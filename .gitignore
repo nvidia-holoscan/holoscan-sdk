@@ -1,0 +1,5 @@
+# default location for download_sample_data.py output
+test_data/
+
+# default location for cmake build in the Dockerfile
+build/
