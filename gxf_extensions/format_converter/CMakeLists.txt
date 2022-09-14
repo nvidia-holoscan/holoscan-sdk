@@ -34,4 +34,5 @@ add_library(format_converter SHARED
 target_link_libraries(format_converter
   PUBLIC format_converter_lib
 )
-
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(format_converter)

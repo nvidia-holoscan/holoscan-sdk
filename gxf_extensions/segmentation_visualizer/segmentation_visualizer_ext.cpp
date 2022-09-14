@@ -23,5 +23,5 @@ GXF_EXT_FACTORY_SET_INFO(0xf52289414bec4f59, 0xb02f1b532c3f19a4, "SegmentationVi
                          "LICENSE");
 GXF_EXT_FACTORY_ADD(0xe048718b636f40ba, 0x993c15d1d530b56e,
                     nvidia::holoscan::segmentation_visualizer::Visualizer, nvidia::gxf::Codelet,
-                    "OpenGL Segmentation Visualizer codelet.");
+                    "OpenGL Segmentation Vizualizer codelet.");
 GXF_EXT_FACTORY_END()

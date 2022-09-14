@@ -31,3 +31,5 @@ add_library(v4l2_source SHARED
 target_link_libraries(v4l2_source
   PUBLIC v4l2_source_lib
 )
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(v4l2_source)

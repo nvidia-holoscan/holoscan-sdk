@@ -30,4 +30,5 @@ add_library(tensor_probe SHARED
 target_link_libraries(tensor_probe
   PUBLIC tensor_probe_lib
 )
-
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(tensor_probe)

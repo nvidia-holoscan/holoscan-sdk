@@ -116,7 +116,6 @@ gxf_result_t VideoStreamSerializer::serialize_entity_abi(gxf_uid_t eid, gxf::End
             entity_header.sequence_number = outgoing_sequence_number_++;
             entity_header.flags = 0x00000000;
             entity_header.component_count = entries.size();
-            printf("components component_count: %u\n", (unsigned int)entity_header.component_count);
             entity_header.reserved = 0;
             return SerializeEntityHeader(entity_header, endpoint);
           })
@@ -180,11 +179,8 @@ gxf::Expected<FixedVector<VideoStreamSerializer::ComponentEntry, kMaxComponents>
 VideoStreamSerializer::createComponentEntries(
     const FixedVectorBase<gxf::UntypedHandle>& components) {
   FixedVector<ComponentEntry, kMaxComponents> entries;
-  printf("components size: %u\n", (unsigned int)components.size());
-  printf("time: %" PRIu64 "\n", std::chrono::system_clock::now().time_since_epoch().count());
   for (size_t i = 0; i < components.size(); i++) {
     const auto component = components[i];
-    printf("components name: %s\n", component->name());
     if (!component) { return gxf::Unexpected{GXF_ARGUMENT_OUT_OF_RANGE}; }
 
     // Check if component is serializable

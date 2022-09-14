@@ -40,13 +40,12 @@ gxf_result_t TensorProbe::tick() {
     return maybe_message.error();
   }
 
-  std::vector<nvidia::gxf::Handle<nvidia::gxf::Tensor>> tensor_metas =
-      maybe_message.value().findAll<gxf::Tensor>();
+  auto tensor_metas = maybe_message.value().findAll<gxf::Tensor>();
   GXF_LOG_INFO("Getting tensors");
 
   for (nvidia::gxf::Handle<nvidia::gxf::Tensor> tensor_meta : tensor_metas) {
-    GXF_LOG_INFO("Tensor name: %s (name length %d)", tensor_meta.name(),
-                 strlen(tensor_meta.name()));
+    GXF_LOG_INFO(
+        "Tensor name: %s (name length %d)", tensor_meta.name(), strlen(tensor_meta.name()));
 
     gxf::Expected<gxf::Handle<gxf::Tensor>> maybe_tensor =
         maybe_message.value().get<gxf::Tensor>(tensor_meta.name());

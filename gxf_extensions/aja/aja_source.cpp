@@ -18,6 +18,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -25,6 +26,17 @@
 
 template <>
 struct YAML::convert<NTV2Channel> {
+  static Node encode(const NTV2Channel& rhs) {
+    Node node;
+    int channel = static_cast<int>(rhs);
+    std::stringstream ss;
+    ss << "NTV2_CHANNEL";
+    ss << channel;
+    node.push_back(ss.str());
+    YAML::Node value_node = node[0];
+    return value_node;
+  }
+
   static bool decode(const Node& node, NTV2Channel& rhs) {
     if (!node.IsScalar()) return false;
 

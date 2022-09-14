@@ -114,7 +114,7 @@ gxf_result_t Postprocessor::tick() {
   }
 
   // Allocate and convert output buffer on the device.
-  gxf::Shape output_shape{shape.width, shape.height, 1};
+  gxf::Shape output_shape{shape.height, shape.width, 1};
   out_tensor.value()->reshape<uint8_t>(output_shape, gxf::MemoryStorageType::kDevice, allocator_);
   if (!out_tensor.value()->pointer()) {
     GXF_LOG_ERROR("Failed to allocate output tensor buffer.");

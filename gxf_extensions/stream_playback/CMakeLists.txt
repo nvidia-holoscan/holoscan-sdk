@@ -35,3 +35,5 @@ target_link_libraries(stream_playback
   PUBLIC
     stream_playback_lib
 )
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(stream_playback)

@@ -35,4 +35,5 @@ add_library(opengl_renderer SHARED
 target_link_libraries(opengl_renderer
   PUBLIC opengl_renderer_lib
 )
-
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(opengl_renderer)

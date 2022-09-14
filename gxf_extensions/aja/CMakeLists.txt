@@ -34,3 +34,5 @@ add_library(aja_source SHARED
 target_link_libraries(aja_source
   PUBLIC aja_source_lib
 )
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(aja_source)

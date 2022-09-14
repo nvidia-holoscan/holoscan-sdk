@@ -1,0 +1,27 @@
+buildType:
+  default: debug
+  description: Build type
+  choices:
+    debug:
+      short: Debug
+      long: Build with debugging information
+      buildType: Debug
+    release:
+      short: Release
+      long: Optimize the resulting binaries
+      buildType: Release
+    rel-debug:
+      short: RelWithDebInfo
+      long: Release build with debug info
+      buildType: RelWithDebInfo
+
+platform:
+  default: x86_64
+  description: Platform
+  choices:
+    x86_64:
+      short: x86_64
+      long: x86_64 platform
+    arm64:
+      short: arm64
+      long: arm64 platform

@@ -45,4 +45,5 @@ add_library(segmentation_postprocessor SHARED
 target_link_libraries(segmentation_postprocessor
   PUBLIC segmentation_postprocessor_lib
 )
-
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(segmentation_postprocessor)

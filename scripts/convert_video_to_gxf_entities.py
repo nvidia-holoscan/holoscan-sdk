@@ -979,8 +979,8 @@ class EntityRecorder:
             raise TypeError("array must have more than 0 rows (height)")
         if array.shape[1] <= 0:
             raise TypeError("array must have more than 0 rows (width)")
-        if array.shape[2] != 3:
-            raise TypeError("array must have 3 channels.")
+        if array.shape[2] not in [1, 3]:
+            raise TypeError("Array must have 1 or 3 channels, but got {}", array.shape[2])
         if not isinstance(name, str):
             raise TypeError("name must be a string")
 

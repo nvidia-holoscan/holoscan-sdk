@@ -1,0 +1,46 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "cmake --build ${command:cmake.buildDirectory} --config ${command:cmake.buildType} --target ${command:cmake.buildTargetName}",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "${env:HOME}/.local/bin:${env:PATH}",
+                    "CUDACXX": "/usr/local/cuda/bin/nvcc",
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Install",
+            "type": "shell",
+            "command": "cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-embedded-core && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-embedded-gxf_extensions && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-embedded-apps && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-embedded-gxf_libs && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-embedded-gxf_bins && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-embedded-dep_libs",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "${env:HOME}/.local/bin:${env:PATH}",
+                    "CUDACXX": "/usr/local/cuda/bin/nvcc",
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "none",
+            }
+        },
+    ]
+}

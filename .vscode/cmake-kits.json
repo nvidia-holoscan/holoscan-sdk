@@ -1,0 +1,24 @@
+// https://vector-of-bool.github.io/docs/vscode-cmake-tools/kits.html#user-local-kits
+[
+    {
+        "name": "GCC native",
+        "compilers": {
+            "C": "/usr/bin/gcc",
+            "CXX": "/usr/bin/g++"
+        }
+    },
+    {
+        "name": "GCC x86-64",
+        "compilers": {
+            "C": "/usr/bin/x86_64-linux-gnu-gcc",
+            "CXX": "/usr/bin/x86_64-linux-gnu-g++"
+        }
+    },
+    {
+        "name": "GCC arm64",
+        "compilers": {
+            "C": "/usr/bin/aarch64-linux-gnu-gcc",
+            "CXX": "/usr/bin/aarch64-linux-gnu-g++"
+        }
+    }
+]

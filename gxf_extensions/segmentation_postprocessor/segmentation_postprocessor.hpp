@@ -18,8 +18,8 @@
 
 #include <string>
 
-#include "gxf/std/codelet.hpp"
 #include "gxf/std/allocator.hpp"
+#include "gxf/std/codelet.hpp"
 #include "gxf/std/receiver.hpp"
 #include "gxf/std/transmitter.hpp"
 

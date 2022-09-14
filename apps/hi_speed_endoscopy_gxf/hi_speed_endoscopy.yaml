@@ -1,0 +1,113 @@
+%YAML 1.2
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+name: source
+components:
+- name: signal
+  type: nvidia::gxf::DoubleBufferTransmitter
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: signal
+    min_size: 1
+- type: nvidia::holoscan::EmergentSource
+  parameters:
+    signal: signal
+    width: 4200
+    height: 2160
+    framerate: 240
+    rdma: false
+---
+name: demosaic
+components:
+  - name: in
+    type: nvidia::gxf::DoubleBufferReceiver
+  - type: nvidia::gxf::MessageAvailableSchedulingTerm
+    parameters:
+      receiver: in
+      min_size: 1
+  - name: out
+    type: nvidia::gxf::DoubleBufferTransmitter
+  - type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+    parameters:
+      transmitter: out
+      min_size: 1
+  - type: nvidia::holoscan::BayerDemosaic
+    parameters:
+      generate_alpha: false
+      bayer_grid_pos: 2
+      interpolation_mode: 0 # this is the only interpolation mode supported by NPP currently
+      pool: utils/demosaic_mempool
+      receiver: in
+      transmitter: out
+      cuda_stream_pool: utils/cuda_stream_pool
+---
+name: holoviz
+components:
+ - name: input
+   type: nvidia::gxf::DoubleBufferReceiver
+ - type: nvidia::holoscan::HolovizViewer
+   parameters:
+     receiver: input
+     # display_name: DP-2
+     # width: 2560
+     # height: 1440
+     # framerate: 240
+     # use_exclusive_display: true
+ - type: nvidia::gxf::MessageAvailableSchedulingTerm
+   parameters:
+     receiver: input
+     min_size: 1
+---
+components:
+  - name: input_connection
+    type: nvidia::gxf::Connection
+    parameters:
+      source: source/signal
+      target: demosaic/in
+  - name: holoviz_connection
+    type: nvidia::gxf::Connection
+    parameters:
+      source: demosaic/out
+      target: holoviz/input
+---
+name: scheduler
+components:
+  - name: clock
+    type: nvidia::gxf::RealtimeClock
+  - name: greedy_scheduler
+    type: nvidia::gxf::GreedyScheduler
+    parameters:
+      clock: clock
+  - type: nvidia::gxf::JobStatistics
+    parameters:
+      clock: clock
+---
+name: utils
+components:
+  - name: cuda_stream_pool
+    type: nvidia::gxf::CudaStreamPool
+    parameters:
+      dev_id: 0
+      stream_flags: 0
+      stream_priority: 0
+      reserved_size: 1
+      max_size: 5
+  - name: demosaic_mempool
+    type: nvidia::gxf::BlockMemoryPool
+    parameters:
+      storage_type: 1
+      block_size: 72576000 # give a good size workspace 4200 x 2160 x 4 (chan) x 1 B
+      num_blocks: 2

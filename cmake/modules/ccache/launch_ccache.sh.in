@@ -1,0 +1,35 @@
+# !/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed\ to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Reference: https://ccache.dev/manual/4.6.1.html#_configuration
+
+export CCACHE_CONFIGPATH=${CCACHE_CONFIGPATH:-"@CCACHE_CONFIGPATH@"}
+export CCACHE_BASEDIR=${CCACHE_BASEDIR:-"@CCACHE_BASEDIR@"}
+export CCACHE_COMPILERTYPE="@CCACHE_COMPILERTYPE@"
+
+# By default, ccache will also include all system headers in the manifest.
+# With this sloppiness set(system_headers),
+# ccache will only include system headers in the hash but not add the system
+# header files to the list of include files.
+export CCACHE_SLOPPINESS="system_headers"
+
+# Set CCACHE_DEBUGDIR with postfix (_debug) to enable debug logs
+export CCACHE_DEBUGDIR=${CCACHE_DEBUGDIR:-"@CCACHE_DIR@_debug"}
+# Uncomment the following if you want to enable debug logs
+#export CCACHE_DEBUG=1
+
+# Execute ccache
+@CCACHE_BIN_PATH@ "$@"

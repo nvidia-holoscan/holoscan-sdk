@@ -19,9 +19,9 @@
 #include <string>
 #include <vector>
 
-#include "ajantv2/includes/ntv2card.h"
-#include "ajantv2/includes/ntv2devicescanner.h"
-#include "ajantv2/includes/ntv2enums.h"
+#include <ajantv2/includes/ntv2card.h>
+#include <ajantv2/includes/ntv2devicescanner.h>
+#include <ajantv2/includes/ntv2enums.h>
 #include "gxf/std/codelet.hpp"
 #include "gxf/std/transmitter.hpp"
 

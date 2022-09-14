@@ -1,0 +1,129 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef HOLOSCAN_CORE_COMPONENT_SPEC_HPP
+#define HOLOSCAN_CORE_COMPONENT_SPEC_HPP
+
+#include "./common.hpp"
+#include "./parameter.hpp"
+
+#include <any>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <typeinfo>
+#include <unordered_map>
+#include <utility>
+
+#include <yaml-cpp/yaml.h>
+
+namespace holoscan {
+
+/**
+ * @brief Class to define the specification of a component.
+ */
+class ComponentSpec {
+ public:
+  /**
+   * @brief Construct a new ComponentSpec object.
+   *
+   * @param fragment The pointer to the fragment that contains this component.
+   */
+  explicit ComponentSpec(Fragment* fragment = nullptr) : fragment_(fragment) {}
+
+  /**
+   * @brief Get the pointer to the fragment that contains this component.
+   *
+   * @return The pointer to the fragment that contains this component.
+   */
+  Fragment* fragment() const { return fragment_; }
+
+
+  /**
+   * @brief Define a parameter for this component.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param parameter The parameter to define.
+   * @param key The key (name) of the parameter.
+   */
+  template <typename typeT>
+  void param(Parameter<typeT>& parameter, const char* key) {
+    param(parameter, key, "N/A", "N/A");
+  }
+  /**
+   * @brief Define a parameter for this component.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param parameter The parameter to define.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   */
+  template <typename typeT>
+  void param(Parameter<typeT>& parameter, const char* key, const char* headline) {
+    param(parameter, key, headline, "N/A");
+  }
+  /**
+   * @brief Define a parameter for this component.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param parameter The parameter to define.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   * @param description The description of the parameter.
+   */
+  template <typename typeT>
+  void param(Parameter<typeT>& parameter, const char* key, const char* headline,
+             const char* description);
+
+  /**
+   * @brief Define a parameter that has a default value.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param parameter The parameter to get.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   * @param description The description of the parameter.
+   * @param default_value The default value of the parameter.
+   */
+  template <typename typeT>
+  void param(Parameter<typeT>& parameter, const char* key, const char* headline,
+             const char* description, typeT default_value);
+
+  /**
+   * @brief Get the parameters of this component.
+   *
+   * @return The reference to the parameters of this component.
+   */
+  std::unordered_map<std::string, ParameterWrapper>& params() { return params_; }
+
+ protected:
+  Fragment* fragment_ = nullptr;  ///< The pointer to the fragment that contains this component.
+  std::unordered_map<std::string, ParameterWrapper> params_;  ///< The parameters of this component.
+};
+
+}  // namespace holoscan
+
+// ------------------------------------------------------------------------------------------------
+// Template definitions
+//
+//   Since the template definitions depends on template methods in other headers, we declare the
+//   template methods above, and define them below with the proper header files, so that we don't
+//   have circular dependencies.
+// ------------------------------------------------------------------------------------------------
+#include "./component_spec-inl.hpp"
+
+#endif  // HOLOSCAN_CORE_COMPONENT_SPEC_HPP

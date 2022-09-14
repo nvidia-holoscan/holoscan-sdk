@@ -33,3 +33,7 @@ add_library(tensor_rt SHARED
 target_link_libraries(tensor_rt
   PUBLIC tensor_rt_inference_lib
 )
+
+# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+install_gxf_extension(tensor_rt)
+install_gxf_extension(tensor_rt_inference_lib) # not following '{name}_lib' so install explicitly

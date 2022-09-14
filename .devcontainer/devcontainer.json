@@ -1,0 +1,64 @@
+// For format details, see https://aka.ms/vscode-remote/devcontainer.json or
+// https://code.visualstudio.com/docs/remote/devcontainerjson-reference
+{
+    "name": "C++",
+    "build": {
+        "dockerfile": "Dockerfile",
+        // Update 'VARIANT' to choose base image
+        // (Default: nvcr.io/nvidia/tensorrt:22.03-py3)
+        "args": {
+            "VARIANT": "nvcr.io/nvidia/tensorrt:22.03-py3",
+            //"PLATFORM": "linux/arm64",
+        }
+        // buildcontainer.json doesn't support build.secrets field
+        // (https://github.com/microsoft/vscode-remote-release/issues/4841)
+    },
+    "runArgs": [
+        "--runtime=nvidia",
+        "--net=host",
+        // Uncomment the following line to use AJA Capture Card
+        // "--device=/dev/ajantv20:/dev/ajantv20",
+        "--cap-add=SYS_PTRACE",
+        "--security-opt=seccomp=unconfined",
+    ],
+    "containerEnv": {
+        "DISPLAY": "${localEnv:DISPLAY}",
+        "NVIDIA_DRIVER_CAPABILITIES": "graphics,video,compute,utility,display",
+    },
+    "mounts": [
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+        // Mount /usr/share/vulkan folder for Vulkan
+        "source=/usr/share/vulkan,target=/usr/share/vulkan,type=bind,consistency=cached",
+        // For mounting local 'test_data' folder to '/workspace/test_data' in the container
+        "source=${localWorkspaceFolder}/test_data,target=/workspace/test_data,type=bind,consistency=cached",
+    ],
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/holoscan-sdk,type=bind,consistency=cached",
+    "workspaceFolder": "/workspace/holoscan-sdk",
+    // Configure tool-specific properties.
+    "customizations": {
+        // Configure properties specific to VS Code.
+        "vscode": {
+            // Set *default* container specific settings.json values on container create.
+            "settings": {},
+            // Add the IDs of extensions you want installed when the container is created.
+            "extensions": [
+                "eamodio.gitlens",
+                "akiramiyakoda.cppincludeguard",
+                "ms-vscode.cpptools-extension-pack",
+                "matepek.vscode-catch2-test-adapter",
+                "ms-vscode.makefile-tools",
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "shardulm94.trailing-spaces",
+                "stkb.rewrap",
+                "shd101wyy.markdown-preview-enhanced",
+            ]
+        }
+    },
+    // Use 'forwardPorts' to make a list of ports inside the container available locally.
+    // "forwardPorts": [],
+    // Use 'postCreateCommand' to run commands after the container is created.
+    // "postCreateCommand": "gcc -v",
+    // Comment out this line to run as root instead.
+    "remoteUser": "holoscan-sdk"
+}
