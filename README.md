@@ -31,11 +31,13 @@ The Clara Holoscan SDK currently supports embedded devices (arm64) as well as x8
 
 ## User Guide
 
-The latest SDK user guide is available at https://docs.nvidia.com/clara-holoscan. Before installing the SDK from this GitHub repo, make sure you have followed the [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide) or the [Clara Holoscan Developer Kit User Guide](https://developer.download.nvidia.com/CLARA/Clara-Holoscan-Developer-Kit-User-Guide.pdf) to set up your development kit.
+The latest SDK user guide is available at https://docs.nvidia.com/clara-holoscan. 
+
+Before installing the SDK from this GitHub repository on Developer Kits, make sure you have followed the [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide) or the [NVIDIA IGX Orin Developer Kit User Guide](https://developer.download.nvidia.com/CLARA/Clara-Holoscan-Developer-Kit-User-Guide.pdf) to set up your development kit. Also, make sure you have joined the [Clara Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and the [RiverMax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
 
 ## Prerequisites
 
-The Clara Holoscan Embedded SDK and its sample applications are designed to run on any of the [Clara Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits/).
+The Clara Holoscan Embedded SDK and its sample applications are designed to run on any of the [Clara Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits) as well as x86_64 systems.
 
 Requirements include:
 - [NVIDIA Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux): 34.1.2<sup> [1](#holopack)</sup>
@@ -47,7 +49,7 @@ Requirements include:
 - For AJA support: AJA drivers (refer to the [user guide](#user-guide))
 - [NGC CLI](https://ngc.nvidia.com/setup/installers/cli)
 
-<sup id="holopack">1. included when installing **[Holopack](https://developer.nvidia.com/embedded/jetpack) 1.1** on your Clara Developer Kit with [SDK Manager][sdkm]</sup>
+<sup id="holopack">1. included when installing **[Holopack](https://developer.nvidia.com/embedded/jetpack) 1.1** on your Clara Developer Kit with [SDK Manager][sdkm].</sup>
 <br>
 <sup id="switch-script">2. included when running the `nvgpuswitch` script on your Clara Developer Kit, installed with the [SDK Manager][sdkm]</sup>
 
