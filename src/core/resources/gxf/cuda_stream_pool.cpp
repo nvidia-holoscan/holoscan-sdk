@@ -45,7 +45,7 @@ void CudaStreamPool::setup(ComponentSpec& spec) {
   spec.param(reserved_size_,
              "reserved_size",
              "Reserved Stream Size",
-             "Reserve serveral CUDA streams before 1st request coming",
+             "Reserve several CUDA streams before 1st request coming",
              kDefaultReservedSize);
   spec.param(max_size_,
              "max_size",

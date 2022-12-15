@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_GXF_ENTITY_HPP
 #define HOLOSCAN_CORE_GXF_ENTITY_HPP
 
+#include <memory>
+
 // Entity definition
 // Since it has code that causes a warning as an error, we disable it here.
 #pragma GCC diagnostic push
@@ -25,8 +27,118 @@
 #include "gxf/core/entity.hpp"
 #pragma GCC diagnostic pop
 
-namespace gxf {
-using ::nvidia::gxf::Entity;
+#include "holoscan/core/gxf/gxf_tensor.hpp"
+#include "holoscan/core/type_traits.hpp"
+
+// Forward declaration
+namespace holoscan {
+class ExecutionContext;
 }
+
+namespace holoscan::gxf {
+
+/**
+ * @brief Class to wrap GXF Entity (`nvidia::gxf::Entity`).
+ *
+ */
+class Entity : public nvidia::gxf::Entity {
+ public:
+  Entity() = default;
+  explicit Entity(const nvidia::gxf::Entity& other) : nvidia::gxf::Entity(other) {}
+  explicit Entity(nvidia::gxf::Entity&& other) : nvidia::gxf::Entity(other) {}
+
+  // Creates a new entity
+  static Entity New(ExecutionContext* context);
+
+  // Gets a component by type. Asserts if no such component.
+  // Adds a component with given type
+  template <typename DataT,
+            typename = std::enable_if_t<!holoscan::is_vector_v<DataT> &&
+                                        holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
+  std::shared_ptr<DataT> get(const char* name = nullptr) const {
+    bool is_holoscan_gxf_tensor = true;
+    // We should use nullptr as a default name because In GXF, 'nullptr' should be used with
+    // GxfComponentFind() if we want to get the first component of the given type.
+
+    // We first try to get holoscan::gxf::GXFTensor from GXF Entity.
+    gxf_tid_t tid;
+    auto tid_result =
+        GxfComponentTypeId(context(), nvidia::TypenameAsString<holoscan::gxf::GXFTensor>(), &tid);
+    if (tid_result != GXF_SUCCESS) {
+      HOLOSCAN_LOG_ERROR("Unable to get component type id: {}", tid_result);
+      return nullptr;
+    }
+
+    gxf_uid_t cid;
+    auto cid_result = GxfComponentFind(context(), eid(), tid, name, nullptr, &cid);
+    if (cid_result != GXF_SUCCESS) {
+      // Then, we try to get nvidia::gxf::Tensor from GXF Entity.
+      tid_result =
+          GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid);
+      if (tid_result != GXF_SUCCESS) {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get component type id from 'nvidia::gxf::Tensor' (error code: {})",
+            tid_result);
+        return nullptr;
+      }
+
+      cid_result = GxfComponentFind(context(), eid(), tid, name, nullptr, &cid);
+      is_holoscan_gxf_tensor = false;
+    }
+
+    if (cid_result != GXF_SUCCESS) {
+      HOLOSCAN_LOG_ERROR("Unable to find component from the name '{}' (error code: {})",
+                         name == nullptr ? "" : name,
+                         cid_result);
+      return nullptr;
+    }
+
+    if (is_holoscan_gxf_tensor) {
+      // We don't need to create DLManagedTensorCtx struct again because it is already created in
+      // GXFTensor. (~150ns)
+      auto handle = nvidia::gxf::Handle<holoscan::gxf::GXFTensor>::Create(context(), cid);
+      auto tensor = handle->get()->as_tensor();
+      return tensor;
+    } else {
+      // Create a holoscan::Tensor object from the newly constructed GXF Tensor object. (~680 ns)
+      auto handle = nvidia::gxf::Handle<nvidia::gxf::Tensor>::Create(context(), cid);
+      auto gxf_tensor = holoscan::gxf::GXFTensor(*handle->get());
+      auto tensor = gxf_tensor.as_tensor();
+      return tensor;
+    }
+  }
+
+  // Adds a component with given type
+  template <typename DataT,
+            typename = std::enable_if_t<!holoscan::is_vector_v<DataT> &&
+                                        holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
+  void add(std::shared_ptr<DataT>& data, const char* name = nullptr) {
+    gxf_tid_t tid;
+    const auto tid_result =
+        GxfComponentTypeId(context(), nvidia::TypenameAsString<holoscan::gxf::GXFTensor>(), &tid);
+    if (tid_result != GXF_SUCCESS) {
+      throw std::runtime_error(fmt::format(
+          "Unable to get component type id from 'holoscan::gxf::GXFTensor' (error code: {})",
+          tid_result));
+    }
+
+    gxf_uid_t cid;
+    const auto cid_result = GxfComponentAdd(context(), eid(), tid, name, &cid);
+    if (cid_result != GXF_SUCCESS) {
+      throw std::runtime_error(
+          fmt::format("Unable to add a component with the name '{}' (error code: {})",
+                      name == nullptr ? "" : name,
+                      cid_result));
+    }
+
+    auto handle = nvidia::gxf::Handle<holoscan::gxf::GXFTensor>::Create(context(), cid);
+    holoscan::gxf::GXFTensor* tensor_ptr = handle->get();
+
+    // Copy the member data (std::shared_ptr<DLManagedTensorCtx>) from the Tensor to GXFTensor
+    *tensor_ptr = data->dl_ctx();
+  }
+};
+
+}  // namespace holoscan::gxf
 
 #endif /* HOLOSCAN_CORE_GXF_ENTITY_HPP */

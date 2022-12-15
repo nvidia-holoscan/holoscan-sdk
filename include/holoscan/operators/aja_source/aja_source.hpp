@@ -18,12 +18,11 @@
 #ifndef HOLOSCAN_OPERATORS_AJA_SOURCE_AJA_SOURCE_HPP
 #define HOLOSCAN_OPERATORS_AJA_SOURCE_AJA_SOURCE_HPP
 
-#include "../../core/gxf/gxf_operator.hpp"
-
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "../../core/gxf/gxf_operator.hpp"
 #include "./ntv2channel.hpp"
 
 namespace holoscan::ops {
@@ -46,13 +45,18 @@ class AJASourceOp : public holoscan::ops::GXFOperator {
   void initialize() override;
 
  private:
-  Parameter<holoscan::IOSpec*> signal_;
+  Parameter<holoscan::IOSpec*> video_buffer_output_;
   Parameter<std::string> device_specifier_;
   Parameter<NTV2Channel> channel_;
   Parameter<uint32_t> width_;
   Parameter<uint32_t> height_;
   Parameter<uint32_t> framerate_;
   Parameter<bool> use_rdma_;
+  Parameter<bool> enable_overlay_;
+  Parameter<NTV2Channel> overlay_channel_;
+  Parameter<bool> overlay_rdma_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_input_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_output_;
 };
 
 }  // namespace holoscan::ops

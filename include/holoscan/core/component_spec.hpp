@@ -18,18 +18,19 @@
 #ifndef HOLOSCAN_CORE_COMPONENT_SPEC_HPP
 #define HOLOSCAN_CORE_COMPONENT_SPEC_HPP
 
-#include "./common.hpp"
-#include "./parameter.hpp"
+#include <yaml-cpp/yaml.h>
 
 #include <any>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
 
-#include <yaml-cpp/yaml.h>
+#include "./common.hpp"
+#include "./parameter.hpp"
 
 namespace holoscan {
 

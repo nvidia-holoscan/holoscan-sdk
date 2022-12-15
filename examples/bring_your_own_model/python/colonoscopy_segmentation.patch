@@ -1,0 +1,96 @@
+diff '--color=auto' -ruN apps/ultrasound_segmentation/python/ultrasound_segmentation.py examples/bring_your_own_model/python/ultrasound_segmentation.py
+--- apps/ultrasound_segmentation/python/ultrasound_segmentation.py	2022-12-02 15:21:28.852965988 -0500
++++ examples/bring_your_own_model/python/ultrasound_segmentation.py	2022-12-02 15:19:46.652800278 -0500
+@@ -35,10 +35,10 @@
+ 
+ sample_data_path = os.environ.get("HOLOSCAN_SAMPLE_DATA_PATH", "../data")
+ 
+-model_path = os.path.join(sample_data_path, "ultrasound", "model")
++model_path = os.path.join(sample_data_path, "colonoscopy", "model")
+ 
+-model_file_path = os.path.join(model_path, "us_unet_256x256_nhwc.onnx")
+-engine_cache_dir = os.path.join(model_path, "us_unet_256x256_nhwc_engines")
++model_file_path = os.path.join(model_path, "colon.onnx")
++engine_cache_dir = os.path.join(model_path, "engine")
+ 
+ 
+ class UltrasoundApp(Application):
+@@ -93,15 +93,15 @@
+                 **self.kwargs("drop_alpha_channel"),
+             )
+         else:
+-            video_dir = os.path.join(sample_data_path, "ultrasound", "video")
++            video_dir = os.path.join(sample_data_path, "colonoscopy", "video")
+             if not os.path.exists(video_dir):
+                 raise ValueError(f"Could not find video data: {video_dir=}")
+             source = VideoStreamReplayerOp(
+                 self, name="replayer", directory=video_dir, **self.kwargs("replayer")
+             )
+ 
+-        width_preprocessor = 1264
+-        height_preprocessor = 1080
++        width_preprocessor = 1350
++        height_preprocessor = 1072
+         preprocessor_block_size = width_preprocessor * height_preprocessor * n_channels * bpp
+         preprocessor_num_blocks = 2
+         segmentation_preprocessor = FormatConverterOp(
+@@ -118,8 +118,8 @@
+         )
+ 
+         n_channels_inference = 2
+-        width_inference = 256
+-        height_inference = 256
++        width_inference = 512
++        height_inference = 512
+         bpp_inference = 4
+         inference_block_size = width_inference * height_inference * n_channels_inference * bpp_inference
+         inference_num_blocks = 2
+diff '--color=auto' -ruN apps/ultrasound_segmentation/python/ultrasound_segmentation.yaml examples/bring_your_own_model/python/ultrasound_segmentation.yaml
+--- apps/ultrasound_segmentation/python/ultrasound_segmentation.yaml	2022-12-02 15:21:30.452968543 -0500
++++ examples/bring_your_own_model/python/ultrasound_segmentation.yaml	2022-12-02 15:19:46.652800278 -0500
+@@ -31,8 +31,8 @@
+   # - libtensor_rt.so
+ 
+ replayer:  # VideoStreamReplayer
+-  # directory: "../data/ultrasound/video"
+-  basename: "ultrasound_256x256"
++  # directory: "../data/colonoscopy/video"
++  basename: "colonoscopy"
+   frame_rate: 0 # as specified in timestamps
+   repeat: true # default: false
+   realtime: true # default: true
+@@ -52,12 +52,12 @@
+ segmentation_preprocessor:  # FormatConverter
+     out_tensor_name: source_video
+     out_dtype: "float32"
+-    resize_width: 256
+-    resize_height: 256
++    resize_width: 512
++    resize_height: 512
+ 
+ segmentation_inference:  # TensorRtInference
+-  # model_file_path: "../data/ultrasound/model/us_unet_256x256_nhwc.onnx"
+-  # engine_cache_dir: "../data/ultrasound/model/us_unet_256x256_nhwc_engines"
++  # model_file_path: "../data/colonoscopy/model/colon.onnx"
++  # engine_cache_dir: "../data/colonoscopy/model/engine"
+   input_tensor_names:
+     - source_video
+   input_binding_names:
+@@ -65,7 +65,7 @@
+   output_tensor_names:
+     - inference_output_tensor
+   output_binding_names:
+-    - OUTPUT__0
++    - output_old
+   force_engine_update: false
+   verbose: true
+   max_workspace_size: 2147483648
+@@ -73,7 +73,7 @@
+ 
+ segmentation_postprocessor:  # Postprocessor
+   in_tensor_name: inference_output_tensor
+-  network_output_type: softmax
++  network_output_type: sigmoid
+   data_format: nchw
+ 
+ segmentation_visualizer:  # Holoviz

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,6 +21,8 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>  // NOLINT(build/include_order)
 // clang-format on
+
+#include <cuda_gl_interop.h>
 
 #include <string>
 #include <vector>
@@ -61,14 +64,14 @@ class Sink : public gxf::Codelet {
   void onKeyCallback(int key, int scancode, int action, int mods);
   void onFramebufferSizeCallback(int width, int height);
 
+  void renderInferenceResults(int width, int height);
+
  private:
   // GLFW members and callback funds
   GLFWwindow* window_ = nullptr;
   // GL viewport
   int vp_width_ = 0;
   int vp_height_ = 0;
-  float vp_aspect_ratio_ = 0;
-  bool vp_changed_ = true;
   FrameData frame_data_;
 
   cudaGraphicsResource* cuda_confidence_resource_ = nullptr;
@@ -134,9 +137,20 @@ class Sink : public gxf::Codelet {
   gxf::Parameter<std::string> overlay_img_vertex_shader_path_;
   gxf::Parameter<std::string> overlay_img_fragment_shader_path_;
 
-  // GFX Parameters
+  // Overlay output
   // --------------------------------------------------------------------
 
+  gxf::Parameter<gxf::Handle<gxf::Receiver>> overlay_buffer_input_;
+  gxf::Parameter<gxf::Handle<gxf::Transmitter>> overlay_buffer_output_;
+  GLuint overlay_render_fbo_ = 0;
+  GLuint overlay_render_texture_ = 0;
+  GLuint overlay_output_fbo_ = 0;
+  GLuint overlay_output_renderbuffer_ = 0;
+  cudaGraphicsResource* cuda_overlay_renderbuffer_resource_ = nullptr;
+  cudaArray* cuda_overlay_array_ = nullptr;
+
+  // GFX Parameters
+  // --------------------------------------------------------------------
 
   gxf::Parameter<std::vector<gxf::Handle<gxf::Receiver>>> in_;
   gxf::Parameter<std::vector<std::string>> in_tensor_names_;

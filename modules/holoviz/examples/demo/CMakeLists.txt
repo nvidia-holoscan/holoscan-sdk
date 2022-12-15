@@ -41,20 +41,22 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
-        clara::holoviz
-        clara::holoviz::imgui
+        holoscan::viz
+        holoscan::viz::imgui
     )
 
 # install source files
 install(
     FILES Main.cpp
     DESTINATION src/examples/demo
+    COMPONENT holoviz-examples
     )
 
 # install data files
 install(
     FILES nv_logo.png
     DESTINATION src/examples/demo
+    COMPONENT holoviz-examples
     )
 
 # install the public CMakeLists.txt file
@@ -62,4 +64,5 @@ install(
     FILES CMakeLists.txt.public
     DESTINATION src/examples/demo
     RENAME CMakeLists.txt
+    COMPONENT holoviz-examples
     )

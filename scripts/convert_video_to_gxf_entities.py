@@ -1,17 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
-# Copyright (c) 2022, NVIDIA CORPORATION.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
 
 import os
 import struct
@@ -174,9 +174,7 @@ class EntityHeader:
         offset: int = 0,
         whence: int = os.SEEK_SET,
     ):
-        self.deserialize(
-            data=data, buffer=buffer, reader=reader, offset=offset, whence=whence
-        )
+        self.deserialize(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
 
     @property
     def serialized_size(self) -> int:
@@ -203,7 +201,7 @@ class EntityHeader:
         return self._reserved
 
     def __repr__(self) -> str:
-        return f"EntityHeader(serialized_size={self.serialized_size}, checksum={self.checksum}, sequence_number={self.sequence_number}, flags={self.flags}, component_count={self.component_count}, reserved={self.reserved})"
+        return f"EntityHeader(serialized_size={self.serialized_size}, checksum={self.checksum}, sequence_number={self.sequence_number}, flags={self.flags}, component_count={self.component_count}, reserved={self.reserved})"  # noqa
 
     def deserialize(
         self,
@@ -316,9 +314,7 @@ class ComponentHeader:
         offset: int = 0,
         whence: int = os.SEEK_SET,
     ):
-        self.deserialize(
-            data=data, buffer=buffer, reader=reader, offset=offset, whence=whence
-        )
+        self.deserialize(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
 
     @property
     def serialized_size(self) -> int:
@@ -333,7 +329,7 @@ class ComponentHeader:
         return self._name_size
 
     def __repr__(self) -> str:
-        return f"ComponentHeader(serialized_size={self.serialized_size}, tid={self.tid}, name_size={self.name_size})"
+        return f"ComponentHeader(serialized_size={self.serialized_size}, tid={self.tid}, name_size={self.name_size})"  # noqa
 
     def deserialize(
         self,
@@ -470,9 +466,7 @@ class TensorHeader:
         offset: int = 0,
         whence: int = os.SEEK_SET,
     ):
-        self.deserialize(
-            data=data, buffer=buffer, reader=reader, offset=offset, whence=whence
-        )
+        self.deserialize(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
 
     @property
     def storage_type(self) -> MemoryStorageType:
@@ -503,7 +497,7 @@ class TensorHeader:
         return PrimitiveType2DType[self.element_type]
 
     def __repr__(self) -> str:
-        return f"TensorHeader(storage_type={self.storage_type}, element_type={self.element_type}, bytes_per_element={self.bytes_per_element}, rank={self.rank}, dims={self.dims}, strides={self.strides})"
+        return f"TensorHeader(storage_type={self.storage_type}, element_type={self.element_type}, bytes_per_element={self.bytes_per_element}, rank={self.rank}, dims={self.dims}, strides={self.strides})"  # noqa
 
     def deserialize(
         self,
@@ -630,12 +624,8 @@ class Tensor:
             header, array = data
         else:
             curr_offset = offset
-            header = TensorHeader(
-                buffer=buffer, reader=reader, offset=curr_offset, whence=whence
-            )
-            data_size_in_bytes = (
-                header.dims[0] * header.strides[0] * header.bytes_per_element
-            )
+            header = TensorHeader(buffer=buffer, reader=reader, offset=curr_offset, whence=whence)
+            data_size_in_bytes = header.dims[0] * header.strides[0] * header.bytes_per_element
             array_data = reader.read(data_size_in_bytes)
 
             array = np.ndarray(
@@ -715,9 +705,7 @@ class Entity:
     @staticmethod
     def create(sequence_number: int, array: ArrayLike) -> None:
         entity_header = EntityHeader(data=(0, 0, sequence_number, 0, 1, 0))
-        component_header = ComponentHeader(
-            data=(0, 3996102265592038524, 11968035723744066232, 0)
-        )
+        component_header = ComponentHeader(data=(0, 3996102265592038524, 11968035723744066232, 0))
         tensor_header = TensorHeader(
             data=(
                 MemoryStorageType.kDevice,
@@ -751,9 +739,7 @@ class Entity:
             header, components = data
         else:
             curr_offset = offset
-            header = EntityHeader(
-                buffer=buffer, reader=reader, offset=curr_offset, whence=whence
-            )
+            header = EntityHeader(buffer=buffer, reader=reader, offset=curr_offset, whence=whence)
             curr_offset = reader.tell()
             components = []
             for _ in range(header.component_count):
@@ -815,11 +801,7 @@ class Component:
 
     @property
     def size_in_bytes(self) -> int:
-        return (
-            self._header.HEADER_SIZE
-            + self._header.name_size
-            + self._tensor.size_in_bytes
-        )
+        return self._header.HEADER_SIZE + self._header.name_size + self._tensor.size_in_bytes
 
     @property
     def header(self) -> ComponentHeader:
@@ -925,9 +907,7 @@ class EntityRecorder:
         self._basename = basename
         self._framerate = framerate
         self._index_path = os.path.join(self._directory, f"{self._basename}.gxf_index")
-        self._entities_path = os.path.join(
-            self._directory, f"{self._basename}.gxf_entities"
-        )
+        self._entities_path = os.path.join(self._directory, f"{self._basename}.gxf_entities")
         self._index_file = None
         self._entities_file = None
         self._initialize()
@@ -1027,19 +1007,16 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Command line utility for encoding raw video frames in GXF Tensors for  stream playback."
+        description=(
+            "Command line utility for encoding raw video frames in GXF Tensors for "
+            "stream playback."
+        )
     )
-    parser.add_argument(
-        "--width", required=True, type=int, help="Input width in pixels"
-    )
-    parser.add_argument(
-        "--height", required=True, type=int, help="Input height in pixels"
-    )
+    parser.add_argument("--width", required=True, type=int, help="Input width in pixels")
+    parser.add_argument("--height", required=True, type=int, help="Input height in pixels")
     parser.add_argument("--channels", default=3, type=int, help="Channel count")
     parser.add_argument("--framerate", default=30, type=int, help="Output frame rate")
-    parser.add_argument(
-        "--basename", default="tensor", help="Basename for gxf entities"
-    )
+    parser.add_argument("--basename", default="tensor", help="Basename for gxf entities")
     parser.add_argument("--directory", default="./", help="Directory for gxf entities")
     args = parser.parse_args()
 

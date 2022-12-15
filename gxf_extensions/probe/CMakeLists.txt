@@ -1,10 +1,11 @@
-# Copyright (c) 2022, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,6 +20,7 @@ add_library(tensor_probe_lib SHARED
 )
 target_link_libraries(tensor_probe_lib
   PUBLIC
+    CUDA::cudart
     GXF::std
     yaml-cpp
 )
@@ -30,5 +32,5 @@ add_library(tensor_probe SHARED
 target_link_libraries(tensor_probe
   PUBLIC tensor_probe_lib
 )
-# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+# Install GXF extension as a component 'holoscan-gxf_extensions'
 install_gxf_extension(tensor_probe)

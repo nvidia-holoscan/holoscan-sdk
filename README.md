@@ -1,521 +1,179 @@
-# Clara Holoscan Embedded SDK
+# Holoscan SDK
 
-[NVIDIA Clara™ Holoscan](https://github.com/nvidia/clara-holoscan) is the AI computing platform for medical devices, consisting of [Clara Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits/) and the [Clara Holoscan SDK](https://developer.nvidia.com/clara-holoscan-sdk). Clara Holoscan enables medical device developers to create the next-generation of AI-enabled medical devices.
+The **Holoscan SDK** is part of [NVIDIA Holoscan](https://github.com/nvidia-holoscan), the AI sensor processing platform that combines hardware systems for low-latency sensor and network connectivity, optimized libraries for data processing and AI, and core microservices to run streaming, imaging, and other applications, from embedded to edge to cloud. It can be used to build streaming AI pipelines for a variety of domains, including Medical Devices, High Performance Computing at the Edge, Industrial Inspection and more.
 
-The Clara Holoscan SDK currently supports embedded devices (arm64) as well as x86 (amd64) systems.
+> In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). As Holoscan has grown, its potential to serve other areas has become apparent. With version 0.4.0, we're proud to announce that the Holoscan SDK is now officially built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Note that some of the content of the SDK (sample applications) or the documentation might still appear to be healthcare-specific pending additional updates. Going forward, domain specific content will be hosted on the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository.
+
+Visit the [NGC demo website](https://demos.ngc.nvidia.com/holoscan) for a live demonstration of some of Holoscan capabilities.
 
 ## Table of Contents
-- [Clara Holoscan Embedded SDK](#clara-holoscan-embedded-sdk)
-  - [Table of Contents](#table-of-contents)
-  - [User Guide](#user-guide)
-  - [Prerequisites](#prerequisites)
-  - [Sample applications](#sample-applications)
-    - [Endoscopy Tool Tracking](#endoscopy-tool-tracking)
-    - [Ultrasound Bone Scoliosis Segmentation](#ultrasound-bone-scoliosis-segmentation)
-    - [Hi-Speed Endoscopy](#hi-speed-endoscopy)
-  - [Running Sample Applications](#running-sample-applications)
-  - [Developing with Holoscan SDK](#developing-with-holoscan-sdk)
-    - [Sample data](#sample-data)
-    - [Using a development container](#using-a-development-container)
-    - [Building and running C++ API-based Endoscopy application](#building-and-running-c-api-based-endoscopy-application)
-    - [Local environment](#local-environment)
-  - [Troubleshooting](#troubleshooting)
-    - [X11: Failed to open display :0 [...] Failed to initialize GLFW](#x11-failed-to-open-display-0--failed-to-initialize-glfw)
-    - [GLX: Failed to create context: GLXBadFBConfig](#glx-failed-to-create-context-glxbadfbconfig)
-    - [`GXF_ENTITY_COMPONENT_NOT_FOUND` or `GXF_ENTITY_NOT_FOUND`](#gxf_entity_component_not_found-or-gxf_entity_not_found)
-    - [No receiver connected to transmitter of <scheduling term id> of entity <x>. The entity will never tick.](#no-receiver-connected-to-transmitter-of-scheduling-term-id-of-entity-x-the-entity-will-never-tick)
-    - [AJA device errors](#aja-device-errors)
-    - [GXF format converter errors](#gxf-format-converter-errors)
-    - [Data download error](#data-download-error)
-  - [Repository structure](#repository-structure)
+- [Documentation](#documentation)
+- [Prerequisites](#prerequisites)
+  - [For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)](#for-clara-agx-and-nvidia-igx-orin-developer-kits-aarch64)
+  - [For x86_64 systems](#for-x86_64-systems)
+- [Using the released SDK](#using-the-released-sdk)
+- [Building the SDK from source](#building-the-sdk-from-source)
+  - [Recommended: using the `run` script](#recommended-using-the-run-script)
+  - [Cross-compilation](#cross-compilation)
+  - [Advanced: Docker + CMake](#advanced-docker-cmake)
+  - [Advanced: Local environment + CMake](#advanced-local-environment-cmake)
+- [Utilities](#utilities)
+  - [Code coverage](#code-coverage)
+- [Troubleshooting](#troubleshooting)
+- [Repository structure](#repository-structure)
 
-## User Guide
+## Documentation
 
-The latest SDK user guide is available at https://docs.nvidia.com/clara-holoscan. 
-
-Before installing the SDK from this GitHub repository on Developer Kits, make sure you have followed the [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide) or the [NVIDIA IGX Orin Developer Kit User Guide](https://developer.download.nvidia.com/CLARA/Clara-Holoscan-Developer-Kit-User-Guide.pdf) to set up your development kit. Also, make sure you have joined the [Clara Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and the [RiverMax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
+* The latest SDK user guide is available at https://docs.nvidia.com/clara-holoscan.
+* For a full list of Holoscan documentation, visit the [Holoscan developer page](https://developer.nvidia.com/clara-holoscan-sdk).
 
 ## Prerequisites
 
-The Clara Holoscan Embedded SDK and its sample applications are designed to run on any of the [Clara Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits) as well as x86_64 systems.
+The Holoscan SDK currently supports the [Holoscan Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits) (aarch64) as well as x86_64 systems.
 
-Requirements include:
-- [NVIDIA Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux): 34.1.2<sup> [1](#holopack)</sup>
-- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08<sup> [2](#switch-script)</sup>
-- [CUDA](https://developer.nvidia.com/cuda-toolkit): 11.6.1<sup> [1](#holopack)</sup>
-- [CuDNN](https://developer.nvidia.com/cudnn): 8.3.3.40<sup> [1](#holopack)</sup>
-- [TensorRT](https://developer.nvidia.com/tensorrt): 8.2.3<sup> [1](#holopack)</sup>
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)<sup> [1](#holopack)</sup>
-- For AJA support: AJA drivers (refer to the [user guide](#user-guide))
-- [NGC CLI](https://ngc.nvidia.com/setup/installers/cli)
+### For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)
 
-<sup id="holopack">1. included when installing **[Holopack](https://developer.nvidia.com/embedded/jetpack) 1.1** on your Clara Developer Kit with [SDK Manager][sdkm].</sup>
-<br>
-<sup id="switch-script">2. included when running the `nvgpuswitch` script on your Clara Developer Kit, installed with the [SDK Manager][sdkm]</sup>
+Set up your developer kit:
+- [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide), or
+- [NVIDIA IGX Orin Developer Kit User Guide](https://developer.nvidia.com/igx-orin-developer-kit-user-guide).
 
-[sdkm]: https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/
+> Make sure you have joined the [Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and, if needed, the [RiverMax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
 
-Optionally, for testing or cross-compiling to arm64:
-  - GNU/Linux x86_64 with kernel version > 3.10
-  - NVIDIA GPU: Architecture >= Pascal, Quadro required to enable RDMA
+[SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/) will install **Holopack 1.1** as well as the `nvgpuswitch.py` script. Once configured for dGPU mode, your developer kit will include the following necessary components to build the SDK:
+- [NVIDIA Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux): 34.1.2
+- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (for containerized development)
+- [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit): 11.6.1 (for local development only)
+- [TensorRT](https://developer.nvidia.com/tensorrt): 8.2.3 (for local development only)
+- Optional Rivermax support
+  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
+  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
+  - *Note: [GPUDirect](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/clara_holoscan_applications.html#installing-and-enabling-gpudirect-rdma) drivers (required for Emergent support) need to be installed manually at this time*
 
-## Sample applications
+Refer to the user guide for additional steps needed to support specific technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html) or [Emergent cameras](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/emergent_setup.html).
 
-### Endoscopy Tool Tracking
+> Additional dependencies are required when developing locally instead of using a containerized environment, see details in the [section below](#advanced-local-environment--cmake).
 
-Based on a LSTM (long-short term memory) stateful model, these applications demonstrate the use of custom components for tool tracking, including composition and rendering of text, tool position, and mask (as heatmap) combined with the original video stream.
-  - `tracking_aja`: uses an AJA capture card for input stream
-  - `tracking_replayer`: uses a pre-recorded video as input
+### For x86_64 systems
 
-### Ultrasound Bone Scoliosis Segmentation
+You'll need the following to build applications from source on x86_64:
+- OS: Ubuntu 20.04
+- NVIDIA GPU
+  - Ampere or above recommended for best performance
+  - [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for [GPUDirect RDMA](https://developer.nvidia.com/gpudirect) support
+- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08
+- For containerized development (recommended):
+  - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- For local development (advanced):
+  - See details in the [section below](#advanced-local-environment--cmake).
+- For Rivermax support (optional):
+  - [NVIDIA ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/)
+  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
+  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
+  - [GPUDirect Drivers](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/clara_holoscan_applications.html#installing-and-enabling-gpudirect-rdma)
 
-Full workflow including a generic visualization of segmentation results from a spinal scoliosis segmentation model of ultrasound videos. The model used is stateless, so this workflow could be configured to adapt to any vanilla DNN model.
-  - `segmentation_aja`: uses an AJA capture card for input stream
-  - `segmentation_replayer`: uses a pre-recorded video as input
+## Using the released SDK
 
-### Hi-Speed Endoscopy
+The Holoscan SDK is packaged in the following different formats:
+- 🐋 The [Holoscan container image on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan) includes the Holoscan libraries, GXF extensions, headers, example source code, and sample datasets. It is the simplest way to run sample streaming applications or create your own application using Holoscan.
+- 🐍 The [Holoscan python wheels on PyPI](https://pypi.org/project/holoscan/) are the simplest way for Python developers to quickly get started in creating their own application with a simple `pip install holoscan`. They only include the necessary libraries and extensions, not including example code, built applications, nor sample datasets.
 
-The example app showcases how high resolution cameras can be used to capture the
-scene, processed on GPU and displayed at high frame rate using the GXF framework.
-This app requires Emergent Vision Technologies camera and a display with high
-refresh rate to keep up with camera's framerate.
-  - `hi_speed_endoscopy`: uses Emergent Vision Technologies camera for input stream
+## Building the SDK from source
 
-## Running Sample Applications
+Follow the instructions below if you want to build the Holoscan SDK yourself.
 
-The [Clara Holoscan Sample Applications](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/clara_holoscan_sample_runtime) container is the simplest way to run the sample applications as it includes all necessary binaries and datasets, and allows for some customization of the application graph and its parameters.
+### Recommended: using the `run` script
 
-Refer to the overview of the container on NGC for prerequisites, setup, and run instructions.
+Call **`./run build`** within the repository to build the development container and the CMake project.
+* *If you encounter errors during the CMake build, you can execute `./run clear_cache` to remove cache/build/install folders*
+* *Execute `./run build --help` for more information*
+* *Execute `./run build --dryrun` to see the commands that will be executed*
+* *That command can be broken-up in more granular commands also:*
+  ```sh
+  ./run setup # setup Docker
+  ./run build_image # create the development Docker container
+  ./run install_gxf # install the GXF package (default location is `.cache/gxf`)
+  ./run build # run the CMake configuration, build, and install steps
+  ```
 
-> _Note: the sample applications container from NGC does not include build dependencies to update or generate new extensions, or to build new applications with other extensions. Refer to the section below to do this from source._
+Call the **`./run launch`** command to start and enter the development container.
+* *You can run from the `install` or `build` tree by passing the working directory as an argument (ex: `./run launch install`)*
+* *Execute `./run launch --help` for more information*
+* *Execute `./run launch --dryrun` to see the commands that will be executed*
 
-## Developing with Holoscan SDK
+**Run the applications or examples** inside the container by running their respective commands listed within each directory README file:
+  * [reference applications](./apps)
+  * [examples](./examples)
 
-### Sample data
+### Cross-compilation
 
-The sample applications rely on ML models and recorded video data, for endoscopy (~430MB) and ultrasound (~30MB), which can be downloaded from NGC in one of two ways:
-  1. Using our python utility script (requires [ngc cli](https://ngc.nvidia.com/setup/installers/cli))
-      ```sh
-      python3 ./scripts/download_sample_data.py # add --help for additional configurations
-      ```
-  2. Or, from the NGC resource webpages directly:
-      - [Sample App Data for AI-based Endoscopy Tool Tracking](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_endoscopy_sample_data)
-      - [Sample App Data for AI-based Bone Scoliosis Segmentation](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_ultrasound_sample_data)
+While the development Dockerfile does not currently support true cross-compilation, you can compile the Holoscan SDK for the developer kits (arm64) from a x86_64 host using an emulation environment.
 
-  _Note: data should be placed under `test_data/endoscopy` and `test_data/ultrasound` to match the paths currently defined in the sample applications. Those paths could easily be modified in the respective application yaml files, located within the `apps/` folder._
+1. [Install qemu](https://docs.nvidia.com/datacenter/cloud-native/playground/x-arch.html#emulation-environment)
+2. Export your target arch: `export HOLOSCAN_BUILD_PLATFORM=linux/arm64`
+3. Clear your build cache: `./run clear_cache`
+4. Rebuild: `./run build`
 
-You don't need to download the data if you're building from source because CMake build will download sample data by default (See [./apps/CMakeLists.txt](./apps/CMakeLists.txt)).
+You can then copy the `install` folder generated by CMake to a developer kit with a configured environment or within a container to use for running and developing applications.
 
-### Using a development container
+### Advanced: Docker + CMake
 
-1. `git clone` this repository and `cd` in the top folder. That directory will be mounted in the development container.
+The [`run`](./run) script mentioned above is helpful to understand how Docker and CMake are configured and run, as commands will be printed when running it or using `--dryrun`.
+We recommend looking at those commands if you want to use Docker and CMake manually, and reading the comments inside the script for details about each parameter (specifically the `build()` and `launch()` methods).
 
-2. Build the development image. It requires more resources from NGC, so you'll need to provide your ngc api key available from [ngc.nvidia.com/setup](https://ngc.nvidia.com/setup/api-key):
+### Advanced: Local environment + CMake
 
+> **Disclaimer**: the risk of this section getting out of date is high since this is not actively maintained and tested at this time. Look at the dependencies pulled in the `Dockerfile` and the CMake commands in the `run` script if you run into issues.
+
+To build on your local environment, you'll need to install the dependencies below in addition to the ones listed in the [prerequisites](#prerequisites):
+- **CUDA Toolkit**: 11.6.1
+  - `arm64`: already installed by SDK Manager on the Developer Kits
+  - `x86_64`: [follow official instructions](https://developer.nvidia.com/cuda-11-6-1-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=20.04)
+- **TensorRT** 8.2.3
+  - `arm64`: already installed by SDK Manager on the Developer Kits
+  - `x86_64`: [follow official instructions](https://docs.nvidia.com/deeplearning/tensorrt/archives/tensorrt-823/install-guide/index.html)
+- **python-dev**: 3.8.10
+  - `sudo apt install python3.8-dev`
+- apt dependencies (**CMake**, **patchelf**, **OpenGL**, **Xorg** stack...)
+  - see the `base` stage in [`Dockerfile`](Dockerfile)
+  - see the `dev` stage in [`Dockerfile`](Dockerfile)
+- **ONNX Runtime**: 1.12.1
+  - download: see the `onnxruntime-downloader` stage in [`Dockerfile`](Dockerfile)
+  - install: see the `dev` stage in [`Dockerfile`](Dockerfile)
+- **Vulkan SDK**: 1.3.216
+  - download & build: see the `vulkansdk-builder` stage in [`Dockerfile`](Dockerfile)
+  - install: see the `dev` stage in [`Dockerfile`](Dockerfile)
+- **GXF**: 2.4.2
+  - call `./run install_gxf` or look at its content
+
+You'll then need CMake to find those dependencies during configuration. Use `CMAKE_PREFIX_PATH`, `CMAKE_LIBRARY_PATH`, and/or `CMAKE_INCLUDE_PATH` if they're not installed in default system paths and cannot automatically be found.
+
+##### Example:
 ```sh
-# This is needed if you want to access non-public resources in NGC
-export NGC_CLI_API_KEY=$YOUR_NGC_API_KEY
+# Configure
+cmake -S $source_dir -B $build_dir \
+  -G Ninja \
+  -D CMAKE_BUILD_TYPE=Release \
+  -D CUDAToolkit_ROOT:PATH="/usr/local/cuda"
+
+# Build
+cmake --build $build_dir -j
+
+# Install
+cmake --install $build_dir --prefix $install_dir
 ```
 
-Then, run the following command to build the image.
+The commands to run the **[reference applications](./apps)** or the **[examples](./examples)** are then the same as in the dockerized environment, and can be found in the respective source directory READMEs.
 
+## Utilities
+
+### Code coverage
+To generate a code coverage report use the following command after completing setup:
 ```sh
-export DOCKER_BUILDKIT=1
-docker build -t holoscan-sdk-dev .
+./run coverage
 ```
 
-Or, you can easily execute the commands above using `./run build_image` command.
-
-```sh
-./run build_image
-```
-
-> #### Compilation with qemu for arm64 architecture
-> While the development dockerfile does not currently support true cross-compilation, you can compile for the Clara developer kits (arm64) from a x86_64 host using an emulation environment.
->
-> Run the following steps on your host:
-> 1. Follow the [installation steps for `qemu`](https://docs.nvidia.com/datacenter/cloud-native/playground/x-arch.html#emulation-environment)
-> 2. Add `--platform linux/arm64` to the `docker build` command above
->   - Or, you can export the environment variable `HOLOSCAN_BUILD_PLATFORM` (`export HOLOSCAN_BUILD_PLATFORM=linux/arm64`) and use `./run` commands below to build and launch with arm64 image. Please remove cache folders (`./run clear_cache`) before building apps from source code to avoid compilation errors.
-> 3. Run the cmake configuration and build below (step 3)
->
-> You can then copy the `build`/`install` folder generated by CMake to a developer kit with a configured environment or container and run applications there.
-
-3. Install GXF package (default location is `.cache/gxf`)
-
-```sh
-./run install_gxf
-```
-
-4. Configure and build the source in the container using CMake
-
-```sh
-docker run -it --rm \
-  -u $(id -u):$(id -g) \
-  -v $(pwd):/workspace/holoscan-sdk \
-  -e CMAKE_BUILD_TYPE=Release \
-  -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
-  -w /workspace/holoscan-sdk \
-  holoscan-sdk-dev \
-  bash -c '
-    cmake -S . -B build \
-    && cmake --build build \
-    && cmake --install build --prefix install --component holoscan-embedded-core \
-    && cmake --install build --prefix install --component holoscan-embedded-gxf_extensions \
-    && cmake --install build --prefix install --component holoscan-embedded-apps \
-    && cmake --install build --prefix install --component holoscan-embedded-gxf_libs \
-    && cmake --install build --prefix install --component holoscan-embedded-gxf_bins \
-    && cmake --install build --prefix install --component holoscan-embedded-dep_libs
-  '
-```
-
-Or, you can easily execute the commands above using `./run build` command.
-
-```sh
-./run build
-
-# Please execute `./run build -h` for more information.
-# Please execute `./run build --dryrun` to see the commands that will be executed.
-```
-
-In the bash commands above, the following shows the specific commands used with the comment.
-
-- `cmake -S . -B build`
-  - Configure the source in the container.
-- `cmake --build build`
-  - Build the source in the container (`./build` folder). Need only this command if already configured.
-- `cmake --install build --prefix install --component holoscan-embedded-core`
-  - Create Holoscan Embedded App SDK's CMake package in `./install` folder.
-- `cmake --install build --prefix install --component holoscan-embedded-gxf_extensions`
-  - Install Holoscan Embedded SDK's GXF extensions in `./install/gxf_extensions` folder.
-- `cmake --install build --prefix install --component holoscan-embedded-apps`
-  - Install Holoscan Embedded SDK's apps in `./install/apps` folder.
-- `cmake --install build --prefix install --component holoscan-embedded-gxf_libs`
-  - Install Holoscan Embedded SDK's GXF libraries (libgxf_xxx.so files) in `./install/lib` folder.
-- `cmake --install build --prefix install --component holoscan-embedded-gxf_bins`
-  - Install Holoscan Embedded SDK's GXF binaries (gxe) in `./install/bin` folder.
-- `cmake --install build --prefix install --component holoscan-embedded-dep_libs`
-  - Install Holoscan Embedded SDK's dependencies in `./install/libs` folder.
-    - Including `libglad.so`, `libglfw.so`, and so on.
-
-> If you encounter errors during CMake build, please try to remove the `build` or/and `install` directory (and cache folders such as `.cache/cpm` and `.cache/ccache`), and try to build again.
-> (You can execute `./run clear_cache` to remove cache/build/install folders).
-
-5. Start the container with the options you need (aja or not...).
-    * Note: it is currently necessary to run the apps from the top of the build directory to satisfy relative paths to certain extension resources, like shaders and fonts.
-
-**Without AJA capture card installed**
-```sh
-docker run -it --rm \
-  --runtime=nvidia \
-  -u $(id -u):$(id -g) \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v /usr/share/vulkan:/usr/share/vulkan \
-  -v $(pwd)/test_data:/workspace/test_data \
-  -v $(pwd):/workspace/holoscan-sdk \
-  -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
-  -e DISPLAY=$DISPLAY \
-  -w /workspace/holoscan-sdk/build \
-  holoscan-sdk-dev
-```
-
-You can replace `-w /workspace/holoscan-sdk/build` with `-w /workspace/holoscan-sdk/install` to run the apps from the install directory.
-(Shared libraries under `install` folder has relative RPATHs so you can copy `install` folder to another location if you want to run the apps from another location.)
-
-You can also use `./run launch` command to launch the container.
-
-```sh
-./run launch
-# Please execute `./run launch -h` for more information.
-# Please execute `./run launch --dryrun` to see the commands that will be executed.
-```
-
-**With AJA capture card installed**
-
-Please update `apps/endoscopy_tool_tracking/app_config.yaml` locally first so that it uses AJA capture card as input.
-
-```yaml
-source: "aja"
-```
-
-```sh
-# `--device /dev/ajantv20:/dev/ajantv20` is added to the docker run command
-docker run -it --rm \
-  --runtime=nvidia \
-  -u $(id -u):$(id -g) \
-  --device /dev/ajantv20:/dev/ajantv20 \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v /usr/share/vulkan:/usr/share/vulkan \
-  -v $(pwd)/test_data:/workspace/test_data \
-  -v $(pwd):/workspace/holoscan-sdk \
-  -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
-  -e DISPLAY=$DISPLAY \
-  -w /workspace/holoscan-sdk/build \
-  holoscan-sdk-dev
-```
-
-You can replace `-w /workspace/holoscan-sdk/build` with `-w /workspace/holoscan-sdk/install` to run the apps from the install directory.
-(Shared libraries under `install` folder has relative RPATHs so you can copy `install` folder to another location if you want to run the apps from another location.)
-
-You can also use `./run launch` command to launch the container.
-
-```sh
-./run launch
-# Please execute `./run launch install` to launch container with the working directory set to `/workspace/holoscan-sdk/install`.
-# Please execute `./run launch -h` for more information.
-# Please execute `./run launch --dryrun` to see the commands that will be executed.
-```
-
-6. Run the apps inside the container.
-    * Note: You can also run those directly, by appending a command to the command above.
-
-```sh
-# Source: video sample data
-./apps/endoscopy_tool_tracking_gxf/tracking_replayer
-./apps/ultrasound_segmentation_gxf/segmentation_replayer
-
-# Source: AJA capture card (requires `--device /dev/ajantv20:/dev/ajantv20` in docker run command)
-# Note that the source should be plugged to the Channel 1 of the AJA card
-./apps/endoscopy_tool_tracking_gxf/tracking_aja
-./apps/ultrasound_segmentation_gxf/segmentation_aja
-
-# C++ API-based Endoscopy application (that wraps the GXF C-API)
-# (Source depends on the `source` field of the configuration in
-#  `apps/endoscopy_tool_tracking/app_config.yaml`)
-LD_LIBRARY_PATH=$(pwd):$(pwd)/lib:$LD_LIBRARY_PATH ./apps/endoscopy_tool_tracking/endoscopy_tool_tracking
-
-# Source: mock AJA capture card input for testing purposes
-./apps/endoscopy_tool_tracking_gxf/tracking_mock
-./apps/ultrasound_segmentation_gxf/segmentation_mock
-```
-
-Without going inside the container, you can also run the apps directly with `./run launch` command:
-
-```sh
-# Source: video sample data (you can replace 'build' with 'install' to run the apps from the install directory)
-./run launch build apps/endoscopy_tool_tracking_gxf/tracking_replayer
-./run launch build apps/ultrasound_segmentation_gxf/segmentation_replayer
-
-# Source: AJA capture card (you can replace 'build' with 'install' to run the apps from the install directory)
-./run launch build apps/endoscopy_tool_tracking_gxf/tracking_aja
-./run launch build apps/ultrasound_segmentation_gxf/segmentation_aja
-
-# C++ API-based Endoscopy application (that wraps the GXF C-API)
-# (Source depends on the `source` field of the configuration in
-#  `apps/endoscopy_tool_tracking/app_config.yaml`)
-./run launch build bash -c 'LD_LIBRARY_PATH=$(pwd):$(pwd)/lib:$LD_LIBRARY_PATH apps/endoscopy_tool_tracking/endoscopy_tool_tracking'
-
-# Source: mock AJA capture card input for testing purposes
-# (you can replace 'build' with 'install' to run the apps from the install directory)
-./run launch build apps/endoscopy_tool_tracking_gxf/tracking_mock
-./run launch build apps/ultrasound_segmentation_gxf/segmentation_mock
-```
-
-### Building and running C++ API-based Endoscopy application
-
-After you have followed the steps above (Step 1 ~ Step 4), you can build and run the C++ API-based Endoscopy application using the CMake package in the `./install` folder.
-
-
-1. Configure and build the stand-alone C++ API-based Endoscopy application in the container using CMake
-
-Under `examples/holoscan-endoscopy-app` (`HOLOSCAN_APP_PATH`), there is a CMake project that builds the C++ API-based Endoscopy application.
-
-Holoscan SDK package is available in the `./install` folder (`HOLOSCAN_SDK_PATH` is set in CMake configuration).
-
-GXF package is available in the `.cache/gxf` folder. (`GXF_SDK_PATH` is set in CMake configuration).
-
-```sh
-docker run -it --rm \
-  -u $(id -u):$(id -g) \
-  -v $(pwd):/workspace/holoscan-sdk \
-  -e CMAKE_BUILD_TYPE=Release \
-  -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
-  -e HOLOSCAN_SDK_PATH=/workspace/holoscan-sdk/install \
-  -e GXF_SDK_PATH=/workspace/holoscan-sdk/.cache/gxf \
-  -e HOLOSCAN_APP_PATH=/workspace/holoscan-sdk/examples/holoscan-endoscopy-app \
-  -w /workspace/holoscan-sdk \
-  holoscan-sdk-dev \
-  bash -c '
-    cd ${HOLOSCAN_APP_PATH} \
-    && cmake -S . -B build -DHOLOSCAN_SDK_PATH=${HOLOSCAN_SDK_PATH} -DGXF_SDK_PATH=${GXF_SDK_PATH} \
-    && cmake --build build
-  '
-```
-
-You can also use `./run build_example` command to build the C++ API-based Endoscopy application in the container.
-
-```sh
-./run build_example
-# Please execute `./run build_example install` to launch container with the working directory set to `/workspace/holoscan-sdk/install`.
-# Please execute `./run build_example -h` for more information.
-# Please execute `./run build_example --dryrun` to see the commands that will be executed.
-```
-
-If you encounter errors in cmake, try removing the build/install directory (and cache folders such as `.cache/cpm` and `.cache/ccache`) and trying again.
-
-2. Start the container with the options you need (aja or not...).
-    * Note: it is currently necessary to run the apps from the top of the build directory to satisfy relative paths to certain extension resources, like shaders and fonts.
-
-**Without AJA capture card installed (this example always uses video sample data as a source)**
-
-```sh
-docker run -it --rm \
-  --runtime=nvidia \
-  -u $(id -u):$(id -g) \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v /usr/share/vulkan:/usr/share/vulkan \
-  -v $(pwd)/test_data:/workspace/test_data \
-  -v $(pwd):/workspace/holoscan-sdk \
-  -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
-  -e DISPLAY=$DISPLAY \
-  -e HOLOSCAN_SDK_PATH=/workspace/holoscan-sdk/install \
-  -e GXF_SDK_PATH=/workspace/holoscan-sdk/.cache/gxf \
-  -e HOLOSCAN_APP_PATH=/workspace/holoscan-sdk/examples/holoscan-endoscopy-app \
-  -w /workspace/holoscan-sdk/build \
-  holoscan-sdk-dev
-```
-
-You can also use `./run launch_example` command to launch the container.
-
-```sh
-./run launch_example
-# Please execute `./run launch_example -h` for more information.
-# Please execute `./run launch_example --dryrun` to see the commands that will be executed.
-```
-
-3. Run the apps inside the container.
-    * Note: You can also run those directly appended to the command above.
-
-```sh
-export LD_LIBRARY_PATH=$(pwd):${HOLOSCAN_SDK_PATH}/lib:$LD_LIBRARY_PATH
-
-${HOLOSCAN_APP_PATH}/build/holoscan-endoscopy-app
-```
-
-Without going inside the container, you can also run the app directly with `./run launch` command:
-
-```sh
-# You can replace 'build' with 'install' to run the apps from the install directory
-./run launch_example build bash -c 'LD_LIBRARY_PATH=$(pwd):${HOLOSCAN_SDK_PATH}/lib:$LD_LIBRARY_PATH ${HOLOSCAN_APP_PATH}/build/holoscan-endoscopy-app'
-```
-
-### Local environment
-
-We recommend building and running the sample applications from the development docker container.
-
-If you want to build and run applications from the bare metal machine without docker (e.g., for building and running the high-speed endoscopy application which requires installing kernel modules), please follow below steps for building the source on local environment.
-
-1. Install following dependencies.
-```sh
-# For GLFW
-sudo apt-get install -y libx11-dev \
-    libxrandr-dev \
-    libxinerama-dev \
-    libxcursor-dev \
-    libxkbcommon-dev \
-    libxi-dev
-
-# GL/gl.h for cuda_gl_interop.h
-sudo apt install -y libgl-dev
-```
-2. Download [TensorRT 8.4.1 GA](https://developer.nvidia.com/nvidia-tensorrt-8x-download) and follow the installation steps using [TensorRT Installation Guide](https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html). If there is exisiting TensorRT, use below commands to purge it and install new version.
-```sh
-sudo apt-get purge "libnvinfer*"
-sudo apt-get purge "nv-tensorrt-repo*"
-
-sudo dpkg -i nv-tensorrt-repo-ubuntu2004-cuda11.6-trt8.4.1.5-ga-20220604_1-1_arm64.deb
-sudo apt-key add /var/nv-tensorrt-repo-ubuntu2004-cuda11.6-trt8.4.1.5-ga-20220604/9a60d8bf.pub
-
-sudo apt-get update
-sudo apt-get install libnvinfer8=8.4.1-1+cuda11.6
-sudo apt-get install libnvinfer-plugin8=8.4.1-1+cuda11.6
-sudo apt-get install libnvparsers8=8.4.1-1+cuda11.6
-sudo apt-get install libnvonnxparsers8=8.4.1-1+cuda11.6
-sudo apt-get install python3-libnvinfer=8.4.1-1+cuda11.6
-sudo apt-get install libnvinfer-dev=8.4.1-1+cuda11.6
-sudo apt-get install libnvinfer-plugin-dev=8.4.1-1+cuda11.6
-sudo apt-get install libnvparsers-dev=8.4.1-1+cuda11.6
-sudo apt-get install libnvonnxparsers-dev=8.4.1-1+cuda11.6
-sudo apt-get install python3-libnvinfer-dev=8.4.1-1+cuda11.6
-sudo apt-get install libnvinfer-bin=8.4.1-1+cuda11.6
-sudo apt-get install libnvinfer-samples=8.4.1-1+cuda11.6
-sudo apt-get install tensorrt=8.4.1.5-1+cuda11.6
-```
-
-3. Install CMake 3.22.2
-```sh
-sudo rm -r \
-    /usr/bin/cmake \
-    /usr/bin/cpack \
-    /usr/bin/ctest
-wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-    | sudo gpg --dearmor - \
-    | sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
-sudo apt-add-repository "deb https://apt.kitware.com/ubuntu/ focal main"
-sudo apt update
-sudo apt install --no-install-recommends -y \
-    cmake-data=3.22.2-0kitware1ubuntu20.04.1 \
-    cmake=3.22.2-0kitware1ubuntu20.04.1
-sudo rm -rf /var/lib/apt/lists/*
-```
-
-4. Install GXF package
-```sh
-./run install_gxf
-```
-
-5. Install Vulkan SDK and dependencies required
-```sh
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends \
-    libglm-dev cmake libxcb-dri3-0 libxcb-present0 \
-    libpciaccess0 libpng-dev libxcb-keysyms1-dev \
-    libxcb-dri3-dev libx11-dev g++ gcc libmirclient-dev \
-    libwayland-dev libxrandr-dev libxcb-randr0-dev \
-    libxcb-ewmh-dev git python python3 bison libx11-xcb-dev \
-    liblz4-dev libzstd-dev python3-distutils qt5-default\
-    ocaml-core ninja-build pkg-config libxml2-dev wayland-protocols
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    libxrandr-dev libxxf86vm-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev libgl-dev
-
-export VULKAN_SDK_VERSION=1.3.216.0
-mkdir /tmp/vulkansdk
-cd /tmp/vulkansdk
-wget --inet4-only -nv --show-progress \
-    --progress=dot:giga https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
-tar -xzf vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
-rm vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
-cd ${VULKAN_SDK_VERSION}
-rm -rf x86_64
-./vulkansdk shaderc glslang headers loader;
-sudo mkdir /opt/vulkansdk
-sudo cp -R /tmp/vulkansdk/${VULKAN_SDK_VERSION}/x86_64/ /opt/vulkansdk/${VULKAN_SDK_VERSION}
-```
-
-6. Set paths for compiling the Holoviz Visualizer extension and sample apps. It
-is recommended to add above paths in `.bashrc` to avoid repetition.
-```sh
-vi ~/.bashrc
-# Add following two lines:
-# export VULKAN_SDK_VERSION=1.3.216.0
-# export VULKAN_SDK=/opt/vulkansdk/${VULKAN_SDK_VERSION}
-# export PATH="$VULKAN_SDK/bin:${PATH}"
-source ~/.bashrc
-```
-
-7. If using Emergent Vision Technologies camera, install the latest Emergent SDK referred to in the 
-[Clara Holoscan User Guide](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/emergent_setup.html#installing-evt-software)
-before configuring and building the source.
-
-8. Configure and build the source locally using CMake.
-```sh
-cmake -S . -B build \
-    -D CMAKE_BUILD_TYPE=Release \
-    -D CUDAToolkit_ROOT:PATH=/usr/local/cuda \
-    -D CMAKE_CUDA_COMPILER:PATH=/usr/local/cuda/bin/nvcc \
-    -D HOLOSCAN_BUILD_HI_SPEED_ENDO_APP=ON
-cmake --build build -j
-```
+Open the file build/coverage/index.html to access the interactive coverage web tool.
 
 ## Troubleshooting
 
@@ -560,24 +218,29 @@ These errors may indicate that you need to reconfigure your format converter's n
 ```
 Try increasing the current num_block number by 1 in the yaml file for all format converter entities. This may happen if your yaml file was configured for running with RDMA and you have decided to disable RDMA.
 
+### Video device error
+Some of those errors may occur when running the V4L2 codelet:
 
-
-### Data download error
-The following error while running the python3 scripts/download_sample_data.py command is not due to a missing file/directory. It may indicate that you have not set up your NGC CLI.
-
-```sh
-FileNotFoundError: [Errno 2] No such file or directory: '/media/m2/workspace/clara-holoscan-embedded-sdk-public/test_data/holoscan_ultrasound_sample_data_v20220606' -> '/media/m2/workspace/clara-holoscan-embedded-sdk-public/test_data/ultrasound'
 ```
+Failed to open device, OPEN: No such file or directory
+```
+Ensure you have a video device connected (ex: USB webcam) and listed when running `ls -l /dev/video*`.
+
+```
+Failed to open device, OPEN: Permission denied
+```
+This means the `/dev/video*` device is not available to the user from within docker. You can make it publicly available with `sudo chmod 666 /dev/video*` from your host.
+
 
 ## Repository structure
 
 The repository is organized as such:
-- `apps/`: yaml files to define the sample applications
-- `cmake/`: CMake custom utilities
-- `examples/`: example applications that use the SDK in a standalone way
-- `gxf_extensions/`: source code the gxf extensions for holoscan codelets
-- `include/`: source code for the holoscan embedded app SDK
-- `modules/`: source code for the holoscan SDK modules (e.g., `Holoviz`)
+- `apps/`: source code for the sample applications
+- `cmake/`: CMake configuration files
+- `examples/`: source code for the examples
+- `gxf_extensions/`: source code for the holoscan SDK gxf codelets
+- `include/`: source code for the holoscan SDK
+- `modules/`: source code for the holoscan SDK modules
 - `scripts/`: utility scripts
-- `src/`: source code for the holoscan embedded app SDK
-- `tests/`: tests for the holoscan embedded app SDK
+- `src/`: source code for the holoscan SDK
+- `tests/`: tests for the holoscan SDK

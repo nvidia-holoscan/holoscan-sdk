@@ -42,7 +42,7 @@ if(NOT HOLOSCAN_INSTALL_LIB_DIR)
     if(DEFINED HOLOSCAN_SDK_PATH)
         # Find library directory from HOLOSCAN_SDK_PATH
         find_path(HOLOSCAN_INSTALL_LIB_DIR
-            NAMES libholoscan-embedded.so
+            NAMES libholoscan.so
             PATHS ${HOLOSCAN_SDK_PATH}/lib ${HOLOSCAN_SDK_PATH}/lib64
             NO_DEFAULT_PATH
             REQUIRED
@@ -77,7 +77,7 @@ find_path(GXF_common_INCLUDE_DIR
 mark_as_advanced(GXF_common_INCLUDE_DIR)
 list(APPEND GXF_INCLUDE_DIR_VARS GXF_common_INCLUDE_DIR)
 
-# Librairies and their headers
+# Libraries and their headers
 list(APPEND _GXF_LIBRARIES ${_GXF_EXTENSIONS} core)
 
 foreach(component IN LISTS _GXF_LIBRARIES)
@@ -100,6 +100,9 @@ foreach(component IN LISTS _GXF_LIBRARIES)
 
     # create imported target
     if(GXF_${component}_LIBRARY AND GXF_${component}_INCLUDE_DIR)
+
+        set(gxf_component_location "${GXF_${component}_LIBRARY}")
+
         if(NOT TARGET GXF::${component})
             # Assume SHARED, though technically UNKNOWN since we don't enforce .so
             add_library(GXF::${component} SHARED IMPORTED)
@@ -107,12 +110,19 @@ foreach(component IN LISTS _GXF_LIBRARIES)
             # Copy a GXF library to ${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}/ folder
             file(COPY "${GXF_${component}_LIBRARY}"
                 DESTINATION "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}"
+                FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
             )
 
-            # Install a GXF library as a component 'holoscan-embedded-gxf_libs'
-            install(FILES "${GXF_${component}_LIBRARY}"
+            # Set the internal location to the binary directory
+            # This is need for RPATH to work
+            get_filename_component(gxf_component_name "${GXF_${component}_LIBRARY}" NAME)
+            set(gxf_component_location "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}/${gxf_component_name}")
+
+            # Install a GXF library as a component 'holoscan-gxf_libs'
+            # Use the copied location since RPATH is changed
+            install(FILES "${gxf_component_location}"
                 DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-                COMPONENT "holoscan-embedded-gxf_libs"
+                COMPONENT "holoscan-gxf_libs"
             )
         endif()
 
@@ -120,8 +130,10 @@ foreach(component IN LISTS _GXF_LIBRARIES)
             ${GXF_${component}_INCLUDE_DIR}
             ${GXF_common_INCLUDE_DIR}
         )
+
+        # Points to the copied location of GXF
         set_target_properties(GXF::${component} PROPERTIES
-            IMPORTED_LOCATION "${GXF_${component}_LIBRARY}"
+            IMPORTED_LOCATION "${gxf_component_location}"
 
             # Without this, make and ninja's behavior is different.
             # GXF's shared libraries doesn't seem to set soname.
@@ -138,6 +150,20 @@ endforeach()
 
 unset(_GXF_EXTENSIONS)
 unset(_GXF_LIBRARIES)
+
+# Sets the RPATH on GXF
+find_program(PATCHELF_EXECUTABLE patchelf)
+if(NOT PATCHELF_EXECUTABLE)
+  message(FATAL_ERROR "Please specify the PATCHELF executable")
+endif()
+
+# Patch GXF core
+get_target_property(GXF_CORE_IMPORTED_LOCATION GXF::core IMPORTED_LOCATION)
+execute_process(COMMAND "${PATCHELF_EXECUTABLE}" "--set-rpath" "\$ORIGIN:\$ORIGIN/gxf_extensions" "${GXF_CORE_IMPORTED_LOCATION}")
+
+# Patch GXF std
+get_target_property(GXF_STD_IMPORTED_LOCATION GXF::std IMPORTED_LOCATION)
+execute_process(COMMAND "${PATCHELF_EXECUTABLE}" "--set-rpath" "\$ORIGIN:\$ORIGIN/gxf_extensions" "${GXF_STD_IMPORTED_LOCATION}")
 
 # Find version
 if(GXF_core_INCLUDE_DIR)

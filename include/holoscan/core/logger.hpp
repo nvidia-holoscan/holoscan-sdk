@@ -18,11 +18,13 @@
 #ifndef HOLOSCAN_CORE_LOGGER_HPP
 #define HOLOSCAN_CORE_LOGGER_HPP
 
+#include <fmt/format.h>
+
 #include <chrono>
 #include <memory>
+#include <string>
 #include <string_view>
-
-#include <fmt/format.h>
+#include <utility>
 
 #define HOLOSCAN_LOG_LEVEL_TRACE 0
 #define HOLOSCAN_LOG_LEVEL_DEBUG 1
@@ -114,7 +116,8 @@
  *
  * The format string follows the [fmtlib format string syntax](https://fmt.dev/latest/syntax.html).
  */
-#    define HOLOSCAN_LOG_CRITICAL(...) HOLOSCAN_LOG_CALL(::holoscan::LogLevel::CRITICAL, __VA_ARGS__)
+#    define HOLOSCAN_LOG_CRITICAL(...) \
+HOLOSCAN_LOG_CALL(::holoscan::LogLevel::CRITICAL, __VA_ARGS__)
 #else
 #    define HOLOSCAN_LOG_CRITICAL(...) (void)0
 #endif

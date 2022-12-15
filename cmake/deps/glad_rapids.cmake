@@ -33,6 +33,6 @@ if(GLAD_ADDED)
     add_library(glad::glad ALIAS glad)
     install(TARGETS glad
         DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-        COMPONENT "holoscan-embedded-dep_libs"
+        COMPONENT "holoscan-dependencies"
     )
 endif()

@@ -26,8 +26,8 @@
 namespace holoscan::ops {
 
 void LSTMTensorRTInferenceOp::setup(OperatorSpec& spec) {
-  auto& in_tensor = spec.input<::gxf::Entity>("source_video");
-  auto& out_tensor = spec.output<::gxf::Entity>("tensor");
+  auto& in_tensor = spec.input<gxf::Entity>("source_video");
+  auto& out_tensor = spec.output<gxf::Entity>("tensor");
 
   spec.param(
       model_file_path_, "model_file_path", "Model File Path", "Path to ONNX model to be loaded.");

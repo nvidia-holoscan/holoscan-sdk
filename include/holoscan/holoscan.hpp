@@ -29,6 +29,7 @@
 #include "./core/fragment.hpp"
 #include "./core/graph.hpp"
 #include "./core/io_context.hpp"
+#include "./core/message.hpp"
 #include "./core/operator.hpp"
 #include "./core/resource.hpp"
 
@@ -47,5 +48,8 @@
 #include "./core/resources/gxf/std_component_serializer.hpp"
 #include "./core/resources/gxf/unbounded_allocator.hpp"
 #include "./core/resources/gxf/video_stream_serializer.hpp"
+
+// Operators
+#include "./core/gxf/gxf_operator.hpp"
 
 #endif /* HOLOSCAN_HOLOSCAN_HPP */

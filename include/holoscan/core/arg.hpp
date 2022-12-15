@@ -18,7 +18,7 @@
 #ifndef HOLOSCAN_CORE_ARG_HPP
 #define HOLOSCAN_CORE_ARG_HPP
 
-#include "./common.hpp"
+#include <yaml-cpp/yaml.h>
 
 #include <any>
 #include <iostream>
@@ -29,11 +29,11 @@
 #include <typeindex>
 #include <typeinfo>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
-#include <yaml-cpp/yaml.h>
-
 #include "./type_traits.hpp"
+#include "./common.hpp"
 
 namespace holoscan {
 
@@ -101,7 +101,7 @@ class ArgType {
   }
 
   /**
-   * @brief Get the argument type from the given type.
+   * @brief Create the argument type from the given type.
    *
    * @tparam typeT The type of the argument.
    * @return The argument type.
@@ -180,42 +180,39 @@ class Arg {
   ~Arg() = default;
 
   /**
+   * @brief Construct a new Arg object
+   *
+   * @param name The name of the argument.
+   * @param value The value of the argument.
+   */
+  template <typename ArgT>
+  Arg(const std::string& name, const ArgT& value) {
+    name_ = name;
+    set_value_<ArgT>(value);
+  }
+
+  /**
+   * @brief Construct a new Arg object
+   *
+   * @param name The name of the argument.
+   * @param value The value of the argument.
+   */
+  template <typename ArgT>
+  Arg(const std::string& name, ArgT&& value) {
+    name_ = name;
+    set_value_<ArgT>(std::forward<ArgT>(value));
+  }
+
+  /**
    * @brief Define the assignment operator.
    *
    * @tparam ArgT The type of the argument.
    * @param value The value of the argument.
    * @return The reference to the argument.
    */
-  template <typename ArgT>
+  template <typename ArgT, typename = std::enable_if_t<!std::is_same_v<Arg, std::decay_t<ArgT>>>>
   Arg& operator=(const ArgT& value) {
-    arg_type_ = ArgType::create<ArgT>();
-    HOLOSCAN_LOG_TRACE(
-        "Arg& operator=(const ArgT& value)({}) parameter: {}, element_type: {}, container_type: {}",
-        typeid(ArgT).name(),
-        name(),
-        (int)arg_type_.element_type(),
-        (int)arg_type_.container_type());
-
-    if constexpr (is_one_of_v<typename holoscan::type_info<ArgT>::element_type,
-                              std::shared_ptr<Resource>,
-                              std::shared_ptr<Condition>>) {
-      if constexpr (is_scalar_v<ArgT>) {
-        value_ = std::dynamic_pointer_cast<
-            base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value);
-      } else if constexpr (is_vector_v<ArgT> && holoscan::type_info<ArgT>::dimension == 1) {
-        std::vector<typename holoscan::type_info<ArgT>::element_type> components;
-        components.reserve(value.size());
-        for (auto& value_item : value) {
-          auto component = std::dynamic_pointer_cast<
-              base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value_item);
-          components.push_back(component);
-        }
-        value_ = components;
-      }
-    } else {
-      value_ = value;
-    }
-
+    set_value_<ArgT>(value);
     return *this;
   }
 
@@ -226,37 +223,9 @@ class Arg {
    * @param value The value of the argument.
    * @return The reference to the argument.
    */
-  template <typename ArgT>
+  template <typename ArgT, typename = std::enable_if_t<!std::is_same_v<Arg, std::decay_t<ArgT>>>>
   Arg&& operator=(ArgT&& value) {
-    arg_type_ = ArgType::create<ArgT>();
-    HOLOSCAN_LOG_TRACE(
-        "Arg&& operator=(ArgT&& value)({}) parameter: {}, element_type: {}, container_type: {}, "
-        "ArgT: {}",
-        typeid(ArgT).name(),
-        name(),
-        (int)arg_type_.element_type(),
-        (int)arg_type_.container_type(),
-        typeid(ArgT).name());
-
-    if constexpr (is_one_of_v<typename holoscan::type_info<ArgT>::element_type,
-                              std::shared_ptr<Resource>,
-                              std::shared_ptr<Condition>>) {
-      if constexpr (is_scalar_v<ArgT>) {
-        value_ = std::move(std::dynamic_pointer_cast<
-                           base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value));
-      } else if constexpr (is_vector_v<ArgT> && holoscan::type_info<ArgT>::dimension == 1) {
-        std::vector<typename holoscan::type_info<ArgT>::element_type> components;
-        components.reserve(value.size());
-        for (auto& value_item : value) {
-          auto component = std::dynamic_pointer_cast<
-              base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value_item);
-          components.push_back(std::move(component));
-        }
-        value_ = std::move(components);
-      }
-    } else {
-      value_ = std::forward<ArgT>(value);
-    }
+    set_value_<ArgT>(std::forward<ArgT>(value));
     return std::move(*this);
   }
 
@@ -291,6 +260,70 @@ class Arg {
   std::string name_;  ///< The name of the argument.
   ArgType arg_type_;  ///< The type of the argument.
   std::any value_;    ///< The value of the argument.
+
+  template <typename ArgT>
+  void set_value_(const ArgT& value) {
+    arg_type_ = ArgType::create<ArgT>();
+    HOLOSCAN_LOG_TRACE(
+        "Arg::set_value(const ArgT& value)({}) parameter: {}, element_type: {}, container_type: {}",
+        typeid(ArgT).name(),
+        name_,
+        static_cast<int>(arg_type_.element_type()),
+        static_cast<int>(arg_type_.container_type()));
+
+    if constexpr (is_one_of_v<typename holoscan::type_info<ArgT>::element_type,
+                              std::shared_ptr<Resource>,
+                              std::shared_ptr<Condition>>) {
+      if constexpr (is_scalar_v<ArgT>) {
+        value_ = std::dynamic_pointer_cast<
+            base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value);
+      } else if constexpr (is_vector_v<ArgT> && holoscan::type_info<ArgT>::dimension == 1) {
+        std::vector<typename holoscan::type_info<ArgT>::element_type> components;
+        components.reserve(value.size());
+        for (auto& value_item : value) {
+          auto component = std::dynamic_pointer_cast<
+              base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value_item);
+          components.push_back(component);
+        }
+        value_ = components;
+      }
+    } else {
+      value_ = value;
+    }
+  }
+
+  template <typename ArgT>
+  void set_value_(ArgT&& value) {
+    arg_type_ = ArgType::create<ArgT>();
+    HOLOSCAN_LOG_TRACE(
+        "Arg::set_value(ArgT&& value)({}) parameter: {}, element_type: {}, container_type: {}, "
+        "ArgT: {}",
+        typeid(ArgT).name(),
+        name_,
+        static_cast<int>(arg_type_.element_type()),
+        static_cast<int>(arg_type_.container_type()),
+        typeid(ArgT).name());
+
+    if constexpr (is_one_of_v<typename holoscan::type_info<ArgT>::element_type,
+                              std::shared_ptr<Resource>,
+                              std::shared_ptr<Condition>>) {
+      if constexpr (is_scalar_v<ArgT>) {
+        value_ = std::move(std::dynamic_pointer_cast<
+                           base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value));
+      } else if constexpr (is_vector_v<ArgT> && holoscan::type_info<ArgT>::dimension == 1) {
+        std::vector<typename holoscan::type_info<ArgT>::element_type> components;
+        components.reserve(value.size());
+        for (auto& value_item : value) {
+          auto component = std::dynamic_pointer_cast<
+              base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value_item);
+          components.push_back(std::move(component));
+        }
+        value_ = std::move(components);
+      }
+    } else {
+      value_ = std::forward<ArgT>(value);
+    }
+  }
 };
 
 /**
@@ -417,6 +450,7 @@ class ArgList {
     args_.reserve(args_.size() + arg.size());
     args_.insert(args_.end(), arg.begin(), arg.end());
   }
+
   /**
    * @brief Add an argument list to the list.
    *

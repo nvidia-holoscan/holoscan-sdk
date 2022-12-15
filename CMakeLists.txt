@@ -17,22 +17,25 @@
 # : https://cmake.org/cmake/help/v3.18/prop_tgt/CUDA_STANDARD.html
 cmake_minimum_required(VERSION 3.20.1) # rapids-cmake-src requires >= 3.20.1
 
-set(HOLOSCAN_PACKAGE_NAME holoscan-embedded)
+set(HOLOSCAN_PACKAGE_NAME holoscan)
 
 # ##############################################################################
 # # Options
 # ##############################################################################
 option(BUILD_SHARED_LIBS "Build Shared Libraries" ON)
-option(HOLOSCAN_BUILD_MODULES "Build Holoscan Embedded SDK Modules" ON)
+option(HOLOSCAN_BUILD_MODULES "Build Holoscan SDK Modules" ON)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
-option(HOLOSCAN_BUILD_APPS "Build Holoscan Embedded SDK Apps" ON)
+option(HOLOSCAN_BUILD_APPS "Build Holoscan SDK Apps" ON)
+option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
+option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
 option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Apps Datasets" ON)
-option(HOLOSCAN_BUILD_TESTS "Build Holoscan Embedded SDK Tests" ON)
-option(HOLOSCAN_BUILD_DOCS "Build Holoscan Embedded SDK Documents" OFF)
-option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan Embedded SDK" ON)
+option(HOLOSCAN_BUILD_TESTS "Build Holoscan SDK Tests" ON)
+option(HOLOSCAN_BUILD_DOCS "Build Holoscan SDK Documents" OFF)
+option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan SDK" ON)
 option(HOLOSCAN_BUILD_HI_SPEED_ENDO_APP "Build Holoscan Hi-Speed Endoscopy App" OFF)
 
-set(HOLOSCAN_CACHE_DIR ".cache" CACHE PATH "Directory to use for caching data for CPM and CCache. If relative, it is relative to the source directory (CMAKE_SOURCE_DIR).")
+set(HOLOSCAN_CACHE_DIR ".cache" CACHE PATH "Directory to use for caching data for CPM and CCache.\
+                                            If relative, it is relative to the source directory (CMAKE_SOURCE_DIR).")
 mark_as_advanced(HOLOSCAN_CACHE_DIR)
 
 # HOLOSCAN_USE_CCACHE_SKIPPED will be set to TRUE by 'include(SetupCache)'
@@ -78,9 +81,17 @@ include(SetupCUDA)
 # ##############################################################################
 project(${HOLOSCAN_PACKAGE_NAME}
     VERSION ${HOLOSCAN_BUILD_VERSION}
-    DESCRIPTION "Holoscan Embedded SDK"
+    DESCRIPTION "Holoscan SDK"
     LANGUAGES C CXX
 )
+
+# Setting the default paths for the build tree
+# Libraries (shared and static) are put by default in the lib directory
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# Set the default RPATH for built libraries to $ORIGIN and the lib directory
+set(CMAKE_BUILD_RPATH \$ORIGIN:${CMAKE_BINARY_DIR}/lib)
 
 # Delayed CUDA language enablement (to set CMAKE_CUDA_ARCHITECTURES and CMAKE_CUDA_HOST_COMPILER)
 enable_language(CUDA)
@@ -88,9 +99,9 @@ enable_language(CUDA)
 # ##############################################################################
 # # Default language settings
 # ##############################################################################
-SET(CMAKE_CXX_STANDARD 17)
-SET(CMAKE_CXX_STANDARD_REQUIRED YES)
-SET(CMAKE_CXX_EXTENSIONS NO)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED YES)
+set(CMAKE_CXX_EXTENSIONS NO)
 
 # ##############################################################################
 # # RAPIDS CMAKE configurations
@@ -100,7 +111,8 @@ SET(CMAKE_CXX_EXTENSIONS NO)
 # Set default build type in case not specified
 rapids_cmake_build_type(release)
 
-# Generate a C++ header file (under ${CMAKE_CURRENT_BINARY_DIR}) that hold the version (X.Y.Z) information of the calling project
+# Generate a C++ header file (under ${CMAKE_CURRENT_BINARY_DIR}) that hold the version (X.Y.Z)
+# information of the calling project
 rapids_cmake_write_version_file(include/holoscan/version_config.hpp PREFIX HOLOSCAN)
 
 # Get install lib dir
@@ -123,7 +135,7 @@ include(cmake/setup_dependencies.cmake)
 # ##############################################################################
 # # Add library: ${HOLOSCAN_PACKAGE_NAME}
 # ##############################################################################
-add_library(${HOLOSCAN_PACKAGE_NAME}
+set(LIST_SOURCES
     include/holoscan/core/application.hpp
     include/holoscan/core/arg.hpp
     include/holoscan/core/argument_setter.hpp
@@ -137,6 +149,7 @@ add_library(${HOLOSCAN_PACKAGE_NAME}
     include/holoscan/core/conditions/gxf/downstream_affordable.hpp
     include/holoscan/core/conditions/gxf/message_available.hpp
     include/holoscan/core/config.hpp
+    include/holoscan/core/domain/tensor.hpp
     include/holoscan/core/execution_context.hpp
     include/holoscan/core/executor.hpp
     include/holoscan/core/executors/gxf/gxf_executor.hpp
@@ -148,11 +161,17 @@ add_library(${HOLOSCAN_PACKAGE_NAME}
     include/holoscan/core/graphs/flow_graph.hpp
     include/holoscan/core/gxf/entity.hpp
     include/holoscan/core/gxf/gxf_component.hpp
+    include/holoscan/core/gxf/gxf_execution_context.hpp
+    include/holoscan/core/gxf/gxf_extension_registrar.hpp
+    include/holoscan/core/gxf/gxf_io_context.hpp
     include/holoscan/core/gxf/gxf_operator.hpp
     include/holoscan/core/gxf/gxf_resource.hpp
+    include/holoscan/core/gxf/gxf_tensor.hpp
     include/holoscan/core/gxf/gxf_utils.hpp
+    include/holoscan/core/gxf/gxf_wrapper.hpp
     include/holoscan/core/io_context.hpp
     include/holoscan/core/io_spec.hpp
+    include/holoscan/core/message.hpp
     include/holoscan/core/operator_spec.hpp
     include/holoscan/core/operator.hpp
     include/holoscan/core/parameter.hpp
@@ -171,29 +190,44 @@ add_library(${HOLOSCAN_PACKAGE_NAME}
     include/holoscan/holoscan.hpp
     include/holoscan/operators/aja_source/aja_source.hpp
     include/holoscan/operators/aja_source/ntv2channel.hpp
+    include/holoscan/operators/bayer_demosaic/bayer_demosaic.hpp
     include/holoscan/operators/custom_lstm_inference/lstm_tensor_rt_inference.hpp
     include/holoscan/operators/format_converter/format_converter.hpp
+    include/holoscan/operators/holoviz/holoviz.hpp
+    include/holoscan/operators/multiai_inference/multiai_inference.hpp
+    include/holoscan/operators/multiai_postprocessor/multiai_postprocessor.hpp
+    include/holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp
     include/holoscan/operators/stream_playback/video_stream_recorder.hpp
     include/holoscan/operators/stream_playback/video_stream_replayer.hpp
     include/holoscan/operators/tensor_rt/tensor_rt_inference.hpp
-    include/holoscan/operators/video_composer/video_composer.hpp
+    include/holoscan/operators/tool_tracking_postprocessor/tool_tracking_postprocessor.hpp
+    include/holoscan/operators/visualizer_icardio/visualizer_icardio.hpp
     include/holoscan/operators/visualizer_tool_tracking/visualizer_tool_tracking.hpp
     include/holoscan/std_ops.hpp
+    include/holoscan/utils/timer.hpp
     include/holoscan/utils/yaml_parser.hpp
     src/core/application.cpp
     src/core/arg.cpp
+    src/core/argument_setter.cpp
     src/core/condition.cpp
     src/core/conditions/gxf/boolean.cpp
     src/core/conditions/gxf/count.cpp
     src/core/conditions/gxf/downstream_affordable.cpp
     src/core/conditions/gxf/message_available.cpp
     src/core/config.cpp
+    src/core/domain/tensor.cpp
     src/core/executors/gxf/gxf_executor.cpp
+    src/core/executors/gxf/gxf_parameter_adaptor.cpp
     src/core/fragment.cpp
     src/core/graphs/flow_graph.cpp
+    src/core/gxf/entity.cpp
     src/core/gxf/gxf_condition.cpp
+    src/core/gxf/gxf_execution_context.cpp
+    src/core/gxf/gxf_io_context.cpp
     src/core/gxf/gxf_operator.cpp
     src/core/gxf/gxf_resource.cpp
+    src/core/gxf/gxf_tensor.cpp
+    src/core/gxf/gxf_wrapper.cpp
     src/core/io_spec.cpp
     src/core/logger.cpp
     src/core/operator.cpp
@@ -205,13 +239,30 @@ add_library(${HOLOSCAN_PACKAGE_NAME}
     src/core/resources/gxf/std_component_serializer.cpp
     src/core/resources/gxf/video_stream_serializer.cpp
     src/operators/aja_source/aja_source.cpp
+    src/operators/bayer_demosaic/bayer_demosaic.cpp
     src/operators/custom_lstm_inference/lstm_tensor_rt_inference.cpp
     src/operators/format_converter/format_converter.cpp
+    src/operators/holoviz/holoviz.cpp
+    src/operators/multiai_inference/multiai_inference.cpp
+    src/operators/multiai_postprocessor/multiai_postprocessor.cpp
+    src/operators/segmentation_postprocessor/segmentation_postprocessor.cpp
     src/operators/stream_playback/video_stream_recorder.cpp
     src/operators/stream_playback/video_stream_replayer.cpp
     src/operators/tensor_rt/tensor_rt_inference.cpp
+    src/operators/tool_tracking_postprocessor/tool_tracking_postprocessor.cpp
+    src/operators/visualizer_icardio/visualizer_icardio.cpp
     src/operators/visualizer_tool_tracking/visualizer_tool_tracking.cpp
 )
+
+if(HOLOSCAN_BUILD_HI_SPEED_ENDO_APP)
+    set(LIST_SOURCES
+        ${LIST_SOURCES}
+        include/holoscan/operators/emergent_source/emergent_source.hpp
+        src/operators/emergent_source/emergent_source.cpp
+  )
+endif()
+
+add_library(${HOLOSCAN_PACKAGE_NAME} ${LIST_SOURCES})
 
 # Compile options
 set_target_properties(${HOLOSCAN_PACKAGE_NAME}
@@ -226,6 +277,9 @@ set_target_properties(${HOLOSCAN_PACKAGE_NAME}
     VERSION ${PROJECT_VERSION}
 )
 
+# Force targets using holoscan SDK to use the C++17 standard
+target_compile_features(${HOLOSCAN_PACKAGE_NAME} INTERFACE cxx_std_17)
+
 # Note: Looks like the following line causes error on CMake 3.18.4 (it is working on 3.18.2). Keeping it for now.
 set(HOLOSCAN_REQUIRED_FEATURES cxx_std_17)
 target_compile_features(${HOLOSCAN_PACKAGE_NAME} PRIVATE ${HOLOSCAN_REQUIRED_FEATURES})
@@ -236,14 +290,27 @@ target_compile_options(${HOLOSCAN_PACKAGE_NAME}
     $<$<COMPILE_LANGUAGE:CXX>:-Werror -Wall -Wextra>
 )
 
+# Build EVT related files if HOLOSCAN_BUILD_HI_SPEED_ENDO_APP is ON.
+if(HOLOSCAN_BUILD_HI_SPEED_ENDO_APP)
+    target_compile_definitions(${HOLOSCAN_PACKAGE_NAME} PUBLIC HOLOSCAN_BUILD_EMERGENT=1)
+endif()
+
+# Skip trace logging in release build if CMAKE_BUILD_TYPE is Release.
+# (See include/holoscan/core/logger.hpp)
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_definitions(${HOLOSCAN_PACKAGE_NAME} PRIVATE HOLOSCAN_LOG_ACTIVE_LEVEL=1)
+endif()
+
 # Link libraries
 target_link_libraries(${HOLOSCAN_PACKAGE_NAME}
     PUBLIC
     ${CMAKE_DL_LIBS}
     Threads::Threads
     fmt::fmt-header-only
-    GXF::core
     yaml-cpp
+    GXF::core
+    GXF::std
+    CUDA::cudart
 
     PRIVATE
     spdlog::spdlog_header_only
@@ -256,6 +323,10 @@ target_include_directories(${HOLOSCAN_PACKAGE_NAME}
 
     # Bundled tl-expected
     $<BUILD_INTERFACE:${tl-expected_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
+
+    # Bundled dlpack
+    $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
 
     PRIVATE
@@ -273,75 +344,98 @@ set(HOLOSCAN_INSTALL_TARGETS
 install(TARGETS ${HOLOSCAN_INSTALL_TARGETS}
     DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
     EXPORT ${HOLOSCAN_PACKAGE_NAME}-exports
-    COMPONENT holoscan-embedded-core
+    COMPONENT holoscan-core
 )
 
 # Copy headers
 install(DIRECTORY include/holoscan/
     DESTINATION include/holoscan
-    COMPONENT holoscan-embedded-core
+    COMPONENT holoscan-core
 )
 
 # Copy bundled tl-expected headers
 install(DIRECTORY ${tl-expected_SOURCE_DIR}/include/tl/
     DESTINATION include/3rdparty/tl
-    COMPONENT holoscan-embedded-core
+    COMPONENT holoscan-dependencies
+)
+
+# Copy bundled dlpack headers
+install(DIRECTORY ${dlpack_SOURCE_DIR}/include/dlpack/
+    DESTINATION include/3rdparty/dlpack
+    COMPONENT holoscan-core
 )
 
 # Copy version file
 install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/version_config.hpp
     DESTINATION include/holoscan
-    COMPONENT holoscan-embedded-core
+    COMPONENT holoscan-core
 )
 
-# Copy FindXXX files generated by CPM
-install(FILES
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/Findajantv2.cmake
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/Findfmt.cmake
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/FindGLAD.cmake
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/FindGLFW.cmake
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/Findnanovg.cmake
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/Findspdlog.cmake
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/Findtl-expected.cmake
-    ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/CPM_modules/Findyaml-cpp.cmake
-    DESTINATION cmake
-    COMPONENT holoscan-embedded-core
+# Install GXF
+install(DIRECTORY
+  ${GXF_core_INCLUDE_DIR}/common
+  ${GXF_core_INCLUDE_DIR}/gxf/core
+  ${GXF_core_INCLUDE_DIR}/gxf/cuda
+  ${GXF_core_INCLUDE_DIR}/gxf/multimedia
+  ${GXF_core_INCLUDE_DIR}/gxf/network
+  ${GXF_core_INCLUDE_DIR}/gxf/npp
+  ${GXF_core_INCLUDE_DIR}/gxf/serialization
+  ${GXF_core_INCLUDE_DIR}/gxf/std
+DESTINATION "include/gxf"
+COMPONENT "holoscan-gxf_libs"
 )
 
-# Copy FindGXF module
-install(FILES ${CMAKE_CURRENT_LIST_DIR}/cmake/modules/FindGXF.cmake
-    DESTINATION cmake
-    COMPONENT holoscan-embedded-core
+# Install CMake script to build GXE applications
+install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/GenerateGXEAppInstall.cmake"
+DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
+COMPONENT "holoscan-gxf_libs"
 )
 
 # Define docs and hooks
 set(holoscan_doc_string [=[
-libholoscan-embedded: Holoscan Embedded SDK C++ API
+libholoscan: Holoscan SDK C++ API
 ]=])
 
-set(holoscan_install_hook_code_string [=[
 
-if(NOT GXF_SDK_PATH)
-    message(FATAL_ERROR "Please set 'GXF_SDK_PATH' variable in CMake")
-else()
-    list(APPEND CMAKE_PREFIX_PATH "${GXF_SDK_PATH}")
-    message("GXF_SDK_PATH is set to ${GXF_SDK_PATH}")
-endif()
+# Defines the install export hook
+# We use add_library since we are installing the libraries as part of the SDK
+set(holoscan_install_hook_code_string
 
-find_package(GXF 2.4 MODULE REQUIRED
-  COMPONENTS
-    core
+[=[
+
+add_library(fmt::fmt-header-only INTERFACE IMPORTED)
+
+set(_GXFlibs core std multimedia cuda network npp serialization behavior_tree)
+
+foreach(gxflib IN LISTS _GXFlibs)
+  add_library(GXF::${gxflib} SHARED IMPORTED)
+  set_target_properties(GXF::${gxflib} PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libgxf_${gxflib}.so"
+    IMPORTED_NO_SONAME ON
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/gxf"
+  )
+endforeach()
+
+add_executable(GXF::gxe IMPORTED)
+set_target_properties(GXF::gxe PROPERTIES
+  IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/bin/gxe"
 )
+
+set(HOLOSCAN_PACKAGE_NAME holoscan::holoscan)
+set(GXF_LIB_DIR "${PACKAGE_PREFIX_DIR}/lib")
+set(GXF_EXTENSIONS_DIR "${PACKAGE_PREFIX_DIR}/lib/gxf_extensions")
+
+include("${CMAKE_CURRENT_LIST_DIR}/GenerateGXEAppInstall.cmake")
 
 ]=])
 
 set(holoscan_build_hook_code_string [=[
 ]=])
 
-# Override CMAKE_INSTALL_DEFAULT_COMPONENT_NAME to hholoscan-embedded-core
+# Override CMAKE_INSTALL_DEFAULT_COMPONENT_NAME to holoscan-core
 # until rapids-cmake's rapids_export include the concept of optional COMPONENTS
 # (https://github.com/rapidsai/rapids-cmake/pull/154)
-set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME holoscan-embedded-core)
+set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME holoscan-core)
 
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_export.html#rapids-export
 # (rapids_export() always installs to lib and doesn’t use GNUInstallDirs)
@@ -364,6 +458,27 @@ rapids_export(
 )
 
 # ##############################################################################
+# # Build Coverage
+# ##############################################################################
+if(HOLOSCAN_BUILD_COVERAGE)
+    include(cmake/modules/CodeCoverage.cmake)
+    append_coverage_compiler_flags()
+    setup_target_for_coverage_lcov(
+        NAME coverage
+	BASE_DIRECTORY "${CMAKE_SOURCE_DIR}"
+	CTEST_EXECUTABLE ctest --test-dir ${CMAKE_BINARY_DIR} || true
+	CTEST_EXTRACT "${CMAKE_SOURCE_DIR}/gxf_extensions/*"
+        "${CMAKE_SOURCE_DIR}/include/holoscan/*"
+        "${CMAKE_SOURCE_DIR}/modules/holoviz/src/*"
+        "${CMAKE_SOURCE_DIR}/modules/holoinfer/src/*"
+        "${CMAKE_SOURCE_DIR}/src/*"
+        "${CMAKE_SOURCE_DIR}/python/pybind11/*"
+	PYTEST_EXECUTABLE pytest --pyargs "${CMAKE_BINARY_DIR}/python/lib/tests" || true
+	PYTEST_EXTRACT "*holoscan*"
+	)
+endif()
+
+# ##############################################################################
 # # Build sub modules (holoviz)
 # ##############################################################################
 if(HOLOSCAN_BUILD_MODULES)
@@ -378,21 +493,45 @@ if(HOLOSCAN_BUILD_GXF_EXTENSIONS)
 endif()
 
 # ##############################################################################
-# # Build Apps
+# # Download datasets
+# ##############################################################################
+if(HOLOSCAN_DOWNLOAD_DATASETS)
+  add_subdirectory(data)
+endif()
+
+# ##############################################################################
+# # Build apps
 # ##############################################################################
 if(HOLOSCAN_BUILD_APPS)
   add_subdirectory(apps)
 endif()
 
 # ##############################################################################
+# # Build examples
+# ##############################################################################
+if(HOLOSCAN_BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+
+# ##############################################################################
 # # Add tests
 # ##############################################################################
-if(HOLOSCAN_BUILD_TESTS AND CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+if(HOLOSCAN_BUILD_TESTS)
     # Enable testing for the current directory and below
     include(CTest) # it calls 'enable_testing()' internally
     superbuild_depend(gtest_rapids)
 
     add_subdirectory(tests)
+
+    # add Holoviz tests
+    add_test(NAME HOLOVIZ_FUNCTIONAL_TEST COMMAND holoscan::viz::functionaltests)
+    add_test(NAME HOLOVIZ_UNIT_TEST COMMAND holoscan::viz::unittests)
+endif()
+
+if(HOLOSCAN_BUILD_PYTHON)
+    find_package(Python3  REQUIRED COMPONENTS Interpreter Development)
+    superbuild_depend(pybind11)
+    add_subdirectory(python)
 endif()
 
 # ##############################################################################
@@ -401,3 +540,5 @@ endif()
 if(HOLOSCAN_BUILD_DOCS)
     add_subdirectory(docs)
 endif()
+
+include(HoloscanCPack)

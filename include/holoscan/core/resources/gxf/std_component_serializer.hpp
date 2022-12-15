@@ -18,11 +18,10 @@
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_STD_COMPONENT_SERIALIZER_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_STD_COMPONENT_SERIALIZER_HPP
 
-#include "../../gxf/gxf_resource.hpp"
-
 #include <memory>
 #include <vector>
 
+#include "../../gxf/gxf_resource.hpp"
 #include "./unbounded_allocator.hpp"
 
 namespace holoscan {

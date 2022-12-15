@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,8 +30,6 @@ gxf_result_t VideoFrame::start() {
   glCreateSamplers(1, &sampler_);
   glSamplerParameteri(sampler_, GL_TEXTURE_WRAP_S, GL_REPEAT);
   glSamplerParameteri(sampler_, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  glSamplerParameteri(sampler_, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glSamplerParameteri(sampler_, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
   if (!createGLSLShaderFromFile(GL_VERTEX_SHADER, vertex_shader_, vertex_shader_file_path_)) {
     GXF_LOG_ERROR("Failed to create GLSLvertex shader");
@@ -47,14 +46,16 @@ gxf_result_t VideoFrame::start() {
     return GXF_FAILURE;
   }
 
-  GXF_LOG_INFO("Build GLSL shaders and program succesfully");
+  GXF_LOG_INFO("Build GLSL shaders and program successfully");
   return GXF_SUCCESS;
 }
 
-gxf_result_t VideoFrame::tick() {
+gxf_result_t VideoFrame::tick(GLuint tex, GLenum filter) {
   glActiveTexture(GL_TEXTURE0);
   glBindSampler(0, sampler_);
-  glBindTexture(GL_TEXTURE_2D, frame_tex_);
+  glSamplerParameteri(sampler_, GL_TEXTURE_MIN_FILTER, filter);
+  glSamplerParameteri(sampler_, GL_TEXTURE_MAG_FILTER, filter);
+  glBindTexture(GL_TEXTURE_2D, tex);
   glUseProgram(program_);
   glBindVertexArray(vao_);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 3);

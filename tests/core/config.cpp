@@ -17,36 +17,36 @@
 
 #include "holoscan/core/config.hpp"
 
-#include <string>
-
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
+
+#include <string>
 
 namespace holoscan {
 
 TEST(Config, TestDefault) {
   Config C = Config();
-  ASSERT_TRUE(C.config_file() == "");
-  ASSERT_TRUE(C.prefix() == "");
-  ASSERT_TRUE(C.yaml_nodes().size() == 0);
+  ASSERT_EQ(C.config_file(), "");
+  ASSERT_EQ(C.prefix(), "");
+  ASSERT_EQ(C.yaml_nodes().size(), 0);
 }
 
-TEST(Config, TestNonexistantFile) {
-  std::string fname1 = "nonexistant.yaml";
+TEST(Config, TestNonexistentFile) {
+  std::string fname1 = "nonexistent.yaml";
 
   // capture stderr
   testing::internal::CaptureStderr();
 
-  // constructor called with nonexistant YAML file
+  // constructor called with nonexistent YAML file
   Config C = Config(fname1, "temp1");
-  ASSERT_TRUE(C.config_file() == fname1);
-  ASSERT_TRUE(C.prefix() == "temp1");
-  ASSERT_TRUE(C.yaml_nodes().size() == 0);
+  ASSERT_EQ(C.config_file(), fname1);
+  ASSERT_EQ(C.prefix(), "temp1");
+  ASSERT_EQ(C.yaml_nodes().size(), 0);
 
   // verify expected warning was logged to stderr
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[warning]") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Config file 'nonexistant.yaml' doesn't exist") != std::string::npos);
+  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Config file 'nonexistent.yaml' doesn't exist") != std::string::npos);
 }
 
 }  // namespace holoscan

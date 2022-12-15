@@ -124,7 +124,7 @@ function(create_gxe_application)
 
     # If 'COMPONENT' option is not defined
     if(NOT DEFINED GXE_APP_COMPONENT)
-        set(GXE_APP_COMPONENT "holoscan-embedded-apps")
+        set(GXE_APP_COMPONENT "holoscan-apps")
     endif()
 
     # Get relative folder path for the app
@@ -206,19 +206,18 @@ function(install_gxf_extension target_name)
 
     # If 'COMPONENT' option is not defined
     if(NOT DEFINED INSTALL_GXF_EXTENSION_COMPONENT)
-        set(INSTALL_GXF_EXTENSION_COMPONENT "holoscan-embedded-gxf_extensions")
+        set(INSTALL_GXF_EXTENSION_COMPONENT "holoscan-gxf_extensions")
     endif()
 
-    file(RELATIVE_PATH relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
     install(TARGETS "${target_name}"
-        DESTINATION "${relative_dest_path}"
+        DESTINATION lib/gxf_extensions
         COMPONENT "${INSTALL_GXF_EXTENSION_COMPONENT}"
     )
 
     # If dependent '_lib' target is defined, add it to the install target
     if(TARGET "${target_name}_lib")
         install(TARGETS "${target_name}_lib"
-            DESTINATION "${relative_dest_path}"
+            DESTINATION lib/gxf_extensions
             COMPONENT "${INSTALL_GXF_EXTENSION_COMPONENT}"
         )
     endif()

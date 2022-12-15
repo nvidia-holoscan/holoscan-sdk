@@ -18,14 +18,14 @@
 #ifndef HOLOSCAN_CORE_FRAGMENT_HPP
 #define HOLOSCAN_CORE_FRAGMENT_HPP
 
-#include "./common.hpp"
-
 #include <iostream>     // for std::cout
 #include <memory>       // for std::shared_ptr
 #include <set>          // for std::set
 #include <string>       // for std::string
 #include <type_traits>  // for std::enable_if_t, std::is_constructible
 #include <utility>      // for std::pair
+
+#include "./common.hpp"
 
 namespace holoscan {
 
@@ -108,11 +108,11 @@ class Fragment {
    *   - libgxf_cuda.so
    *   - libgxf_multimedia.so
    *   - libgxf_serialization.so
-   *   - ./gxf_extensions/my_recorder/libmy_recorder.so
-   *   - ./gxf_extensions/stream_playback/libstream_playback.so
+   *   - libmy_recorder.so
+   *   - libstream_playback.so
    *
    * replayer:
-   *   directory: "/workspace/test_data/endoscopy/video"
+   *   directory: "../data/endoscopy/video"
    *   basename: "surgical_video"
    *   frame_rate: 0   # as specified in timestamps
    *   repeat: false   # default: false
@@ -192,7 +192,7 @@ class Fragment {
   ArgList from_config(const std::string& key);
 
   /**
-   * @brief Create a new operator and add it to the graph.
+   * @brief Create a new operator.
    *
    * @tparam OperatorT The type of the operator.
    * @param name The name of the operator.
@@ -206,16 +206,16 @@ class Fragment {
     auto op = std::make_shared<OperatorT>(std::forward<ArgsT>(args)...);
     op->name(name);
     op->fragment(this);
-    auto spec = std::make_unique<OperatorSpec>(this);
+    auto spec = std::make_shared<OperatorSpec>(this);
     op->setup(*spec.get());
-    op->spec(std::move(spec));
+    op->spec(spec);
 
     op->initialize();
 
     return op;
   }
   /**
-   * @brief Create a new operator and add it to the graph.
+   * @brief Create a new operator.
    *
    * @tparam OperatorT The type of the operator.
    * @param args The arguments for the operator.
@@ -243,9 +243,9 @@ class Fragment {
     auto resource = std::make_shared<ResourceT>(std::forward<ArgsT>(args)...);
     resource->name(name);
     resource->fragment(this);
-    auto spec = std::make_unique<ComponentSpec>(this);
+    auto spec = std::make_shared<ComponentSpec>(this);
     resource->setup(*spec.get());
-    resource->spec(std::move(spec));
+    resource->spec(spec);
 
     resource->initialize();
 
@@ -280,9 +280,9 @@ class Fragment {
     auto condition = std::make_shared<ConditionT>(std::forward<ArgsT>(args)...);
     condition->name(name);
     condition->fragment(this);
-    auto spec = std::make_unique<ComponentSpec>(this);
+    auto spec = std::make_shared<ComponentSpec>(this);
     condition->setup(*spec.get());
-    condition->spec(std::move(spec));
+    condition->spec(spec);
 
     // Skip initialization. `condition->initialize()` is done in GXFOperator::initialize()
 
@@ -345,14 +345,78 @@ class Fragment {
    * In `port_pairs`, an empty port name ("") can be used for specifying a port name if the operator
    * has only one input/output port.
    *
+   * If a non-existent port name is specified in `port_pairs`, it first checks if there is a
+   * parameter with the same name but with a type of `std::vector<holoscan::IOSpec*>` in the
+   * downstream operator.
+   * If there is such a parameter (e.g., `receivers`), it creates a new input port with a specific
+   * label (`<parameter name>:<index>`. e.g., `receivers:0`), otherwise it shows an error message.
+   *
+   * For example, if a parameter `receivers` want to have an arbitrary number of receivers,
+   *
+   *     class HolovizOp : public holoscan::ops::GXFOperator {
+   *         ...
+   *         private:
+   *           Parameter<std::vector<holoscan::IOSpec*>> receivers_;
+   *         ...
+   *
+   * Instead of creating a fixed number of input ports (e.g., `source_video` and `tensor`) and
+   * assigning them to the parameter (`receivers`):
+   *
+   *     void HolovizOp::setup(OperatorSpec& spec) {
+   *       ...
+   *
+   *       auto& in_source_video = spec.input<holoscan::gxf::Entity>("source_video");
+   *       auto& in_tensor = spec.input<holoscan::gxf::Entity>("tensor");
+   *
+   *       spec.param(receivers_,
+   *                  "receivers",
+   *                  "Input Receivers",
+   *                  "List of input receivers.",
+   *                  {&in_source_video, &in_tensor});
+   *       ...
+   *
+   * You can skip the creation of input ports and assign them to the parameter (`receivers`) as
+   * follows:
+   *
+   *     void HolovizOp::setup(OperatorSpec& spec) {
+   *       ...
+   *       spec.param(receivers_,
+   *                  "receivers",
+   *                  "Input Receivers",
+   *                  "List of input receivers.",
+   *                  {&in_source_video, &in_tensor});
+   *       ...
+   *
+   * This makes the following code possible in the Application's `compose()` method:
+   *
+   *     add_flow(source, visualizer_format_converter);
+   *     add_flow(visualizer_format_converter, visualizer, {{"", "receivers"}});
+   *
+   *     add_flow(source, format_converter);
+   *     add_flow(format_converter, lstm_inferer);
+   *     add_flow(lstm_inferer, visualizer, {{"", "receivers"}});
+   *
+   * Instead of:
+   *
+   *     add_flow(source, visualizer_format_converter);
+   *     add_flow(visualizer_format_converter, visualizer, {{"", "source_video"}});
+   *
+   *     add_flow(source, format_converter);
+   *     add_flow(format_converter, lstm_inferer);
+   *     add_flow(lstm_inferer, visualizer, {{"", "tensor"}});
+   *
+   * By using the parameter (`receivers`) with `std::vector<holoscan::IOSpec*>` type, the framework
+   * creates input ports (`receivers:0` and `receivers:1`) implicitly and connects them (and adds
+   * the references of the input ports to the `receivers` vector).
+   *
    * @param upstream_op The upstream operator.
    * @param downstream_op The downstream operator.
-   * @param port_pairs  The port pairs. The first element of the pair is the port of the upstream
+   * @param port_pairs The port pairs. The first element of the pair is the port of the upstream
    * operator and the second element is the port of the downstream operator.
    */
   virtual void add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Operator>& downstream_op,
-                        std::set<std::pair<std::string, std::string>> io_map);
+                        std::set<std::pair<std::string, std::string>> port_pairs);
 
   /**
    * @brief Compose a graph.

@@ -18,10 +18,9 @@
 #ifndef HOLOSCAN_CORE_IO_SPEC_HPP
 #define HOLOSCAN_CORE_IO_SPEC_HPP
 
-#include "./common.hpp"
-
 #include <iostream>
 #include <memory>
+#include <string>
 #include <typeinfo>
 #include <utility>
 #include <vector>
@@ -30,7 +29,8 @@
 #include "./conditions/gxf/count.hpp"
 #include "./conditions/gxf/downstream_affordable.hpp"
 #include "./conditions/gxf/message_available.hpp"
-
+#include "./gxf/entity.hpp"
+#include "./common.hpp"
 namespace holoscan {
 
 /**
@@ -47,6 +47,19 @@ class IOSpec {
    * @brief Input/Output type.
    */
   enum class IOType { kInput, kOutput };
+
+  /**
+   * @brief Construct a new IOSpec object.
+   *
+   * @param op_spec The pointer to the operator specification that contains this input/output.
+   * @param name The name of this input/output.
+   * @param io_type The type of this input/output.
+   */
+  IOSpec(OperatorSpec* op_spec, const std::string& name, IOType io_type)
+      : op_spec_(op_spec),
+        name_(name),
+        io_type_(io_type),
+        typeinfo_(&typeid(holoscan::gxf::Entity)) {}
 
   /**
    * @brief Construct a new IOSpec object.
@@ -72,13 +85,15 @@ class IOSpec {
    *
    * @return The name of this input/output.
    */
-  std::string& name() { return name_; }
+  const std::string& name() const { return name_; }
+
   /**
    * @brief Get the input/output type.
    *
    * @return The input/output type.
    */
   IOType io_type() const { return io_type_; }
+
   /**
    * @brief Get the type info of the data of this input/output.
    *
@@ -145,7 +160,7 @@ class IOSpec {
                                  std::make_shared<BooleanCondition>(std::forward<ArgsT>(args)...));
         break;
       case ConditionType::kNone:
-        HOLOSCAN_LOG_ERROR("Condition type kNone is not allowed in IOSpec::condition()");
+        conditions_.emplace_back(type, nullptr);
         break;
     }
     return *this;

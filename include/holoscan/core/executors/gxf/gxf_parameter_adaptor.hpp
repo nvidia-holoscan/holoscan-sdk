@@ -18,9 +18,8 @@
 #ifndef HOLOSCAN_CORE_EXECUTORS_GXF_GXF_PARAMETER_ADAPTOR_HPP
 #define HOLOSCAN_CORE_EXECUTORS_GXF_GXF_PARAMETER_ADAPTOR_HPP
 
-#include "../../common.hpp"
-
 #include <functional>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <typeindex>
@@ -28,14 +27,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include <gxf/core/gxf.h>
-#include <yaml-cpp/yaml.h>
-
+#include "../../common.hpp"
 #include "../../arg.hpp"
 #include "../../gxf/gxf_condition.hpp"
 #include "../../gxf/gxf_resource.hpp"
 #include "../../gxf/gxf_utils.hpp"
-#include "../../operator_spec.hpp"
+#include "../../io_spec.hpp"
 #include "../../parameter.hpp"
 
 namespace holoscan::gxf {
@@ -59,10 +56,12 @@ class GXFParameterAdaptor {
     return GXF_FAILURE;
   };
 
-  static GXFParameterAdaptor& get_instance() {
-    static GXFParameterAdaptor instance;
-    return instance;
-  }
+  /**
+   * @brief Get the instance of GXFParameterAdaptor.
+   *
+   * @return The reference of the static GXFParameterAdaptor instance.
+   */
+  static GXFParameterAdaptor& get_instance();
 
   static gxf_result_t set_param(gxf_context_t context, gxf_uid_t uid, const char* key,
                                 ParameterWrapper& param_wrap) {
@@ -119,6 +118,10 @@ class GXFParameterAdaptor {
             auto& param = *std::any_cast<Parameter<typeT>*>(any_value);
 
             param.set_default_value();  // set default value if not set.
+
+            // If the parameter (any_value) is from the native operator
+            // (which means 'uid == -1'), return here without setting GXF parameter.
+            if (uid == -1) { return GXF_SUCCESS; }
 
             if (param.has_value()) {
               auto& value = param.get();
@@ -223,11 +226,16 @@ class GXFParameterAdaptor {
                     }
                     case ArgElementType::kIOSpec: {
                       if constexpr (std::is_same_v<typeT, holoscan::IOSpec*>) {
-                        auto gxf_resource =
-                            std::dynamic_pointer_cast<GXFResource>(value->resource());
-                        gxf_uid_t cid = gxf_resource->gxf_cid();
+                        if (value) {
+                          auto gxf_resource =
+                              std::dynamic_pointer_cast<GXFResource>(value->resource());
+                          gxf_uid_t cid = gxf_resource->gxf_cid();
 
-                        return GxfParameterSetHandle(context, uid, key, cid);
+                          return GxfParameterSetHandle(context, uid, key, cid);
+                        } else {
+                          // If the IOSpec is null, do not set the parameter.
+                          return GXF_SUCCESS;
+                        }
                       }
                       break;
                     }
@@ -236,8 +244,9 @@ class GXFParameterAdaptor {
                                         typename holoscan::type_info<typeT>::element_type,
                                         std::shared_ptr<Resource>> &&
                                     holoscan::type_info<typeT>::dimension == 0) {
-                        auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(value);
+                        // Set the handle parameter only if the resource is valid.
                         if (value) {
+                          auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(value);
                           // Initialize GXF component if it is not already initialized.
                           if (gxf_resource->gxf_context() == nullptr) {
                             gxf_resource->gxf_eid(gxf::get_component_eid(
@@ -246,10 +255,14 @@ class GXFParameterAdaptor {
                             gxf_resource->initialize();
                           }
                           return GxfParameterSetHandle(context, uid, key, gxf_resource->gxf_cid());
+                        } else {
+                          HOLOSCAN_LOG_TRACE(
+                              "Resource is null for key '{}'. Not setting parameter.", key);
+                          return GXF_SUCCESS;
                         }
-                        HOLOSCAN_LOG_ERROR(
-                            "Unable to handle ArgElementType::kResource for key '{}'", key);
                       }
+                      HOLOSCAN_LOG_ERROR("Unable to handle ArgElementType::kResource for key '{}'",
+                                         key);
                       break;
                     }
                     case ArgElementType::kCondition: {
@@ -303,7 +316,7 @@ class GXFParameterAdaptor {
                         }
                         return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
                       } else if constexpr (std::is_same_v<typeT,
-                                                          std::vector<std::vector<uint32_t>>>) {
+                                           std::vector<std::vector<uint32_t>>>) {
                         YAML::Node yaml_node;
                         for (const std::vector<uint32_t>& vec : value) {
                           for (uint32_t item : vec) { yaml_node.push_back(item); }
@@ -374,11 +387,13 @@ class GXFParameterAdaptor {
                     case ArgElementType::kIOSpec: {
                       if constexpr (std::is_same_v<typeT, std::vector<holoscan::IOSpec*>>) {
                         // Create vector of Handles
-                        YAML::Node yaml_node;
+                        YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
                         for (auto& io_spec : value) {
-                          auto gxf_resource =
-                              std::dynamic_pointer_cast<GXFResource>(io_spec->resource());
-                          yaml_node.push_back(gxf_resource->gxf_cname());
+                          if (io_spec) {  // Only consider non-null IOSpecs
+                            auto gxf_resource =
+                                std::dynamic_pointer_cast<GXFResource>(io_spec->resource());
+                            yaml_node.push_back(gxf_resource->gxf_cname());
+                          }
                         }
                         return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
                       }
@@ -397,10 +412,17 @@ class GXFParameterAdaptor {
                         YAML::Node yaml_node;
                         for (auto& resource : value) {
                           auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(resource);
-                          gxf_uid_t resource_cid = gxf_resource->gxf_cid();
-                          std::string full_resource_name =
-                              gxf::get_full_component_name(context, resource_cid);
-                          yaml_node.push_back(full_resource_name.c_str());
+                          // Push back the resource's gxf_cname only if it is not null.
+                          if (gxf_resource) {
+                            gxf_uid_t resource_cid = gxf_resource->gxf_cid();
+                            std::string full_resource_name =
+                                gxf::get_full_component_name(context, resource_cid);
+                            yaml_node.push_back(full_resource_name.c_str());
+                          } else {
+                            HOLOSCAN_LOG_TRACE(
+                                "Resource item in the vector is null. Skipping it for key '{}'",
+                                key);
+                          }
                         }
                         return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
                       }

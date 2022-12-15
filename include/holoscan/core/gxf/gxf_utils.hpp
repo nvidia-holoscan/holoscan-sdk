@@ -18,14 +18,22 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
 #define HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
 
+#include <gxf/core/gxf.h>
+
 #include <iostream>
 #include <sstream>
 #include <string>
 
-#include <gxf/core/gxf.h>
-
 namespace holoscan::gxf {
 
+/**
+ * @brief Add a connection between two components.
+ *
+ * @param context The GXF context.
+ * @param source_cid The source component ID.
+ * @param target_cid The target component ID.
+ * @return The result code.
+ */
 inline gxf_result_t add_connection(gxf_context_t context, gxf_uid_t source_cid,
                                    gxf_uid_t target_cid) {
   gxf_result_t code;
@@ -43,6 +51,13 @@ inline gxf_result_t add_connection(gxf_context_t context, gxf_uid_t source_cid,
   return code;
 }
 
+/**
+ * @brief Get the entity ID of the component.
+ *
+ * @param context The GXF context.
+ * @param cid The component ID.
+ * @return The result code.
+ */
 inline gxf_uid_t get_component_eid(gxf_context_t context, gxf_uid_t cid) {
   gxf_result_t code;
   gxf_uid_t eid;
@@ -51,6 +66,13 @@ inline gxf_uid_t get_component_eid(gxf_context_t context, gxf_uid_t cid) {
   return eid;
 }
 
+/**
+ * @brief Get the full component name of the component.
+ *
+ * @param context The GXF context.
+ * @param cid The component ID.
+ * @return The full component name.
+ */
 inline std::string get_full_component_name(gxf_context_t context, gxf_uid_t cid) {
   gxf_result_t code;
 
@@ -67,12 +89,26 @@ inline std::string get_full_component_name(gxf_context_t context, gxf_uid_t cid)
   return sstream.str();
 }
 
+/**
+ * @brief Create a name from the prefix and the index.
+ *
+ * @param prefix The prefix string.
+ * @param index The index.
+ * @return The created name (`<prefix>_<index>`).
+ */
 inline std::string create_name(const char* prefix, int index) {
   std::stringstream sstream;
   sstream << prefix << "_" << index;
   return sstream.str();
 }
 
+/**
+ * @brief Create a name from the prefix and the name.
+ *
+ * @param prefix The prefix string.
+ * @param name The name.
+ * @return The created name (`<prefix>_<name>`).
+ */
 inline std::string create_name(const char* prefix, const std::string& name) {
   std::stringstream sstream;
   sstream << prefix << "_" << name;

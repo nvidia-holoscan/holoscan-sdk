@@ -1,4 +1,6 @@
-# Clara Holoviz SDK
+# Holoviz SDK
+
+> Note: Holoviz will be tightly coupled to the Holoscan SDK in a future release, and will not be an independant SDK
 
 ## Prerequisites
 
@@ -6,7 +8,7 @@
 
 ## Building
 
-Clara Holoviz is build with a docker container.
+Holoviz is buillt with a docker container.
 
 All build operations are executed using the 'run.sh' batch file, use
 
@@ -16,11 +18,11 @@ $ ./run.sh -h
 
 to see the options. The script supports
 
--   creating the docker image needed for building Clara Holoviz
--   building Clara Holoviz
+-   creating the docker image needed for building Holoviz
+-   building Holoviz
 
 The docker image _clara-holoviz-dev_ARCH:?.?.?_ (where `ARCH` is `x86_64`
-or `aarch64` and `?.?.?` is the version) is used to build the Clara Holoviz
+or `aarch64` and `?.?.?` is the version) is used to build the Holoviz
 executable.
 
 First the _dev_ docker image needs to be build by, this need to be done only once or when the dev docker image changes.
@@ -29,7 +31,7 @@ First the _dev_ docker image needs to be build by, this need to be done only onc
 $ ./run.sh image_build_dev
 ```
 
-When this is done the Clara Holoviz executable can be build.
+When this is done the Holoviz executable can be build.
 
 ```shell
 $ ./run.sh build

@@ -27,7 +27,7 @@
 namespace holoscan::ops {
 
 void VideoStreamReplayerOp::setup(OperatorSpec& spec) {
-  auto& output = spec.output<::gxf::Entity>("output");
+  auto& output = spec.output<gxf::Entity>("output");
 
   spec.param(transmitter_,
              "transmitter",

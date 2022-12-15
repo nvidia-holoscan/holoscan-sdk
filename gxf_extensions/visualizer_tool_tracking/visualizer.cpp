@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -84,7 +85,7 @@ static void glfwKeyCallback(GLFWwindow* window_, int key, int scancode, int acti
 }
 
 Sink::Sink()
-    : video_frame_vis_(video_frame_tex_),
+    : video_frame_vis_(),
       tooltip_vis_(frame_data_),
       label_vis_(frame_data_),
       overlay_img_vis(frame_data_, overlay_img_tex_) {}
@@ -166,6 +167,15 @@ gxf_result_t Sink::registerInterface(gxf::Registrar* registrar) {
       window_close_scheduling_term_, "window_close_scheduling_term", "WindowCloseSchedulingTerm",
       "BooleanSchedulingTerm to stop the codelet from ticking after all messages are published.");
 
+  result &= registrar->parameter(overlay_buffer_input_, "overlay_buffer_input",
+                                 "OverlayBufferInput", "Input for an empty overlay buffer.",
+                                 gxf::Registrar::NoDefaultParameter(),
+                                GXF_PARAMETER_FLAGS_OPTIONAL);
+  result &= registrar->parameter(overlay_buffer_output_, "overlay_buffer_output",
+                                 "OverlayBufferOutput", "Output for a filled overlay buffer.",
+                                 gxf::Registrar::NoDefaultParameter(),
+                                 GXF_PARAMETER_FLAGS_OPTIONAL);
+
   return gxf::ToResultCode(result);
 }
 
@@ -195,7 +205,7 @@ gxf_result_t Sink::start() {
   glfwSetKeyCallback(window_, glfwKeyCallback);
   glfwMakeContextCurrent(window_);
 
-  // propage width, height manually as first framebuffer resize callback is not triggered
+  // propagate width, height manually as first framebuffer resize callback is not triggered
   onFramebufferSizeCallback(in_width_, in_height_);
 
   // Load all OpenGL function pointers
@@ -348,6 +358,14 @@ gxf_result_t Sink::stop() {
 
   // Free OpenGL buffer and texture memory
   // ----------------------------------------------------------------------------------
+
+  if (cuda_overlay_renderbuffer_resource_) {
+    cudaError_t cuda_status = CUDA_TRY(
+        cudaGraphicsUnmapResources(1, &cuda_overlay_renderbuffer_resource_, 0));
+    if (cuda_status) {
+      GXF_LOG_ERROR("Failed to unmap CUDA overlay renderbuffer resource");
+    }
+  }
 
   // terminate, clearing all previously allocated GLFW resources.
   if (window_ != nullptr) {
@@ -649,16 +667,124 @@ gxf_result_t Sink::tick() {
     }
   }  // if (messages.size() >= 2)
 
-  if (vp_changed_) {
-    glViewport(0, 0, vp_width_, vp_height_);
-    vp_changed_ = false;
-  }
-
   // Draw Frame
   // ----------------------------------------------------------------------------------
 
-  video_frame_vis_.tick();
+  glViewport(0, 0, vp_width_, vp_height_);
+  video_frame_vis_.tick(video_frame_tex_, GL_LINEAR);
+  renderInferenceResults(vp_width_, vp_height_);
 
+  // Overlay output
+  // ----------------------------------------------------------------------------------
+
+  if (overlay_buffer_input_.try_get() && overlay_buffer_output_.try_get()) {
+    const auto& overlay_buffer_input = overlay_buffer_input_.try_get().value()->receive();
+    if (overlay_buffer_input) {
+      // Get the empty input buffer
+      const auto& overlay_buffer_in = overlay_buffer_input.value().get<gxf::VideoBuffer>();
+      if (overlay_buffer_in) {
+        auto info = overlay_buffer_in.value()->video_frame_info();
+
+        // Initialize the overlay rendering objects
+        if (overlay_render_fbo_ == 0) {
+          glGenFramebuffers(1, &overlay_render_fbo_);
+          glBindFramebuffer(GL_FRAMEBUFFER, overlay_render_fbo_);
+          glGenTextures(1, &overlay_render_texture_);
+          glBindTexture(GL_TEXTURE_2D, overlay_render_texture_);
+          glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, info.width, info.height);
+          glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, overlay_render_texture_, 0);
+
+          glGenFramebuffers(1, &overlay_output_fbo_);
+          glBindFramebuffer(GL_FRAMEBUFFER, overlay_output_fbo_);
+          glGenRenderbuffers(1, &overlay_output_renderbuffer_);
+          glBindRenderbuffer(GL_RENDERBUFFER, overlay_output_renderbuffer_);
+          glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, info.width, info.height);
+          glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
+                                    overlay_output_renderbuffer_);
+
+          cudaError_t cuda_status =
+              CUDA_TRY(cudaGraphicsGLRegisterImage(&cuda_overlay_renderbuffer_resource_,
+                                                   overlay_output_renderbuffer_,
+                                                   GL_RENDERBUFFER,
+                                                   cudaGraphicsRegisterFlagsReadOnly));
+          if (cuda_status) {
+            GXF_LOG_ERROR("Failed to register overlay renderbuffer for CUDA / OpenGL Interop");
+            return GXF_FAILURE;
+          }
+
+          cuda_status = CUDA_TRY(cudaGraphicsMapResources(1, &cuda_overlay_renderbuffer_resource_));
+          if (cuda_status) {
+            GXF_LOG_ERROR("Failed to map overlay renderbuffer for CUDA / OpenGL interop");
+            return GXF_FAILURE;
+          }
+
+          cuda_status = CUDA_TRY(cudaGraphicsSubResourceGetMappedArray(
+              &cuda_overlay_array_, cuda_overlay_renderbuffer_resource_, 0, 0));
+          if (cuda_status) {
+            GXF_LOG_ERROR("Failed to get mapped CUDA array for overlay renderbuffer");
+            return GXF_FAILURE;
+          }
+        }
+
+        glViewport(0, 0, info.width, info.height);
+
+        // Render the overlay to the texture
+        glBindFramebuffer(GL_FRAMEBUFFER, overlay_render_fbo_);
+        glClear(GL_COLOR_BUFFER_BIT);
+        renderInferenceResults(info.width, info.height);
+
+        // Use the video renderer to vertically flip the overlay to the output renderbuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, overlay_output_fbo_);
+        glClear(GL_COLOR_BUFFER_BIT);
+        video_frame_vis_.tick(overlay_render_texture_, GL_NEAREST);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Copy the overlay to the output buffer
+        auto memcpyKind = (overlay_buffer_in.value()->storage_type() ==
+                                                           gxf::MemoryStorageType::kHost)
+            ? cudaMemcpyDeviceToHost : cudaMemcpyDeviceToDevice;
+        auto row_size = info.width * 4;
+        cudaError_t cuda_status = CUDA_TRY(cudaMemcpy2DFromArray(
+                                            overlay_buffer_in.value()->pointer(),
+            row_size, cuda_overlay_array_, 0, 0, row_size, info.height, memcpyKind));
+        if (cuda_status) {
+          GXF_LOG_ERROR("Failed to copy overlay buffer via CUDA / OpenGL interop");
+          return GXF_FAILURE;
+        }
+
+        // Output the filled overlay buffer object
+        auto overlay_buffer_output = gxf::Entity::New(context());
+        if (!overlay_buffer_output) {
+          GXF_LOG_ERROR("Failed to allocate overlay output; terminating.");
+          return GXF_FAILURE;
+        }
+
+        auto overlay_buffer_out = overlay_buffer_output.value().add<gxf::VideoBuffer>();
+        overlay_buffer_out.value()->wrapMemory(info,
+            overlay_buffer_in.value()->size(),
+            overlay_buffer_in.value()->storage_type(),
+            overlay_buffer_in.value()->pointer(), nullptr);
+
+        const auto result = overlay_buffer_output_.try_get().value()->publish(
+            std::move(overlay_buffer_output.value()));
+        if (GXF_SUCCESS != gxf::ToResultCode(result)) {
+          GXF_LOG_ERROR("Failed to publish overlay output buffer");
+          return GXF_FAILURE;
+        }
+      }
+    }
+  }
+
+  // swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
+  // -------------------------------------------------------------------------------
+  glfwSwapBuffers(window_);
+  glfwPollEvents();
+
+  return GXF_SUCCESS;
+}
+
+void Sink::renderInferenceResults(int width, int height) {
   // render inference results: Overlay Image, Tooltip, Tool Names
   glEnable(GL_BLEND);
 
@@ -669,19 +795,8 @@ gxf_result_t Sink::tick() {
   glDisable(GL_BLEND);
 
   if (enable_tool_labels_) {
-    label_vis_.vp_width_ = vp_width_;
-    label_vis_.vp_height_ = vp_height_;
-    label_vis_.vp_aspect_ratio_ = vp_aspect_ratio_;
-
-    label_vis_.tick();
+    label_vis_.tick(width, height);
   }
-
-  // swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
-  // -------------------------------------------------------------------------------
-  glfwSwapBuffers(window_);
-  glfwPollEvents();
-
-  return GXF_SUCCESS;
 }
 
 void Sink::onKeyCallback(int key, int scancode, int action, int mods) {
@@ -707,8 +822,6 @@ void Sink::onFramebufferSizeCallback(int width, int height) {
 
   vp_width_ = width;
   vp_height_ = height;
-  vp_aspect_ratio_ = static_cast<float>(vp_width_) / static_cast<float>(vp_height_);
-  vp_changed_ = true;
 }
 
 }  // namespace visualizer_tool_tracking

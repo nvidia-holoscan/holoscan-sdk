@@ -18,8 +18,7 @@
 #ifndef HOLOSCAN_CORE_GRAPHS_GRAPH_HPP
 #define HOLOSCAN_CORE_GRAPHS_GRAPH_HPP
 
-#include "./common.hpp"
-
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -28,6 +27,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "./common.hpp"
 namespace holoscan {
 
 // Forward declarations
@@ -56,10 +56,11 @@ class Graph {
    *
    * @param op_u A source operator.
    * @param op_v A destination operator.
-   * @param io_map A map from the source operator's port name to the destination operator's port
+   * @param port_map A map from the source operator's port name to the destination operator's port
    * name(s).
    */
-  virtual void add_flow(const NodeType& op_u, const NodeType& op_v, const EdgeDataType& io_map) = 0;
+  virtual void add_flow(const NodeType& op_u, const NodeType& op_v,
+                        const EdgeDataType& port_map) = 0;
 
   /**
    * @brief Get a mapping from the source operator's port name to the destination operator's port
@@ -80,7 +81,7 @@ class Graph {
   virtual bool is_root(const NodeType& op) = 0;
 
   /**
-   * @brief Check if the operator is a left operator.
+   * @brief Check if the operator is a leaf operator.
    *
    * @param op A node in the graph.
    * @return true if the operator is a leaf operator.

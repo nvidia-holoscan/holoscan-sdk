@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "./ping_tx.hpp"
+#include "ping_tx.hpp"
 
 namespace nvidia {
 namespace holoscan {
@@ -50,7 +51,7 @@ gxf_result_t PingTx::tick() {
   }
   GXF_LOG_INFO("Signal vector size: %llu", signal_vector_.get().size());
 
-  auto result = signal_->publish(message.value(), now);
+  signal_->publish(message.value(), now);
   GXF_LOG_INFO("Message Sent: %d", this->count);
   GXF_LOG_INFO("Message data size: %llu  [0] = %d",
                this->signal_data_.get().size(),

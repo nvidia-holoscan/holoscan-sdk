@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -34,7 +35,7 @@ namespace holoscan {
 
 /// @brief Visualization codelet using OpenGL and GLFW for display.
 ///
-/// Provides a codelet that renders a VideoBuffer to an OpenGL texture leveraging 
+/// Provides a codelet that renders a VideoBuffer to an OpenGL texture leveraging
 /// OpenGL/CUDA interoperation.
 /// The texture is mapped to a full screen quad with simple GLSL shaders to render the texture.
 class OpenGLRenderer : public gxf::Codelet {

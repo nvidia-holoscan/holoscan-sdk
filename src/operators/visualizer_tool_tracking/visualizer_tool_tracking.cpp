@@ -45,8 +45,12 @@ void ToolTrackingVizOp::setup(OperatorSpec& spec) {
                                                                  {0.79f, 0.70f, 0.84f},
                                                                  {1.00f, 1.00f, 0.60f}};
 
-  auto& in_source_video = spec.input<::gxf::Entity>("source_video");
-  auto& in_tensor = spec.input<::gxf::Entity>("tensor");
+  auto& in_source_video = spec.input<gxf::Entity>("source_video");
+  auto& in_tensor = spec.input<gxf::Entity>("tensor");
+  auto& overlay_buffer_input = spec.input<gxf::Entity>("overlay_buffer_input")
+                                   .condition(ConditionType::kNone);
+  auto& overlay_buffer_output = spec.output<gxf::Entity>("overlay_buffer_output")
+                                    .condition(ConditionType::kNone);
 
   spec.param(in_, "in", "Input", "List of input channels", {&in_source_video, &in_tensor});
 
@@ -146,6 +150,16 @@ void ToolTrackingVizOp::setup(OperatorSpec& spec) {
       "window_close_scheduling_term",
       "WindowCloseSchedulingTerm",
       "BooleanSchedulingTerm to stop the codelet from ticking after all messages are published.");
+  spec.param(overlay_buffer_input_,
+             "overlay_buffer_input",
+             "OverlayBufferInput",
+             "Input for an empty overlay buffer.",
+             &overlay_buffer_input);
+  spec.param(overlay_buffer_output_,
+             "overlay_buffer_output",
+             "OverlayBufferOutput",
+             "Output for a filled overlay buffer.",
+             &overlay_buffer_output);
 }
 
 void ToolTrackingVizOp::initialize() {

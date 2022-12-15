@@ -1,13 +1,14 @@
 #version 450
 
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,6 +22,5 @@ layout(binding = 0) uniform sampler2D background;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-  vec3 rgb = texture2D(background, tex_coords).rgb;
-  out_color = vec4(rgb, 1.0);
+  out_color = texture2D(background, tex_coords);
 };

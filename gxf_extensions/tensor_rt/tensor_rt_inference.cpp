@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -38,7 +39,7 @@
 namespace nvidia {
 namespace gxf {
 namespace {
-// Checks wether a string ends with a certain string
+// Checks whether a string ends with a certain string
 inline bool EndsWith(const std::string& str, const std::string& suffix) {
   return str.size() >= suffix.size() &&
          str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -123,7 +124,7 @@ gxf::Expected<gxf::PrimitiveType> NvInferDatatypeToTensorElementType(nvinfer1::D
 }
 
 // Writes engine plan to specified file path
-gxf::Expected<void> SerializeEnginePlan(const std::vector<char>& plan, const std::string path) {
+gxf::Expected<void> SerializeEnginePlan(const std::vector<char>& plan, const std::string& path) {
   // Write Plan To Disk
   std::ofstream out_stream(path.c_str(), std::ofstream::binary);
   if (!out_stream.is_open()) {
@@ -339,7 +340,7 @@ gxf_result_t TensorRtInference::start() {
 
   // Debug spews
   if (verbose_.get()) {
-    GXF_LOG_DEBUG("Nubmer of CUDA bindings: %d", cuda_engine_->getNbBindings());
+    GXF_LOG_DEBUG("Number of CUDA bindings: %d", cuda_engine_->getNbBindings());
     for (int i = 0; i < cuda_engine_->getNbBindings(); ++i) {
       GXF_LOG_DEBUG("CUDA binding No.%d: name %s Format %s", i, cuda_engine_->getBindingName(i),
                     cuda_engine_->getBindingFormatDesc(i));

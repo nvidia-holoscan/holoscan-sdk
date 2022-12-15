@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_CONDITIONS_GXF_MESSAGE_AVAILABLE_HPP
 #define HOLOSCAN_CORE_CONDITIONS_GXF_MESSAGE_AVAILABLE_HPP
 
+#include <memory>
+
 #include "../../gxf/gxf_condition.hpp"
 
 namespace holoscan {

@@ -18,11 +18,12 @@
 #ifndef HOLOSCAN_OPERATORS_STREAM_PLAYBACK_VIDEO_STREAM_REPLAYER_HPP
 #define HOLOSCAN_OPERATORS_STREAM_PLAYBACK_VIDEO_STREAM_REPLAYER_HPP
 
-#include "../../core/gxf/gxf_operator.hpp"
-
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "../../core/gxf/gxf_operator.hpp"
 
 namespace holoscan::ops {
 

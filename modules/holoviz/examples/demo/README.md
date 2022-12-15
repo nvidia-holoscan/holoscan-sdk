@@ -1,3 +1,3 @@
-# Clara Holoviz Demo
+# Holoviz Demo
 
-This example shows all Clara Holoviz features in one application.
+This example shows all Holoviz features in one application.

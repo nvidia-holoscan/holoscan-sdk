@@ -18,12 +18,12 @@
 #ifndef HOLOSCAN_CORE_TYPES_HPP
 #define HOLOSCAN_CORE_TYPES_HPP
 
-#include "./common.hpp"
-
 #include <array>
 #include <memory>
 #include <type_traits>
 #include <vector>
+
+#include "./common.hpp"
 
 namespace holoscan {
 
@@ -205,6 +205,11 @@ inline constexpr bool is_yaml_convertable_v = is_yaml_convertable<std::decay_t<T
 
 template <typename T, typename... ArgsT>
 inline constexpr bool is_one_of_v = ((std::is_same_v<T, ArgsT> || ...));
+
+// is_one_of_derived_v
+
+template <typename T, typename... ArgsT>
+inline constexpr bool is_one_of_derived_v = ((std::is_base_of_v<T, ArgsT> || ...));
 
 // dimension_of_v
 

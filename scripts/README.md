@@ -2,7 +2,6 @@
 
 This folder includes the following scripts:
 - [`convert_video_to_gxf_entities.py`](#convert_video_to_gxf_entitiespy)
-- [`download_sample_data.py`](#download_sample_datapy)
 - [`generate_extension_uuids.py`](#generate_extension_uuidspy)
 - [`graph_surgeon.py`](#graph_surgeonpy)
 - [`include_checker.py`](#include_checkerpy)
@@ -23,26 +22,6 @@ Example usage converting the output of a tool like `ffmpeg` to encoded gxf entit
 
 ```sh
 ffmpeg -i endoscopy_1920x1080.avi -pix_fmt rgb24 -f rawvideo pipe:1 | python scripts/convert_video_to_gxf_entities.py --width 1920 --height 1080 --channels 3 --framerate 30
-```
-
-## download_sample_data.py
-
-Downloads the endoscopy and ultrasound data (AI models, video sources) from NGC, used by the sample applications.
-
-### Prerequisites
-
-NGC CLI tools installed and configured: https://ngc.nvidia.com/setup/installers/cli
-
-### Usage
-
-Default:
-```sh
-python scripts/download_sample_data.py
-```
-
-Help for additional configurations (NGC org, destination folder, data versions)
-```sh
-python scripts/download_sample_data.py --help
 ```
 
 ## generate_extension_uuids.py
@@ -70,5 +49,5 @@ If double-quotes are used, this script checks whether there is a file located at
 ### Usage
 
 ```bash
-python3 scripts/include_checker.py apps examples include modules src test
+python3 scripts/include_checker.py apps examples include modules src test python/pybind11
 ```

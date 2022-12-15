@@ -145,5 +145,5 @@ venv.bak/
 .conda
 conda-bld
 
-# Test data folders
-test_data
+# Data folders
+data

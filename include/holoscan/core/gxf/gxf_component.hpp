@@ -18,10 +18,10 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_COMPONENT_HPP
 #define HOLOSCAN_CORE_GXF_GXF_COMPONENT_HPP
 
+#include <gxf/core/gxf.h>
+
 #include <iostream>
 #include <string>
-
-#include <gxf/core/gxf.h>
 
 namespace holoscan::gxf {
 
@@ -30,13 +30,16 @@ class GXFComponent {
   GXFComponent() = default;
   virtual ~GXFComponent() = default;
 
-  virtual const char* gxf_typename() const { return "nvidia::gxf::Component"; };
+  virtual const char* gxf_typename() const { return "nvidia::gxf::Component"; }
 
   void gxf_context(gxf_context_t gxf_context) { gxf_context_ = gxf_context; }
   gxf_context_t gxf_context() const { return gxf_context_; }
 
   void gxf_eid(gxf_uid_t gxf_eid) { gxf_eid_ = gxf_eid; }
   gxf_uid_t gxf_eid() const { return gxf_eid_; }
+
+  void gxf_tid(gxf_tid_t gxf_tid) { gxf_tid_ = gxf_tid; }
+  gxf_tid_t gxf_tid() const { return gxf_tid_; }
 
   void gxf_cid(gxf_uid_t gxf_cid) { gxf_cid_ = gxf_cid; }
   gxf_uid_t gxf_cid() const { return gxf_cid_; }
@@ -54,11 +57,11 @@ class GXFComponent {
       return;
     }
 
-    gxf_tid_t term_tid;
     gxf_result_t code;
-
-    code = GxfComponentTypeId(gxf_context_, gxf_typename(), &term_tid);
-    code = GxfComponentAdd(gxf_context_, gxf_eid_, term_tid, gxf_cname().c_str(), &gxf_cid_);
+    code = GxfComponentTypeId(gxf_context_, gxf_typename(), &gxf_tid_);
+    code = GxfComponentAdd(gxf_context_, gxf_eid_, gxf_tid_, gxf_cname().c_str(), &gxf_cid_);
+    code =
+        GxfComponentPointer(gxf_context_, gxf_cid_, gxf_tid_, reinterpret_cast<void**>(&gxf_cptr_));
 
     (void)code;
   }
@@ -66,8 +69,10 @@ class GXFComponent {
  protected:
   gxf_context_t gxf_context_ = nullptr;
   gxf_uid_t gxf_eid_ = 0;
+  gxf_tid_t gxf_tid_ = {};
   gxf_uid_t gxf_cid_ = 0;
   std::string gxf_cname_;
+  void* gxf_cptr_ = nullptr;
 };
 
 }  // namespace holoscan::gxf

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -62,7 +63,6 @@ __global__ void postprocessing_kernel(Shape shape, const float* input, output_ty
 
   if ((x >= shape.width) || (y >= shape.height)) { return; }
 
-  float max_value = 0.0f;
   uint8_t max_index = 0;
 
   switch (network_output_type) {
@@ -71,6 +71,7 @@ __global__ void postprocessing_kernel(Shape shape, const float* input, output_ty
       max_index = value >= 0.5f ? 1 : 0;
     } break;
     case NetworkOutputType::kSoftmax: {
+      float max_value = 0.0f;
       for (uint32_t c = 0; c < shape.channels; c++) {
         const float value = input[data_format_to_index<data_format>(shape, y, x, c)];
         if (value > max_value) {

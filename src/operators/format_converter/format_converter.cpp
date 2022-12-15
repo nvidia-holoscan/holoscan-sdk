@@ -26,8 +26,8 @@
 namespace holoscan::ops {
 
 void FormatConverterOp::setup(OperatorSpec& spec) {
-  auto& in_tensor = spec.input<::gxf::Entity>("source_video");
-  auto& out_tensor = spec.output<::gxf::Entity>("tensor");
+  auto& in_tensor = spec.input<gxf::Entity>("source_video");
+  auto& out_tensor = spec.output<gxf::Entity>("tensor");
 
   spec.param(in_, "in", "Input", "Input channel.", &in_tensor);
   spec.param(out_, "out", "Output", "Output channel.", &out_tensor);

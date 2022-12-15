@@ -16,6 +16,26 @@
  */
 #include "holoscan/core/operator.hpp"
 
+#include "holoscan/core/executor.hpp"
+#include "holoscan/core/fragment.hpp"
+#include "holoscan/core/gxf/gxf_operator.hpp"
+
 namespace holoscan {
+
+void Operator::initialize() {
+  // Set the operator type based on the base class
+  if (dynamic_cast<ops::GXFOperator*>(this)) {
+    operator_type_ = holoscan::Operator::OperatorType::kGXF;
+  }
+
+  // Initialize the operator through the executor
+  auto fragment_ptr = fragment();
+  if (fragment_ptr) {
+    auto& executor = fragment_ptr->executor();
+    executor.initialize_operator(this);
+  } else {
+    HOLOSCAN_LOG_WARN("Operator::initialize() - Fragment is not set");
+  }
+}
 
 }  // namespace holoscan

@@ -1,4 +1,5 @@
-# Copyright (c) 2022, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,5 +46,7 @@ target_link_libraries(holoscan_sample
     ping_rx
     yaml-cpp
 )
-# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+# Install GXF extension as a component 'holoscan-gxf_extensions'
 install_gxf_extension(holoscan_sample)
+install_gxf_extension(ping_tx) # not following '{name}_lib' so install explicitly
+install_gxf_extension(ping_rx) # not following '{name}_lib' so install explicitly

@@ -31,7 +31,7 @@ typedef enum {
   NTV2_CHANNEL6,          ///< @brief Specifies channel or Frame Store 6 (or the 6th item).
   NTV2_CHANNEL7,          ///< @brief Specifies channel or Frame Store 7 (or the 7th item).
   NTV2_CHANNEL8,          ///< @brief Specifies channel or Frame Store 8 (or the 8th item).
-  NTV2_MAX_NUM_CHANNELS,  //	Always last!
+  NTV2_MAX_NUM_CHANNELS,  // Always last!
   NTV2_CHANNEL_INVALID = NTV2_MAX_NUM_CHANNELS
 } NTV2Channel;
 

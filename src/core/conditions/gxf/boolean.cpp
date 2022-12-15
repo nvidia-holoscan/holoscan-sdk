@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#include <gxf/std/scheduling_terms.hpp>
+
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 
 #include "holoscan/core/component_spec.hpp"
@@ -27,6 +29,33 @@ void BooleanCondition::setup(ComponentSpec& spec) {
              "Enable Tick",
              "The default initial condition for enabling tick.",
              true);
+}
+
+void BooleanCondition::enable_tick() {
+  if (gxf_cptr_) {
+    nvidia::gxf::BooleanSchedulingTerm* boolean_condition =
+        static_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_cptr_);
+    boolean_condition->enable_tick();
+  }
+  enable_tick_ = true;
+}
+
+void BooleanCondition::disable_tick() {
+  if (gxf_cptr_) {
+    nvidia::gxf::BooleanSchedulingTerm* boolean_condition =
+        static_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_cptr_);
+    boolean_condition->disable_tick();
+  }
+  enable_tick_ = false;
+}
+
+bool BooleanCondition::check_tick_enabled() {
+  if (gxf_cptr_) {
+    nvidia::gxf::BooleanSchedulingTerm* boolean_condition =
+        static_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_cptr_);
+    enable_tick_ = boolean_condition->checkTickEnabled();
+  }
+  return enable_tick_.get();
 }
 
 }  // namespace holoscan

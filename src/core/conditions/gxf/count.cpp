@@ -23,7 +23,7 @@ namespace holoscan {
 
 void CountCondition::setup(ComponentSpec& spec) {
   spec.param(
-      count_, "count", "Count", "The total number of time this term will permit execution.", 1L);
+      count_, "count", "Count", "The total number of times this term will permit execution.", 1L);
 }
 
 }  // namespace holoscan

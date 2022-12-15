@@ -19,9 +19,6 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 # Here we are using rapids_cpm_find() function instead of rapids_cpm_spdlog() function
 # (https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_spdlog.html), to
 # override the default options.
-# By default, rapids-cmake is seeking to a default version of spdlog library so we also update
-# the default version of spdlog from `cmake/rapids_cpm_package_overrides.json` file to prevent
-# the default version from being used.
 set(version 1.10.0)
 
 rapids_cpm_find(spdlog ${version}
@@ -35,6 +32,7 @@ rapids_cpm_find(spdlog ${version}
 
     OPTIONS
     "SPDLOG_FMT_EXTERNAL_HO ON"
+    EXCLUDE_FROM_ALL
 )
 
 if(spdlog_ADDED)

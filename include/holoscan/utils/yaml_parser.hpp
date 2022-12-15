@@ -18,14 +18,15 @@
 #ifndef HOLOSCAN_UTILS_YAML_PARSER_HPP
 #define HOLOSCAN_UTILS_YAML_PARSER_HPP
 
-#include "../core/common.hpp"
+#include <yaml-cpp/yaml.h>
 
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <utility>
+#include <vector>
 
-#include <yaml-cpp/yaml.h>
-
+#include "../core/common.hpp"
 namespace holoscan {
 
 template <typename typeT, typename valueT = void>
@@ -63,7 +64,9 @@ template <typename typeT>
 struct YAMLNodeParser<std::vector<typeT>> {
   static std::vector<typeT> parse(const YAML::Node& node) {
     if (!node.IsSequence()) {
-      HOLOSCAN_LOG_ERROR("Unable to parse YAML node: '{}'. It is not a sequence.", node);
+      std::stringstream ss;
+      ss << node;
+      HOLOSCAN_LOG_ERROR("Unable to parse YAML node: '{}'. It is not a sequence.", ss.str());
       return std::vector<typeT>();
     }
     std::vector<typeT> result(node.size());
@@ -80,12 +83,16 @@ template <typename typeT, std::size_t N>
 struct YAMLNodeParser<std::array<typeT, N>> {
   static std::array<typeT, N> parse(const YAML::Node& node) {
     if (!node.IsSequence()) {
-      HOLOSCAN_LOG_ERROR("Unable to parse YAML node: '{}'. It is not a sequence.", node);
+      std::stringstream ss;
+      ss << node;
+      HOLOSCAN_LOG_ERROR("Unable to parse YAML node: '{}'. It is not a sequence.", ss.str());
       return std::array<typeT, N>();
     }
     if (node.size() != N) {
+      std::stringstream ss;
+      ss << node;
       HOLOSCAN_LOG_ERROR(
-          "Unable to parse YAML node: '{}'. It is not a sequence of size {}.", node, N);
+          "Unable to parse YAML node: '{}'. It is not a sequence of size {}.", ss.str(), N);
       return std::array<typeT, N>();
     }
     std::array<typeT, N> result;

@@ -18,12 +18,12 @@
 #ifndef HOLOSCAN_CORE_CONFIG_HPP
 #define HOLOSCAN_CORE_CONFIG_HPP
 
-#include "./common.hpp"
-
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "./common.hpp"
 
 namespace holoscan {
 
@@ -40,14 +40,14 @@ class Config {
    * @param prefix The prefix string that is prepended to the key of the configuration. (not
    * implemented yet)
    */
-  Config(const std::string& config_file, const std::string& prefix = "")
+  explicit Config(const std::string& config_file, const std::string& prefix = "")
       : config_file_(config_file), prefix_(prefix) {
     if (std::filesystem::exists(config_file)) {
       parse_file(config_file);
-    } else {
-      HOLOSCAN_LOG_WARN("Config file '{}' doesn't exists", config_file);
+    } else if (config_file != "") {
+      HOLOSCAN_LOG_WARN("Config file '{}' doesn't exist", config_file);
     }
-  };
+  }
 
   virtual ~Config() = default;
 

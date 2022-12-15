@@ -1,13 +1,14 @@
 #version 450
 
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -33,7 +34,7 @@ layout(std430, binding = 0) buffer ConfidenceBlock {
 
 layout(location = 0) out vec4 out_color;
 
-float treshhold(float v, float minV, float maxV) {
+float threshold(float v, float minV, float maxV) {
   const float range = maxV - minV;
   v = clamp(v, minV, maxV);
   v -= minV;
@@ -52,7 +53,7 @@ void main() {
 
   for (int i = 0; i != num_layers; ++i) {
     if (confidence[i] > 0.5) {
-      float s = treshhold(texture(mask, vec3(tex_coords - tex_coord_offset, i)).r, minV, maxV);
+      float s = threshold(texture(mask, vec3(tex_coords - tex_coord_offset, i)).r, minV, maxV);
       vec4 src = vec4(layer_colors[i], s * 0.7);
       dst = (1.0 - src.a) * dst + src.a * src;
     }

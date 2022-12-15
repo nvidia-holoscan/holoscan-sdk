@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -43,14 +44,14 @@ gxf_result_t TensorProbe::tick() {
   auto tensor_metas = maybe_message.value().findAll<gxf::Tensor>();
   GXF_LOG_INFO("Getting tensors");
 
-  for (nvidia::gxf::Handle<nvidia::gxf::Tensor> tensor_meta : tensor_metas) {
+  for (const auto& tensor_meta : tensor_metas.value()) {
     GXF_LOG_INFO(
-        "Tensor name: %s (name length %d)", tensor_meta.name(), strlen(tensor_meta.name()));
+        "Tensor name: %s (name length %d)", tensor_meta->name(), strlen(tensor_meta->name()));
 
     gxf::Expected<gxf::Handle<gxf::Tensor>> maybe_tensor =
-        maybe_message.value().get<gxf::Tensor>(tensor_meta.name());
+        maybe_message.value().get<gxf::Tensor>(tensor_meta->name());
     if (!maybe_tensor) {
-      GXF_LOG_ERROR("Tensor %s not available.", tensor_meta.name());
+      GXF_LOG_ERROR("Tensor %s not available.", tensor_meta->name());
       return maybe_tensor.error();
     }
 
@@ -67,11 +68,11 @@ gxf_result_t TensorProbe::tick() {
       }
       stream << "]";
 
-      GXF_LOG_INFO("Input tensor: %s, Dimension: %s", tensor_meta.name(), sbuf.str().c_str());
+      GXF_LOG_INFO("Input tensor: %s, Dimension: %s", tensor_meta->name(), sbuf.str().c_str());
     }
 
     // Print element type
-    GXF_LOG_INFO("Input tensor: %s, Element Type: %d", tensor_meta.name(), tensor->element_type());
+    GXF_LOG_INFO("Input tensor: %s, Element Type: %d", tensor_meta->name(), tensor->element_type());
   }
 
   return GXF_SUCCESS;

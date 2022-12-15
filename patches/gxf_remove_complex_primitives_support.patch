@@ -1,0 +1,28 @@
+--- .cache/gxf/gxf/std/tensor.hpp	2022-11-16 01:49:53.000000000 -0500
++++ .cache/gxf/gxf/std/tensor_nocomplex.hpp	2022-11-16 11:58:49.765696035 -0500
+@@ -27,7 +27,6 @@
+ #include "gxf/core/component.hpp"
+ #include "gxf/core/expected.hpp"
+ #include "gxf/std/allocator.hpp"
+-#include "gxf/std/complex.hpp"
+ #include "gxf/std/memory_buffer.hpp"
+ 
+ namespace nvidia {
+@@ -46,8 +45,6 @@
+   kUnsigned64,
+   kFloat32,
+   kFloat64,
+-  kComplex64,
+-  kComplex128,
+ };
+ 
+ // Returns the size of each element of specific PrimitiveType as number of bytes.
+@@ -73,8 +70,6 @@
+ GXF_PRIMITIVE_TYPE_TRAITS(uint64_t, kUnsigned64);
+ GXF_PRIMITIVE_TYPE_TRAITS(float, kFloat32);
+ GXF_PRIMITIVE_TYPE_TRAITS(double, kFloat64);
+-GXF_PRIMITIVE_TYPE_TRAITS(complex64, kComplex64);
+-GXF_PRIMITIVE_TYPE_TRAITS(complex128, kComplex128);
+ 
+ // Type to hold the shape of a tensor
+ class Shape {

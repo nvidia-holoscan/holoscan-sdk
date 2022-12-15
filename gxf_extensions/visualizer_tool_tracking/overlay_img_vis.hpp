@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -42,7 +43,7 @@ struct OverlayImageVis {
   GLuint vertex_shader_ = 0, fragment_shader_ = 0, program_ = 0;
   std::string vertex_shader_file_path_;
   std::string fragment_shader_file_path_;
-  size_t num_layers_;
+  size_t num_layers_ = 0;
   std::vector<std::vector<float>> layer_colors_;
 
   OverlayImageVis(const FrameData& frame_data, const GLuint& overlay_img_tex)

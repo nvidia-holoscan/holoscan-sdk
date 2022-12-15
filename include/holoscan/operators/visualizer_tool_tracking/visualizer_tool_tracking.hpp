@@ -18,11 +18,11 @@
 #ifndef HOLOSCAN_OPERATORS_VISUALIZER_TOOL_TRACKING_VISUALIZER_TOOL_TRACKING_HPP
 #define HOLOSCAN_OPERATORS_VISUALIZER_TOOL_TRACKING_VISUALIZER_TOOL_TRACKING_HPP
 
-#include "../../core/gxf/gxf_operator.hpp"
-
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "../../core/gxf/gxf_operator.hpp"
 
 namespace holoscan::ops {
 
@@ -78,6 +78,9 @@ class ToolTrackingVizOp : public holoscan::ops::GXFOperator {
   Parameter<std::vector<std::string>> in_tensor_names_;
   Parameter<std::shared_ptr<Allocator>> pool_;
   Parameter<std::shared_ptr<Condition>> window_close_scheduling_term_;
+
+  Parameter<holoscan::IOSpec*> overlay_buffer_input_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_output_;
 };
 
 }  // namespace holoscan::ops

@@ -18,14 +18,14 @@
 #ifndef HOLOSCAN_CORE_APPLICATION_HPP
 #define HOLOSCAN_CORE_APPLICATION_HPP
 
-#include "./fragment.hpp"
-
 #include <iostream>     // for std::cout
 #include <memory>       // for std::shared_ptr
 #include <set>          // for std::set
 #include <string>       // for std::string
 #include <type_traits>  // for std::enable_if_t, std::is_constructible
 #include <utility>      // for std::pair
+
+#include "./fragment.hpp"
 
 namespace holoscan {
 
@@ -39,8 +39,14 @@ namespace holoscan {
 template <typename AppT, typename... ArgsT>
 std::shared_ptr<AppT> make_application(ArgsT&&... args) {
   return std::make_shared<AppT>(std::forward<ArgsT>(args)...);
-};
+}
 
+/**
+ * @brief Application class.
+ *
+ * An application acquires and processes streaming data. An application is a collection of fragments
+ * where each fragment can be allocated to execute on a physical node of a Holoscan cluster.
+ */
 class Application : public Fragment {
  public:
   Application() = default;

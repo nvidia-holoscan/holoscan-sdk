@@ -47,6 +47,9 @@ void GXFResource::initialize() {
 
   GXFComponent::gxf_initialize();
 
+  // Set GXF component ID as the component ID
+  id_ = gxf_cid_;
+
   if (!spec_) {
     HOLOSCAN_LOG_ERROR("No component spec for GXFResource '{}'", name());
     return;
@@ -81,4 +84,4 @@ void GXFResource::initialize() {
   (void)code;
 }
 
-}  // namespace holoscan
+}  // namespace holoscan::gxf

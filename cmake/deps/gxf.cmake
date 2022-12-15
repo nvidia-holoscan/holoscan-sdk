@@ -67,11 +67,11 @@ file(COPY "${_GXF_folder}/gxe/gxe"
     FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-# Install gxe binary to the binrary directory of the CMAKE_INSTALL_PREFIX
+# Install gxe binary to the binary directory of the CMAKE_INSTALL_PREFIX
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/bin/gxe"
     DESTINATION "bin"
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-    COMPONENT "holoscan-embedded-gxf_bins"
+    COMPONENT "holoscan-gxf_bins"
 )
 
 # Clean

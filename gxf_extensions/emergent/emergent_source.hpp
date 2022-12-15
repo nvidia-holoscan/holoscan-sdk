@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,17 +17,17 @@
 #ifndef NVIDIA_CLARA_HOLOSCAN_GXF_EXTENSIONS_EMERGENT_SOURCE_HPP_
 #define NVIDIA_CLARA_HOLOSCAN_GXF_EXTENSIONS_EMERGENT_SOURCE_HPP_
 
-#include <string>
-#include <vector>
-
-#include "gxf/std/codelet.hpp"
-#include "gxf/std/transmitter.hpp"
-
 #include <emergentframe.h>
 #include <emergenterrors.h>
 #include <gigevisiondeviceinfo.h>
 #include <EmergentCamera.h>
 #include <EmergentCameraAPIs.h>
+
+#include <string>
+#include <vector>
+
+#include "gxf/std/codelet.hpp"
+#include "gxf/std/transmitter.hpp"
 
 #define FRAMES_BUFFERS 256
 
@@ -46,8 +47,8 @@ constexpr PIXEL_FORMAT kDefaultPixelFormat = GVSP_PIX_BAYGB8;
 
 /// @brief Video input codelet for use with Emergent cameras using ConnectX-6
 ///
-/// Provides a codelet for supporting Emergent camera as a source. 
-/// It offers support for GPUDirect-RDMA on Quadro GPUs. 
+/// Provides a codelet for supporting Emergent camera as a source.
+/// It offers support for GPUDirect-RDMA on Quadro/NVIDIA RTX GPUs.
 /// The output is a VideoBuffer object.
 
 class EmergentSource : public gxf::Codelet {

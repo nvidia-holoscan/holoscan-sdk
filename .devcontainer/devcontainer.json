@@ -2,13 +2,19 @@
 // https://code.visualstudio.com/docs/remote/devcontainerjson-reference
 {
     "name": "C++",
+    // Dockerfile in this VSCode DevContainer uses a cache image named `holoscan-sdk-dev` to
+    // speed up the build process. To rebuild the cache image before container creation, it runs:
+    //
+    //   docker buildx use default  # use the default builder to access all the cache images
+    //   ./run build_image`
+    //
+    // as an initialization command.
+    // It also runs `./run install_gxf` to install the GXF library.
+    "initializeCommand": "docker buildx use default; ${localWorkspaceFolder}/run build_image; ${localWorkspaceFolder}/run install_gxf",
     "build": {
         "dockerfile": "Dockerfile",
-        // Update 'VARIANT' to choose base image
-        // (Default: nvcr.io/nvidia/tensorrt:22.03-py3)
         "args": {
-            "VARIANT": "nvcr.io/nvidia/tensorrt:22.03-py3",
-            //"PLATFORM": "linux/arm64",
+            "BUILDKIT_INLINE_CACHE": "1", // Enable Docker BuildKit cache
         }
         // buildcontainer.json doesn't support build.secrets field
         // (https://github.com/microsoft/vscode-remote-release/issues/4841)
@@ -18,6 +24,8 @@
         "--net=host",
         // Uncomment the following line to use AJA Capture Card
         // "--device=/dev/ajantv20:/dev/ajantv20",
+        // Uncomment the following line to use /dev/video0. Also, execute 'sudo chmod 666 /dev/video0' inside the container.
+        // "--device=/dev/video0:/dev/video0",
         "--cap-add=SYS_PTRACE",
         "--security-opt=seccomp=unconfined",
     ],
@@ -27,10 +35,11 @@
     },
     "mounts": [
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
-        // Mount /usr/share/vulkan folder for Vulkan
-        "source=/usr/share/vulkan,target=/usr/share/vulkan,type=bind,consistency=cached",
-        // For mounting local 'test_data' folder to '/workspace/test_data' in the container
-        "source=${localWorkspaceFolder}/test_data,target=/workspace/test_data,type=bind,consistency=cached",
+        // Mount Vulkan driver ICD configuration (need to map two paths, the configurations files are installed to different locations
+        // when installing with deb packages or with run files)
+        // Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
+        "source=/usr/share/vulkan/icd.d/nvidia_icd.json,target=/usr/share/vulkan/icd.d/nvidia_icd.json,type=bind,consistency=cached",
+        "source=/etc/vulkan/icd.d/nvidia_icd.json,target=/etc/vulkan/icd.d/nvidia_icd.json,type=bind,consistency=cached",
     ],
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/holoscan-sdk,type=bind,consistency=cached",
     "workspaceFolder": "/workspace/holoscan-sdk",
@@ -52,6 +61,7 @@
                 "shardulm94.trailing-spaces",
                 "stkb.rewrap",
                 "shd101wyy.markdown-preview-enhanced",
+                "cschlosser.doxdocgen",
             ]
         }
     },

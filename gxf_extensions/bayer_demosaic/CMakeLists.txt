@@ -38,5 +38,5 @@ target_link_libraries(bayer_demosaic
   bayer_demosaic_lib
 )
 
-# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+# Install GXF extension as a component 'holoscan-gxf_extensions'
 install_gxf_extension(bayer_demosaic)

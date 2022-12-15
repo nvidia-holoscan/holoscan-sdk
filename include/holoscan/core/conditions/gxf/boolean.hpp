@@ -25,14 +25,14 @@ namespace holoscan {
 class BooleanCondition : public gxf::GXFCondition {
  public:
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(BooleanCondition, GXFCondition)
-  BooleanCondition() = default;
-  explicit BooleanCondition(bool enable_tick) : enable_tick_(enable_tick) {}
+
+  explicit BooleanCondition(bool enable_tick = true) : enable_tick_(enable_tick) {}
 
   const char* gxf_typename() const override { return "nvidia::gxf::BooleanSchedulingTerm"; }
 
-  void enable_tick() { enable_tick_ = true; }
-  void disable_tick() { enable_tick_ = false; }
-  bool check_tick_enabled() { return enable_tick_.get(); }
+  void enable_tick();
+  void disable_tick();
+  bool check_tick_enabled();
 
   void setup(ComponentSpec& spec) override;
 

@@ -28,7 +28,7 @@
 namespace holoscan::ops {
 
 void VideoStreamRecorderOp::setup(OperatorSpec& spec) {
-  auto& input = spec.input<::gxf::Entity>("input");
+  auto& input = spec.input<gxf::Entity>("input");
 
   spec.param(receiver_, "receiver", "Entity receiver", "Receiver channel to log", &input);
   spec.param(entity_serializer_,

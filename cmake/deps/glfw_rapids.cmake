@@ -67,6 +67,6 @@ rapids_cpm_find(GLFW 3.3.7
 if(GLFW_ADDED)
     install(TARGETS glfw
         DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-        COMPONENT "holoscan-embedded-dep_libs"
+        COMPONENT "holoscan-dependencies"
     )
 endif()

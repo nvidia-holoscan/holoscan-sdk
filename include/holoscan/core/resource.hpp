@@ -18,12 +18,12 @@
 #ifndef HOLOSCAN_CORE_RESOURCE_HPP
 #define HOLOSCAN_CORE_RESOURCE_HPP
 
-#include "./component.hpp"
-
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 
+#include "./component.hpp"
 #include "./gxf/gxf_component.hpp"
 #include "./gxf/gxf_utils.hpp"
 
@@ -47,7 +47,7 @@
 #define HOLOSCAN_RESOURCE_FORWARD_ARGS(class_name) \
   HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()             \
   class_name(ArgT&& arg, ArgsT&&... args)          \
-      : Resource(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...){};
+      : Resource(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 /**
  * @brief Forward the arguments to the super class.
@@ -78,7 +78,7 @@
 #define HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(class_name, super_class_name) \
   HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()                                     \
   class_name(ArgT&& arg, ArgsT&&... args)                                  \
-      : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...){};
+      : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
 
@@ -97,7 +97,7 @@ class Resource : public Component {
   Resource(Resource&&) = default;
 
   HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()
-  Resource(ArgT&& arg, ArgsT&&... args) {
+  explicit Resource(ArgT&& arg, ArgsT&&... args) {
     add_arg(std::forward<ArgT>(arg));
     (add_arg(std::forward<ArgsT>(args)), ...);
   }
@@ -142,13 +142,11 @@ class Resource : public Component {
   /**
    * @brief Set the component specification to the resource.
    *
-   * The component specification would be 'moved' to the resource.
-   *
    * @param spec The component specification.
    * @return The reference to the resource.
    */
-  Resource& spec(std::unique_ptr<ComponentSpec> spec) {
-    spec_ = std::move(spec);
+  Resource& spec(std::shared_ptr<ComponentSpec> spec) {
+    spec_ = spec;
     return *this;
   }
   /**
@@ -168,7 +166,7 @@ class Resource : public Component {
   virtual void setup(ComponentSpec& spec) { (void)spec; }
 
  protected:
-  std::unique_ptr<ComponentSpec> spec_;  ///< The component specification.
+  std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
 };
 
 }  // namespace holoscan

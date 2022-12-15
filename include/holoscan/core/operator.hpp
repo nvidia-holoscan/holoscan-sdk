@@ -18,14 +18,17 @@
 #ifndef HOLOSCAN_CORE_OPERATOR_HPP
 #define HOLOSCAN_CORE_OPERATOR_HPP
 
-#include "./common.hpp"
-
 #include <stdio.h>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <type_traits>
+#include <utility>
+#include <unordered_map>
 
+#include "./common.hpp"
 #include "./arg.hpp"
+#include "./argument_setter.hpp"
 #include "./component.hpp"
 #include "./condition.hpp"
 #include "./forward_def.hpp"
@@ -40,9 +43,9 @@
                 (std::is_same_v<Arg, std::decay_t<ArgT>> ||                             \
                  std::is_same_v<ArgList, std::decay_t<ArgT>> ||                         \
                  std::is_base_of_v<holoscan::Condition,                                 \
-                                   typename holoscan::type_info<ArgT>::element_type> || \
+                                   typename holoscan::type_info<ArgT>::derived_type> || \
                  std::is_base_of_v<holoscan::Resource,                                  \
-                                   typename holoscan::type_info<ArgT>::element_type>)>>
+                                   typename holoscan::type_info<ArgT>::derived_type>)>>
 
 /**
  * @brief Forward the arguments to the super class.
@@ -113,7 +116,7 @@ namespace holoscan {
 /**
  * @brief Base class for all operators.
  *
- * An operator is the most basic unit of work in Holoscan Embedded SDK. An Operator receives
+ * An operator is the most basic unit of work in Holoscan SDK. An Operator receives
  * streaming data at an input port, processes it, and publishes it to one of its output ports.
  *
  * This class is the base class for all operators. It provides the basic functionality for all
@@ -125,12 +128,20 @@ namespace holoscan {
 class Operator : public Component {
  public:
   /**
+   * @brief Operator type used by the executor.
+   */
+  enum class OperatorType {
+    kNative,  ///< Native operator.
+    kGXF,     ///< GXF operator.
+  };
+
+  /**
    * @brief Construct a new Operator object.
    *
    * @param args The arguments to be passed to the operator.
    */
   HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
-  Operator(ArgT&& arg, ArgsT&&... args) {
+  explicit Operator(ArgT&& arg, ArgsT&&... args) {
     add_arg(std::forward<ArgT>(arg));
     (add_arg(std::forward<ArgsT>(args)), ...);
   }
@@ -138,6 +149,25 @@ class Operator : public Component {
   Operator() = default;
 
   ~Operator() override = default;
+
+  /**
+   * @brief Get the operator type.
+   *
+   * @return The operator type.
+   */
+  OperatorType operator_type() const { return operator_type_; }
+
+  using Component::id;
+  /**
+   * @brief Set the Operator ID.
+   *
+   * @param id The ID of the operator.
+   * @return The reference to this operator.
+   */
+  Operator& id(int64_t id) {
+    id_ = id;
+    return *this;
+  }
 
   using Component::name;
   /**
@@ -169,8 +199,8 @@ class Operator : public Component {
    * @param spec The operator spec.
    * @return The reference to this operator.
    */
-  Operator& spec(std::unique_ptr<OperatorSpec> spec) {
-    spec_ = std::move(spec);
+  Operator& spec(const std::shared_ptr<OperatorSpec>& spec) {
+    spec_ = spec;
     return *this;
   }
   /**
@@ -179,6 +209,28 @@ class Operator : public Component {
    * @return The operator spec.
    */
   OperatorSpec* spec() { return spec_.get(); }
+
+  /**
+   * @brief Get the shared pointer to the operator spec.
+   *
+   * @return The shared pointer to the operator spec.
+   */
+  std::shared_ptr<OperatorSpec> spec_shared() { return spec_; }
+
+  template <typename ConditionT>
+  /**
+   * @brief Get a shared pointer to the Condition object.
+   *
+   * @param name The name of the condition.
+   * @return The reference to the Condition object. If the condition does not exist, return the
+   * nullptr.
+   */
+  std::shared_ptr<ConditionT> condition(const std::string& name) {
+    if (auto condition = conditions_.find(name); condition != conditions_.end()) {
+      return std::dynamic_pointer_cast<ConditionT>(condition->second);
+    }
+    return nullptr;
+  }
 
   /**
    * @brief Get the conditions of the operator.
@@ -229,15 +281,22 @@ class Operator : public Component {
   virtual void setup(OperatorSpec& spec) { (void)spec; }
 
   /**
+   * @brief Initialize the operator.
+   *
+   * This function is called after the operator is created by holoscan::Fragment::make_operator().
+   */
+  void initialize() override;
+
+  /**
    * @brief Implement the startup logic of the operator.
    *
    * This method is called multiple times over the lifecycle of the operator according to the
    * order defined in the lifecycle, and used for heavy initialization tasks such as allocating
    * memory resources.
    */
-  virtual void start(){
+  virtual void start() {
       // Empty default implementation
-  };
+  }
 
   /**
    * @brief Implement the shutdown logic of the operator.
@@ -246,9 +305,9 @@ class Operator : public Component {
    * order defined in the lifecycle, and used for heavy deinitialization tasks such as deallocation
    * of all resources previously assigned in start.
    */
-  virtual void stop(){
+  virtual void stop() {
       // Empty default implementation
-  };
+  }
 
   /**
    * @brief Implement the compute method.
@@ -265,10 +324,129 @@ class Operator : public Component {
     (void)op_input;
     (void)op_output;
     (void)context;
-  };
+  }
+
+  /**
+   * @brief Register the argument setter for the given type.
+   *
+   * If the operator has an argument with a custom type, the argument setter must be registered
+   * using this method.
+   *
+   * The argument setter is used to set the value of the argument from the YAML configuration.
+   *
+   * This method can be called in the initialization phase of the operator (e.g., `initialize()`).
+   * The example below shows how to register the argument setter for the custom type (`Vec3`):
+   *
+   * ```cpp
+   * void MyOp::initialize() {
+   *   register_converter<Vec3>();
+   * }
+   * ```
+   *
+   * It is assumed that `YAML::convert<T>::encode` and `YAML::convert<T>::decode` are implemented
+   * for the given type.
+   * You need to specialize the `YAML::convert<>` template class.
+   *
+   * For example, suppose that you had a `Vec3` class with the following members:
+   *
+   * ```cpp
+   * struct Vec3 {
+   *   // make sure you have overloaded operator==() for the comparison
+   *   double x, y, z;
+   * };
+   * ```
+   *
+   * You can define the `YAML::convert<Vec3>` as follows in a '.cpp' file:
+   *
+   * ```cpp
+   * namespace YAML {
+   * template<>
+   * struct convert<Vec3> {
+   *   static Node encode(const Vec3& rhs) {
+   *     Node node;
+   *     node.push_back(rhs.x);
+   *     node.push_back(rhs.y);
+   *     node.push_back(rhs.z);
+   *     return node;
+   *   }
+   *
+   *   static bool decode(const Node& node, Vec3& rhs) {
+   *     if(!node.IsSequence() || node.size() != 3) {
+   *       return false;
+   *     }
+   *
+   *     rhs.x = node[0].as<double>();
+   *     rhs.y = node[1].as<double>();
+   *     rhs.z = node[2].as<double>();
+   *     return true;
+   *   }
+   * };
+   * }
+   * ```
+   *
+   * Please refer to the [yaml-cpp
+   * documentation](https://github.com/jbeder/yaml-cpp/wiki/Tutorial#converting-tofrom-native-data-types)
+   * for more details.
+   *
+   * @tparam typeT The type of the argument to register.
+   */
+  template <typename typeT>
+  static void register_converter() {
+    register_argument_setter<typeT>();
+  }
 
  protected:
-  std::unique_ptr<OperatorSpec> spec_;  ///< The operator spec of the operator.
+  /**
+   * @brief Register the argument setter for the given type.
+   *
+   * Please refer to the documentation of `::register_converter()` for more details.
+   *
+   * @tparam typeT The type of the argument to register.
+   */
+  template <typename typeT>
+  static void register_argument_setter() {
+    ArgumentSetter::get_instance().add_argument_setter<typeT>(
+        [](ParameterWrapper& param_wrap, Arg& arg) {
+          std::any& any_param = param_wrap.value();
+          std::any& any_arg = arg.value();
+
+          // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
+          auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
+          const auto& arg_type = arg.arg_type();
+          (void)param;
+
+          auto element_type = arg_type.element_type();
+          auto container_type = arg_type.container_type();
+
+          HOLOSCAN_LOG_DEBUG(
+              "Registering converter for parameter {} (element_type: {}, container_type: {})",
+              arg.name(),
+              (int)element_type,
+              (int)container_type);
+
+          if (element_type == ArgElementType::kYAMLNode) {
+            auto& arg_value = std::any_cast<YAML::Node&>(any_arg);
+            typeT new_value;
+            bool parse_ok = YAML::convert<typeT>::decode(arg_value, new_value);
+            if (!parse_ok) {
+              HOLOSCAN_LOG_ERROR("Unable to parse YAML node for parameter '{}'", arg.name());
+            } else {
+              param = std::move(new_value);
+            }
+          } else {
+            try {
+              auto& arg_value = std::any_cast<typeT&>(any_arg);
+              param = arg_value;
+            } catch (const std::bad_any_cast& e) {
+              HOLOSCAN_LOG_ERROR(
+                  "Bad any cast exception caught for argument '{}': {}", arg.name(), e.what());
+            }
+          }
+        });
+  }
+
+  OperatorType operator_type_ = OperatorType::kNative;  ///< The type of the operator.
+  std::shared_ptr<OperatorSpec> spec_;                  ///< The operator spec of the operator.
   std::unordered_map<std::string, std::shared_ptr<Condition>>
       conditions_;  ///< The conditions of the operator.
   std::unordered_map<std::string, std::shared_ptr<Resource>>

@@ -18,13 +18,11 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_OPERATOR_HPP
 #define HOLOSCAN_CORE_GXF_GXF_OPERATOR_HPP
 
-#include "../operator.hpp"
+#include <gxf/core/gxf.h>
 
 #include <iostream>
 
-#include <gxf/core/gxf.h>
-
-#include "../argument_setter.hpp"
+#include "../operator.hpp"
 #include "../executors/gxf/gxf_parameter_adaptor.hpp"
 
 namespace holoscan::ops {
@@ -35,50 +33,136 @@ class GXFOperator : public holoscan::Operator {
 
   GXFOperator() = default;
 
-  void initialize() override;
-
+  /**
+   * @brief Get the type name of the GXF component.
+   *
+   * The returned string is the type name of the GXF component and is used to
+   * create the GXF component.
+   *
+   * Example: "nvidia::holoscan::AJASource"
+   *
+   * @return The type name of the GXF component.
+   */
   virtual const char* gxf_typename() const = 0;
 
+  /**
+   * @brief Get the GXF context object.
+   *
+   * @return The GXF context object.
+   */
+  gxf_context_t gxf_context() const { return gxf_context_; }
+
+  /**
+   * @brief Set GXF entity ID.
+   *
+   * @param gxf_eid The GXF entity ID.
+   */
+  void gxf_eid(gxf_uid_t gxf_eid) { gxf_eid_ = gxf_eid; }
+  /**
+   * @brief Get the GXF entity ID.
+   *
+   * @return The GXF entity ID.
+   */
+  gxf_uid_t gxf_eid() const { return gxf_eid_; }
+
+  /**
+   * @brief Set the GXF component ID.
+   *
+   * @param gxf_cid The GXF component ID.
+   */
+  void gxf_cid(gxf_uid_t gxf_cid) { gxf_cid_ = gxf_cid; }
+
+  /**
+   * @brief Get the GXF component ID.
+   *
+   * @return The GXF component ID.
+   */
+  gxf_uid_t gxf_cid() const { return gxf_cid_; }
+
+  /**
+   * @brief Register the argument setter and the GXF parameter adaptor for the given type.
+   *
+   * If the GXF operator has an argument with a custom type, both the argument setter and GXF
+   * parameter adaptor must be registered using this method.
+   *
+   * The argument setter is used to set the value of the argument from the YAML configuration, and
+   * the GXF parameter adaptor is used to set the value of the GXF parameter from the argument value
+   * in `YAML::Node` object.
+   *
+   * This method can be called in the initialization phase of the operator (e.g., `initialize()`).
+   * The example below shows how to register the argument setter for the custom type (`Vec3`):
+   *
+   * ```cpp
+   * void MyGXFOp::initialize() {
+   *   register_converter<Vec3>();
+   *
+   *   holoscan::ops::GXFOperator::initialize();
+   * }
+   * ```
+   *
+   * It is assumed that `YAML::convert<T>::encode` and `YAML::convert<T>::decode` are implemented
+   * for the given type.
+   * You need to specialize the `YAML::convert<>` template class.
+   *
+   * For example, suppose that you had a `Vec3` class with the following members:
+   *
+   * ```cpp
+   * struct Vec3 {
+   *   // make sure you have overloaded operator==() for the comparison
+   *   double x, y, z;
+   * };
+   * ```
+   *
+   * You can define the `YAML::convert<Vec3>` as follows in a '.cpp' file:
+   *
+   * ```cpp
+   * namespace YAML {
+   * template<>
+   * struct convert<Vec3> {
+   *   static Node encode(const Vec3& rhs) {
+   *     Node node;
+   *     node.push_back(rhs.x);
+   *     node.push_back(rhs.y);
+   *     node.push_back(rhs.z);
+   *     return node;
+   *   }
+   *
+   *   static bool decode(const Node& node, Vec3& rhs) {
+   *     if(!node.IsSequence() || node.size() != 3) {
+   *       return false;
+   *     }
+   *
+   *     rhs.x = node[0].as<double>();
+   *     rhs.y = node[1].as<double>();
+   *     rhs.z = node[2].as<double>();
+   *     return true;
+   *   }
+   * };
+   * }
+   * ```
+   *
+   * Please refer to the [yaml-cpp
+   * documentation](https://github.com/jbeder/yaml-cpp/wiki/Tutorial#converting-tofrom-native-data-types)
+   * for more details.
+   *
+   * @tparam typeT The type of the argument to register.
+   */
   template <typename typeT>
   static void register_converter() {
-    ArgumentSetter::get_instance().add_argument_setter<typeT>([](ParameterWrapper& param_wrap,
-                                                                 Arg& arg) {
-      std::any& any_param = param_wrap.value();
-      std::any& any_arg = arg.value();
+    ::holoscan::Operator::register_argument_setter<typeT>();
+    register_parameter_adaptor<typeT>();
+  }
 
-      // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
-      auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
-      const auto& arg_type = arg.arg_type();
-      (void)param;
-
-      auto element_type = arg_type.element_type();
-      auto container_type = arg_type.container_type();
-
-      HOLOSCAN_LOG_DEBUG(
-          "Registering converter for parameter {} (element_type: {}, container_type: {})",
-          arg.name(),
-          (int)element_type,
-          (int)container_type);
-
-      if (element_type == ArgElementType::kYAMLNode) {
-        auto& arg_value = std::any_cast<YAML::Node&>(any_arg);
-        typeT new_value;
-        bool parse_ok = YAML::convert<typeT>::decode(arg_value, new_value);
-        if (!parse_ok) {
-          HOLOSCAN_LOG_ERROR("Unable to parse YAML node for parameter '{}'", arg.name());
-        } else {
-          param = std::move(new_value);
-        }
-      } else {
-        auto& arg_value = std::any_cast<typeT&>(any_arg);
-        if (arg_value) {
-          param = arg_value;
-        } else {
-          HOLOSCAN_LOG_ERROR("Unable to handle parameter '{}'", arg.name());
-        }
-      }
-    });
-
+ protected:
+  /**
+   * @brief Register the GXF parameter adaptor for the given type.
+   *
+   * Please refer to the documentation of `::register_converter()` for more details.
+   *
+   * @tparam typeT The type of the argument to register.
+   */
+  template <typename typeT>
+  static void register_parameter_adaptor() {
     ::holoscan::gxf::GXFParameterAdaptor::get_instance().add_param_handler<typeT>(
         [](gxf_context_t context,
            gxf_uid_t uid,
@@ -93,17 +177,17 @@ class GXFOperator : public holoscan::Operator {
             if (param.has_value()) {
               auto& value = param.get();
               switch (arg_type.container_type()) {
-                case ArgContainerType::kNative: {
+                case ArgContainerType::kNative:
+                case ArgContainerType::kVector: {
                   if (arg_type.element_type() == ArgElementType::kCustom) {
                     YAML::Node value_node = YAML::convert<typeT>::encode(value);
                     return GxfParameterSetFromYamlNode(context, uid, key, &value_node, "");
                   }
                   break;
                 }
-                case ArgContainerType::kVector:
                 case ArgContainerType::kArray: {
-                  HOLOSCAN_LOG_ERROR(
-                      "Unable to handle ArgContainerType::kVector/kArray type for key '{}'", key);
+                  HOLOSCAN_LOG_ERROR("Unable to handle ArgContainerType::kArray type for key '{}'",
+                                     key);
                   break;
                 }
               }
@@ -119,9 +203,9 @@ class GXFOperator : public holoscan::Operator {
           return GXF_FAILURE;
         });
   }
-
- protected:
-  gxf_context_t gxf_context_ = nullptr;
+  gxf_context_t gxf_context_ = nullptr;  ///< The GXF context.
+  gxf_uid_t gxf_eid_ = 0;                ///< GXF entity ID
+  gxf_uid_t gxf_cid_ = 0;                ///< The GXF component ID.
 };
 
 }  // namespace holoscan::ops

@@ -21,20 +21,20 @@ find_package(CUDAToolkit REQUIRED)
 find_package(X11 REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED)
-add_library(clara::holoviz ALIAS ${PROJECT_NAME})
+add_library(holoscan::viz ALIAS ${PROJECT_NAME})
 
 # compile GLSL source files to SPIR-V
 include("${nvpro_core_CMAKE_DIR}/utilities.cmake")
 
 set(GLSL_SOURCE_FILES)
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometryShader.glsl.frag")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometryShader.glsl.vert")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometryTextShader.glsl.frag")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometryTextShader.glsl.vert")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/imageLUTFloatShader.glsl.frag")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/imageLUTUIntShader.glsl.frag")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/imageShader.glsl.frag")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/imageShader.glsl.vert")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_shader.glsl.frag")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_shader.glsl.vert")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_text_shader.glsl.frag")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_text_shader.glsl.vert")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_lut_float_shader.glsl.frag")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_lut_uint_shader.glsl.frag")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_shader.glsl.frag")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_shader.glsl.vert")
 
 compile_glsl(
     SOURCE_FILES ${GLSL_SOURCE_FILES}
@@ -48,19 +48,22 @@ set_source_files_properties(${GLSL_SOURCE_FILES} PROPERTIES GENERATED TRUE)
 # sources
 target_sources(${PROJECT_NAME}
     PRIVATE
-        Context.cpp
-        Holoviz.cpp
-        GLFWWindow.cpp
-        ExclusiveWindow.cpp
+        context.cpp
+        exclusive_window.cpp
+        glfw_window.cpp
+        headless_window.cpp
+        holoviz.cpp
 
-        cuda/Convert.cu
+        cuda/convert.cu
+        cuda/cuda_service.cpp
 
-        layers/GeometryLayer.cpp
-        layers/ImageLayer.cpp
-        layers/ImGuiLayer.cpp
-        layers/Layer.cpp
+        layers/geometry_layer.cpp
+        layers/image_layer.cpp
+        layers/im_gui_layer.cpp
+        layers/layer.cpp
 
-        vulkan/Vulkan.cpp
+        vulkan/framebuffer_sequence.cpp
+        vulkan/vulkan.cpp
 
         ${GLSL_SOURCE_FILES}
     )
@@ -80,7 +83,7 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         X11::X11
         nvpro_core
-        clara::holoviz::imgui
+        holoscan::viz::imgui
 
     PUBLIC
         CUDA::cuda_driver
@@ -106,9 +109,10 @@ install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Config
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-install(EXPORT ${PROJECT_NAME}Config
-    DESTINATION cmake
-)
+# TODO: Commenting the install since it's included in the SDK
+#install(EXPORT ${PROJECT_NAME}Config
+#    DESTINATION cmake
+#)
 
 install(
     DIRECTORY

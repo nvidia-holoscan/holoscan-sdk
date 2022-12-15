@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,14 +17,14 @@
 #ifndef NVIDIA_CLARA_HOLOSCAN_GXF_EXTENSIONS_SEGMENTATION_VISUALIZER_HPP_
 #define NVIDIA_CLARA_HOLOSCAN_GXF_EXTENSIONS_SEGMENTATION_VISUALIZER_HPP_
 
-#include <string>
-#include <vector>
-
 // clang-format off
 #define GLFW_INCLUDE_NONE 1
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>  // NOLINT(build/include_order)
 // clang-format on
+
+#include <string>
+#include <vector>
 
 #include "gxf/std/codelet.hpp"
 #include "gxf/std/receiver.hpp"
@@ -36,11 +37,11 @@ namespace nvidia {
 namespace holoscan {
 namespace segmentation_visualizer {
 
-/// @brief OpenGL Visualization Codelet that combines segmentation output overlayed on video input.
+/// @brief OpenGL Visualization Codelet that combines segmentation output overlaid on video input.
 ///
 /// This Codelet performs visualization of a segmentation model alpha blended with the original
 // video input.
-/// The window is displayed with GLFW and uses CUDA/OpenGL interopt propogate CUDA Tensors from the
+/// The window is displayed with GLFW and uses CUDA/OpenGL interopt propagate CUDA Tensors from the
 /// CUDA context to OpenGL.
 /// The final class color is rendered using a GLSL fragment shader to remap the class index to an
 /// RGBA LUT.

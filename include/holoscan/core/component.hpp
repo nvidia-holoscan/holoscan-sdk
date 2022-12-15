@@ -18,16 +18,18 @@
 #ifndef HOLOSCAN_CORE_COMPONENT_HPP
 #define HOLOSCAN_CORE_COMPONENT_HPP
 
-#include "./arg.hpp"
-#include "./forward_def.hpp"
-
 #include <stdio.h>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "./parameter.hpp"
 #include "./type_traits.hpp"
+#include "./arg.hpp"
+#include "./forward_def.hpp"
 
 #define HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()                                                \
   template <typename ArgT,                                                                   \
@@ -64,12 +66,24 @@ class Component {
    * @param args The arguments to be passed to the component.
    */
   HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()
-  Component(ArgT&& arg, ArgsT&&... args) {
+  explicit Component(ArgT&& arg, ArgsT&&... args) {
     add_arg(std::forward<ArgT>(arg));
     (add_arg(std::forward<ArgsT>(args)), ...);
   }
 
   virtual ~Component() = default;
+
+  /**
+   * @brief Get the identifier of the component.
+   *
+   * By default, the identifier is set to -1.
+   * It is set to a valid value when the component is initialized.
+   *
+   * With the default executor (GXFExecutor), the identifier is set to the GXF component ID.
+   *
+   * @return The identifier of the component.
+   */
+  int64_t id() const { return id_; }
 
   /**
    * @brief Get the name of the component.
@@ -120,14 +134,24 @@ class Component {
   }
 
   /**
+   * @brief Get the list of arguments.
+   *
+   * @return The vector of arguments.
+   */
+  std::vector<Arg>& args() { return args_; }
+
+  /**
    * @brief Initialize the component.
    *
-   * This method is called only once when the codelet is created for the first time, and use of
+   * This method is called only once when the component is created for the first time, and use of
    * light-weight initialization.
    */
-  virtual void initialize(){};
+  virtual void initialize() {}
 
  protected:
+  friend class Executor;
+
+  int64_t id_ = -1;               ///< The ID of the component.
   std::string name_;              ///< Name of the component
   Fragment* fragment_ = nullptr;  ///< Pointer to the fragment that owns this component
   std::vector<Arg> args_;         ///< List of arguments

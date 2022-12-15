@@ -17,39 +17,43 @@
 {
     global:
         extern "C++" {
-            "clara::holoviz::Init(GLFWwindow *)";
-            "clara::holoviz::Init(unsigned int, unsigned int, char const*, clara::holoviz::InitFlags)";
-            "clara::holoviz::Init(char const*, unsigned int, unsigned int, unsigned int, clara::holoviz::InitFlags)";
+            "holoscan::viz::Init(GLFWwindow*, holoscan::viz::InitFlags)";
+            "holoscan::viz::Init(unsigned int, unsigned int, char const*, holoscan::viz::InitFlags)";
+            "holoscan::viz::Init(char const*, unsigned int, unsigned int, unsigned int, holoscan::viz::InitFlags)";
 
-            "clara::holoviz::ImGuiSetCurrentContext(ImGuiContext*)";
+            "holoscan::viz::ImGuiSetCurrentContext(ImGuiContext*)";
 
-            "clara::holoviz::WindowShouldClose()";
-            "clara::holoviz::WindowIsMinimized()";
+            "holoscan::viz::SetCudaStream(CUstream_st*)";
 
-            "clara::holoviz::Shutdown()";
+            "holoscan::viz::WindowShouldClose()";
+            "holoscan::viz::WindowIsMinimized()";
 
-            "clara::holoviz::Begin()";
-            "clara::holoviz::End()";
+            "holoscan::viz::Shutdown()";
 
-            "clara::holoviz::BeginImageLayer()";
-            "clara::holoviz::ImageCudaDevice(unsigned int, unsigned int, clara::holoviz::ImageFormat, unsigned long long)";
-            "clara::holoviz::ImageCudaArray(ImageFormat, CUarray)";
-            "clara::holoviz::ImageHost(unsigned int, unsigned int, clara::holoviz::ImageFormat, void const*)";
-            "clara::holoviz::LUT(unsigned int, clara::holoviz::ImageFormat, unsigned long, void const*)";
+            "holoscan::viz::Begin()";
+            "holoscan::viz::End()";
 
-            "clara::holoviz::BeginImGuiLayer()";
+            "holoscan::viz::BeginImageLayer()";
+            "holoscan::viz::ImageCudaDevice(unsigned int, unsigned int, holoscan::viz::ImageFormat, unsigned long long)";
+            "holoscan::viz::ImageCudaArray(holoscan::viz::ImageFormat, CUarray_st*)";
+            "holoscan::viz::ImageHost(unsigned int, unsigned int, holoscan::viz::ImageFormat, void const*)";
+            "holoscan::viz::LUT(unsigned int, holoscan::viz::ImageFormat, unsigned long, void const*)";
 
-            "clara::holoviz::BeginGeometryLayer()";
-            "clara::holoviz::Color(float, float, float, float)";
-            "clara::holoviz::LineWidth(float)";
-            "clara::holoviz::PointSize(float)";
-            "clara::holoviz::Primitive(clara::holoviz::PrimitiveTopology, unsigned int, unsigned long, float const*)";
-            "clara::holoviz::Text(float, float, float, char const*)";
+            "holoscan::viz::BeginImGuiLayer()";
 
-            "clara::holoviz::LayerOpacity(float)";
-            "clara::holoviz::LayerPriority(int)";
+            "holoscan::viz::BeginGeometryLayer()";
+            "holoscan::viz::Color(float, float, float, float)";
+            "holoscan::viz::LineWidth(float)";
+            "holoscan::viz::PointSize(float)";
+            "holoscan::viz::Primitive(holoscan::viz::PrimitiveTopology, unsigned int, unsigned long, float const*)";
+            "holoscan::viz::Text(float, float, float, char const*)";
 
-            "clara::holoviz::EndLayer()";
+            "holoscan::viz::LayerOpacity(float)";
+            "holoscan::viz::LayerPriority(int)";
+
+            "holoscan::viz::EndLayer()";
+
+            "holoscan::viz::ReadFramebuffer(holoscan::viz::ImageFormat, unsigned long, unsigned long long)";
         };
     local:
         *;

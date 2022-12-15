@@ -18,6 +18,9 @@
 #ifndef HOLOSCAN_CORE_COMPONENT_SPEC_INL_HPP
 #define HOLOSCAN_CORE_COMPONENT_SPEC_INL_HPP
 
+#include <memory>
+#include <utility>
+
 #include "./component_spec.hpp"
 
 #include "./argument_setter.hpp"

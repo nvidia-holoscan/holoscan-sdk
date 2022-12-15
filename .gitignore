@@ -14,6 +14,7 @@ build/
 cmake-build*/
 build-*/
 install/
+install-*/
 temp/
 releases/
 develop-eggs/
@@ -31,6 +32,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+_deps
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -53,6 +55,7 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+Testing
 
 # Translations
 *.mo
@@ -145,5 +148,6 @@ venv.bak/
 .conda
 conda-bld
 
-# Test data folders
-test_data
+# Data folder
+data/*
+!data/CMakeLists.txt

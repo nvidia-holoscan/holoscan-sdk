@@ -114,7 +114,8 @@
         "__string": "cpp",
         "ios": "cpp",
         "version": "cpp",
-        "span": "cpp"
+        "span": "cpp",
+        "charconv": "cpp"
     },
     "git.alwaysSignOff": true,
     "editor.formatOnSave": true,
@@ -151,4 +152,38 @@
     "C/C++ Include Guard.Remove Extension": false,
     "sonarlint.pathToCompileCommands": "${command:cmake.buildDirectory}/compile_commands.json",
     "cmake.configureOnEdit": false,
+    // https://github.com/matepek/vscode-catch2-test-adapter/blob/master/documents/configuration/test.advancedExecutables.md
+    "testMate.cpp.test.advancedExecutables": [
+        {
+            "name": "${filename}",
+            "description": "${relDirpath}/",
+            "pattern": "${command:cmake.buildDirectory}/gtests/**/*{test,Test,TEST}*",
+            "cwd": "${command:cmake.buildDirectory}",
+            "env": {
+                "LD_LIBRARY_PATH": "${command:cmake.buildDirectory}/lib:${command:cmake.buildDirectory}/lib/gxf_extensions:${env:LD_LIBRARY_PATH}",
+                "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/tests/data",
+            }
+        },
+        {
+            "name": "${filename}",
+            "description": "${relDirpath}/",
+            "pattern": "${command:cmake.buildDirectory}/_deps/holoviz-build/tests/**/*{test,Test,TEST}*",
+            "cwd": "${command:cmake.buildDirectory}",
+            "env": {
+                "LD_LIBRARY_PATH": "${command:cmake.buildDirectory}/lib:${command:cmake.buildDirectory}/lib/gxf_extensions:${env:LD_LIBRARY_PATH}",
+                "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/tests/data",
+            }
+        },
+    ],
+    "python.formatting.provider": "black",
+    // It seems that Pytest Discovery feature in VSCode needs to be improved
+    // - https://github.com/microsoft/vscode-python/issues/17242
+    // - https://github.com/microsoft/vscode-python/issues/19790
+
+    // https://code.visualstudio.com/docs/python/testing#_test-configuration-settings
+    // "python.testing.pytestArgs": [
+    //     "build-debug-x86_64"
+    // ],
+    // "python.testing.unittestEnabled": false,
+    // "python.testing.pytestEnabled": true,
 }

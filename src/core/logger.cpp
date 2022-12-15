@@ -17,11 +17,11 @@
 
 #include "holoscan/core/logger.hpp"
 
-#include <cstdlib>
-
 #include <spdlog/cfg/env.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
+
+#include <cstdlib>
 
 namespace holoscan {
 
@@ -31,24 +31,24 @@ static std::shared_ptr<spdlog::logger>& get_logger(const std::string& name = "ho
 }
 
 void Logger::load_env_level() {
-  if (const char* env_p = std::getenv("HOLOSCAN_LOG_LEVEL")) {
-    if (env_p) {
-      auto log_level_str = std::string_view(env_p);
-      if (log_level_str == "TRACE") {
-        set_log_level(LogLevel::TRACE);
-      } else if (log_level_str == "DEBUG") {
-        set_log_level(LogLevel::DEBUG);
-      } else if (log_level_str == "INFO") {
-        set_log_level(LogLevel::INFO);
-      } else if (log_level_str == "WARN") {
-        set_log_level(LogLevel::WARN);
-      } else if (log_level_str == "ERROR") {
-        set_log_level(LogLevel::ERROR);
-      } else if (log_level_str == "CRITICAL") {
-        set_log_level(LogLevel::CRITICAL);
-      } else if (log_level_str == "OFF") {
-        set_log_level(LogLevel::OFF);
-      }
+  const char* env_p = std::getenv("HOLOSCAN_LOG_LEVEL");
+
+  if (env_p) {
+    auto log_level_str = std::string_view(env_p);
+    if (log_level_str == "TRACE") {
+      set_log_level(LogLevel::TRACE);
+    } else if (log_level_str == "DEBUG") {
+      set_log_level(LogLevel::DEBUG);
+    } else if (log_level_str == "INFO") {
+      set_log_level(LogLevel::INFO);
+    } else if (log_level_str == "WARN") {
+      set_log_level(LogLevel::WARN);
+    } else if (log_level_str == "ERROR") {
+      set_log_level(LogLevel::ERROR);
+    } else if (log_level_str == "CRITICAL") {
+      set_log_level(LogLevel::CRITICAL);
+    } else if (log_level_str == "OFF") {
+      set_log_level(LogLevel::OFF);
     }
   }
 }

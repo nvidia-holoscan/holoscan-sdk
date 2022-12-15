@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,11 +15,13 @@
  * limitations under the License.
  */
 
-#include <iostream>
 
 #include <cuda_runtime.h>
 
+#include <iostream>
+
 #include "bayer_demosaic.hpp"
+
 
 #define CUDA_TRY(stmt)                                                                            \
   ({                                                                                              \
@@ -46,11 +49,17 @@ gxf_result_t BayerDemosaic::registerInterface(nvidia::gxf::Registrar* registrar)
   result &= registrar->parameter(out_tensor_name_, "out_tensor_name", "OutputTensorName",
     "Name of the output tensor.", std::string(""));
   result &= registrar->parameter(pool_, "pool", "Pool", "Pool to allocate the output message.");
-  result &= registrar->parameter(cuda_stream_pool_, "cuda_stream_pool", "CUDA Stream Pool", "CUDA Stream pool to create CUDA streams.");
-  result &= registrar->parameter(bayer_interp_mode_, "interpolation_mode", "Interpolation used for demosaicing",
-    "The interpolation model to be used for demosaicing (default UNDEFINED). Values available at: https://docs.nvidia.com/cuda/npp/group__typedefs__npp.html#ga2b58ebd329141d560aa4367f1708f191", 0);
+  result &= registrar->parameter(cuda_stream_pool_, "cuda_stream_pool", "CUDA Stream Pool",
+                                                    "CUDA Stream pool to create CUDA streams.");
+  result &= registrar->parameter(bayer_interp_mode_, "interpolation_mode",
+    "Interpolation used for demosaicing",
+    "The interpolation model to be used for demosaicing (default UNDEFINED). Values available at:"
+    "https://docs.nvidia.com/cuda/npp/group__typedefs__npp.html#ga2b58ebd329141d560aa4367f1708f191",
+     0);
   result &= registrar->parameter(bayer_grid_pos_, "bayer_grid_pos", "Bayer grid position",
-    "The Bayer grid position (default GBRG). Values available at: https://docs.nvidia.com/cuda/npp/group__typedefs__npp.html#ga5597309d6766fb2dffe155990d915ecb", 2);
+    "The Bayer grid position (default GBRG). Values available at:"
+    "https://docs.nvidia.com/cuda/npp/group__typedefs__npp.html#ga5597309d6766fb2dffe155990d915ecb",
+     2);
   result &= registrar->parameter(generate_alpha_, "generate_alpha", "Generate alpha channel",
     "Generate alpha channel.", false);
   result &= registrar->parameter(alpha_value_, "alpha_value", "Alpha value to be generated",
@@ -71,7 +80,7 @@ gxf_result_t BayerDemosaic::initialize() {
 
   // assign the CUDA stream to the NPP stream context
   auto nppStatus = nppGetStreamContext(&npp_stream_ctx_);
-  if(NPP_SUCCESS != nppStatus) {
+  if (NPP_SUCCESS != nppStatus) {
     GXF_LOG_ERROR("Failed to get NPP cuda stream context");
     return GXF_FAILURE;
   }
@@ -97,11 +106,10 @@ gxf_result_t BayerDemosaic::stop() {
 }
 
 gxf_result_t BayerDemosaic::tick() {
-
   // Process input message
   const auto in_message = receiver_->receive();
   if (!in_message || in_message.value().is_null()) {
-    return GXF_CONTRACT_MESSAGE_NOT_AVAILABLE; 
+    return GXF_CONTRACT_MESSAGE_NOT_AVAILABLE;
   }
 
   void * input_data_ptr = nullptr;
@@ -136,7 +144,7 @@ gxf_result_t BayerDemosaic::tick() {
 
     // get input image metadata
     in_shape = gxf::Shape{static_cast<int32_t>(buffer_info.height),
-                      static_cast<int32_t>(buffer_info.width), 1};
+                          static_cast<int32_t>(buffer_info.width), 1};
 
     rows = buffer_info.height;
     columns = buffer_info.width;
@@ -147,7 +155,6 @@ gxf_result_t BayerDemosaic::tick() {
 
     // if the input tensor is not coming from device then move it to device
     if (input_memory_type != gxf::MemoryStorageType::kDevice) {
-
       size_t buffer_size = rows * columns * in_channels * element_size;
 
       if (buffer_size > device_scratch_buffer_.size()) {
@@ -162,8 +169,7 @@ gxf_result_t BayerDemosaic::tick() {
         static_cast<void *>(device_scratch_buffer_.pointer()),
         static_cast<const void *>(frame->pointer()),
         buffer_size,
-        cudaMemcpyHostToDevice
-      ));
+        cudaMemcpyHostToDevice));
       input_data_ptr = device_scratch_buffer_.pointer();
     }
   } else {
@@ -189,7 +195,8 @@ gxf_result_t BayerDemosaic::tick() {
 
   if (element_type != gxf::PrimitiveType::kUnsigned8 &&
       element_type != gxf::PrimitiveType::kUnsigned16) {
-    GXF_LOG_ERROR("Unexpected bytes in element representation %d (size %d)", element_type, element_size);
+    GXF_LOG_ERROR("Unexpected bytes in element representation %d (size %d)", element_type,
+                                                                            element_size);
     return GXF_FAILURE;
   }
 
@@ -204,17 +211,17 @@ gxf_result_t BayerDemosaic::tick() {
       element_type,
       0,
       gxf::ComputeTrivialStrides(gxf::Shape{rows, columns, out_channels}, element_size)
-    }}
-  );
-  
+    }});
+
   if (!out_message) {
     GXF_LOG_ERROR("Failed to allocate tensors in output message");
     return gxf::ToResultCode(out_message);
   }
 
   // get the tensor of interest
-  const auto maybe_output_tensor = out_message.value().get<gxf::Tensor>(out_tensor_name_.get().c_str());
-  if (!maybe_output_tensor) { 
+  const auto maybe_output_tensor = out_message.value().get<gxf::Tensor>
+                                                       (out_tensor_name_.get().c_str());
+  if (!maybe_output_tensor) {
     GXF_LOG_ERROR("Failed to access output tensor with name `%s`", out_tensor_name_.get().c_str());
     return gxf::ToResultCode(maybe_output_tensor);
   }
@@ -234,8 +241,7 @@ gxf_result_t BayerDemosaic::tick() {
         npp_bayer_grid_pos_,
         npp_bayer_interp_mode_,
         alpha_value_,
-        npp_stream_ctx_
-      );
+        npp_stream_ctx_);
     } else {
       nppiCFAToRGB_8u_C1C3R_Ctx(
         static_cast<const Npp8u*>(input_data_ptr),
@@ -246,8 +252,7 @@ gxf_result_t BayerDemosaic::tick() {
         columns * out_channels * element_size,
         npp_bayer_grid_pos_,
         npp_bayer_interp_mode_,
-        npp_stream_ctx_
-      );
+        npp_stream_ctx_);
     }
   } else {
     if (generate_alpha_) {
@@ -261,8 +266,7 @@ gxf_result_t BayerDemosaic::tick() {
         npp_bayer_grid_pos_,
         npp_bayer_interp_mode_,
         alpha_value_,
-        npp_stream_ctx_
-      );
+        npp_stream_ctx_);
     } else {
       nppiCFAToRGB_16u_C1C3R_Ctx(
         static_cast<const Npp16u*>(input_data_ptr),
@@ -273,14 +277,12 @@ gxf_result_t BayerDemosaic::tick() {
         columns * out_channels * element_size,
         npp_bayer_grid_pos_,
         npp_bayer_interp_mode_,
-        npp_stream_ctx_
-      );
+        npp_stream_ctx_);
     }
-    
   }
 
   const auto result = transmitter_->publish(out_message.value());
   return gxf::ToResultCode(result);
 }
 
-}
+}  // namespace nvidia::holoscan

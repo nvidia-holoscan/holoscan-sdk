@@ -18,7 +18,7 @@
 #ifndef HOLOSCAN_CORE_CONDITION_HPP
 #define HOLOSCAN_CORE_CONDITION_HPP
 
-#include "./common.hpp"
+#include <gxf/core/gxf.h>
 
 #include <any>
 #include <iostream>
@@ -28,9 +28,9 @@
 #include <typeindex>
 #include <typeinfo>
 #include <unordered_map>
+#include <utility>
 
-#include <gxf/core/gxf.h>
-
+#include "./common.hpp"
 #include "./component.hpp"
 #include "./gxf/gxf_component.hpp"
 #include "./gxf/gxf_utils.hpp"
@@ -55,7 +55,7 @@
 #define HOLOSCAN_CONDITION_FORWARD_ARGS(class_name) \
   HOLOSCAN_CONDITION_FORWARD_TEMPLATE()             \
   class_name(ArgT&& arg, ArgsT&&... args)           \
-      : Condition(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...){};
+      : Condition(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 /**
  * @brief Forward the arguments to the super class.
@@ -91,7 +91,7 @@
 #define HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(class_name, super_class_name) \
   HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                     \
   class_name(ArgT&& arg, ArgsT&&... args)                                   \
-      : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...){};
+      : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
 
@@ -120,7 +120,7 @@ class Condition : public Component {
    * @brief Construct a new Condition object.
    */
   HOLOSCAN_CONDITION_FORWARD_TEMPLATE()
-  Condition(ArgT&& arg, ArgsT&&... args) {
+  explicit Condition(ArgT&& arg, ArgsT&&... args) {
     add_arg(std::forward<ArgT>(arg));
     (add_arg(std::forward<ArgsT>(args)), ...);
   }
@@ -166,13 +166,11 @@ class Condition : public Component {
   /**
    * @brief Set the component specification to the condition.
    *
-   * The component specification would be 'moved' to the condition.
-   *
    * @param spec The component specification.
    * @return The reference to the condition.
    */
-  Condition& spec(std::unique_ptr<ComponentSpec> spec) {
-    spec_ = std::move(spec);
+  Condition& spec(std::shared_ptr<ComponentSpec> spec) {
+    spec_ = spec;
     return *this;
   }
   /**
@@ -192,7 +190,7 @@ class Condition : public Component {
   virtual void setup(ComponentSpec& spec) { (void)spec; }
 
  protected:
-  std::unique_ptr<ComponentSpec> spec_;  ///< The component specification.
+  std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
 };
 
 }  // namespace holoscan

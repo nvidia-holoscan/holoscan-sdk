@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,12 +16,12 @@
  */
 #include "instrument_label.hpp"
 
-#include <string>
-
 #include <nanovg.h>
 #define NANOVG_GL3_IMPLEMENTATION
 #include <nanovg_gl.h>
 #include <nanovg_gl_utils.h>
+
+#include <string>
 
 #include "opengl_utils.hpp"
 
@@ -58,8 +59,8 @@ gxf_result_t InstrumentLabel::start() {
   return GXF_SUCCESS;
 }
 
-gxf_result_t InstrumentLabel::tick() {
-  nvgBeginFrame(nvg_ctx_, vp_width_, vp_height_, vp_aspect_ratio_);
+gxf_result_t InstrumentLabel::tick(float width, float height) {
+  nvgBeginFrame(nvg_ctx_, width, height, width / height);
 
   nvgFontSize(nvg_ctx_, 25.0f);
   nvgFontFace(nvg_ctx_, "sans-bold");
@@ -70,8 +71,8 @@ gxf_result_t InstrumentLabel::tick() {
     if (frame_data_.confidence_host_[i] < 0.5) { continue; }
 
     const char* label_text = tool_labels_or_numbers_[i].c_str();
-    float x = frame_data_.position_host_[i * num_tool_pos_components_] * vp_width_ + 40;
-    float y = frame_data_.position_host_[i * num_tool_pos_components_ + 1] * vp_height_ + 40;
+    float x = frame_data_.position_host_[i * num_tool_pos_components_] * width + 40;
+    float y = frame_data_.position_host_[i * num_tool_pos_components_ + 1] * height + 40;
     nvgFillColor(nvg_ctx_, nvgRGBAf(1.0f, 1.0f, 1.0f, 0.9f));
     nvgText(nvg_ctx_, x, y, label_text, NULL);
   }

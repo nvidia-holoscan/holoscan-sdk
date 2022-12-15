@@ -25,7 +25,7 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 # (specified by '~/.cmake/packages/yaml-cpp/xxxxx' which refers to
 # '${CMAKE_BINARY_DIR}/_deps/yaml-cpp-build')
 # causing a failure when building the source tree because
-# '_deps/yaml-cpp-build/libyaml-cpp.a', needed by'libholoscan-embedded.so' is
+# '_deps/yaml-cpp-build/libyaml-cpp.a', needed by'libholoscan.so' is
 # missing.
 #
 # export(PACKAGE yaml-cpp)
@@ -42,25 +42,27 @@ set(YAML_CPP_CPM_ARGS
     "YAML_CPP_BUILD_TESTS Off"
     "YAML_CPP_BUILD_CONTRIB Off"
     "YAML_CPP_BUILD_TOOLS Off"
+    "YAML_BUILD_SHARED_LIBS On"  # Build the shared library instead of the default static library
 )
 rapids_cpm_find(yaml-cpp 0.6.3
     GLOBAL_TARGETS yaml-cpp
     BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
-    INSTALL_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
 
     CPM_ARGS
     ${YAML_CPP_CPM_ARGS}
 )
 
-# If CPM is using the local package of yaml-cpp, it doesn't create a custom 'Findyaml-cpp.cmake' in
-# '${CMAKE_BINARY_DIR}/CPM_modules' folder.
-# We force to create one for yaml-cpp because we will copy
-# ${CMAKE_BINARY_DIR}/CPM_modules/Findyaml-cpp.cmake for the installation of 'holoscan-embedded'
-# package.
-cpm_create_module_file(yaml-cpp "CPMAddPackage(\"${YAML_CPP_CPM_ARGS}\")")
-
 if(yaml-cpp_ADDED)
-    # Set PIC to prevent the following error message
-    # : relocation R_X86_64_PC32 against symbol `_ZTVN4YAML9ExceptionE' can not be used when making a shared object; recompile with -fPIC
-    set_target_properties(yaml-cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    # Install the headers needed for development with the SDK
+    install(DIRECTORY ${yaml-cpp_SOURCE_DIR}/include/yaml-cpp
+        DESTINATION "include"
+        COMPONENT "holoscan-dependencies"
+        )
+
+    # Install the target
+    install(TARGETS yaml-cpp
+        DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
+        COMPONENT "holoscan-dependencies"
+    )
 endif()

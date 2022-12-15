@@ -18,14 +18,15 @@
 #ifndef HOLOSCAN_CORE_PARAMETER_HPP
 #define HOLOSCAN_CORE_PARAMETER_HPP
 
-#include "./common.hpp"
-
 #include <any>
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <string>
 #include <typeinfo>
+#include <utility>
 
+#include "./common.hpp"
 #include "./arg.hpp"
 
 namespace holoscan {
@@ -161,7 +162,7 @@ class MetaParameter {
     if (value_.has_value()) {
       return value_.value();
     } else {
-      throw std::runtime_error("MetaParameter: value is not set");
+      throw std::runtime_error(fmt::format("MetaParameter: value for '{}' is not set", key_));
     }
   }
 
@@ -171,6 +172,26 @@ class MetaParameter {
   void set_default_value() {
     if (!value_.has_value()) { value_ = default_value_; }
   }
+
+  /**
+   * @brief Return the default value object.
+   * @return The default value object.
+   */
+  ValueT& default_value() {
+    if (default_value_.has_value()) {
+      return default_value_.value();
+    } else {
+      throw std::runtime_error(
+        fmt::format("MetaParameter: default value for '{}' is not set", key_));
+    }
+  }
+
+  /**
+   * @brief Check whether the parameter contains a default value.
+   *
+   * @return true if the parameter contains a default value.
+   */
+  bool has_default_value() const { return default_value_.has_value(); }
 
   /**
    * @brief Get the value of the argument.

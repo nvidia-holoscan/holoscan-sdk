@@ -35,7 +35,7 @@ void FlowGraph::add_operator(const NodeType& op) {
   }
 }
 
-void FlowGraph::add_flow(const NodeType& op_u, const NodeType& op_v, const EdgeDataType& io_map) {
+void FlowGraph::add_flow(const NodeType& op_u, const NodeType& op_v, const EdgeDataType& port_map) {
   if (succ_.find(op_u) == succ_.end()) {
     if (!op_u) {
       HOLOSCAN_LOG_ERROR("Calling add_flow() with nullptr (op_u is nullptr)");
@@ -56,16 +56,16 @@ void FlowGraph::add_flow(const NodeType& op_u, const NodeType& op_v, const EdgeD
   auto it_edgedata = succ_[op_u].find(op_v);
   if (it_edgedata != succ_[op_u].end()) {
     const auto& datadict = it_edgedata->second;
-    if (io_map) {
-      for (auto& [key, value] : *io_map) { datadict->insert({key, value}); }
+    if (port_map) {
+      for (auto& [key, value] : *port_map) { datadict->insert({key, value}); }
     }
     succ_[op_u][op_v] = datadict;
     pred_[op_v][op_u] = datadict;
   } else {
     auto datadict = std::make_shared<EdgeDataElementType>();
 
-    if (io_map) {
-      for (auto& [key, value] : *io_map) { datadict->insert({key, value}); }
+    if (port_map) {
+      for (auto& [key, value] : *port_map) { datadict->insert({key, value}); }
     }
     succ_[op_u][op_v] = datadict;
     pred_[op_v][op_u] = datadict;

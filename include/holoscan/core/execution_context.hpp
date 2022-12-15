@@ -19,22 +19,47 @@
 #define HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 
 #include "./common.hpp"
+#include "./io_context.hpp"
 
 namespace holoscan {
 
 /**
  * @brief Class to hold the execution context.
  *
- * TBD
+ * This class provides the execution context for the operator.
  */
 class ExecutionContext {
  public:
+  /**
+   * @brief Construct a new Execution Context object.
+   */
   ExecutionContext() = default;
 
-  void* gxf_context() { return gxf_context_; }
+  /**
+   * @brief Get the input context.
+   *
+   * @return The pointer to the input context.
+   */
+  InputContext* input() const { return input_context_;}
 
- private:
-  void* gxf_context_ = nullptr;  /// The GXF context
+  /**
+   * @brief Get the output context.
+   *
+   * @return The pointer to the output context.
+   */
+  OutputContext* output() const { return output_context_;}
+
+  /**
+   * @brief Get the context.
+   *
+   * @return The pointer to the context.
+   */
+  void* context() const { return context_; }
+
+ protected:
+  InputContext* input_context_ = nullptr;    ///< The input context.
+  OutputContext* output_context_ = nullptr;  ///< The output context.
+  void* context_ = nullptr;                  ///< The context.
 };
 
 }  // namespace holoscan

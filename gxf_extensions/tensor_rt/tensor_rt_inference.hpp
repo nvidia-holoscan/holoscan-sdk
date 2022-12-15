@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -53,8 +54,8 @@ class TensorRTInferenceLogger : public nvinfer1::ILogger {
 
 /// @brief Loads ONNX model, takes input tensors and run inference against them with TensorRT.
 ///
-/// It takes input from all receivers provided and try to locate Tensor component with specified name
-/// on them one by one. The first occurence would be used. Only takes gpu memory tensor.
+/// It takes input from all receivers provided and try to locate Tensor component with specified
+/// name on them one by one. The first occurrence would be used. Only takes gpu memory tensor.
 /// Supports dynamic batch as first dimension.
 /// The codelet has an engine cache directory that can be pre-populated to reduce start time.
 /// If the engine cache directory has no pre-existing engine file for an architecture, it will

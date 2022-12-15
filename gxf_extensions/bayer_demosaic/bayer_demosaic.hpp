@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,9 +18,11 @@
 #ifndef NVIDIA_CLARA_HOLOSCAN_GXF_EXTENSIONS_BAYER_DEMOSAIC_HPP_
 #define NVIDIA_CLARA_HOLOSCAN_GXF_EXTENSIONS_BAYER_DEMOSAIC_HPP_
 
-#include <string>
+
 
 #include <npp.h>
+
+#include <string>
 
 #include "gxf/core/entity.hpp"
 #include "gxf/core/handle.hpp"
@@ -65,6 +68,6 @@ class BayerDemosaic : public gxf::Codelet {
   gxf::MemoryBuffer device_scratch_buffer_;
 };
 
-}
+}  // namespace nvidia::holoscan
 
 #endif  // NVIDIA_CLARA_HOLOSCAN_GXF_EXTENSIONS_BAYER_DEMOSAIC_HPP_

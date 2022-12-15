@@ -18,6 +18,9 @@
 #ifndef HOLOSCAN_CORE_GRAPHS_FLOW_GRAPH_HPP
 #define HOLOSCAN_CORE_GRAPHS_FLOW_GRAPH_HPP
 
+#include <vector>
+#include <unordered_map>
+
 #include "../graph.hpp"
 
 namespace holoscan {
@@ -28,7 +31,7 @@ class FlowGraph : public Graph {
   ~FlowGraph() override = default;
 
   void add_operator(const NodeType& op) override;
-  void add_flow(const NodeType& op_u, const NodeType& op_v, const EdgeDataType& io_map) override;
+  void add_flow(const NodeType& op_u, const NodeType& op_v, const EdgeDataType& port_map) override;
 
   std::optional<EdgeDataType> get_port_map(const NodeType& op_u, const NodeType& op_v) override;
 

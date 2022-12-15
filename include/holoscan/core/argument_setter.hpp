@@ -18,8 +18,6 @@
 #ifndef HOLOSCAN_CORE_ARGUMENT_SETTER_HPP
 #define HOLOSCAN_CORE_ARGUMENT_SETTER_HPP
 
-#include "./common.hpp"
-
 #include <any>
 #include <functional>
 #include <iostream>
@@ -30,9 +28,14 @@
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
+#include "./common.hpp"
 #include "../utils/yaml_parser.hpp"
 #include "./arg.hpp"
+#include "./condition.hpp"
+#include "./parameter.hpp"
+#include "./resource.hpp"
 #include "./type_traits.hpp"
 
 namespace holoscan {
@@ -65,10 +68,7 @@ class ArgumentSetter {
    *
    * @return The reference to the ArgumentSetter instance.
    */
-  static ArgumentSetter& get_instance() {
-    static ArgumentSetter instance;
-    return instance;
-  }
+  static ArgumentSetter& get_instance();
 
   /**
    * @brief Set the param object.
@@ -186,7 +186,7 @@ class ArgumentSetter {
                       param = arg_value;
                     } else {
                       HOLOSCAN_LOG_ERROR(
-                          "Unable to convert argument type '{}' to prameter type '{}' for '{}'",
+                          "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
                           any_arg.type().name(),
                           typeid(typeT).name(),
                           arg.name());
@@ -232,7 +232,7 @@ class ArgumentSetter {
                     break;
                   case ArgElementType::kCustom: {
                     HOLOSCAN_LOG_ERROR(
-                        "Unable to convert argument type '{}' to prameter type '{}' for '{}'",
+                        "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
                         any_arg.type().name(),
                         typeid(typeT).name(),
                         arg.name());
@@ -286,7 +286,7 @@ class ArgumentSetter {
                       param = arg_value;
                     } else {
                       HOLOSCAN_LOG_ERROR(
-                          "Unable to convert argument type '{}' to prameter type '{}' for '{}'",
+                          "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
                           any_arg.type().name(),
                           typeid(typeT).name(),
                           arg.name());
@@ -332,7 +332,7 @@ class ArgumentSetter {
                   }
                   case ArgElementType::kCustom: {
                     HOLOSCAN_LOG_ERROR(
-                        "Unable to convert argument type '{}' to prameter type '{}' for '{}'",
+                        "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
                         any_arg.type().name(),
                         typeid(typeT).name(),
                         arg.name());

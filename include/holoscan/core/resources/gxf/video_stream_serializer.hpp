@@ -18,10 +18,10 @@
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_VIDEO_STREAM_SERIALIZER_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_VIDEO_STREAM_SERIALIZER_HPP
 
-#include "../../gxf/gxf_resource.hpp"
-
 #include <memory>
 #include <vector>
+
+#include "../../gxf/gxf_resource.hpp"
 
 namespace holoscan {
 

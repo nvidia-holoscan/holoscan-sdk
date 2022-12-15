@@ -19,7 +19,6 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 rapids_cpm_find(fmt 8.1.1
     GLOBAL_TARGETS fmt fmt-header-only
     BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
-    INSTALL_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
     CPM_ARGS
 
     GITHUB_REPOSITORY fmtlib/fmt
@@ -30,3 +29,11 @@ rapids_cpm_find(fmt 8.1.1
     "FMT_INSTALL ON"
     EXCLUDE_FROM_ALL
 )
+
+if(fmt_ADDED)
+    # Install the headers needed for development with the SDK
+    install(DIRECTORY ${fmt_SOURCE_DIR}/include/fmt
+        DESTINATION "include"
+        COMPONENT "holoscan-dependencies"
+        )
+endif()

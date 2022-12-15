@@ -13,6 +13,7 @@
         "shardulm94.trailing-spaces",
         "stkb.rewrap",
         "shd101wyy.markdown-preview-enhanced",
+        "cschlosser.doxdocgen",
     ],
     // List of extensions recommended by VS Code that should not be recommended for users of this workspace.
     "unwantedRecommendations": []

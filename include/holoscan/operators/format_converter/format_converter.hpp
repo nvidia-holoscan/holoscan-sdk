@@ -18,11 +18,11 @@
 #ifndef HOLOSCAN_OPERATORS_FORMAT_CONVERTER_FORMAT_CONVERTER_HPP
 #define HOLOSCAN_OPERATORS_FORMAT_CONVERTER_FORMAT_CONVERTER_HPP
 
-#include "../../core/gxf/gxf_operator.hpp"
-
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "../../core/gxf/gxf_operator.hpp"
 
 namespace holoscan::ops {
 

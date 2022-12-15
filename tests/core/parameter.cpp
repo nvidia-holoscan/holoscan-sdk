@@ -17,9 +17,11 @@
 
 #include "holoscan/core/parameter.hpp"
 
-#include <string>
-
 #include <gtest/gtest.h>
+
+#include <string>
+#include <typeinfo>
+
 
 namespace holoscan {
 
@@ -32,22 +34,47 @@ TEST(Parameter, TestParameterFlagEnum) {
   ASSERT_TRUE(p == ParameterFlag::kDynamic);
 }
 
+TEST(Parameter, TestParameterWrapper) {
+  // default constructor
+  ParameterWrapper p;
+  EXPECT_EQ(p.type(), typeid(void));
+
+  // 3-argument constructor
+  float beta = 3.5;
+  ParameterWrapper p3(beta, &typeid(beta), ArgType::create<float>());
+  EXPECT_EQ(p3.type(), typeid(float));
+  EXPECT_EQ(p3.arg_type().element_type(), ArgElementType::kFloat32);
+  EXPECT_EQ(p3.arg_type().container_type(), ArgContainerType::kNative);
+  EXPECT_EQ(std::any_cast<float>(p3.value()), beta);
+
+  // construct with Parameter
+  uint32_t expected_val = 5;
+  MetaParameter uint32_param = MetaParameter<uint32_t>(expected_val);
+  ParameterWrapper p2(uint32_param);
+  EXPECT_EQ(p2.type(), typeid(uint32_t));
+  EXPECT_EQ(p2.arg_type().element_type(), ArgElementType::kUnsigned32);
+  EXPECT_EQ(p2.arg_type().container_type(), ArgContainerType::kNative);
+  std::any& val2 = p2.value();
+  auto& param2 = *std::any_cast<Parameter<uint32_t>*>(val2);
+  EXPECT_EQ(param2.get(), expected_val);
+}
+
 TEST(Parameter, TestMetaParameterInt) {
   // test initialized metaparameter
   MetaParameter p = MetaParameter<int>(5);
   ASSERT_TRUE(p.has_value());
   int val = p.get();
-  ASSERT_TRUE(val == 5);
+  ASSERT_EQ(val, 5);
 
   // value assignment
   int new_val = 7;
   p = new_val;
-  ASSERT_TRUE(p.get() == 7);
+  ASSERT_EQ(p.get(), 7);
 
   // const value assignment
   const int new_val2 = 8;
   p = new_val2;
-  ASSERT_TRUE(p.get() == 8);
+  ASSERT_EQ(p.get(), 8);
 }
 
 TEST(Parameter, TestMetaParameterUninitialized) {
@@ -61,7 +88,7 @@ TEST(Parameter, TestMetaParameterUninitialized) {
           p2.get();
         } catch (const std::runtime_error& e) {
           // and this tests that it has the correct message
-          EXPECT_STREQ("MetaParameter: value is not set", e.what());
+          EXPECT_STREQ("MetaParameter: value for '' is not set", e.what());
           throw;
         }
       },

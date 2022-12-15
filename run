@@ -321,7 +321,7 @@ Environments:
 '
 }
 install_gxf() {
-    local gxf_tag=${GXF_TAG:-2.4.3-6ff6ffd4}
+    local gxf_tag=${GXF_TAG:-2.5.0-8fbe43cb}
     local ngc_cli_org=${NGC_CLI_ORG:-nvidia}
     local ngc_cli_team=${NGC_CLI_TEAM:-clara-holoscan}
     local GXF_MODIFIED=false
@@ -337,6 +337,7 @@ install_gxf() {
 
     # Check if wget or ngc is installed
     if ! command -v ngc > /dev/null; then
+      c_echo W "'ngc' cli command not found, using 'wget'"
       download_command=wget
       if ! command -v wget > /dev/null; then
           fatal R "Please install " W "wget" R " or the " W "ngc" R " command to run install_gxf. Follow the instructions in https://ngc.nvidia.com/setup/installers/cli to install NGC CLI."
@@ -345,7 +346,7 @@ install_gxf() {
 
     if [ ! -f gxf_x86_64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz ]; then
         if [ "${download_command}" == "wget" ]; then
-            run_command wget --content-disposition https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/gxf_x86_64_holoscan_sdk/versions/${gxf_tag}/zip -O gxf_x86_64_holoscan_sdk_${gxf_tag}.zip
+            run_command wget --content-disposition https://api.ngc.nvidia.com/v2/resources/${ngc_cli_org}/${ngc_cli_team}/gxf_x86_64_holoscan_sdk/versions/${gxf_tag}/zip -O gxf_x86_64_holoscan_sdk_${gxf_tag}.zip
             if [ $? -ne 0 ]; then
                fatal R "Unable to download " W "${ngc_cli_org}/${ngc_cli_team}/gxf_x86_64_holoscan_sdk:${gxf_tag}" R " Make sure you have access to NGC via your browser."
             fi
@@ -369,7 +370,7 @@ install_gxf() {
     fi
     if [ ! -f gxf_arm64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz ]; then
         if [ "${download_command}" == "wget" ]; then
-            run_command wget --content-disposition https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/gxf_arm64_holoscan_sdk/versions/${gxf_tag}/zip -O gxf_arm64_holoscan_sdk_${gxf_tag}.zip
+            run_command wget --content-disposition https://api.ngc.nvidia.com/v2/resources/${ngc_cli_org}/${ngc_cli_team}/gxf_arm64_holoscan_sdk/versions/${gxf_tag}/zip -O gxf_arm64_holoscan_sdk_${gxf_tag}.zip
             if [ $? -ne 0 ]; then
                fatal R "Unable to download " W "${ngc_cli_org}/${ngc_cli_team}/gxf_arm64_holoscan_sdk:${gxf_tag}" R " Make sure you have access to NGC via your browser."
             fi
@@ -388,7 +389,7 @@ install_gxf() {
         export NGC_CLI_ORG=<ngc-organization>
         export NGC_CLI_TEAM=<ngc-team>'
             fi
-        fi    
+        fi
         GXF_MODIFIED=true
     fi
 
@@ -398,6 +399,13 @@ install_gxf() {
 
         run_command tar -zxf gxf_x86_64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz -C ${TOP}/.cache/gxf --strip-components=1
         run_command tar -zxf gxf_arm64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz -C ${TOP}/.cache/gxf --strip-components=1
+
+        # Patch GXF to remove its support for complex cuda primitives,
+        # due to limitation in the CUDA Toolkit 11.6 with C++17
+        # Support will be added when upgrading to CUDA Toolkit 11.7+
+        # with libcu++ 1.8.0+: https://github.com/NVIDIA/libcudacxx/pull/234
+        run_command patch -suNb ${TOP}/.cache/gxf/gxf/std/tensor.hpp ${TOP}/patches/gxf_remove_complex_primitives_support.patch
+        run_command mv ${TOP}/.cache/gxf/gxf/std/complex.hpp ${TOP}/.cache/gxf/gxf/std/complex.hpp.orig
     else
         c_echo_err W "GXF is already installed"
     fi
@@ -461,17 +469,12 @@ clear_cache() {
     c_echo W "Clearing cache..."
     run_command rm -rf ${TOP}/build
     run_command rm -rf ${TOP}/install
-    run_command rm -rf ${TOP}/build-debug*
-    run_command rm -rf ${TOP}/build-release*
-    run_command rm -rf ${TOP}/build-rel-debug*
-    run_command rm -rf ${TOP}/install-debug*
-    run_command rm -rf ${TOP}/install-release*
-    run_command rm -rf ${TOP}/install-rel-debug*
-
-    run_command rm -rf ${TOP}/examples/holoscan-endoscopy-app/build
+    run_command rm -rf ${TOP}/build-*
+    run_command rm -rf ${TOP}/install-*
 
     run_command rm -rf ${TOP}/.cache/ccache
     run_command rm -rf ${TOP}/.cache/cpm
+    run_command rm -rf ${TOP}/.cache/gxf
 }
 
 setup_desc() { c_echo 'Setup development environment
@@ -513,7 +516,11 @@ build_image() {
     c_echo W "Using docker build option: '${build_opts}'"
 
     run_command export DOCKER_BUILDKIT=1
-    run_command docker build ${build_opts} -t holoscan-sdk-dev ${TOP}
+    run_command docker build ${build_opts} \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --network=host \
+        -t holoscan-sdk-dev \
+        ${TOP}
 }
 
 build_desc() { c_echo 'Build (args: one of [debug, release, rel-debug])
@@ -525,35 +532,63 @@ Export CMAKE_BUILD_PATH (default: "build") to change the build path.
 
     export CMAKE_BUILD_PATH=build-arm64
 
-Arguements:
+Arguments:
   $1 - CMAKE_BUILD_TYPE (one of ["debug", "release", "rel-debug"])
 '
 }
 build() {
     local buildtype=$(get_buildtype_str $1)
     local build_path="${CMAKE_BUILD_PATH:-build}"
-    local prefix="${CMAKE_PREFIX_PATH:-install}"
+    local install_prefix="${CMAKE_INSTALL_PREFIX:-install}"
 
     setup
     build_image
     install_gxf
 
-    run_command ${HOLOSCAN_DOCKER_EXE} run -it --rm --net=host \
+    # DOCKER PARAMETERS
+    #
+    # --rm
+    #   Deletes the container after the command runs
+    #
+    # -u $(id -u):$(id -g)
+    #   Ensures the generated files (build, install...) are owned by $USER and not root
+    #
+    # -v ${TOP}:/workspace/holoscan-sdk
+    #   Mount the source directory
+    #
+    # -w /workspace/holoscan-sdk
+    #   Start in the source directory
+    #
+    # -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
+    #   Optimize the number of concurrent processes when building
+    #
+    #
+    # CMAKE PARAMETERS
+    #
+    # -S . -B ${build_path}
+    #   Generic configuration
+    #
+    # -D CMAKE_BUILD_TYPE=${buildtype}
+    #   Define the build type (release, debug...). Can be passed as env to docker also.
+    #
+    run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host \
         -u $(id -u):$(id -g) \
         -v ${TOP}:/workspace/holoscan-sdk \
-        -e CMAKE_BUILD_TYPE=${buildtype} \
-        -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
         -w /workspace/holoscan-sdk \
+        -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
         holoscan-sdk-dev \
         bash -c "
-            cmake -S . -B ${build_path} \
-            && cmake --build ${build_path} \
-            && cmake --install ${build_path} --prefix ${prefix} --component holoscan-embedded-core \
-            && cmake --install ${build_path} --prefix ${prefix} --component holoscan-embedded-gxf_extensions \
-            && cmake --install ${build_path} --prefix ${prefix} --component holoscan-embedded-apps \
-            && cmake --install ${build_path} --prefix ${prefix} --component holoscan-embedded-gxf_libs \
-            && cmake --install ${build_path} --prefix ${prefix} --component holoscan-embedded-gxf_bins \
-            && cmake --install ${build_path} --prefix ${prefix} --component holoscan-embedded-dep_libs
+            cmake -S . -B ${build_path} -G Ninja \
+              -D CMAKE_BUILD_TYPE=${buildtype} \
+            && cmake --build ${build_path} -j \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_extensions \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-apps \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_libs \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_bins \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-modules \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-dependencies \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-python_libs
         "
 }
 
@@ -569,6 +604,60 @@ lint() {
     pushd ${TOP} > /dev/null
     run_command ${HOLOSCAN_PY_EXE} scripts/include_checker.py apps gxf_extensions tests
     popd > /dev/null
+}
+
+cpplint_desc() { c_echo 'CPPLint code
+'
+}
+
+cpplint() {
+    c_echo W "CPPLinting code..."
+    pushd ${TOP} > /dev/null
+    local DIR_TO_RUN="apps examples gxf_extensions modules python/pybind11 tests"
+    if [ -n "$1" ]; then               # directories was specified
+        run_command ${HOLOSCAN_PY_EXE} -m cpplint --recursive "$@"
+    else
+        run_command ${HOLOSCAN_PY_EXE} -m cpplint --recursive ${DIR_TO_RUN}
+    fi
+    popd > /dev/null
+}
+
+coverage_desc() { c_echo 'Execute code coverage
+'
+}
+
+coverage() {
+    local buildtype=$(get_buildtype_str $1)
+    local build_path="${CMAKE_BUILD_PATH:-build}"
+    local working_dir=${1:-${build_path}}
+
+    # Find the nvidia_icd.json file which could reside at different paths
+    # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
+    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
+
+    run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host \
+        -u $(id -u):$(id -g) \
+        -v ${TOP}:/workspace/holoscan-sdk \
+        -w /workspace/holoscan-sdk \
+        --runtime=nvidia \
+        -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        -e DISPLAY=$DISPLAY \
+        -v $nvidia_icd_json:$nvidia_icd_json:ro \
+        -e HOLOSCAN_LIB_PATH=/workspace/holoscan-sdk/${working_dir}/lib \
+        -e HOLOSCAN_SAMPLE_DATA_PATH=/workspace/holoscan-sdk/data \
+        -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
+        -e HOLOSCAN_LOG_LEVEL=INFO \
+        -e PYTHONPATH=/workspace/holoscan-sdk/${working_dir}/python/lib \
+        -e CMAKE_BUILD_TYPE=${buildtype} \
+        -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
+        holoscan-sdk-dev \
+        bash -c "
+            cmake -S . -B ${build_path} -G Ninja \
+              -D HOLOSCAN_BUILD_COVERAGE=ON \
+            && cmake --build ${build_path} \
+            && cmake --build ${build_path} --target coverage
+        "
 }
 
 # test_desc() { c_echo 'Execute test cases
@@ -628,117 +717,76 @@ launch() {
 
     c_echo W "Launching (mount_device_opt:" G "${mount_device_opt}" W ")..."
 
-    # Execute with `--runtime=nvidia` to use NVIDIA Docker runtime
-    run_command ${HOLOSCAN_DOCKER_EXE} run -it --rm \
-        --runtime=nvidia \
-        --net=host \
+    # Find the nvidia_icd.json file which could reside at different paths
+    # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
+    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
+
+    # DOCKER PARAMETERS
+    #
+    # -it
+    #   The container needs to be interactive to be able to interact with the X11 windows
+    #
+    # --rm
+    #   Deletes the container after the command runs
+    #
+    # -u $(id -u):$(id -g)
+    # -v /etc/group:/etc/group:ro
+    # -v /etc/passwd:/etc/passwd:ro
+    #   Ensures the generated files (build, install...) are owned by $USER and not root,
+    #   and provide the configuration files to avoid warning for user and group names
+    #
+    # -v ${TOP}:/workspace/holoscan-sdk
+    #   Mount the source directory
+    #
+    # -w /workspace/holoscan-sdk/${working_dir}
+    #   Start in the build or install directory
+    #
+    # --runtime=nvidia \
+    # -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display
+    #   Enable GPU acceleration
+    #
+    # -v /tmp/.X11-unix:/tmp/.X11-unix
+    # -e DISPLAY
+    #   Enable graphical applications
+    #
+    # -v $nvidia_icd_json:$nvidia_icd_json:ro
+    #   Bind NVIDIA's Vulkan installable client driver to run Vulkan
+    #   Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
+    #   The configurations files are installed to different locations when installing
+    #   with deb packages or with run files, so we look at both places
+    #
+    # --device /dev/video${i}:/dev/video${i}
+    #   Bind video capture devices for V4L2
+    #
+    # --device /dev/ajantv2${i}:/dev/ajantv2${i}
+    #   Bind AJA capture cards for NTV2
+    #
+    # -e PYTHONPATH
+    # -e HOLOSCAN_LIB_PATH
+    # -e HOLOSCAN_SAMPLE_DATA_PATH
+    #   Define paths needed by the python applications
+    #
+    # -e CUPY_CACHE_DIR
+    #   Define path for cupy' kernel cache, needed since $HOME does
+    #   not exist when running with `-u id:group`
+
+    run_command ${HOLOSCAN_DOCKER_EXE} run -it --rm --net host \
         -u $(id -u):$(id -g) \
-        ${mount_device_opt} \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -v /usr/share/vulkan:/usr/share/vulkan \
-        -v ${TOP}/test_data:/workspace/test_data \
+        -v /etc/group:/etc/group:ro \
+        -v /etc/passwd:/etc/passwd:ro \
         -v ${TOP}:/workspace/holoscan-sdk \
-        -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
-        -e DISPLAY=$DISPLAY \
         -w /workspace/holoscan-sdk/${working_dir} \
-        holoscan-sdk-dev "$@"
-}
-
-#===============================================================================
-# Section: Example
-#===============================================================================
-
-build_example_desc() { c_echo 'Build "examples/holoscan-endoscopy-app"
-
-This command will build the example project.
-
-Export CMAKE_BUILD_PATH (default: "build") to change the build path.
-  e.g.,
-
-    export CMAKE_BUILD_PATH=build-arm64
-
-Arguements:
-  $1 - CMAKE_BUILD_TYPE (one of ["debug", "release", "rel-debug"])
-'
-}
-build_example() {
-    local buildtype=$(get_buildtype_str $1)
-    local build_path="${CMAKE_BUILD_PATH:-build}"
-    local prefix="${CMAKE_PREFIX_PATH:-install}"
-
-    build ${buildtype}
-
-    run_command ${HOLOSCAN_DOCKER_EXE} run -it --rm --net=host \
-        -u $(id -u):$(id -g) \
-        -v ${TOP}:/workspace/holoscan-sdk \
-        -e CMAKE_BUILD_TYPE=${buildtype} \
-        -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
-        -e HOLOSCAN_SDK_PATH=/workspace/holoscan-sdk/install \
-        -e GXF_SDK_PATH=/workspace/holoscan-sdk/.cache/gxf \
-        -e HOLOSCAN_APP_PATH=/workspace/holoscan-sdk/examples/holoscan-endoscopy-app \
-        -w /workspace/holoscan-sdk \
-        holoscan-sdk-dev \
-        bash -c "
-            cd \${HOLOSCAN_APP_PATH} \
-            && cmake -S . -B ${build_path} -DHOLOSCAN_SDK_PATH=\${HOLOSCAN_SDK_PATH} -DGXF_SDK_PATH=\${GXF_SDK_PATH} \
-            && cmake --build ${build_path}
-        "
-}
-
-launch_example_desc() { c_echo 'Launch "examples/holoscan-endoscopy-app"
-
-Export CMAKE_BUILD_PATH (default: "build") to change the build path.
-  e.g.,
-
-    export CMAKE_BUILD_PATH=build-arm64
-
-Arguments:
-    $1 - Working directory (e.g, "install" => "/workspace/holoscan-sdk/install")
-         Default: "build"
-'
-}
-launch_example() {
-    local build_path="${CMAKE_BUILD_PATH:-build}"
-    local working_dir=${1:-${build_path}}
-    local mount_device_opt=""
-
-    # Skip the first argument to pass the remaining arguments to the docker command.
-    if [ -n "$1" ]; then
-        shift
-    fi
-
-    setup
-
-    # Allow connecting from docker. This is not needed for WSL2 (`SI:localuser:wslg` is added by default)
-    run_command xhost +local:docker
-
-    for i in 0 1 2 3; do
-        if [ -e /dev/video${i} ]; then
-            mount_device_opt+=" --device /dev/video${i}:/dev/video${i}"
-        fi
-        if [ -e /dev/ajantv2${i} ]; then
-            mount_device_opt+=" --device /dev/ajantv2${i}:/dev/ajantv2${i}"
-        fi
-    done
-
-    c_echo W "Launching (mount_device_opt:" G "${mount_device_opt}" W ")..."
-
-    # Execute with `--runtime=nvidia` to use NVIDIA Docker runtime
-    run_command ${HOLOSCAN_DOCKER_EXE} run -it --rm \
         --runtime=nvidia \
-        --net=host \
-        -u $(id -u):$(id -g) \
-        ${mount_device_opt} \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -v /usr/share/vulkan:/usr/share/vulkan \
-        -v ${TOP}/test_data:/workspace/test_data \
-        -v ${TOP}:/workspace/holoscan-sdk \
         -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
-        -e DISPLAY=$DISPLAY \
-        -e HOLOSCAN_SDK_PATH=/workspace/holoscan-sdk/install \
-        -e GXF_SDK_PATH=/workspace/holoscan-sdk/.cache/gxf \
-        -e HOLOSCAN_APP_PATH=/workspace/holoscan-sdk/examples/holoscan-endoscopy-app \
-        -w /workspace/holoscan-sdk/${working_dir} \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        -e DISPLAY \
+        ${mount_device_opt} \
+        -v $nvidia_icd_json:$nvidia_icd_json:ro \
+        -e PYTHONPATH=/workspace/holoscan-sdk/${working_dir}/python/lib \
+        -e HOLOSCAN_LIB_PATH=/workspace/holoscan-sdk/${working_dir}/lib \
+        -e HOLOSCAN_SAMPLE_DATA_PATH=/workspace/holoscan-sdk/data \
+        -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
+        -e CUPY_CACHE_DIR=/workspace/holoscan-sdk/.cupy/kernel_cache \
         holoscan-sdk-dev "$@"
 }
 
@@ -795,7 +843,7 @@ print_usage() {
     echo_err "USAGE: $0 [command] [arguments]..."
     echo_err ""
     c_echo_err W "Global Arguments"
-    c_echo_err "  --help, -h      : Print help messages for [commmand]"
+    c_echo_err "  --help, -h      : Print help messages for [command]"
     c_echo_err "  --dryrun        : Print commands to screen without running"
     echo_err
     c_echo_err W "Command List"

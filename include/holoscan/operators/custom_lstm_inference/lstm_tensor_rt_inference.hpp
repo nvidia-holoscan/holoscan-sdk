@@ -18,11 +18,11 @@
 #ifndef HOLOSCAN_OPERATORS_CUSTOM_LSTM_INFERENCE_LSTM_TENSOR_RT_INFERENCE_HPP
 #define HOLOSCAN_OPERATORS_CUSTOM_LSTM_INFERENCE_LSTM_TENSOR_RT_INFERENCE_HPP
 
-#include "../../core/gxf/gxf_operator.hpp"
-
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "../../core/gxf/gxf_operator.hpp"
 
 namespace holoscan::ops {
 

@@ -57,7 +57,7 @@ ForEachMacros:
   - Q_FOREACH
   - BOOST_FOREACH
 IncludeCategories:
-  - Regex:           '^<.*\.h>'
+  - Regex:           '^<.*\.hpp>'
     Priority:        1
   - Regex:           '^<.*'
     Priority:        2

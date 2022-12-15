@@ -19,7 +19,6 @@
 #define HOLOSCAN_CORE_FORWARD_DEF_HPP
 
 #include <cinttypes>
-
 namespace holoscan {
 
 class Application;
@@ -43,6 +42,7 @@ class GXFParameterAdaptor;
 class InputContext;
 class IOSpec;
 class Logger;
+class Message;
 class Operator;
 class OperatorSpec;
 class OutputContext;
@@ -57,10 +57,19 @@ class ParameterWrapper;
 enum class ParameterFlag;
 class Resource;
 
+// holoscan::gxf
 namespace gxf {
+class Entity;
 class GXFComponent;
-class GXFResource;
 class GXFCondition;
+class GXFInputContext;
+class GXFOutputContext;
+class GXFResource;
+}  // namespace gxf
+
+// holoscan::ops
+namespace ops {
+class GXFOperator;
 }
 
 // Conditions
@@ -76,6 +85,9 @@ class CudaStreamPool;
 class StdComponentSerializer;
 class UnboundedAllocator;
 class VideoStreamSerializer;
+
+// Domain objects
+class Tensor;
 
 }  // namespace holoscan
 

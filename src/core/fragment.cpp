@@ -16,12 +16,14 @@
  */
 #include "holoscan/core/fragment.hpp"
 
-#include <iterator>  // for std::back_inserter
-#include <typeinfo>
-#include <unordered_set>
-#include <variant>
-
 #include <yaml-cpp/yaml.h>
+
+#include <iterator>  // for std::back_inserter
+#include <set>
+#include <string>
+#include <typeinfo>
+#include <utility>
+#include <variant>
 
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/config.hpp"
@@ -73,7 +75,6 @@ Executor& Fragment::executor() {
   if (!executor_) { executor_ = make_executor<gxf::GXFExecutor>(); }
   return *executor_;
 }
-
 ArgList Fragment::from_config(const std::string& key) {
   (void)key;
   auto& yaml_nodes = config().yaml_nodes();
@@ -181,21 +182,20 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     port_pairs.emplace("", "");
   }
 
+  std::vector<std::string> output_labels;
+  output_labels.reserve(port_pairs.size());
+
   // Convert port pairs to port map (set<pair<string, string>> -> map<string, set<string>>)
   for (auto& [key, value] : port_pairs) {
     if (port_map->find(key) == port_map->end()) {
       (*port_map)[key] = std::set<std::string, std::less<>>();
+      output_labels.push_back(key);  // maintain the order of output labels
     }
     (*port_map)[key].insert(value);
   }
 
   // Verify that the upstream & downstream operators have the input and output ports specified by
   // the port_map
-
-  std::vector<std::string> output_labels;
-  output_labels.reserve(port_map->size());
-  for (auto& [key, _] : *port_map) { output_labels.push_back(key); }
-
   if (op_outputs.size() == 1 && output_labels.size() != 1) {
     HOLOSCAN_LOG_ERROR(
         "The upstream operator({}) has only one port with label '{}' but port_map "
@@ -211,8 +211,10 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     if (op_outputs.find(output_label) == op_outputs.end()) {
       if (op_outputs.size() == 1 && output_labels.size() == 1 && output_label == "") {
         // Set the default output port label
-        (*port_map)[op_outputs.begin()->first] = (*port_map)[output_label];
+        (*port_map)[op_outputs.begin()->first] = std::move((*port_map)[output_label]);
         port_map->erase(output_label);
+        // Update the output label
+        output_labels[0] = op_outputs.begin()->first;
         break;
       }
 
@@ -235,10 +237,6 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     }
   }
 
-  output_labels.clear();
-  // Re-evaluate output_labels
-  for (const auto& [key, _] : *port_map) { output_labels.push_back(key); }
-
   for (const auto& output_label : output_labels) {
     auto& input_labels = (*port_map)[output_label];
     if (op_inputs.size() == 1 && input_labels.size() != 1) {
@@ -259,6 +257,38 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
           input_labels.clear();
           input_labels.insert(op_inputs.begin()->first);
           break;
+        }
+
+        // Support for the case where the destination input port label points to the
+        // parameter name of the downstream operator, and the parameter type is
+        // 'std::vector<holoscan::IOSpec*>'.
+        // If we cannot find the input port with the specified label (e.g., 'receivers'),
+        // then we need to find a downstream operator's parameter
+        // (with 'std::vector<holoscan::IOSpec*>' type) and create a new input port
+        // with a specific label ('<parameter name>:<index>'. e.g, 'receivers:0').
+        auto& downstream_op_params = downstream_op_spec->params();
+        if (downstream_op_params.find(input_label) != downstream_op_params.end()) {
+          auto& downstream_op_param = downstream_op_params.at(input_label);
+          if (std::type_index(downstream_op_param.type()) ==
+              std::type_index(typeid(std::vector<holoscan::IOSpec*>))) {
+            const std::any& any_value = downstream_op_param.value();
+            auto& param = *std::any_cast<Parameter<std::vector<holoscan::IOSpec*>>*>(any_value);
+            param.set_default_value();
+
+            std::vector<holoscan::IOSpec*>& iospec_vector = param.get();
+
+            // Create a new input port for this receivers parameter
+            bool succeed = executor().add_receivers(downstream_op, input_label,
+                                                    input_labels, iospec_vector);
+            if (!succeed) {
+              HOLOSCAN_LOG_ERROR(
+                  "Failed to add receivers to the downstream operator({}) with label '{}'",
+                  downstream_op->name(),
+                  input_label);
+              return;
+            }
+            continue;
+          }
         }
 
         auto msg_buf = fmt::memory_buffer();
@@ -284,10 +314,10 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
   graph().add_flow(upstream_op, downstream_op, port_map);
 }
 
-void Fragment::compose(){};
+void Fragment::compose() {}
 
 void Fragment::run() {
   executor().run(graph());
-};
+}
 
 }  // namespace holoscan

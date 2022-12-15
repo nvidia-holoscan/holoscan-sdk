@@ -1,4 +1,5 @@
-# Copyright (c) 2022, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,6 +36,6 @@ target_link_libraries(mocks
   PUBLIC video_buffer_mock_lib
 )
 
-# Install GXF extension as a component 'holoscan-embedded-gxf_extensions'
+# Install GXF extension as a component 'holoscan-gxf_extensions'
 install_gxf_extension(mocks)
 install_gxf_extension(video_buffer_mock_lib) # not following '{name}_lib' so install explicitly

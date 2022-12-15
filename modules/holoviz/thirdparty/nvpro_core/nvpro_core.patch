@@ -1,0 +1,230 @@
+diff --git a/nvvk/appbase_vk.cpp b/nvvk/appbase_vk.cpp
+index b1b7d92..c2502cc 100644
+--- a/nvvk/appbase_vk.cpp
++++ b/nvvk/appbase_vk.cpp
+@@ -122,7 +122,7 @@ VkSurfaceKHR nvvk::AppBaseVk::getVkSurface(const VkInstance& instance, GLFWwindo
+ //--------------------------------------------------------------------------------------------------
+ // Creating the surface for rendering
+ //
+-void nvvk::AppBaseVk::createSwapchain(const VkSurfaceKHR& surface,
++bool nvvk::AppBaseVk::createSwapchain(const VkSurfaceKHR& surface,
+                                       uint32_t            width,
+                                       uint32_t            height,
+                                       VkFormat            colorFormat /*= VK_FORMAT_B8G8R8A8_UNORM*/,
+@@ -151,7 +151,8 @@ void nvvk::AppBaseVk::createSwapchain(const VkSurfaceKHR& surface,
+   }
+ 
+   m_swapChain.init(m_device, m_physicalDevice, m_queue, m_graphicsQueueIndex, surface, static_cast<VkFormat>(colorFormat));
+-  m_size        = m_swapChain.update(m_size.width, m_size.height, vsync);
++  if(!m_swapChain.update(m_size.width, m_size.height, vsync, &m_size))
++    return false;
+   m_colorFormat = static_cast<VkFormat>(m_swapChain.getFormat());
+ 
+   // Create Synchronization Primitives
+@@ -191,6 +192,8 @@ void nvvk::AppBaseVk::createSwapchain(const VkSurfaceKHR& surface,
+ 
+   // Setup camera
+   CameraManip.setWindowSize(m_size.width, m_size.height);
++
++  return true;
+ }
+ 
+ //--------------------------------------------------------------------------------------------------
+@@ -502,7 +505,7 @@ void nvvk::AppBaseVk::onFramebufferSize(int w, int h)
+   vkQueueWaitIdle(m_queue);
+ 
+   // Request new swapchain image size
+-  m_size         = m_swapChain.update(w, h, m_vsync);
++  m_swapChain.update(w, h, m_vsync, &m_size);
+   auto cmdBuffer = createTempCmdBuffer();
+   m_swapChain.cmdUpdateBarriers(cmdBuffer);  // Make them presentable
+   submitTempCmdBuffer(cmdBuffer);
+diff --git a/nvvk/appbase_vk.hpp b/nvvk/appbase_vk.hpp
+index 0de1053..154e300 100644
+--- a/nvvk/appbase_vk.hpp
++++ b/nvvk/appbase_vk.hpp
+@@ -275,7 +275,7 @@ public:
+   virtual void setup(const VkInstance& instance, const VkDevice& device, const VkPhysicalDevice& physicalDevice, uint32_t graphicsQueueIndex);
+   virtual void destroy();
+   VkSurfaceKHR getVkSurface(const VkInstance& instance, GLFWwindow* window);
+-  virtual void createSwapchain(const VkSurfaceKHR& surface,
++  virtual bool createSwapchain(const VkSurfaceKHR& surface,
+                                uint32_t            width,
+                                uint32_t            height,
+                                VkFormat            colorFormat = VK_FORMAT_B8G8R8A8_UNORM,
+diff --git a/nvvk/appbase_vkpp.cpp b/nvvk/appbase_vkpp.cpp
+index b6fb877..50c7c53 100644
+--- a/nvvk/appbase_vkpp.cpp
++++ b/nvvk/appbase_vkpp.cpp
+@@ -117,7 +117,10 @@ void nvvk::AppBase::createSwapchain(const vk::SurfaceKHR& surface, uint32_t widt
+   }
+ 
+   m_swapChain.init(m_device, m_physicalDevice, m_queue, m_graphicsQueueIndex, surface, static_cast<VkFormat>(colorFormat));
+-  m_size        = m_swapChain.update(m_size.width, m_size.height, vsync);
++  VkExtent2D dimensions;
++  if(!m_swapChain.update(m_size.width, m_size.height, vsync, &dimensions))
++    return;
++  m_size        = dimensions;
+   m_colorFormat = static_cast<vk::Format>(m_swapChain.getFormat());
+ 
+   // Create Synchronization Primitives
+@@ -395,7 +398,9 @@ void nvvk::AppBase::onFramebufferSize(int w, int h)
+   m_queue.waitIdle();
+ 
+   // Request new swapschain image size
+-  m_size = m_swapChain.update(m_size.width, m_size.height, m_vsync);
++  VkExtent2D dimensions;
++  m_swapChain.update(m_size.width, m_size.height, m_vsync, &dimensions);
++  m_size = dimensions;
+ 
+   if(m_size.width != w || m_size.height != h)
+   {
+diff --git a/nvvk/swapchain_vk.cpp b/nvvk/swapchain_vk.cpp
+index 8ac346c..cab44fd 100644
+--- a/nvvk/swapchain_vk.cpp
++++ b/nvvk/swapchain_vk.cpp
+@@ -44,16 +44,14 @@ bool SwapChain::init(VkDevice          device,
+   m_surface          = surface;
+   m_imageUsage       = imageUsage;
+ 
+-  VkResult result;
+-
+   // Get the list of VkFormat's that are supported:
+   uint32_t formatCount;
+-  result = vkGetPhysicalDeviceSurfaceFormatsKHR(m_physicalDevice, m_surface, &formatCount, nullptr);
+-  assert(!result);
++  if(NVVK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(m_physicalDevice, m_surface, &formatCount, nullptr)))
++    return false;
+ 
+   std::vector<VkSurfaceFormatKHR> surfFormats(formatCount);
+-  result = vkGetPhysicalDeviceSurfaceFormatsKHR(m_physicalDevice, m_surface, &formatCount, surfFormats.data());
+-  assert(!result);
++  if(NVVK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(m_physicalDevice, m_surface, &formatCount, surfFormats.data())))
++    return false;
+   // If the format list includes just one entry of VK_FORMAT_UNDEFINED,
+   // the surface has no preferred format.  Otherwise, at least one
+   // supported format will be returned.
+@@ -74,29 +72,26 @@ bool SwapChain::init(VkDevice          device,
+   return false;
+ }
+ 
+-VkExtent2D SwapChain::update(int width, int height, bool vsync)
++bool SwapChain::update(int width, int height, bool vsync, VkExtent2D* dimensions)
+ {
+   m_changeID++;
+ 
+-  VkResult       err;
+   VkSwapchainKHR oldSwapchain = m_swapchain;
+ 
+-  err = waitIdle();
+-  if(nvvk::checkResult(err, __FILE__, __LINE__))
+-  {
+-    exit(-1);
+-  }
++  if(NVVK_CHECK(waitIdle()))
++    return false;
++
+   // Check the surface capabilities and formats
+   VkSurfaceCapabilitiesKHR surfCapabilities;
+-  err = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physicalDevice, m_surface, &surfCapabilities);
+-  assert(!err);
++  if(NVVK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physicalDevice, m_surface, &surfCapabilities)))
++    return false;
+ 
+   uint32_t presentModeCount;
+-  err = vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface, &presentModeCount, nullptr);
+-  assert(!err);
++  if(NVVK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface, &presentModeCount, nullptr)))
++    return false;
+   std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+-  err = vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface, &presentModeCount, presentModes.data());
+-  assert(!err);
++  if(NVVK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface, &presentModeCount, presentModes.data())))
++    return false;
+ 
+   VkExtent2D swapchainExtent;
+   // width and height are either both -1, or both not -1.
+@@ -174,8 +169,8 @@ VkExtent2D SwapChain::update(int width, int height, bool vsync)
+   swapchain.oldSwapchain             = oldSwapchain;
+   swapchain.clipped                  = true;
+ 
+-  err = vkCreateSwapchainKHR(m_device, &swapchain, nullptr, &m_swapchain);
+-  assert(!err);
++  if(NVVK_CHECK(vkCreateSwapchainKHR(m_device, &swapchain, nullptr, &m_swapchain)))
++    return false;
+ 
+   nvvk::DebugUtil debugUtil(m_device);
+ 
+@@ -196,16 +191,16 @@ VkExtent2D SwapChain::update(int width, int height, bool vsync)
+     vkDestroySwapchainKHR(m_device, oldSwapchain, nullptr);
+   }
+ 
+-  err = vkGetSwapchainImagesKHR(m_device, m_swapchain, &m_imageCount, nullptr);
+-  assert(!err);
++  if(NVVK_CHECK(vkGetSwapchainImagesKHR(m_device, m_swapchain, &m_imageCount, nullptr)))
++    return false;
+ 
+   m_entries.resize(m_imageCount);
+   m_barriers.resize(m_imageCount);
+ 
+   std::vector<VkImage> images(m_imageCount);
+ 
+-  err = vkGetSwapchainImagesKHR(m_device, m_swapchain, &m_imageCount, images.data());
+-  assert(!err);
++  if(NVVK_CHECK(vkGetSwapchainImagesKHR(m_device, m_swapchain, &m_imageCount, images.data())))
++    return false;
+   //
+   // Image views
+   //
+@@ -226,16 +221,16 @@ VkExtent2D SwapChain::update(int width, int height, bool vsync)
+                                             {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A},
+                                             {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+ 
+-    err = vkCreateImageView(m_device, &viewCreateInfo, nullptr, &entry.imageView);
+-    assert(!err);
++    if(NVVK_CHECK(vkCreateImageView(m_device, &viewCreateInfo, nullptr, &entry.imageView)))
++      return false;
+ 
+     // semaphore
+     VkSemaphoreCreateInfo semCreateInfo = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+ 
+-    err = vkCreateSemaphore(m_device, &semCreateInfo, nullptr, &entry.readSemaphore);
+-    assert(!err);
+-    err = vkCreateSemaphore(m_device, &semCreateInfo, nullptr, &entry.writtenSemaphore);
+-    assert(!err);
++    if(NVVK_CHECK(vkCreateSemaphore(m_device, &semCreateInfo, nullptr, &entry.readSemaphore)))
++      return false;
++    if(NVVK_CHECK(vkCreateSemaphore(m_device, &semCreateInfo, nullptr, &entry.writtenSemaphore)))
++      return false;
+ 
+     // initial barriers
+     VkImageSubresourceRange range = {0};
+@@ -271,7 +266,9 @@ VkExtent2D SwapChain::update(int width, int height, bool vsync)
+   m_currentSemaphore = 0;
+   m_currentImage     = 0;
+ 
+-  return swapchainExtent;
++  if(dimensions)
++    *dimensions = swapchainExtent;
++  return true;
+ }
+ 
+ void SwapChain::deinitResources()
+diff --git a/nvvk/swapchain_vk.hpp b/nvvk/swapchain_vk.hpp
+index db02692..7a73785 100644
+--- a/nvvk/swapchain_vk.hpp
++++ b/nvvk/swapchain_vk.hpp
+@@ -283,8 +283,11 @@ public:
+   // (must be called at least once after init)
+   // triggers queue/device wait idle
+   // returns actual swapchain dimensions, which may differ from requested
+-  VkExtent2D update(int width, int height, bool vsync);
+-  VkExtent2D update(int width, int height) { return update(width, height, m_vsync); }
++  bool update(int width, int height, bool vsync, VkExtent2D* dimensions = nullptr);
++  bool update(int width, int height, VkExtent2D* dimensions = nullptr)
++  {
++    return update(width, height, m_vsync, dimensions);
++  }
+ 
+   // Returns true on success.
+   //

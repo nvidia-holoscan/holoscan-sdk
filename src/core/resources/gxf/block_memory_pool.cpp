@@ -32,7 +32,7 @@ void BlockMemoryPool::setup(ComponentSpec& spec) {
              "block_size",
              "Block size",
              "The size of one block of memory in byte. Allocation requests can only be "
-             "fullfilled if they "
+             "fulfilled if they "
              "fit into one block. If less memory is requested still a full block is issued.");
   spec.param(
       num_blocks_,

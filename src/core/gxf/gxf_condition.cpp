@@ -35,6 +35,9 @@ void GXFCondition::initialize() {
 
   GXFComponent::gxf_initialize();
 
+  // Set GXF component ID as the component ID
+  id_ = gxf_cid_;
+
   if (!spec_) {
     HOLOSCAN_LOG_ERROR("No component spec for GXFCondition '{}'", name());
     return;

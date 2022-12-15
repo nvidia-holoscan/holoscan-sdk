@@ -38,6 +38,7 @@ message(STATUS "CMAKE_INSTALL_FULL_INCLUDEDIR    : ${CMAKE_INSTALL_FULL_INCLUDED
 message(STATUS "CMAKE_INSTALL_FULL_LIBDIR        : ${CMAKE_INSTALL_FULL_LIBDIR}")
 message(STATUS "CMAKE_MODULE_PATH                : ${CMAKE_MODULE_PATH}")
 message(STATUS "CMAKE_PREFIX_PATH                : ${CMAKE_PREFIX_PATH}")
+message(STATUS "CMAKE_PREFIX_PATH (env)          : $ENV{CMAKE_PREFIX_PATH}")
 message(STATUS "CMAKE_FIND_ROOT_PATH             : ${CMAKE_FIND_ROOT_PATH}")
 message(STATUS "CMAKE_LIBRARY_ARCHITECTURE       : ${CMAKE_LIBRARY_ARCHITECTURE}")
 message(STATUS "FIND_LIBRARY_USE_LIB64_PATHS     : ${FIND_LIBRARY_USE_LIB64_PATHS}")
@@ -68,7 +69,7 @@ superbuild_depend(threads)
 # (This uses CPM_SOURCE_CACHE and ENV{CPM_SOURCE_CACHE} to cache the downloaded source code)
 
 # https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_versions.html#cpm-version-format
-rapids_cpm_init(OVERRIDE ${CMAKE_CURRENT_LIST_DIR}/rapids_cpm_package_overrides.json)
+rapids_cpm_init()
 
 superbuild_depend(cudatoolkit_rapids)
 
@@ -78,6 +79,7 @@ superbuild_depend(expected_rapids)
 
 superbuild_depend(spdlog_rapids)
 # superbuild_depend(rmm_rapids)
+superbuild_depend(dlpack_rapids)
 
 # GXF dependencies
 superbuild_depend(gxf)

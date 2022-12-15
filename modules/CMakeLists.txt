@@ -15,12 +15,15 @@
 
 cmake_minimum_required(VERSION 3.22)
 
-# Reset CMAKE_INSTALL_DEFAULT_COMPONENT_NAME to 'holoscan-embedded-holoviz' so that installation caused
-# by modules in this folder will not install into the default component that Holoscan Embedded SDK
+# Reset CMAKE_INSTALL_DEFAULT_COMPONENT_NAME to 'holoscan-modules' so that installation caused
+# by modules in this folder will not install into the default component that Holoscan SDK
 # uses.
-# (CMAKE_INSTALL_DEFAULT_COMPONENT_NAME is set to 'holoscan-embedded-core' by the root CMakeLists.txt
+# (CMAKE_INSTALL_DEFAULT_COMPONENT_NAME is set to 'holoscan-core' by the root CMakeLists.txt
 # before this folder is processed.)
-set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "holoscan-embedded-holoviz")
+set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "holoscan-modules")
+
+# We set the default RPATH to $ORIGIN to make sure we load the installed libraries
+set(CMAKE_INSTALL_RPATH \$ORIGIN)
 
 include(FetchContent)
 
@@ -28,4 +31,10 @@ FetchContent_Declare(
   holoviz
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/holoviz
 )
-FetchContent_MakeAvailable(holoviz)
+
+FetchContent_Declare(
+  holoinfer
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/holoinfer
+)
+
+FetchContent_MakeAvailable(holoviz holoinfer)
