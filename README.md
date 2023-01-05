@@ -74,9 +74,10 @@ You'll need the following to build applications from source on x86_64:
 
 ## Using the released SDK
 
-The Holoscan SDK is packaged in the following different formats:
-- 🐋 The [Holoscan container image on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan) includes the Holoscan libraries, GXF extensions, headers, example source code, and sample datasets. It is the simplest way to run sample streaming applications or create your own application using Holoscan.
-- 🐍 The [Holoscan python wheels on PyPI](https://pypi.org/project/holoscan/) are the simplest way for Python developers to quickly get started in creating their own application with a simple `pip install holoscan`. They only include the necessary libraries and extensions, not including example code, built applications, nor sample datasets.
+The Holoscan SDK is available as part of the following packages:
+- 🐋 The [Holoscan container image on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan) includes the Holoscan libraries, GXF extensions, headers, example source code, and sample datasets, as well as all the dependencies that were tested with Holoscan. It is the recommended way to run sample streaming applications, while still allowing you to create your own C++ and Python Holoscan application.
+- 🐍 The [Holoscan python wheels on PyPI](https://pypi.org/project/holoscan/) (**NEW IN 0.4**) are the ideal way for Python developers to get started with the SDK, simply using `pip install holoscan`. The wheels include the necessary libraries and extensions, not including example code, built applications, nor sample datasets.
+- 📦️ The [Holoscan Debian package on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_dev_deb) (**NEW IN 0.4**) includes the libraries, headers, and CMake configurations needed for both C++ and Python developers. It does not include example code, pre-built applications, nor sample datasets.
 
 ## Building the SDK from source
 
