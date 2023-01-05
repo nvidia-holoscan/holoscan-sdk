@@ -37,7 +37,7 @@ Set up your developer kit:
 - [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide), or
 - [NVIDIA IGX Orin Developer Kit User Guide](https://developer.nvidia.com/igx-orin-developer-kit-user-guide).
 
-> Make sure you have joined the [Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and, if needed, the [RiverMax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
+> Make sure you have joined the [Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and, if needed, the [Rivermax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
 
 [SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/) will install **Holopack 1.1** as well as the `nvgpuswitch.py` script. Once configured for dGPU mode, your developer kit will include the following necessary components to build the SDK:
 - [NVIDIA Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux): 34.1.2
@@ -48,7 +48,7 @@ Set up your developer kit:
 - Optional Rivermax support
   - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
   - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
-  - *Note: [GPUDirect](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/clara_holoscan_applications.html#installing-and-enabling-gpudirect-rdma) drivers (required for Emergent support) need to be installed manually at this time*
+  - *Note: [GPUDirect](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma) drivers (required for Emergent support) need to be installed manually at this time*
 
 Refer to the user guide for additional steps needed to support specific technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html) or [Emergent cameras](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/emergent_setup.html).
 
@@ -70,7 +70,7 @@ You'll need the following to build applications from source on x86_64:
   - [NVIDIA ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/)
   - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
   - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
-  - [GPUDirect Drivers](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/clara_holoscan_applications.html#installing-and-enabling-gpudirect-rdma)
+  - [GPUDirect Drivers](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma)
 
 ## Using the released SDK
 
@@ -143,7 +143,7 @@ To build on your local environment, you'll need to install the dependencies belo
 - **Vulkan SDK**: 1.3.216
   - download & build: see the `vulkansdk-builder` stage in [`Dockerfile`](Dockerfile)
   - install: see the `dev` stage in [`Dockerfile`](Dockerfile)
-- **GXF**: 2.4.2
+- **GXF**: 2.5
   - call `./run install_gxf` or look at its content
 
 You'll then need CMake to find those dependencies during configuration. Use `CMAKE_PREFIX_PATH`, `CMAKE_LIBRARY_PATH`, and/or `CMAKE_INCLUDE_PATH` if they're not installed in default system paths and cannot automatically be found.
