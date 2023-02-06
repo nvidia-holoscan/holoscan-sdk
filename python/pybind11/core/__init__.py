@@ -120,6 +120,8 @@ __all__ = [
 
 
 def _load_gxf_extensions(cls):
+    import logging
+
     from ..gxf import load_extensions
 
     if not hasattr(cls, "_context"):
@@ -153,15 +155,21 @@ def _load_gxf_extensions(cls):
         pass
 
     extensions = [os.path.join(holoscan_lib_path, lib) for lib in gxf_extension_libs]
-    extensions += [os.path.join(holoscan_gxf_extensions_path, lib) for lib in holoscan_gxf_extension_libs]
-    for f in extensions:
-        if not os.path.exists(f):
-            raise ValueError(f"could not find the GXF extension: {f}")
-
+    extensions += [
+        os.path.join(holoscan_gxf_extensions_path, lib) for lib in holoscan_gxf_extension_libs
+    ]
     # Note: can only add a given extension once, otherwise will get:
     #       ValueError: GXF_FACTORY_DUPLICATE_TID
-    load_extensions(cls._context, extensions, [], "")
-
+    # Note: loading them one at a time to print adequate warning
+    for ext in extensions:
+        try:
+            load_extensions(cls._context, [ext], [], "")
+        except ValueError as e:
+            e_string = f"{type(e).__name__}: {e}"
+            if not os.path.exists(ext):
+                logging.warning(f"Could not find the GXF extension: {ext}. {e_string}")
+            else:
+                logging.warning(f"Could not load the GXF extension: {ext}. {e_string}")
 
 class Application(_Application):
     def __init__(self, *args, **kwargs):

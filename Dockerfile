@@ -30,12 +30,7 @@ FROM ${BASE_IMAGE} as base
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Install tools
-RUN apt update \
-    && apt install --no-install-recommends -y \
-        software-properties-common
-
-# Install newer CMake
+# Install newer CMake (https://apt.kitware.com/)
 RUN rm -r \
     /usr/local/bin/cmake \
     /usr/local/bin/cpack \
@@ -43,10 +38,13 @@ RUN rm -r \
     /usr/local/share/cmake-3.14
 RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
         | gpg --dearmor - \
-        | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null \
-    && apt-add-repository "deb https://apt.kitware.com/ubuntu/ focal main" \
+        | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
+    && echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' \
+        | tee /etc/apt/sources.list.d/kitware.list >/dev/null \
     && apt update \
+    && rm /usr/share/keyrings/kitware-archive-keyring.gpg \
     && apt install --no-install-recommends -y \
+        kitware-archive-keyring \
         cmake-data=3.22.2-0kitware1ubuntu20.04.1 \
         cmake=3.22.2-0kitware1ubuntu20.04.1 \
     && rm -rf /var/lib/apt/lists/*

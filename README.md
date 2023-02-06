@@ -8,11 +8,11 @@ Visit the [NGC demo website](https://demos.ngc.nvidia.com/holoscan) for a live d
 
 ## Table of Contents
 - [Documentation](#documentation)
-- [Prerequisites](#prerequisites)
-  - [For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)](#for-clara-agx-and-nvidia-igx-orin-developer-kits-aarch64)
-  - [For x86_64 systems](#for-x86_64-systems)
 - [Using the released SDK](#using-the-released-sdk)
 - [Building the SDK from source](#building-the-sdk-from-source)
+  - [Prerequisites](#prerequisites)
+    - [For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)](#for-clara-agx-and-nvidia-igx-orin-developer-kits-aarch64)
+    - [For x86_64 systems](#for-x86_64-systems)
   - [Recommended: using the `run` script](#recommended-using-the-run-script)
   - [Cross-compilation](#cross-compilation)
   - [Advanced: Docker + CMake](#advanced-docker-cmake)
@@ -27,51 +27,6 @@ Visit the [NGC demo website](https://demos.ngc.nvidia.com/holoscan) for a live d
 * The latest SDK user guide is available at https://docs.nvidia.com/clara-holoscan.
 * For a full list of Holoscan documentation, visit the [Holoscan developer page](https://developer.nvidia.com/clara-holoscan-sdk).
 
-## Prerequisites
-
-The Holoscan SDK currently supports the [Holoscan Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits) (aarch64) as well as x86_64 systems.
-
-### For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)
-
-Set up your developer kit:
-- [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide), or
-- [NVIDIA IGX Orin Developer Kit User Guide](https://developer.nvidia.com/igx-orin-developer-kit-user-guide).
-
-> Make sure you have joined the [Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and, if needed, the [Rivermax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
-
-[SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/) will install **Holopack 1.1** as well as the `nvgpuswitch.py` script. Once configured for dGPU mode, your developer kit will include the following necessary components to build the SDK:
-- [NVIDIA Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux): 34.1.2
-- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (for containerized development)
-- [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit): 11.6.1 (for local development only)
-- [TensorRT](https://developer.nvidia.com/tensorrt): 8.2.3 (for local development only)
-- Optional Rivermax support
-  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
-  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
-  - *Note: [GPUDirect](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma) drivers (required for Emergent support) need to be installed manually at this time*
-
-Refer to the user guide for additional steps needed to support specific technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html) or [Emergent cameras](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/emergent_setup.html).
-
-> Additional dependencies are required when developing locally instead of using a containerized environment, see details in the [section below](#advanced-local-environment--cmake).
-
-### For x86_64 systems
-
-You'll need the following to build applications from source on x86_64:
-- OS: Ubuntu 20.04
-- NVIDIA GPU
-  - Ampere or above recommended for best performance
-  - [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for [GPUDirect RDMA](https://developer.nvidia.com/gpudirect) support
-- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08
-- For containerized development (recommended):
-  - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
-- For local development (advanced):
-  - See details in the [section below](#advanced-local-environment--cmake).
-- For Rivermax support (optional):
-  - [NVIDIA ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/)
-  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
-  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
-  - [GPUDirect Drivers](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma)
-
 ## Using the released SDK
 
 The Holoscan SDK is available as part of the following packages:
@@ -81,7 +36,43 @@ The Holoscan SDK is available as part of the following packages:
 
 ## Building the SDK from source
 
-Follow the instructions below if you want to build the Holoscan SDK yourself.
+> **Disclaimer**: we only recommend building the SDK from source if you are a developer of the SDK, or need to build the SDK with debug symbols or other options not used as part of the released packages. If you want to modify some code to fit your use case, contribute to HoloHub if it's an operator or application, or file a feature or bug request. If that's not the case, prefer using [generated packages](using-the-released-sdk).
+
+### Prerequisites
+
+The Holoscan SDK currently supports the [Holoscan Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits) (aarch64) as well as x86_64 systems.
+
+#### For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)
+
+Set up your developer kit:
+- [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide), or
+- [NVIDIA IGX Orin Developer Kit User Guide](https://developer.nvidia.com/igx-orin-developer-kit-user-guide).
+
+> Make sure you have joined the [Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and, if needed, the [Rivermax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
+
+- [SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/) will install **Holopack 1.2** as well as the `nvgpuswitch.py` script. Once configured for dGPU mode, your developer kit will include the necessary components to build the SDK
+- For Rivermax support (optional/local development only at this time), GPUDirect drivers need to be installed manually at this time, see the [User Guide](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma).
+- Refer to the user guide for additional steps needed to support third-party technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html) or [Emergent cameras](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/emergent_setup.html).
+- Additional dependencies are required when developing locally instead of using a containerized environment, see details in the [section below](#advanced-local-environment--cmake).
+
+#### For x86_64 systems
+
+You'll need the following to build applications from source on x86_64:
+- OS: Ubuntu 20.04
+- NVIDIA GPU
+  - Ampere or above recommended for best performance
+  - [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for [GPUDirect RDMA](https://developer.nvidia.com/gpudirect) support
+  - Tested with [NVIDIA RTX 6000](https://www.nvidia.com/en-us/design-visualization/rtx-6000/) and [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/)
+- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08 or above
+- For containerized development (recommended):
+  - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- For local development (advanced):
+  - See details in the [section below](#advanced-local-environment--cmake).
+- For Rivermax support (optional/local development only at this time):
+  - [NVIDIA ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/)
+  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.8
+  - [GPUDirect Drivers](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma): 1.1
+  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.20
 
 ### Recommended: using the `run` script
 
