@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,17 @@
 #include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan::gxf {
+
+GXFCondition::GXFCondition(const std::string& name, nvidia::gxf::SchedulingTerm* term) {
+  id_ = term->cid();
+  name_ = name;
+  gxf_context_ = term->context();
+  gxf_eid_ = term->eid();
+  gxf_cid_ = term->cid();
+  GxfComponentType(gxf_context_, gxf_cid_, &gxf_tid_);
+  gxf_cname_ = name;
+  gxf_cptr_ = term;
+}
 
 void GXFCondition::initialize() {
   Condition::initialize();

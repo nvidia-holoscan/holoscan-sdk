@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(PROJECT_NAME clara_holoviz_unittests)
+set(PROJECT_NAME holoviz_unittests)
 
 add_executable(${PROJECT_NAME})
 add_executable(holoscan::viz::unittests ALIAS ${PROJECT_NAME})
@@ -28,10 +28,6 @@ target_compile_definitions(${PROJECT_NAME}
         GTEST_HAS_RTTI=1
         GTEST_LANG_CXX11=1
         GTEST_HAS_EXCEPTIONS=1
-        # the gtest library provided by Holoscan is compiled with _GLIBCXX_USE_CXX11_ABI set to 1
-        # if this is not set there are link errors or runtime errors of functions in gtest expecting
-        # std::string
-        _GLIBCXX_USE_CXX11_ABI=1
     )
 
 target_link_libraries(${PROJECT_NAME}

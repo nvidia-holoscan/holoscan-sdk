@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_TYPES_HPP
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <type_traits>
 #include <vector>
@@ -34,22 +35,19 @@ struct array_type : std::integral_constant<int, 2> {};
 // base_type/base_type_t
 
 template <typename T, typename Enable = void>
-struct _base_type {
+struct base_type {
   using type = std::decay_t<T>;
 };
 
 template <typename T>
-struct _base_type<T, typename std::enable_if_t<std::is_base_of_v<Resource, std::decay_t<T>>>> {
+struct base_type<T, typename std::enable_if_t<std::is_base_of_v<Resource, std::decay_t<T>>>> {
   using type = Resource;
 };
 
 template <typename T>
-struct _base_type<T, typename std::enable_if_t<std::is_base_of_v<Condition, std::decay_t<T>>>> {
+struct base_type<T, typename std::enable_if_t<std::is_base_of_v<Condition, std::decay_t<T>>>> {
   using type = Condition;
 };
-
-template <typename T>
-using base_type = _base_type<std::decay_t<T>>;
 
 template <typename T>
 using base_type_t = typename base_type<T>::type;
@@ -61,7 +59,7 @@ struct _type_info {
   using container_type = scalar_type;
   using element_type = base_type_t<T>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 0;
+  static constexpr int32_t dimension = 0;
 };
 
 template <typename T>
@@ -69,7 +67,7 @@ struct _type_info<std::shared_ptr<T>> {
   using container_type = scalar_type;
   using element_type = std::shared_ptr<base_type_t<T>>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 0;
+  static constexpr int32_t dimension = 0;
 };
 
 template <typename T>
@@ -77,7 +75,7 @@ struct _type_info<std::vector<T>> {
   using container_type = vector_type;
   using element_type = base_type_t<T>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 1;
+  static constexpr int32_t dimension = 1;
 };
 
 template <typename T>
@@ -85,7 +83,7 @@ struct _type_info<std::vector<std::shared_ptr<T>>> {
   using container_type = vector_type;
   using element_type = std::shared_ptr<base_type_t<T>>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 1;
+  static constexpr int32_t dimension = 1;
 };
 
 template <typename T>
@@ -93,7 +91,7 @@ struct _type_info<std::vector<std::vector<T>>> {
   using container_type = vector_type;
   using element_type = base_type_t<T>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 2;
+  static constexpr int32_t dimension = 2;
 };
 
 template <typename T>
@@ -101,7 +99,7 @@ struct _type_info<std::vector<std::vector<std::shared_ptr<T>>>> {
   using container_type = vector_type;
   using element_type = std::shared_ptr<base_type_t<T>>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 2;
+  static constexpr int32_t dimension = 2;
 };
 
 template <typename T, std::size_t N>
@@ -109,7 +107,7 @@ struct _type_info<std::array<T, N>> {
   using container_type = array_type;
   using element_type = base_type_t<T>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 1;
+  static constexpr int32_t dimension = 1;
 };
 
 template <typename T>
@@ -117,7 +115,7 @@ struct _type_info<Parameter<std::shared_ptr<T>>> {
   using container_type = scalar_type;
   using element_type = std::shared_ptr<base_type_t<T>>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 0;
+  static constexpr int32_t dimension = 0;
 };
 
 template <typename T>
@@ -125,7 +123,7 @@ struct _type_info<Parameter<std::vector<T>>> {
   using container_type = vector_type;
   using element_type = base_type_t<T>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 1;
+  static constexpr int32_t dimension = 1;
 };
 
 template <typename T>
@@ -133,7 +131,7 @@ struct _type_info<Parameter<std::vector<std::vector<T>>>> {
   using container_type = vector_type;
   using element_type = base_type_t<T>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 2;
+  static constexpr int32_t dimension = 2;
 };
 
 template <typename T, std::size_t N>
@@ -141,7 +139,7 @@ struct _type_info<Parameter<std::array<T, N>>> {
   using container_type = array_type;
   using element_type = base_type_t<T>;
   using derived_type = std::decay_t<T>;
-  static constexpr int dimension = 1;
+  static constexpr int32_t dimension = 1;
 };
 
 template <typename T>
@@ -214,7 +212,7 @@ inline constexpr bool is_one_of_derived_v = ((std::is_base_of_v<T, ArgsT> || ...
 // dimension_of_v
 
 template <typename T>
-inline constexpr int dimension_of_v = type_info<T>::dimension;
+inline constexpr int32_t dimension_of_v = type_info<T>::dimension;
 
 }  // namespace holoscan
 

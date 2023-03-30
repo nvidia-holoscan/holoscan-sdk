@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,12 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_CONDITION_HPP
 #define HOLOSCAN_CORE_GXF_GXF_CONDITION_HPP
 
+#include <string>
+
 #include "../condition.hpp"
 #include "./gxf_component.hpp"
+
+#include "gxf/std/scheduling_terms.hpp"
 
 namespace holoscan::gxf {
 
@@ -27,6 +31,7 @@ class GXFCondition : public holoscan::Condition, public gxf::GXFComponent {
  public:
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(GXFCondition, holoscan::Condition)
   GXFCondition() = default;
+  GXFCondition(const std::string& name, nvidia::gxf::SchedulingTerm* term);
 
   void initialize() override;
 };

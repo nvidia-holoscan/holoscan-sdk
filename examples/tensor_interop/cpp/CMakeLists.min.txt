@@ -14,10 +14,11 @@
 # limitations under the License.
 
 cmake_minimum_required(VERSION 3.20)
-project(holoscan_cpp_tensor_interop CXX)
+project(holoscan_tensor_interop CXX)
 
 # Finds the package holoscan
-find_package(holoscan REQUIRED)
+find_package(holoscan REQUIRED CONFIG
+             PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
 
 add_executable(tensor_interop
   tensor_interop.cpp
@@ -27,12 +28,17 @@ add_executable(tensor_interop
 
 target_link_libraries(tensor_interop
   PRIVATE
-  holoscan::holoscan
+  holoscan::core
   CUDA::cudart
 )
 
-# Copy config file to the build tree
-add_custom_target(tensor_interop_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/app_config.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-)
-add_dependencies(tensor_interop tensor_interop_yaml)
+# Testing
+if(BUILD_TESTING)
+  add_test(NAME EXAMPLE_CPP_TENSOR_INTEROP_TEST
+    COMMAND tensor_interop
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_TENSOR_INTEROP_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Scheduling 3 entities"
+  )
+endif()

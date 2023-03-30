@@ -19,14 +19,4 @@ project(holoscan_inference_toolkit
     LANGUAGES CXX CUDA
     )
 
-set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/package")
-# avoid 'Up-to-date' install messages
-set(CMAKE_INSTALL_MESSAGE LAZY)
-# strip release binaries
-if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(_INSTALL_TARGET "install/strip")
-else()
-    set(_INSTALL_TARGET "install")
-endif()
-
 add_subdirectory(src)

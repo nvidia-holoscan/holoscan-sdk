@@ -29,7 +29,7 @@ layout(binding = 1) uniform sampler2D texSamplerLUT;
 
 layout(push_constant) uniform constants
 {
-    float opacity;
+    layout(offset = 21 * 4) float opacity;
 } pushConstants;
 
 void main()

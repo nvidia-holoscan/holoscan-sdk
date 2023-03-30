@@ -18,7 +18,7 @@
 #version 450
 
 // incoming
-layout(location = 0) in vec2 i_position;
+layout(location = 0) in vec3 i_position;
 
 // outgoing
 layout(location = 0) out vec4 o_color;
@@ -38,5 +38,5 @@ void main()
     gl_PointSize = pushConstants.pointSize;
     o_color = vec4(pushConstants.colorRed, pushConstants.colorGreen, pushConstants.colorBlue, pushConstants.colorAlpha);
 
-    gl_Position  = pushConstants.matrix * vec4(i_position, 0.0, 1.0);
+    gl_Position  = pushConstants.matrix * vec4(i_position, 1.0);
 }

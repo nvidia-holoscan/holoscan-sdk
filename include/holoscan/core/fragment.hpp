@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,10 @@
 #include <type_traits>  // for std::enable_if_t, std::is_constructible
 #include <utility>      // for std::pair
 
-#include "./common.hpp"
+#include "common.hpp"
+#include "config.hpp"
+#include "executor.hpp"
+#include "graph.hpp"
 
 namespace holoscan {
 
@@ -85,13 +88,18 @@ class Fragment {
    *
    * The `extensions` field in the YAML configuration file is a list of GXF extension paths.
    * The paths can be absolute or relative to the current working directory, considering paths in
-   * `LD_LIBRARY_PATH` environment variable. The paths consists of the following parts:
+   * `LD_LIBRARY_PATH` environment variable.
+   *
+   * The paths can consist of the following parts:
    *
    * - GXF core extensions
    *   - built-in extensions such as `libgxf_std.so` and `libgxf_cuda.so`.
+   *   - `libgxf_std.so`, `libgxf_cuda.so`, `libgxf_multimedia.so`, `libgxf_serialization.so` are
+   *     always loaded by default.
    *   - GXF core extensions are copied to the `lib` directory of the build/installation directory.
    * - Other GXF extensions
    *   - GXF extensions that are required for operators that this fragment uses.
+   *   - some core GXF extensions such as `libgxf_stream_playback.so` are always loaded by default.
    *   - these paths are usually relative to the build/installation directory.
    *
    * The extension paths are used to load dependent GXF extensions at runtime when
@@ -104,12 +112,7 @@ class Fragment {
    *
    * ```yaml
    * extensions:
-   *   - libgxf_std.so
-   *   - libgxf_cuda.so
-   *   - libgxf_multimedia.so
-   *   - libgxf_serialization.so
    *   - libmy_recorder.so
-   *   - libstream_playback.so
    *
    * replayer:
    *   directory: "../data/endoscopy/video"
@@ -231,7 +234,7 @@ class Fragment {
   /**
    * @brief Create a new (operator) resource.
    *
-   * @tparam OperatorT The type of the resource.
+   * @tparam ResourceT The type of the resource.
    * @param name The name of the resource.
    * @param args The arguments for the resource.
    * @return The shared pointer to the resource.
@@ -254,7 +257,7 @@ class Fragment {
   /**
    * @brief Create a new (operator) resource.
    *
-   * @tparam OperatorT The type of the resource.
+   * @tparam ResourceT The type of the resource.
    * @param args The arguments for the resource.
    * @return The shared pointer to the resource.
    */
@@ -268,7 +271,7 @@ class Fragment {
   /**
    * @brief Create a new condition.
    *
-   * @tparam OperatorT The type of the condition.
+   * @tparam ConditionT The type of the condition.
    * @param name The name of the condition.
    * @param args The arguments for the condition.
    * @return The shared pointer to the condition.
@@ -292,7 +295,7 @@ class Fragment {
   /**
    * @brief Create a new condition.
    *
-   * @tparam OperatorT The type of the condition.
+   * @tparam ConditionT The type of the condition.
    * @param args The arguments for the condition.
    * @return The shared pointer to the condition.
    */
@@ -393,8 +396,8 @@ class Fragment {
    *     add_flow(visualizer_format_converter, visualizer, {{"", "receivers"}});
    *
    *     add_flow(source, format_converter);
-   *     add_flow(format_converter, lstm_inferer);
-   *     add_flow(lstm_inferer, visualizer, {{"", "receivers"}});
+   *     add_flow(format_converter, multiai_inference);
+   *     add_flow(multiai_inference, visualizer, {{"", "receivers"}});
    *
    * Instead of:
    *
@@ -402,8 +405,8 @@ class Fragment {
    *     add_flow(visualizer_format_converter, visualizer, {{"", "source_video"}});
    *
    *     add_flow(source, format_converter);
-   *     add_flow(format_converter, lstm_inferer);
-   *     add_flow(lstm_inferer, visualizer, {{"", "tensor"}});
+   *     add_flow(format_converter, multiai_inference);
+   *     add_flow(multiai_inference, visualizer, {{"", "tensor"}});
    *
    * By using the parameter (`receivers`) with `std::vector<holoscan::IOSpec*>` type, the framework
    * creates input ports (`receivers:0` and `receivers:1`) implicitly and connects them (and adds
@@ -446,6 +449,11 @@ class Fragment {
   template <typename ExecutorT>
   std::unique_ptr<Executor> make_executor() {
     return std::make_unique<ExecutorT>(this);
+  }
+
+  template <typename ExecutorT, typename... ArgsT>
+  std::unique_ptr<Executor> make_executor(ArgsT&&... args) {
+    return std::make_unique<ExecutorT>(std::forward<ArgsT>(args)...);
   }
 
   std::string name_;                    ///< The name of the fragment.

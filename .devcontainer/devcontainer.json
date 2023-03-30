@@ -2,15 +2,8 @@
 // https://code.visualstudio.com/docs/remote/devcontainerjson-reference
 {
     "name": "C++",
-    // Dockerfile in this VSCode DevContainer uses a cache image named `holoscan-sdk-dev` to
-    // speed up the build process. To rebuild the cache image before container creation, it runs:
-    //
-    //   docker buildx use default  # use the default builder to access all the cache images
-    //   ./run build_image`
-    //
-    // as an initialization command.
-    // It also runs `./run install_gxf` to install the GXF library.
-    "initializeCommand": "docker buildx use default; ${localWorkspaceFolder}/run build_image; ${localWorkspaceFolder}/run install_gxf",
+    // Use 'initialize-command.sh' to execute initialization commands before the container is created.
+    "initializeCommand": ".devcontainer/initialize-command.sh",
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
@@ -22,6 +15,10 @@
     "runArgs": [
         "--runtime=nvidia",
         "--net=host",
+        // Current VSCode DevContainer doesn't support dynamic 'runArgs' for docker
+        // (see https://github.com/microsoft/vscode-remote-release/issues/3972).
+        // So, we need to comment out the following lines when we don't use AJA Capture Card or video device.
+        //
         // Uncomment the following line to use AJA Capture Card
         // "--device=/dev/ajantv20:/dev/ajantv20",
         // Uncomment the following line to use /dev/video0. Also, execute 'sudo chmod 666 /dev/video0' inside the container.
@@ -32,14 +29,19 @@
     "containerEnv": {
         "DISPLAY": "${localEnv:DISPLAY}",
         "NVIDIA_DRIVER_CAPABILITIES": "graphics,video,compute,utility,display",
+        // Set the following environment variables to use the same folder name as the host machine.
+        // This is needed to launch container from the workspace folder that is not same as the SDK source root folder.
+        "HOLOSCAN_PUBLIC_FOLDER": "${env:HOLOSCAN_PUBLIC_FOLDER}",
     },
     "mounts": [
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
-        // Mount Vulkan driver ICD configuration (need to map two paths, the configurations files are installed to different locations
-        // when installing with deb packages or with run files)
+        // Mount Vulkan driver ICD configuration.
         // Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-        "source=/usr/share/vulkan/icd.d/nvidia_icd.json,target=/usr/share/vulkan/icd.d/nvidia_icd.json,type=bind,consistency=cached",
-        "source=/etc/vulkan/icd.d/nvidia_icd.json,target=/etc/vulkan/icd.d/nvidia_icd.json,type=bind,consistency=cached",
+        // The configurations files are installed to different locations depending on the installation method.
+        // (whether installing with deb packages or with run files)
+        // By the 'initializeCommand' script, the ICD configurations are copied to /tmp/holoscan_nvidia_icd.json and
+        // we mount it to /usr/share/vulkan/icd.d/nvidia_icd.json
+        "source=/tmp/holoscan_nvidia_icd.json,target=/usr/share/vulkan/icd.d/nvidia_icd.json,type=bind,consistency=cached",
     ],
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/holoscan-sdk,type=bind,consistency=cached",
     "workspaceFolder": "/workspace/holoscan-sdk",

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,12 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_RESOURCES_UNBOUNDED_ALLOCATOR_HPP
-#define HOLOSCAN_CORE_RESOURCES_UNBOUNDED_ALLOCATOR_HPP
+#ifndef HOLOSCAN_CORE_RESOURCES_GXF_UNBOUNDED_ALLOCATOR_HPP
+#define HOLOSCAN_CORE_RESOURCES_GXF_UNBOUNDED_ALLOCATOR_HPP
+
+#include <string>
+
+#include <gxf/std/unbounded_allocator.hpp>
 
 #include "./allocator.hpp"
 
@@ -26,10 +30,12 @@ class UnboundedAllocator : public Allocator {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(UnboundedAllocator, Allocator)
   UnboundedAllocator() = default;
+  UnboundedAllocator(const std::string& name, nvidia::gxf::UnboundedAllocator* component)
+      : Allocator(name, component) {}
 
   const char* gxf_typename() const override { return "nvidia::gxf::UnboundedAllocator"; }
 };
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_RESOURCES_UNBOUNDED_ALLOCATOR_HPP */
+#endif /* HOLOSCAN_CORE_RESOURCES_GXF_UNBOUNDED_ALLOCATOR_HPP */

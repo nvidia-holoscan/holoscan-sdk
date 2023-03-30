@@ -19,6 +19,8 @@
 #define HOLOSCAN_CORE_GXF_GXF_TENSOR_HPP
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "gxf/std/tensor.hpp"
 
@@ -46,14 +48,14 @@ class GXFTensor : public nvidia::gxf::Tensor {
    *
    * @param tensor Tensor to wrap.
    */
-  GXFTensor(nvidia::gxf::Tensor& tensor);
+  explicit GXFTensor(nvidia::gxf::Tensor& tensor);
 
   /**
    * @brief Construct a new GXFTensor object.
    *
    * @param dl_ctx DLManagedTensorCtx object to wrap.
    */
-  GXFTensor(std::shared_ptr<DLManagedTensorCtx>& dl_ctx);
+  explicit GXFTensor(std::shared_ptr<DLManagedTensorCtx>& dl_ctx);
 
   /**
    * @brief Get DLDevice object from the GXF Tensor.
@@ -116,7 +118,7 @@ class GXFMemoryBuffer : public nvidia::gxf::MemoryBuffer {
  public:
   using nvidia::gxf::MemoryBuffer::MemoryBuffer;
 
-  GXFMemoryBuffer(nvidia::gxf::MemoryBuffer&& other)
+  explicit GXFMemoryBuffer(nvidia::gxf::MemoryBuffer&& other)
       : nvidia::gxf::MemoryBuffer(std::forward<nvidia::gxf::MemoryBuffer>(other)) {}
 
   nvidia::gxf::Tensor::stride_array_t gxf_strides;  ///< Strides of the GXF Tensor.

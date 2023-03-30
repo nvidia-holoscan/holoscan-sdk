@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include "gxf/core/entity.hpp"
 #pragma GCC diagnostic pop
 
+#include "gxf/multimedia/video.hpp"
 #include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/core/type_traits.hpp"
 
@@ -50,12 +51,22 @@ class Entity : public nvidia::gxf::Entity {
   // Creates a new entity
   static Entity New(ExecutionContext* context);
 
+  /**
+   * @brief Return true if the entity is not null.
+   *
+   * Calling this method on an entity object from {cpp:func}`holoscan::IOContext::receive` will
+   * return false if there is no entity to receive.
+   *
+   * @return true if the entity is not null. Otherwise, false.
+   */
+  operator bool() const { return !is_null(); }
+
   // Gets a component by type. Asserts if no such component.
   // Adds a component with given type
   template <typename DataT,
             typename = std::enable_if_t<!holoscan::is_vector_v<DataT> &&
                                         holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
-  std::shared_ptr<DataT> get(const char* name = nullptr) const {
+  std::shared_ptr<DataT> get(const char* name = nullptr, bool log_errors = true) const {
     bool is_holoscan_gxf_tensor = true;
     // We should use nullptr as a default name because In GXF, 'nullptr' should be used with
     // GxfComponentFind() if we want to get the first component of the given type.
@@ -65,7 +76,9 @@ class Entity : public nvidia::gxf::Entity {
     auto tid_result =
         GxfComponentTypeId(context(), nvidia::TypenameAsString<holoscan::gxf::GXFTensor>(), &tid);
     if (tid_result != GXF_SUCCESS) {
-      HOLOSCAN_LOG_ERROR("Unable to get component type id: {}", tid_result);
+      if (log_errors) {
+        HOLOSCAN_LOG_ERROR("Unable to get component type id: {}", tid_result);
+      }
       return nullptr;
     }
 
@@ -76,9 +89,11 @@ class Entity : public nvidia::gxf::Entity {
       tid_result =
           GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid);
       if (tid_result != GXF_SUCCESS) {
-        HOLOSCAN_LOG_ERROR(
-            "Unable to get component type id from 'nvidia::gxf::Tensor' (error code: {})",
-            tid_result);
+        if (log_errors) {
+          HOLOSCAN_LOG_ERROR(
+              "Unable to get component type id from 'nvidia::gxf::Tensor' (error code: {})",
+              tid_result);
+        }
         return nullptr;
       }
 
@@ -87,9 +102,11 @@ class Entity : public nvidia::gxf::Entity {
     }
 
     if (cid_result != GXF_SUCCESS) {
-      HOLOSCAN_LOG_ERROR("Unable to find component from the name '{}' (error code: {})",
-                         name == nullptr ? "" : name,
-                         cid_result);
+      if (log_errors) {
+        HOLOSCAN_LOG_ERROR("Unable to find component from the name '{}' (error code: {})",
+                           name == nullptr ? "" : name,
+                           cid_result);
+      }
       return nullptr;
     }
 
@@ -135,9 +152,15 @@ class Entity : public nvidia::gxf::Entity {
     holoscan::gxf::GXFTensor* tensor_ptr = handle->get();
 
     // Copy the member data (std::shared_ptr<DLManagedTensorCtx>) from the Tensor to GXFTensor
-    *tensor_ptr = data->dl_ctx();
+    *tensor_ptr = GXFTensor(data->dl_ctx());
   }
 };
+
+// Modified version of the Tensor version of gxf::Entity::get
+// Retrieves a VideoBuffer instead
+// TODO: Support gxf::VideoBuffer natively in Holoscan
+nvidia::gxf::Handle<nvidia::gxf::VideoBuffer> get_videobuffer(Entity entity,
+                                                              const char* name = nullptr);
 
 }  // namespace holoscan::gxf
 

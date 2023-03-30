@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +55,12 @@ if(NOT HOLOSCAN_INSTALL_LIB_DIR)
     endif()
 endif()
 
+# Need PatchELF to update the RPATH of the libs
+find_program(PATCHELF_EXECUTABLE patchelf)
+if(NOT PATCHELF_EXECUTABLE)
+    message(FATAL_ERROR "Please specify the PATCHELF executable")
+endif()
+
 # Library names
 list(APPEND _GXF_EXTENSIONS
     behavior_tree
@@ -67,6 +73,10 @@ list(APPEND _GXF_EXTENSIONS
     serialization
     std
     tensor_rt
+    videoencoderio
+    videoencoder
+    videodecoderio
+    videodecoder
 )
 
 # Common headers
@@ -142,6 +152,29 @@ foreach(component IN LISTS _GXF_LIBRARIES)
             INTERFACE_INCLUDE_DIRECTORIES "${GXF_${component}_INCLUDE_DIRS}"
         )
 
+        list(APPEND _GXF_LIB_RPATH "\$ORIGIN" "\$ORIGIN/gxf_extensions")
+
+        # The video encoder/decoder libraries need an extra path for aarch64
+        # To find the right l4t libraries
+        if(CMAKE_SYSTEM_PROCESSOR STREQUAL aarch64 OR CMAKE_SYSTEM_PROCESSOR STREQUAL arm64)
+            if(component STREQUAL videoencoderio
+            OR component STREQUAL videoencoder
+            OR component STREQUAL videodecoderio
+            OR component STREQUAL videodecoder)
+                list(APPEND _GXF_LIB_RPATH "/usr/lib/aarch64-linux-gnu/tegra/")
+            endif()
+        endif()
+
+        # Patch RUNPATH
+        list(JOIN _GXF_LIB_RPATH ":" _GXF_LIB_RPATH)
+        execute_process(COMMAND
+            "${PATCHELF_EXECUTABLE}"
+            "--set-rpath"
+            "${_GXF_LIB_RPATH}"
+            "${gxf_component_location}"
+        )
+        unset(_GXF_LIB_RPATH)
+
         set(GXF_${component}_FOUND TRUE)
     else()
         set(GXF_${component}_FOUND FALSE)
@@ -150,20 +183,6 @@ endforeach()
 
 unset(_GXF_EXTENSIONS)
 unset(_GXF_LIBRARIES)
-
-# Sets the RPATH on GXF
-find_program(PATCHELF_EXECUTABLE patchelf)
-if(NOT PATCHELF_EXECUTABLE)
-  message(FATAL_ERROR "Please specify the PATCHELF executable")
-endif()
-
-# Patch GXF core
-get_target_property(GXF_CORE_IMPORTED_LOCATION GXF::core IMPORTED_LOCATION)
-execute_process(COMMAND "${PATCHELF_EXECUTABLE}" "--set-rpath" "\$ORIGIN:\$ORIGIN/gxf_extensions" "${GXF_CORE_IMPORTED_LOCATION}")
-
-# Patch GXF std
-get_target_property(GXF_STD_IMPORTED_LOCATION GXF::std IMPORTED_LOCATION)
-execute_process(COMMAND "${PATCHELF_EXECUTABLE}" "--set-rpath" "\$ORIGIN:\$ORIGIN/gxf_extensions" "${GXF_STD_IMPORTED_LOCATION}")
 
 # Find version
 if(GXF_core_INCLUDE_DIR)
@@ -178,6 +197,43 @@ if(GXF_core_INCLUDE_DIR)
     unset(_GXF_VERSION_LINE)
 endif()
 
+# Install the Deepstream dependencies only on x86_64
+if(_public_GXF_recipe STREQUAL x86_64)
+  file(GLOB DS_DEPS_NVUTILS "${GXF_core_INCLUDE_DIR}/x86_64/nvutils/*.so")
+  file(GLOB DS_DEPS_CUVIDV4L2 "${GXF_core_INCLUDE_DIR}/x86_64/cuvidv4l2/*.so")
+
+  foreach(dsdep IN LISTS DS_DEPS_NVUTILS DS_DEPS_CUVIDV4L2)
+
+    # Patch RUNPATH
+    execute_process(COMMAND
+    "${PATCHELF_EXECUTABLE}"
+    "--set-rpath"
+    "\$ORIGIN"
+    "${dsdep}"
+    )
+
+    # Install the files
+    install(FILES "${dsdep}"
+            DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
+            COMPONENT "holoscan-gxf_libs"
+            )
+  endforeach()
+
+  # Create a symlink
+  INSTALL(CODE "execute_process( \
+    COMMAND ${CMAKE_COMMAND} -E create_symlink \
+    libnvv4l2.so \
+    libv4l2.so.0 \
+    COMMAND ${CMAKE_COMMAND} -E create_symlink \
+    libnvv4lconvert.so \
+    libv4lconvert.so.0 \
+    WORKING_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/${HOLOSCAN_INSTALL_LIB_DIR}\"
+    )"
+    COMPONENT "holoscan-gxf_libs"
+  )
+endif()
+
+
 # GXE
 find_program(GXF_gxe_PATH
     NAMES gxe
@@ -190,6 +246,21 @@ if(GXF_gxe_PATH)
     if(NOT TARGET GXF::gxe)
         add_executable(GXF::gxe IMPORTED)
     endif()
+
+    # 'gxe' is read-only file, so we need to update the permissions before patching
+    # with patchelf (https://github.com/NixOS/nixpkgs/issues/14440).
+    # Note that 'file(CHMOD)' is supported since later CMake versions(>=3.19)
+    file(CHMOD ${GXF_gxe_PATH}
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+    )
+
+    # Patch RUNPATH so that it can find libgxf_core.so library.
+    execute_process(COMMAND
+        "${PATCHELF_EXECUTABLE}"
+        "--set-rpath"
+        "\$ORIGIN:\$ORIGIN/../${HOLOSCAN_INSTALL_LIB_DIR}"
+        "${GXF_gxe_PATH}"
+    )
 
     set_target_properties(GXF::gxe PROPERTIES
         IMPORTED_LOCATION "${GXF_gxe_PATH}"

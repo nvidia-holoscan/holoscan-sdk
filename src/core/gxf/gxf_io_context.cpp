@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,7 +54,7 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
           op_->name(),
           inputs_.begin()->first,
           name);
-      return nullptr;  // to cause a bad_any_cast
+      return -1;  // to cause a bad_any_cast
     } else {
       auto msg_buf = fmt::memory_buffer();
       auto& op_inputs = op_->spec()->inputs();
@@ -69,10 +69,10 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
           "The operator({}) does not have an input port with label '{}'. It should be "
           "one of ({:.{}}) in receive() method",
           op_->name(),
-          name,
+          input_name,
           msg_buf.data(),
           msg_buf.size());
-      return nullptr;  // to cause a bad_any_cast
+      return -1;  // to cause a bad_any_cast
     }
   }
 
@@ -81,7 +81,7 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
   auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(resource);
   if (gxf_resource == nullptr) {
     HOLOSCAN_LOG_ERROR("Invalid resource type");
-    return nullptr;  // to cause a bad_any_cast
+    return -1;  // to cause a bad_any_cast
   }
 
   gxf_result_t code;
@@ -96,8 +96,7 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
 
   auto entity = receiver->receive();
   if (!entity || entity.value().is_null()) {
-    HOLOSCAN_LOG_ERROR("Failed to receive entity");
-    return nullptr;  // to cause a bad_any_cast
+    return nullptr;  // to indicate that there is no data
   }
 
   auto message = entity.value().get<holoscan::Message>();
@@ -154,7 +153,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           "The operator({}) does not have an output port with label '{}'. It should be "
           "one of ({:.{}}) in emit() method",
           op_->name(),
-          name,
+          output_name,
           msg_buf.data(),
           msg_buf.size());
       return;
@@ -187,6 +186,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       // Set the data to the value of the Message object.
       buffer.value()->set_value(data);
       // Publish the Entity object.
+      // TODO(gbae): Check error message
       static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity.value()));
       break;
     }
@@ -194,6 +194,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       // Cast to an Entity object and publish it.
       try {
         auto gxf_entity = std::any_cast<holoscan::gxf::Entity>(data);
+        // TODO(gbae): Check error message
         static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity));
       } catch (const std::bad_any_cast& e) {
         HOLOSCAN_LOG_ERROR("Unable to cast to gxf::Entity: {}", e.what());

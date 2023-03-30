@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,27 +14,23 @@
 # limitations under the License.
 
 # Create library
-add_library(stream_playback_lib SHARED
-  video_stream_replayer.cpp
-  video_stream_replayer.hpp
+add_library(gxf_stream_playback_lib SHARED
   video_stream_serializer.cpp
   video_stream_serializer.hpp
 )
-target_link_libraries(stream_playback_lib
+target_link_libraries(gxf_stream_playback_lib
   PUBLIC
-    CUDA::cudart
     GXF::serialization
-    GXF::std
     yaml-cpp
 )
 
 # Create extension
-add_library(stream_playback SHARED
+add_library(gxf_stream_playback SHARED
   stream_playback_ext.cpp
 )
-target_link_libraries(stream_playback
+target_link_libraries(gxf_stream_playback
   PUBLIC
-    stream_playback_lib
+    gxf_stream_playback_lib
 )
 # Install GXF extension as a component 'holoscan-gxf_extensions'
-install_gxf_extension(stream_playback)
+install_gxf_extension(gxf_stream_playback)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -182,11 +182,19 @@ struct MultiAISpecs {
    */
   Mappings get_path_map() const { return model_path_map_; }
 
-  ///  @brief Flag showing if inference on CUDA. Default is True.
-  bool oncuda_ = true;
+  std::string backend_type_{"trt"};
+
+  ///  @brief Map with key as model name and value as model file path
+  Mappings model_path_map_;
+
+  /// @brief Map with key as model name and value as inferred tensor name
+  Mappings inference_map_;
 
   /// @brief Flag showing if input model path is path to engine files
   bool is_engine_path_ = false;
+
+  ///  @brief Flag showing if inference on CUDA. Default is True.
+  bool oncuda_ = true;
 
   ///  @brief Flag to enable parallel inference. Default is True.
   bool parallel_processing_ = false;
@@ -200,12 +208,6 @@ struct MultiAISpecs {
   ///  @brief Flag showing if output buffers are on CUDA. Default is True.
   bool cuda_buffer_out_ = true;
 
-  ///  @brief Map with key as model name and value as model file path
-  Mappings model_path_map_;
-
-  /// @brief Map with key as model name and value as inferred tensor name
-  Mappings inference_map_;
-
   /// @brief Input Data Map with key as model name and value as DataBuffer
   DataMap data_per_model_;
 
@@ -214,8 +216,6 @@ struct MultiAISpecs {
 
   /// @brief Output Data Map with key as tensor name and value as DataBuffer
   DataMap output_per_model_;
-
-  std::string backend_type_{"trt"};
 };
 
 /**

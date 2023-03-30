@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,10 +59,7 @@ void Fragment::config(const std::string& config_file, const std::string& prefix)
 }
 
 Config& Fragment::config() {
-  if (!config_) {
-    HOLOSCAN_LOG_WARN("Config object was not created. Call config(config_file, prefix) first.");
-    config_ = make_config<Config>();
-  }
+  if (!config_) { config_ = make_config<Config>(); }
   return *config_;
 }
 

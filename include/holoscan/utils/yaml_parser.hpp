@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +42,20 @@ struct YAMLNodeParser<typeT> {
       ss << node;
       HOLOSCAN_LOG_ERROR("Unable to parse YAML node: '{}'", ss.str());
       return typeT();
+    }
+  }
+};
+
+template <>
+struct YAMLNodeParser<int8_t> {
+  static uint8_t parse(const YAML::Node& node) {
+    try {
+      return static_cast<int8_t>(node.as<int32_t>());
+    } catch (...) {
+      std::stringstream ss;
+      ss << node;
+      HOLOSCAN_LOG_ERROR("Unable to parse YAML node: '{}'", ss.str());
+      return 0;
     }
   }
 };

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,16 +21,9 @@ add_executable(tensor_interop
 )
 target_link_libraries(tensor_interop
   PRIVATE
-  ${HOLOSCAN_PACKAGE_NAME}
+  holoscan::core
   CUDA::cudart
 )
-
-# Copy config file to the build tree
-add_custom_target(tensor_interop_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/app_config.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/app_config.yaml"
-)
-add_dependencies(tensor_interop tensor_interop_yaml)
 
 # Install example
 
@@ -45,25 +38,31 @@ file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SO
 # Install the target
 install(TARGETS tensor_interop
   DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-apps
+  COMPONENT holoscan-examples
 )
 
+if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
 # Install the source
 install(FILES tensor_interop.cpp receive_tensor_gxf.hpp send_tensor_gxf.hpp
   DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-apps
+  COMPONENT holoscan-examples
 )
 
 # Install the minimal CMakeLists.txt file
 install(FILES CMakeLists.min.txt
   RENAME "CMakeLists.txt"
   DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-apps
+  COMPONENT holoscan-examples
 )
+endif()
 
-# Install the configuration file
-install(FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/app_config.yaml"
-  DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-apps
-)
+# Testing
+if(HOLOSCAN_BUILD_TESTS)
+  add_test(NAME EXAMPLE_CPP_TENSOR_INTEROP_TEST
+    COMMAND tensor_interop
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_TENSOR_INTEROP_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Scheduling 3 entities"
+  )
+endif()

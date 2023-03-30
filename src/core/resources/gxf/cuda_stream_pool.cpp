@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,25 @@ constexpr uint32_t kDefaultReservedSize = 1;
 constexpr uint32_t kDefaultMaxSize = 0;
 constexpr int32_t kDefaultDeviceId = 0;
 }  // namespace
+
+CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component)
+    : Allocator(name, component) {
+  int32_t dev_id = 0;
+  GxfParameterGetInt32(gxf_context_, gxf_cid_, "dev_id", &dev_id);
+  dev_id_ = dev_id;
+  uint32_t stream_flags = 0;
+  GxfParameterGetUInt32(gxf_context_, gxf_cid_, "stream_flags", &stream_flags);
+  stream_flags_ = stream_flags;
+  int32_t stream_priority = 0;
+  GxfParameterGetInt32(gxf_context_, gxf_cid_, "stream_priority", &stream_priority);
+  stream_priority_ = stream_priority;
+  uint32_t reserved_size = 0;
+  GxfParameterGetUInt32(gxf_context_, gxf_cid_, "reserved_size", &reserved_size);
+  reserved_size_ = reserved_size;
+  uint32_t max_size = 0;
+  GxfParameterGetUInt32(gxf_context_, gxf_cid_, "max_size", &max_size);
+  max_size_ = max_size;
+}
 
 void CudaStreamPool::setup(ComponentSpec& spec) {
   spec.param(

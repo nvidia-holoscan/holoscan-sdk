@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -173,9 +173,10 @@ class GXFExtensionRegistrar {
   /**
    * @brief Register the extension.
    *
+   * @param out_extension_ptr If provided, the pointer to the extension is set to this pointer.
    * @return true If the extension is registered successfully. Otherwise, false.
    */
-  bool register_extension() {
+  bool register_extension(nvidia::gxf::Extension** out_extension_ptr = nullptr) {
     if (!factory_) {
       HOLOSCAN_LOG_ERROR("GXF Extension factory is not initialized");
       return false;
@@ -188,9 +189,19 @@ class GXFExtensionRegistrar {
     }
 
     nvidia::gxf::Extension* extension = factory_.release();
+
+    // Set the extension pointer if provided.
+    if (out_extension_ptr != nullptr) {
+      if (extension != nullptr) {
+        *out_extension_ptr = extension;
+      } else {
+        *out_extension_ptr = nullptr;
+      }
+    }
+
     gxf_result_t result = GxfLoadExtensionFromPointer(context_, extension);
     if (result != GXF_SUCCESS) {
-      HOLOSCAN_LOG_ERROR("Unable to register the GXF extension: {}", result);
+      HOLOSCAN_LOG_ERROR("Unable to register the GXF extension: {}", GxfResultStr(result));
       return false;
     }
     return true;

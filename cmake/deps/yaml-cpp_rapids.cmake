@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,14 +37,14 @@ set(CMAKE_FIND_USE_PACKAGE_REGISTRY FALSE)
 # https://github.com/cpm-cmake/CPM.cmake/wiki/More-Snippets#yaml-cpp
 set(YAML_CPP_CPM_ARGS
     GITHUB_REPOSITORY jbeder/yaml-cpp
-    GIT_TAG yaml-cpp-0.6.3
+    GIT_TAG yaml-cpp-0.7.0
     OPTIONS
     "YAML_CPP_BUILD_TESTS Off"
     "YAML_CPP_BUILD_CONTRIB Off"
     "YAML_CPP_BUILD_TOOLS Off"
     "YAML_BUILD_SHARED_LIBS On"  # Build the shared library instead of the default static library
 )
-rapids_cpm_find(yaml-cpp 0.6.3
+rapids_cpm_find(yaml-cpp 0.7.0
     GLOBAL_TARGETS yaml-cpp
     BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
 

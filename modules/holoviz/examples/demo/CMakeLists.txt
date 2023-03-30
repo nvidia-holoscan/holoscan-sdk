@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(PROJECT_NAME ExampleDemo)
+set(PROJECT_NAME holoviz_demo)
 
 # fetch the dependencies
 include(FetchContent)
@@ -24,7 +24,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/nothings/stb.git
     GIT_TAG af1a5bc352164740c1cc1354942b1c6b72eacb8a
     GIT_PROGRESS TRUE
-)
+    )
 FetchContent_MakeAvailable(stb)
 
 add_executable(${PROJECT_NAME})
@@ -43,26 +43,4 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         holoscan::viz
         holoscan::viz::imgui
-    )
-
-# install source files
-install(
-    FILES Main.cpp
-    DESTINATION src/examples/demo
-    COMPONENT holoviz-examples
-    )
-
-# install data files
-install(
-    FILES nv_logo.png
-    DESTINATION src/examples/demo
-    COMPONENT holoviz-examples
-    )
-
-# install the public CMakeLists.txt file
-install(
-    FILES CMakeLists.txt.public
-    DESTINATION src/examples/demo
-    RENAME CMakeLists.txt
-    COMPONENT holoviz-examples
     )

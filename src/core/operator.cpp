@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,21 @@ void Operator::initialize() {
   } else {
     HOLOSCAN_LOG_WARN("Operator::initialize() - Fragment is not set");
   }
+}
+
+YAML::Node Operator::to_yaml_node() const {
+  YAML::Node node = Component::to_yaml_node();
+  node["type"] = (operator_type_ == OperatorType::kGXF) ? "GXF" : "native";
+  node["conditions"] = YAML::Node(YAML::NodeType::Sequence);
+  for (const auto& c : conditions_) { node["conditions"].push_back(c.second->to_yaml_node()); }
+  node["resources"] = YAML::Node(YAML::NodeType::Sequence);
+  for (const auto& r : resources_) { node["resources"].push_back(r.second->to_yaml_node()); }
+  if (spec_) {
+    node["spec"] = spec_->to_yaml_node();
+  } else {
+    node["spec"] = YAML::Null;
+  }
+  return node;
 }
 
 }  // namespace holoscan

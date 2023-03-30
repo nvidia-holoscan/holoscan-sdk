@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,15 +16,11 @@
  */
 #include "gxf/std/extension_factory_helper.hpp"
 
-#include "video_stream_replayer.hpp"
 #include "video_stream_serializer.hpp"
 
 GXF_EXT_FACTORY_BEGIN()
 GXF_EXT_FACTORY_SET_INFO(0xe6c168715f3f428d, 0x96cd24dce2f42f46, "StreamPlaybackExtension",
                          "Holoscan StreamPlayback extension", "NVIDIA", "0.2.0", "LICENSE");
-GXF_EXT_FACTORY_ADD(0xb4d16b16b7484e52, 0xaccb8c8989bfac91,
-                    nvidia::holoscan::stream_playback::VideoStreamReplayer, nvidia::gxf::Codelet,
-                    "VideoStreamReplayer codelet.");
 GXF_EXT_FACTORY_ADD(0x7ee08fcc84c94245, 0xa415022b42f4ef39,
                     nvidia::holoscan::stream_playback::VideoStreamSerializer,
                     nvidia::gxf::EntitySerializer, "VideoStreamSerializer component.");

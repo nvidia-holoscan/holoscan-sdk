@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -180,61 +180,91 @@ void TensorRTInferenceLogger::setVerbose(bool verbose) {
 gxf_result_t TensorRtInference::registerInterface(gxf::Registrar* registrar) {
   gxf::Expected<void> result;
 
-  result &= registrar->parameter(model_file_path_, "model_file_path", "Model File Path",
-                                 "Path to ONNX model to be loaded.");
   result &= registrar->parameter(
-      engine_cache_dir_, "engine_cache_dir", "Engine Cache Directory",
+      model_file_path_, "model_file_path", "Model File Path", "Path to ONNX model to be loaded.");
+  result &= registrar->parameter(
+      engine_cache_dir_,
+      "engine_cache_dir",
+      "Engine Cache Directory",
       "Path to a folder containing cached engine files to be serialized and loaded from.");
-  result &= registrar->parameter(
-      plugins_lib_namespace_, "plugins_lib_namespace", "Plugins Lib Namespace",
-      "Namespace used to register all the plugins in this library.", std::string(""));
-  result &= registrar->parameter(force_engine_update_, "force_engine_update", "Force Engine Update",
+  result &= registrar->parameter(plugins_lib_namespace_,
+                                 "plugins_lib_namespace",
+                                 "Plugins Lib Namespace",
+                                 "Namespace used to register all the plugins in this library.",
+                                 std::string(""));
+  result &= registrar->parameter(force_engine_update_,
+                                 "force_engine_update",
+                                 "Force Engine Update",
                                  "Always update engine regard less of existing engine file. "
                                  "Such conversion may take minutes. Default to false.",
                                  false);
 
-  result &= registrar->parameter(input_tensor_names_, "input_tensor_names", "Input Tensor Names",
+  result &= registrar->parameter(input_tensor_names_,
+                                 "input_tensor_names",
+                                 "Input Tensor Names",
                                  "Names of input tensors in the order to be fed into the model.");
-  result &= registrar->parameter(input_binding_names_, "input_binding_names", "Input Binding Names",
+  result &= registrar->parameter(input_binding_names_,
+                                 "input_binding_names",
+                                 "Input Binding Names",
                                  "Names of input bindings as in the model in the same order of "
                                  "what is provided in input_tensor_names.");
 
-  result &= registrar->parameter(output_tensor_names_, "output_tensor_names", "Output Tensor Names",
+  result &= registrar->parameter(output_tensor_names_,
+                                 "output_tensor_names",
+                                 "Output Tensor Names",
                                  "Names of output tensors in the order to be retrieved "
                                  "from the model.");
-  result &=
-      registrar->parameter(output_binding_names_, "output_binding_names", "Output Binding Names",
-                           "Names of output bindings in the model in the same "
-                           "order of of what is provided in output_tensor_names.");
+  result &= registrar->parameter(output_binding_names_,
+                                 "output_binding_names",
+                                 "Output Binding Names",
+                                 "Names of output bindings in the model in the same "
+                                 "order of of what is provided in output_tensor_names.");
   result &= registrar->parameter(pool_, "pool", "Pool", "Allocator instance for output tensors.");
-  result &= registrar->parameter(cuda_stream_pool_, "cuda_stream_pool", "Cuda Stream Pool",
-                                 "Instance of gxf::CudaStreamPool to allocate CUDA stream.");
 
-  result &= registrar->parameter(max_workspace_size_, "max_workspace_size", "Max Workspace Size",
-                                 "Size of working space in bytes. Default to 64MB", 67108864l);
-  result &=
-      registrar->parameter(dla_core_, "dla_core", "DLA Core",
-                           "DLA Core to use. Fallback to GPU is always enabled. "
-                           "Default to use GPU only.",
-                           gxf::Registrar::NoDefaultParameter(), GXF_PARAMETER_FLAGS_OPTIONAL);
-  result &= registrar->parameter(max_batch_size_, "max_batch_size", "Max Batch Size",
+  result &= registrar->parameter(max_workspace_size_,
+                                 "max_workspace_size",
+                                 "Max Workspace Size",
+                                 "Size of working space in bytes. Default to 64MB",
+                                 67108864l);
+  result &= registrar->parameter(dla_core_,
+                                 "dla_core",
+                                 "DLA Core",
+                                 "DLA Core to use. Fallback to GPU is always enabled. "
+                                 "Default to use GPU only.",
+                                 gxf::Registrar::NoDefaultParameter(),
+                                 GXF_PARAMETER_FLAGS_OPTIONAL);
+  result &= registrar->parameter(max_batch_size_,
+                                 "max_batch_size",
+                                 "Max Batch Size",
                                  "Maximum possible batch size in case the first dimension is "
                                  "dynamic and used as batch size.",
                                  1);
-  result &= registrar->parameter(enable_fp16_, "enable_fp16_", "Enable FP16 Mode",
-                                 "Enable inference with FP16 and FP32 fallback.", false);
-
-  result &= registrar->parameter(verbose_, "verbose", "Verbose",
-                                 "Enable verbose logging on console. Default to false.", false);
-  result &= registrar->parameter(relaxed_dimension_check_, "relaxed_dimension_check",
+  result &= registrar->parameter(enable_fp16_,
+                                 "enable_fp16_",
+                                 "Enable FP16 Mode",
+                                 "Enable inference with FP16 and FP32 fallback.",
+                                 false);
+  result &= registrar->parameter(verbose_,
+                                 "verbose",
+                                 "Verbose",
+                                 "Enable verbose logging on console. Default to false.",
+                                 false);
+  result &= registrar->parameter(relaxed_dimension_check_,
+                                 "relaxed_dimension_check",
                                  "Relaxed Dimension Check",
-                                 "Ignore dimensions of 1 for input tensor dimension check.", true);
-  result &=
-      registrar->parameter(clock_, "clock", "Clock", "Instance of clock for publish time.",
-                           gxf::Registrar::NoDefaultParameter(), GXF_PARAMETER_FLAGS_OPTIONAL);
+                                 "Ignore dimensions of 1 for input tensor dimension check.",
+                                 true);
+  result &= registrar->parameter(clock_,
+                                 "clock",
+                                 "Clock",
+                                 "Instance of clock for publish time.",
+                                 gxf::Registrar::NoDefaultParameter(),
+                                 GXF_PARAMETER_FLAGS_OPTIONAL);
 
   result &= registrar->parameter(rx_, "rx", "RX", "List of receivers to take input tensors");
   result &= registrar->parameter(tx_, "tx", "TX", "Transmitter to publish output tensors");
+
+  result &= cuda_stream_handler_.registerInterface(registrar, true);
 
   return gxf::ToResultCode(result);
 }
@@ -251,12 +281,14 @@ gxf_result_t TensorRtInference::start() {
   }
   if (input_tensor_names_.get().size() != input_binding_names_.get().size()) {
     GXF_LOG_ERROR("Mismatching number of input tensor names and bindings: %lu vs %lu.",
-                  input_tensor_names_.get().size(), input_binding_names_.get().size());
+                  input_tensor_names_.get().size(),
+                  input_binding_names_.get().size());
     return GXF_FAILURE;
   }
   if (output_tensor_names_.get().size() != output_binding_names_.get().size()) {
     GXF_LOG_ERROR("Mismatching number of output tensor names and bindings: %lu vs %lu.",
-                  output_tensor_names_.get().size(), output_binding_names_.get().size());
+                  output_tensor_names_.get().size(),
+                  output_binding_names_.get().size());
     return GXF_FAILURE;
   }
 
@@ -269,18 +301,8 @@ gxf_result_t TensorRtInference::start() {
     GXF_LOG_WARNING("Could not initialize LibNvInferPlugins.");
   }
 
-  // Create the cuda stream if it does not yet exist.
-  // This is needed to populate cuda_stream_ before calling queryHostEngineCapability()
-  if (!cuda_stream_) {
-    auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
-    if (!maybe_stream) {
-      GXF_LOG_ERROR("Failed to allocate CUDA stream");
-      return maybe_stream.error();
-    }
-    cuda_stream_ = std::move(maybe_stream.value());
-  }
-
-  gxf::Expected<std::string> maybe_host_engine_capability = queryHostEngineCapability();
+  gxf::Expected<std::string> maybe_host_engine_capability =
+      queryHostEngineCapability(cuda_stream_handler_.getStreamHandle()->dev_id());
   if (!maybe_host_engine_capability) {
     GXF_LOG_ERROR("Failed to query host engine capability.");
     return GXF_FAILURE;
@@ -314,7 +336,8 @@ gxf_result_t TensorRtInference::start() {
     GXF_LOG_WARNING(
         "Rebuilding CUDA engine %s%s. "
         "Note: this process may take up to several minutes.",
-        engine_file_path.c_str(), warning_note);
+        engine_file_path.c_str(),
+        warning_note);
     auto result = convertModelToEngine();
     if (!result) {
       GXF_LOG_ERROR("Failed to create engine plan for model %s.", model_file_path_.get().c_str());
@@ -336,13 +359,15 @@ gxf_result_t TensorRtInference::start() {
 
   // Deserialize the CUDA engine
   if (verbose_.get()) { GXF_LOG_DEBUG("Creating inference runtime."); }
-  cuda_engine_.reset(infer_runtime->deserializeCudaEngine(plan.data(), plan.size(), NULL));
+  cuda_engine_.reset(infer_runtime->deserializeCudaEngine(plan.data(), plan.size()));
 
   // Debug spews
   if (verbose_.get()) {
     GXF_LOG_DEBUG("Number of CUDA bindings: %d", cuda_engine_->getNbBindings());
     for (int i = 0; i < cuda_engine_->getNbBindings(); ++i) {
-      GXF_LOG_DEBUG("CUDA binding No.%d: name %s Format %s", i, cuda_engine_->getBindingName(i),
+      GXF_LOG_DEBUG("CUDA binding No.%d: name %s Format %s",
+                    i,
+                    cuda_engine_->getBindingName(i),
                     cuda_engine_->getBindingFormatDesc(i));
     }
   }
@@ -355,7 +380,8 @@ gxf_result_t TensorRtInference::start() {
     GXF_LOG_ERROR(
         "Numbers of CUDA bindings mismatch: configured for %lu vs model requires %d. "
         "Please check TensorRTInference codelet configuration.\n",
-        total_bindings_number, cuda_engine_->getNbBindings());
+        total_bindings_number,
+        cuda_engine_->getNbBindings());
     return GXF_ARGUMENT_INVALID;
   }
 
@@ -374,13 +400,15 @@ gxf_result_t TensorRtInference::start() {
 
     const int32_t binding_index = cuda_engine_->getBindingIndex(binding_name.c_str());
     if (binding_index == -1) {
-      GXF_LOG_ERROR("Failed to get binding index for input %s in model %s", binding_name.c_str(),
+      GXF_LOG_ERROR("Failed to get binding index for input %s in model %s",
+                    binding_name.c_str(),
                     engine_file_path_.c_str());
       return GXF_FAILURE;
     }
 
     if (binding_index >= static_cast<int>(cuda_buffers_.size())) {
-      GXF_LOG_ERROR("Binding index for input %s is out of range in model %s.", binding_name.c_str(),
+      GXF_LOG_ERROR("Binding index for input %s is out of range in model %s.",
+                    binding_name.c_str(),
                     engine_file_path.c_str());
       return GXF_FAILURE;
     }
@@ -390,20 +418,25 @@ gxf_result_t TensorRtInference::start() {
         NvInferDatatypeToTensorElementType(cuda_engine_->getBindingDataType(binding_index));
     if (!maybe_element_type) {
       GXF_LOG_ERROR("Unsupported element type for binding input %s on index %d. ",
-                    binding_name.c_str(), binding_index);
+                    binding_name.c_str(),
+                    binding_index);
       return maybe_element_type.error();
     }
 
     // Keeps binding info
     const auto& dims = cuda_engine_->getBindingDimensions(binding_index);
-    binding_infos_[tensor_name] =
-        BindingInfo{binding_index, static_cast<uint32_t>(dims.nbDims), binding_name,
-                    maybe_element_type.value(), Dims2Dimensions(dims)};
+    binding_infos_[tensor_name] = BindingInfo{binding_index,
+                                              static_cast<uint32_t>(dims.nbDims),
+                                              binding_name,
+                                              maybe_element_type.value(),
+                                              Dims2Dimensions(dims)};
 
     // Debug spew
     if (verbose_.get()) {
       GXF_LOG_DEBUG(
-          "Input Tensor %s:%s index %d Dimensions %s.", tensor_name.c_str(), binding_name.c_str(),
+          "Input Tensor %s:%s index %d Dimensions %s.",
+          tensor_name.c_str(),
+          binding_name.c_str(),
           binding_index,
           FormatDims(binding_infos_[tensor_name].dimensions, binding_infos_[tensor_name].rank)
               .c_str());
@@ -430,50 +463,29 @@ gxf_result_t TensorRtInference::start() {
         NvInferDatatypeToTensorElementType(cuda_engine_->getBindingDataType(binding_index));
     if (!maybe_element_type) {
       GXF_LOG_ERROR("Unsupported element type for binding output %s on index %d. ",
-                    binding_name.c_str(), binding_index);
+                    binding_name.c_str(),
+                    binding_index);
       return maybe_element_type.error();
     }
 
     // Keeps binding info
     const auto& dims = cuda_engine_->getBindingDimensions(binding_index);
-    binding_infos_[tensor_name] =
-        BindingInfo{binding_index, static_cast<uint32_t>(dims.nbDims), binding_name,
-                    maybe_element_type.value(), Dims2Dimensions(dims)};
+    binding_infos_[tensor_name] = BindingInfo{binding_index,
+                                              static_cast<uint32_t>(dims.nbDims),
+                                              binding_name,
+                                              maybe_element_type.value(),
+                                              Dims2Dimensions(dims)};
     cuda_buffers_[binding_index] = nullptr;  // populate cuda_buffers dynamically, in tick()
 
     if (verbose_.get()) {
       GXF_LOG_DEBUG(
-          "Output Tensor %s:%s (%d), Dimensions: %s.", tensor_name.c_str(), binding_name.c_str(),
+          "Output Tensor %s:%s (%d), Dimensions: %s.",
+          tensor_name.c_str(),
+          binding_name.c_str(),
           binding_index,
           FormatDims(binding_infos_[tensor_name].dimensions, binding_infos_[tensor_name].rank)
               .c_str());
     }
-  }
-
-  // Grabs CUDA stream and creates CUDA event for synchronization
-  if (!cuda_stream_) {
-    auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
-    if (!maybe_stream) {
-      GXF_LOG_ERROR("Failed to allocate CUDA stream");
-      return maybe_stream.error();
-    }
-    cuda_stream_ = std::move(maybe_stream.value());
-  }
-  auto stream = cuda_stream_.get()->stream();
-  if (!stream) {
-    GXF_LOG_ERROR("Failed to grab CUDA stream");
-    return stream.error();
-  }
-  cached_cuda_stream_ = stream.value();
-  auto result = cudaEventCreate(&cuda_event_consumed_);
-  if (cudaSuccess != result) {
-    GXF_LOG_ERROR("Failed to create consumed CUDA event: %s", cudaGetErrorString(result));
-    return GXF_FAILURE;
-  }
-  auto result2 = cudaEventCreate(&cuda_event_done_);
-  if (cudaSuccess != result2) {
-    GXF_LOG_ERROR("Failed to create done CUDA event: %s", cudaGetErrorString(result2));
-    return GXF_FAILURE;
   }
 
   return GXF_SUCCESS;
@@ -526,7 +538,8 @@ gxf::Expected<std::vector<char>> TensorRtInference::convertModelToEngine() {
       if (dims.d[j] <= 0) {
         GXF_LOG_ERROR(
             "Input binding %s requires dynamic size on dimension No.%d which is not supported",
-            bind_tensor->getName(), j);
+            bind_tensor->getName(),
+            j);
         return gxf::Unexpected{GXF_ARGUMENT_OUT_OF_RANGE};
       }
     }
@@ -547,14 +560,8 @@ gxf::Expected<std::vector<char>> TensorRtInference::convertModelToEngine() {
   builderConfig->addOptimizationProfile(optimization_profile);
 
   // Creates TensorRT Engine Plan
-  NvInferHandle<nvinfer1::ICudaEngine> engine(
-      builder->buildEngineWithConfig(*network, *builderConfig));
-  if (!engine) {
-    GXF_LOG_ERROR("Failed to build TensorRT engine from model %s.", model_file_path_.get().c_str());
-    return gxf::Unexpected{GXF_FAILURE};
-  }
-
-  NvInferHandle<nvinfer1::IHostMemory> model_stream(engine->serialize());
+  NvInferHandle<nvinfer1::IHostMemory> model_stream(builder->buildSerializedNetwork(
+                                                                        *network, *builderConfig));
   if (!model_stream || model_stream->size() == 0 || model_stream->data() == nullptr) {
     GXF_LOG_ERROR("Fail to serialize TensorRT Engine.");
     return gxf::Unexpected{GXF_FAILURE};
@@ -573,17 +580,6 @@ gxf_result_t TensorRtInference::stop() {
   cuda_engine_ = nullptr;
   cuda_buffers_.clear();
 
-  auto result = cudaEventDestroy(cuda_event_consumed_);
-  if (cudaSuccess != result) {
-    GXF_LOG_ERROR("Failed to destroy consumed CUDA event: %s", cudaGetErrorString(result));
-    return GXF_FAILURE;
-  }
-  auto result2 = cudaEventDestroy(cuda_event_done_);
-  if (cudaSuccess != result2) {
-    GXF_LOG_ERROR("Failed to create done CUDA event: %s", cudaGetErrorString(result2));
-    return GXF_FAILURE;
-  }
-
   return GXF_SUCCESS;
 }
 
@@ -599,12 +595,20 @@ gxf_result_t TensorRtInference::tick() {
     GXF_LOG_ERROR("No message available.");
     return GXF_CONTRACT_MESSAGE_NOT_AVAILABLE;
   }
+
+  // sync with the CUDA streams from the input messages
+  gxf_result_t stream_handler_result = cuda_stream_handler_.fromMessages(context(), messages);
+  if (stream_handler_result != GXF_SUCCESS) {
+    GXF_LOG_ERROR("Failed to get the CUDA stream from incoming messages");
+    return stream_handler_result;
+  }
   // Tries to retrieve timestamp if clock present
   gxf::Expected<gxf::Handle<gxf::Timestamp>> maybe_input_timestamp = gxf::Unexpected{GXF_FAILURE};
   for (auto& msg : messages) {
     maybe_input_timestamp = msg.get<gxf::Timestamp>("timestamp");
     if (maybe_input_timestamp) { break; }
   }
+
   // Populates input tensors
   for (const auto& tensor_name : input_tensor_names_.get()) {
     gxf::Expected<gxf::Handle<gxf::Tensor>> maybe_tensor = gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
@@ -627,7 +631,8 @@ gxf_result_t TensorRtInference::tick() {
     // Checks input tensor element type
     if (maybe_tensor.value()->element_type() != binding_info.element_type) {
       GXF_LOG_ERROR("Mismatching tensor element type required %d vs provided %d",
-                    binding_info.element_type, maybe_tensor.value()->element_type());
+                    binding_info.element_type,
+                    maybe_tensor.value()->element_type());
       return GXF_FAILURE;
     }
 
@@ -668,7 +673,8 @@ gxf_result_t TensorRtInference::tick() {
         GXF_LOG_ERROR(
             "Input Tensor %s bound to %s:"
             " dimensions does not meet model spec with relaxed matching. Expected: %s Real: %s",
-            tensor_name.c_str(), binding_info.binding_name.c_str(),
+            tensor_name.c_str(),
+            binding_info.binding_name.c_str(),
             FormatDims(binding_info.dimensions, binding_info.rank).c_str(),
             FormatTensorShape(shape).c_str());
         return GXF_FAILURE;
@@ -677,7 +683,9 @@ gxf_result_t TensorRtInference::tick() {
       // Strict dimension match. All dimensions must match. Binding of -1 is considered as match.
       if (shape.rank() != binding_info.rank) {
         GXF_LOG_ERROR("Tensor %s bound to %s has mismatching rank %d (%d required)",
-                      tensor_name.c_str(), binding_info.binding_name.c_str(), shape.rank(),
+                      tensor_name.c_str(),
+                      binding_info.binding_name.c_str(),
+                      shape.rank(),
                       binding_info.rank);
         return GXF_FAILURE;
       }
@@ -685,8 +693,11 @@ gxf_result_t TensorRtInference::tick() {
         if (binding_info.dimensions[i] == -1) { dims.d[i] = shape.dimension(i); }
         if (shape.dimension(i) != binding_info.dimensions[i] && binding_info.dimensions[i] != -1) {
           GXF_LOG_ERROR("Tensor %s bound to %s has mismatching dimension %d:%d (%d required)",
-                        tensor_name.c_str(), binding_info.binding_name.c_str(), i,
-                        shape.dimension(i), binding_info.dimensions[i]);
+                        tensor_name.c_str(),
+                        binding_info.binding_name.c_str(),
+                        i,
+                        shape.dimension(i),
+                        binding_info.dimensions[i]);
           return GXF_FAILURE;
         }
       }
@@ -721,8 +732,12 @@ gxf_result_t TensorRtInference::tick() {
     gxf::Shape shape{Dims2Dimensions(binding_dims), binding_info.rank};
 
     auto result = maybe_result_tensor.value()->reshapeCustom(
-        shape, binding_info.element_type, gxf::PrimitiveTypeSize(binding_info.element_type),
-        gxf::Unexpected{GXF_UNINITIALIZED_VALUE}, gxf::MemoryStorageType::kDevice, pool_);
+        shape,
+        binding_info.element_type,
+        gxf::PrimitiveTypeSize(binding_info.element_type),
+        gxf::Unexpected{GXF_UNINITIALIZED_VALUE},
+        gxf::MemoryStorageType::kDevice,
+        pool_);
     if (!result) {
       GXF_LOG_ERROR("Failed to allocate for output tensor %s", tensor_name.c_str());
       return gxf::ToResultCode(result);
@@ -732,32 +747,18 @@ gxf_result_t TensorRtInference::tick() {
     cuda_buffers_[binding_info.index] = maybe_result_tensor.value()->pointer();
   }
 
-  auto maybe_stream_id = maybe_result_message.value().add<gxf::CudaStreamId>("TensorRTCuStream");
-  if (!maybe_stream_id) {
-    GXF_LOG_ERROR("failed to add TensorRTCuStream");
-    return gxf::ToResultCode(maybe_stream_id);
-  }
-  maybe_stream_id.value()->stream_cid = cuda_stream_.cid();
-  GXF_ASSERT(maybe_stream_id.value()->stream_cid != kNullUid, "Internal error: stream_cid is null");
-
   // Runs inference on specified CUDA stream
-  if (!cuda_execution_ctx_->enqueueV2(cuda_buffers_.data(), cached_cuda_stream_,
-                                      &cuda_event_consumed_)) {
+  if (!cuda_execution_ctx_->enqueueV2(
+          cuda_buffers_.data(), cuda_stream_handler_.getCudaStream(), nullptr)) {
     GXF_LOG_ERROR("TensorRT task enqueue for engine %s failed.", engine_file_path_.c_str());
     return GXF_FAILURE;
   }
-  // Blocks until job is done
-  auto result = cudaEventRecord(cuda_event_done_, cached_cuda_stream_);
-  if (cudaSuccess != result) {
-    GXF_LOG_ERROR("Failed to queue event for task done with engine %s: %s",
-                  engine_file_path_.c_str(), cudaGetErrorString(result));
-    return GXF_FAILURE;
-  }
-  auto result2 = cudaEventSynchronize(cuda_event_done_);
-  if (cudaSuccess != result2) {
-    GXF_LOG_ERROR("Failed to synchronize for task done with engine %s: %s",
-                  engine_file_path_.c_str(), cudaGetErrorString(result2));
-    return GXF_FAILURE;
+
+  // pass the CUDA stream to the output message
+  stream_handler_result = cuda_stream_handler_.toMessage(maybe_result_message);
+  if (stream_handler_result != GXF_SUCCESS) {
+    GXF_LOG_ERROR("Failed to add the CUDA stream to the outgoing messages");
+    return stream_handler_result;
   }
 
   // Publishes result with acqtime
@@ -775,14 +776,14 @@ static std::string replaceChar(const std::string& string, char match, char repla
   return result;
 }
 
-gxf::Expected<std::string> TensorRtInference::queryHostEngineCapability() const {
+gxf::Expected<std::string> TensorRtInference::queryHostEngineCapability(int dev_id) const {
   char* env_var = std::getenv("GXF_TENSORRT_HOST_ENGINE_CAPABILITY");
   if (env_var != nullptr) {
     GXF_LOG_INFO("Using GXF_TENSORRT_HOST_ENGINE_CAPABILITY overwrite: %s", env_var);
     return std::string(env_var);
   }
   cudaDeviceProp device_prop = {0};
-  cudaError_t status = cudaGetDeviceProperties(&device_prop, cuda_stream_.get()->dev_id());
+  cudaError_t status = cudaGetDeviceProperties(&device_prop, dev_id);
   if (status != cudaSuccess) {
     GXF_LOG_ERROR("Failed to get cuda device properties with errorcode: %d", status);
     return gxf::Unexpected{};

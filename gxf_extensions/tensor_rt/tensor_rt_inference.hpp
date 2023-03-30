@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NVIDIA_GXF_EXTENSIONS_TENSOR_RT_TENSOR_RT_INFERENCE_HPP_
-#define NVIDIA_GXF_EXTENSIONS_TENSOR_RT_TENSOR_RT_INFERENCE_HPP_
+#ifndef GXF_EXTENSIONS_TENSOR_RT_TENSOR_RT_INFERENCE_HPP
+#define GXF_EXTENSIONS_TENSOR_RT_TENSOR_RT_INFERENCE_HPP
 
 #include <NvInfer.h>
 #include <cuda_runtime.h>
@@ -37,6 +37,8 @@
 #include "gxf/std/receiver.hpp"
 #include "gxf/std/tensor.hpp"
 #include "gxf/std/transmitter.hpp"
+
+#include "../utils/cuda_stream_handler.hpp"
 
 namespace nvidia {
 namespace gxf {
@@ -70,14 +72,14 @@ class TensorRtInference : public gxf::Codelet {
 
  private:
   // Helper to return a string for the TRT engine capability.
-  gxf::Expected<std::string> queryHostEngineCapability() const;
+  gxf::Expected<std::string> queryHostEngineCapability(int dev_id) const;
   // Helper to search for the engine file path.
   gxf::Expected<std::string> findEngineFilePath(const std::string& host_engine_capability) const;
 
   // Helper deleter to call destroy while destroying the cuda objects
   template <typename T>
   struct DeleteFunctor {
-    inline void operator()(void* ptr) { reinterpret_cast<T*>(ptr)->destroy(); }
+    inline void operator()(void* ptr) { delete reinterpret_cast<T*>(ptr); }
   };
   // unique_ptr using custom Delete Functor above
   template <typename T>
@@ -105,7 +107,6 @@ class TensorRtInference : public gxf::Codelet {
   gxf::Parameter<std::vector<std::string>> output_tensor_names_;
   gxf::Parameter<std::vector<std::string>> output_binding_names_;
   gxf::Parameter<gxf::Handle<gxf::Allocator>> pool_;
-  gxf::Parameter<gxf::Handle<gxf::CudaStreamPool>> cuda_stream_pool_;
   gxf::Parameter<int64_t> max_workspace_size_;
   gxf::Parameter<int64_t> dla_core_;
   gxf::Parameter<int32_t> max_batch_size_;
@@ -123,15 +124,13 @@ class TensorRtInference : public gxf::Codelet {
   NvInferHandle<nvinfer1::IExecutionContext> cuda_execution_ctx_;
   NvInferHandle<nvinfer1::ICudaEngine> cuda_engine_;
 
-  gxf::Handle<gxf::CudaStream> cuda_stream_;
   std::vector<void*> cuda_buffers_;
-  cudaStream_t cached_cuda_stream_;
-  cudaEvent_t cuda_event_consumed_;
-  cudaEvent_t cuda_event_done_;
   std::string engine_file_path_;
+
+  holoscan::CudaStreamHandler cuda_stream_handler_;
 };
 
 }  // namespace gxf
 }  // namespace nvidia
 
-#endif  // NVIDIA_GXF_EXTENSIONS_TENSOR_RT_TENSOR_RT_INFERENCE_HPP_
+#endif /* GXF_EXTENSIONS_TENSOR_RT_TENSOR_RT_INFERENCE_HPP */

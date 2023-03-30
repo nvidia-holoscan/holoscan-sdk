@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,13 @@
 #include <string>
 #include <vector>
 
-#include "../../core/gxf/gxf_operator.hpp"
+#include "holoscan/core/gxf/gxf_operator.hpp"
+
+#include "holoinfer.hpp"
+#include "holoinfer_utils.hpp"
+#include "holoinfer_buffer.hpp"
+
+namespace HoloInfer = holoscan::inference;
 
 namespace holoscan::ops {
 /**
@@ -31,18 +37,17 @@ namespace holoscan::ops {
  *
  * Class wraps a GXF Codelet(`nvidia::holoscan::multiai::MultiAIPostprocessor`).
  */
-class MultiAIPostprocessorOp : public holoscan::ops::GXFOperator {
+class MultiAIPostprocessorOp : public holoscan::Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(MultiAIPostprocessorOp, holoscan::ops::GXFOperator)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(MultiAIPostprocessorOp)
 
   MultiAIPostprocessorOp() = default;
 
-  const char* gxf_typename() const override {
-    return "nvidia::holoscan::multiai::MultiAIPostprocessor";
-  }
-
   void setup(OperatorSpec& spec) override;
   void initialize() override;
+  void start() override;
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override;
 
   /**
    * DataMap specification
@@ -106,6 +111,23 @@ class MultiAIPostprocessorOp : public holoscan::ops::GXFOperator {
 
   ///  @brief Output transmitter. Single transmitter supported.
   Parameter<std::vector<IOSpec*>> transmitter_;
+
+  void conditional_disable_output_port(const std::string& name);
+
+  // Internal state
+
+  /// Pointer to Data Processor context.
+  std::unique_ptr<HoloInfer::ProcessorContext> holoscan_postprocess_context_;
+
+  /// Map holding data per input tensor.
+  HoloInfer::DataMap data_per_tensor_;
+
+  /// Map holding dimensions per model. Key is model name and value is a vector with
+  /// dimensions.
+  std::map<std::string, std::vector<int>> dims_per_tensor_;
+
+  /// Codelet Identifier, used in reporting.
+  const std::string module_{"Multi AI Postprocessor Codelet"};
 };
 
 }  // namespace holoscan::ops

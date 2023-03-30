@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,7 @@
 #include <memory>
 #include <string>
 
-#include "../../core/gxf/gxf_operator.hpp"
+#include "holoscan/core/gxf/gxf_operator.hpp"
 
 namespace holoscan::ops {
 
@@ -58,4 +58,3 @@ class BayerDemosaicOp : public holoscan::ops::GXFOperator {
 }  // namespace holoscan::ops
 
 #endif /* HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_HPP */
-

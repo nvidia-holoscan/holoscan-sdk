@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,8 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/logger/logger.hpp>
+
 #define _HOLOSCAN_EXTERNAL_API_ __attribute__((visibility("default")))
 
 namespace holoscan {
@@ -58,8 +60,19 @@ class _HOLOSCAN_EXTERNAL_API_ InferStatus {
   std::string get_message() const { return _message; }
   void set_code(const holoinfer_code& _c) { _code = _c; }
   void set_message(const std::string& _m) { _message = _m; }
-  void display_message() const { std::cout << _message << " \n"; }
-
+  void display_message() const {
+    switch (_code) {
+      case holoinfer_code::H_SUCCESS:
+      default: {
+        HOLOSCAN_LOG_INFO(_message);
+        break;
+      }
+      case holoinfer_code::H_ERROR: {
+        HOLOSCAN_LOG_ERROR(_message);
+        break;
+      }
+    }
+  }
   InferStatus(const holoinfer_code& code = holoinfer_code::H_SUCCESS,
               const std::string& message = "")
       : _code(code), _message(message) {}

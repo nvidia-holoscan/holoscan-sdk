@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -133,11 +133,10 @@ function(create_gxe_application)
     # Copy the yaml file
     get_filename_component(GXE_APP_YAML_NAME ${GXE_APP_YAML} NAME)
     cmake_path(APPEND GXE_APP_YAML_RELATIVE_PATH ${app_relative_dest_path} ${GXE_APP_YAML_NAME})
-    add_custom_target(gxf_app-${GXE_APP_NAME}-yaml
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${GXE_APP_YAML_NAME}
         COMMAND ${CMAKE_COMMAND} -E copy ${GXE_APP_YAML} ${CMAKE_CURRENT_BINARY_DIR}/${GXE_APP_YAML_NAME}
         DEPENDS ${GXE_APP_YAML}
-        )
-    add_dependencies(${HOLOSCAN_PACKAGE_NAME} gxf_app-${GXE_APP_NAME}-yaml)
+    )
     install(FILES ${GXE_APP_YAML}
         DESTINATION ${app_relative_dest_path}
         COMPONENT "${GXE_APP_COMPONENT}"
@@ -173,10 +172,6 @@ function(create_gxe_application)
         VERBATIM
         DEPENDS "${GXE_APP_MANIFEST_ORIGINAL}"
     )
-    add_custom_target(gxf_app-${GXE_APP_NAME}-manifest
-        DEPENDS "${GXE_APP_MANIFEST}"
-    )
-    add_dependencies(${HOLOSCAN_PACKAGE_NAME} gxf_app-${GXE_APP_NAME}-manifest)
     install(FILES ${GXE_APP_MANIFEST}
         DESTINATION ${app_relative_dest_path}
         COMPONENT "${GXE_APP_COMPONENT}"
@@ -197,6 +192,16 @@ export LD_LIBRARY_PATH=$(pwd):$(pwd)/${HOLOSCAN_INSTALL_LIB_DIR}:\${LD_LIBRARY_P
         DESTINATION ${app_relative_dest_path}
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
         COMPONENT "${GXE_APP_COMPONENT}"
+    )
+
+    # Create custom targets for the generated files
+    add_custom_target(${GXE_APP_NAME} ALL
+        DEPENDS
+            "${CMAKE_CURRENT_BINARY_DIR}/${GXE_APP_YAML_NAME}"
+            "${GXE_APP_MANIFEST}"
+            # TODO: fix name conflict dependency with `file(GENERATE)`
+            # Would need to find a way to only generate at build time?
+            # "${GXE_APP_EXECUTABLE}"
     )
 endfunction()
 

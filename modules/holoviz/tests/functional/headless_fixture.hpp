@@ -30,65 +30,62 @@
  */
 class TestHeadless : public ::testing::Test {
  protected:
-    /**
-     * Construct a new TestHeadless object
-     */
-    TestHeadless() = default;
+  /**
+   * Construct a new TestHeadless object
+   */
+  TestHeadless() = default;
 
-    /**
-     * Construct a new TestHeadless object with a given window size
-     *
-     * @param width window width
-     * @param height window height
-     */
-    TestHeadless(uint32_t width, uint32_t height)
-        : width_(width)
-        , height_(height) {
-    }
+  /**
+   * Construct a new TestHeadless object with a given window size
+   *
+   * @param width window width
+   * @param height window height
+   */
+  TestHeadless(uint32_t width, uint32_t height) : width_(width), height_(height) {}
 
-    /// ::testing::Test virtual members
-    ///@{
-    void SetUp() override;
-    void TearDown() override;
-    ///@}
+  /// ::testing::Test virtual members
+  ///@{
+  void SetUp() override;
+  void TearDown() override;
+  ///@}
 
-    /**
-     * Setup random pixel data.
-     *
-     * @param format pixel format
-     * @param rand_seed random seed
-     */
-    void SetupData(holoscan::viz::ImageFormat format, uint32_t rand_seed = 1);
+  /**
+   * Setup random pixel data.
+   *
+   * @param format pixel format
+   * @param rand_seed random seed
+   */
+  void SetupData(holoscan::viz::ImageFormat format, uint32_t rand_seed = 1);
 
-    /**
-     * Read back data from the Holoviz window.
-     *
-     * @param read_data vector to hold the read back data
-     */
-    void ReadData(std::vector<uint8_t> &read_data);
+  /**
+   * Read back data from the Holoviz window.
+   *
+   * @param read_data vector to hold the read back data
+   */
+  void ReadData(std::vector<uint8_t>& read_data);
 
-    /**
-     * Read back data and compare with the data generated with SetupData().
-     *
-     * @returns false if read back and generated data do not match
-     */
-    bool CompareResult();
+  /**
+   * Read back data and compare with the data generated with SetupData().
+   *
+   * @returns false if read back and generated data do not match
+   */
+  bool CompareResult();
 
-    /**
-     * Read back data, generate a CRC32 and compare with the provided CRC32's.
-     *
-     * @param crc32 vector of expected CRC32's
-     *
-     * @returns false if read back and generated data do not match
-     */
-    bool CompareResultCRC32(const std::vector<uint32_t> crc32);
+  /**
+   * Read back data, generate a CRC32 and compare with the provided CRC32's.
+   *
+   * @param crc32 vector of expected CRC32's
+   *
+   * @returns false if read back and generated data do not match
+   */
+  bool CompareResultCRC32(const std::vector<uint32_t> crc32);
 
-    const uint32_t lut_size_ = 8;
+  const uint32_t lut_size_ = 8;
 
-    const uint32_t width_  = 64;
-    const uint32_t height_ = 32;
+  const uint32_t width_ = 64;
+  const uint32_t height_ = 32;
 
-    std::vector<uint8_t> data_;
+  std::vector<uint8_t> data_;
 };
 
 #endif /* HOLOVIZ_TESTS_FUNCTIONAL_HEADLESS_FIXTURE_HPP */

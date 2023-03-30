@@ -6,7 +6,7 @@
             "type": "shell",
             "command": "cmake --build ${command:cmake.buildDirectory} --config ${command:cmake.buildType} --target ${command:cmake.buildTargetName}",
             "options": {
-                "cwd": "${workspaceFolder}",
+                "cwd": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}",
                 "env": {
                     "PATH": "${env:HOME}/.local/bin:${env:PATH}",
                     "CUDACXX": "/usr/local/cuda/bin/nvcc",
@@ -25,29 +25,9 @@
         {
             "label": "Install",
             "type": "shell",
-            "command": "cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-core && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-gxf_extensions && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-apps && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-gxf_libs && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-gxf_bins && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-modules && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-dependencies && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/install --component holoscan-python_libs",
+            "command": "cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-core && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-gxf_extensions && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-examples && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-gxf_libs && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-gxf_bins && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-modules && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-dependencies && cmake --install ${command:cmake.buildDirectory} --prefix ${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install --component holoscan-python_libs",
             "options": {
-                "cwd": "${workspaceFolder}",
-                "env": {
-                    "PATH": "${env:HOME}/.local/bin:${env:PATH}",
-                    "CUDACXX": "/usr/local/cuda/bin/nvcc",
-                }
-            },
-            "presentation": {
-                "reveal": "always",
-                "focus": true
-            },
-            "problemMatcher": [],
-            "group": {
-                "kind": "none",
-            }
-        },
-        {
-            "label": "Install CuPy package",
-            "type": "shell",
-            "command": "python -m pip install cupy-cuda11x",
-            "options": {
-                "cwd": "${workspaceFolder}",
+                "cwd": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}",
                 "env": {
                     "PATH": "${env:HOME}/.local/bin:${env:PATH}",
                     "CUDACXX": "/usr/local/cuda/bin/nvcc",

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_CUDA_CONVERT_HPP
-#define HOLOSCAN_VIZ_CUDA_CONVERT_HPP
+#ifndef HOLOVIZ_SRC_CUDA_CONVERT_HPP
+#define HOLOVIZ_SRC_CUDA_CONVERT_HPP
 
 #include <cuda.h>
 
@@ -48,8 +48,8 @@ void ConvertR8G8B8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src, s
  * @param stream        stream to use for this operation
  */
 void ConvertB8G8R8A8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src, size_t src_pitch,
-                                CUdeviceptr dst, size_t dst_pitch, CUstream stream);
+                               CUdeviceptr dst, size_t dst_pitch, CUstream stream);
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_CUDA_CONVERT_HPP */
+#endif /* HOLOVIZ_SRC_CUDA_CONVERT_HPP */

@@ -33,6 +33,7 @@ void MessageAvailableCondition::setup(ComponentSpec& spec) {
              "The scheduling term permits execution if the given receiver has at least the "
              "given number of messages available.",
              1UL);
+  // TODO(gbae): This is an optional parameter. Should support optional parameters.
   spec.param(
       front_stage_max_size_,
       "front_stage_max_size",

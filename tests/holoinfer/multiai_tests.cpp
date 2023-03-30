@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -160,6 +160,7 @@ void parameter_setup_test() {
   holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_ERROR);
 
   test_name = "ONNX backend, Default";
+  if (!is_x86_64) { infer_on_cpu = true; }
   is_engine_path = false;
   input_on_cuda = false;
   output_on_cuda = false;
@@ -168,6 +169,7 @@ void parameter_setup_test() {
   holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_SUCCESS);
 
   backend = "trt";
+  if (!is_x86_64) { infer_on_cpu = false; }
   input_on_cuda = true;
   output_on_cuda = true;
   test_name = "TRT backend, Default check 1";
@@ -335,33 +337,40 @@ void inference_tests() {
   status = do_inference();
   holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_SUCCESS);
 
-  test_name = "ONNX backend, Basic sequential inference on GPU";
-  infer_on_cpu = false;
-  status = prepare_for_inference();
-  status = do_mapping();
-  status = do_inference();
-  holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_SUCCESS);
+  if (is_x86_64) {
+    test_name = "ONNX backend, Basic sequential inference on GPU";
+    infer_on_cpu = false;
+    status = prepare_for_inference();
+    status = do_mapping();
+    status = do_inference();
+    holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_SUCCESS);
 
-  test_name = "ONNX backend, Basic parallel inference on GPU";
-  parallel_inference = true;
-  status = prepare_for_inference();
-  status = do_mapping();
-  status = do_inference();
-  holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_SUCCESS);
+    test_name = "ONNX backend, Basic parallel inference on GPU";
+    parallel_inference = true;
+    status = prepare_for_inference();
+    status = do_mapping();
+    status = do_inference();
+    holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_SUCCESS);
 
-  test_name = "ONNX backend, Empty host input";
-  dbs = multiai_specs_->data_per_model_.at("plax_chamber")->host_buffer.size();
-  multiai_specs_->data_per_model_.at("plax_chamber")->host_buffer.resize(0);
-  status = do_inference();
-  holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_ERROR);
-  multiai_specs_->data_per_model_.at("plax_chamber")->host_buffer.resize(dbs);
+    test_name = "ONNX backend, Empty host input";
+    dbs = multiai_specs_->data_per_model_.at("plax_chamber")->host_buffer.size();
+    multiai_specs_->data_per_model_.at("plax_chamber")->host_buffer.resize(0);
+    status = do_inference();
+    holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_ERROR);
+    multiai_specs_->data_per_model_.at("plax_chamber")->host_buffer.resize(dbs);
 
-  test_name = "ONNX backend, Empty host output";
-  dbs = multiai_specs_->output_per_model_.at("aortic_infer")->host_buffer.size();
-  multiai_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(0);
-  status = do_inference();
-  holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_ERROR);
-  multiai_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(dbs);
+    test_name = "ONNX backend, Empty host output";
+    dbs = multiai_specs_->output_per_model_.at("aortic_infer")->host_buffer.size();
+    multiai_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(0);
+    status = do_inference();
+    holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_ERROR);
+    multiai_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(dbs);
+  } else {
+    test_name = "ONNX backend on ARM, Basic sequential inference on GPU";
+    infer_on_cpu = false;
+    status = prepare_for_inference();
+    holoinfer_assert(status, test_module, test_name, HoloInfer::holoinfer_code::H_ERROR);
+  }
 }
 
 int main() {

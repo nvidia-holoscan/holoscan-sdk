@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,16 +15,19 @@
  * limitations under the License.
  */
 
+#include "utils.hpp"
+
 #include <filesystem>
 
-#include "utils.hpp"
+#include <NvInferPlugin.h>
+#include <NvOnnxParser.h>
 
 namespace holoscan {
 namespace inference {
 
 cudaError_t check_cuda(cudaError_t result) {
   if (result != cudaSuccess) {
-    std::cerr << "Cuda runtime error: " << cudaGetErrorString(result);
+    HOLOSCAN_LOG_ERROR("Cuda runtime error: {}", cudaGetErrorString(result));
     assert(result == cudaSuccess);
   }
   return result;
@@ -39,7 +42,7 @@ bool generate_engine_path(const NetworkOptions& options, const std::string& onnx
   cudaDeviceProp device_prop;
   auto status = cudaGetDeviceProperties(&device_prop, options.device_index);
   if (status != cudaSuccess) {
-    std::cerr << "Error in getting device properties\n";
+    HOLOSCAN_LOG_ERROR("Error in getting device properties.");
     return false;
   }
 
@@ -73,12 +76,14 @@ void set_dimensions_for_profile(const char* input_name, nvinfer1::IOptimizationP
 bool build_engine(const std::string& onnx_model_path, const std::string& engine_path,
                   const NetworkOptions& network_options, Logger& logger) {
   if (valid_file_path(engine_path)) {
-    std::cout << "Cached engine found: " << engine_path << std::endl;
+    HOLOSCAN_LOG_INFO("Cached engine found: {}", engine_path);
     return true;
   }
 
-  std::cout <<
-    "Engine file missing at " << engine_path << ". Starting generation process." << std::endl;
+  HOLOSCAN_LOG_INFO(
+      "Engine file missing at {}. Starting generation process.\nNOTE: This could take a couple of "
+      "minutes depending on your model size and GPU!",
+      engine_path);
 
   auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
   if (!builder) { return false; }
@@ -146,7 +151,7 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   std::ofstream outfile(engine_path, std::ofstream::binary);
   outfile.write(reinterpret_cast<const char*>(plan->data()), plan->size());
 
-  std::cout << "Engine file generated, saved as: " << engine_path << std::endl;
+  HOLOSCAN_LOG_INFO("Engine file generated, saved as: {}", engine_path);
 
   return true;
 }

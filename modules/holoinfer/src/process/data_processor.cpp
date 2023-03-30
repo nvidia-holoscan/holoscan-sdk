@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,9 +28,17 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations) {
     }
 
     for (const auto& _op : _operations) {
-      if (supported_operations_.find(_op) == supported_operations_.end()) {
-        return InferStatus(holoinfer_code::H_ERROR,
-                           "Data processor, Operation " + _op + " not supported.");
+      if (_op.find("print") == std::string::npos) {
+        if (supported_operations_.find(_op) == supported_operations_.end()) {
+          return InferStatus(holoinfer_code::H_ERROR,
+                             "Data processor, Operation " + _op + " not supported.");
+        }
+      } else {
+        if ((_op.compare("print") != 0) &&
+            (_op.find("print_custom_binary_classification") == std::string::npos)) {
+          return InferStatus(holoinfer_code::H_ERROR,
+                             "Data processor, Print operation: " + _op + " not supported.");
+        }
       }
     }
   }
@@ -43,6 +51,26 @@ void DataProcessor::print_results(const std::vector<int>& dimensions,
 
   for (unsigned int i = 0; i < dsize - 1; i++) { std::cout << indata.at(i) << ", "; }
   std::cout << indata[dsize - 1] << "\n";
+}
+
+void DataProcessor::print_custom_binary_classification(
+    const std::vector<int>& dimensions, const std::vector<float>& indata,
+    const std::vector<std::string>& custom_strings) {
+  size_t dsize = indata.size();
+
+  if (dsize == 2) {
+    auto first_value = 1.0 / (1 + exp(-indata.at(0)));
+    auto second_value = 1.0 / (1 + exp(-indata.at(1)));
+
+    if (first_value > second_value) {
+      std::cout << custom_strings[0] << ". Confidence: " << first_value << "\n";
+    } else {
+      std::cout << custom_strings[1] << ". Confidence: " << second_value << "\n";
+    }
+  } else {
+    HOLOSCAN_LOG_INFO("Input data size: {}", dsize);
+    HOLOSCAN_LOG_INFO("This is binary classification custom print, size must be 2.");
+  }
 }
 
 void DataProcessor::compute_max_per_channel_cpu(const std::vector<int>& dimensions,
@@ -90,18 +118,20 @@ InferStatus DataProcessor::process_operation(const std::string& operation,
                                              const std::vector<int>& indims,
                                              const std::vector<float>& indata,
                                              std::vector<int64_t>& processed_dims,
-                                             std::vector<float>& processed_data) {
+                                             std::vector<float>& processed_data,
+                                             const std::vector<std::string>& custom_strings) {
   if (oper_to_fp_.find(operation) == oper_to_fp_.end())
     return InferStatus(holoinfer_code::H_ERROR,
                        "Data processor, Operation " + operation + " not found in map");
   try {
-    oper_to_fp_.at(operation)(indims, indata, processed_dims, processed_data);
+    oper_to_fp_.at(operation)(indims, indata, processed_dims, processed_data, custom_strings);
   } catch (...) {
     return InferStatus(holoinfer_code::H_ERROR,
                        "Data processor, Exception in running " + operation);
   }
-  if (operation.compare("print") != 0 && processed_data.size() == 0)
+  if (operation.find("print") == std::string::npos && processed_data.size() == 0) {
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, Processed data map empty");
+  }
   return InferStatus();
 }
 

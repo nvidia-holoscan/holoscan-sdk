@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -169,7 +169,7 @@ class Condition : public Component {
    * @param spec The component specification.
    * @return The reference to the condition.
    */
-  Condition& spec(std::shared_ptr<ComponentSpec> spec) {
+  Condition& spec(const std::shared_ptr<ComponentSpec>& spec) {
     spec_ = spec;
     return *this;
   }
@@ -180,6 +180,13 @@ class Condition : public Component {
    */
   ComponentSpec* spec() { return spec_.get(); }
 
+  /**
+   * @brief Get the shared pointer to the component spec.
+   *
+   * @return The shared pointer to the component spec.
+   */
+  std::shared_ptr<ComponentSpec> spec_shared() { return spec_; }
+
   using Component::add_arg;
 
   /**
@@ -188,6 +195,13 @@ class Condition : public Component {
    * @param spec The reference to the component specification.
    */
   virtual void setup(ComponentSpec& spec) { (void)spec; }
+
+  /**
+   * @brief Get a YAML representation of the condition.
+   *
+   * @return YAML node including spec of the condition in addition to the base component properties.
+   */
+  YAML::Node to_yaml_node() const override;
 
  protected:
   std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.

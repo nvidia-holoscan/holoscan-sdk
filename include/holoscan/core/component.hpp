@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -147,6 +147,21 @@ class Component {
    * light-weight initialization.
    */
   virtual void initialize() {}
+
+  /**
+   * @brief Get a YAML representation of the component.
+   *
+   * @return YAML node including the id, name, fragment name, and arguments of the component.
+   */
+  virtual YAML::Node to_yaml_node() const;
+
+  /**
+   * @brief Get a description of the component.
+   *
+   * @see to_yaml_node()
+   * @return YAML string.
+   */
+  std::string description() const;
 
  protected:
   friend class Executor;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_CONDITIONS_GXF_BOOLEAN_HPP
 #define HOLOSCAN_CORE_CONDITIONS_GXF_BOOLEAN_HPP
 
+#include <string>
+
 #include "../../gxf/gxf_condition.hpp"
 
 namespace holoscan {
@@ -27,6 +29,7 @@ class BooleanCondition : public gxf::GXFCondition {
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(BooleanCondition, GXFCondition)
 
   explicit BooleanCondition(bool enable_tick = true) : enable_tick_(enable_tick) {}
+  BooleanCondition(const std::string& name, nvidia::gxf::BooleanSchedulingTerm* term);
 
   const char* gxf_typename() const override { return "nvidia::gxf::BooleanSchedulingTerm"; }
 

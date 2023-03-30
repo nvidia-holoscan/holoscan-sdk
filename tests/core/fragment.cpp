@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,7 +41,7 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
-#include "holoscan/operators/stream_playback/video_stream_recorder.hpp"
+#include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
 
 using namespace std::string_literals;
 
@@ -115,13 +115,8 @@ TEST(Fragment, TestFragmentConfigNestedArgs) {
 TEST(Fragment, TestConfigUninitializedWarning) {
   Fragment F;
 
-  // verify that calling config() file to passing a config_file raises a warning
-  testing::internal::CaptureStderr();
   Config C = F.config();
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Config object was not created. Call "
-                              "config(config_file, prefix) first.") != std::string::npos);
+  EXPECT_EQ(C.config_file(), "");
 }
 
 TEST(Fragment, TestFragmentFromConfigNonexistentKey) {

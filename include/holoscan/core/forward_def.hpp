@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,7 @@ class Config;
 class Component;
 class ComponentSpec;
 class ExecutionContext;
+class ExtensionManager;
 class Executor;
 class Fragment;
 enum class FlowType;
@@ -65,6 +66,7 @@ class GXFCondition;
 class GXFInputContext;
 class GXFOutputContext;
 class GXFResource;
+class GXFExtensionManager;
 }  // namespace gxf
 
 // holoscan::ops

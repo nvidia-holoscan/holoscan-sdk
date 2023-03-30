@@ -98,8 +98,9 @@ class InputContext {
    *   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
    *     // The type of `value` is `std::shared_ptr<ValueData>`
    *     auto value = op_input.receive<ValueData>("in");
-   *
-   *     HOLOSCAN_LOG_INFO("Message received (value: {})", value->data());
+   *     if (value) {
+   *       HOLOSCAN_LOG_INFO("Message received (value: {})", value->data());
+   *     }
    *   }
    * };
    * ```
@@ -113,6 +114,10 @@ class InputContext {
                                 !holoscan::is_one_of_v<DataT, holoscan::gxf::Entity, std::any>>>
   std::shared_ptr<DataT> receive(const char* name = nullptr) {
     auto value = receive_impl(name);
+
+    // If the received data is nullptr, return a null shared pointer.
+    if (value.type() == typeid(nullptr_t)) { return nullptr; }
+
     try {
       return std::any_cast<std::shared_ptr<DataT>>(value);
     } catch (const std::bad_any_cast& e) {
@@ -133,7 +138,8 @@ class InputContext {
    *
    * If the input port with the given name and the type (`nvidia::gxf::Entity`) is available,
    * it will return the message data (`holoscan::gxf::Entity`) from the input
-   * port. Otherwise, it will throw an exception.
+   * port. Otherwise, it will return an empty Entity or throw an exception if it fails to parse
+   * the message data.
    *
    * Example:
    *
@@ -151,9 +157,10 @@ class InputContext {
    *   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
    *     // The type of `in_entity` is 'holoscan::gxf::Entity'.
    *     auto in_entity = op_input.receive<holoscan::gxf::Entity>("in");
-   *
-   *    // Process with `in_entity`.
-   *    // ...
+   *     if (in_entity) {
+   *       // Process with `in_entity`.
+   *       // ...
+   *     }
    *   }
    * };
    * ```
@@ -161,13 +168,17 @@ class InputContext {
    * @tparam DataT The type of the data to receive. It should be `holoscan::gxf::Entity`.
    * @param name The name of the input port to receive the data from.
    * @return The entity object (`holoscan::gxf::Entity`).
-   * @throws std::runtime_error if the input port with the given name and the type (`DataT`) is
-   * not available.
+   * @throws std::runtime_error if it fails to parse the message data from the input port with the
+   * given type (`DataT`).
    */
   template <typename DataT,
             typename = std::enable_if_t<holoscan::is_one_of_v<DataT, holoscan::gxf::Entity>>>
   DataT receive(const char* name) {
     auto value = receive_impl(name);
+
+    // If the received data is nullptr, return an empty entity
+    if (value.type() == typeid(nullptr_t)) { return {}; }
+
     try {
       return std::any_cast<holoscan::gxf::Entity>(value);
     } catch (const std::bad_any_cast& e) {
@@ -205,16 +216,20 @@ class InputContext {
    *   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
    *     // The type of `in_any` is 'std::any'.
    *     auto in_any = op_input.receive<std::any>("in");
-   *     if (in_any.type() == typeid(holoscan::gxf::Entity)) {
+   *     auto& in_any_type = in_any.type();
+   *
+   *     if (in_any_type == typeid(holoscan::gxf::Entity)) {
    *       auto in_entity = std::any_cast<holoscan::gxf::Entity>(in_any);
    *       // Process with `in_entity`.
    *       // ...
-   *     } else if (in_any.type() == typeid(std::shared_ptr<ValueData>)) {
+   *     } else if (in_any_type == typeid(std::shared_ptr<ValueData>)) {
    *       auto in_message = std::any_cast<std::shared_ptr<ValueData>>(in_any);
    *       // Process with `in_message`.
    *       // ...
+   *     } else if (in_any_type == typeid(nullptr_t)) {
+   *       // No message is available.
    *     } else {
-   *       HOLOSCAN_LOG_ERROR("Message is not available");
+   *       HOLOSCAN_LOG_ERROR("Invalid message type: {}", in_any_type.name());
    *       return;
    *     }
    *   }
@@ -238,7 +253,8 @@ class InputContext {
    * If the parameter (of type `std::vector<IOSpec*>`) with the given name is available,
    * it will return a vector of the shared pointers to the data
    * (`std::vector<std::shared_ptr<DataT>>`) from the input port. Otherwise, it will return an
-   * empty vector.
+   * empty vector. The vector can have empty shared pointers if the data of the corresponding input
+   * port is not available.
    *
    * Example:
    *
@@ -259,9 +275,10 @@ class InputContext {
    *     HOLOSCAN_LOG_INFO("Received {} messages", in_messages.size());
    *     // The type of `in_message` is 'std::vector<std::shared_ptr<ValueData>>'.
    *     auto& in_message = in_messages[0];
-   *
-   *     // Process with `in_message`.
-   *     // ...
+   *     if (in_message) {
+   *       // Process with `in_message`.
+   *       // ...
+   *     }
    *   }
    *
    *  private:
@@ -289,14 +306,14 @@ class InputContext {
 
     if (it == params.end()) {
       HOLOSCAN_LOG_ERROR(
-          "Unable to find input parameter with type 'std::vector<IOSpec*>' and name '{}'", name);
+          "Unable to find input parameter with name '{}'", name);
       return input_vector;
     }
     auto& param_wrapper = it->second;
     auto& arg_type = param_wrapper.arg_type();
     if ((arg_type.element_type() != ArgElementType::kIOSpec) ||
         (arg_type.container_type() != ArgContainerType::kVector)) {
-      HOLOSCAN_LOG_ERROR("Input parameter with name {} is not of type 'std::vector<IOSpec*>'",
+      HOLOSCAN_LOG_ERROR("Input parameter with name '{}' is not of type 'std::vector<IOSpec*>'",
                          name);
       return input_vector;
     }
@@ -314,6 +331,13 @@ class InputContext {
       // ('<parameter name>:<index>'. e.g, 'receivers:0') to return an object with
       // 'std::vector<std::shared_ptr<DataT_ElementT>' type.
       auto value = receive_impl(fmt::format("{}:{}", name, index).c_str(), true);
+
+      // If the received data is nullptr, add a null shared pointer.
+      if (value.type() == typeid(nullptr_t)) {
+        input_vector.emplace_back(nullptr);
+        continue;
+      }
+
       try {
         auto casted_value = std::any_cast<std::shared_ptr<DataT_ElementT>>(value);
         input_vector.push_back(std::move(casted_value));
@@ -338,7 +362,8 @@ class InputContext {
    * If the parameter (of type `std::vector<IOSpec*>`) with
    * the given name is available, it will return a vector of entities
    * (`std::vector<holoscan::gxf::Entity>`). Otherwise, it will return an
-   * empty vector.
+   * empty vector. The vector can have empty entities if the data of the corresponding
+   * input port is not available.
    *
    * Example:
    *
@@ -359,8 +384,10 @@ class InputContext {
    *     HOLOSCAN_LOG_INFO("Received {} messages", in_messages.size());
    *     // in_message's type is 'holoscan::gxf::Entity'.
    *     auto& in_message = in_messages[0];
-   *
-   *     // Process with 'in_message' here.
+   *     if (in_message)
+   *     {
+   *       // Process with 'in_message' here.
+   *     }
    *   }
    *
    *  private:
@@ -385,14 +412,14 @@ class InputContext {
 
     if (it == params.end()) {
       HOLOSCAN_LOG_ERROR(
-          "Unable to find input parameter with type 'std::vector<IOSpec*>' and name '{}'", name);
+          "Unable to find input parameter with name '{}'", name);
       return input_vector;
     }
     auto& param_wrapper = it->second;
     auto& arg_type = param_wrapper.arg_type();
     if ((arg_type.element_type() != ArgElementType::kIOSpec) ||
         (arg_type.container_type() != ArgContainerType::kVector)) {
-      HOLOSCAN_LOG_ERROR("Input parameter with name {} is not of type 'std::vector<IOSpec*>'",
+      HOLOSCAN_LOG_ERROR("Input parameter with name '{}' is not of type 'std::vector<IOSpec*>'",
                          name);
       return input_vector;
     }
@@ -410,6 +437,13 @@ class InputContext {
       // ('<parameter name>:<index>'. e.g, 'receivers:0') to return an object with
       // 'std::vector<holoscan::gxf::Entity>' type.
       auto value = receive_impl(fmt::format("{}:{}", name, index).c_str(), true);
+
+      // If the received data is nullptr, add an empty entity.
+      if (value.type() == typeid(nullptr_t)) {
+        input_vector.emplace_back();
+        continue;
+      }
+
       try {
         auto casted_value = std::any_cast<holoscan::gxf::Entity>(value);
         input_vector.push_back(std::move(casted_value));
@@ -431,7 +465,7 @@ class InputContext {
    *
    * If the parameter (of type `std::vector<IOSpec*>`) with
    * the given name is available, it will return a vector of entities
-   * (`std::vector<std::any>`). Otherwise, it will return an
+   * (`std::vector<std::any>`) from the receivers. Otherwise, it will return an
    * empty vector.
    *
    * Example:
@@ -459,17 +493,20 @@ class InputContext {
    *
    *     // in_any's type is 'std::any'.
    *     auto& in_any = in_any_vector[0];
+   *     auto& in_any_type = in_any.type();
    *
-   *     if (in_any.type() == typeid(holoscan::gxf::Entity)) {
+   *     if (in_any_type == typeid(holoscan::gxf::Entity)) {
    *       auto in_entity = std::any_cast<holoscan::gxf::Entity>(in_any);
    *       // Process with `in_entity`.
    *       // ...
-   *     } else if (in_any.type() == typeid(std::shared_ptr<ValueData>)) {
+   *     } else if (in_any_type == typeid(std::shared_ptr<ValueData>)) {
    *       auto in_message = std::any_cast<std::shared_ptr<ValueData>>(in_any);
    *       // Process with `in_message`.
    *       // ...
+   *     } else if (in_any_type == typeid(nullptr_t)) {
+   *       // No message is available.
    *     } else {
-   *       HOLOSCAN_LOG_ERROR("Unable to parse message");
+   *       HOLOSCAN_LOG_ERROR("Invalid message type: {}", in_any_type.name());
    *       return;
    *     }
    *   }
@@ -495,14 +532,14 @@ class InputContext {
 
     if (it == params.end()) {
       HOLOSCAN_LOG_ERROR(
-          "Unable to find input parameter with type 'std::vector<IOSpec*>' and name '{}'", name);
+          "Unable to find input parameter with name '{}'", name);
       return input_vector;
     }
     auto& param_wrapper = it->second;
     auto& arg_type = param_wrapper.arg_type();
     if ((arg_type.element_type() != ArgElementType::kIOSpec) ||
         (arg_type.container_type() != ArgContainerType::kVector)) {
-      HOLOSCAN_LOG_ERROR("Input parameter with name {} is not of type 'std::vector<IOSpec*>'",
+      HOLOSCAN_LOG_ERROR("Input parameter with name '{}' is not of type 'std::vector<IOSpec*>'",
                          name);
       return input_vector;
     }

@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,23 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ---
-extensions:
-  # The following extensions are automatically loaded upon Python App
-  # initialization, so they do not need to be listed here.
-  # This is a difference in behavior from the C++-API which currently requires
-  # explicitly listing these.
-  # - libgxf_std.so
-  # - libgxf_cuda.so
-  # - libgxf_multimedia.so
-  # - libgxf_serialization.so
-  # - libaja_source.so
-  # - libcustom_lstm_inference.so
-  # - libformat_converter.so
-  # - libholoviz.so
-  # - libstream_playback.so
-  # - libtool_tracking_postprocessor.so
-  # - libvisualizer_tool_tracking.so
-
 replayer:
   # directory: "../data/endoscopy/video"
   basename: "surgical_video"

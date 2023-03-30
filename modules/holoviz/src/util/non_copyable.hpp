@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_UTIL_NONCOPYABLE_HPP
-#define HOLOSCAN_VIZ_UTIL_NONCOPYABLE_HPP
+#ifndef HOLOVIZ_SRC_UTIL_NON_COPYABLE_HPP
+#define HOLOVIZ_SRC_UTIL_NON_COPYABLE_HPP
 
 namespace holoscan::viz {
 
@@ -25,13 +25,13 @@ namespace holoscan::viz {
  */
 class NonCopyable {
  protected:
-    constexpr NonCopyable() = default;
-    virtual ~NonCopyable()  = default;
+  constexpr NonCopyable() = default;
+  virtual ~NonCopyable() = default;
 
-    NonCopyable(const NonCopyable &)            = delete;
-    NonCopyable &operator=(const NonCopyable &) = delete;
+  NonCopyable(const NonCopyable&) = delete;
+  NonCopyable& operator=(const NonCopyable&) = delete;
 };
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_UTIL_NONCOPYABLE_HPP */
+#endif /* HOLOVIZ_SRC_UTIL_NON_COPYABLE_HPP */

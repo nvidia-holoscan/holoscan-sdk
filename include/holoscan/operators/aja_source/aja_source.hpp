@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,33 +18,47 @@
 #ifndef HOLOSCAN_OPERATORS_AJA_SOURCE_AJA_SOURCE_HPP
 #define HOLOSCAN_OPERATORS_AJA_SOURCE_AJA_SOURCE_HPP
 
+#include <ajantv2/includes/ntv2card.h>
+#include <ajantv2/includes/ntv2devicescanner.h>
+#include <ajantv2/includes/ntv2enums.h>
+
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "../../core/gxf/gxf_operator.hpp"
+#include "holoscan/core/gxf/gxf_operator.hpp"
 #include "./ntv2channel.hpp"
 
 namespace holoscan::ops {
 
 /**
  * @brief Operator class to get the video stream from AJA capture card.
- *
- * This wraps a GXF Codelet(`nvidia::holoscan::AJASource`).
  */
-class AJASourceOp : public holoscan::ops::GXFOperator {
+class AJASourceOp : public holoscan::Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(AJASourceOp, holoscan::ops::GXFOperator)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(AJASourceOp)
 
-  AJASourceOp() = default;
-
-  const char* gxf_typename() const override { return "nvidia::holoscan::AJASource"; }
+  AJASourceOp();
 
   void setup(OperatorSpec& spec) override;
 
   void initialize() override;
+  void start() override;
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override;
+  void stop() override;
 
  private:
+  AJAStatus DetermineVideoFormat();
+  AJAStatus OpenDevice();
+  AJAStatus SetupVideo();
+  AJAStatus SetupBuffers();
+  AJAStatus StartAutoCirculate();
+  bool AllocateBuffers(std::vector<void*>& buffers, size_t num_buffers, size_t buffer_size,
+                       bool rdma);
+  void FreeBuffers(std::vector<void*>& buffers, bool rdma);
+  bool GetNTV2VideoFormatTSI(NTV2VideoFormat* format);
+
   Parameter<holoscan::IOSpec*> video_buffer_output_;
   Parameter<std::string> device_specifier_;
   Parameter<NTV2Channel> channel_;
@@ -57,6 +71,20 @@ class AJASourceOp : public holoscan::ops::GXFOperator {
   Parameter<bool> overlay_rdma_;
   Parameter<holoscan::IOSpec*> overlay_buffer_input_;
   Parameter<holoscan::IOSpec*> overlay_buffer_output_;
+
+  // internal state
+  CNTV2Card device_;
+  NTV2DeviceID device_id_;
+  NTV2VideoFormat video_format_;
+  NTV2PixelFormat pixel_format_ = NTV2_FBF_ABGR;
+  bool use_tsi_ = false;
+  bool is_kona_hdmi_ = false;
+
+  std::vector<void*> buffers_;
+  std::vector<void*> overlay_buffers_;
+  uint8_t current_buffer_ = 0;
+  uint8_t current_hw_frame_ = 0;
+  uint8_t current_overlay_hw_frame_ = 0;
 };
 
 }  // namespace holoscan::ops

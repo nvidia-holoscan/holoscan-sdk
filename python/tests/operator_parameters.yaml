@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,6 @@ aja:
   overlay_rdma: true
 
 replayer:
-  directory: "../data/endoscopy/video"
   basename: "surgical_video"
   frame_rate: 0 # as specified in timestamps
   repeat: true # default: false
@@ -58,54 +57,6 @@ format_converter_aja:
   scale_max: 255.0
   resize_width: 854
   resize_height: 480
-
-lstm_inference:
-  input_tensor_names:
-    - source_video
-    - cellstate_in
-    - hiddenstate_in
-  input_state_tensor_names:
-    - cellstate_in
-    - hiddenstate_in
-  input_binding_names:
-    - data_ph:0 # (shape=[1, 480, 854, 3], dtype=float32) <==> source_video
-    - cellstate_ph:0 # (shape=[1, 60, 107, 7], dtype=float32) == internal state
-    - hiddenstate_ph:0 # (shape=[1, 60, 107, 7], dtype=float32) == internal state
-  output_tensor_names:
-    - cellstate_out
-    - hiddenstate_out
-    - probs
-    - scaled_coords
-    - binary_masks
-  output_state_tensor_names:
-    - cellstate_out
-    - hiddenstate_out
-  output_binding_names:
-    - Model/net_states:0 # (shape=[ 1, 60, 107, 7], dtype=float32)
-    - Model/net_hidden:0 # (shape=[ 1, 60, 107, 7], dtype=float32)
-    - probs:0 # (shape=[1, 7], dtype=float32)
-    - Localize/scaled_coords:0 # (shape=[1, 7, 2], dtype=float32)
-    - Localize_1/binary_masks:0 # (shape=[1, 7, 60, 107], dtype=float32)
-  force_engine_update: false
-  verbose: true
-  max_workspace_size: 2147483648
-  enable_fp16_: true
-
-
-segmentation_inference:  # TensorRtInference
-  input_tensor_names:
-    - source_video
-  input_binding_names:
-    - INPUT__0
-  output_tensor_names:
-    - inference_output_tensor
-  output_binding_names:
-    - OUTPUT__0
-  force_engine_update: false
-  verbose: true
-  max_workspace_size: 2147483648
-  enable_fp16_: false
-
 
 visualizer_format_converter_replayer:
   in_dtype: "rgb888"
@@ -153,8 +104,6 @@ visualizer:
   in_channels: 4
   in_bytes_per_pixel: 1
 
-tool_tracking_postprocessor:
-
 holoviz:
   width: 854
   height: 480
@@ -190,16 +139,30 @@ holoviz:
         - Irrigator
         - Spec.Bag
 
+segmentation_inference:  # TensorRtInference
+  input_tensor_names:
+    - source_video
+  input_binding_names:
+    - INPUT__0
+  output_tensor_names:
+    - inference_output_tensor
+  output_binding_names:
+    - OUTPUT__0
+  force_engine_update: false
+  verbose: true
+  max_workspace_size: 2147483648
+  enable_fp16_: false
+
 multiai_inference:
   backend: "trt"
   pre_processor_map:
-    "icardio_plax_chamber": ["plax_cham_pre_proc"]
-    "icardio_aortic_stenosis": ["aortic_pre_proc"]
-    "icardio_bmode_perspective": ["bmode_pre_proc"]
+    "plax_chamber": ["plax_cham_pre_proc"]
+    "aortic_stenosis": ["aortic_pre_proc"]
+    "bmode_perspective": ["bmode_pre_proc"]
   inference_map:
-    "icardio_plax_chamber": "plax_cham_infer"
-    "icardio_aortic_stenosis": "aortic_infer"
-    "icardio_bmode_perspective": "bmode_infer"
+    "plax_chamber": "plax_cham_infer"
+    "aortic_stenosis": "aortic_infer"
+    "bmode_perspective": "bmode_infer"
   in_tensor_names: ["plax_cham_pre_proc", "aortic_pre_proc", "bmode_pre_proc"]
   out_tensor_names: ["plax_cham_infer", "aortic_infer", "bmode_infer"]
   parallel_inference: true
@@ -221,18 +184,7 @@ multiai_postprocessor:
   input_on_cuda: false
   output_on_cuda: false
   transmit_on_cuda: false
-
-visualizer_icardio:
-  in_tensor_names: ["plax_chamber_processed"]
-  out_tensor_names: ["keypoints", "keyarea_1", "keyarea_2",
-                     "keyarea_3", "keyarea_4", "keyarea_5", "lines"]
-  input_on_cuda: false
-
-emergent:
-  width: 4200
-  height: 2160
-  framerate: 240
-  rdma: false
+  disable_transmitter: false
 
 demosaic:
   generate_alpha: false

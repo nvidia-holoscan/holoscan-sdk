@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,6 +111,13 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<MultiAISpecs>& mu
               "Inference manager, Engine path cannot be true with onnx runtime backend");
           return status;
         }
+
+        bool is_aarch64 = is_platform_aarch64();
+        if (is_aarch64 && multiai_specs->oncuda_) {
+          status.set_message("Onnxruntime with CUDA not supported on aarch64.");
+          return status;
+        }
+
         holo_infer_context_.insert(
             {model_map.first,
              std::make_unique<OnnxInfer>(model_map.second, multiai_specs->oncuda_)});

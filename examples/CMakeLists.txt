@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,9 +12,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-add_subdirectory(basic_workflow)
+add_subdirectory(aja_capture)
 add_subdirectory(bring_your_own_model)
-add_subdirectory(native_operator)
+add_subdirectory(cupy_native)
+add_subdirectory(hello_world)
+add_subdirectory(holoviz)
+add_subdirectory(numpy_native)
+add_subdirectory(ping_simple)
+add_subdirectory(ping_custom_op)
+add_subdirectory(ping_multi_port)
 add_subdirectory(tensor_interop)
-add_subdirectory(video_sources)
+add_subdirectory(v4l2_camera)
+add_subdirectory(video_replayer)
+add_subdirectory(wrap_operator_as_gxf_extension)
+
+if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
+# Generates the install CMakeLists.txt to compile all the cpp examples
+set(cmake_example_directories)
+file(GLOB_RECURSE cmakeinstallfiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} */CMakeLists.min.txt)
+foreach(cmakeinstallfile IN LISTS cmakeinstallfiles)
+  string(REPLACE "/CMakeLists.min.txt" "" cmakedirectory ${cmakeinstallfile} )
+  string(APPEND cmake_example_directories "add_subdirectory(${cmakedirectory})\n")
+endforeach()
+
+configure_file(CMakeLists.min.txt.in CMakeLists.min.txt @ONLY)
+
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/CMakeLists.min.txt"
+          RENAME "CMakeLists.txt"
+          DESTINATION examples
+          COMPONENT holoscan-examples)
+endif()

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,43 +48,60 @@
 
 namespace holoscan::gxf {
 
+static const std::vector<std::string> kDefaultGXFExtensions{
+    "libgxf_std.so",
+    "libgxf_cuda.so",
+    "libgxf_multimedia.so",
+    "libgxf_serialization.so",
+};
+
+static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
+    "libgxf_bayer_demosaic.so",
+    "libgxf_stream_playback.so",  // keep for use of VideoStreamSerializer
+    "libgxf_tensor_rt.so",
+};
+
 /// Global context for signal() to interrupt with Ctrl+C
 gxf_context_t s_signal_context;
 
-GXFExecutor::GXFExecutor(holoscan::Fragment* app) : Executor(app) {
-  gxf_result_t code;
-  GXF_LOG_INFO("Creating context");
-  code = GxfContextCreate(&context_);
-  if (code != GXF_SUCCESS) {
-    GXF_LOG_ERROR("GxfContextCreate Error: %s", GxfResultStr(code));
-    return;
+GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
+    : Executor(fragment) {
+  if (create_gxf_context) {
+    gxf_result_t code;
+    GXF_LOG_INFO("Creating context");
+    code = GxfContextCreate(&context_);
+    if (code != GXF_SUCCESS) {
+      GXF_LOG_ERROR("GxfContextCreate Error: %s", GxfResultStr(code));
+      return;
+    }
+    own_gxf_context_ = true;
+    gxf_extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
+    // Register extensions for holoscan (GXFWrapper codelet)
+    register_extensions();
   }
 }
 
 GXFExecutor::~GXFExecutor() {
-  gxf_result_t code;
-  GXF_LOG_INFO("Destroying context");
-  code = GxfContextDestroy(context_);
-  if (code != GXF_SUCCESS) {
-    GXF_LOG_ERROR("GxfContextDestroy Error: %s", GxfResultStr(code));
-    return;
+  // Deinitialize GXF context only if `own_gxf_context_` is true
+  if (own_gxf_context_) {
+    gxf_result_t code;
+    GXF_LOG_INFO("Destroying context");
+    code = GxfContextDestroy(context_);
+    if (code != GXF_SUCCESS) {
+      GXF_LOG_ERROR("GxfContextDestroy Error: %s", GxfResultStr(code));
+      return;
+    }
   }
 }
 
 void GXFExecutor::run(Graph& graph) {
   auto context = context_;
 
-  // Load extensions
-  std::string config_file = fragment_->config().config_file();
-  if (config_file != "") {
-    const char* manifest_filename = config_file.c_str();
-
-    const GxfLoadExtensionsInfo load_ext_info{nullptr, 0, &manifest_filename, 1, nullptr};
-    HOLOSCAN_LOG_INFO("Loading extensions...");
-    GXF_ASSERT_SUCCESS(GxfLoadExtensions(context, &load_ext_info));
+  HOLOSCAN_LOG_INFO("Loading extensions from configs...");
+  // Load extensions from config file if exists.
+  for (const auto& yaml_node : fragment_->config().yaml_nodes()) {
+    gxf_extension_manager_->load_extensions_from_yaml(yaml_node);
   }
-  // Register extensions for holoscan (GXFWrapper codelet)
-  register_extensions();
 
   // Compose the graph
   fragment_->compose();
@@ -105,7 +122,6 @@ void GXFExecutor::run(Graph& graph) {
   code = GxfComponentTypeId(context, "nvidia::gxf::GreedyScheduler", &sched_tid);
   gxf_uid_t sched_cid;
   code = GxfComponentAdd(context, eid, sched_tid, nullptr, &sched_cid);
-
   code = GxfParameterSetHandle(context, sched_cid, "clock", clock_cid);
 
   // Add connections
@@ -167,7 +183,6 @@ void GXFExecutor::run(Graph& graph) {
               next_op_spec->inputs()[target_port]->resource());
           gxf_uid_t source_cid = source_gxf_resource->gxf_cid();
           gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
-
           if (connections.find(source_cid) == connections.end()) {
             connections[source_cid] = std::set<gxf_uid_t>();
           }
@@ -194,8 +209,11 @@ void GXFExecutor::run(Graph& graph) {
 
       // Insert GXF's Broadcast component if source port is connected to multiple targets
       if (target_cids.size() > 1) {
+        const char* source_cname = "";
+        code = GxfComponentName(context, source_cid, &source_cname);
         gxf_uid_t broadcast_eid;
-        const GxfEntityCreateInfo broadcast_entity_create_info = {"",
+        auto broadcast_entity_name = fmt::format("_broadcast_{}_{}", op_name, source_cname);
+        const GxfEntityCreateInfo broadcast_entity_create_info = {broadcast_entity_name.c_str(),
                                                                   GXF_ENTITY_CREATE_PROGRAM_BIT};
         code = GxfCreateEntity(context, &broadcast_entity_create_info, &broadcast_eid);
 
@@ -280,12 +298,66 @@ void GXFExecutor::run(Graph& graph) {
   GXF_ASSERT_SUCCESS(GxfGraphDeactivate(context));
 }
 
+void GXFExecutor::context(void* context) {
+  context_ = context;
+  gxf_extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
+}
+
+std::shared_ptr<ExtensionManager> GXFExecutor::extension_manager() {
+  return gxf_extension_manager_;
+}
+
 void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
-                                    IOSpec* io_spec) {
+                                    IOSpec* io_spec, bool bind_port) {
+  const char* rx_name = io_spec->name().c_str();  // input port name
+
+  // If this executor is used by OperatorWrapper (bind_port == true) to wrap Native Operator,
+  // then we need to call `io_spec->resource(...)` to set the existing GXF Receiver for this input.
+  if (bind_port) {
+    const char* entity_name = "";
+    GxfComponentName(gxf_context, eid, &entity_name);
+
+    gxf_tid_t receiver_find_tid{};
+    GxfComponentTypeId(gxf_context, "nvidia::gxf::Receiver", &receiver_find_tid);
+
+    gxf_uid_t receiver_cid = 0;
+    GxfComponentFind(gxf_context, eid, receiver_find_tid, rx_name, nullptr, &receiver_cid);
+
+    gxf_tid_t receiver_tid{};
+    GxfComponentType(gxf_context, receiver_cid, &receiver_tid);
+
+    gxf_tid_t double_buffer_receiver_tid{};
+    GxfComponentTypeId(
+        gxf_context, "nvidia::gxf::DoubleBufferReceiver", &double_buffer_receiver_tid);
+
+    if (receiver_tid == double_buffer_receiver_tid) {
+      nvidia::gxf::DoubleBufferReceiver* double_buffer_receiver_ptr = nullptr;
+      GxfComponentPointer(gxf_context,
+                          receiver_cid,
+                          receiver_tid,
+                          reinterpret_cast<void**>(&double_buffer_receiver_ptr));
+
+      if (double_buffer_receiver_ptr) {
+        auto receiver =
+            std::make_shared<holoscan::DoubleBufferReceiver>(rx_name, double_buffer_receiver_ptr);
+        // Set the existing DoubleBufferReceiver for this input
+        io_spec->resource(receiver);
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get DoubleBufferReceiver pointer for the handle: '{}' in '{}' entity",
+            rx_name,
+            entity_name);
+      }
+    } else {
+      HOLOSCAN_LOG_ERROR("Unsupported GXF receiver type for the handle: '{}' in '{}' entity",
+                         rx_name,
+                         entity_name);
+    }
+    return;
+  }
+
   gxf_result_t code;
   // Create Receiver component for this input
-  const char* rx_name = io_spec->name().c_str();
-
   auto rx_resource = std::make_shared<DoubleBufferReceiver>();
   rx_resource->name(rx_name);
   rx_resource->fragment(fragment);
@@ -343,11 +415,57 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
 }
 
 void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
-                                     IOSpec* io_spec) {
-  gxf_result_t code;
-  // Create Transmitter component for this output
+                                     IOSpec* io_spec, bool bind_port) {
   const char* tx_name = io_spec->name().c_str();
 
+  // If this executor is used by OperatorWrapper (bind_port == true) to wrap Native Operator,
+  // then we need to call `io_spec->resource(...)` to set the existing GXF Transmitter for this
+  // output.
+  if (bind_port) {
+    const char* entity_name = "";
+    GxfComponentName(gxf_context, eid, &entity_name);
+
+    gxf_tid_t transmitter_find_tid{};
+    GxfComponentTypeId(gxf_context, "nvidia::gxf::Transmitter", &transmitter_find_tid);
+
+    gxf_uid_t transmitter_cid = 0;
+    GxfComponentFind(gxf_context, eid, transmitter_find_tid, tx_name, nullptr, &transmitter_cid);
+
+    gxf_tid_t transmitter_tid{};
+    GxfComponentType(gxf_context, transmitter_cid, &transmitter_tid);
+
+    gxf_tid_t double_buffer_transmitter_tid{};
+    GxfComponentTypeId(
+        gxf_context, "nvidia::gxf::DoubleBufferTransmitter", &double_buffer_transmitter_tid);
+
+    if (transmitter_tid == double_buffer_transmitter_tid) {
+      nvidia::gxf::DoubleBufferTransmitter* double_buffer_transmitter_ptr = nullptr;
+      GxfComponentPointer(gxf_context,
+                          transmitter_cid,
+                          transmitter_tid,
+                          reinterpret_cast<void**>(&double_buffer_transmitter_ptr));
+
+      if (double_buffer_transmitter_ptr) {
+        auto transmitter = std::make_shared<holoscan::DoubleBufferTransmitter>(
+            tx_name, double_buffer_transmitter_ptr);
+        // Set the existing DoubleBufferTransmitter for this output
+        io_spec->resource(transmitter);
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get DoubleBufferTransmitter pointer for the handle: '{}' in '{}' entity",
+            tx_name,
+            entity_name);
+      }
+    } else {
+      HOLOSCAN_LOG_ERROR("Unsupported GXF transmitter type for the handle: '{}' in '{}' entity",
+                         tx_name,
+                         entity_name);
+    }
+    return;
+  }
+
+  gxf_result_t code;
+  // Create Transmitter component for this output
   auto tx_resource = std::make_shared<DoubleBufferTransmitter>();
   tx_resource->name(tx_name);
   tx_resource->fragment(fragment);
@@ -425,49 +543,58 @@ bool GXFExecutor::initialize_operator(Operator* op) {
 
   auto& spec = *(op->spec());
 
-  // Create Entity for the operator
-  gxf_uid_t eid;
+  gxf_uid_t eid = 0;
   gxf_result_t code;
-  const GxfEntityCreateInfo entity_create_info = {op->name().c_str(),
-                                                  GXF_ENTITY_CREATE_PROGRAM_BIT};
-  code = GxfCreateEntity(context_, &entity_create_info, &eid);
 
-  // Create Codelet component
-  gxf_tid_t codelet_tid;
+  // Create Entity for the operator if `op_eid_` is 0
+  if (op_eid_ == 0) {
+    const GxfEntityCreateInfo entity_create_info = {op->name().c_str(),
+                                                    GXF_ENTITY_CREATE_PROGRAM_BIT};
+    code = GxfCreateEntity(context_, &entity_create_info, &eid);
+  } else {
+    eid = op_eid_;
+  }
+
   gxf_uid_t codelet_cid;
-  code = GxfComponentTypeId(context_, codelet_typename, &codelet_tid);
-  code = GxfComponentAdd(context_, eid, codelet_tid, op->name().c_str(), &codelet_cid);
+  // Create Codelet component if `op_cid_` is 0
+  if (op_cid_ == 0) {
+    gxf_tid_t codelet_tid;
+    code = GxfComponentTypeId(context_, codelet_typename, &codelet_tid);
+    code = GxfComponentAdd(context_, eid, codelet_tid, op->name().c_str(), &codelet_cid);
+
+    // Set the operator to the GXFWrapper if it is a native operator
+    if (is_native_operator) {
+      holoscan::gxf::GXFWrapper* gxf_wrapper = nullptr;
+      code = GxfComponentPointer(
+          context_, codelet_cid, codelet_tid, reinterpret_cast<void**>(&gxf_wrapper));
+      if (gxf_wrapper) {
+        gxf_wrapper->set_operator(op);
+      } else {
+        HOLOSCAN_LOG_ERROR("Unable to get GXFWrapper for Operator '{}'", op->name());
+      }
+    } else {
+      // Set the entity id
+      gxf_op->gxf_eid(eid);
+      // Set the codelet component id
+      gxf_op->gxf_cid(codelet_cid);
+    }
+  } else {
+    codelet_cid = op_cid_;
+  }
 
   // Set GXF Codelet ID as the ID of the operator
   op->id(codelet_cid);
 
-  // Set the operator to the GXFWrapper if it is a native operator
-  if (is_native_operator) {
-    holoscan::gxf::GXFWrapper* gxf_wrapper = nullptr;
-    code = GxfComponentPointer(
-        context_, codelet_cid, codelet_tid, reinterpret_cast<void**>(&gxf_wrapper));
-    if (gxf_wrapper) {
-      gxf_wrapper->set_operator(op);
-    } else {
-      HOLOSCAN_LOG_ERROR("Unable to get GXFWrapper for Operator '{}'", op->name());
-    }
-  } else {
-    // Set the entity id
-    gxf_op->gxf_eid(eid);
-    // Set the codelet component id
-    gxf_op->gxf_cid(codelet_cid);
-  }
-
   // Create Components for input
   const auto& inputs = spec.inputs();
   for (const auto& [name, io_spec] : inputs) {
-    gxf::GXFExecutor::create_input_port(fragment(), context_, eid, io_spec.get());
+    gxf::GXFExecutor::create_input_port(fragment(), context_, eid, io_spec.get(), op_eid_ != 0);
   }
 
   // Create Components for output
   const auto& outputs = spec.outputs();
   for (const auto& [name, io_spec] : outputs) {
-    gxf::GXFExecutor::create_output_port(fragment(), context_, eid, io_spec.get());
+    gxf::GXFExecutor::create_output_port(fragment(), context_, eid, io_spec.get(), op_eid_ != 0);
   }
 
   // Create Components for condition
@@ -531,8 +658,9 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   } else {
     // Set only default parameter values
     for (auto& [key, param_wrap] : params) {
-      // Set default value (by setting 'uid' to -1 for set_param() method) if not set.
-      code = ::holoscan::gxf::GXFParameterAdaptor::set_param(context_, -1, key.c_str(), param_wrap);
+      // If no value is specified, the default value will be used by setting an empty argument.
+      Arg empty_arg("");
+      ArgumentSetter::set_param(param_wrap, empty_arg);
     }
   }
   (void)code;
@@ -551,6 +679,10 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
   const std::string& new_input_label = fmt::format("{}:{}", receivers_name, iospec_vector.size());
   HOLOSCAN_LOG_TRACE("Creating new input port with label '{}'", new_input_label);
   auto& input_port = downstream_op_spec->input<holoscan::gxf::Entity>(new_input_label);
+  // TODO: Currently, there is no convenient API to set the condition of the receivers (input ports)
+  //       from the setup() method of the operator. We need to add a new API to set the condition
+  //       of the receivers (input ports) from the setup() method of the operator.
+
   // Add the new input port to the vector.
   iospec_vector.push_back(&input_port);
 
@@ -592,21 +724,39 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
 }
 
 void GXFExecutor::register_extensions() {
-  GXFExtensionRegistrar extension_factory(
-      context_,
-      "HoloscanSdkInternalExtension",
-      "A runtime hidden extension used by Holoscan SDK to provide the native operators");
+  // Register the default GXF extensions
+  for (auto& gxf_extension_file_name : kDefaultGXFExtensions) {
+    gxf_extension_manager_->load_extension(gxf_extension_file_name);
+  }
 
-  extension_factory.add_component<holoscan::gxf::GXFWrapper, nvidia::gxf::Codelet>(
-      "GXF wrapper to support Holoscan SDK native operators");
-  extension_factory.add_type<holoscan::Message>("Holoscan message type");
+  // Register the default Holoscan GXF extensions
+  for (auto& gxf_extension_file_name : kDefaultHoloscanGXFExtensions) {
+    gxf_extension_manager_->load_extension(gxf_extension_file_name);
+  }
 
-  extension_factory.add_component<holoscan::gxf::GXFTensor, nvidia::gxf::Tensor>("Holoscan's GXF Tensor type");
-  extension_factory.add_type<holoscan::Tensor>("Holoscan's Tensor type");
+  // Register the GXF extension that provides the native operators
+  gxf_tid_t gxf_wrapper_tid{0xd4e7c16bcae741f8, 0xa5eb93731de9ccf6};
 
-  if (!extension_factory.register_extension()) {
-    HOLOSCAN_LOG_ERROR("Failed to register Holoscan SDK internal extension");
-    return;
+  if (!gxf_extension_manager_->is_extension_loaded(gxf_wrapper_tid)) {
+    GXFExtensionRegistrar extension_factory(
+        context_,
+        "HoloscanSdkInternalExtension",
+        "A runtime hidden extension used by Holoscan SDK to provide the native operators",
+        gxf_wrapper_tid);
+
+    extension_factory.add_component<holoscan::gxf::GXFWrapper, nvidia::gxf::Codelet>(
+        "GXF wrapper to support Holoscan SDK native operators");
+    extension_factory.add_type<holoscan::Message>("Holoscan message type",
+                                                  {0x61510ca06aa9493b, 0x8a777d0bf87476b7});
+
+    extension_factory.add_component<holoscan::gxf::GXFTensor, nvidia::gxf::Tensor>(
+        "Holoscan's GXF Tensor type", {0xa02945eaf20e418c, 0x8e6992b68672ce40});
+    extension_factory.add_type<holoscan::Tensor>("Holoscan's Tensor type",
+                                                 {0xa5eb0ed57d7f4aa2, 0xb5865ccca0ef955c});
+
+    if (!extension_factory.register_extension()) {
+      HOLOSCAN_LOG_ERROR("Failed to register Holoscan SDK internal extension");
+    }
   }
 }
 

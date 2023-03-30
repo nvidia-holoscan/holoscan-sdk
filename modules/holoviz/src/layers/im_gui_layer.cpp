@@ -20,52 +20,48 @@
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui.h>
 
-#include "../vulkan/vulkan.hpp"
+#include "../vulkan/vulkan_app.hpp"
 
 namespace holoscan::viz {
 
 struct ImGuiLayer::Impl {
-    bool pushed_style_ = false;
+  bool pushed_style_ = false;
 };
 
-ImGuiLayer::ImGuiLayer()
-    : Layer(Type::ImGui)
-    , impl_(new ImGuiLayer::Impl) {
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, get_opacity());
-    impl_->pushed_style_ = true;
+ImGuiLayer::ImGuiLayer() : Layer(Type::ImGui), impl_(new ImGuiLayer::Impl) {
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, get_opacity());
+  impl_->pushed_style_ = true;
 }
 
 ImGuiLayer::~ImGuiLayer() {
-    if (impl_->pushed_style_) {
-        ImGui::PopStyleVar();
-    }
+  if (impl_->pushed_style_) { ImGui::PopStyleVar(); }
 }
 
 void ImGuiLayer::set_opacity(float opacity) {
-    // call the base class
-    Layer::set_opacity(opacity);
+  // call the base class
+  Layer::set_opacity(opacity);
 
-    // set the opacity
-    if (impl_->pushed_style_) {
-        ImGui::PopStyleVar();
-        impl_->pushed_style_ = false;
-    }
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, get_opacity());
-    impl_->pushed_style_ = true;
+  // set the opacity
+  if (impl_->pushed_style_) {
+    ImGui::PopStyleVar();
+    impl_->pushed_style_ = false;
+  }
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, get_opacity());
+  impl_->pushed_style_ = true;
 }
 
-void ImGuiLayer::render(Vulkan *vulkan) {
-    if (impl_->pushed_style_) {
-        ImGui::PopStyleVar();
-        impl_->pushed_style_ = false;
-    }
+void ImGuiLayer::render(Vulkan* vulkan) {
+  if (impl_->pushed_style_) {
+    ImGui::PopStyleVar();
+    impl_->pushed_style_ = false;
+  }
 
-    /// @todo we can't renderer multiple ImGui layers, figure out
-    ///       a way to handle that (store DrawData returned by GetDrawData()?)
+  /// @todo we can't renderer multiple ImGui layers, figure out
+  ///       a way to handle that (store DrawData returned by GetDrawData()?)
 
-    // Render UI
-    ImGui::Render();
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vulkan->get_command_buffer());
+  // Render UI
+  ImGui::Render();
+  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vulkan->get_command_buffer());
 }
 
 }  // namespace holoscan::viz

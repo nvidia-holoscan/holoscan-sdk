@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,19 @@
 #include "holoscan/core/component_spec.hpp"
 
 namespace holoscan {
+
+BlockMemoryPool::BlockMemoryPool(const std::string& name, nvidia::gxf::BlockMemoryPool* component)
+    : Allocator(name, component) {
+  int32_t storage_type = 0;
+  GxfParameterGetInt32(gxf_context_, gxf_cid_, "storage_type", &storage_type);
+  storage_type_ = storage_type;
+  uint64_t block_size = 0;
+  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "block_size", &block_size);
+  block_size_ = block_size;
+  uint64_t num_blocks = 0;
+  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "num_blocks", &num_blocks);
+  num_blocks_ = num_blocks;
+}
 
 void BlockMemoryPool::setup(ComponentSpec& spec) {
   spec.param(storage_type_,

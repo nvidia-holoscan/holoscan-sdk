@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,17 @@
 #include "holoscan/core/component_spec.hpp"
 
 namespace holoscan {
+
+DoubleBufferReceiver::DoubleBufferReceiver(const std::string& name,
+                                           nvidia::gxf::DoubleBufferReceiver* component)
+    : Receiver(name, component) {
+  uint64_t capacity = 0;
+  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "capacity", &capacity);
+  capacity_ = capacity;
+  uint64_t policy = 0;
+  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "policy", &policy);
+  policy_ = policy;
+}
 
 void DoubleBufferReceiver::setup(ComponentSpec& spec) {
   spec.param(capacity_, "capacity", "Capacity", "", 1UL);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "./common.hpp"
+#include "./extension_manager.hpp"
 #include "./operator.hpp"
 
 namespace holoscan {
@@ -53,6 +54,13 @@ class Executor {
   virtual void run(Graph& graph) { (void)graph; }
 
   /**
+   * @brief Set the pointer to the fragment of the executor.
+   *
+   * @param fragment The pointer to the fragment of the executor.
+   */
+  void fragment(Fragment* fragment) { fragment_ = fragment; }
+
+  /**
    * @brief Get a pointer to Fragment object.
    *
    * @return The Pointer to Fragment object.
@@ -64,7 +72,7 @@ class Executor {
    *
    * @param context The context.
    */
-  void context(void* context) { context_ = context; }
+  virtual void context(void* context) { context_ = context; }
   /**
    * @brief Get the context
    *
@@ -75,6 +83,12 @@ class Executor {
   // add uint64_t context getters/setters for Python API
   void context_uint64(uint64_t context) { context_ = reinterpret_cast<void*>(context); }
   uint64_t context_uint64() { return reinterpret_cast<uint64_t>(context_); }
+
+  /**
+   * @brief Get the extension manager.
+   * @return The shared pointer of the extension manager.
+   */
+  virtual std::shared_ptr<ExtensionManager> extension_manager() { return extension_manager_; }
 
  protected:
   friend class Fragment;  // make Fragment a friend class to access protected members of Executor
@@ -127,6 +141,7 @@ class Executor {
 
   Fragment* fragment_ = nullptr;  ///< The fragment of the executor.
   void* context_ = nullptr;       ///< The context.
+  std::shared_ptr<ExtensionManager> extension_manager_;  ///< The extension manager.
 };
 
 }  // namespace holoscan

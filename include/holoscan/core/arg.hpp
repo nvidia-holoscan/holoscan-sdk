@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,7 +43,7 @@ namespace holoscan {
 enum class ArgElementType {
   kCustom,      ///< Custom type
   kBoolean,     ///< Boolean type (bool)
-  kInt8,        ///< 8-bit integer type (uint8_t)
+  kInt8,        ///< 8-bit integer type (int8_t)
   kUnsigned8,   ///< 8-bit unsigned integer type (uint8_t)
   kInt16,       ///< 16-bit integer type (int16_t)
   kUnsigned16,  ///< Unsigned 16-bit integer (uint16_t)
@@ -81,9 +81,10 @@ class ArgType {
    *
    * @param element_type The element type of the argument.
    * @param container_type The container type of the argument.
+   * @param dimension The dimension of the argument.
    */
-  ArgType(ArgElementType element_type, ArgContainerType container_type)
-      : element_type_(element_type), container_type_(container_type) {}
+  ArgType(ArgElementType element_type, ArgContainerType container_type, int32_t dimension = 0)
+      : element_type_(element_type), container_type_(container_type), dimension_(dimension) {}
 
   /**
    * @brief Get the element type of the argument.
@@ -114,10 +115,12 @@ class ArgType {
       return ArgType(get_element_type(index), ArgContainerType::kNative);
     } else if constexpr (holoscan::is_vector_v<std::decay_t<typeT>>) {
       auto elem_index = std::type_index(typeid(typename holoscan::type_info<typeT>::element_type));
-      return ArgType(get_element_type(elem_index), ArgContainerType::kVector);
+      return ArgType(
+          get_element_type(elem_index), ArgContainerType::kVector, holoscan::dimension_of_v<typeT>);
     } else if constexpr (holoscan::is_array_v<std::decay_t<typeT>>) {
       auto elem_index = std::type_index(typeid(typename holoscan::type_info<typeT>::element_type));
-      return ArgType(get_element_type(elem_index), ArgContainerType::kArray);
+      return ArgType(
+          get_element_type(elem_index), ArgContainerType::kArray, holoscan::dimension_of_v<typeT>);
     } else {
       HOLOSCAN_LOG_ERROR("No element type for '{}' exists", typeid(std::decay_t<typeT>).name());
       return ArgType(ArgElementType::kCustom, ArgContainerType::kNative);
@@ -130,12 +133,26 @@ class ArgType {
    * @return The element type of the argument.
    */
   ArgElementType element_type() const { return element_type_; }
+
   /**
    * @brief Get the container type of the argument.
    *
    * @return The container type of the argument.
    */
   ArgContainerType container_type() const { return container_type_; }
+  /**
+   * @brief Get the dimension of the argument.
+   *
+   * @return The dimension of the argument.
+   */
+  int32_t dimension() const { return dimension_; }
+
+  /**
+   * @brief Get a string representation of the argument type.
+   *
+   * @return String representation of the argument type.
+   */
+  std::string to_string() const;
 
  private:
   template <class typeT>
@@ -162,8 +179,29 @@ class ArgType {
       to_element_type_pair<std::shared_ptr<Condition>>(ArgElementType::kCondition),
       to_element_type_pair<std::shared_ptr<Resource>>(ArgElementType::kResource),
   };
+  inline static const std::unordered_map<ArgElementType, const char*> element_type_name_map_{
+      {ArgElementType::kCustom, "CustomType"},
+      {ArgElementType::kBoolean, "bool"},
+      {ArgElementType::kInt8, "int8_t"},
+      {ArgElementType::kUnsigned8, "uint8_t"},
+      {ArgElementType::kInt16, "int16_t"},
+      {ArgElementType::kUnsigned16, "uint16_t"},
+      {ArgElementType::kInt32, "int32_t"},
+      {ArgElementType::kUnsigned32, "uint32_t"},
+      {ArgElementType::kInt64, "int64_t"},
+      {ArgElementType::kUnsigned64, "uint64_t"},
+      {ArgElementType::kFloat32, "float"},
+      {ArgElementType::kFloat64, "double"},
+      {ArgElementType::kString, "std::string"},
+      {ArgElementType::kHandle, "std::any"},
+      {ArgElementType::kYAMLNode, "YAML::Node"},
+      {ArgElementType::kIOSpec, "holoscan::IOSpec*"},
+      {ArgElementType::kCondition, "std::shared_ptr<Condition>"},
+      {ArgElementType::kResource, "std::shared_ptr<Resource>"},
+  };
   ArgElementType element_type_ = ArgElementType::kCustom;
   ArgContainerType container_type_ = ArgContainerType::kNative;
+  int32_t dimension_ = 0;
 };
 
 /**
@@ -255,6 +293,21 @@ class Arg {
    * @return The reference to the value of the argument.
    */
   std::any& value() { return value_; }
+
+  /**
+   * @brief Get a YAML representation of the argument.
+   *
+   * @return YAML node including the name, type, and value of the argument.
+   */
+  YAML::Node to_yaml_node() const;
+
+  /**
+   * @brief Get a description of the argument.
+   *
+   * @see to_yaml_node()
+   * @return YAML string.
+   */
+  std::string description() const;
 
  private:
   std::string name_;  ///< The name of the argument.
@@ -469,6 +522,21 @@ class ArgList {
    * @return The name of the argument list.
    */
   const std::string& name() const { return name_; }
+
+  /**
+   * @brief Get a YAML representation of the argument list.
+   *
+   * @return YAML node including the name, and arguments of the argument list.
+   */
+  YAML::Node to_yaml_node() const;
+
+  /**
+   * @brief Get a description of the argument list.
+   *
+   * @see to_yaml_node()
+   * @return YAML string.
+   */
+  std::string description() const;
 
  private:
   std::string name_{"arglist"};  ///< The name of the argument list.

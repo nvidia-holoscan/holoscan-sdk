@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,8 @@
 
 # https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_gtest.html
 include(${rapids-cmake-dir}/cpm/gtest.cmake)
+include(${rapids-cmake-dir}/cpm/package_override.cmake)
 
-# It uses GTest version 1.10.0 (as of rapids-cmake v22.06)
-# https://github.com/rapidsai/rapids-cmake/blob/branch-22.06/rapids-cmake/cpm/versions.json
+# Using GTest 1.12.1
+rapids_cpm_package_override("${CMAKE_SOURCE_DIR}/cmake/deps/rapids-cmake-packages.json")
 rapids_cpm_gtest()

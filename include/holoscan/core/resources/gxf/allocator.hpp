@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,10 @@
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_ALLOCATOR_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_ALLOCATOR_HPP
 
+#include <string>
+
+#include <gxf/std/allocator.hpp>
+
 #include "../../gxf/gxf_resource.hpp"
 
 namespace holoscan {
@@ -28,22 +32,16 @@ class Allocator : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(Allocator, GXFResource)
   Allocator() = default;
+  Allocator(const std::string& name, nvidia::gxf::Allocator* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::Allocator"; }
 
-  virtual bool is_available(uint64_t size) {
-    (void)size;
-    return true;
-  }
+  virtual bool is_available(uint64_t size);
 
   // TODO(gbae): Introduce expected<> type
-  std::byte* allocate(uint64_t size, MemoryStorageType type) {
-    (void)size;
-    (void)type;
-    return nullptr;
-  }
+  virtual nvidia::byte* allocate(uint64_t size, MemoryStorageType type);
 
-  void free(std::byte* pointer) { (void)pointer; }
+  virtual void free(nvidia::byte* pointer);
 };
 
 }  // namespace holoscan

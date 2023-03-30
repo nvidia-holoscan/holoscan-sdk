@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,8 @@
 
             "holoscan::viz::SetCudaStream(CUstream_st*)";
 
+            "holoscan::viz::SetFont(char const*, float)";
+
             "holoscan::viz::WindowShouldClose()";
             "holoscan::viz::WindowIsMinimized()";
 
@@ -37,7 +39,7 @@
             "holoscan::viz::ImageCudaDevice(unsigned int, unsigned int, holoscan::viz::ImageFormat, unsigned long long)";
             "holoscan::viz::ImageCudaArray(holoscan::viz::ImageFormat, CUarray_st*)";
             "holoscan::viz::ImageHost(unsigned int, unsigned int, holoscan::viz::ImageFormat, void const*)";
-            "holoscan::viz::LUT(unsigned int, holoscan::viz::ImageFormat, unsigned long, void const*)";
+            "holoscan::viz::LUT(unsigned int, holoscan::viz::ImageFormat, unsigned long, void const*, bool)";
 
             "holoscan::viz::BeginImGuiLayer()";
 
@@ -47,13 +49,15 @@
             "holoscan::viz::PointSize(float)";
             "holoscan::viz::Primitive(holoscan::viz::PrimitiveTopology, unsigned int, unsigned long, float const*)";
             "holoscan::viz::Text(float, float, float, char const*)";
+            "holoscan::viz::DepthMap(holoscan::viz::DepthMapRenderMode, unsigned int, unsigned int, holoscan::viz::ImageFormat, unsigned long long, holoscan::viz::ImageFormat, unsigned long long)";
 
             "holoscan::viz::LayerOpacity(float)";
             "holoscan::viz::LayerPriority(int)";
+            "holoscan::viz::LayerViewCamera(holoscan::viz::Vector3f*, holoscan::viz::Vector3f*, holoscan::viz::Vector3f*)";
 
             "holoscan::viz::EndLayer()";
 
-            "holoscan::viz::ReadFramebuffer(holoscan::viz::ImageFormat, unsigned long, unsigned long long)";
+            "holoscan::viz::ReadFramebuffer(holoscan::viz::ImageFormat, unsigned int, unsigned int, unsigned long, unsigned long long)";
         };
     local:
         *;

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +49,11 @@ RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/nul
         cmake=3.22.2-0kitware1ubuntu20.04.1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install symlink missing from the container for H264 encode examples
+RUN if [ $(uname -m) == "x86_64" ]; then \
+        ln -sf /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-encode.so; \
+    fi
+
 # - This variable is consumed by all dependencies below as an environment variable (CMake 3.22+)
 # - We use ARG to only set it at docker build time, so it does not affect cmake builds
 #   performed at docker run time in case users want to use a different BUILD_TYPE
@@ -87,9 +92,14 @@ RUN if [ $(uname -m) == "aarch64" ]; then ARCH=aarch64; else ARCH=x64-gpu; fi \
 
 ############################################################
 # Vulkan SDK
+#
+# Use the SDK because we need the newer Vulkan headers and the newer shader compiler than provided
+# by the Ubuntu deb packages. These are compile time dependencies, we still use the Vulkan loaded
+# and the Vulkan validation layer as runtime components provided by Ubuntu packages because that's
+# what the user will have on their installations.
 ############################################################
 FROM base as vulkansdk-builder
-ARG VULKAN_SDK_VERSION=1.3.216.0
+ARG VULKAN_SDK_VERSION
 
 WORKDIR /opt/vulkansdk
 
@@ -99,15 +109,11 @@ RUN wget -nv --show-progress --progress=bar:force:noscroll \
     https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
 RUN tar -xzf vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
 RUN if [ $(uname -m) == "aarch64" ]; then \
-    apt update \
-    && apt install -y --no-install-recommends \
-        libwayland-dev=1.18.0-1ubuntu0.1 \
-        libx11-dev=2:1.6.9-2ubuntu1.2 \
-        libxrandr-dev=2:1.5.2-0ubuntu1 \
-    && cd ${VULKAN_SDK_VERSION} \
+    cd ${VULKAN_SDK_VERSION} \
     && rm -rf x86_64 \
-    && ./vulkansdk shaderc glslang headers loader layers; \
-fi
+    && ./vulkansdk shaderc glslang headers; \
+    fi
+
 
 ############################################################
 # dev image
@@ -126,6 +132,9 @@ RUN apt update \
         coverage==6.5.0
 
 # Install apt & pip build dependencies
+#  libvulkan1 - for Vulkan apps (Holoviz)
+#  vulkan-validationlayers, spirv-tools - for Vulkan validation layer (enabled for Holoviz in debug mode)
+#  libegl1 - to run headless Vulkan apps
 RUN apt update \
     && apt install --no-install-recommends -y \
         libgl-dev=1.3.2-1~ubuntu0.20.04.2 \
@@ -136,13 +145,17 @@ RUN apt update \
         libxinerama-dev=2:1.1.4-2 \
         libxrandr-dev=2:1.5.2-0ubuntu1 \
         libxxf86vm-dev=1:1.1.4-1build1 \
+        libvulkan1=1.2.131.2-1 \
+        vulkan-validationlayers=1.2.131.2-1 \
+        spirv-tools=2020.1-2 \
+        libegl1=1.3.2-1~ubuntu0.20.04.2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pip run dependencies
-# Note: cupy pypi wheels not available for arm64
-RUN if [ $(uname -m) != "aarch64" ]; then \
-    python3 -m pip install \
-        cupy-cuda11x==11.3.0; \
+RUN if [ $(uname -m) == "aarch64" ]; then \
+        python3 -m pip install cupy-cuda11x==11.3.0 -f https://pip.cupy.dev/aarch64; \
+    else \
+        python3 -m pip install cupy-cuda11x==11.3.0; \
     fi
 
 ## COPY BUILT/DOWNLOADED dependencies in previous stages
@@ -163,8 +176,19 @@ ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${ONNX_RUNTIME}"
 ARG VULKAN_SDK_VERSION
 ENV VULKAN_SDK=/opt/vulkansdk/${VULKAN_SDK_VERSION}
 COPY --from=vulkansdk-builder ${VULKAN_SDK}/x86_64/ ${VULKAN_SDK}
-RUN mkdir -p /usr/share/vulkan/explicit_layer.d \
-    && cp ${VULKAN_SDK}/etc/vulkan/explicit_layer.d/VkLayer_*.json /usr/share/vulkan/explicit_layer.d \
-    && echo ${VULKAN_SDK}/lib > /etc/ld.so.conf.d/vulkan.conf
+# We need to use the headers and shader compiler of the SDK but want to link against the
+# Vulkan loader provided by the Ubuntu package. Therefore create a link in the SDK directory
+# pointing to the system Vulkan loader library.
+RUN rm -f ${VULKAN_SDK}/lib/libvulkan.so* \
+    && ln -s /lib/$(uname -m)-linux-gnu/libvulkan.so.1 ${VULKAN_SDK}/lib/libvulkan.so
+# Setup EGL for running headless Vulkan apps
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d \
+    && echo -e "{\n\
+    \"file_format_version\" : \"1.0.0\",\n\
+    \"ICD\" : {\n\
+        \"library_path\" : \"libEGL_nvidia.so.0\"\n\
+    }\n\
+}\n" > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
 ENV PATH="${PATH}:${VULKAN_SDK}/bin"
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${VULKAN_SDK}"

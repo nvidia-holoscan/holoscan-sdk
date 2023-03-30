@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #ifndef _HOLOSCAN_INFER_UTILS_API_H
 #define _HOLOSCAN_INFER_UTILS_API_H
 
+#include <sys/utsname.h>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -44,6 +45,8 @@
 
 namespace holoscan {
 namespace inference {
+
+void timer_init(TimePoint& _t);
 
 using GXFTransmitters = std::vector<nvidia::gxf::Handle<nvidia::gxf::Transmitter>>;
 using GXFReceivers = std::vector<nvidia::gxf::Handle<nvidia::gxf::Receiver>>;
@@ -114,6 +117,14 @@ gxf_result_t _HOLOSCAN_EXTERNAL_API_ report_error(const std::string& module,
                                                   const std::string& submodule);
 
 /**
+ * Raise error with module, submodule and message
+ *
+ * @param module    Module of error occurrence
+ * @param submodule Submodule/Function of error occurrence with the error message (as string)
+ */
+void _HOLOSCAN_EXTERNAL_API_ raise_error(const std::string& module, const std::string& submodule);
+
+/**
  * @brief Checks for correctness of inference parameters from configuration.
  * @param model_path_map Map with model name as key, path to model as value
  * @param pre_processor_map Map of model name as key, mapped to vector of tensor names
@@ -137,6 +148,11 @@ InferStatus multiai_inference_validity_check(const Mappings& model_path_map,
 InferStatus multiai_processor_validity_check(const Mappings& processed_map,
                                              const std::vector<std::string>& in_tensor_names,
                                              const std::vector<std::string>& out_tensor_names);
+
+/**
+ * @brief Checks if the processor is arm based
+ */
+bool is_platform_aarch64();
 
 }  // namespace inference
 }  // namespace holoscan
