@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,8 +26,8 @@
 #include <typeinfo>
 #include <utility>
 
-#include "./common.hpp"
 #include "./arg.hpp"
+#include "./common.hpp"
 
 namespace holoscan {
 
@@ -55,8 +55,10 @@ class ParameterWrapper {
    */
   template <typename typeT>
   explicit ParameterWrapper(Parameter<typeT>& param)
-      : type_(&typeid(typeT)), arg_type_(ArgType::create<typeT>()), value_(&param) {}
-
+      : type_(&typeid(typeT)),
+        arg_type_(ArgType::create<typeT>()),
+        value_(&param),
+        storage_ptr_(static_cast<void*>(&param)) {}
 
   /**
    * @brief Construct a new ParameterWrapper object.
@@ -91,10 +93,18 @@ class ParameterWrapper {
    */
   std::any& value() { return value_; }
 
+  /**
+   * @brief Get the pointer to the parameter storage.
+   *
+   * @return The pointer to the parameter storage.
+   */
+  void* storage_ptr() const { return storage_ptr_; }
+
  private:
-  const std::type_info* type_ = nullptr;  /// element type of Parameter
-  ArgType arg_type_;                      /// type of argument
-  std::any value_;
+  const std::type_info* type_ = nullptr;  ///< The element type of Parameter
+  ArgType arg_type_;                      ///< The type of the argument
+  std::any value_;                        ///< The value of the parameter
+  void* storage_ptr_ = nullptr;           ///< The pointer to the parameter storage
 };
 
 /**
@@ -147,6 +157,20 @@ class MetaParameter {
   const std::string& key() const { return key_; }
 
   /**
+   * @brief Get the headline of the parameter.
+   *
+   * @return The headline of the parameter.
+   */
+  const std::string& headline() const { return headline_; }
+
+  /**
+   * @brief Get the description of the parameter.
+   *
+   * @return The description of the parameter.
+   */
+  const std::string& description() const { return description_; }
+
+  /**
    * @brief Check whether the parameter contains a value.
    *
    * @return true if the parameter contains a value.
@@ -182,7 +206,7 @@ class MetaParameter {
       return default_value_.value();
     } else {
       throw std::runtime_error(
-        fmt::format("MetaParameter: default value for '{}' is not set", key_));
+          fmt::format("MetaParameter: default value for '{}' is not set", key_));
     }
   }
 
@@ -203,12 +227,12 @@ class MetaParameter {
  private:
   friend class ComponentSpec;
   friend class OperatorSpec;
-  std::optional<ValueT> value_;
-  std::optional<ValueT> default_value_;
   std::string key_;
   std::string headline_;
   std::string description_;
   ParameterFlag flag_ = ParameterFlag::kNone;
+  std::optional<ValueT> value_;
+  std::optional<ValueT> default_value_;
 };
 
 }  // namespace holoscan

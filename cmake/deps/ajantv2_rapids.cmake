@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +21,8 @@ rapids_cpm_find(ajantv2 16.2.0
 
     CPM_ARGS
 
-    GITHUB_REPOSITORY ibstewart/ntv2
-    GIT_TAG holoscan-v0.2.0
+    GITHUB_REPOSITORY nvidia-holoscan/ntv2
+    GIT_TAG 1321a8d4c1a8de696c996d05b65e5aa2934f89d1
     OPTIONS
     "AJA_BUILD_APPS OFF"
     "AJA_BUILD_DOCS OFF"
@@ -41,4 +41,11 @@ if(ajantv2_ADDED)
 
     # ajantv2 is a static library so we do not need to install it.
     add_library(AJA::ajantv2 ALIAS ajantv2)
+
+    # Install the headers needed for development with the SDK
+    install(DIRECTORY ${ajantv2_SOURCE_DIR}/ajalibraries
+        DESTINATION "include"
+        COMPONENT "holoscan-dependencies"
+        FILES_MATCHING PATTERN "*.h" PATTERN "*.hh"
+        )
 endif()

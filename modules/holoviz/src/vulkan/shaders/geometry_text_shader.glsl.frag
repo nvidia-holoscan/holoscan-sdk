@@ -32,7 +32,7 @@ layout(binding = 0) uniform sampler2D texSampler;
 
 layout(push_constant) uniform constants
 {
-    layout(offset = 16 * 4) float opacity;
+    layout(offset = 21 * 4) float opacity;
 }
 pushConstants;
 

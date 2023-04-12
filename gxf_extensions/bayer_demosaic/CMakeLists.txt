@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,11 @@
 
 # create component library
 
-add_library(bayer_demosaic_lib SHARED
+add_library(gxf_bayer_demosaic_lib SHARED
   bayer_demosaic.cpp
   bayer_demosaic.hpp
 )
-target_link_libraries(bayer_demosaic_lib
+target_link_libraries(gxf_bayer_demosaic_lib
   PUBLIC
   CUDA::cudart
   CUDA::nppicc
@@ -30,13 +30,13 @@ target_link_libraries(bayer_demosaic_lib
 )
 
 # Create extension
-add_library(bayer_demosaic SHARED
+add_library(gxf_bayer_demosaic SHARED
   bayer_demosaic_ext.cpp
 )
-target_link_libraries(bayer_demosaic
+target_link_libraries(gxf_bayer_demosaic
   PUBLIC
-  bayer_demosaic_lib
+  gxf_bayer_demosaic_lib
 )
 
 # Install GXF extension as a component 'holoscan-gxf_extensions'
-install_gxf_extension(bayer_demosaic)
+install_gxf_extension(gxf_bayer_demosaic)

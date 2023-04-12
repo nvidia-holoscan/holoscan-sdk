@@ -24,9 +24,9 @@ namespace holoscan::viz {
 
 /// Flags passed to the init function
 typedef enum {
-    NONE       = 0x00000000,  ///< none
-    FULLSCREEN = 0x00000001,  ///< switch the app to full screen mode
-    HEADLESS   = 0x00000002   ///< run in headless mode
+  NONE = 0x00000000,        ///< none
+  FULLSCREEN = 0x00000001,  ///< switch the app to full screen mode
+  HEADLESS = 0x00000002     ///< run in headless mode
 } InitFlags;
 
 }  // namespace holoscan::viz

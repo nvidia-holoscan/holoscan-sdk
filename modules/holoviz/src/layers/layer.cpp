@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,39 +20,36 @@
 namespace holoscan::viz {
 
 struct Layer::Impl {
-    int32_t priority_ = 0;
-    float opacity_    = 1.f;
+  int32_t priority_ = 0;
+  float opacity_ = 1.f;
 };
 
-Layer::Layer(Type type)
-    : type_(type)
-    , impl_(new Impl) {
-}
+Layer::Layer(Type type) : type_(type), impl_(new Impl) {}
 
 Layer::~Layer() {}
 
 Layer::Type Layer::get_type() const {
-    return type_;
+  return type_;
 }
 
-bool Layer::can_be_reused(Layer &other) const {
-    return (type_ == other.type_);
+bool Layer::can_be_reused(Layer& other) const {
+  return (type_ == other.type_);
 }
 
 int32_t Layer::get_priority() const {
-    return impl_->priority_;
+  return impl_->priority_;
 }
 
 void Layer::set_priority(int32_t priority) {
-    impl_->priority_ = priority;
+  impl_->priority_ = priority;
 }
 
 float Layer::get_opacity() const {
-    return impl_->opacity_;
+  return impl_->opacity_;
 }
 
 void Layer::set_opacity(float opacity) {
-    impl_->opacity_ = opacity;
+  impl_->opacity_ = opacity;
 }
 
 }  // namespace holoscan::viz

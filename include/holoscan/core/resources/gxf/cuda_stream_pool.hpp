@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,10 @@
 #ifndef HOLOSCAN_CORE_RESOURCES_CUDA_STREAM_POOL_HPP
 #define HOLOSCAN_CORE_RESOURCES_CUDA_STREAM_POOL_HPP
 
+#include <string>
+
+#include <gxf/cuda/cuda_stream_pool.hpp>
+
 #include "./allocator.hpp"
 
 namespace holoscan {
@@ -32,6 +36,7 @@ class CudaStreamPool : public Allocator {
         stream_priority_(stream_priority),
         reserved_size_(reserved_size),
         max_size_(max_size) {}
+  CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::CudaStreamPool"; }
 

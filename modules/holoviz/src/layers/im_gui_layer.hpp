@@ -30,25 +30,25 @@ namespace holoscan::viz {
  */
 class ImGuiLayer : public Layer {
  public:
-    /**
-     * Construct a new ImGuiLayer object.
-     */
-    ImGuiLayer();
+  /**
+   * Construct a new ImGuiLayer object.
+   */
+  ImGuiLayer();
 
-    /**
-     * Destroy the ImGuiLayer object.
-     */
-    ~ImGuiLayer();
+  /**
+   * Destroy the ImGuiLayer object.
+   */
+  ~ImGuiLayer();
 
-    /// holoscan::viz::Layer virtual members
-    ///@{
-    void set_opacity(float opacity) override;
-    void render(Vulkan *vulkan) override;
-    ///@}
+  /// holoscan::viz::Layer virtual members
+  ///@{
+  void set_opacity(float opacity) override;
+  void render(Vulkan* vulkan) override;
+  ///@}
 
  private:
-    struct Impl;
-    std::shared_ptr<Impl> impl_;
+  struct Impl;
+  std::shared_ptr<Impl> impl_;
 };
 
 }  // namespace holoscan::viz

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,84 +30,84 @@ class Vulkan;
  */
 class Layer {
  public:
-    /**
-     * Layer types
-     */
-    enum class Type {
-        Image,     ///< image layer
-        Geometry,  ///< geometry layer
-        ImGui      ///< ImBui layer
-    };
+  /**
+   * Layer types
+   */
+  enum class Type {
+    Image,     ///< image layer
+    Geometry,  ///< geometry layer
+    ImGui      ///< ImBui layer
+  };
 
-    /**
-     * Construct a new Layer object.
-     *
-     * @param type  layer type
-     */
-    explicit Layer(Type type);
-    Layer() = delete;
+  /**
+   * Construct a new Layer object.
+   *
+   * @param type  layer type
+   */
+  explicit Layer(Type type);
+  Layer() = delete;
 
-    /**
-     * Destroy the Layer object.
-     */
-    virtual ~Layer();
+  /**
+   * Destroy the Layer object.
+   */
+  virtual ~Layer();
 
-    /**
-     * @returns  the layer type
-     */
-    Type get_type() const;
+  /**
+   * @returns  the layer type
+   */
+  Type get_type() const;
 
-    /**
-     * @returns  the layer priority
-     */
-    int32_t get_priority() const;
+  /**
+   * @returns  the layer priority
+   */
+  int32_t get_priority() const;
 
-    /**
-     * Set the layer priority.
-     *
-     * @param priority  new layer priority
-     */
-    void set_priority(int32_t priority);
+  /**
+   * Set the layer priority.
+   *
+   * @param priority  new layer priority
+   */
+  void set_priority(int32_t priority);
 
-    /**
-     * @returns  the layer opacity
-     */
-    float get_opacity() const;
+  /**
+   * @returns  the layer opacity
+   */
+  float get_opacity() const;
 
-    /**
-     * Set the layer opacity.
-     *
-     * @param opacity   new layer opacity
-     */
-    virtual void set_opacity(float opacity);
+  /**
+   * Set the layer opacity.
+   *
+   * @param opacity   new layer opacity
+   */
+  virtual void set_opacity(float opacity);
 
-    /**
-     * Checks if a layer can be reused (properties have to match).
-     *
-     * @param other layer which is to be checked for re-usability
-     */
-    virtual bool can_be_reused(Layer &other) const;
+  /**
+   * Checks if a layer can be reused (properties have to match).
+   *
+   * @param other layer which is to be checked for re-usability
+   */
+  virtual bool can_be_reused(Layer& other) const;
 
-    /**
-     * End layer construction. Upload data.
-     *
-     * @param vulkan    vulkan instance to use for updating data
-     */
-    virtual void end(Vulkan *vulkan) {}
+  /**
+   * End layer construction. Upload data.
+   *
+   * @param vulkan    vulkan instance to use for updating data
+   */
+  virtual void end(Vulkan* vulkan) {}
 
-    /**
-     * Render the layer.
-     *
-     * @param vulkan    vulkan instance to use for drawing
-     */
-    virtual void render(Vulkan *vulkan) = 0;
+  /**
+   * Render the layer.
+   *
+   * @param vulkan    vulkan instance to use for drawing
+   */
+  virtual void render(Vulkan* vulkan) = 0;
 
  protected:
-    const Type type_;  ///< layer type
+  const Type type_;  ///< layer type
 
  private:
-    struct Impl;
-    std::shared_ptr<Impl> impl_;
+  struct Impl;
+  std::shared_ptr<Impl> impl_;
 };
 
 }  // namespace holoscan::viz

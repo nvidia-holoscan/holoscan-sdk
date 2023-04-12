@@ -28,7 +28,7 @@ layout(binding = 0) uniform sampler2D texSampler;
 
 layout(push_constant) uniform constants
 {
-    float opacity;
+    layout(offset = 21 * 4) float opacity;
 } pushConstants;
 
 void main()

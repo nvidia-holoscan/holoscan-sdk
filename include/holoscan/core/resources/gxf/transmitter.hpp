@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,10 @@
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_TRANSMITTER_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_TRANSMITTER_HPP
 
+#include <string>
+
+#include <gxf/std/transmitter.hpp>
+
 #include "../../gxf/gxf_resource.hpp"
 
 namespace holoscan {
@@ -26,6 +30,7 @@ class Transmitter : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(Transmitter, GXFResource)
   Transmitter() = default;
+  Transmitter(const std::string& name, nvidia::gxf::Transmitter* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::Transmitter"; }
 };

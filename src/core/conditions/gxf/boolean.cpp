@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,12 @@
 #include "holoscan/core/component_spec.hpp"
 
 namespace holoscan {
+
+BooleanCondition::BooleanCondition(const std::string& name,
+                                   nvidia::gxf::BooleanSchedulingTerm* term)
+    : GXFCondition(name, term) {
+  enable_tick_ = term->checkTickEnabled();
+}
 
 void BooleanCondition::setup(ComponentSpec& spec) {
   spec.param(enable_tick_,

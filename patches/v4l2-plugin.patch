@@ -1,0 +1,88 @@
+# This patch is released under GNU LGPL License v2.1
+--- a/libv4l2/v4l2-plugin.c
++++ b/libv4l2/v4l2-plugin.c
+@@ -25,6 +25,9 @@
+ #include "libv4l2.h"
+ #include "libv4l2-priv.h"
+ #include "libv4l-plugin.h"
++#include <libgen.h>
++#include <string.h>
++#include <stdlib.h>
+
+ /* libv4l plugin support:
+    it is provided by functions v4l2_plugin_[open,close,etc].
+@@ -45,12 +48,29 @@
+    and if it was not then v4l2_* functions proceed with their usual behavior.
+ */
+
+-#define PLUGINS_PATTERN LIBV4L2_PLUGIN_DIR "/*.so"
++#define PLUGINS_PATTERN "*v4l2_plugin.so"
++
++#include <unistd.h>
+
+ void v4l2_plugin_init(int fd, void **plugin_lib_ret, void **plugin_priv_ret,
+               const struct libv4l_dev_ops **dev_ops_ret)
+ {
+-    char *error;
++    // Get the current directory where the shared lib is loaded
++    char* dlidname = NULL;
++    char* dli_fname = NULL;
++    Dl_info info;
++    if (dladdr(v4l2_plugin_init,&info) != 0) {
++        dli_fname = strdup((char*)info.dli_fname);
++        dlidname = dirname(dli_fname);
++    }
++
++    if(dlidname == NULL){
++      printf("v4l2_plugin_init : cannot find directory dlidname\n");
++      free(dli_fname);
++      return;
++    }
++
++    char *error;
+     int glob_ret;
+         uint32_t i;
+     void *plugin_library = NULL;
+@@ -61,7 +81,10 @@ void v4l2_plugin_init(int fd, void **plugin_lib_ret, void **plugin_priv_ret,
+     *plugin_lib_ret = NULL;
+     *plugin_priv_ret = NULL;
+
+-    glob_ret = glob(PLUGINS_PATTERN, 0, NULL, &globbuf);
++    char globpattern[2048];
++    sprintf(globpattern,"%s/%s",dlidname,PLUGINS_PATTERN);
++    glob_ret = glob(globpattern, 0, NULL, &globbuf);
++    free(dli_fname);
+
+     if (glob_ret == GLOB_NOSPACE)
+         return;
+@@ -70,18 +93,28 @@ void v4l2_plugin_init(int fd, void **plugin_lib_ret, void **plugin_priv_ret,
+         goto leave;
+
+     for (i = 0; i < globbuf.gl_pathc; i++) {
++
+         V4L2_LOG("PLUGIN: dlopen(%s);\n", globbuf.gl_pathv[i]);
+
+         plugin_library = dlopen(globbuf.gl_pathv[i], RTLD_LAZY);
+-        if (!plugin_library)
++
++        error = dlerror();
++        if (error != NULL)  {
++            V4L2_LOG("PLUGIN: dlopen failed: %s\n", error);
++            continue;
++        }
++
++        if (!plugin_library) {
++            V4L2_LOG("PLUGIN: dlopen failed");
+             continue;
++        }
+
+         dlerror(); /* Clear any existing error */
+         libv4l2_plugin = (struct libv4l_dev_ops *)
+             dlsym(plugin_library, "libv4l2_plugin");
+         error = dlerror();
+         if (error != NULL)  {
+-            V4L2_LOG_ERR("PLUGIN: dlsym failed: %s\n", error);
++            V4L2_LOG("PLUGIN: dlsym failed: %s\n", error);
+             dlclose(plugin_library);
+             continue;
+         }

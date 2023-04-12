@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -135,8 +135,6 @@ gxf::Expected<gxf::Entity> VideoStreamSerializer::deserialize_entity_header_abi(
           .and_then([&]() { return DeserializeEntityHeader(endpoint); })
           .map([&](EntityHeader entity_header) {
             if (entity_header.sequence_number != incoming_sequence_number_) {
-              GXF_LOG_WARNING("Got message %zu but expected message %zu",
-                              entity_header.sequence_number, incoming_sequence_number_);
               incoming_sequence_number_ = entity_header.sequence_number;
             }
             incoming_sequence_number_++;

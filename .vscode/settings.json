@@ -118,6 +118,7 @@
         "charconv": "cpp"
     },
     "git.alwaysSignOff": true,
+    "git.untrackedChanges": "separate",
     "editor.formatOnSave": true,
     "editor.formatOnSaveMode": "modifications",
     // "[cmake]": {
@@ -126,11 +127,12 @@
     "[dockerfile]": {
         "editor.formatOnSave": false,
     },
-    "cmake.sourceDirectory": "${workspaceFolder}",
+    "cmake.configureOnOpen": true,
+    "cmake.sourceDirectory": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}",
     // https://vector-of-bool.github.io/docs/vscode-cmake-tools/settings.html
     "cmake.buildTask": false,
-    "cmake.buildDirectory": "${workspaceFolder}/build-${variant:buildType}-${variant:platform}",
-    // "cmake.installPrefix": "${workspaceFolder}/install-${variant:buildType}-${variant:platform}",
+    "cmake.buildDirectory": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/build-${variant:buildType}-${variant:platform}",
+    // "cmake.installPrefix": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/install-${variant:buildType}-${variant:platform}",
     "cmake.preferredGenerators": [
         "Ninja",
         "Unix Makefiles"
@@ -138,6 +140,7 @@
     "cmake.configureArgs": [
         "--log-context",
         "-DFETCHCONTENT_QUIET=Off",
+        "-DHOLOSCAN_USE_CCACHE=On"
         // "--trace",
         // "--trace-expand",
     ],
@@ -151,7 +154,6 @@
     "C/C++ Include Guard.Path Depth": 0,
     "C/C++ Include Guard.Remove Extension": false,
     "sonarlint.pathToCompileCommands": "${command:cmake.buildDirectory}/compile_commands.json",
-    "cmake.configureOnEdit": false,
     // https://github.com/matepek/vscode-catch2-test-adapter/blob/master/documents/configuration/test.advancedExecutables.md
     "testMate.cpp.test.advancedExecutables": [
         {
@@ -161,7 +163,8 @@
             "cwd": "${command:cmake.buildDirectory}",
             "env": {
                 "LD_LIBRARY_PATH": "${command:cmake.buildDirectory}/lib:${command:cmake.buildDirectory}/lib/gxf_extensions:${env:LD_LIBRARY_PATH}",
-                "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/tests/data",
+                "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/tests/data",
+                "HOLOSCAN_SAMPLE_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/data",
             }
         },
         {
@@ -171,15 +174,19 @@
             "cwd": "${command:cmake.buildDirectory}",
             "env": {
                 "LD_LIBRARY_PATH": "${command:cmake.buildDirectory}/lib:${command:cmake.buildDirectory}/lib/gxf_extensions:${env:LD_LIBRARY_PATH}",
-                "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/tests/data",
+                "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/tests/data",
+                "HOLOSCAN_SAMPLE_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/data",
             }
         },
+    ],
+    "python.analysis.extraPaths": [
+        // variable substitution, e.g. using ${command:cmake.buildDirectory} is not working here
+        "./build-debug-x86_64/python/lib"
     ],
     "python.formatting.provider": "black",
     // It seems that Pytest Discovery feature in VSCode needs to be improved
     // - https://github.com/microsoft/vscode-python/issues/17242
     // - https://github.com/microsoft/vscode-python/issues/19790
-
     // https://code.visualstudio.com/docs/python/testing#_test-configuration-settings
     // "python.testing.pytestArgs": [
     //     "build-debug-x86_64"

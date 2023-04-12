@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@ limitations under the License.
 """  # no qa
 
 import os
+import sys
 
 import holoscan as hs
 from holoscan.core import Application, Operator, OperatorSpec
@@ -50,11 +51,11 @@ class ImageProcessingOp(Operator):
     (height, width, channels).
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, fragment, *args, **kwargs):
         self.count = 1
 
         # Need to call the base class constructor last
-        super().__init__(*args, **kwargs)
+        super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
         spec.input("input_tensor")
@@ -130,6 +131,12 @@ class MyVideoProcessingApp(Application):
 
 if __name__ == "__main__":
     load_env_log_level()
+
+    config_file = os.path.join(os.path.dirname(__file__), "tensor_interop.yaml")
+
+    if len(sys.argv) >= 2:
+        config_file = sys.argv[1]
+
     app = MyVideoProcessingApp()
-    app.config(os.path.join(os.path.dirname(__file__), "tensor_interop.yaml"))
+    app.config(config_file)
     app.run()

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,11 @@ gxf_result_t report_error(const std::string& module, const std::string& submodul
   return GXF_FAILURE;
 }
 
+void raise_error(const std::string& module, const std::string& message) {
+  std::string error_string{"Error in " + module + ", Sub-module->" + message};
+  throw std::runtime_error(error_string);
+}
+
 void timer_init(TimePoint& _t) {
   _t = std::chrono::steady_clock::now();
 }
@@ -35,6 +40,20 @@ gxf_result_t timer_check(TimePoint& start, TimePoint& end, const std::string& mo
   int64_t delta = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
   GXF_LOG_DEBUG("%s : %d ms", module.c_str(), delta);
   return GXF_SUCCESS;
+}
+
+bool is_platform_aarch64() {
+  struct utsname buffer;
+
+  if (uname(&buffer) == 0) {
+    std::string machine(buffer.machine);
+
+    if (machine.find("arm") != std::string::npos || machine.find("aarch64") != std::string::npos) {
+      return true;
+    }
+  }
+  // Return false in all other conditions.
+  return false;
 }
 
 InferStatus map_data_to_model_from_tensor(const MultiMappings& model_data_mapping,
@@ -499,17 +518,16 @@ InferStatus multiai_processor_validity_check(const Mappings& processed_map,
                                              const std::vector<std::string>& out_tensor_names) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
 
-  auto l_status = check_mappings_size_value(processed_map, "processed_map");
-  if (l_status.get_code() == holoinfer_code::H_ERROR) { return l_status; }
-
   if (in_tensor_names.empty()) {
     status.set_message("Input tensor names cannot be empty");
     return status;
   }
 
   if (out_tensor_names.empty()) {
-    status.set_message("Output tensor names cannot be empty");
-    return status;
+    status.set_message("WARNING: Output tensor names empty");
+  } else {
+    auto l_status = check_mappings_size_value(processed_map, "processed_map");
+    if (l_status.get_code() == holoinfer_code::H_ERROR) { return l_status; }
   }
 
   if (!check_equality(processed_map.size(), out_tensor_names.size())) {

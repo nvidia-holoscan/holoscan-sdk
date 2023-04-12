@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +14,11 @@
 # limitations under the License.
 
 # Create library
-add_library(tensor_rt_inference_lib SHARED
+add_library(gxf_tensor_rt_lib SHARED
   tensor_rt_inference.cpp
   tensor_rt_inference.hpp
 )
-target_link_libraries(tensor_rt_inference_lib
+target_link_libraries(gxf_tensor_rt_lib
   PUBLIC
     CUDA::cudart
     GXF::cuda
@@ -28,13 +28,12 @@ target_link_libraries(tensor_rt_inference_lib
 )
 
 # Create extension
-add_library(tensor_rt SHARED
+add_library(gxf_tensor_rt SHARED
   tensor_rt_extension.cpp
 )
-target_link_libraries(tensor_rt
-  PUBLIC tensor_rt_inference_lib
+target_link_libraries(gxf_tensor_rt
+  PUBLIC gxf_tensor_rt_lib
 )
 
 # Install GXF extension as a component 'holoscan-gxf_extensions'
-install_gxf_extension(tensor_rt)
-install_gxf_extension(tensor_rt_inference_lib) # not following '{name}_lib' so install explicitly
+install_gxf_extension(gxf_tensor_rt)

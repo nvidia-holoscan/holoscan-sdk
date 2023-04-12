@@ -23,8 +23,18 @@ layout(location = 0) in vec2 i_position;
 // outgoing
 layout(location = 0) out vec2 o_texCoord;
 
+layout(push_constant) uniform constants
+{
+    mat4x4 matrix;
+    float pointSize;
+    float colorRed;
+    float colorGreen;
+    float colorBlue;
+    float colorAlpha;
+} pushConstants;
+
 void main()
 {
-    gl_Position = vec4(i_position, 0.0, 1.0);
+    gl_Position = pushConstants.matrix * vec4(i_position, 0.0, 1.0);
     o_texCoord  = (i_position + vec2(1.f)) * vec2(0.5f);
 }

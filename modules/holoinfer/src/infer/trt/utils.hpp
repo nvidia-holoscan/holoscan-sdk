@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,9 +33,7 @@
 #include <vector>
 
 #include <NvInfer.h>
-#include <NvInferPlugin.h>
-#include <NvInferRuntimeCommon.h>
-#include <NvOnnxParser.h>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 namespace inference {
@@ -44,7 +42,7 @@ namespace inference {
  */
 class Logger : public nvinfer1::ILogger {
   void log(Severity severity, const char* msg) noexcept override {
-    if (severity <= Severity::kWARNING) { std::cout << msg << std::endl; }
+    if (severity <= Severity::kWARNING) { HOLOSCAN_LOG_INFO(msg); }
   };
 };
 

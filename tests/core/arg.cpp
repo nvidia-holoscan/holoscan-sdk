@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <cstdint>
+#include <regex>
 #include <string>
 #include <typeinfo>
 
@@ -46,21 +47,36 @@ TEST(Arg, TestArgType) {
   ArgType A = ArgType();
   EXPECT_EQ(A.element_type(), ArgElementType::kCustom);
   EXPECT_EQ(A.container_type(), ArgContainerType::kNative);
+  EXPECT_EQ(A.dimension(), 0);
+  EXPECT_EQ(A.to_string(), "CustomType");
 
   // constructor
-  A = ArgType(ArgElementType::kInt8, ArgContainerType::kArray);
+  A = ArgType(ArgElementType::kInt8, ArgContainerType::kArray, 1);
   EXPECT_EQ(A.element_type(), ArgElementType::kInt8);
   EXPECT_EQ(A.container_type(), ArgContainerType::kArray);
+  EXPECT_EQ(A.dimension(), 1);
+  EXPECT_EQ(A.to_string(), "std::array<int8_t,N>");
 
   // initialize a vector of float via ArgType::create
   A = ArgType::create<std::vector<float>>();
   EXPECT_EQ(A.element_type(), ArgElementType::kFloat32);
   EXPECT_EQ(A.container_type(), ArgContainerType::kVector);
+  EXPECT_EQ(A.dimension(), 1);
+  EXPECT_EQ(A.to_string(), "std::vector<float>");
+
+  // initialize a vector of vector of string via ArgType::create
+  A = ArgType::create<std::vector<std::vector<std::string>>>();
+  EXPECT_EQ(A.element_type(), ArgElementType::kString);
+  EXPECT_EQ(A.container_type(), ArgContainerType::kVector);
+  EXPECT_EQ(A.dimension(), 2);
+  EXPECT_EQ(A.to_string(), "std::vector<std::vector<std::string>>");
 
   // initialize an array of int8_t via ArgType::create
   A = ArgType::create<std::array<std::int8_t, 5>>();
   EXPECT_EQ(A.element_type(), ArgElementType::kInt8);
   EXPECT_EQ(A.container_type(), ArgContainerType::kArray);
+  EXPECT_EQ(A.dimension(), 1);
+  EXPECT_EQ(A.to_string(), "std::array<int8_t,N>");
 
   // Verify get_element_type returns the expected type
   EXPECT_EQ(ArgType::get_element_type(std::type_index(typeid(5.0))), ArgElementType::kFloat64);
@@ -75,40 +91,43 @@ class ArgParameterizedTestFixture : public ::testing::TestWithParam<ParamTuple> 
   Arg A = Arg("alpha");
 };
 
+void any_to_arg(const std::any& value, Arg& arg) {
+  if (value.type() == typeid(double)) arg = std::any_cast<double>(value);
+  else if (value.type() == typeid(float))
+    arg = std::any_cast<float>(value);
+  else if (value.type() == typeid(bool))
+    arg = std::any_cast<bool>(value);
+  else if (value.type() == typeid(uint8_t))
+    arg = std::any_cast<uint8_t>(value);
+  else if (value.type() == typeid(uint16_t))
+    arg = std::any_cast<uint16_t>(value);
+  else if (value.type() == typeid(uint32_t))
+    arg = std::any_cast<uint32_t>(value);
+  else if (value.type() == typeid(uint64_t))
+    arg = std::any_cast<uint64_t>(value);
+  else if (value.type() == typeid(int8_t))
+    arg = std::any_cast<int8_t>(value);
+  else if (value.type() == typeid(int16_t))
+    arg = std::any_cast<int16_t>(value);
+  else if (value.type() == typeid(int32_t))
+    arg = std::any_cast<int32_t>(value);
+  else if (value.type() == typeid(int64_t))
+    arg = std::any_cast<int64_t>(value);
+  else if (value.type() == typeid(YAML::Node))
+    arg = std::any_cast<YAML::Node>(value);
+  else if (value.type() == typeid(std::string))
+    arg = std::any_cast<std::string>(value);
+  else if (value.type() == typeid(CustomType))
+    arg = std::any_cast<CustomType>(value);
+  else if (value.type() == typeid(std::vector<std::string>))
+    arg = std::any_cast<std::vector<std::string>>(value);
+  else if (value.type() == typeid(std::array<std::uint16_t, 4>))
+    arg = std::any_cast<std::array<std::uint16_t, 4>>(value);
+}
+
 TEST_P(ArgParameterizedTestFixture, ArgElementAndContainerTypes) {
   auto [value, ExpectedElementType, ExpectedContainerType] = GetParam();
-
-  if (value.type() == typeid(double)) A = std::any_cast<double>(value);
-  else if (value.type() == typeid(float))
-    A = std::any_cast<float>(value);
-  else if (value.type() == typeid(bool))
-    A = std::any_cast<bool>(value);
-  else if (value.type() == typeid(uint8_t))
-    A = std::any_cast<uint8_t>(value);
-  else if (value.type() == typeid(uint16_t))
-    A = std::any_cast<uint16_t>(value);
-  else if (value.type() == typeid(uint32_t))
-    A = std::any_cast<uint32_t>(value);
-  else if (value.type() == typeid(uint64_t))
-    A = std::any_cast<uint64_t>(value);
-  else if (value.type() == typeid(int8_t))
-    A = std::any_cast<int8_t>(value);
-  else if (value.type() == typeid(int16_t))
-    A = std::any_cast<int16_t>(value);
-  else if (value.type() == typeid(int32_t))
-    A = std::any_cast<int32_t>(value);
-  else if (value.type() == typeid(int64_t))
-    A = std::any_cast<int64_t>(value);
-  else if (value.type() == typeid(YAML::Node))
-    A = std::any_cast<YAML::Node>(value);
-  else if (value.type() == typeid(std::string))
-    A = std::any_cast<std::string>(value);
-  else if (value.type() == typeid(CustomType))
-    A = std::any_cast<CustomType>(value);
-  else if (value.type() == typeid(std::vector<std::string>))
-    A = std::any_cast<std::vector<std::string>>(value);
-  else if (value.type() == typeid(std::array<std::uint16_t, 4>))
-    A = std::any_cast<std::array<std::uint16_t, 4>>(value);
+  any_to_arg(value, A);
   check_arg_types(A, ExpectedElementType, ExpectedContainerType);
 }
 
@@ -135,6 +154,28 @@ INSTANTIATE_TEST_CASE_P(
         ParamTuple{std::array<std::uint16_t, 4>{1, 8, 9, 15},
                    ArgElementType::kUnsigned16,
                    ArgContainerType::kArray}));
+
+// name, value, value as string
+static std::vector<std::tuple<const char*, std::any, std::optional<std::vector<std::string>>>>
+    arg_params = {
+        {"A", 7.0, {{"7"}}},
+        {"B", 7.0F, {{"7"}}},
+        {"C", false, {{"false"}}},
+        {"D", int8_t{1}, {{"\"\\x01\""}}},  // hex
+        {"E", int16_t{1}, {{"1"}}},
+        {"F", int32_t{1}, {{"1"}}},
+        {"G", int64_t{1}, {{"1"}}},
+        {"H", uint8_t{1}, {{"\"\\x01\""}}},  // hex
+        {"I", uint16_t{1}, {{"1"}}},
+        {"J", uint32_t{1}, {{"1"}}},
+        {"K", uint64_t{1}, {{"1"}}},
+        {"L", YAML::Node(YAML::NodeType::Null), {{"~"}}},
+        {"M", std::string{"abcd"}, {{"abcd"}}},
+        {"N", std::vector<std::string>{"abcd", "ef", "ghijklm"}, {{"abcd", "ef", "ghijklm"}}},
+        {"O", std::array<uint16_t, 4>{1, 8, 9, 15}, std::nullopt},  // can't guess size
+        {"Z", CustomType(), std::nullopt},                          // Unknown type
+        {"Z", std::any(), std::nullopt},                            // Unknown type
+};
 
 TEST(Arg, TestArgHandleType) {
   // initialize without any value
@@ -166,6 +207,25 @@ TEST(Arg, TestOtherEnums) {
   ArgElementType T = ArgElementType::kIOSpec;
   T = ArgElementType::kCondition;
   T = ArgElementType::kResource;
+}
+
+TEST(Arg, TestArgDescription) {
+  for (const auto& [name, value, str_list] : arg_params) {
+    Arg arg = Arg(name);
+    any_to_arg(value, arg);
+    std::string description = fmt::format("name: {}\ntype: {}", name, arg.arg_type().to_string());
+    if (str_list) {
+      description = fmt::format("{}\nvalue:", description);
+      if (str_list->size() == 1) {
+        description = fmt::format("{} {}", description, str_list->at(0));
+      } else {
+        for (const std::string& val_str : str_list.value()) {
+          description = fmt::format("{}\n  - {}", description, val_str);
+        }
+      }
+    }
+    EXPECT_EQ(arg.description(), description);
+  }
 }
 
 TEST(Arg, TestArgList) {
@@ -241,6 +301,20 @@ TEST(Arg, TestArgList2) {
   Arg a2 = args[2];
   EXPECT_EQ(a2.name(), "str_arg");
   EXPECT_EQ(std::any_cast<std::string>(a2.value()), s1);
+}
+
+TEST(Arg, TestArgListDescription) {
+  ArgList args;
+  std::string description = "name: arglist\nargs:";
+  for (const auto& [name, value, _] : arg_params) {
+    Arg arg = Arg(name);
+    any_to_arg(value, arg);
+    std::string indented_arg_description =
+        std::regex_replace(arg.description(), std::regex("\n"), "\n    ");
+    args.add(arg);
+    description = fmt::format("{}\n  - {}", description, indented_arg_description);
+  }
+  EXPECT_EQ(args.description(), description);
 }
 
 }  // namespace holoscan

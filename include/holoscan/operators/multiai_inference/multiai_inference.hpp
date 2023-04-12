@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,13 @@
 #include <string>
 #include <vector>
 
-#include "../../core/gxf/gxf_operator.hpp"
+#include "holoscan/core/gxf/gxf_operator.hpp"
+
+#include "holoinfer.hpp"
+#include "holoinfer_utils.hpp"
+#include "holoinfer_buffer.hpp"
+
+namespace HoloInfer = holoscan::inference;
 
 namespace holoscan::ops {
 /**
@@ -31,18 +37,18 @@ namespace holoscan::ops {
  *
  * Class wraps a GXF Codelet(`nvidia::holoscan::multiai::MultiAIInference`).
  */
-class MultiAIInferenceOp : public holoscan::ops::GXFOperator {
+class MultiAIInferenceOp : public holoscan::Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(MultiAIInferenceOp, holoscan::ops::GXFOperator)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(MultiAIInferenceOp)
 
   MultiAIInferenceOp() = default;
 
-  const char* gxf_typename() const override {
-    return "nvidia::holoscan::multiai::MultiAIInference";
-  }
-
   void setup(OperatorSpec& spec) override;
   void initialize() override;
+  void start() override;
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override;
+  void stop() override;
 
   /**
    * DataMap specification
@@ -123,6 +129,24 @@ class MultiAIInferenceOp : public holoscan::ops::GXFOperator {
 
   ///  @brief Output transmitter. Single transmitter supported.
   Parameter<std::vector<IOSpec*>> transmitter_;
+
+  // Internal state
+
+  /// Pointer to inference context.
+  std::unique_ptr<HoloInfer::InferContext> holoscan_infer_context_;
+
+  /// Pointer to multi ai inference specifications
+  std::shared_ptr<HoloInfer::MultiAISpecs> multiai_specs_;
+
+  /// Data type of message to be transmitted. Supported value: float32
+  nvidia::gxf::PrimitiveType data_type_ = nvidia::gxf::PrimitiveType::kFloat32;
+
+  /// Map holding dimensions per model. Key is model name and value is a vector with
+  /// dimensions.
+  std::map<std::string, std::vector<int>> dims_per_tensor_;
+
+  /// Codelet Identifier, used in reporting.
+  const std::string module_{"Multi AI Inference Codelet"};
 };
 
 }  // namespace holoscan::ops

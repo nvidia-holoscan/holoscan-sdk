@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(PROJECT_NAME clara_holoviz_functionaltests)
+set(PROJECT_NAME holoviz_functionaltests)
 
 # fetch the dependencies
 include(FetchContent)
@@ -28,6 +28,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(stb)
 
 find_package(CUDAToolkit REQUIRED)
+find_package(Vulkan REQUIRED)
 
 add_executable(${PROJECT_NAME})
 add_executable(holoscan::viz::functionaltests ALIAS ${PROJECT_NAME})
@@ -49,11 +50,6 @@ target_compile_definitions(${PROJECT_NAME}
         GTEST_HAS_RTTI=1
         GTEST_LANG_CXX11=1
         GTEST_HAS_EXCEPTIONS=1
-        # the gtest library provided by Holoscan is compiled with _GLIBCXX_USE_CXX11_ABI set to 1
-        # if this is not set there are link errors as
-        #  undefined reference to `testing::internal::EqFailure(char const*, char const*, std::string const&, std::string const&, bool)
-        # or runtime errors of functions in gtest expecting std::string
-        _GLIBCXX_USE_CXX11_ABI=1
     )
 
 target_include_directories(${PROJECT_NAME}
@@ -63,12 +59,14 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
+        glfw
+        Vulkan::Vulkan
         X11::X11
         holoscan::viz
         holoscan::viz::imgui
         GTest::gtest_main
         CUDA::cuda_driver
-        nvpro_core # for GLFW
+        holoscan::logger
     )
 
 add_test(NAME functional COMMAND ${PROJECT_NAME})

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,11 +47,18 @@ class ComponentSpec {
   explicit ComponentSpec(Fragment* fragment = nullptr) : fragment_(fragment) {}
 
   /**
+   * @brief Set the pointer to the fragment that contains this component.
+   *
+   * @param fragment The pointer to the fragment that contains this component.
+   */
+  void fragment(Fragment* fragment) { fragment_ = fragment; }
+
+  /**
    * @brief Get the pointer to the fragment that contains this component.
    *
    * @return The pointer to the fragment that contains this component.
    */
-  Fragment* fragment() const { return fragment_; }
+  Fragment* fragment() { return fragment_; }
 
 
   /**
@@ -89,7 +96,6 @@ class ComponentSpec {
   template <typename typeT>
   void param(Parameter<typeT>& parameter, const char* key, const char* headline,
              const char* description);
-
   /**
    * @brief Define a parameter that has a default value.
    *
@@ -110,6 +116,21 @@ class ComponentSpec {
    * @return The reference to the parameters of this component.
    */
   std::unordered_map<std::string, ParameterWrapper>& params() { return params_; }
+
+  /**
+   * @brief Get a YAML representation of the component spec.
+   *
+   * @return YAML node including the parameters of this component.
+   */
+  virtual YAML::Node to_yaml_node() const;
+
+  /**
+   * @brief Get a description of the component spec.
+   *
+   * @see to_yaml_node()
+   * @return YAML string.
+   */
+  std::string description() const;
 
  protected:
   Fragment* fragment_ = nullptr;  ///< The pointer to the fragment that contains this component.

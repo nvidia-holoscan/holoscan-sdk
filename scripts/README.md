@@ -4,7 +4,6 @@ This folder includes the following scripts:
 - [`convert_video_to_gxf_entities.py`](#convert_video_to_gxf_entitiespy)
 - [`generate_extension_uuids.py`](#generate_extension_uuidspy)
 - [`graph_surgeon.py`](#graph_surgeonpy)
-- [`include_checker.py`](#include_checkerpy)
 
 ## convert_video_to_gxf_entities.py
 
@@ -40,14 +39,4 @@ Note that this script modifies the names of the output by appending `_old` to th
 
 ```bash
 python3 scripts/graph_surgeon.py input_model.onnx output_model.onnx
-```
-
-## include_checker.py
-
-If double-quotes are used, this script checks whether there is a file located at that location relative to the file being checked. If the file does not exist, it will suggest changing to an `#include` using angle brackets. Similarly, if the include uses angle brackets, but the file is present locally it will suggest changing to a double-quote style import.
-
-### Usage
-
-```bash
-python3 scripts/include_checker.py apps examples include modules src test python/pybind11
 ```

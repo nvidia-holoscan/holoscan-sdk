@@ -1,6 +1,6 @@
 # Holoscan SDK
 
-The **Holoscan SDK** is part of [NVIDIA Holoscan](https://github.com/nvidia-holoscan), the AI sensor processing platform that combines hardware systems for low-latency sensor and network connectivity, optimized libraries for data processing and AI, and core microservices to run streaming, imaging, and other applications, from embedded to edge to cloud. It can be used to build streaming AI pipelines for a variety of domains, including Medical Devices, High Performance Computing at the Edge, Industrial Inspection and more.
+The **Holoscan SDK** is part of [NVIDIA Holoscan](https://developer.nvidia.com/holoscan-sdk), the AI sensor processing platform that combines hardware systems for low-latency sensor and network connectivity, optimized libraries for data processing and AI, and core microservices to run streaming, imaging, and other applications, from embedded to edge to cloud. It can be used to build streaming AI pipelines for a variety of domains, including Medical Devices, High Performance Computing at the Edge, Industrial Inspection and more.
 
 > In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). As Holoscan has grown, its potential to serve other areas has become apparent. With version 0.4.0, we're proud to announce that the Holoscan SDK is now officially built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Note that some of the content of the SDK (sample applications) or the documentation might still appear to be healthcare-specific pending additional updates. Going forward, domain specific content will be hosted on the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository.
 
@@ -8,17 +8,18 @@ Visit the [NGC demo website](https://demos.ngc.nvidia.com/holoscan) for a live d
 
 ## Table of Contents
 - [Documentation](#documentation)
-- [Prerequisites](#prerequisites)
-  - [For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)](#for-clara-agx-and-nvidia-igx-orin-developer-kits-aarch64)
-  - [For x86_64 systems](#for-x86_64-systems)
 - [Using the released SDK](#using-the-released-sdk)
 - [Building the SDK from source](#building-the-sdk-from-source)
+  - [Prerequisites](#prerequisites)
+    - [For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)](#for-clara-agx-and-nvidia-igx-orin-developer-kits-aarch64)
+    - [For x86_64 systems](#for-x86_64-systems)
   - [Recommended: using the `run` script](#recommended-using-the-run-script)
   - [Cross-compilation](#cross-compilation)
   - [Advanced: Docker + CMake](#advanced-docker-cmake)
   - [Advanced: Local environment + CMake](#advanced-local-environment-cmake)
 - [Utilities](#utilities)
   - [Code coverage](#code-coverage)
+  - [Linting](#linting)
 - [Troubleshooting](#troubleshooting)
 - [Repository structure](#repository-structure)
 
@@ -27,61 +28,53 @@ Visit the [NGC demo website](https://demos.ngc.nvidia.com/holoscan) for a live d
 * The latest SDK user guide is available at https://docs.nvidia.com/clara-holoscan.
 * For a full list of Holoscan documentation, visit the [Holoscan developer page](https://developer.nvidia.com/clara-holoscan-sdk).
 
-## Prerequisites
+## Using the released SDK
+
+The Holoscan SDK is available as part of the following packages:
+- 🐋 The [Holoscan container image on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan) includes the Holoscan libraries, GXF extensions, headers, example source code, and sample datasets, as well as all the dependencies that were tested with Holoscan. It is the recommended way to run the Holoscan examples, while still allowing you to create your own C++ and Python Holoscan application.
+- 🐍 The [Holoscan python wheels on PyPI](https://pypi.org/project/holoscan/) are the simplest way for Python developers to get started with the SDK using `pip install holoscan`. The wheels include the SDK libraries, not the example applications or the sample datasets.
+- 📦️ The [Holoscan Debian package on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_dev_deb) includes the libraries, headers, example applications and CMake configurations needed for both C++ and Python developers. It does not include sample datasets.
+
+## Building the SDK from source
+
+> **Disclaimer**: we only recommend building the SDK from source if you are a developer of the SDK, or need to build the SDK with debug symbols or other options not used as part of the released packages. If you want to modify some code to fit your use case, contribute to HoloHub if it's an operator or application, or file a feature or bug request. If that's not the case, prefer using [generated packages](#using-the-released-sdk).
+
+### Prerequisites
 
 The Holoscan SDK currently supports the [Holoscan Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits) (aarch64) as well as x86_64 systems.
 
-### For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)
+#### For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)
 
 Set up your developer kit:
-- [Clara AGX Developer Kit User Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide), or
-- [NVIDIA IGX Orin Developer Kit User Guide](https://developer.nvidia.com/igx-orin-developer-kit-user-guide).
+- [NVIDIA Clara AGX](https://developer.nvidia.com/clara-agx-developer-kit-user-guide)
+- [NVIDIA IGX Orin [ES]](https://developer.nvidia.com/igx-orin-developer-kit-user-guide)
+- NVIDIA IGX Orin: *coming soon*
 
 > Make sure you have joined the [Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and, if needed, the [Rivermax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
 
-[SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/) will install **Holopack 1.1** as well as the `nvgpuswitch.py` script. Once configured for dGPU mode, your developer kit will include the following necessary components to build the SDK:
-- [NVIDIA Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux): 34.1.2
-- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (for containerized development)
-- [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit): 11.6.1 (for local development only)
-- [TensorRT](https://developer.nvidia.com/tensorrt): 8.2.3 (for local development only)
-- Optional Rivermax support
-  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
-  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
-  - *Note: [GPUDirect](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma) drivers (required for Emergent support) need to be installed manually at this time*
+- [SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/) will install **Holopack 1.2** as well as the `nvgpuswitch.py` script. Once configured for dGPU mode, your developer kit will include the necessary components to build the SDK
+- For Rivermax support (optional/local development only at this time), GPUDirect drivers need to be loaded manually at this time, see the [User Guide](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma).
+- Refer to the user guide for additional steps needed to support third-party technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html).
+- Additional dependencies are required when developing locally instead of using a containerized environment, see details in the [section below](#advanced-local-environment--cmake).
 
-Refer to the user guide for additional steps needed to support specific technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html) or [Emergent cameras](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/emergent_setup.html).
-
-> Additional dependencies are required when developing locally instead of using a containerized environment, see details in the [section below](#advanced-local-environment--cmake).
-
-### For x86_64 systems
+#### For x86_64 systems
 
 You'll need the following to build applications from source on x86_64:
 - OS: Ubuntu 20.04
 - NVIDIA GPU
   - Ampere or above recommended for best performance
   - [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for [GPUDirect RDMA](https://developer.nvidia.com/gpudirect) support
-- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08
+  - Tested with [NVIDIA RTX 6000](https://www.nvidia.com/en-us/design-visualization/rtx-6000/) and [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/)
+- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 510.73.08 or above
 - For containerized development (recommended):
   - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
 - For local development (advanced):
   - See details in the [section below](#advanced-local-environment--cmake).
-- For Rivermax support (optional):
+- For Rivermax support (optional/local development only at this time):
   - [NVIDIA ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/)
-  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.7
-  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.11 (for local development only)
-  - [GPUDirect Drivers](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma)
-
-## Using the released SDK
-
-The Holoscan SDK is available as part of the following packages:
-- 🐋 The [Holoscan container image on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan) includes the Holoscan libraries, GXF extensions, headers, example source code, and sample datasets, as well as all the dependencies that were tested with Holoscan. It is the recommended way to run sample streaming applications, while still allowing you to create your own C++ and Python Holoscan application.
-- 🐍 The [Holoscan python wheels on PyPI](https://pypi.org/project/holoscan/) (**NEW IN 0.4**) are the ideal way for Python developers to get started with the SDK, simply using `pip install holoscan`. The wheels include the necessary libraries and extensions, not including example code, built applications, nor sample datasets.
-- 📦️ The [Holoscan Debian package on NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_dev_deb) (**NEW IN 0.4**) includes the libraries, headers, and CMake configurations needed for both C++ and Python developers. It does not include example code, pre-built applications, nor sample datasets.
-
-## Building the SDK from source
-
-Follow the instructions below if you want to build the Holoscan SDK yourself.
+  - [OFED Network Drivers](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/): 5.8
+  - [GPUDirect Drivers](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma): 1.1
+  - [Rivermax SDK](https://developer.nvidia.com/networking/rivermax): 1.20
 
 ### Recommended: using the `run` script
 
@@ -102,18 +95,17 @@ Call the **`./run launch`** command to start and enter the development container
 * *Execute `./run launch --help` for more information*
 * *Execute `./run launch --dryrun` to see the commands that will be executed*
 
-**Run the applications or examples** inside the container by running their respective commands listed within each directory README file:
-  * [reference applications](./apps)
-  * [examples](./examples)
+Run the [**examples**](./examples) inside the container by running their respective commands listed within each directory README file.
 
 ### Cross-compilation
 
 While the development Dockerfile does not currently support true cross-compilation, you can compile the Holoscan SDK for the developer kits (arm64) from a x86_64 host using an emulation environment.
 
 1. [Install qemu](https://docs.nvidia.com/datacenter/cloud-native/playground/x-arch.html#emulation-environment)
-2. Export your target arch: `export HOLOSCAN_BUILD_PLATFORM=linux/arm64`
-3. Clear your build cache: `./run clear_cache`
-4. Rebuild: `./run build`
+2. Clear your build cache: `./run clear_cache`
+3. Rebuild for `linux/arm64` using `--platform` or `HOLOSCAN_BUILD_PLATFORM`:
+    * `./run build --platform linux/arm64`
+    * `HOLOSCAN_BUILD_PLATFORM=linux/arm64 ./run build`
 
 You can then copy the `install` folder generated by CMake to a developer kit with a configured environment or within a container to use for running and developing applications.
 
@@ -164,17 +156,52 @@ cmake --build $build_dir -j
 cmake --install $build_dir --prefix $install_dir
 ```
 
-The commands to run the **[reference applications](./apps)** or the **[examples](./examples)** are then the same as in the dockerized environment, and can be found in the respective source directory READMEs.
+The commands to run the [**examples**](./examples) are then the same as in the dockerized environment, and can be found in the respective source directory READMEs.
 
 ## Utilities
 
+Some utilities are available in the [`scripts`](./scripts) folder, others closer to the built process are listed below:
+
 ### Code coverage
+
 To generate a code coverage report use the following command after completing setup:
 ```sh
 ./run coverage
 ```
 
-Open the file build/coverage/index.html to access the interactive coverage web tool.
+Open the file `build/coverage/index.html` to access the interactive coverage web tool.
+
+### Linting
+
+Run the following command to run various linting tools on the repository:
+```sh
+./run lint # optional: specify directories
+```
+
+> Note: Run `run lint --help` to see the list of tools that are used. If a lint command fails due to a missing module or executable on your system, you can install it using `python3 -m pip install <tool>`.
+
+### Working with Visual Studio Code
+
+Visual Studio Code can be utilized to develop Holoscan SDK. The `.devcontainer` folder holds the configuration for setting up a [development container](https://code.visualstudio.com/docs/remote/containers) with all necessary tools and libraries installed.
+
+The `./run` script contains `vscode` and `vscode_remote` commands for launching Visual Studio Code in a container or from a remote machine, respectively.
+
+- To launch Visual Studio Code in a dev container, use `./run vscode`.
+- To attach to an existing dev container from a remote machine, use `./run vscode_remote`. For more information, refer to the instructions from `./run vscode_remote -h`.
+
+Once Visual Studio Code is launched, the development container will be built and the recommended extensions will be installed automatically, along with CMake being configured.
+
+#### Configuring CMake in the Development Container
+
+For manual configuration of CMake, open the command palette (`Ctrl + Shift + P`) and run the `CMake: Configure` command.
+
+#### Building the Source Code in the Development Container
+
+The source code in the development container can be built by either pressing `Ctrl + Shift + B` or executing `Tasks: Run Build Task` from the command palette (`Ctrl + Shift + P`).
+
+#### Debugging the Source Code in the Development Container
+
+To debug the source code in the development container, open the `Run and Debug` view (`Ctrl + Shift + D`), select a debug configuration from the dropdown list, and press `F5` to initiate debugging.
 
 ## Troubleshooting
 
@@ -232,16 +259,58 @@ Failed to open device, OPEN: Permission denied
 ```
 This means the `/dev/video*` device is not available to the user from within docker. You can make it publicly available with `sudo chmod 666 /dev/video*` from your host.
 
+### Cuda driver error 101 (CUDA_ERROR_INVALID_DEVICE): invalid device ordinal
+
+The error can happen when running in a multi-GPU environment:
+
+```
+[2023-02-10 10:42:31.039] [holoscan] [error] [gxf_wrapper.cpp:68] Exception occurred for operator: 'holoviz' - Cuda driver error 101 (CUDA_ERROR_INVALID_DEVICE): invalid device ordinal
+2023-02-10 10:42:31.039 ERROR gxf/std/entity_executor.cpp@509: Failed to tick codelet holoviz in entity: holoviz code: GXF_FAILURE
+```
+
+This is due to the fact that operators in your application run on different GPUs, depending on their internal implementation, preventing data from being freely exchanged between them.
+
+To fix the issue, either:
+1. Configure or modify your operators to copy data across the appropriate GPUs (using [`cuPointerGetAttribute`](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__UNIFIED.html#group__CUDA__UNIFIED_1g0c28ed0aff848042bc0533110e45820c) and [`cuMemCpyPeerAsync()`](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g82fcecb38018e64b98616a8ac30112f2) internally). This comes at a cost and should only be done when leveraging multiple GPUs is required for improving performance (parallel processing).
+2. Configure or modify your operators to use the same GPU (using [`cudaSetDevice()`](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__DEVICE.html#group__CUDART__DEVICE_1g159587909ffa0791bbe4b40187a4c6bb) internally).
+3. Restrict your environment using [`CUDA_VISIBLE_DEVICES`](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html?highlight=CUDA_VISIBLE_DEVICES#cuda-environment-variables) to only expose a single GPU:
+   ```sh
+   export CUDA_VISIBLE_DEVICES=<GPU_ID>
+   ```
+
+Note that this generally occurs because the `HolovizOp` operator needs to use the GPU connected to the display, but other operators in the Holoscan pipeline might default to another GPU depending on their internal implementation. The index of the GPU connected to the display can be found by running `nvidia-smi` from a command prompt and looking for the GPU where the `Disp.A` value shows `On`. In the example below, the GPU `0` should be used before passing data to `HolovizOp`.
+
+```
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 525.85.12    Driver Version: 525.85.12    CUDA Version: 12.0     |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                               |                      |               MIG M. |
+|===============================+======================+======================|
+|   0  NVIDIA RTX A5000    On   | 00000000:09:00.0  On |                  Off |
+| 30%   29C    P8    11W / 230W |    236MiB / 24564MiB |      0%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+|   1  NVIDIA RTX A5000    On   | 00000000:10:00.0 Off |                  Off |
+| 30%   29C    P8    11W / 230W |    236MiB / 24564MiB |      0%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+```
+
+_Note: Holoviz should support copying data across CUDA devices in a future release._
 
 ## Repository structure
 
-The repository is organized as such:
-- `apps/`: source code for the sample applications
+The repository is organized as such:s
 - `cmake/`: CMake configuration files
+- `data/`: directory where data will be downloaded
 - `examples/`: source code for the examples
 - `gxf_extensions/`: source code for the holoscan SDK gxf codelets
-- `include/`: source code for the holoscan SDK
+- `include/`: source code for the holoscan SDK core
 - `modules/`: source code for the holoscan SDK modules
+- `patches/`: patch files applied to dependencies
+- `python/`: python bindings for the holoscan SDK
 - `scripts/`: utility scripts
-- `src/`: source code for the holoscan SDK
+- `src/`: source code for the holoscan SDK core
 - `tests/`: tests for the holoscan SDK

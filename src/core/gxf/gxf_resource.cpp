@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,17 @@
 #include "holoscan/core/fragment.hpp"
 
 namespace holoscan::gxf {
+
+GXFResource::GXFResource(const std::string& name, nvidia::gxf::Component* component) {
+  id_ = component->cid();
+  name_ = name;
+  gxf_context_ = component->context();
+  gxf_eid_ = component->eid();
+  gxf_cid_ = component->cid();
+  GxfComponentType(gxf_context_, gxf_cid_, &gxf_tid_);
+  gxf_cname_ = name;
+  gxf_cptr_ = component;
+}
 
 void GXFResource::initialize() {
   Resource::initialize();

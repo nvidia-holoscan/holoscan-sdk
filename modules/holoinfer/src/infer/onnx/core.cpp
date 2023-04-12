@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,27 +20,14 @@ namespace holoscan {
 namespace inference {
 
 void OnnxInfer::print_model_details() {
-  std::cout << "Input node count: " << input_nodes_ << std::endl;
-  std::cout << "Output node count: " << output_nodes_ << std::endl;
-
-  std::cout << "Input names: [";
-  for (const auto& in : input_names_) std::cout << in << " ";
-  std::cout << "]" << std::endl;
-
-  std::cout << "Input Dimension : [ ";
-  for (const auto& sh : input_dims_) std::cout << sh << " ";
-  std::cout << "]" << std::endl;
-
-  std::cout << "Input Type: " << input_type_ << std::endl;
-
-  std::cout << "Output names: [";
-  for (const auto& out : output_names_) std::cout << out << " ";
-  std::cout << "]" << std::endl;
-
-  std::cout << "Output Dimension : [ ";
-  for (const auto& sh : output_dims_) std::cout << sh << " ";
-  std::cout << "]" << std::endl;
-  std::cout << "Output Type: " << output_type_ << std::endl;
+  HOLOSCAN_LOG_INFO("Input node count: {}", input_nodes_);
+  HOLOSCAN_LOG_INFO("Output node count: {}", output_nodes_);
+  HOLOSCAN_LOG_INFO("Input names: [{}]", fmt::join(input_names_, ", "));
+  HOLOSCAN_LOG_INFO("Input dims: [{}]", fmt::join(input_dims_, ", "));
+  HOLOSCAN_LOG_INFO("Input Type: {}", input_type_);
+  HOLOSCAN_LOG_INFO("Output names: [{}]", fmt::join(output_names_, ", "));
+  HOLOSCAN_LOG_INFO("Output dims: [{}]", fmt::join(output_dims_, ", "));
+  HOLOSCAN_LOG_INFO("Output Type: {}", output_type_);
 }
 
 void OnnxInfer::populate_model_details() {

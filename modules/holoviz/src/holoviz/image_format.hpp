@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,50 +40,54 @@ namespace holoscan::viz {
  *            component (if one exists) is a regular unsigned normalized value
  */
 enum class ImageFormat {
-    R8_UINT,     ///< specifies a one-component,
-                 ///  8-bit unsigned integer format that has a single 8-bit R component
-    R16_UINT,    ///< specifies a one-component,
-                 ///  16-bit unsigned integer format that has a single 16-bit R component
-    R16_SFLOAT,  ///< specifies a one-component,
-                 ///  16-bit signed floating-point format that has a single 16-bit R component
-    R32_UINT,    ///< specifies a one-component,
-                 ///  16-bit unsigned integer format that has a single 16-bit R component
-    R32_SFLOAT,  ///< specifies a one-component,
-                 ///  32-bit signed floating-point format that has a single 32-bit R component
+  R8_UINT,     ///< specifies a one-component,
+               ///  8-bit unsigned integer format that has a single 8-bit R component
+  R16_UINT,    ///< specifies a one-component,
+               ///  16-bit unsigned integer format that has a single 16-bit R component
+  R16_SFLOAT,  ///< specifies a one-component,
+               ///  16-bit signed floating-point format that has a single 16-bit R component
+  R32_UINT,    ///< specifies a one-component,
+               ///  16-bit unsigned integer format that has a single 16-bit R component
+  R32_SFLOAT,  ///< specifies a one-component,
+               ///  32-bit signed floating-point format that has a single 32-bit R component
 
-    R8G8B8_UNORM,  ///< specifies a three-component,
-                   ///  24-bit unsigned normalized format that has an 8-bit R component in byte 0,
-                   ///  an 8-bit G component in byte 1, and an 8-bit B component in byte 2
-    B8G8R8_UNORM,  ///< specifies a three-component,
-                   ///  24-bit unsigned normalized format that has an 8-bit B component in byte 0,
-                   ///  an 8-bit G component in byte 1, and an 8-bit R component in byte 2
+  R8G8B8_UNORM,  ///< specifies a three-component,
+                 ///  24-bit unsigned normalized format that has an 8-bit R component in byte 0,
+                 ///  an 8-bit G component in byte 1, and an 8-bit B component in byte 2
+  B8G8R8_UNORM,  ///< specifies a three-component,
+                 ///  24-bit unsigned normalized format that has an 8-bit B component in byte 0,
+                 ///  an 8-bit G component in byte 1, and an 8-bit R component in byte 2
 
-    R8G8B8A8_UNORM,  ///< specifies a four-component,
-                     ///  32-bit unsigned normalized format that has an 8-bit R component in byte 0,
-                     ///  an 8-bit G component in byte 1, an 8-bit B component in byte 2,
-                     ///  and an 8-bit A component in byte 3
-    B8G8R8A8_UNORM,  ///< specifies a four-component,
-                     ///  32-bit unsigned normalized format that has an 8-bit B component in byte 0,
-                     ///  an 8-bit G component in byte 1, an 8-bit R component in byte 2,
-                     ///  and an 8-bit A component in byte 3
-    R16G16B16A16_UNORM,  ///< specifies a four-component,
-                         ///  64-bit unsigned normalized format that has
-                         ///  a 16-bit R component in bytes 0..1,
-                         ///  a 16-bit G component in bytes 2..3,
-                         ///  a 16-bit B component in bytes 4..5,
-                         ///  and a 16-bit A component in bytes 6..7
-    R16G16B16A16_SFLOAT,  ///< specifies a four-component,
-                          ///  64-bit signed floating-point format that has
-                          ///  a 16-bit R component in bytes 0..1,
-                          ///  a 16-bit G component in bytes 2..3,
-                          ///  a 16-bit B component in bytes 4..5,
-                          ///  and a 16-bit A component in bytes 6..7
-    R32G32B32A32_SFLOAT  ///< specifies a four-component,
-                         ///  128-bit signed floating-point format that has
-                         ///  a 32-bit R component in bytes 0..3,
-                         ///  a 32-bit G component in bytes 4..7,
-                         ///  a 32-bit B component in bytes 8..11,
-                         ///  and a 32-bit A component in bytes 12..15
+  R8G8B8A8_UNORM,  ///< specifies a four-component,
+                   ///  32-bit unsigned normalized format that has an 8-bit R component in byte 0,
+                   ///  an 8-bit G component in byte 1, an 8-bit B component in byte 2,
+                   ///  and an 8-bit A component in byte 3
+  B8G8R8A8_UNORM,  ///< specifies a four-component,
+                   ///  32-bit unsigned normalized format that has an 8-bit B component in byte 0,
+                   ///  an 8-bit G component in byte 1, an 8-bit R component in byte 2,
+                   ///  and an 8-bit A component in byte 3
+  R16G16B16A16_UNORM,   ///< specifies a four-component,
+                        ///  64-bit unsigned normalized format that has
+                        ///  a 16-bit R component in bytes 0..1,
+                        ///  a 16-bit G component in bytes 2..3,
+                        ///  a 16-bit B component in bytes 4..5,
+                        ///  and a 16-bit A component in bytes 6..7
+  R16G16B16A16_SFLOAT,  ///< specifies a four-component,
+                        ///  64-bit signed floating-point format that has
+                        ///  a 16-bit R component in bytes 0..1,
+                        ///  a 16-bit G component in bytes 2..3,
+                        ///  a 16-bit B component in bytes 4..5,
+                        ///  and a 16-bit A component in bytes 6..7
+  R32G32B32A32_SFLOAT,  ///< specifies a four-component,
+                        ///  128-bit signed floating-point format that has
+                        ///  a 32-bit R component in bytes 0..3,
+                        ///  a 32-bit G component in bytes 4..7,
+                        ///  a 32-bit B component in bytes 8..11,
+                        ///  and a 32-bit A component in bytes 12..15
+  R8_UNORM,             ///< specifies a one-component,
+                        ///  8-bit unsigned normalized format that has a single 8-bit R component.
+  R16_UNORM,            ///< specifies a one-component,
+                        ///  16-bit unsigned normalized format that has a single 8-bit R component.
 };
 
 }  // namespace holoscan::viz

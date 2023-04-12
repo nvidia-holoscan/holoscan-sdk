@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,6 @@
 #include <gxf/std/tensor.hpp>
 #include <holoscan/core/gxf/gxf_extension_registrar.hpp>
 #include <holoscan/core/gxf/gxf_tensor.hpp>
-#include <holoscan/std_ops.hpp>
 
 #include "./receive_tensor_gxf.hpp"
 #include "./send_tensor_gxf.hpp"
@@ -169,12 +168,6 @@ int main(int argc, char** argv) {
   holoscan::load_env_log_level();
 
   auto app = holoscan::make_application<App>();
-
-  // Get the configuration
-  auto config_path = std::filesystem::canonical(argv[0]).parent_path();
-  config_path += "/app_config.yaml";
-  app->config(config_path);
-
   app->run();
 
   return 0;

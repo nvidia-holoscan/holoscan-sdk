@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,9 +16,13 @@
  */
 
 #include "holoscan/operators/multiai_inference/multiai_inference.hpp"
+
+#include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/gxf/entity.hpp"
+#include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/utils/holoinfer_utils.hpp"
 
 /**
  * Custom YAML parser for DataMap class
@@ -89,6 +93,8 @@ struct YAML::convert<holoscan::ops::MultiAIInferenceOp::DataVecMap> {
 namespace holoscan::ops {
 
 void MultiAIInferenceOp::setup(OperatorSpec& spec) {
+  register_converter<DataMap>();
+  register_converter<DataVecMap>();
   auto& transmitter = spec.output<gxf::Entity>("transmitter");
   spec.param(backend_, "backend", "Supported backend");
   spec.param(model_path_map_,
@@ -127,7 +133,121 @@ void MultiAIInferenceOp::setup(OperatorSpec& spec) {
 void MultiAIInferenceOp::initialize() {
   register_converter<DataMap>();
   register_converter<DataVecMap>();
-  GXFOperator::initialize();
+  Operator::initialize();
+}
+
+void MultiAIInferenceOp::start() {
+  try {
+    // Check for the validity of parameters from configuration
+    auto status = HoloInfer::multiai_inference_validity_check(model_path_map_.get().get_map(),
+                                                              pre_processor_map_.get().get_map(),
+                                                              inference_map_.get().get_map(),
+                                                              in_tensor_names_.get(),
+                                                              out_tensor_names_.get());
+    if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
+      HoloInfer::raise_error(module_, "Parameter Validation failed: " + status.get_message());
+    }
+
+    bool is_aarch64 = HoloInfer::is_platform_aarch64();
+    if (is_aarch64 && backend_.get().compare("onnxrt") == 0 && !infer_on_cpu_.get()) {
+      HoloInfer::raise_error(module_, "Onnxruntime with CUDA not supported on aarch64.");
+    }
+
+    // Create multiai specification structure
+    multiai_specs_ = std::make_shared<HoloInfer::MultiAISpecs>(backend_.get(),
+                                                               model_path_map_.get().get_map(),
+                                                               inference_map_.get().get_map(),
+                                                               is_engine_path_.get(),
+                                                               infer_on_cpu_.get(),
+                                                               parallel_inference_.get(),
+                                                               enable_fp16_.get(),
+                                                               input_on_cuda_.get(),
+                                                               output_on_cuda_.get());
+
+    // Create holoscan inference context
+    holoscan_infer_context_ = std::make_unique<HoloInfer::InferContext>();
+
+    // Set and transfer inference specification to inference context
+    // Multi AI specifications are updated with memory allocations
+    status = holoscan_infer_context_->set_inference_params(multiai_specs_);
+    if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
+      HoloInfer::raise_error(module_, "Start, Parameters setup, " + status.get_message());
+    }
+  } catch (const std::bad_alloc& b_) {
+    HoloInfer::raise_error(module_, "Start, Memory allocation, Message: " + std::string(b_.what()));
+  } catch (const std::runtime_error& rt_) {
+    HOLOSCAN_LOG_ERROR(rt_.what());
+    throw;
+  } catch (...) { HoloInfer::raise_error(module_, "Start, Unknown exception"); }
+}
+
+void MultiAIInferenceOp::stop() {
+  holoscan_infer_context_.reset();
+}
+
+gxf_result_t timer_check(HoloInfer::TimePoint& start, HoloInfer::TimePoint& end,
+                         const std::string& module) {
+  HoloInfer::timer_init(end);
+  int64_t delta = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  HOLOSCAN_LOG_DEBUG("{} : {} ms", module, delta);
+  return GXF_SUCCESS;
+}
+
+void MultiAIInferenceOp::compute(InputContext& op_input, OutputContext& op_output,
+                                 ExecutionContext& context) {
+  // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
+  auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
+                                                                       allocator_.get()->gxf_cid());
+
+  try {
+    // Extract relevant data from input GXF Receivers, and update multiai specifications
+    gxf_result_t stat =
+        holoscan::utils::multiai_get_data_per_model(op_input,
+                                                    in_tensor_names_.get(),
+                                                    multiai_specs_->data_per_tensor_,
+                                                    dims_per_tensor_,
+                                                    input_on_cuda_.get(),
+                                                    module_);
+
+    if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Tick, Data extraction"); }
+
+    auto status = HoloInfer::map_data_to_model_from_tensor(pre_processor_map_.get().get_map(),
+                                                           multiai_specs_->data_per_model_,
+                                                           multiai_specs_->data_per_tensor_);
+    if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
+      HoloInfer::raise_error(module_, "Tick, Data mapping, " + status.get_message());
+    }
+
+    // Execute inference and populate output buffer in multiai specifications
+    status = holoscan_infer_context_->execute_inference(multiai_specs_->data_per_model_,
+                                                        multiai_specs_->output_per_model_);
+    if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
+      HoloInfer::raise_error(module_, "Tick, Inference execution, " + status.get_message());
+    }
+    HOLOSCAN_LOG_DEBUG(status.get_message());
+
+    // Get output dimensions
+    auto model_out_dims_map = holoscan_infer_context_->get_output_dimensions();
+
+    auto cont = context.context();
+
+    // Transmit output buffers via a single GXF transmitter
+    stat = holoscan::utils::multiai_transmit_data_per_model(cont,
+                                                            inference_map_.get().get_map(),
+                                                            multiai_specs_->output_per_model_,
+                                                            op_output,
+                                                            out_tensor_names_.get(),
+                                                            model_out_dims_map,
+                                                            output_on_cuda_.get(),
+                                                            transmit_on_cuda_.get(),
+                                                            data_type_,
+                                                            allocator.value(),
+                                                            module_);
+    if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Tick, Data Transmission"); }
+  } catch (const std::runtime_error& r_) {
+    HoloInfer::raise_error(module_,
+                           "Tick, Inference execution, Message->" + std::string(r_.what()));
+  } catch (...) { HoloInfer::raise_error(module_, "Tick, unknown exception"); }
 }
 
 }  // namespace holoscan::ops

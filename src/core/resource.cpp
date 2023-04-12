@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,5 +21,14 @@
 
 namespace holoscan {
 
+YAML::Node Resource::to_yaml_node() const {
+  YAML::Node node = Component::to_yaml_node();
+  if (spec_) {
+    node["spec"] = spec_->to_yaml_node();
+  } else {
+    node["spec"] = YAML::Null;
+  }
+  return node;
+}
 
 }  // namespace holoscan

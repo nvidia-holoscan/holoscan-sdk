@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,41 +36,36 @@ set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 
 # Just one package will all the components
 set(CPACK_DEB_COMPONENT_INSTALL 1)
-set(CPACK_COMPONENTS_GROUPING ONE_PER_GROUP)
-set(CPACK_DEBIAN_ENABLE_COMPONENT_DEPENDS 1)
+set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
 
 # List of the components that should be installed
-set(CPACK_COMPONENTS_ALL 
+set(CPACK_COMPONENTS_ALL
   holoscan-core
   holoscan-gxf_extensions
   holoscan-gxf_libs
   holoscan-gxf_bins
   holoscan-modules
   holoscan-dependencies
-  holoscan-apps
-  holoscan-data
+  holoscan-examples
   holoscan-python_libs
   )
 
-set(CPACK_DEBIAN_DEV_PACKAGE_DEPENDS "cuda (>=11.6.1), cuda (<<12.0), libnvinfer-bin (>= 8.2.3), libnvinfer-plugin8 (>=8.2.3),libnvinfer8 (>= 8.2.3), libnvonnxparsers8 (>= 8.2.3)")
-set(CPACK_COMPONENT_APPS_DEPENDS DEV)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "cuda-cudart-dev-11-6 | cuda-cudart-dev-11-7 | cuda-cudart-dev-11-8, \
+cuda-nvcc-11-6 | cuda-nvcc-11-7 | cuda-nvcc-11-8, \
+libnpp-11-6 | libnpp-11-7 | libnpp-11-8, \
+libnvinfer-bin (>= 8.2.3), \
+libvulkan1 (>=1.2.131), libx11-6 (>=1.6.9)")
 
 include(CPack)
 
 message(STATUS "Components to pack: ${CPACK_COMPONENTS_ALL}")
 
 # Create the Dev package
-cpack_add_component_group(DEV "Holoscan - Dev")
-cpack_add_component(holoscan-core GROUP DEV)
-cpack_add_component(holoscan-python_libs GROUP DEV)
-cpack_add_component(holoscan-gxf_extensions GROUP DEV)
-cpack_add_component(holoscan-gxf_libs GROUP DEV)
-cpack_add_component(holoscan-gxf_bins GROUP DEV)
-cpack_add_component(holoscan-modules GROUP DEV)
-cpack_add_component(holoscan-dependencies GROUP DEV)
-
-# Create the Apps package
-cpack_add_component_group(APPS "Holoscan - Sample Applications")
-cpack_add_component(holoscan-apps GROUP APPS)
-cpack_add_component(holoscan-data GROUP APPS)
-
+cpack_add_component(holoscan-core)
+cpack_add_component(holoscan-python_libs)
+cpack_add_component(holoscan-gxf_extensions)
+cpack_add_component(holoscan-gxf_libs)
+cpack_add_component(holoscan-gxf_bins)
+cpack_add_component(holoscan-modules)
+cpack_add_component(holoscan-dependencies)
+cpack_add_component(holoscan-examples)

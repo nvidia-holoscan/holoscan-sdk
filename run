@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Error out if a command fails
+set -e
+
 #===============================================================================
 # Default values for environment variables.
 #===============================================================================
@@ -26,12 +29,7 @@ init_globals() {
         export RUN_SCRIPT_FILE="$(readlink -f "${BASH_SOURCE[0]}")"
     fi
 
-    export TOP=$(git rev-parse --show-toplevel 2> /dev/null || dirname "${RUN_SCRIPT_FILE}")
-
-    # If this repository is dev repository, consider public folder as TOP folder
-    if [ -d ${TOP}/public ]; then
-        export TOP=${TOP}/public
-    fi
+    export TOP=$(dirname "${RUN_SCRIPT_FILE}")
 
     HOLOSCAN_PY_EXE=${HOLOSCAN_PY_EXE:-"python3"}
     export HOLOSCAN_PY_EXE
@@ -286,9 +284,9 @@ run_command() {
     local cmd="$*"
 
     if [ "${DO_DRY_RUN}" != "true" ]; then
-        c_echo B "$(date -u '+%Y-%m-%d %H:%M:%S') " W "\$ " G "${cmd}"
+        c_echo_err B "$(date -u '+%Y-%m-%d %H:%M:%S') " W "\$ " G "${cmd}"
     else
-        c_echo B "$(date -u '+%Y-%m-%d %H:%M:%S') " C "[dryrun] " W "\$ " G "${cmd}"
+        c_echo_err B "$(date -u '+%Y-%m-%d %H:%M:%S') " C "[dryrun] " W "\$ " G "${cmd}"
     fi
 
     [ "$(echo -n "$@")" = "" ] && return 1 # return 1 if there is no command available
@@ -321,7 +319,7 @@ Environments:
 '
 }
 install_gxf() {
-    local gxf_tag=${GXF_TAG:-2.5.0-8fbe43cb}
+    local gxf_tag=${GXF_TAG:-2.5.0-6b2e34ec}
     local ngc_cli_org=${NGC_CLI_ORG:-nvidia}
     local ngc_cli_team=${NGC_CLI_TEAM:-clara-holoscan}
     local GXF_MODIFIED=false
@@ -440,26 +438,38 @@ get_buildtype_str() {
     echo -n "${build_type_str}"
 }
 
-get_build_platform_option() {
-    local build_opt="${1:-}"
+get_platform_str() {
+    local platform="${1:-}"
+    local platform_str
 
-    case "${build_opt}" in
-        amd64|x86_64|x86)
-            build_opt="--platform linux/amd64"
+    case "${platform}" in
+        amd64|x86_64|x86|linux/amd64)
+            platform_str="linux/amd64"
             ;;
-        arm64|aarch64|arm)
-            build_opt="--platform linux/arm64"
-            ;;
-        *)
-            if [ -n "${HOLOSCAN_BUILD_PLATFORM}" ]; then
-                build_opt="--platform ${HOLOSCAN_BUILD_PLATFORM}"
-            else
-                build_opt=""
-            fi
+        arm64|aarch64|arm|linux/arm64)
+            platform_str="linux/arm64"
             ;;
     esac
 
-    echo -n "${build_opt}"
+    echo -n "${platform_str}"
+}
+
+get_cuda_archs() {
+    local cuda_archs="${1:-}"
+
+    case "${cuda_archs}" in
+        native|NATIVE)
+            cuda_archs_str="NATIVE"
+            ;;
+        all|ALL)
+            cuda_archs_str="ALL"
+            ;;
+        *)
+            cuda_archs_str="${1:-}"
+            ;;
+    esac
+
+    echo -n "${cuda_archs_str}"
 }
 
 clear_cache_desc() { c_echo 'Clear cache folders (including build/install folders)
@@ -508,44 +518,106 @@ setup() {
 }
 
 build_image_desc() { c_echo 'Build dev image
+  --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
+        Default: current host platform
+        Associated environment variable: HOLOSCAN_BUILD_PLATFORM
 '
 }
 build_image() {
-    local platform=${1:-}
-    local build_opts=$(get_build_platform_option "${platform}")
-    c_echo W "Using docker build option: '${build_opts}'"
+    # Parse env variables first or set default values
+    local platform="${HOLOSCAN_BUILD_PLATFORM:-$(get_platform_str $(uname -p))}"
+
+    # Parse CLI arguments next
+    ARGS=("$@")
+    local i
+    local arg
+    for i in "${!ARGS[@]}"; do
+        arg="${ARGS[i]}"
+        if [ "$arg" = "--platform" ]; then
+           platform=$(get_platform_str "${ARGS[i+1]}")
+        fi
+    done
 
     run_command export DOCKER_BUILDKIT=1
-    run_command docker build ${build_opts} \
+    run_command docker build \
         --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --platform ${platform} \
         --network=host \
         -t holoscan-sdk-dev \
         ${TOP}
 }
 
-build_desc() { c_echo 'Build (args: one of [debug, release, rel-debug])
+build_desc() { c_echo 'Build the project
 
-This command will build the project.
-
-Export CMAKE_BUILD_PATH (default: "build") to change the build path.
-  e.g.,
-
-    export CMAKE_BUILD_PATH=build-arm64
+This command will build the project with optional configuration arguments.
 
 Arguments:
-  $1 - CMAKE_BUILD_TYPE (one of ["debug", "release", "rel-debug"])
+  --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
+        Default: current host platform
+        Associated environment variable: HOLOSCAN_BUILD_PLATFORM
+  --cudaarchs [native | all | <custom_arch_list>]
+        Default: native
+        Associated environment variable: CMAKE_CUDA_ARCHITECTURES
+  --type [debug | release | rel-debug] : Specify the type of build
+        Default: release
+        Associated environment variable: CMAKE_BUILD_TYPE
+  --buildpath <build_directory> : Change the build path.
+        Default: build
+        Associated environment variable: CMAKE_BUILD_PATH
+  --installprefix <install_directory> : Specify the install directory
+        Default: install
+        Associated environment variable: CMAKE_INSTALL_PREFIX
+  --reconfigure: Force reconfiguration of the CMake project. By default CMake is only run if
+        a CMakeCache.txt does not exist in the build directory or if CMake detects a reconfigure
+        is needed.
+        Default: false
 '
 }
 build() {
-    local buildtype=$(get_buildtype_str $1)
+    # Parse env variables first or set default values
+    local platform="${HOLOSCAN_BUILD_PLATFORM:-$(get_platform_str $(uname -p))}"
+    local cuda_archs="${CMAKE_CUDA_ARCHITECTURES:-NATIVE}"
+    local build_type="${CMAKE_BUILD_TYPE:-release}"
     local build_path="${CMAKE_BUILD_PATH:-build}"
     local install_prefix="${CMAKE_INSTALL_PREFIX:-install}"
+    local reconfigure=false
+
+    # Parse CLI arguments next
+    ARGS=("$@")
+    local i
+    local arg
+    for i in "${!ARGS[@]}"; do
+        arg="${ARGS[i]}"
+        if [ "$arg" = "--platform" ]; then
+           platform=$(get_platform_str "${ARGS[i+1]}")
+        fi
+        if [ "$arg" = "--cudaarchs" ]; then
+           cuda_archs=$(get_cuda_archs "${ARGS[i+1]}")
+           reconfigure=true
+        fi
+        if [ "$arg" = "--type" ]; then
+           build_type=$(get_buildtype_str "${ARGS[i+1]}")
+           reconfigure=true
+        fi
+        if [ "$arg" = "--buildpath" ]; then
+           build_path="${ARGS[i+1]}"
+        fi
+        if [ "$arg" = "--installprefix" ]; then
+           install_prefix="${ARGS[i+1]}"
+        fi
+        if [ "$arg" = "--reconfigure" ]; then
+           reconfigure=true
+        fi
+    done
 
     setup
-    build_image
+    build_image --platform ${platform}
     install_gxf
 
     # DOCKER PARAMETERS
+    #
+    # -it
+    #   Making the container interactive allows cancelling the build
     #
     # --rm
     #   Deletes the container after the command runs
@@ -568,22 +640,30 @@ build() {
     # -S . -B ${build_path}
     #   Generic configuration
     #
-    # -D CMAKE_BUILD_TYPE=${buildtype}
+    # -D CMAKE_BUILD_TYPE=${build_type}
     #   Define the build type (release, debug...). Can be passed as env to docker also.
     #
-    run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host \
+    # -D CMAKE_CUDA_ARCHITECTURES=${cuda_archs}
+    #   Define the cuda architectures to build for (NATIVE, ALL, custom). If custom or ALL, the
+    #   last arch will be used for real and virtual architectures (PTX, forward compatible) while
+    #   the previous archs will be real only.
+    #
+    run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host -it \
         -u $(id -u):$(id -g) \
         -v ${TOP}:/workspace/holoscan-sdk \
         -w /workspace/holoscan-sdk \
         -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
         holoscan-sdk-dev \
         bash -c "
-            cmake -S . -B ${build_path} -G Ninja \
-              -D CMAKE_BUILD_TYPE=${buildtype} \
+            if [ ! -f '${build_path}/build.ninja' ] || ${reconfigure} ; then \
+                cmake -S . -B ${build_path} -G Ninja \
+                  -D CMAKE_CUDA_ARCHITECTURES=\"${cuda_archs}\" \
+                  -D CMAKE_BUILD_TYPE=${build_type}; \
+            fi \
             && cmake --build ${build_path} -j \
             && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core \
             && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_extensions \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-apps \
+            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-examples \
             && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_libs \
             && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_bins \
             && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-modules \
@@ -596,44 +676,86 @@ build() {
 # Section: Test
 #===============================================================================
 
-lint_desc() { c_echo 'Lint code
+lint_desc() { c_echo 'Lint the repository
+
+Python linting: black, isort, ruff
+C++ linting: cpplint
+Spelling: codespell
+
+Arguments:
+  $@ - directories to lint (default: .)
 '
 }
+
 lint() {
-    c_echo W "Linting code..."
-    pushd ${TOP} > /dev/null
-    run_command ${HOLOSCAN_PY_EXE} scripts/include_checker.py apps gxf_extensions tests
-    popd > /dev/null
-}
+    local DIR_TO_RUN=${@:-"."}
 
-cpplint_desc() { c_echo 'CPPLint code
-'
-}
+    # We use $(command) || exit_code=1 to run all linting tools, and exit
+    # with failure after all commands were executed if any of them failed
+    local exit_code=0
 
-cpplint() {
-    c_echo W "CPPLinting code..."
     pushd ${TOP} > /dev/null
-    local DIR_TO_RUN="apps examples gxf_extensions modules python/pybind11 tests"
-    if [ -n "$1" ]; then               # directories was specified
-        run_command ${HOLOSCAN_PY_EXE} -m cpplint --recursive "$@"
-    else
-        run_command ${HOLOSCAN_PY_EXE} -m cpplint --recursive ${DIR_TO_RUN}
-    fi
+
+    c_echo W "Linting Python"
+    run_command ruff $DIR_TO_RUN || exit_code=1
+    run_command ${HOLOSCAN_PY_EXE} -m isort -c $DIR_TO_RUN || exit_code=1
+    run_command ${HOLOSCAN_PY_EXE} -m black --check $DIR_TO_RUN || exit_code=1
+
+    c_echo W "Linting C++"
+    # We use `grep -v` to hide verbose output that drowns actual errors
+    # Since we care about the success/failure of cpplitn and not of grep, we:
+    #  1. use `set -o pipefail` to fail if `cpplint` fails
+    #  2. use `grep -v ... || true` to ignore whether grep hid any output
+    run_command set -o pipefail; ${HOLOSCAN_PY_EXE} -m cpplint \
+            --exclude .cache \
+            --exclude build \
+            --exclude install \
+            --exclude build-\* \
+            --exclude install-\* \
+            --recursive $DIR_TO_RUN \
+        | { grep -v "Ignoring\|Done processing" || true; } || exit_code=1
+
+
+    c_echo W "Code spelling"
+    run_command codespell $DIR_TO_RUN || exit_code=1
+
     popd > /dev/null
+
+    exit $exit_code
 }
 
 coverage_desc() { c_echo 'Execute code coverage
+  --type [debug | release | rel-debug] : Specify the type of build
+        Default: release
+        Associated environment variable: CMAKE_BUILD_TYPE
+  --buildpath <build_directory> : Change the build path.
+        Default: build
+        Associated environment variable: CMAKE_BUILD_PATH
 '
 }
-
 coverage() {
-    local buildtype=$(get_buildtype_str $1)
+    # Parse env variables first or set default values
+    local build_type="${CMAKE_BUILD_TYPE:-release}"
     local build_path="${CMAKE_BUILD_PATH:-build}"
+
+    # Parse CLI arguments next
+    ARGS=("$@")
+    local i
+    local arg
+    for i in "${!ARGS[@]}"; do
+        arg="${ARGS[i]}"
+        if [ "$arg" = "--type" ]; then
+           build_type=$(get_buildtype_str "${ARGS[i+1]}")
+        fi
+        if [ "$arg" = "--buildpath" ]; then
+           build_path="${ARGS[i+1]}"
+        fi
+    done
     local working_dir=${1:-${build_path}}
 
     # Find the nvidia_icd.json file which could reside at different paths
     # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
+    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
 
     run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host \
         -u $(id -u):$(id -g) \
@@ -649,12 +771,12 @@ coverage() {
         -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
         -e HOLOSCAN_LOG_LEVEL=INFO \
         -e PYTHONPATH=/workspace/holoscan-sdk/${working_dir}/python/lib \
-        -e CMAKE_BUILD_TYPE=${buildtype} \
         -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
         holoscan-sdk-dev \
         bash -c "
             cmake -S . -B ${build_path} -G Ninja \
-              -D HOLOSCAN_BUILD_COVERAGE=ON \
+                -D HOLOSCAN_BUILD_COVERAGE=ON \
+                -D CMAKE_BUILD_TYPE=${build_type} \
             && cmake --build ${build_path} \
             && cmake --build ${build_path} --target coverage
         "
@@ -719,7 +841,7 @@ launch() {
 
     # Find the nvidia_icd.json file which could reside at different paths
     # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
+    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
 
     # DOCKER PARAMETERS
     #
@@ -788,6 +910,94 @@ launch() {
         -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
         -e CUPY_CACHE_DIR=/workspace/holoscan-sdk/.cupy/kernel_cache \
         holoscan-sdk-dev "$@"
+}
+
+vscode_desc() { c_echo 'Launch VSCode in DevContainer
+
+Launch a VSCode instance in a Docker container with the development environment.
+'
+}
+vscode() {
+    if ! command -v code > /dev/null; then
+        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
+    fi
+
+    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
+    local workspace_path_hex
+
+    if [ "${workspace_path}" != "${TOP}" ]; then
+        # Set the environment variable 'HOLOSCAN_PUBLIC_FOLDER' to the resolved path relative to the
+        # workspace path if the workspace path is different than the TOP folder so that
+        # the DevContainer can build files under the Holoscan source root folder while mounting the
+        # workspace folder.
+        run_command export HOLOSCAN_PUBLIC_FOLDER=$(realpath --relative-to=${workspace_path} ${TOP})
+    fi
+
+    # Allow connecting from docker. This is not needed for WSL2 (`SI:localuser:wslg` is added by default)
+    run_command xhost +local:docker
+
+    # Install the VSCode Remote Development extension.
+    # Checking if the extension is already installed is slow, so we always install it so that
+    # the installation can be skipped if the extension is already installed.
+    run_command code --force --install-extension ms-vscode-remote.vscode-remote-extensionpack
+
+    # For now, there is no easy way to launch DevContainer directly from the command line.
+    # ('devcontainer' CLI is only available after manually executing 'Remote-Containers: Install devcontainer CLI' command)
+    # Here, we launch VSCode with .devcontainer/devcontainer.json with '--folder-uri' option to open the current folder in the container.
+    # See https://github.com/microsoft/vscode-remote-release/issues/2133
+    workspace_path_hex=$(echo -n ${workspace_path} | xxd -p)
+    workspace_path_hex="${workspace_path_hex//[[:space:]]/}"
+    c_echo B "Local workspace path: " W "${workspace_path} (${workspace_path_hex})"
+    run_command code --folder-uri "vscode-remote://dev-container+${workspace_path_hex}/workspace/holoscan-sdk"
+}
+
+vscode_remote_desc() { c_echo 'Attach to the existing VSCode DevContainer
+
+This command is useful when you want to attach to the existing VSCode DevContainer from the remote machine.
+
+1) Launch VSCode DevContainer on the local machine with "./run vscode" command.
+2) In the remote machine, launch VSCode Remote-SSH extension to connect to the local machine.
+3) Launch this command on the remote machine to attach to the existing VSCode DevContainer in the local machine.
+'
+}
+vscode_remote() {
+    if ! command -v code > /dev/null; then
+        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
+    fi
+
+    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
+
+    local container_name=$(run_command docker ps --filter "label=devcontainer.local_folder=${workspace_path}" --format "{{.Names}}" | head -1)
+    if [ -z "${container_name}" ]; then
+        fatal R "No DevContainer (with the label 'devcontainer.local_folder=${workspace_path}') is found in the local machine. Please launch VSCode DevContainer with " W "./run vscode" R " command first."
+    fi
+    c_echo W "Container name: " y "${container_name}"
+
+    # The following command is based on the information of the following issue:
+    #   https://github.com/microsoft/vscode-remote-release/issues/2133#issuecomment-618328138
+    python - > /tmp/holoscan_remote_uri.txt << EOF
+import json
+from urllib.parse import urlunparse
+from subprocess import check_output
+hostname = check_output("hostname" , shell=True).decode('utf-8').strip()
+remote_description = json.dumps({"containerName": f"/${container_name}", "settings":{"host": f"ssh://{hostname}"}})
+remote_uri = urlunparse(('vscode-remote', f'attached-container+{remote_description.encode("utf8").hex()}', '/workspace/holoscan-sdk', '', '', ''))
+print(remote_uri)
+EOF
+    local remote_uri=$(cat /tmp/holoscan_remote_uri.txt)
+    c_echo W "Remote URI: " y "${remote_uri}"
+
+    # VSCode's attached-container mode does not support forwarding SSH keys to the container well.
+    # For the reason, we need to copy SSH keys to the container so that the container can access
+    # the local machine's SSH keys.
+    c_echo W "Copying SSH keys to the container..."
+    for i in identity id_rsa id_ed25519 id_ed25519_sk id_dsa id_cdsa id_ecdsa_sk; do
+        if [ -e ~/.ssh/${i} ]; then
+            run_command docker cp ~/.ssh/${i} ${container_name}:/home/holoscan-sdk/.ssh/
+        fi
+    done;
+
+    run_command code --folder-uri ${remote_uri}
 }
 
 #===============================================================================

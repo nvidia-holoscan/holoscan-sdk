@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,24 +22,31 @@
 #include <string>
 #include <utility>
 
-#include "../../core/gxf/gxf_operator.hpp"
+#include "holoscan/core/operator.hpp"
+#include "holoscan/utils/cuda_stream_handler.hpp"
+#include "segmentation_postprocessor.cuh"
+
+using holoscan::ops::segmentation_postprocessor::DataFormat;
+using holoscan::ops::segmentation_postprocessor::NetworkOutputType;
 
 namespace holoscan::ops {
 
-class SegmentationPostprocessorOp : public holoscan::ops::GXFOperator {
+class SegmentationPostprocessorOp : public Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(SegmentationPostprocessorOp, holoscan::ops::GXFOperator)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(SegmentationPostprocessorOp)
 
   SegmentationPostprocessorOp() = default;
 
-  const char* gxf_typename() const override {
-    return "nvidia::holoscan::segmentation_postprocessor::Postprocessor";
-  }
-
   // TODO(gbae): use std::expected
   void setup(OperatorSpec& spec) override;
+  void start() override;
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override;
 
  private:
+  NetworkOutputType network_output_type_value_;
+  DataFormat data_format_value_;
+
   Parameter<holoscan::IOSpec*> in_;
   Parameter<holoscan::IOSpec*> out_;
 
@@ -48,6 +55,8 @@ class SegmentationPostprocessorOp : public holoscan::ops::GXFOperator {
   Parameter<std::string> in_tensor_name_;
   Parameter<std::string> network_output_type_;
   Parameter<std::string> data_format_;
+
+  CudaStreamHandler cuda_stream_handler_;
 };
 
 }  // namespace holoscan::ops

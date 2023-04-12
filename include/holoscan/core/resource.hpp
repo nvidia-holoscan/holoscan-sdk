@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -145,7 +145,7 @@ class Resource : public Component {
    * @param spec The component specification.
    * @return The reference to the resource.
    */
-  Resource& spec(std::shared_ptr<ComponentSpec> spec) {
+  Resource& spec(const std::shared_ptr<ComponentSpec>& spec) {
     spec_ = spec;
     return *this;
   }
@@ -156,6 +156,13 @@ class Resource : public Component {
    */
   ComponentSpec* spec() { return spec_.get(); }
 
+  /**
+   * @brief Get the shared pointer to the component spec.
+   *
+   * @return The shared pointer to the component spec.
+   */
+  std::shared_ptr<ComponentSpec> spec_shared() { return spec_; }
+
   using Component::add_arg;
 
   /**
@@ -164,6 +171,13 @@ class Resource : public Component {
    * @param spec The reference to the component specification.
    */
   virtual void setup(ComponentSpec& spec) { (void)spec; }
+
+  /**
+   * @brief Get a YAML representation of the resource.
+   *
+   * @return YAML node including spec of the resource in addition to the base component properties.
+   */
+  YAML::Node to_yaml_node() const override;
 
  protected:
   std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.

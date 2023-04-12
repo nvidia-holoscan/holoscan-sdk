@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_HOLOVIZ_HOLOVIZ_HPP
-#define HOLOSCAN_VIZ_HOLOVIZ_HOLOVIZ_HPP
+#ifndef MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
+#define MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
 
 /**
  * \file
@@ -40,13 +40,13 @@
  * \section Usage
  *
  * The code below creates a window and displays an image.
- * First Holoviz needs to be initialized. This is done by calling clara::viz::Init().
+ * First Holoviz needs to be initialized. This is done by calling holoscan::viz::Init().
  *
  * The elements to display are defined in the render loop, termination of the loop is checked with
- * clara::viz::WindowShouldClose().
+ * holoscan::viz::WindowShouldClose().
  *
- * The definition of the displayed content starts with clara::viz::Begin() and ends with
- * clara::viz::End(). clara::viz::End() starts the rendering and displays the rendered result.
+ * The definition of the displayed content starts with holoscan::viz::Begin() and ends with
+ * holoscan::viz::End(). holoscan::viz::End() starts the rendering and displays the rendered result.
  *
  * Finally Holoviz is shutdown with viz::Shutdown().
  *
@@ -72,6 +72,7 @@ viz::Shutdown();
 
 #include <cstdint>
 
+#include "holoviz/depth_map_render_mode.hpp"
 #include "holoviz/image_format.hpp"
 #include "holoviz/init_flags.hpp"
 #include "holoviz/primitive_topology.hpp"
@@ -80,8 +81,7 @@ viz::Shutdown();
 typedef struct GLFWwindow GLFWwindow;
 struct ImGuiContext;
 
-namespace holoscan::viz
-{
+namespace holoscan::viz {
 
 /**
  * Initialize Holoviz using an existing GLFW window.
@@ -89,7 +89,7 @@ namespace holoscan::viz
  * @param window    GLFW window
  * @param flags     init flags
  */
-void Init(GLFWwindow *window, InitFlags flags = InitFlags::NONE);
+void Init(GLFWwindow* window, InitFlags flags = InitFlags::NONE);
 
 /**
  * Initialize Holoviz.
@@ -101,15 +101,16 @@ void Init(GLFWwindow *window, InitFlags flags = InitFlags::NONE);
  * @param title     window title
  * @param flags     init flags
  */
-void Init(uint32_t width, uint32_t height, const char *title, InitFlags flags = InitFlags::NONE);
+void Init(uint32_t width, uint32_t height, const char* title, InitFlags flags = InitFlags::NONE);
 
 /**
  * Initialize Holoviz to use a display in exclusive mode.
  *
  * Setup:
  *  - when multiple displays are connected:
- *    The display to be used in exclusive mode needs to be disabled in the NVIDIA Settings. Open the `X Server Display Configuration`
- *    tab, select the display and under `Configuration` select `Disabled`. Press `Apply`.
+ *    The display to be used in exclusive mode needs to be disabled in the NVIDIA Settings. Open the
+ *    `X Server Display Configuration` tab, select the display and under `Configuration` select
+ *    `Disabled`. Press `Apply`.
  *  - when a single display is connected:
  *    SSH into the machine, stop the X server with `sudo systemctl stop display-manager`.
  *
@@ -122,8 +123,8 @@ void Init(uint32_t width, uint32_t height, const char *title, InitFlags flags = 
  *                      each second multiplied by 1000), ignored if 0
  * @param flags         init flags
  */
-void Init(const char *displayName, uint32_t width = 0, uint32_t height = 0, uint32_t refreshRate = 0,
-          InitFlags flags = InitFlags::NONE);
+void Init(const char* displayName, uint32_t width = 0, uint32_t height = 0,
+          uint32_t refreshRate = 0, InitFlags flags = InitFlags::NONE);
 
 /**
  * If using ImGui, create a context and pass it to Holoviz, do this before calling viz::Init().
@@ -138,7 +139,17 @@ void Init(const char *displayName, uint32_t width = 0, uint32_t height = 0, uint
  *
  * @param context  ImGui context
  */
-void ImGuiSetCurrentContext(ImGuiContext *context);
+void ImGuiSetCurrentContext(ImGuiContext* context);
+
+/**
+ * Set the font used to render text, do this before calling viz::Init().
+ *
+ * The font is converted to bitmaps, these bitmaps are scaled to the final size when rendering.
+ *
+ * @param path path to TTF font file
+ * @param size_in_pixels size of the font bitmaps
+ */
+void SetFont(const char* path, float size_in_pixels);
 
 /**
  * Set the Cuda stream used by Holoviz for Cuda operations.
@@ -219,27 +230,36 @@ void ImageCudaArray(ImageFormat fmt, CUarray array);
  * @param fmt       image format
  * @param data      host memory pointer
  */
-void ImageHost(uint32_t width, uint32_t height, ImageFormat fmt, const void *data);
+void ImageHost(uint32_t width, uint32_t height, ImageFormat fmt, const void* data);
 
 /**
  * Defines the lookup table for this image layer.
  *
  * If a lookup table is used the image format has to be a single channel integer or
  * float format (e.g. ::ImageFormat::R8_UINT, ::ImageFormat::R16_UINT, ::ImageFormat::R32_UINT,
- * ::ImageFormat::R32_SFLOAT).
+ * ::ImageFormat::R8_UNORM, ::ImageFormat::R16_UNORM, ::ImageFormat::R32_SFLOAT).
  *
- * The function processed is as follow
+ * If normalized is 'true' the function processed is as follow
+ * @code{.cpp}
+ *  out = lut[clamp(in, 0.0, 1.0)]
+ * @endcode
+ * Input image values are clamped to the range of the lookup table size: `[0.0, 1.0[`.
+ *
+ * If normalized is 'false' the function processed is as follow
  * @code{.cpp}
  *  out = lut[clamp(in, 0, size)]
  * @endcode
- * Input image values are clamped to the range of the lookup table size: `[0, size[`.
+ * Input image values are clamped to the range of the lookup table size: `[0.0, size[`.
  *
  * @param size      size of the lookup table in elements
  * @param fmt       lookup table color format
  * @param data_size size of the lookup table data in bytes
  * @param data      host memory pointer to lookup table data
+ * @param normalized if true then the range of the lookup table is '[0.0, 1.0[', else it is
+ * `[0.0, size[`
  */
-void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void *data);
+void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data,
+         bool normalized = false);
 
 /**
  * Start a ImGUI layer.
@@ -286,7 +306,8 @@ void PointSize(float size);
  * @param data              pointer to data, the format and size of the array depends on the
  *                          primitive count and topology
  */
-void Primitive(PrimitiveTopology topology, uint32_t primitive_count, size_t data_size, const float *data);
+void Primitive(PrimitiveTopology topology, uint32_t primitive_count, size_t data_size,
+               const float* data);
 /**
  * Draw text.
  *
@@ -295,7 +316,34 @@ void Primitive(PrimitiveTopology topology, uint32_t primitive_count, size_t data
  * @param size  font size
  * @param text  text to draw
  */
-void Text(float x, float y, float size, const char *text);
+void Text(float x, float y, float size, const char* text);
+
+/**
+ * Render a depth map.
+ *
+ * Depth maps are rectangular 2D arrays where each element represents a depth value. The data is
+ * rendered as a 3D object using points, lines or triangles.
+ * Additionally a 2D array with a color value for each point in the grid can be specified.
+ *
+ * Depth maps are rendered in 3D and support camera movement.
+ * The camera is operated using the mouse.
+ *  - Orbit        (LMB)
+ *  - Pan          (LMB + CTRL  | MMB)
+ *  - Dolly        (LMB + SHIFT | RMB | Mouse wheel)
+ *  - Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
+ *  - Zoom         (Mouse wheel + SHIFT)
+ *
+ * @param render_mode       depth map render mode
+ * @param width             width of the depth map
+ * @param height            height of the depth map
+ * @param depth_fmt         format of the depth map data (has to be ImageFormat::R8_UNORM)
+ * @param depth_device_ptr  Cuda device memory pointer holding the depth data
+ * @param color_fmt         format of the color data (has to be ImageFormat::R8G8B8A8_UNORM)
+ * @param color_device_ptr  Cuda device memory pointer holding the color data (optional)
+ */
+void DepthMap(DepthMapRenderMode render_mode, uint32_t width, uint32_t height,
+              ImageFormat depth_fmt, CUdeviceptr depth_device_ptr, ImageFormat color_fmt,
+              CUdeviceptr color_device_ptr);
 
 /**
  * Set the layer opacity.
@@ -326,12 +374,15 @@ void EndLayer();
  *
  * Can only be called outside of Begin()/End().
  *
- * @param fmt          image format, currently only R8G8B8A8_UNORM is supported.
- * @param buffer_size  size of the storage buffer in bytes
- * @param device_ptr   pointer to Cuda device memory to store the framebuffer into
+ * @param fmt           image format, currently only R8G8B8A8_UNORM is supported
+ * @param width, height width and height of the region to read back, will be limited to the
+ *                      framebuffer size if the framebuffer is smaller than that
+ * @param buffer_size   size of the storage buffer in bytes
+ * @param device_ptr    pointer to Cuda device memory to store the framebuffer into
  */
-void ReadFramebuffer(ImageFormat fmt, size_t buffer_size, CUdeviceptr device_ptr);
+void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
+                     CUdeviceptr device_ptr);
 
-} // namespace holoscan::viz
+}  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP */

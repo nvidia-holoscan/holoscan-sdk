@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,9 +21,6 @@ cmake_minimum_required(VERSION 3.22)
 # (CMAKE_INSTALL_DEFAULT_COMPONENT_NAME is set to 'holoscan-core' by the root CMakeLists.txt
 # before this folder is processed.)
 set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "holoscan-modules")
-
-# We set the default RPATH to $ORIGIN to make sure we load the installed libraries
-set(CMAKE_INSTALL_RPATH \$ORIGIN)
 
 include(FetchContent)
 

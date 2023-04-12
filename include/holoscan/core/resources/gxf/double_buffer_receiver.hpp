@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,10 @@
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_DOUBLE_BUFFER_RECEIVER_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_DOUBLE_BUFFER_RECEIVER_HPP
 
+#include <string>
+
+#include <gxf/std/double_buffer_receiver.hpp>
+
 #include "./receiver.hpp"
 
 namespace holoscan {
@@ -26,6 +30,7 @@ class DoubleBufferReceiver : public Receiver {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(DoubleBufferReceiver, Receiver)
   DoubleBufferReceiver() = default;
+  DoubleBufferReceiver(const std::string& name, nvidia::gxf::DoubleBufferReceiver* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::DoubleBufferReceiver"; }
 

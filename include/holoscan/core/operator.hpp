@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,9 +39,9 @@
   template <typename ArgT,                                                              \
             typename... ArgsT,                                                          \
             typename = std::enable_if_t<                                                \
-                !std::is_base_of_v<Operator, std::decay_t<ArgT>> &&                     \
-                (std::is_same_v<Arg, std::decay_t<ArgT>> ||                             \
-                 std::is_same_v<ArgList, std::decay_t<ArgT>> ||                         \
+                !std::is_base_of_v<holoscan::Operator, std::decay_t<ArgT>> &&                     \
+                (std::is_same_v<holoscan::Arg, std::decay_t<ArgT>> ||                             \
+                 std::is_same_v<holoscan::ArgList, std::decay_t<ArgT>> ||                         \
                  std::is_base_of_v<holoscan::Condition,                                 \
                                    typename holoscan::type_info<ArgT>::derived_type> || \
                  std::is_base_of_v<holoscan::Resource,                                  \
@@ -238,6 +238,7 @@ class Operator : public Component {
    * @return The conditions of the operator.
    */
   std::unordered_map<std::string, std::shared_ptr<Condition>>& conditions() { return conditions_; }
+
   /**
    * @brief Get the resources of the operator.
    *
@@ -395,6 +396,14 @@ class Operator : public Component {
     register_argument_setter<typeT>();
   }
 
+  /**
+   * @brief Get a YAML representation of the operator.
+   *
+   * @return YAML node including type, specs, conditions and resources of the operator in addition
+   * to the base component properties.
+   */
+  YAML::Node to_yaml_node() const override;
+
  protected:
   /**
    * @brief Register the argument setter for the given type.
@@ -408,6 +417,15 @@ class Operator : public Component {
     ArgumentSetter::get_instance().add_argument_setter<typeT>(
         [](ParameterWrapper& param_wrap, Arg& arg) {
           std::any& any_param = param_wrap.value();
+
+          // If arg has no name and value, that indicates that we want to set the default value for
+          // the native operator if it is not specified.
+          if (arg.name().empty() && !arg.has_value()) {
+            auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
+            param.set_default_value();
+            return;
+          }
+
           std::any& any_arg = arg.value();
 
           // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
@@ -421,8 +439,8 @@ class Operator : public Component {
           HOLOSCAN_LOG_DEBUG(
               "Registering converter for parameter {} (element_type: {}, container_type: {})",
               arg.name(),
-              (int)element_type,
-              (int)container_type);
+              static_cast<int>(element_type),
+              static_cast<int>(container_type));
 
           if (element_type == ArgElementType::kYAMLNode) {
             auto& arg_value = std::any_cast<YAML::Node&>(any_arg);

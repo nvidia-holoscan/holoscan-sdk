@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,8 +83,8 @@ function(create_gxe_application)
               if(NOT lib)
                 set(lib "$<TARGET_FILE:${extension}>")
               endif()
-            elseif(GXF_EXTENSIONS_DIR) # use the full path
-               set(lib "${GXF_EXTENSIONS_DIR}/lib${extension}.so")
+            elseif(GXF_EXTENSIONS_DIR) # use the full path and check if the target exists at generation time
+              set(lib "$<$<TARGET_EXISTS:${extension}>:$<TARGET_FILE:${extension}>>$<$<NOT:$<TARGET_EXISTS:${extension}>>:${GXF_EXTENSIONS_DIR}/lib${extension}.so>")
             else()
               message(FATAL_ERROR "Target not found for ${extension} and GXF_EXTENSTIONS_DIR not set")
             endif()

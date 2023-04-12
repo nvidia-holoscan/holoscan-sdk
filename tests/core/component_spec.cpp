@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,8 +28,11 @@
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/argument_setter.hpp"
 #include "holoscan/core/parameter.hpp"
+#include "../utils.hpp"
 
 namespace holoscan {
+
+using ComponentSpecWithGXFContext = TestWithGXFContext;
 
 TEST(ComponentSpec, TestComponentSpec) {
   ComponentSpec spec;
@@ -88,4 +91,61 @@ TEST(ComponentSpec, TestComponentSpecDefaultValue) {
   EXPECT_EQ((int)p, default_val);
 }
 
+TEST(ComponentSpec, TestComponentSpecDescriptionWithoutFragment) {
+  ComponentSpec spec;
+  Parameter<bool> b;
+  Parameter<std::array<int, 5>> i;
+  Parameter<std::vector<std::vector<double>>> d;
+  Parameter<std::vector<std::string>> s;
+  spec.param(b, "bool_scalar", "Boolean parameter", "true or false");
+  spec.param(i, "int_array", "Int array parameter", "5 integers");
+  spec.param(
+      d, "double_vec_of_vec", "Double 2D vector parameter", "double floats in double vector");
+  spec.param(s, "string_vector", "String vector parameter", "");
+
+  constexpr auto description = R"(fragment: ~
+params:
+  - name: string_vector
+    type: std::vector<std::string>
+    description: ""
+  - name: double_vec_of_vec
+    type: std::vector<std::vector<double>>
+    description: double floats in double vector
+  - name: int_array
+    type: std::array<int32_t,N>
+    description: 5 integers
+  - name: bool_scalar
+    type: bool
+    description: true or false)";
+  EXPECT_EQ(spec.description(), description);
+}
+
+TEST_F(ComponentSpecWithGXFContext, TestComponentSpecDescription) {
+  auto spec = std::make_shared<ComponentSpec>(&F);
+  Parameter<bool> b;
+  Parameter<std::array<int, 5>> i;
+  Parameter<std::vector<std::vector<double>>> d;
+  Parameter<std::vector<std::string>> s;
+  spec->param(b, "bool_scalar", "Boolean parameter", "true or false");
+  spec->param(i, "int_array", "Int array parameter", "5 integers");
+  spec->param(
+      d, "double_vec_of_vec", "Double 2D vector parameter", "double floats in double vector");
+  spec->param(s, "string_vector", "String vector parameter", "");
+
+  constexpr auto description = R"(fragment: ""
+params:
+  - name: string_vector
+    type: std::vector<std::string>
+    description: ""
+  - name: double_vec_of_vec
+    type: std::vector<std::vector<double>>
+    description: double floats in double vector
+  - name: int_array
+    type: std::array<int32_t,N>
+    description: 5 integers
+  - name: bool_scalar
+    type: bool
+    description: true or false)";
+  EXPECT_EQ(spec->description(), description);
+}
 }  // namespace holoscan

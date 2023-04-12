@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
 
 # Create TensorRT imported targets
 #
-# This module defines TensorRT_FOUND if all GXF libraries are found or
+# This module defines TensorRT_FOUND if the tensorRT include dir is found or
 # if the required libraries (COMPONENTS property in find_package)
 # are found.
 #
@@ -28,7 +28,8 @@
 # [2] https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html#find-module-packages
 
 # Find headers
-find_path(TensorRT_INCLUDE_DIR NAMES NvInferVersion.h REQUIRED)
+find_path(TensorRT_INCLUDE_DIR NAMES NvInferVersion.h REQUIRED
+          PATHS /usr/include/x86_64-linux-gnu /usr/include/aarch64-linux-gnu)
 mark_as_advanced(TensorRT_INCLUDE_DIR)
 
 # Find version
@@ -46,6 +47,7 @@ unset(_TRT_VERSION_FILE)
 
 # Find libs, and create the imported target
 macro(find_trt_library libname)
+  if(NOT TARGET TensorRT::${libname})
     find_library(TensorRT_${libname}_LIBRARY NAMES ${libname} REQUIRED)
     mark_as_advanced(TensorRT_${libname}_LIBRARY)
     add_library(TensorRT::${libname} SHARED IMPORTED GLOBAL)
@@ -53,6 +55,7 @@ macro(find_trt_library libname)
         IMPORTED_LOCATION "${TensorRT_${libname}_LIBRARY}"
         INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${TensorRT_INCLUDE_DIR}"
     )
+  endif()
 endmacro()
 
 find_trt_library(nvinfer)
@@ -66,5 +69,5 @@ include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(TensorRT
     FOUND_VAR TensorRT_FOUND
     VERSION_VAR TensorRT_VERSION
-    REQUIRED_VARS TensorRT_INCLUDE_DIR # no need for libs/targets, since find_library si REQUIRED
+    REQUIRED_VARS TensorRT_INCLUDE_DIR # no need for libs/targets, since find_library is REQUIRED
 )

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,44 +24,87 @@ FetchContent_Declare(
   GIT_PROGRESS TRUE
   SOURCE_DIR nvpro_core
   PATCH_COMMAND git apply "${CMAKE_CURRENT_SOURCE_DIR}/nvpro_core.patch" || true
-)
+  )
 
 FetchContent_GetProperties(nvpro_core)
 
 if(NOT nvpro_core_POPULATED)
   FetchContent_Populate(nvpro_core)
 
-  # setup nvpro_core
-  set(BASE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-  include(${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
+  # Create the nvpro_core project
+  #  We do this manually instead of using the nvpro_core CMakeFile.txt since nvpro_core is
+  #  - not using the target_??? commands, this leads to exported private dependencies
+  #  - setting multiple global CMAKE_??? variables which overwrite our project variables
+  set(nvpro_core_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/nvpro_core)
 
-  _add_project_definitions(${CMAKE_PROJECT_NAME})
+  find_package(Vulkan REQUIRED)
 
-  # additions from packages needed for this app
-  # add refs  in LIBRARIES_OPTIMIZED
-  # add refs  in LIBRARIES_DEBUG
-  # add files in PACKAGE_SOURCE_FILES
-  _add_package_VulkanSDK()
-  _add_package_IMGUI()
+  add_library(nvpro_core STATIC)
 
-  # process the rest of some cmake code that needs to be done *after* the packages add
-  _add_nvpro_core_lib()
+  target_sources(nvpro_core
+    PRIVATE
+      ${nvpro_core_SOURCE_DIR}/nvh/cameramanipulator.cpp
+      ${nvpro_core_SOURCE_DIR}/nvh/nvprint.cpp
+      ${nvpro_core_SOURCE_DIR}/nvp/perproject_globals.cpp
+    )
 
-  # nvpro_core is using add_definitions() and include_directories(), convert these to target properties
-  get_directory_property(NVPRO_CORE_INCLUDE_DIRECTORIES INCLUDE_DIRECTORIES)
+  set(nvvk_SOURCE_DIR ${nvpro_core_SOURCE_DIR}/nvvk)
+
+  target_sources(nvpro_core
+    PRIVATE
+      ${nvvk_SOURCE_DIR}/buffersuballocator_vk.cpp
+      ${nvvk_SOURCE_DIR}/commands_vk.cpp
+      ${nvvk_SOURCE_DIR}/context_vk.cpp
+      ${nvvk_SOURCE_DIR}/debug_util_vk.cpp
+      ${nvvk_SOURCE_DIR}/descriptorsets_vk.cpp
+      ${nvvk_SOURCE_DIR}/error_vk.cpp
+      ${nvvk_SOURCE_DIR}/extensions_vk.cpp
+      ${nvvk_SOURCE_DIR}/images_vk.cpp
+      ${nvvk_SOURCE_DIR}/memallocator_dedicated_vk.cpp
+      ${nvvk_SOURCE_DIR}/memallocator_vk.cpp
+      ${nvvk_SOURCE_DIR}/memorymanagement_vk.cpp
+      ${nvvk_SOURCE_DIR}/nsight_aftermath_vk.cpp
+      ${nvvk_SOURCE_DIR}/pipeline_vk.cpp
+      ${nvvk_SOURCE_DIR}/resourceallocator_vk.cpp
+      ${nvvk_SOURCE_DIR}/samplers_vk.cpp
+      ${nvvk_SOURCE_DIR}/shadermodulemanager_vk.cpp
+      ${nvvk_SOURCE_DIR}/stagingmemorymanager_vk.cpp
+      ${nvvk_SOURCE_DIR}/swapchain_vk.cpp
+    )
+
+  set(imgui_SOURCE_DIR ${nvpro_core_SOURCE_DIR}/third_party/imgui)
+
+  target_sources(nvpro_core
+    PRIVATE
+      ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+      ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
+  )
+
+  target_compile_definitions(nvpro_core
+    PRIVATE
+      PROJECT_NAME="Holoviz"
+      # nvpro_core expects GLFW 3.4 which is not yet released. 3.4 added GLFW_CONTEXT_DEBUG
+      # as an alias to GLFW_OPENGL_DEBUG_CONTEXT, we do this manually.
+      -DGLFW_CONTEXT_DEBUG=GLFW_OPENGL_DEBUG_CONTEXT
+      NVP_SUPPORTS_VULKANSDK
+    )
+
   target_include_directories(nvpro_core
     PUBLIC
-    ${NVPRO_CORE_INCLUDE_DIRECTORIES}
-  )
-  get_directory_property(NVPRO_CORE_COMPILE_DEFINITIONS COMPILE_DEFINITIONS)
-  # nvpro_core expects GLFW 3.4 which is not yet release. 3.4 added GLFW_CONTEXT_DEBUG
-  # as an alias to GLFW_OPENGL_DEBUG_CONTEXT, we do this manually.
-  target_compile_definitions(nvpro_core
-    PRIVATE -DGLFW_CONTEXT_DEBUG=GLFW_OPENGL_DEBUG_CONTEXT
-    PUBLIC ${NVPRO_CORE_COMPILE_DEFINITIONS}
-  )
+      ${imgui_SOURCE_DIR}
+      ${nvpro_core_SOURCE_DIR}
+      ${nvpro_core_SOURCE_DIR}/nvp
+    )
 
-  target_sources(nvpro_core PRIVATE  ${COMMON_SOURCE_FILES})
+  target_link_libraries(nvpro_core
+    PRIVATE
+      Vulkan::Vulkan
+      glfw
+    )
+
+  set_target_properties(nvpro_core
+    PROPERTIES POSITION_INDEPENDENT_CODE ON
+    )
 
   # export the nvpro_core cmake directory to provide access to e.g. utilities.cmake for compile_glsl_directory()
   set(nvpro_core_CMAKE_DIR "${nvpro_core_SOURCE_DIR}/cmake" CACHE INTERNAL "nvpro_core cmake dir" FORCE)
@@ -72,39 +115,39 @@ if(NOT nvpro_core_POPULATED)
       CACHE INTERNAL "nvpro_core external imgui dir" FORCE)
 
   # export the ImGUI installation of nvpro_core as a static library
-  set(PROJECT_NAME clara_holoviz_imgui)
-  add_library(${PROJECT_NAME} STATIC)
-  add_library(holoscan::viz::imgui ALIAS ${PROJECT_NAME})
+  add_library(holoviz_imgui STATIC)
+  add_library(holoscan::viz::imgui ALIAS holoviz_imgui)
 
-  target_sources(${PROJECT_NAME}
+  target_sources(holoviz_imgui
     PRIVATE
       ${nvpro_core_EXT_IMGUI_DIR}/imgui.cpp
       ${nvpro_core_EXT_IMGUI_DIR}/imgui_draw.cpp
       ${nvpro_core_EXT_IMGUI_DIR}/imgui_tables.cpp
       ${nvpro_core_EXT_IMGUI_DIR}/imgui_widgets.cpp
+      ${nvpro_core_EXT_IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp
     )
 
-  target_include_directories(${PROJECT_NAME}
+  target_include_directories(holoviz_imgui
     PUBLIC
       $<BUILD_INTERFACE:${nvpro_core_EXT_IMGUI_DIR}>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>/holoviz/imgui
     )
 
-    install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Config
-      ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-      COMPONENT "holoscan-dependencies"
+  set_target_properties(holoviz_imgui
+    PROPERTIES POSITION_INDEPENDENT_CODE ON
     )
 
-   # TODO: Commenting the install since it's included in the SDK
-   # install(EXPORT ${PROJECT_NAME}Config
-   #   DESTINATION cmake
-   # )
+  install(TARGETS holoviz_imgui EXPORT holoviz_imguiConfig
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT "holoscan-dependencies"
+    )
 
   install(
     FILES
       ${nvpro_core_EXT_IMGUI_DIR}/imconfig.h
       ${nvpro_core_EXT_IMGUI_DIR}/imgui_internal.h
       ${nvpro_core_EXT_IMGUI_DIR}/imgui.h
+      ${nvpro_core_EXT_IMGUI_DIR}/misc/cpp/imgui_stdlib.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoviz/imgui
     COMPONENT "holoscan-dependencies"
     )

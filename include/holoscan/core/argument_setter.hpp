@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,9 +30,11 @@
 #include <utility>
 #include <vector>
 
-#include "./common.hpp"
+#include <common/logger.hpp>
+
 #include "../utils/yaml_parser.hpp"
 #include "./arg.hpp"
+#include "./common.hpp"
 #include "./condition.hpp"
 #include "./parameter.hpp"
 #include "./resource.hpp"
@@ -141,12 +143,19 @@ class ArgumentSetter {
     function_map_.try_emplace(
         std::type_index(typeid(typeT)), [](ParameterWrapper& param_wrap, Arg& arg) {
           std::any& any_param = param_wrap.value();
-          std::any& any_arg = arg.value();
-
           // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
           auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
+
+          // If arg has no name and value, that indicates that we want to set the default value for
+          // the native operator if it is not specified.
+          if (arg.name().empty() && !arg.has_value()) {
+            auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
+            param.set_default_value();
+            return;
+          }
+
+          std::any& any_arg = arg.value();
           const auto& arg_type = arg.arg_type();
-          (void)param;
 
           auto element_type = arg_type.element_type();
           auto container_type = arg_type.container_type();
@@ -155,17 +164,67 @@ class ArgumentSetter {
             switch (container_type) {
               case ArgContainerType::kNative: {
                 switch (element_type) {
+                  // Handle the argument with 'kInt64' type differently because the argument might
+                  // come from Python, and Python only has 'int' type ('int64_t' in C++).
+                  case ArgElementType::kInt64: {
+                    if constexpr (holoscan::is_one_of_v<typeT,
+                                                        bool,
+                                                        int8_t,
+                                                        int16_t,
+                                                        int32_t,
+                                                        int64_t,
+                                                        uint8_t,
+                                                        uint16_t,
+                                                        uint32_t,
+                                                        uint64_t,
+                                                        float,
+                                                        double>) {
+                      auto& arg_value = std::any_cast<int64_t&>(any_arg);
+                      param = static_cast<typeT>(arg_value);
+                    } else {
+                      HOLOSCAN_LOG_ERROR(
+                          "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
+                          any_arg.type().name(),
+                          typeid(typeT).name(),
+                          arg.name());
+                    }
+                    break;
+                  }
+                  // Handle the argument with 'kFloat64' type differently because the argument might
+                  // come from Python, and Python only has 'float' type ('double' in C++).
+                  case ArgElementType::kFloat64: {
+                    if constexpr (holoscan::is_one_of_v<typeT,
+                                                        bool,
+                                                        int8_t,
+                                                        int16_t,
+                                                        int32_t,
+                                                        int64_t,
+                                                        uint8_t,
+                                                        uint16_t,
+                                                        uint32_t,
+                                                        uint64_t,
+                                                        float,
+                                                        double>) {
+                      auto& arg_value = std::any_cast<double&>(any_arg);
+                      param = static_cast<typeT>(arg_value);
+                    } else {
+                      HOLOSCAN_LOG_ERROR(
+                          "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
+                          any_arg.type().name(),
+                          typeid(typeT).name(),
+                          arg.name());
+                    }
+                    break;
+                  }
                   case ArgElementType::kBoolean:
                   case ArgElementType::kInt8:
                   case ArgElementType::kInt16:
                   case ArgElementType::kInt32:
-                  case ArgElementType::kInt64:
                   case ArgElementType::kUnsigned8:
                   case ArgElementType::kUnsigned16:
                   case ArgElementType::kUnsigned32:
                   case ArgElementType::kUnsigned64:
                   case ArgElementType::kFloat32:
-                  case ArgElementType::kFloat64:
                   case ArgElementType::kString:
                   case ArgElementType::kIOSpec: {
                     if constexpr (holoscan::is_one_of_v<typeT,

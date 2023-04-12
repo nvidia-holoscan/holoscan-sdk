@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,9 +29,10 @@
 namespace HoloInfer = holoscan::inference;
 
 unsigned int test_count = 0;
+bool is_x86_64 = !HoloInfer::is_platform_aarch64();
 
 /// Default parameters for inference
-std::string backend = "trt"; // NOLINT
+std::string backend = "trt";  // NOLINT
 std::vector<std::string> in_tensor_names = {
     "plax_cham_pre_proc", "aortic_pre_proc", "bmode_pre_proc"};
 std::vector<std::string> out_tensor_names = {"plax_cham_infer", "aortic_infer", "bmode_infer"};

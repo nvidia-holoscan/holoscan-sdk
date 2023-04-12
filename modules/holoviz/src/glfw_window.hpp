@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,9 +20,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
-#include "window.hpp"
 #include "holoviz/init_flags.hpp"
+#include "window.hpp"
 
 typedef struct GLFWwindow GLFWwindow;
 
@@ -33,55 +34,61 @@ namespace holoscan::viz {
  */
 class GLFWWindow : public Window {
  public:
-    /**
-     * Construct a new GLFWWindow object with an existing GLFWwindow object.
-     *
-     * @param window    existing GLFWwindow window
-     */
-    explicit GLFWWindow(GLFWwindow *window);
+  /**
+   * Construct a new GLFWWindow object with an existing GLFWwindow object.
+   *
+   * @param window    existing GLFWwindow window
+   */
+  explicit GLFWWindow(GLFWwindow* window);
 
-    /**
-     * Construct a new GLFWWindow object of a given size.
-     *
-     * @param width, height     window size
-     * @param title             window tile
-     * @param flags             init flags
-     */
-    GLFWWindow(uint32_t width, uint32_t height, const char *title, InitFlags flags);
+  /**
+   * Construct a new GLFWWindow object of a given size.
+   *
+   * @param width, height     window size
+   * @param title             window tile
+   * @param flags             init flags
+   */
+  GLFWWindow(uint32_t width, uint32_t height, const char* title, InitFlags flags);
 
-    /**
-     * Delete the standard constructor, always need parameters to construct.
-     */
-    GLFWWindow() = delete;
+  /**
+   * Delete the standard constructor, always need parameters to construct.
+   */
+  GLFWWindow() = delete;
 
-    /**
-     * Destroy the GLFWWindow object.
-     */
-    virtual ~GLFWWindow();
+  /**
+   * Destroy the GLFWWindow object.
+   */
+  virtual ~GLFWWindow();
 
-    /// holoscan::viz::Window virtual members
-    ///@{
-    void init_im_gui() override;
-    void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) override;
+  /// holoscan::viz::Window virtual members
+  ///@{
+  void init_im_gui() override;
+  void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) override;
 
-    const char **get_required_instance_extensions(uint32_t *count) override;
-    const char **get_required_device_extensions(uint32_t *count) override;
-    void get_framebuffer_size(uint32_t *width, uint32_t *height) override;
+  const char** get_required_instance_extensions(uint32_t* count) override;
+  const char** get_required_device_extensions(uint32_t* count) override;
+  uint32_t select_device(vk::Instance instance,
+                         const std::vector<vk::PhysicalDevice>& physical_devices) override;
+  void get_framebuffer_size(uint32_t* width, uint32_t* height) override;
 
-    VkSurfaceKHR create_surface(VkPhysicalDevice physical_device, VkInstance instance) override;
+  vk::SurfaceKHR create_surface(vk::PhysicalDevice physical_device, vk::Instance instance) override;
 
-    bool should_close() override;
-    bool is_minimized() override;
+  bool should_close() override;
+  bool is_minimized() override;
 
-    void im_gui_new_frame() override;
+  void im_gui_new_frame() override;
 
-    void begin() override;
-    void end() override;
-    ///@}
+  void begin() override;
+  void end() override;
+
+  void get_view_matrix(nvmath::mat4f* view_matrix) override;
+
+  float get_aspect_ratio() override;
+  ///@}
 
  private:
-    struct Impl;
-    std::shared_ptr<Impl> impl_;
+  struct Impl;
+  std::shared_ptr<Impl> impl_;
 };
 
 }  // namespace holoscan::viz

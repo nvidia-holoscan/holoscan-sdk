@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,39 +35,19 @@ class TestWithGXFContext : public ::testing::Test {
  protected:
   void SetUp() override {
     F.config(config_file);
-    auto context = F.executor().context();
+    auto& executor = F.executor();
+    auto context = executor.context();
+    auto extension_manager = executor.extension_manager();
 
     // Load GXF extensions included in the config file
     // We should do this before we can initialized GXF-based Conditions, Resources or Operators
     const char* manifest_filename = F.config().config_file().c_str();
-    const GxfLoadExtensionsInfo load_ext_info{nullptr, 0, &manifest_filename, 1,
-                                              nullptr};
-    GXF_ASSERT_SUCCESS(GxfLoadExtensions(context, &load_ext_info));
+    auto node = YAML::LoadFile(manifest_filename);
+    ASSERT_TRUE(extension_manager->load_extensions_from_yaml(node));
   }
 
   Fragment F;
   const std::string config_file = test_config.get_test_data_file("app_config.yaml");
 };
-
-#if HOLOSCAN_BUILD_EMERGENT == 1
-  // Fixture that creates a Fragment and initializes a GXF context for it loading emergent extension
-class TestWithGXFEmergentContext : public ::testing::Test {
- protected:
-    void SetUp() override {
-      F.config(config_file);
-      auto context = F.executor().context();
-
-      // Load GXF extensions included in the config file
-      // We should do this before we can initialized GXF-based Conditions, Resources or Operators
-      const char* manifest_filename = F.config().config_file().c_str();
-      const GxfLoadExtensionsInfo load_ext_info{nullptr, 0, &manifest_filename, 1,
-                                                nullptr};
-      GXF_ASSERT_SUCCESS(GxfLoadExtensions(context, &load_ext_info));
-    }
-
-    Fragment F;
-    const std::string config_file = test_config.get_test_data_file("emergent.yaml");
-};
-#endif
 
 }  // namespace holoscan

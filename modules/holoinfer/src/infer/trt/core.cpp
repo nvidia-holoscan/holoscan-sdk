@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,8 @@
 
 #include "core.hpp"
 
+#include <NvInferPlugin.h>
+
 namespace holoscan {
 namespace inference {
 
@@ -32,7 +34,7 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
   initLibNvInferPlugins(nullptr, "");
 
   if (!is_engine_path_) {
-    std::cout << "TRT Inference: converting ONNX model at " << model_path_ << "\n";
+    HOLOSCAN_LOG_INFO("TRT Inference: converting ONNX model at {}", model_path_);
 
     bool status = generate_engine_path(network_options_, model_path_, engine_path_);
     if (!status) { throw std::runtime_error("TRT Inference: could not generate TRT engine path."); }
@@ -55,50 +57,50 @@ TrtInfer::~TrtInfer() {
 }
 
 bool TrtInfer::load_engine() {
-  std::cout << "Loading Engine: " << engine_path_ << "\n";
+  HOLOSCAN_LOG_INFO("Loading Engine: {}", engine_path_);
   std::ifstream file(engine_path_, std::ios::binary | std::ios::ate);
   std::streamsize size = file.tellg();
   file.seekg(0, std::ios::beg);
 
   std::vector<char> buffer(size);
   if (!file.read(buffer.data(), size)) {
-    std::cout << "Load Engine: File read error: " << engine_path_ << "\n";
+    HOLOSCAN_LOG_ERROR("Load Engine: File read error: {}", engine_path_);
     return false;
   }
 
   std::unique_ptr<nvinfer1::IRuntime> runtime{nvinfer1::createInferRuntime(logger_)};
   if (!runtime) {
-    std::cout << "Load Engine: Error in creating inference runtime. \n";
+    HOLOSCAN_LOG_ERROR("Load Engine: Error in creating inference runtime.");
     return false;
   }
 
   // Set the device index
   auto status = cudaSetDevice(network_options_.device_index);
   if (status != 0) {
-    std::cout << "Load Engine: Setting cuda device failed. \n";
+    HOLOSCAN_LOG_ERROR("Load Engine: Setting cuda device failed.");
     throw std::runtime_error("Error setting cuda device in load engine.");
   }
 
   engine_ = std::unique_ptr<nvinfer1::ICudaEngine>(
       runtime->deserializeCudaEngine(buffer.data(), buffer.size()));
   if (!engine_) {
-    std::cout << "Load Engine: Error in deserializing cuda engine. \n";
+    HOLOSCAN_LOG_ERROR("Load Engine: Error in deserializing cuda engine.");
     return false;
   }
 
   context_ = std::unique_ptr<nvinfer1::IExecutionContext>(engine_->createExecutionContext());
   if (!context_) {
-    std::cout << "Load Engine: Error in creating execution context. \n";
+    HOLOSCAN_LOG_ERROR("Load Engine: Error in creating execution context.");
     return false;
   }
 
   status = cudaStreamCreate(&cuda_stream_);
   if (status != 0) {
-    std::cout << "Load Engine: Cuda stream creation failed. \n";
+    HOLOSCAN_LOG_ERROR("Load Engine: Cuda stream creation failed.");
     throw std::runtime_error("Unable to create cuda stream");
   }
 
-  std::cout << "Engine loaded: " << engine_path_ << "\n";
+  HOLOSCAN_LOG_INFO("Engine loaded: {}", engine_path_);
   return true;
 }
 

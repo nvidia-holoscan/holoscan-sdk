@@ -4,14 +4,14 @@
         {
             "name": "x86_64",
             "includePath": [
-                "${workspaceFolder}/include"
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "gnu11",
             "cppStandard": "gnu++17",
             "intelliSenseMode": "linux-gcc-x64",
-            // "compileCommands": "${workspaceFolder}/build-debug-x86_64/compile_commands.json",
+            // "compileCommands": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/build-debug-x86_64/compile_commands.json",
             "compileCommands": "${command:cmake.buildDirectory}/compile_commands.json",
             "browse": {
                 "limitSymbolsToIncludedHeaders": true
@@ -21,14 +21,14 @@
         {
             "name": "arm64",
             "includePath": [
-                "${workspaceFolder}/include"
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "gnu11",
             "cppStandard": "gnu++17",
             "intelliSenseMode": "linux-gcc-arm64",
-            // "compileCommands": "${workspaceFolder}/build-debug-arm64/compile_commands.json",
+            // "compileCommands": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/build-debug-arm64/compile_commands.json",
             "compileCommands": "${command:cmake.buildDirectory}/compile_commands.json",
             "browse": {
                 "limitSymbolsToIncludedHeaders": true

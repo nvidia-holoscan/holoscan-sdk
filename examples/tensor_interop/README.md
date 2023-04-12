@@ -10,18 +10,21 @@ This application demonstrates interoperability between a native operator (`Proce
 
 Notably, the two GXF codelets have not been wrapped as Holoscan operators, but are instead registered at runtime in the `compose` method of the application.
 
-### Build instructions
-
-Built with the SDK, see instructions from the top level README.
-
 ### Run instructions
 
-First, go in your `build` or `install` directory (automatically done by `./run launch`).
-
-Then, run:
-```bash
-./examples/tensor_interop/cpp/tensor_interop
-```
+* **using deb package install or NGC container**:
+  ```bash
+  /opt/nvidia/holoscan/examples/tensor_interop/cpp/tensor_interop
+  ```
+* **source (dev container)**:
+  ```bash
+  ./run launch # optional: append `install` for install tree
+  ./examples/tensor_interop/cpp/tensor_interop
+  ```
+* **source (local env)**:
+  ```bash
+  ${BUILD_OR_INSTALL_DIR}/examples/tensor_interop/cpp/tensor_interop
+  ```
 
 ## Python API
 
@@ -30,21 +33,43 @@ This application demonstrates interoperability between a native operator (`Image
 - The output tensor (in a new entity) is sent to the `HolovizOp` operator (codelet) which gets the tensor from the entity and displays the image in the GUI. The `VideoStreamReplayerOp` operator is used to replay the video stream from the sample data.
 - The Holoscan Tensor object is interoperable with DLPack or array interfaces.
 
-### Requirements
+### Data
 
-This example requires cupy which is included in the x86_64 development container. You'll need to build cupy for arm64 if you want to run this example on the developer kits.
-
-### Build instructions
-
-Built with the SDK, see instructions from the top level README.
+The following dataset is used by this example:
+[📦️ (NGC) Sample App Data for AI-based Endoscopy Tool Tracking](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_endoscopy_sample_data).
 
 ### Run instructions
 
-First, go in your `build` or `install` directory (automatically done by `./run launch`).
-
-Then run: 
-```bash
-python3 ./examples/tensor_interop/python/tensor_interop.py
-```
-
-> ℹ️ Python apps can run outside those folders if `HOLOSCAN_SAMPLE_DATA_PATH` is set in your environment (automatically done by `./run launch`).
+* **using python wheel**:
+  ```bash
+  # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  # [Prerequisite] Download example .py and .yaml file below to `APP_DIR`
+  # [Optional] Start the virtualenv where holoscan is installed
+  python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
+  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
+  python3 <APP_DIR>/tensor_interop.py
+  ```
+* **using deb package install**:
+  ```bash
+  # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
+  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
+  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
+  python3 /opt/nvidia/holoscan/examples/tensor_interop/python/tensor_interop.py
+  ```
+* **from NGC container**:
+  ```bash
+  python3 /opt/nvidia/holoscan/examples/tensor_interop/python/tensor_interop.py
+  ```
+* **source (dev container)**:
+  ```bash
+  ./run launch # optional: append `install` for install tree
+  python3 ./examples/tensor_interop/python/tensor_interop.py
+  ```
+* **source (local env)**:
+  ```bash
+  python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
+  export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
+  export HOLOSCAN_SAMPLE_DATA_PATH=${SRC_DIR}/data
+  python3 ${BUILD_OR_INSTALL_DIR}/examples/tensor_interop/python/tensor_interop.py
+  ```

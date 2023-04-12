@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,6 @@ InferStatus ManagerProcessor::process(
     DataMap& inferred_result_map, const std::map<std::string, std::vector<int>>& dimension_map) {
   for (const auto& tensor_to_ops : tensor_oper_map) {
     auto tensor_name = tensor_to_ops.first;
-
     if (inferred_result_map.find(tensor_name) == inferred_result_map.end()) {
       return InferStatus(
           holoinfer_code::H_ERROR,
@@ -62,13 +61,32 @@ InferStatus ManagerProcessor::process(
 
     processed_dims_map_.clear();
 
-    for (const auto& operation : operations) {
+    for (auto& operation : operations) {
       std::vector<int64_t> processed_dims;
       std::vector<float> process_vector;
+      std::vector<std::string> custom_strings;
 
       // if operation is print, then no need to allocate output memory
-      if (operation.compare("print") == 0) {
-        std::cout << "Printing results from " << tensor_name << " -> ";
+      if (operation.find("print") != std::string::npos) {
+        if (operation.compare("print") == 0) {
+          std::cout << "Printing results from " << tensor_name << " -> ";
+        } else {
+          if (operation.find("custom") != std::string::npos) {
+            std::istringstream cstrings(operation);
+
+            std::string custom_string;
+            while (std::getline(cstrings, custom_string, ',')) {
+              custom_strings.push_back(custom_string);
+            }
+            if (custom_strings.size() != 3) {
+              return InferStatus(
+                  holoinfer_code::H_ERROR,
+                  "Process manager, Custom binary print operation must generate 3 strings");
+            }
+            operation = custom_strings.at(0);
+            custom_strings.erase(custom_strings.begin());
+          }
+        }
       } else {
         if (in_out_tensor_map.find(tensor_name) == in_out_tensor_map.end()) {
           return InferStatus(
@@ -84,7 +102,7 @@ InferStatus ManagerProcessor::process(
       }
 
       InferStatus status = infer_data_->process_operation(
-          operation, dimensions, out_result, processed_dims, process_vector);
+          operation, dimensions, out_result, processed_dims, process_vector, custom_strings);
 
       if (status.get_code() != holoinfer_code::H_SUCCESS) {
         return InferStatus(holoinfer_code::H_ERROR,
@@ -117,7 +135,7 @@ ProcessorContext::ProcessorContext() {
   try {
     process_manager = std::make_unique<ManagerProcessor>();
   } catch (const std::bad_alloc&) {
-    std::cerr << "Holoscan Outdata context: Memory allocation error\n";
+    HOLOSCAN_LOG_ERROR("Holoscan Outdata context: Memory allocation error.");
     throw;
   }
 }

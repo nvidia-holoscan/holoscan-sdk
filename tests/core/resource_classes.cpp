@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -205,8 +205,8 @@ TEST_F(ResourceClassesWithGXFContext, TestAllocator) {
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<Allocator>()));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::Allocator"s);
 
-  // For the base Allocator, this always returns true
-  EXPECT_EQ(resource->is_available(1024), true);
+  // For the base Allocator, this always returns false
+  EXPECT_EQ(resource->is_available(1024), false);
 
   // For the base Allocator, allocate and free exist but don't do anything
   EXPECT_EQ(resource->allocate(1024, MemoryStorageType::kHost), nullptr);

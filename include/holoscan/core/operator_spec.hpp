@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -185,57 +185,15 @@ class OperatorSpec : public ComponentSpec {
   }
 
   /**
-   * @brief Define a resource that is required by this operator.
+   * @brief Get a YAML representation of the operator spec.
    *
-   * @tparam ResourceT The type of the resource.
-   * @param name The name of the resource.
-   * @param args The arguments to construct the resource.
+   * @return YAML node including the inputs, outputs, and parameters of this operator.
    */
-  template <typename ResourceT, typename StringT, typename... ArgsT,
-            typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  void resource(const StringT& name, ArgsT&&... args) {
-    resources_.emplace(name, std::make_shared<ResourceT>(std::forward<ArgsT>(args)...));
-  }
-
-  /**
-   * @brief Define a resource that is required by this operator.
-   *
-   * @param args The arguments to construct the resource.
-   */
-  template <typename... ArgsT>
-  void resource(ArgsT&&... args) {
-    resource("", std::forward<ArgsT>(args)...);
-  }
-
-  /**
-   * @brief Define a condition that is required by this operator.
-   *
-   * @tparam ConditionT The type of the condition.
-   * @param name The name of the condition.
-   * @param args The arguments to construct the condition.
-   */
-  template <typename ConditionT, typename StringT, typename... ArgsT,
-            typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  void condition(const StringT& name, ArgsT&&... args) {
-    conditions_.emplace(name, std::make_shared<ConditionT>(std::forward<ArgsT>(args)...));
-  }
-
-  /**
-   * @brief Define a condition that is required by this operator.
-   *
-   * @param args The arguments to construct the condition.
-   */
-  template <typename ConditionT, typename... ArgsT>
-  void condition(ArgsT&&... args) {
-    condition("", std::forward<ArgsT>(args)...);
-  }
+  YAML::Node to_yaml_node() const override;
 
  protected:
   std::unordered_map<std::string, std::unique_ptr<IOSpec>> inputs_;   ///< Input specs
   std::unordered_map<std::string, std::unique_ptr<IOSpec>> outputs_;  ///< Outputs specs
-  // TODO(gbae): use these for operator spec.
-  std::unordered_map<std::string, std::shared_ptr<Condition>> conditions_;  ///< Conditions
-  std::unordered_map<std::string, std::shared_ptr<Resource>> resources_;    ///< Resources
 };
 
 }  // namespace holoscan

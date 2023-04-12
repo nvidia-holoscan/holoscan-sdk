@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
+#include <holoinfer_utils.hpp>
 #include <infer/infer.hpp>
 #include <infer/onnx/core.hpp>
 #include <infer/trt/core.hpp>
