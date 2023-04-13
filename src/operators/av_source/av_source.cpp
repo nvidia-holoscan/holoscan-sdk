@@ -143,16 +143,23 @@ std::shared_ptr<AVFrame> AVSourceOp::read_frame() {
   packet.data = nullptr;
   packet.size = 0;
 
-  while (av_read_frame(format_ctx_, &packet) >= 0) {
+  while (true) {
+    int response = av_read_frame(format_ctx_, &packet);
+    if (response == AVERROR_EOF) {
+      HOLOSCAN_LOG_INFO("End of file reached. Seeking to beginning and continuing.");
+      av_seek_frame(format_ctx_, video_stream_index_, 0, AVSEEK_FLAG_FRAME);
+      continue;
+    }
+
     if (packet.stream_index == video_stream_index_) {
       if (avcodec_send_packet(codec_ctx_, &packet) < 0) {
-        std::cerr << "Error sending packet to decoder.\n";
+        HOLOSCAN_LOG_ERROR("Error sending packet to decoder.");
         av_packet_unref(&packet);
         return nullptr;
       }
 
       std::shared_ptr<AVFrame> frame(av_frame_alloc(), [](AVFrame* f) { av_frame_free(&f); });
-      int response = avcodec_receive_frame(codec_ctx_, frame.get());
+      response = avcodec_receive_frame(codec_ctx_, frame.get());
 
       if (response == 0) {
         std::shared_ptr<AVFrame> rgba_frame(av_frame_alloc(),
