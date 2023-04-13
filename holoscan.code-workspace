@@ -113,7 +113,8 @@
 			"semaphore": "cpp",
 			"stop_token": "cpp",
 			"tensor": "cpp",
-			"charconv": "cpp"
+			"charconv": "cpp",
+			"cuchar": "cpp"
 		},
 	},
 

@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 add_subdirectory(aja_capture)
+add_subdirectory(av_source)
 add_subdirectory(bring_your_own_model)
 add_subdirectory(cupy_native)
 add_subdirectory(hello_world)

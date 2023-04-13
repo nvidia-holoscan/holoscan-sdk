@@ -22,7 +22,7 @@
         // Uncomment the following line to use AJA Capture Card
         // "--device=/dev/ajantv20:/dev/ajantv20",
         // Uncomment the following line to use /dev/video0. Also, execute 'sudo chmod 666 /dev/video0' inside the container.
-        // "--device=/dev/video0:/dev/video0",
+        "--device=/dev/video0:/dev/video0",
         "--cap-add=SYS_PTRACE",
         "--security-opt=seccomp=unconfined",
     ],

@@ -1,0 +1,12 @@
+---
+av:
+  filename: ../data/endoscopy/video/surgical_video.264
+
+holoviz:
+  width: 854
+  height: 480
+  tensors:
+    - name: ""
+      type: color
+      opacity: 1.0
+      priority: 0
