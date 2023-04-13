@@ -43,6 +43,15 @@ RUN apt update \
     && rm -rf /var/lib/apt/lists/*
 ENV CMAKE_GENERATOR=Ninja
 
+# Install libav
+RUN apt update \
+    && apt install --no-install-recommends -y \
+        libavcodec-dev \
+        libavformat-dev \
+        libavutil-dev \
+        libswscale-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set the default user.
 # (See https://code.visualstudio.com/remote/advancedcontainers/add-nonroot-user)
 USER $USERNAME

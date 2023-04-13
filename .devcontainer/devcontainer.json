@@ -13,7 +13,8 @@
         // (https://github.com/microsoft/vscode-remote-release/issues/4841)
     },
     "runArgs": [
-        "--runtime=nvidia",
+        //"--runtime=nvidia",
+        "--gpus=all",
         "--net=host",
         // Current VSCode DevContainer doesn't support dynamic 'runArgs' for docker
         // (see https://github.com/microsoft/vscode-remote-release/issues/3972).

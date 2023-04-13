@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
-#define HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#ifndef INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#define INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
 
 #include <memory>
 #include <string>
@@ -240,4 +240,4 @@ class HolovizOp : public Operator {
 
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */

@@ -7,7 +7,8 @@ class App : public holoscan::Application {
   void compose() override {
     using namespace holoscan;
 
-    auto source = make_operator<ops::AVSourceOp>("av", from_config("av"));
+    auto source = make_operator<ops::AVSourceOp>(
+        "av", from_config("av"), Arg("allocator") = make_resource<UnboundedAllocator>("allocator"));
     auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"));
 
     // Flow definition

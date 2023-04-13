@@ -1,10 +1,10 @@
 ---
 av:
-  filename: ../data/endoscopy/video/surgical_video.264
+  filename: ../data/mdt/videos/iov.mp4
 
 holoviz:
-  width: 854
-  height: 480
+  width: 1280
+  height: 720
   tensors:
     - name: ""
       type: color
