@@ -162,8 +162,10 @@ std::shared_ptr<AVFrame> AVSourceOp::read_frame() {
       response = avcodec_receive_frame(codec_ctx_, frame.get());
 
       if (response == 0) {
-        std::shared_ptr<AVFrame> rgba_frame(av_frame_alloc(),
-                                            [](AVFrame* f) { av_frame_free(&f); });
+        std::shared_ptr<AVFrame> rgba_frame(av_frame_alloc(), [](AVFrame* f) {
+          av_freep(&f->data[0]);
+          av_frame_free(&f);
+        });
 
         rgba_frame->format = AV_PIX_FMT_RGBA;
         rgba_frame->width = codec_ctx_->width;
