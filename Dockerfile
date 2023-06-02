@@ -18,17 +18,21 @@
 ############################################################
 # Versions
 ############################################################
-ARG TRT_CONTAINER_TAG=22.03-py3
 ARG ONNX_RUNTIME_VERSION=1.12.1
 ARG VULKAN_SDK_VERSION=1.3.216.0
 
 ############################################################
 # Base image
 ############################################################
-ARG BASE_IMAGE=nvcr.io/nvidia/tensorrt:${TRT_CONTAINER_TAG}
-FROM ${BASE_IMAGE} as base
+ARG GPU_TYPE=dgpu
+FROM nvcr.io/nvidia/tensorrt:22.03-py3 AS dgpu_base
+FROM nvcr.io/nvidia/l4t-tensorrt:r8.5.2.2-devel AS igpu_base
+FROM ${GPU_TYPE}_base AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
+
+# Remove any cuda list which could be invalid and prevent successful apt update
+RUN rm -f /etc/apt/sources.list.d/cuda.list
 
 # Install newer CMake (https://apt.kitware.com/)
 RUN rm -r \
@@ -36,7 +40,7 @@ RUN rm -r \
     /usr/local/bin/cpack \
     /usr/local/bin/ctest \
     /usr/local/share/cmake-3.14
-RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
+RUN curl -s -L https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
         | gpg --dearmor - \
         | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
     && echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' \
@@ -50,7 +54,7 @@ RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/nul
     && rm -rf /var/lib/apt/lists/*
 
 # Install symlink missing from the container for H264 encode examples
-RUN if [ $(uname -m) == "x86_64" ]; then \
+RUN if [ $(uname -m) = "x86_64" ]; then \
         ln -sf /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-encode.so; \
     fi
 
@@ -66,27 +70,23 @@ FROM base as ngc-cli-downloader
 
 WORKDIR /opt/ngc-cli
 
-RUN if [ $(uname -m) == "aarch64" ]; then ARCH=arm64; else ARCH=linux; fi \
-    && wget \
-        -nv --show-progress --progress=bar:force:noscroll \
-        -O ngccli_linux.zip https://ngc.nvidia.com/downloads/ngccli_${ARCH}.zip \
-    && unzip -o ngccli_linux.zip \
+RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=linux; fi \
+    && curl -S -# -L -o ngccli_linux.zip https://ngc.nvidia.com/downloads/ngccli_${ARCH}.zip \
+    && unzip -q ngccli_linux.zip \
     && rm ngccli_linux.zip \
     && export ngc_exec=$(find . -type f -executable -name "ngc" | head -n1)
 
 ############################################################
-# ONNYX Runtime
+# ONNX Runtime
 ############################################################
 FROM base as onnxruntime-downloader
 ARG ONNX_RUNTIME_VERSION=1.12.1
 
 WORKDIR /opt/onnxruntime
 
-RUN if [ $(uname -m) == "aarch64" ]; then ARCH=aarch64; else ARCH=x64-gpu; fi \
+RUN if [ $(uname -m) = "aarch64" ]; then ARCH=aarch64; else ARCH=x64-gpu; fi \
     && ONNX_RUNTIME_NAME="onnxruntime-linux-${ARCH}-${ONNX_RUNTIME_VERSION}" \
-    && wget \
-        -nv --show-progress --progress=bar:force:noscroll \
-        https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_RUNTIME_VERSION}/${ONNX_RUNTIME_NAME}.tgz \
+    && curl -S -# -O -L https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_RUNTIME_VERSION}/${ONNX_RUNTIME_NAME}.tgz \
     && mkdir -p ${ONNX_RUNTIME_VERSION} \
     && tar -xzf ${ONNX_RUNTIME_NAME}.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 1
 
@@ -104,11 +104,10 @@ ARG VULKAN_SDK_VERSION
 WORKDIR /opt/vulkansdk
 
 # Note there is no aarch64 binary version to download, therefore for aarch64 we also download the x86_64 version which
-# includes the source. Then remove the binaries and build the aarch64 version from source.
-RUN wget -nv --show-progress --progress=bar:force:noscroll \
-    https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
+# includes the source. Then remove the binaries and e7ab9314build the aarch64 version from source.
+RUN curl -S -# -O -L https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
 RUN tar -xzf vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.gz
-RUN if [ $(uname -m) == "aarch64" ]; then \
+RUN if [ $(uname -m) = "aarch64" ]; then \
     cd ${VULKAN_SDK_VERSION} \
     && rm -rf x86_64 \
     && ./vulkansdk shaderc glslang headers; \
@@ -152,11 +151,17 @@ RUN apt update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pip run dependencies
-RUN if [ $(uname -m) == "aarch64" ]; then \
+RUN if [ $(uname -m) = "aarch64" ]; then \
         python3 -m pip install cupy-cuda11x==11.3.0 -f https://pip.cupy.dev/aarch64; \
     else \
         python3 -m pip install cupy-cuda11x==11.3.0; \
     fi
+
+# Install ffmpeg
+RUN ARCH=$(uname -m) \
+    && curl -S -# -o /usr/bin/ffmpeg \
+             -L https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/ffmpeg/6.0/bin/${ARCH}/ffmpeg \
+    && chmod +x /usr/bin/ffmpeg
 
 ## COPY BUILT/DOWNLOADED dependencies in previous stages
 # Note: avoid LD_LIBRARY_PATH - https://www.hpc.dtu.dk/?page_id=1180

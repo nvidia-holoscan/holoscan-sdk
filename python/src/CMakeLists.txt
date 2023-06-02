@@ -70,14 +70,6 @@ add_custom_target(holoscan-python-pyinit
 )
 add_dependencies(holoscan-python holoscan-python-pyinit)
 
-# custom target for top-level config.py file
-set(CMAKE_PYBIND11_CONFIG_FILE ${CMAKE_CURRENT_LIST_DIR}/config.py)
-add_custom_target(holoscan-python-config
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PYBIND11_CONFIG_FILE}" "${CMAKE_PYBIND11_MODULE_OUT_DIR}/"
-    DEPENDS "${CMAKE_PYBIND11_CONFIG_FILE}"
-)
-add_dependencies(holoscan-python holoscan-python-config)
-
 ######################
 # Add pybind11 modules
 ######################

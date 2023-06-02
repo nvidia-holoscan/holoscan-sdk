@@ -28,6 +28,10 @@ Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v0.7/LICENSE)
 expected (https://github.com/TartanLlama/expected)
 Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.0.0/COPYING)
 
+ffmpeg (https://github.com/FFmpeg/FFmpeg)
+Copyright (C) 2007 Free Software Foundation, Inc.
+Licensed under LGPLv3 (https://github.com/FFmpeg/FFmpeg/blob/master/COPYING.LGPLv3)
+
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich
 Licensed under MIT (https://github.com/fmtlib/fmt/blob/8.1.1/LICENSE.rst)

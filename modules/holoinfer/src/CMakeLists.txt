@@ -50,6 +50,7 @@ target_link_libraries(${PROJECT_NAME}
         GXF::std
         yaml-cpp
     PRIVATE
+        CUDA::cuda_driver
         CUDA::cudart
         CUDA::nppidei
         CUDA::nppig

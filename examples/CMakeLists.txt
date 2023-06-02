@@ -40,5 +40,11 @@ configure_file(CMakeLists.min.txt.in CMakeLists.min.txt @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/CMakeLists.min.txt"
           RENAME "CMakeLists.txt"
           DESTINATION examples
-          COMPONENT holoscan-examples)
+  COMPONENT holoscan-examples
+)
+
+install(FILES README.md
+  DESTINATION examples
+  COMPONENT holoscan-examples
+)
 endif()

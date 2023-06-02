@@ -295,7 +295,11 @@ bool AJASourceOp::AllocateBuffers(std::vector<void*>& buffers, size_t num_buffer
   buffers.resize(num_buffers);
   for (auto& buf : buffers) {
     if (rdma) {
-      cudaMalloc(&buf, buffer_size);
+      if (is_igpu_) {
+        cudaHostAlloc(&buf, buffer_size, cudaHostAllocDefault);
+      } else {
+        cudaMalloc(&buf, buffer_size);
+      }
       unsigned int syncFlag = 1;
       if (cuPointerSetAttribute(
               &syncFlag, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS, reinterpret_cast<CUdeviceptr>(buf))) {
@@ -323,7 +327,11 @@ bool AJASourceOp::AllocateBuffers(std::vector<void*>& buffers, size_t num_buffer
 void AJASourceOp::FreeBuffers(std::vector<void*>& buffers, bool rdma) {
   for (auto& buf : buffers) {
     if (rdma) {
-      cudaFree(buf);
+      if (is_igpu_) {
+        cudaFreeHost(buf);
+      } else {
+        cudaFree(buf);
+      }
     } else {
       free(buf);
     }
@@ -352,6 +360,12 @@ void AJASourceOp::initialize() {
 }
 
 void AJASourceOp::start() {
+  // Determine whether or not we're using the iGPU.
+  // TODO: This assumes we're using the first GPU device (as does the rest of the operator).
+  cudaDeviceProp prop;
+  cudaGetDeviceProperties(&prop, 0);
+  is_igpu_ = prop.integrated;
+
   HOLOSCAN_LOG_INFO("AJA Source: Capturing from NTV2_CHANNEL{}", (channel_.get() + 1));
   HOLOSCAN_LOG_INFO("AJA Source: RDMA is {}", use_rdma_ ? "enabled" : "disabled");
   if (enable_overlay_) {

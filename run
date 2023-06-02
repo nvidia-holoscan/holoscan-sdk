@@ -454,6 +454,33 @@ get_platform_str() {
     echo -n "${platform_str}"
 }
 
+get_gpu_str() {
+    local gpu="${1:-}"
+    local gpu_str=$gpu
+
+    case "${gpu}" in
+        igpu|iGPU|integrated|Jetson)
+            gpu_str="igpu"
+            ;;
+        dgpu|dGPU|discrete|RTX)
+            gpu_str="dgpu"
+            ;;
+    esac
+
+    echo -n "${gpu_str}"
+}
+
+get_host_gpu() {
+    if lsmod | grep -q nvidia_drm && command -v nvidia-smi > /dev/null; then
+        echo -n "dgpu"
+    elif lsmod | grep -q nvgpu ; then
+        echo -n "igpu"
+    else
+        c_echo_err Y "Could not find any GPU drivers on host. Defaulting build to target dGPU/CPU stack."
+        echo -n "dgpu"
+    fi
+}
+
 get_cuda_archs() {
     local cuda_archs="${1:-}"
 
@@ -521,11 +548,15 @@ build_image_desc() { c_echo 'Build dev image
   --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
         Default: current host platform
         Associated environment variable: HOLOSCAN_BUILD_PLATFORM
+  --gpu [igpu | dgpu] : Specify the GPU stack (integrated vs discrete)
+        Default: current host platform
+        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
 '
 }
 build_image() {
     # Parse env variables first or set default values
     local platform="${HOLOSCAN_BUILD_PLATFORM:-$(get_platform_str $(uname -p))}"
+    local gpu=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
 
     # Parse CLI arguments next
     ARGS=("$@")
@@ -536,11 +567,16 @@ build_image() {
         if [ "$arg" = "--platform" ]; then
            platform=$(get_platform_str "${ARGS[i+1]}")
         fi
+        if [ "$arg" = "--gpu" ]; then
+           gpu=$(get_gpu_str "${ARGS[i+1]}")
+        fi
     done
 
+    # Docker build
     run_command export DOCKER_BUILDKIT=1
     run_command docker build \
         --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --build-arg GPU_TYPE=${gpu} \
         --platform ${platform} \
         --network=host \
         -t holoscan-sdk-dev \
@@ -555,6 +591,9 @@ Arguments:
   --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
         Default: current host platform
         Associated environment variable: HOLOSCAN_BUILD_PLATFORM
+  --gpu [igpu | dgpu] : Specify the GPU stack (integrated vs discrete)
+        Default: current host GPU
+        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
   --cudaarchs [native | all | <custom_arch_list>]
         Default: native
         Associated environment variable: CMAKE_CUDA_ARCHITECTURES
@@ -576,6 +615,7 @@ Arguments:
 build() {
     # Parse env variables first or set default values
     local platform="${HOLOSCAN_BUILD_PLATFORM:-$(get_platform_str $(uname -p))}"
+    local gpu=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
     local cuda_archs="${CMAKE_CUDA_ARCHITECTURES:-NATIVE}"
     local build_type="${CMAKE_BUILD_TYPE:-release}"
     local build_path="${CMAKE_BUILD_PATH:-build}"
@@ -590,6 +630,9 @@ build() {
         arg="${ARGS[i]}"
         if [ "$arg" = "--platform" ]; then
            platform=$(get_platform_str "${ARGS[i+1]}")
+        fi
+        if [ "$arg" = "--gpu" ]; then
+           gpu=$(get_gpu_str "${ARGS[i+1]}")
         fi
         if [ "$arg" = "--cudaarchs" ]; then
            cuda_archs=$(get_cuda_archs "${ARGS[i+1]}")
@@ -611,7 +654,7 @@ build() {
     done
 
     setup
-    build_image --platform ${platform}
+    build_image --platform ${platform} --gpu ${gpu}
     install_gxf
 
     # DOCKER PARAMETERS
@@ -755,7 +798,7 @@ coverage() {
 
     # Find the nvidia_icd.json file which could reside at different paths
     # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
+    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f,l -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
 
     run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host \
         -u $(id -u):$(id -g) \
@@ -841,7 +884,7 @@ launch() {
 
     # Find the nvidia_icd.json file which could reside at different paths
     # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
+    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f,l -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
 
     # DOCKER PARAMETERS
     #

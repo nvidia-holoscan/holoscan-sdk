@@ -13,25 +13,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# isort: off
-# must keep import of core and gxf before other modules that rely on them
+# We import core and gxf to make sure they're available before other modules that rely on them
 from . import core, gxf
-from . import conditions, config, executors, graphs, logger, operators, resources
-
-# isort: on
 
 as_tensor = core.Tensor.as_tensor
+__all__ = ["as_tensor", "core", "gxf"]
 
-__all__ = [
-    "as_tensor",
+# Other modules are exposed to the public API but will only be lazily loaded
+_EXTRA_MODULES = [
     "conditions",
-    "config",
-    "core",
     "executors",
-    "graphs",
-    "gxf",
     "graphs",
     "logger",
     "operators",
     "resources",
 ]
+__all__.extend(_EXTRA_MODULES)
+
+
+# Autocomplete
+def __dir__():
+    return __all__
+
+
+# Lazily load extra modules
+def __getattr__(name):
+    import importlib
+    import sys
+
+    if name in _EXTRA_MODULES:
+        module_name = f"{__name__}.{name}"
+        module = importlib.import_module(module_name)  # import
+        sys.modules[module_name] = module  # cache
+        return module
+    else:
+        raise AttributeError(f"module {__name__} has no attribute {name}")

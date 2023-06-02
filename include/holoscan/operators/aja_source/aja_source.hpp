@@ -85,6 +85,8 @@ class AJASourceOp : public holoscan::Operator {
   uint8_t current_buffer_ = 0;
   uint8_t current_hw_frame_ = 0;
   uint8_t current_overlay_hw_frame_ = 0;
+
+  bool is_igpu_ = false;
 };
 
 }  // namespace holoscan::ops

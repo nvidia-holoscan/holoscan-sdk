@@ -50,9 +50,10 @@ set(CPACK_COMPONENTS_ALL
   holoscan-python_libs
   )
 
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "cuda-cudart-dev-11-6 | cuda-cudart-dev-11-7 | cuda-cudart-dev-11-8, \
-cuda-nvcc-11-6 | cuda-nvcc-11-7 | cuda-nvcc-11-8, \
-libnpp-11-6 | libnpp-11-7 | libnpp-11-8, \
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "cuda-cudart-dev-11-4 | cuda-cudart-dev-11-5 \
+| cuda-cudart-dev-11-6 | cuda-cudart-dev-11-7 | cuda-cudart-dev-11-8, \
+cuda-nvcc-11-4 | cuda-nvcc-11-5 | cuda-nvcc-11-6 | cuda-nvcc-11-7 | cuda-nvcc-11-8, \
+libnpp-11-4 | libnpp-11-5 | libnpp-11-6 | libnpp-11-7 | libnpp-11-8, \
 libnvinfer-bin (>= 8.2.3), \
 libvulkan1 (>=1.2.131), libx11-6 (>=1.6.9)")
 

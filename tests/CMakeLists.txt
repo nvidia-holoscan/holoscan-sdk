@@ -124,12 +124,9 @@ ConfigureTest(HOLOINFER_TEST
   holoinfer/multiai_tests.hpp
   holoinfer/test_infer_settings.hpp
 )
-target_include_directories(HOLOINFER_TEST
-  PRIVATE
-    ${CMAKE_SOURCE_DIR}/modules/holoinfer/src/include
-)
 target_link_libraries(HOLOINFER_TEST
   PRIVATE
     holoinfer
+    CUDA::cuda_driver
 )
 add_dependencies(HOLOINFER_TEST multiai_ultrasound_data)

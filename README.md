@@ -11,7 +11,7 @@ Visit the [NGC demo website](https://demos.ngc.nvidia.com/holoscan) for a live d
 - [Using the released SDK](#using-the-released-sdk)
 - [Building the SDK from source](#building-the-sdk-from-source)
   - [Prerequisites](#prerequisites)
-    - [For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)](#for-clara-agx-and-nvidia-igx-orin-developer-kits-aarch64)
+    - [For Holoscan Developer Kits (aarch64)](#for-holoscan-developer-kits-aarch64)
     - [For x86_64 systems](#for-x86_64-systems)
   - [Recommended: using the `run` script](#recommended-using-the-run-script)
   - [Cross-compilation](#cross-compilation)
@@ -43,25 +43,27 @@ The Holoscan SDK is available as part of the following packages:
 
 The Holoscan SDK currently supports the [Holoscan Developer Kits](https://www.nvidia.com/en-us/clara/developer-kits) (aarch64) as well as x86_64 systems.
 
-#### For Clara AGX and NVIDIA IGX Orin Developer Kits (aarch64)
+#### For Holoscan Developer Kits (aarch64)
 
 Set up your developer kit:
-- [NVIDIA Clara AGX](https://developer.nvidia.com/clara-agx-developer-kit-user-guide)
-- [NVIDIA IGX Orin [ES]](https://developer.nvidia.com/igx-orin-developer-kit-user-guide)
-- NVIDIA IGX Orin: *coming soon*
 
-> Make sure you have joined the [Holoscan SDK Program](https://developer.nvidia.com/clara-holoscan-sdk-program) and, if needed, the [Rivermax SDK Program](https://developer.nvidia.com/nvidia-rivermax-sdk) before using the NVIDIA SDK Manager.
+Developer Kit | User Guide | HoloPack | GPU
+------------- | ---------- | -------- | ---
+[NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) | [Guide](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/nvidia-igx-orin/nvidia_igx_orin_user_guide.md) | 2.0 | dGPU or iGPU
+NVIDIA IGX Orin [ES] | [Guide](https://developer.download.nvidia.com/CLARA/IGX-Orin-Developer-Kit-User-Guide-(v1.0).pdf) | 1.2 | dGPU only
+[NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments/) | [Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide) | 1.2 | dGPU only
 
-- [SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-clara/) will install **Holopack 1.2** as well as the `nvgpuswitch.py` script. Once configured for dGPU mode, your developer kit will include the necessary components to build the SDK
-- For Rivermax support (optional/local development only at this time), GPUDirect drivers need to be loaded manually at this time, see the [User Guide](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma).
-- Refer to the user guide for additional steps needed to support third-party technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html).
-- Additional dependencies are required when developing locally instead of using a containerized environment, see details in the [section below](#advanced-local-environment--cmake).
+> Notes:
+>
+> - For Rivermax support (optional/local development only at this time), GPUDirect drivers need to be loaded manually at this time, see the [User Guide](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/additional_setup.html#setting-up-gpudirect-rdma).
+> - Refer to the user guide for additional steps needed to support third-party technologies, such as [AJA cards](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/aja_setup.html).
+> - Additional dependencies are required when developing locally instead of using a containerized environment, see details in the [section below](#advanced-local-environment--cmake).
 
 #### For x86_64 systems
 
 You'll need the following to build applications from source on x86_64:
 - OS: Ubuntu 20.04
-- NVIDIA GPU
+- NVIDIA discrete GPU (dGPU)
   - Ampere or above recommended for best performance
   - [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for [GPUDirect RDMA](https://developer.nvidia.com/gpudirect) support
   - Tested with [NVIDIA RTX 6000](https://www.nvidia.com/en-us/design-visualization/rtx-6000/) and [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/)
@@ -302,7 +304,7 @@ _Note: Holoviz should support copying data across CUDA devices in a future relea
 
 ## Repository structure
 
-The repository is organized as such:s
+The repository is organized as such:
 - `cmake/`: CMake configuration files
 - `data/`: directory where data will be downloaded
 - `examples/`: source code for the examples
