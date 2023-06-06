@@ -269,6 +269,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
         out_shape = nvidia::gxf::Shape{
             static_cast<int32_t>(buffer_info.height), static_cast<int32_t>(buffer_info.width), 4};
         break;
+      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB:
+        in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned8;
+        in_channels = 3;  // RGB
+        out_channels = in_channels;
+        out_shape = nvidia::gxf::Shape{
+            static_cast<int32_t>(buffer_info.height), static_cast<int32_t>(buffer_info.width), 3};
+        break;
       case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12:
         in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned8;
         in_channels = buffer_info.color_planes.size();
