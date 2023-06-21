@@ -137,7 +137,7 @@ RUN apt update \
 RUN apt update \
     && apt install --no-install-recommends -y \
         libgl-dev=1.3.2-1~ubuntu0.20.04.2 \
-        libx11-dev=2:1.6.9-2ubuntu1.2 \
+        libx11-dev="2:1.6.9-*" \
         libxcursor-dev=1:1.2.0-2 \
         libxext-dev=2:1.3.4-0ubuntu1 \
         libxi-dev=2:1.7.10-0ubuntu1 \
@@ -170,6 +170,8 @@ RUN ARCH=$(uname -m) \
 ENV NGC_CLI=/opt/ngc-cli
 COPY --from=ngc-cli-downloader ${NGC_CLI}/ngc-cli ${NGC_CLI}
 ENV PATH="${PATH}:${NGC_CLI}"
+# Workaround to fix encoding for ngc-cli download
+ENV PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8
 
 # Copy ONNX Runtime
 ARG ONNX_RUNTIME_VERSION
