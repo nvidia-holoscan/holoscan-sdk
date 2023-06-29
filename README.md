@@ -50,7 +50,6 @@ Set up your developer kit:
 Developer Kit | User Guide | HoloPack | GPU
 ------------- | ---------- | -------- | ---
 [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) | [Guide](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/nvidia-igx-orin/nvidia_igx_orin_user_guide.md) | 2.0 | dGPU or iGPU
-NVIDIA IGX Orin [ES] | [Guide](https://developer.download.nvidia.com/CLARA/IGX-Orin-Developer-Kit-User-Guide-(v1.0).pdf) | 1.2 | dGPU only
 [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments/) | [Guide](https://developer.nvidia.com/clara-agx-developer-kit-user-guide) | 1.2 | dGPU only
 
 > Notes:
