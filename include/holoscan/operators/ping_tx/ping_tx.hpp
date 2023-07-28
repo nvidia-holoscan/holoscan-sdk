@@ -32,6 +32,8 @@ class PingTxOp : public Operator {
 
   void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override;
 
+  int index() const { return index_; }
+
  private:
   int index_ = 1;
 };

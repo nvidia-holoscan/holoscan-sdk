@@ -87,7 +87,9 @@ enum class ImageFormat {
   R8_UNORM,             ///< specifies a one-component,
                         ///  8-bit unsigned normalized format that has a single 8-bit R component.
   R16_UNORM,            ///< specifies a one-component,
-                        ///  16-bit unsigned normalized format that has a single 8-bit R component.
+                        ///  16-bit unsigned normalized format that has a single 16-bit R component.
+  D32_SFLOAT,           ///< specifies a one-component, 32-bit signed floating-point format that has
+                        ///  32 bits in the depth component.
 };
 
 }  // namespace holoscan::viz

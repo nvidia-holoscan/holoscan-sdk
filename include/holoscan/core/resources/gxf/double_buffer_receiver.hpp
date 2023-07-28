@@ -26,19 +26,38 @@
 
 namespace holoscan {
 
+// Forward declarations
+class AnnotatedDoubleBufferReceiver;
+
+/**
+ * @brief Double buffer receiver class.
+ *
+ * The DoubleBufferReceiver class is used to receive messages from another operator within a
+ * fragment.
+ */
 class DoubleBufferReceiver : public Receiver {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(DoubleBufferReceiver, Receiver)
   DoubleBufferReceiver() = default;
   DoubleBufferReceiver(const std::string& name, nvidia::gxf::DoubleBufferReceiver* component);
 
-  const char* gxf_typename() const override { return "nvidia::gxf::DoubleBufferReceiver"; }
+  DoubleBufferReceiver(const std::string& name, AnnotatedDoubleBufferReceiver* component);
+
+  const char* gxf_typename() const override;
 
   void setup(ComponentSpec& spec) override;
 
- private:
+  /**
+   * @brief Track the data flow of the receiver and use holoscan::AnnotatedDoubleBufferReceiver as
+   * the GXF Component.
+   */
+  void track();
+
   Parameter<uint64_t> capacity_;
   Parameter<uint64_t> policy_;
+
+ private:
+  bool tracking_ = false;  ///< Used to decide whether to use data flow tracking or not.
 };
 
 }  // namespace holoscan

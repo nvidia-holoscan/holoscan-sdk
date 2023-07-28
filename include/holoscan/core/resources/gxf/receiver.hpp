@@ -26,6 +26,11 @@
 
 namespace holoscan {
 
+/**
+ * @brief Base receiver class.
+ *
+ * Receivers are used by input ports to receive messages.
+ */
 class Receiver : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(Receiver, GXFResource)

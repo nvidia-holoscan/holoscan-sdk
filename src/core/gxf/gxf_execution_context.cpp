@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 
 #include <memory>
@@ -24,8 +25,8 @@
 namespace holoscan::gxf {
 
 GXFExecutionContext::GXFExecutionContext(gxf_context_t context, Operator* op) {
-  gxf_input_context_ = std::make_shared<GXFInputContext>(context, op);
-  gxf_output_context_ = std::make_shared<GXFOutputContext>(context, op);
+  gxf_input_context_ = std::make_shared<GXFInputContext>(this, op);
+  gxf_output_context_ = std::make_shared<GXFOutputContext>(this, op);
 
   context_ = context;
   input_context_ = gxf_input_context_.get();

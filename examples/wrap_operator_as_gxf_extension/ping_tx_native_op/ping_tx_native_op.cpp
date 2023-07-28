@@ -25,7 +25,7 @@ namespace myops {
 
 void PingTxNativeOp::setup(OperatorSpec& spec) {
   HOLOSCAN_LOG_INFO("PingTxNativeOp::setup() called.");
-  spec.output<gxf::Entity>("out");
+  spec.output<holoscan::gxf::Entity>("out");
 }
 
 void PingTxNativeOp::compute(InputContext& op_input, OutputContext& op_output,
@@ -33,7 +33,7 @@ void PingTxNativeOp::compute(InputContext& op_input, OutputContext& op_output,
   HOLOSCAN_LOG_INFO("PingTxNativeOp::compute() called.");
 
   // Create a new message (Entity)
-  auto out_message = gxf::Entity::New(&context);
+  auto out_message = holoscan::gxf::Entity::New(&context);
   // Send the empty message.
   op_output.emit(out_message, "out");
 }

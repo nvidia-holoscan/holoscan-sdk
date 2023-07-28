@@ -19,17 +19,26 @@
 
 #include <NvInferPlugin.h>
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace holoscan {
 namespace inference {
 
-TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name, bool enable_fp16,
-                   bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out)
+TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name, int device_id,
+                   bool enable_fp16, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out)
     : model_path_(model_path),
       model_name_(model_name),
+      device_id_(device_id),
       enable_fp16_(enable_fp16),
       is_engine_path_(is_engine_path),
       cuda_buf_in_(cuda_buf_in),
       cuda_buf_out_(cuda_buf_out) {
+  // Set the device index
+  network_options_.device_index = device_id_;
+
   network_options_.use_fp16 = enable_fp16_;
   initLibNvInferPlugins(nullptr, "");
 
@@ -40,7 +49,14 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
     if (!status) { throw std::runtime_error("TRT Inference: could not generate TRT engine path."); }
 
     status = build_engine(model_path_, engine_path_, network_options_, logger_);
-    if (!status) { throw std::runtime_error("TRT Inference: failed to build TRT engine file."); }
+    if (!status) {
+      HOLOSCAN_LOG_ERROR("Engine file creation failed for {}", model_path_);
+      HOLOSCAN_LOG_INFO(
+          "If the input path {} is an engine file, set 'is_engine_path' parameter to true in "
+          "the inference settings in the application config.",
+          model_path_);
+      throw std::runtime_error("TRT Inference: failed to build TRT engine file.");
+    }
   } else {
     engine_path_ = model_path_;
   }
@@ -49,11 +65,14 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
   if (!status) { throw std::runtime_error("TRT Inference: failed to load TRT engine file."); }
 
   status = initialize_parameters();
-  if (!status) { throw std::runtime_error("TRT Inference: memory allocation error."); }
+  if (!status) { throw std::runtime_error("TRT Inference: Initialization error."); }
 }
 
 TrtInfer::~TrtInfer() {
+  if (context_) { context_.reset(); }
+  if (engine_) { engine_.reset(); }
   if (cuda_stream_) { cudaStreamDestroy(cuda_stream_); }
+  if (infer_runtime_) { infer_runtime_.reset(); }
 }
 
 bool TrtInfer::load_engine() {
@@ -68,8 +87,8 @@ bool TrtInfer::load_engine() {
     return false;
   }
 
-  std::unique_ptr<nvinfer1::IRuntime> runtime{nvinfer1::createInferRuntime(logger_)};
-  if (!runtime) {
+  infer_runtime_.reset(nvinfer1::createInferRuntime(logger_));
+  if (!infer_runtime_) {
     HOLOSCAN_LOG_ERROR("Load Engine: Error in creating inference runtime.");
     return false;
   }
@@ -82,7 +101,7 @@ bool TrtInfer::load_engine() {
   }
 
   engine_ = std::unique_ptr<nvinfer1::ICudaEngine>(
-      runtime->deserializeCudaEngine(buffer.data(), buffer.size()));
+      infer_runtime_->deserializeCudaEngine(buffer.data(), buffer.size()));
   if (!engine_) {
     HOLOSCAN_LOG_ERROR("Load Engine: Error in deserializing cuda engine.");
     return false;
@@ -104,112 +123,196 @@ bool TrtInfer::load_engine() {
   return true;
 }
 
-std::vector<int64_t> TrtInfer::get_input_dims() const {
+std::vector<std::vector<int64_t>> TrtInfer::get_input_dims() const {
   return input_dims_;
 }
 
-std::vector<int64_t> TrtInfer::get_output_dims() const {
+std::vector<std::vector<int64_t>> TrtInfer::get_output_dims() const {
   return output_dims_;
 }
 
+std::vector<holoinfer_datatype> TrtInfer::get_input_datatype() const {
+  return in_data_types_;
+}
+
+std::vector<holoinfer_datatype> TrtInfer::get_output_datatype() const {
+  return out_data_types_;
+}
+
 bool TrtInfer::initialize_parameters() {
-  auto dims = engine_->getBindingDimensions(0);
-  auto out_dims = engine_->getBindingDimensions(1);
+  if (!engine_) {
+    HOLOSCAN_LOG_ERROR("Engine is Null.");
+    return false;
+  }
+  const int num_bindings = engine_->getNbBindings();
 
-  nvinfer1::Dims4 in_dimensions = {1, dims.d[1], dims.d[2], dims.d[3]};
-  std::vector<int64_t> indim = {1, dims.d[1], dims.d[2], dims.d[3]};
-  input_dims_ = std::move(indim);
+  for (int i = 0; i < num_bindings; i++) {
+    auto dims = engine_->getBindingDimensions(i);
+    auto data_type = engine_->getBindingDataType(i);
 
-  context_->setBindingDimensions(0, in_dimensions);
+    holoinfer_datatype holoinfer_type = holoinfer_datatype::h_Float32;
+    switch (data_type) {
+      case nvinfer1::DataType::kFLOAT: {
+        holoinfer_type = holoinfer_datatype::h_Float32;
+        break;
+      }
+      case nvinfer1::DataType::kINT32: {
+        holoinfer_type = holoinfer_datatype::h_Int32;
+        break;
+      }
+      case nvinfer1::DataType::kINT8: {
+        holoinfer_type = holoinfer_datatype::h_Int8;
+        break;
+      }
+      default: {
+        HOLOSCAN_LOG_ERROR("Data type not supported.");
+        return false;
+      }
+    }
+
+    if (engine_->bindingIsInput(i)) {
+      switch (dims.nbDims) {
+        case 2: {
+          nvinfer1::Dims2 in_dimensions = {dims.d[0], dims.d[1]};
+          context_->setBindingDimensions(i, in_dimensions);
+        } break;
+        case 3: {
+          nvinfer1::Dims3 in_dimensions = {dims.d[0], dims.d[1], dims.d[2]};
+          context_->setBindingDimensions(i, in_dimensions);
+        } break;
+        case 4: {
+          nvinfer1::Dims4 in_dimensions = {dims.d[0], dims.d[1], dims.d[2], dims.d[3]};
+          context_->setBindingDimensions(i, in_dimensions);
+        } break;
+        default: {
+          throw std::runtime_error("Dimension size not supported: " + std::to_string(dims.nbDims));
+        }
+      }
+
+      std::vector<int64_t> indim;
+      for (size_t in = 0; in < dims.nbDims; in++) { indim.push_back(dims.d[in]); }
+      input_dims_.push_back(std::move(indim));
+
+      in_data_types_.push_back(holoinfer_type);
+    } else {
+      std::vector<int64_t> outdim;
+      for (size_t in = 0; in < dims.nbDims; in++) { outdim.push_back(dims.d[in]); }
+
+      output_dims_.push_back(outdim);
+      out_data_types_.push_back(holoinfer_type);
+    }
+  }
 
   if (!context_->allInputDimensionsSpecified()) {
     throw std::runtime_error("Error, not all input dimensions specified.");
   }
 
-  if (out_dims.d[2] == 0) out_dims.d[2] = 1;
-  if (out_dims.d[3] == 0) out_dims.d[3] = 1;
-
-  std::vector<int64_t> outdim = {1, out_dims.d[1], out_dims.d[2], out_dims.d[3]};
-  output_dims_ = std::move(outdim);
-
   return true;
 }
 
-InferStatus TrtInfer::do_inference(std::shared_ptr<DataBuffer>& input_buffer,
-                                   std::shared_ptr<DataBuffer>& output_buffer) {
+InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffers,
+                                   std::vector<std::shared_ptr<DataBuffer>>& output_buffers) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
+  std::vector<void*> cuda_buffers;
 
-  if (input_buffer->device_buffer == nullptr) {
-    status.set_message(" TRT inference core: Input Device buffer is null.");
-    return status;
-  }
-  if (input_buffer->device_buffer->data() == nullptr) {
-    status.set_message(" TRT inference core: Data in Input Device buffer is null.");
-    return status;
-  }
-
-  //  Host to Device transfer
-  if (!cuda_buf_in_) {
-    if (input_buffer->host_buffer.size() == 0) {
-      status.set_message(" TRT inference core: Empty input host buffer.");
+  for (auto& input_buffer : input_buffers) {
+    if (input_buffer->device_buffer == nullptr) {
+      status.set_message(" TRT inference core: Input Device buffer is null.");
       return status;
     }
-    if (input_buffer->device_buffer->size() != input_buffer->host_buffer.size()) {
-      status.set_message(" TRT inference core: Input Host and Device buffer size mismatch.");
+
+    if (input_buffer->device_buffer->data() == nullptr) {
+      status.set_message(" TRT inference core: Data in Input Device buffer is null.");
       return status;
     }
-    auto cstatus = cudaMemcpyAsync(input_buffer->device_buffer->data(),
-                                   input_buffer->host_buffer.data(),
-                                   input_buffer->device_buffer->get_bytes(),
-                                   cudaMemcpyHostToDevice,
-                                   cuda_stream_);
-    if (cstatus != cudaSuccess) {
-      status.set_message(" TRT inference core: Host to device transfer failed.");
+
+    //  Host to Device transfer
+    if (!cuda_buf_in_) {
+      if (input_buffer->host_buffer.size() == 0) {
+        status.set_message(" TRT inference core: Empty input host buffer.");
+        return status;
+      }
+      if (input_buffer->device_buffer->size() != input_buffer->host_buffer.size()) {
+        status.set_message(" TRT inference core: Input Host and Device buffer size mismatch.");
+        return status;
+      }
+      auto cstatus = cudaMemcpyAsync(input_buffer->device_buffer->data(),
+                                     input_buffer->host_buffer.data(),
+                                     input_buffer->device_buffer->get_bytes(),
+                                     cudaMemcpyHostToDevice,
+                                     cuda_stream_);
+      if (cstatus != cudaSuccess) {
+        status.set_message(" TRT inference core: Host to device transfer failed.");
+        return status;
+      }
+      cstatus = cudaStreamSynchronize(cuda_stream_);
+      if (cstatus != cudaSuccess) {
+        status.set_message(" TRT: Cuda stream synchronization failed");
+        return status;
+      }
+      if (input_buffer->device_buffer->size() == 0) {
+        status.set_message(" TRT inference core: Input Device buffer size is 0.");
+        return status;
+      }
+    }
+    cuda_buffers.push_back(input_buffer->device_buffer->data());
+  }
+
+  for (auto& output_buffer : output_buffers) {
+    if (output_buffer->device_buffer == nullptr) {
+      status.set_message(" TRT inference core: Output Device buffer is null.");
       return status;
     }
+    if (output_buffer->device_buffer->data() == nullptr) {
+      status.set_message(" TRT inference core: Data in Output Device buffer is null.");
+      return status;
+    }
+
+    if (output_buffer->device_buffer->size() == 0) {
+      status.set_message(" TRT inference core: Output Device buffer size is 0.");
+      return status;
+    }
+    cuda_buffers.push_back(output_buffer->device_buffer->data());
   }
 
-  if (output_buffer->device_buffer == nullptr) {
-    status.set_message(" TRT inference core: Output Device buffer is null.");
-    return status;
-  }
-  if (output_buffer->device_buffer->data() == nullptr) {
-    status.set_message(" TRT inference core: Data in Output Device buffer is null.");
-    return status;
-  }
-
-  if (input_buffer->device_buffer->size() == 0 || output_buffer->device_buffer->size() == 0) {
-    status.set_message(" TRT inference core: Device buffer size is 0.");
-    return status;
-  }
-
-  auto cuda_buffers = {input_buffer->device_buffer->data(), output_buffer->device_buffer->data()};
   auto inference_bindings = std::make_shared<std::vector<void*>>(cuda_buffers);
-
-  bool infer_status = context_->enqueueV2(inference_bindings->data(), cuda_stream_, nullptr);
+  bool infer_status = false;
+  if (!engine_->hasImplicitBatchDimension()) {
+    infer_status = context_->enqueueV2(inference_bindings->data(), cuda_stream_, nullptr);
+  } else {
+    infer_status = context_->enqueue(1, inference_bindings->data(), cuda_stream_, nullptr);
+  }
 
   if (!infer_status) {
     status.set_message(" TRT inference core: Inference failure.");
     return status;
   }
+
   if (!cuda_buf_out_) {
-    if (output_buffer->host_buffer.size() == 0) {
-      status.set_message(" TRT inference core: Empty output host buffer.");
-      return status;
-    }
-    if (output_buffer->device_buffer->size() != output_buffer->host_buffer.size()) {
-      status.set_message(" TRT inference core: Output Host and Device buffer size mismatch.");
-      return status;
-    }
-    // Copy the results back to CPU memory
-    auto cstatus = cudaMemcpyAsync(output_buffer->host_buffer.data(),
-                                   output_buffer->device_buffer->data(),
-                                   output_buffer->device_buffer->get_bytes(),
-                                   cudaMemcpyDeviceToHost,
-                                   cuda_stream_);
-    if (cstatus != cudaSuccess) {
-      status.set_message(" TRT: Device to host transfer failed");
-      return status;
+    for (auto& output_buffer : output_buffers) {
+      if (output_buffer->host_buffer.size() == 0) {
+        status.set_message(" TRT inference core: Empty output host buffer.");
+        return status;
+      }
+      if (output_buffer->device_buffer->size() != output_buffer->host_buffer.size()) {
+        status.set_message(" TRT inference core: Output Host and Device buffer size mismatch.");
+        return status;
+      }
+      // Copy the results back to CPU memory
+      auto cstatus = cudaMemcpyAsync(output_buffer->host_buffer.data(),
+                                     output_buffer->device_buffer->data(),
+                                     output_buffer->device_buffer->get_bytes(),
+                                     cudaMemcpyDeviceToHost,
+                                     cuda_stream_);
+      if (cstatus != cudaSuccess) {
+        status.set_message(" TRT: Device to host transfer failed");
+        return status;
+      }
+      cstatus = cudaStreamSynchronize(cuda_stream_);
+      if (cstatus != cudaSuccess) {
+        status.set_message(" TRT: Cuda stream synchronization failed");
+        return status;
+      }
     }
   }
 

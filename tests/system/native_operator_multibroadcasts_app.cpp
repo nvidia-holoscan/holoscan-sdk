@@ -37,11 +37,11 @@ class NativeMultiBroadcastsApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::PingTxOp>("tx", make_condition<CountCondition>(10));
-    auto rx11 = make_operator<ops::PingRxOp>("rx11");
-    auto rx12 = make_operator<ops::PingRxOp>("rx12");
-    auto rx21 = make_operator<ops::PingRxOp>("rx21");
-    auto rx22 = make_operator<ops::PingRxOp>("rx22");
+    auto tx = make_operator<ops::PingMultiTxOp>("tx", make_condition<CountCondition>(10));
+    auto rx11 = make_operator<ops::PingMultiRxOp>("rx11");
+    auto rx12 = make_operator<ops::PingMultiRxOp>("rx12");
+    auto rx21 = make_operator<ops::PingMultiRxOp>("rx21");
+    auto rx22 = make_operator<ops::PingMultiRxOp>("rx22");
 
     add_flow(tx, rx11, {{"out1", "receivers"}});
     add_flow(tx, rx12, {{"out1", "receivers"}});
@@ -52,8 +52,6 @@ class NativeMultiBroadcastsApp : public holoscan::Application {
 };
 
 TEST(NativeOperatorMultiBroadcastsApp, TestNativeOperatorMultiBroadcastsApp) {
-  load_env_log_level();
-
   auto app = make_application<NativeMultiBroadcastsApp>();
 
   const std::string config_file = test_config.get_test_data_file("minimal.yaml");

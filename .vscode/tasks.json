@@ -42,5 +42,25 @@
                 "kind": "none",
             }
         },
+        {
+            "label": "Lint Code",
+            "type": "shell",
+            "command": "./run lint",
+            "options": {
+                "cwd": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}",
+                "env": {
+                    "PATH": "${env:HOME}/.local/bin:${env:PATH}",
+                    "CUDACXX": "/usr/local/cuda/bin/nvcc",
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true
+            },
+            "problemMatcher": [],
+            "group": {
+                "kind": "none",
+            }
+        },
     ]
 }

@@ -16,6 +16,9 @@
  */
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "push_constants.hpp"
 
 // incoming
 layout(location = 0) in struct
@@ -28,16 +31,21 @@ layout(location = 0) in struct
 layout(location = 0) out vec4 o_color;
 
 // sampler
-layout(binding = 0) uniform sampler2D texSampler;
+layout(binding = SAMPLE_BINDING_COLOR) uniform sampler2D texSampler;
 
-layout(push_constant) uniform constants
-{
-    layout(offset = 21 * 4) float opacity;
-}
-pushConstants;
+// constants
+layout(push_constant) uniform constants {
+  layout(offset = PUSH_CONSTANT_VERTEX_SIZE) PushConstantFragment fragment;
+} push_constants;
 
 void main()
 {
-    o_color = In.color * texture(texSampler, In.texCoord);
-    o_color.a *= pushConstants.opacity;
+    vec4 color = In.color * texture(texSampler, In.texCoord);
+    color.a *= push_constants.fragment.opacity;
+
+    // discard transparent fragments
+    if (color.a == 0.f)
+        discard;
+
+    o_color = color;
 }

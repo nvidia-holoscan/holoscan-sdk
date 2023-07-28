@@ -35,8 +35,9 @@ add_executable(holoscan::viz::functionaltests ALIAS ${PROJECT_NAME})
 
 target_sources(${PROJECT_NAME}
     PRIVATE
-        headless_fixture.cpp
+        camera_pose_test.cpp
         geometry_layer_test.cpp
+        headless_fixture.cpp
         im_gui_layer_test.cpp
         image_layer_test.cpp
         init_test.cpp

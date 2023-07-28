@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,6 @@
 
 #include "holoinfer_buffer.hpp"
 
-
 namespace holoscan {
 namespace inference {
 
@@ -39,11 +38,11 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
   /**
    * Set Inference parameters
    *
-   * @param multiai_specs   Pointer to Multi AI inference specifications
+   * @param inference_specs   Pointer to inference specifications
    *
    * @returns InferStatus with appropriate holoinfer_code and message.
    */
-  InferStatus set_inference_params(std::shared_ptr<MultiAISpecs>& multiai_specs);
+  InferStatus set_inference_params(std::shared_ptr<InferenceSpecs>& inference_specs);
 
   /**
    * Executes the inference
@@ -78,24 +77,24 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    *
    * @returns InferStatus with appropriate holoinfer_code and message.
    */
-  InferStatus initialize(const MultiMappings& process_operations);
+  InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
 
   /**
    * Process the tensors with operations as initialized.
    * Toolkit supports one tensor input and output per model
    *
-   * @param tensor_oper_map       Map of tensor name as key, mapped to list of operations to be
-   *                              applied in sequence on the tensor
-   * @param in_out_tensor_map     Map of input tensor name mapped to output tensor name after
-   *                              processing
-   * @param processed_result_map  Map is updated with output tensor name as key mapped to processed
+   * @param tensor_oper_map Map of tensor name as key, mapped to list of operations to be applied in
+   * sequence on the tensor
+   * @param in_out_tensor_map Map of input tensor name mapped to vector of output tensor names
+   * after processing
+   * @param processed_result_map Map is updated with output tensor name as key mapped to processed
    * output as a vector of float32 type
-   * @param dimension_map         Map is updated with model name as key mapped to dimension of
-   * processed data as a vector
+   * @param dimension_map Map is updated with model name as key mapped to dimension of processed
+   * data as a vector
    *
    * @returns InferStatus with appropriate holoinfer_code and message.
    */
-  InferStatus process(const MultiMappings& tensor_oper_map, const Mappings& in_out_tensor_map,
+  InferStatus process(const MultiMappings& tensor_oper_map, const MultiMappings& in_out_tensor_map,
                       DataMap& processed_result_map,
                       const std::map<std::string, std::vector<int>>& dimension_map);
 

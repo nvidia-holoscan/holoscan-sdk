@@ -17,7 +17,10 @@
 
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
+#include <string>
+
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan {
 
@@ -32,19 +35,22 @@ constexpr int32_t kDefaultDeviceId = 0;
 CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component)
     : Allocator(name, component) {
   int32_t dev_id = 0;
-  GxfParameterGetInt32(gxf_context_, gxf_cid_, "dev_id", &dev_id);
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetInt32(gxf_context_, gxf_cid_, "dev_id", &dev_id));
   dev_id_ = dev_id;
   uint32_t stream_flags = 0;
-  GxfParameterGetUInt32(gxf_context_, gxf_cid_, "stream_flags", &stream_flags);
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfParameterGetUInt32(gxf_context_, gxf_cid_, "stream_flags", &stream_flags));
   stream_flags_ = stream_flags;
   int32_t stream_priority = 0;
-  GxfParameterGetInt32(gxf_context_, gxf_cid_, "stream_priority", &stream_priority);
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfParameterGetInt32(gxf_context_, gxf_cid_, "stream_priority", &stream_priority));
   stream_priority_ = stream_priority;
   uint32_t reserved_size = 0;
-  GxfParameterGetUInt32(gxf_context_, gxf_cid_, "reserved_size", &reserved_size);
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfParameterGetUInt32(gxf_context_, gxf_cid_, "reserved_size", &reserved_size));
   reserved_size_ = reserved_size;
   uint32_t max_size = 0;
-  GxfParameterGetUInt32(gxf_context_, gxf_cid_, "max_size", &max_size);
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt32(gxf_context_, gxf_cid_, "max_size", &max_size));
   max_size_ = max_size;
 }
 

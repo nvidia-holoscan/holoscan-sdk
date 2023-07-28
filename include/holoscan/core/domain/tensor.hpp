@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,11 +59,8 @@ struct DLManagedTensorCtx {
  */
 class DLManagedMemoryBuffer {
  public:
-  explicit DLManagedMemoryBuffer(DLManagedTensor* self) : self_(self) {}
-
-  ~DLManagedMemoryBuffer() {
-    if (self_ && self_->deleter != nullptr) { self_->deleter(self_); }
-  }
+  explicit DLManagedMemoryBuffer(DLManagedTensor* self);
+  ~DLManagedMemoryBuffer();
 
  private:
   DLManagedTensor* self_ = nullptr;

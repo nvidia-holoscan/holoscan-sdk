@@ -39,12 +39,19 @@
 namespace holoscan {
 namespace inference {
 
-enum class holoinfer_datatype { hFloat = 0 };
+enum class holoinfer_datatype {
+  h_Float32 = 0,
+  h_Int8 = 1,
+  h_Int32 = 2,
+  h_Int64 = 3,
+  h_UInt8 = 4,
+  h_Unsupported = 5
+};
 /// @brief Data processor implementation codes
-enum class holoinfer_data_processor { CUDA = 0, HOST = 1, CUDA_AND_HOST = 2 };
+enum class holoinfer_data_processor { h_CUDA = 0, h_HOST = 1, h_CUDA_AND_HOST = 2 };
 
-/// @brief Codes for data storage format
-enum class holoinfer_data_storage_format { NHWC = 0, NCHW = 1 };
+/// @brief Codes for supported inference backends
+enum class holoinfer_backend { h_trt = 0, h_onnx = 1, h_torch = 2, h_unknown = 3 };
 
 /// @brief Holoscan Inference Toolkit status codes
 enum class holoinfer_code { H_SUCCESS, H_ERROR, H_EXCEPTION, H_WARNING };
@@ -79,6 +86,7 @@ class _HOLOSCAN_EXTERNAL_API_ InferStatus {
 };
 
 using TimePoint = std::chrono::steady_clock::time_point;
+using byte = unsigned char;
 
 }  // namespace inference
 }  // namespace holoscan

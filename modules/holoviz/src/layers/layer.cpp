@@ -17,11 +17,15 @@
 
 #include "layer.hpp"
 
+#include <vector>
+#include <stdexcept>
+
 namespace holoscan::viz {
 
 struct Layer::Impl {
   int32_t priority_ = 0;
   float opacity_ = 1.f;
+  std::vector<View> views_;
 };
 
 Layer::Layer(Type type) : type_(type), impl_(new Impl) {}
@@ -49,7 +53,28 @@ float Layer::get_opacity() const {
 }
 
 void Layer::set_opacity(float opacity) {
+  if ((opacity < 0.f) || (opacity > 1.f)) {
+    throw std::invalid_argument("Layer opacity should be in the range [0.0 ... 1.0]");
+  }
   impl_->opacity_ = opacity;
+}
+
+const std::vector<Layer::View>& Layer::get_views() const {
+  return impl_->views_;
+}
+
+void Layer::set_views(const std::vector<View>& views) {
+  impl_->views_ = views;
+}
+
+void Layer::add_view(const View& view) {
+  if (view.height == 0) {
+    throw std::invalid_argument("Layer view height should not be zero");
+  }
+  if (view.width <= 0) {
+    throw std::invalid_argument("Layer view width should not be less than or equal to zero");
+  }
+  impl_->views_.push_back(view);
 }
 
 }  // namespace holoscan::viz

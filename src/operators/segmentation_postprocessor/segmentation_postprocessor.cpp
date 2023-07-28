@@ -75,7 +75,7 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
 
   // Process input message
   // The type of `in_message` is 'holoscan::gxf::Entity'.
-  auto in_message = op_input.receive<gxf::Entity>("in_tensor");
+  auto in_message = op_input.receive<gxf::Entity>("in_tensor").value();
 
   // if (!in_message || in_message.value().is_null()) { return GXF_CONTRACT_MESSAGE_NOT_AVAILABLE; }
 
@@ -134,7 +134,7 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
 
   // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
   auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
-                                                                       allocator_.get()->gxf_cid());
+                                                                       allocator_->gxf_cid());
   out_tensor.value()->reshape<uint8_t>(
       output_shape, nvidia::gxf::MemoryStorageType::kDevice, allocator.value());
   if (!out_tensor.value()->pointer()) {

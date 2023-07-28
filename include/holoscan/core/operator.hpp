@@ -19,19 +19,23 @@
 #define HOLOSCAN_CORE_OPERATOR_HPP
 
 #include <stdio.h>
+#include <algorithm>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <type_traits>
-#include <utility>
 #include <unordered_map>
+#include <utility>
 
-#include "./common.hpp"
 #include "./arg.hpp"
 #include "./argument_setter.hpp"
+#include "./codec_registry.hpp"
+#include "./common.hpp"
 #include "./component.hpp"
 #include "./condition.hpp"
 #include "./forward_def.hpp"
+#include "./messagelabel.hpp"
 #include "./operator_spec.hpp"
 #include "./resource.hpp"
 
@@ -39,9 +43,9 @@
   template <typename ArgT,                                                              \
             typename... ArgsT,                                                          \
             typename = std::enable_if_t<                                                \
-                !std::is_base_of_v<holoscan::Operator, std::decay_t<ArgT>> &&                     \
-                (std::is_same_v<holoscan::Arg, std::decay_t<ArgT>> ||                             \
-                 std::is_same_v<holoscan::ArgList, std::decay_t<ArgT>> ||                         \
+                !std::is_base_of_v<holoscan::Operator, std::decay_t<ArgT>> &&           \
+                (std::is_same_v<holoscan::Arg, std::decay_t<ArgT>> ||                   \
+                 std::is_same_v<holoscan::ArgList, std::decay_t<ArgT>> ||               \
                  std::is_base_of_v<holoscan::Condition,                                 \
                                    typename holoscan::type_info<ArgT>::derived_type> || \
                  std::is_base_of_v<holoscan::Resource,                                  \
@@ -131,8 +135,9 @@ class Operator : public Component {
    * @brief Operator type used by the executor.
    */
   enum class OperatorType {
-    kNative,  ///< Native operator.
-    kGXF,     ///< GXF operator.
+    kNative,   ///< Native operator.
+    kGXF,      ///< GXF operator.
+    kVirtual,  ///< Virtual operator.
   };
 
   /**
@@ -239,6 +244,21 @@ class Operator : public Component {
    */
   std::unordered_map<std::string, std::shared_ptr<Condition>>& conditions() { return conditions_; }
 
+  template <typename ResourceT>
+  /**
+   * @brief Get a shared pointer to the Resource object.
+   *
+   * @param name The name of the resource.
+   * @return The reference to the Resource object. If the resource does not exist, returns the
+   * nullptr.
+   */
+  std::shared_ptr<ResourceT> resource(const std::string& name) {
+    if (auto resource = resources_.find(name); resource != resources_.end()) {
+      return std::dynamic_pointer_cast<ResourceT>(resource->second);
+    }
+    return nullptr;
+  }
+
   /**
    * @brief Get the resources of the operator.
    *
@@ -253,26 +273,64 @@ class Operator : public Component {
    *
    * @param arg The condition to add.
    */
-  void add_arg(const std::shared_ptr<Condition>& arg) { conditions_[arg->name()] = arg; }
+  void add_arg(const std::shared_ptr<Condition>& arg) {
+    if (conditions_.find(arg->name()) != conditions_.end()) {
+      HOLOSCAN_LOG_ERROR(
+          "Condition '{}' already exists in the operator. Please specify a unique "
+          "name when creating a Condition instance.",
+          arg->name());
+    } else {
+      conditions_[arg->name()] = arg;
+    }
+  }
+
   /**
    * @brief Add a condition to the operator.
    *
    * @param arg The condition to add.
    */
-  void add_arg(std::shared_ptr<Condition>&& arg) { conditions_[arg->name()] = std::move(arg); }
+  void add_arg(std::shared_ptr<Condition>&& arg) {
+    if (conditions_.find(arg->name()) != conditions_.end()) {
+      HOLOSCAN_LOG_ERROR(
+          "Condition '{}' already exists in the operator. Please specify a unique "
+          "name when creating a Condition instance.",
+          arg->name());
+    } else {
+      conditions_[arg->name()] = std::move(arg);
+    }
+  }
 
   /**
    * @brief Add a resource to the operator.
    *
    * @param arg The resource to add.
    */
-  void add_arg(const std::shared_ptr<Resource>& arg) { resources_[arg->name()] = arg; }
+  void add_arg(const std::shared_ptr<Resource>& arg) {
+    if (resources_.find(arg->name()) != resources_.end()) {
+      HOLOSCAN_LOG_ERROR(
+          "Resource '{}' already exists in the operator. Please specify a unique "
+          "name when creating a Resource instance.",
+          arg->name());
+    } else {
+      resources_[arg->name()] = arg;
+    }
+  }
+
   /**
    * @brief Add a resource to the operator.
    *
    * @param arg The resource to add.
    */
-  void add_arg(std::shared_ptr<Resource>&& arg) { resources_[arg->name()] = std::move(arg); }
+  void add_arg(std::shared_ptr<Resource>&& arg) {
+    if (resources_.find(arg->name()) != resources_.end()) {
+      HOLOSCAN_LOG_ERROR(
+          "Resource '{}' already exists in the operator. Please specify a unique "
+          "name when creating a Resource instance.",
+          arg->name());
+    } else {
+      resources_[arg->name()] = std::move(arg);
+    }
+  }
 
   /**
    * @brief Define the operator specification.
@@ -282,9 +340,24 @@ class Operator : public Component {
   virtual void setup(OperatorSpec& spec) { (void)spec; }
 
   /**
+   * @brief Returns whether the operator is a root operator based on its fragment's graph
+   *
+   * @return True, if the operator is a root operator; false, otherwise
+   */
+  bool is_root();
+
+  /**
+   * @brief Returns whether the operator is a leaf operator based on its fragment's graph
+   *
+   * @return True, if the operator is a leaf operator; false, otherwise
+   */
+  bool is_leaf();
+
+  /**
    * @brief Initialize the operator.
    *
-   * This function is called after the operator is created by holoscan::Fragment::make_operator().
+   * This function is called when the fragment is initialized by
+   * Executor::initialize_fragment().
    */
   void initialize() override;
 
@@ -296,7 +369,7 @@ class Operator : public Component {
    * memory resources.
    */
   virtual void start() {
-      // Empty default implementation
+    // Empty default implementation
   }
 
   /**
@@ -307,7 +380,7 @@ class Operator : public Component {
    * of all resources previously assigned in start.
    */
   virtual void stop() {
-      // Empty default implementation
+    // Empty default implementation
   }
 
   /**
@@ -396,6 +469,64 @@ class Operator : public Component {
     register_argument_setter<typeT>();
   }
 
+  /// Return operator name and port name from a string in the format of "<op_name>[.<port_name>]".
+  static std::pair<std::string, std::string> parse_port_name(const std::string& op_port_name);
+
+  /**
+   * @brief Register the codec for serialization/deserialization of a custom type.
+   *
+   * If the operator has an argument with a custom type, the codec must be registered
+   * using this method.
+   *
+   * For example, suppose we want to emit using the following custom struct type:
+   *
+   * ```cpp
+   * namespace holoscan {
+   *   struct Coordinate {
+   *     int16_t x;
+   *     int16_t y;
+   *     int16_t z;
+   *   }
+   * }  // namespace holoscan
+   * ```
+   *
+   * Then, we can define codec<Coordinate> as follows where the serialize and deserialize methods
+   * would be used for serialization and deserialization of this type, respectively.
+   *
+   * ```cpp
+   * namespace holoscan {
+   *
+   *   template <>
+   *   struct codec<Coordinate> {
+   *     static expected<size_t, RuntimeError> serialize(const Coordinate& value, Endpoint* endpoint) {
+   *       return serialize_trivial_type<Coordinate>(value, endpoint);
+   *     }
+   *     static expected<Coordinate, RuntimeError> deserialize(Endpoint* endpoint) {
+   *       return deserialize_trivial_type<Coordinate>(endpoint);
+   *     }
+   *   };
+   * }  // namespace holoscan
+   * ```
+   *
+   * In this case, since this is a simple struct with a static size, we can use the
+   * existing serialize_trivial_type and deserialize_trivial_type implementations.
+   *
+   * Finally, to register this custom codec at runtime, we need to make the following call
+   * within the setup method of our Operator.
+   *
+   * ```cpp
+   * register_codec<Coordinate>("Coordinate");
+   * ```
+   *
+   * @tparam typeT The type of the argument to register.
+   * @param codec_name The name of the codec (must be unique unless overwrite is true).
+   * @param overwrite If true and codec_name already exists, the codec will be overwritten.
+   */
+  template <typename typeT>
+  static void register_codec(const std::string& codec_name, bool overwrite = true) {
+    CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
+  }
+
   /**
    * @brief Get a YAML representation of the operator.
    *
@@ -405,6 +536,61 @@ class Operator : public Component {
   YAML::Node to_yaml_node() const override;
 
  protected:
+  // Making the following classes as friend classes to allow them to access
+  // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
+  // reset_input_message_labels and update_published_messages functions, which should only be called
+  // externally by them
+  friend class AnnotatedDoubleBufferReceiver;
+  friend class AnnotatedDoubleBufferTransmitter;
+  friend class DFFTCollector;
+
+  /**
+   * @brief This function returns a consolidated MessageLabel for all the input ports of an
+   * Operator. If there is no input port (root Operator), then a new MessageLabel with the current
+   * Operator and default receive timestamp is returned.
+   *
+   * @return The consolidated MessageLabel
+   */
+
+  MessageLabel get_consolidated_input_label();
+
+  /**
+   * @brief Update the input_message_labels map with the given MessageLabel a
+   * corresponding input_name
+   *
+   * @param input_name The input port name for which the MessageLabel is updated
+   * @param m The new MessageLabel that will be set for the input port
+   */
+  void update_input_message_label(std::string input_name, MessageLabel m) {
+    input_message_labels[input_name] = m;
+  }
+
+  /**
+   * @brief Reset the input message labels to clear all its contents. This is done for a leaf
+   * operator when it finishes its execution as it is assumed that all its inputs are processed.
+   */
+  void reset_input_message_labels() { input_message_labels.clear(); }
+
+  /**
+   * @brief Get the number of published messages for each output port indexed by the output port
+   * name.
+   *
+   * The function is utilized by the DFFTCollector to update the DataFlowTracker with the number of
+   * published messages for root operators.
+   *
+   * @return The map of the number of published messages for every output name.
+   */
+  std::map<std::string, uint64_t> num_published_messages_map() {
+    return num_published_messages_map_;
+  }
+
+  /**
+   * @brief This function updates the number of published messages for a given output port.
+   *
+   * @param output_name The name of the output port
+   */
+  void update_published_messages(std::string output_name);
+
   /**
    * @brief Register the argument setter for the given type.
    *
@@ -469,6 +655,21 @@ class Operator : public Component {
       conditions_;  ///< The conditions of the operator.
   std::unordered_map<std::string, std::shared_ptr<Resource>>
       resources_;  ///< The resources used by the operator.
+
+ private:
+  /**
+   * @brief Set the operator codelet or any other backend codebase.
+   */
+  void set_op_backend();
+
+  /// The MessageLabel objects corresponding to the input ports indexed by the input port.
+  std::unordered_map<std::string, MessageLabel> input_message_labels;
+
+  /// The number of published messages for each output indexed by output names.
+  std::map<std::string, uint64_t> num_published_messages_map_;
+
+  /// The backend Codelet or other codebase pointer. It is used for DFFT.
+  void* op_backend_ptr = nullptr;
 };
 
 }  // namespace holoscan

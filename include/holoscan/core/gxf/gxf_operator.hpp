@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,17 +21,33 @@
 #include <gxf/core/gxf.h>
 
 #include <iostream>
+#include <utility>
 
-#include "../operator.hpp"
 #include "../executors/gxf/gxf_parameter_adaptor.hpp"
+#include "../operator.hpp"
+#include "./gxf_utils.hpp"
 
 namespace holoscan::ops {
 
 class GXFOperator : public holoscan::Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(GXFOperator)
+  HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
+  explicit GXFOperator(ArgT&& arg, ArgsT&&... args)
+      : Operator(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {
+    operator_type_ = holoscan::Operator::OperatorType::kGXF;
+  }
 
-  GXFOperator() = default;
+  GXFOperator() : Operator() { operator_type_ = holoscan::Operator::OperatorType::kGXF; }
+
+  /**
+   * @brief Initialize the GXF operator.
+   *
+   * This function is called when the fragment is initialized by
+   * Executor::initialize_fragment().
+   *
+   * This sets the operator type to `holoscan::Operator::OperatorType::kGXF`.
+   */
+  void initialize() override;
 
   /**
    * @brief Get the type name of the GXF component.

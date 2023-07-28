@@ -26,6 +26,7 @@
 #include <iostream>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 #include <nvh/cameramanipulator.hpp>
 #include <nvh/timesampler.hpp>

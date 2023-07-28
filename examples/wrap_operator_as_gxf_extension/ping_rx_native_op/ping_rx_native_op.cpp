@@ -25,7 +25,7 @@ namespace myops {
 
 void PingRxNativeOp::setup(OperatorSpec& spec) {
   HOLOSCAN_LOG_INFO("PingRxNativeOp::setup() called.");
-  spec.input<gxf::Entity>("in");
+  spec.input<holoscan::gxf::Entity>("in");
 }
 
 void PingRxNativeOp::compute(InputContext& op_input, OutputContext& op_output,

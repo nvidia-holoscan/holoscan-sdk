@@ -17,6 +17,8 @@
 
 #include "holoscan/core/resources/gxf/allocator.hpp"
 
+#include <string>
+
 namespace holoscan {
 
 Allocator::Allocator(const std::string& name, nvidia::gxf::Allocator* component)

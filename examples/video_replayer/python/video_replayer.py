@@ -21,7 +21,7 @@ import sys
 from holoscan.core import Application
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 
-sample_data_path = os.environ.get("HOLOSCAN_SAMPLE_DATA_PATH", "../data")
+sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
 
 class VideoReplayerApp(Application):
@@ -52,7 +52,6 @@ class VideoReplayerApp(Application):
 
 
 if __name__ == "__main__":
-
     config_file = os.path.join(os.path.dirname(__file__), "video_replayer.yaml")
 
     if len(sys.argv) >= 2:

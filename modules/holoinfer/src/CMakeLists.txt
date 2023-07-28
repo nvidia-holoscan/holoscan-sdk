@@ -20,17 +20,49 @@ project(holoinfer VERSION ${HOLOSCAN_BUILD_VERSION} LANGUAGES CXX CUDA)
 find_package(CUDAToolkit REQUIRED)
 find_package(ONNXRuntime REQUIRED)
 
-add_library(${PROJECT_NAME} SHARED
+if (${HOLOSCAN_BUILD_LIBTORCH})
+    find_package(Torch REQUIRED)
+    find_package(TorchVision REQUIRED)
+    add_library(holoinfer_torch SHARED infer/torch/core.cpp)
+    add_library(holoscan::infer::torch ALIAS holoinfer_torch)
+    set_target_properties(holoinfer_torch PROPERTIES
+        OUTPUT_NAME holoscan_infer_torch
+        EXPORT_NAME infer::torch
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        VERSION ${PROJECT_VERSION}
+        INSTALL_RPATH_USE_LINK_PATH true # find libtorch and torchvision in install tree
+    )
+    target_link_libraries(holoinfer_torch
+        PRIVATE
+            torch
+            -Wl,--no-as-needed TorchVision::TorchVision # torch plugin
+            holoscan::logger
+            GXF::core
+            yaml-cpp
+    )
+    target_include_directories(holoinfer_torch
+        PRIVATE
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>
+        )
+endif()
+
+set(holoinfer_src
     infer/onnx/core.cpp
     infer/trt/core.cpp
     infer/trt/utils.cpp
     params/infer_param.cpp
     process/data_processor.cpp
+    process/transforms/generate_boxes.cpp
     manager/infer_manager.cpp
     manager/process_manager.cpp
     utils/infer_utils.cpp
     utils/infer_buffer.cpp
-    )
+)
+
+add_library(${PROJECT_NAME} SHARED ${holoinfer_src})
 add_library(holoscan::infer ALIAS ${PROJECT_NAME})
 
 target_include_directories(${PROJECT_NAME}
@@ -50,7 +82,7 @@ target_link_libraries(${PROJECT_NAME}
         GXF::std
         yaml-cpp
     PRIVATE
-        CUDA::cuda_driver
+        ${CMAKE_DL_LIBS} # to dlopen holoinfer_torch
         CUDA::cudart
         CUDA::nppidei
         CUDA::nppig
@@ -58,6 +90,11 @@ target_link_libraries(${PROJECT_NAME}
         TensorRT::nvonnxparser
         ONNXRuntime::ONNXRuntime
 )
+
+if (${HOLOSCAN_BUILD_LIBTORCH})
+    # no target_link_libraries to holoinfer_torch: we dlopen it as a plugin
+    target_compile_definitions(${PROJECT_NAME} PRIVATE use_torch)
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     OUTPUT_NAME holoscan_infer

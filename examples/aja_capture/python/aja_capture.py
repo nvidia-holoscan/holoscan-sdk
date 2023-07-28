@@ -16,7 +16,6 @@ limitations under the License.
 """  # noqa
 
 from holoscan.core import Application
-from holoscan.logger import load_env_log_level
 from holoscan.operators import AJASourceOp, HolovizOp
 
 
@@ -32,7 +31,6 @@ class AJACaptureApp(Application):
     """
 
     def compose(self):
-
         width = 1920
         height = 1080
 
@@ -58,8 +56,5 @@ class AJACaptureApp(Application):
 
 
 if __name__ == "__main__":
-
-    load_env_log_level()
-
     app = AJACaptureApp()
     app.run()

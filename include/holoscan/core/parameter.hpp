@@ -33,11 +33,17 @@ namespace holoscan {
 
 /**
  * @brief Enum class to define the type of a parameter.
+ *
+ * The parameter flag can be used to control the behavior of the parameter.
  */
 enum class ParameterFlag {
-  kNone = 0,      ///< No flag
-  kOptional = 1,  ///< The parameter is optional
-  kDynamic = 2,   ///< The parameter is dynamic
+  /// The parameter is mandatory and static. It cannot be changed at runtime.
+  kNone = 0,
+  /// The parameter is optional and might not be available at runtime. Use `Parameter::try_get()` to
+  /// get the value.
+  kOptional = 1,
+  /// The parameter is dynamic and might change at runtime.
+  kDynamic = 2,
 };
 
 /**
@@ -120,7 +126,7 @@ class MetaParameter {
    *
    * @param value The value of the parameter.
    */
-  explicit MetaParameter(ValueT& value) : value_(value) {}
+  explicit MetaParameter(const ValueT& value) : value_(value) {}
   /**
    * @brief Construct a new MetaParameter object.
    *
@@ -171,6 +177,13 @@ class MetaParameter {
   const std::string& description() const { return description_; }
 
   /**
+   * @brief Get the flag of the parameter.
+   *
+   * @return The flag of the parameter.
+   */
+  const ParameterFlag& flag() const { return flag_; }
+
+  /**
    * @brief Check whether the parameter contains a value.
    *
    * @return true if the parameter contains a value.
@@ -188,6 +201,51 @@ class MetaParameter {
     } else {
       throw std::runtime_error(fmt::format("MetaParameter: value for '{}' is not set", key_));
     }
+  }
+
+  /**
+   * @brief Try to get the value of the parameter.
+   *
+   * Return the reference to the std::optional value of the parameter.
+   *
+   * @return The reference to the optional value of the parameter.
+   */
+  std::optional<ValueT>& try_get() {
+    return value_;
+  }
+
+  /**
+   * @brief Provides a pointer to the object managed by the shared pointer pointed to by the
+   * parameter value or dereferences the pointer.
+   *
+   * @tparam PointerT The type of the pointer.
+   * @return The pointer to the object managed by the shared pointer pointed to by the parameter
+   * value or the dereferenced pointer.
+   */
+  template <typename PointerT = ValueT,
+            typename = std::enable_if_t<holoscan::is_shared_ptr_v<PointerT> ||
+                                        std::is_pointer_v<PointerT>>>
+  holoscan::remove_pointer_t<PointerT>* operator->() {
+    if constexpr (holoscan::is_shared_ptr_v<PointerT>) {
+      return get().get();
+    } else {
+      return get();
+    }
+  }
+
+  /**
+   * @brief Provides a reference to the object managed by the shared pointer pointed to by the
+   * parameter value or dereferences the pointer.
+   *
+   * @tparam PointerT The type of the pointer.
+   * @return The reference to the object managed by the shared pointer pointed to by the parameter
+   * value or the dereferenced pointer.
+   */
+  template <typename PointerT = ValueT,
+            typename = std::enable_if_t<holoscan::is_shared_ptr_v<PointerT> ||
+                                        std::is_pointer_v<PointerT>>>
+  holoscan::remove_pointer_t<PointerT> operator*() {
+    return *get();
   }
 
   /**

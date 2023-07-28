@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,11 +17,11 @@
 
 #include "holoscan/core/gxf/gxf_operator.hpp"
 
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_condition.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/gxf/gxf_wrapper.hpp"
+namespace holoscan::ops {
 
-namespace holoscan::ops {}  // namespace holoscan::ops
+void GXFOperator::initialize() {
+  // Call base class initialize function.
+  Operator::initialize();
+}
+
+}  // namespace holoscan::ops

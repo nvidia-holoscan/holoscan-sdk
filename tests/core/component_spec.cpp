@@ -22,13 +22,16 @@
 
 #include <complex>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <typeinfo>
+#include <vector>
 
+#include "../utils.hpp"
+#include "dummy_classes.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/argument_setter.hpp"
 #include "holoscan/core/parameter.hpp"
-#include "../utils.hpp"
 
 namespace holoscan {
 
@@ -69,7 +72,28 @@ TEST(ComponentSpec, TestComponentSpec) {
   EXPECT_EQ(p3.key(), "beta2");
 }
 
-TEST(ComponentSpec, TestComponentSpecDefaultValue) {
+TEST(ComponentSpec, TestComponentSpecOptional) {
+  ComponentSpec spec;
+
+  // add a parameter without any value
+  MetaParameter empty_float = Parameter<float>();
+  spec.param(empty_float, "beta1", "headline1", "description1", ParameterFlag::kOptional);
+  auto params = spec.params();
+  EXPECT_EQ(params.size(), 1);
+
+  // verify that the extracted parameter has no value
+  ParameterWrapper w = params["beta1"];
+  std::any& val = w.value();
+  auto& p = *std::any_cast<Parameter<float>*>(val);
+  EXPECT_EQ(p.has_value(), false);
+
+  // now set to the default value
+  p.set_default_value();  // set default value if not set.
+  EXPECT_EQ(p.try_get(), std::nullopt);
+  EXPECT_THROW(p.get(), std::runtime_error);
+}
+
+TEST(ComponentSpec, TestComponentSpecDefaultLValue) {
   ComponentSpec spec;
 
   // add a parameter without any value
@@ -91,6 +115,51 @@ TEST(ComponentSpec, TestComponentSpecDefaultValue) {
   EXPECT_EQ((int)p, default_val);
 }
 
+TEST(ComponentSpec, TestComponentSpecDefaultRValue) {
+  ComponentSpec spec;
+
+  // add a parameter without any value
+  Parameter<DummyIntClass> empty_int;
+  spec.param(empty_int, "int", "int param", "Example integer parameter.", DummyIntClass{15});
+  auto params = spec.params();
+  EXPECT_EQ(params.size(), 1);
+
+  // verify that the extracted parameter has no value
+  ParameterWrapper w = params["int"];
+  std::any& val = w.value();
+  auto& p = *std::any_cast<Parameter<DummyIntClass>*>(val);
+  EXPECT_EQ(p.has_value(), false);
+
+  // now set to the default value
+  p.set_default_value();  // set default value if not set.
+  EXPECT_EQ(p.get(), DummyIntClass{15});
+  EXPECT_EQ((DummyIntClass)p,  // NOLINT
+            DummyIntClass{15});
+}
+
+TEST(ComponentSpec, TestComponentSpecEmptyDefault) {
+  ComponentSpec spec;
+
+  // initialize
+  Parameter<int64_t> empty_p;
+
+  // add one parameter
+  // '{}' needs to be treated as a default value, instead of 'ParameterFlag::kNone'.
+  spec.param(empty_p, "int64_t", "headline1", "description1", {});
+  EXPECT_EQ(spec.params().size(), 1);
+
+  // verify that the extracted parameter has no value
+  ParameterWrapper w = spec.params()["int64_t"];
+  std::any& val = w.value();
+  auto& p = *std::any_cast<Parameter<int64_t>*>(val);
+  EXPECT_EQ(p.has_value(), false);
+
+  // set to the default value
+  p.set_default_value();
+  EXPECT_EQ(p.get(), 0);
+  EXPECT_EQ(static_cast<int64_t>(p), 0);
+}
+
 TEST(ComponentSpec, TestComponentSpecDescriptionWithoutFragment) {
   ComponentSpec spec;
   Parameter<bool> b;
@@ -108,15 +177,19 @@ params:
   - name: string_vector
     type: std::vector<std::string>
     description: ""
+    flag: kNone
   - name: double_vec_of_vec
     type: std::vector<std::vector<double>>
     description: double floats in double vector
+    flag: kNone
   - name: int_array
     type: std::array<int32_t,N>
     description: 5 integers
+    flag: kNone
   - name: bool_scalar
     type: bool
-    description: true or false)";
+    description: true or false
+    flag: kNone)";
   EXPECT_EQ(spec.description(), description);
 }
 
@@ -137,15 +210,20 @@ params:
   - name: string_vector
     type: std::vector<std::string>
     description: ""
+    flag: kNone
   - name: double_vec_of_vec
     type: std::vector<std::vector<double>>
     description: double floats in double vector
+    flag: kNone
   - name: int_array
     type: std::array<int32_t,N>
     description: 5 integers
+    flag: kNone
   - name: bool_scalar
     type: bool
-    description: true or false)";
+    description: true or false
+    flag: kNone)";
+
   EXPECT_EQ(spec->description(), description);
 }
 }  // namespace holoscan

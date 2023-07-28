@@ -2,6 +2,8 @@
 
 This example demonstrates a hello world application using the holoscan SDK.
 
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/hello_world.html) for step-by-step documentation of this example.*
+
 ## C++ Run instructions
 
 * **using deb package install or NGC container**:

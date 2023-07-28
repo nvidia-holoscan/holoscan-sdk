@@ -18,10 +18,11 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <memory>
 #include <string>
 
-#include "../config.hpp"
 #include <holoscan/holoscan.hpp>
+#include "../config.hpp"
 
 using namespace std::string_literals;
 
@@ -54,6 +55,76 @@ TEST(Logger, TestLoggingPattern) {
 
   // restore default logging pattern or test cases run afterwards may fail
   set_log_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%n] %v");
+}
+
+TEST(Logger, TestDefaultLogPattern) {
+  auto orig_level = log_level();
+  const char* env_orig = std::getenv("HOLOSCAN_LOG_LEVEL");
+  const char* env_format = std::getenv("HOLOSCAN_LOG_FORMAT");
+
+  std::shared_ptr<Application> app;
+
+  // set default log level to INFO
+  setenv("HOLOSCAN_LOG_LEVEL", "INFO", 1);
+
+  // 1. HOLOSCAN_LOG_FORMAT is set to SHORT and no set_log_pattern() is called
+  //    before Application::Application().
+  //    => expected log pattern is SHORT ("[%^%l%$] %v")
+  Logger::log_pattern_set_by_user = false;
+  setenv("HOLOSCAN_LOG_FORMAT", "SHORT", 1);
+  app = holoscan::make_application<Application>();
+  EXPECT_EQ(Logger::pattern(), "[%^%l%$] %v");
+
+  // 2. HOLOSCAN_LOG_FORMAT is set to SHORT and set_log_pattern("FULL") is called
+  //    before Application::Application().
+  //    => expected log pattern is SHORT (environment variable has higher priority)
+  Logger::log_pattern_set_by_user = false;
+  setenv("HOLOSCAN_LOG_FORMAT", "SHORT", 1);
+  set_log_pattern("FULL");
+  app = holoscan::make_application<Application>();
+  EXPECT_EQ(Logger::pattern(), "[%^%l%$] %v");
+
+  // 3. HOLOSCAN_LOG_FORMAT is set to FULL and set_log_pattern("SHORT") is called
+  //    after Application::Application().
+  //    => expected log pattern is FULL (environment variable has higher priority)
+  Logger::log_pattern_set_by_user = false;
+  setenv("HOLOSCAN_LOG_FORMAT", "FULL", 1);
+  app = holoscan::make_application<Application>();
+  set_log_pattern("SHORT");
+  EXPECT_EQ(Logger::pattern(), "[%Y-%m-%d %H:%M:%S.%e] [%t] [%n] [%^%l%$] [%s:%#] %v");
+
+  // 4. HOLOSCAN_LOG_FORMAT is not set and set_log_pattern("LONG") is called
+  //    after Application::Application().
+  //    => expected log pattern is LONG ("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [%s:%#] %v")
+  Logger::log_pattern_set_by_user = false;
+  unsetenv("HOLOSCAN_LOG_FORMAT");
+  app = holoscan::make_application<Application>();
+  set_log_pattern("LONG");
+  EXPECT_EQ(Logger::pattern(), "[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [%s:%#] %v");
+
+  // 5. HOLOSCAN_LOG_FORMAT is not set.
+  //    => expected log pattern is DEFAULT (after Application::Application()).
+  Logger::log_pattern_set_by_user = false;
+  unsetenv("HOLOSCAN_LOG_FORMAT");
+  app = holoscan::make_application<Application>();
+  EXPECT_EQ(Logger::pattern(), "[%^%l%$] [%s:%#] %v");
+
+  // restore the original environment variable
+  if (env_orig) {
+    setenv("HOLOSCAN_LOG_LEVEL", env_orig, 1);
+  } else {
+    unsetenv("HOLOSCAN_LOG_LEVEL");
+  }
+
+  // restore the original log format
+  if (env_format) {
+    setenv("HOLOSCAN_LOG_FORMAT", env_format, 1);
+  } else {
+    unsetenv("HOLOSCAN_LOG_FORMAT");
+  }
+
+  // restore the original log level
+  set_log_level(orig_level);
 }
 
 TEST(Logger, TestLoggingFlushLevel) {
@@ -102,6 +173,8 @@ INSTANTIATE_TEST_CASE_P(LoggingTests, LevelParameterizedTestFixture,
                                           LogLevel::OFF));
 
 TEST_P(LevelParameterizedTestFixture, TestLoadEnvLogLevel) {
+  // check the current logging level
+  auto orig_level = log_level();
   const char* env_orig = std::getenv("HOLOSCAN_LOG_LEVEL");
 
   auto desired_level = GetParam();
@@ -129,7 +202,8 @@ TEST_P(LevelParameterizedTestFixture, TestLoadEnvLogLevel) {
       break;
   }
 
-  load_env_log_level();
+  // test that the desired logging level was loaded from the environment
+  holoscan::set_log_level(LogLevel::INFO);  // set an arbitrary level to load from the environment
   EXPECT_EQ(log_level(), desired_level);
 
   // restore the original log level
@@ -138,6 +212,9 @@ TEST_P(LevelParameterizedTestFixture, TestLoadEnvLogLevel) {
   } else {
     unsetenv("HOLOSCAN_LOG_LEVEL");
   }
+
+  // restore the original log level
+  set_log_level(orig_level);
 }
 
 TEST_P(LevelParameterizedTestFixture, TestLoggingMacros) {
@@ -224,6 +301,69 @@ TEST_P(LevelParameterizedTestFixture, TestLoggingMacros) {
     case LogLevel::OFF:
       EXPECT_TRUE(log_output.find("unlogged") == std::string::npos);
       break;
+  }
+
+  // restore the original log level
+  set_log_level(orig_level);
+}
+
+TEST(Logger, TestDefaultLogLevel) {
+  auto orig_level = log_level();
+  const char* env_orig = std::getenv("HOLOSCAN_LOG_LEVEL");
+
+  std::shared_ptr<Application> app;
+
+  // 1. HOLOSCAN_LOG_LEVEL is set to TRACE and no set_log_level() is called
+  //    before Application::Application().
+  //    => expected log level is TRACE
+  Logger::set_level(LogLevel::INFO);
+  Logger::log_level_set_by_user = false;
+  setenv("HOLOSCAN_LOG_LEVEL", "TRACE", 1);
+  app = holoscan::make_application<Application>();
+  EXPECT_EQ(log_level(), LogLevel::TRACE);
+
+  // 2. HOLOSCAN_LOG_LEVEL is set to TRACE and set_log_level(LogLevel::WARN) is called
+  //    before Application::Application().
+  //    => expected log level is TRACE (environment variable has higher priority)
+  Logger::set_level(LogLevel::INFO);
+  Logger::log_level_set_by_user = false;
+  setenv("HOLOSCAN_LOG_LEVEL", "TRACE", 1);
+  set_log_level(LogLevel::WARN);
+  app = holoscan::make_application<Application>();
+  EXPECT_EQ(log_level(), LogLevel::TRACE);
+
+  // 3. HOLOSCAN_LOG_LEVEL is set to ERROR and set_log_level(LogLevel::WARN) is called
+  //    after Application::Application().
+  //    => expected log level is ERROR (environment variable has higher priority)
+  Logger::set_level(LogLevel::INFO);
+  Logger::log_level_set_by_user = false;
+  setenv("HOLOSCAN_LOG_LEVEL", "ERROR", 1);
+  app = holoscan::make_application<Application>();
+  set_log_level(LogLevel::WARN);
+  EXPECT_EQ(log_level(), LogLevel::ERROR);
+
+  // 4. HOLOSCAN_LOG_LEVEL is not set and set_log_level(LogLevel::WARN) is called
+  //    after Application::Application().
+  //    => expected log level is WARN
+  Logger::set_level(LogLevel::INFO);
+  Logger::log_level_set_by_user = false;
+  unsetenv("HOLOSCAN_LOG_LEVEL");
+  app = holoscan::make_application<Application>();
+  set_log_level(LogLevel::WARN);
+  EXPECT_EQ(log_level(), LogLevel::WARN);
+
+  // 5. HOLOSCAN_LOG_LEVEL is not set.
+  //    => expected log level is INFO (after Application::Application()).
+  Logger::log_level_set_by_user = false;
+  unsetenv("HOLOSCAN_LOG_LEVEL");
+  app = holoscan::make_application<Application>();
+  EXPECT_EQ(log_level(), LogLevel::INFO);
+
+  // restore the original environment variable
+  if (env_orig) {
+    setenv("HOLOSCAN_LOG_LEVEL", env_orig, 1);
+  } else {
+    unsetenv("HOLOSCAN_LOG_LEVEL");
   }
 
   // restore the original log level

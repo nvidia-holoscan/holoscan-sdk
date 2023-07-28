@@ -9,6 +9,8 @@ There are three operators involved in this example:
   2. a middle operator that prints the received values, multiplies by a scalar and transmits the modified values
   3. a receiver that prints the received values to the terminal
 
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/ping_multi_port.html) for step-by-step documentation of this example.*
+
 ## C++ Run instructions
 
 * **using deb package install or NGC container**:

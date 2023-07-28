@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <string>
 #include <typeinfo>
+#include <vector>
 
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/parameter.hpp"
@@ -97,6 +98,30 @@ TEST(OperatorSpec, TestOperatorSpecParam) {
   EXPECT_EQ(spec.params().size(), 1);
 }
 
+TEST(OperatorSpec, TestOperatorSpecParamOptional) {
+  OperatorSpec spec = OperatorSpec();
+
+  // initialize
+  IOSpec default_input{&spec, "a", IOSpec::IOType::kInput, &typeid(gxf::Entity)};
+  IOSpec* default_input_ptr = &default_input;
+  MetaParameter empty_p = Parameter<holoscan::IOSpec*>();  // set val
+
+  // add one parameter
+  spec.param(empty_p, "beta", "headline1", "description1", ParameterFlag::kOptional);
+  EXPECT_EQ(spec.params().size(), 1);
+
+  // verify that the extracted parameter has no value
+  ParameterWrapper w = spec.params()["beta"];
+  std::any& val = w.value();
+  auto& p = *std::any_cast<Parameter<holoscan::IOSpec*>*>(val);
+  EXPECT_EQ(p.has_value(), false);
+
+  // set to the default value
+  p.set_default_value();
+  EXPECT_EQ(p.try_get(), std::nullopt);
+  EXPECT_THROW(p.get(), std::runtime_error);
+}
+
 TEST(OperatorSpec, TestOperatorSpecParamDefault) {
   OperatorSpec spec = OperatorSpec();
 
@@ -119,6 +144,30 @@ TEST(OperatorSpec, TestOperatorSpecParamDefault) {
   p.set_default_value();
   EXPECT_EQ(p.get(), default_input_ptr);
   EXPECT_EQ((IOSpec*)p, default_input_ptr);
+}
+
+TEST(OperatorSpec, TestOperatorSpecParamEmptyDefault) {
+  OperatorSpec spec = OperatorSpec();
+
+  // initialize
+  IOSpec default_input{&spec, "iospec", IOSpec::IOType::kInput, &typeid(holoscan::IOSpec*)};
+  Parameter<holoscan::IOSpec*> empty_p;
+
+  // add one parameter
+  // '{}' needs to be treated as a default value, instead of 'ParameterFlag::kNone'.
+  spec.param(empty_p, "iospec_param", "iospec param", "Example IOSpec* parameter.", {});
+  EXPECT_EQ(spec.params().size(), 1);
+
+  // verify that the extracted parameter has no value
+  ParameterWrapper w = spec.params()["iospec_param"];
+  std::any& val = w.value();
+  auto& p = *std::any_cast<Parameter<holoscan::IOSpec*>*>(val);
+  EXPECT_EQ(p.has_value(), false);
+
+  // set to the default value
+  p.set_default_value();
+  EXPECT_EQ(p.get(), nullptr);
+  EXPECT_EQ(static_cast<holoscan::IOSpec*>(p), nullptr);
 }
 
 TEST(OperatorSpec, TestOperatorSpecParamVector) {
@@ -185,6 +234,28 @@ TEST(OperatorSpec, TestOperatorSpecParamVectorDefault) {
   EXPECT_EQ((std::vector<IOSpec*>)p, default_v);
 }
 
+TEST(OperatorSpec, TestOperatorSpecParamVectorEmptyDefault) {
+  OperatorSpec spec = OperatorSpec();
+
+  // initialize
+  MetaParameter empty_p = Parameter<std::vector<holoscan::IOSpec*>>();
+
+  // add one parameter
+  spec.param(empty_p, "beta", "headline1", "description1", {});
+  EXPECT_EQ(spec.params().size(), 1);
+
+  // verify that the extracted parameter has no value
+  ParameterWrapper w = spec.params()["beta"];
+  std::any& val = w.value();
+  auto& p = *std::any_cast<Parameter<std::vector<holoscan::IOSpec*>>*>(val);
+  EXPECT_EQ(p.has_value(), false);
+
+  // set to the default value
+  p.set_default_value();
+  EXPECT_EQ(p.get().size(), 0);
+  EXPECT_EQ((std::vector<IOSpec*>)p, std::vector<IOSpec*>());
+}
+
 TEST(OperatorSpec, TestOperatorSpecDescription) {
   OperatorSpec spec;
   spec.input<gxf::Entity>("gxf_entity_in");
@@ -192,24 +263,24 @@ TEST(OperatorSpec, TestOperatorSpecDescription) {
   spec.input<holoscan::Tensor>("holoscan_tensor_in");
   spec.output<holoscan::Tensor>("holoscan_tensor_out");
 
-  Parameter<bool> b;
-  Parameter<std::array<int, 5>> i;
-  Parameter<std::vector<std::vector<double>>> d;
-  Parameter<std::vector<std::string>> s;
-  spec.param(b, "bool_scalar", "Boolean parameter", "true or false");
-  spec.param(i, "int_array", "Int array parameter", "5 integers");
-  spec.param(
-      d, "double_vec_of_vec", "Double 2D vector parameter", "double floats in double vector");
-  spec.param(s, "string_vector", "String vector parameter", "");
+    Parameter<bool> b;
+    Parameter<std::array<int, 5>> i;
+    Parameter<std::vector<std::vector<double>>> d;
+    Parameter<std::vector<std::string>> s;
+    spec.param(b, "bool_scalar", "Boolean parameter", "true or false");
+    spec.param(i, "int_array", "Int array parameter", "5 integers");
+    spec.param(
+        d, "double_vec_of_vec", "Double 2D vector parameter", "double floats in double vector");
+    spec.param(s, "string_vector", "String vector parameter", "");
 
-  std::string description = fmt::format(R"({}
+    std::string description = fmt::format(R"({}
 inputs:
   - holoscan_tensor_in
   - gxf_entity_in
 outputs:
   - holoscan_tensor_out
   - gxf_entity_out)",
-                                        ComponentSpec(spec).description());
-  EXPECT_EQ(spec.description(), description);
+                                          ComponentSpec(spec).description());
+    EXPECT_EQ(spec.description(), description);
 }
 }  // namespace holoscan

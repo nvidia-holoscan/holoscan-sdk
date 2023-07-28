@@ -18,20 +18,20 @@ import pytest
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Arg, Operator, OperatorSpec, Tensor, _Operator
+from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.gxf import Entity
-from holoscan.operators import (
-    AJASourceOp,
-    FormatConverterOp,
+from holoscan.operators.aja_source import AJASourceOp, NTV2Channel
+from holoscan.operators.format_converter import FormatConverterOp
+from holoscan.operators.holoviz import (
     HolovizOp,
-    MultiAIInferenceOp,
-    MultiAIPostprocessorOp,
-    NTV2Channel,
-    SegmentationPostprocessorOp,
-    VideoStreamRecorderOp,
-    VideoStreamReplayerOp,
     _holoviz_str_to_depth_map_render_mode,
     _holoviz_str_to_input_type,
 )
+from holoscan.operators.inference import InferenceOp
+from holoscan.operators.inference_processor import InferenceProcessorOp
+from holoscan.operators.segmentation_postprocessor import SegmentationPostprocessorOp
+from holoscan.operators.video_stream_recorder import VideoStreamRecorderOp
+from holoscan.operators.video_stream_replayer import VideoStreamReplayerOp
 from holoscan.resources import BlockMemoryPool, MemoryStorageType, UnboundedAllocator
 
 try:
@@ -45,7 +45,7 @@ try:
 except ImportError:
     unsigned_dtypes = signed_dtypes = float_dtypes = []
 
-sample_data_path = os.environ.get("HOLOSCAN_SAMPLE_DATA_PATH", "../data")
+sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
 
 class TestOperator:
@@ -64,17 +64,15 @@ class TestOperator:
 
     def test_basic_init(self, fragment, capfd):
         op = Operator(fragment)
-        assert op.name == ""
+        assert op.name.startswith("unnamed_operator")
         assert op.fragment is fragment
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
         capfd.readouterr()
 
     def test_basic_kwarg_init(self, fragment, capfd):
         op = Operator(fragment=fragment)
-        assert op.name == ""
+        assert op.name.startswith("unnamed_operator")
         assert op.fragment is fragment
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
         capfd.readouterr()
 
@@ -105,8 +103,11 @@ class TestOperator:
         op = Operator(*args, **kwargs)
 
         # check operator name
-        expected_name = "my op" if with_name else ""
-        assert op.name == expected_name
+        if with_name:
+            assert op.name == "my op"
+        else:
+            assert op.name.startswith("unnamed_operator")
+
         assert op.fragment is app
 
         # check all args that were not of Condition or Resource type
@@ -152,11 +153,11 @@ class TestOperator:
         capfd.readouterr()
 
     def test_initialize(self, app, config_file, capfd):
-        spec = OperatorSpec(app)
+        spec = OperatorSpecBase(app)
 
         op = Operator(app)
         # Operator.__init__ will have added op.spec for us
-        assert isinstance(op.spec, OperatorSpec)
+        assert isinstance(op.spec, OperatorSpecBase)
 
         app.config(config_file)
 
@@ -172,7 +173,7 @@ class TestOperator:
 
         op.setup(spec)
         op.spec = spec
-        assert isinstance(op.spec, OperatorSpec)
+        assert isinstance(op.spec, OperatorSpecBase)
 
         op.initialize()
         op.id != -1
@@ -180,7 +181,7 @@ class TestOperator:
         capfd.readouterr()
 
     def test_operator_setup_and_assignment(self, fragment, capfd):
-        spec = OperatorSpec(fragment)
+        spec = OperatorSpecBase(fragment)
         op = Operator(fragment)
         op.setup(spec)
         op.spec = spec
@@ -306,6 +307,21 @@ class TestTensor:
         b = xp.asarray(t)
         xp.testing.assert_array_equal(a, b)
 
+    @pytest.mark.parametrize("module", ["cupy", "numpy"])
+    def test_from_dlpack(self, module):
+        # Check if module is numpy and numpy version is less than 1.23 then skip the test
+        # because numpy.from_dlpack is not available in numpy versions less than 1.23
+        if module == "numpy" and tuple(map(int, np.__version__.split("."))) < (1, 23):
+            pytest.skip("requires numpy version >= 1.23")
+
+        xp = pytest.importorskip(module)
+        arr_in = xp.random.randn(1, 2, 3, 4).astype(xp.float32)
+        tensor = Tensor.as_tensor(arr_in)
+        arr_out1 = xp.asarray(tensor)
+        arr_out2 = xp.from_dlpack(tensor)
+        xp.testing.assert_array_equal(arr_in, arr_out1)
+        xp.testing.assert_array_equal(arr_in, arr_out2)
+
 
 # Test cases for specific bundled native operators
 
@@ -363,7 +379,7 @@ class TestFormatConverterOp:
         assert "warning" not in captured.err
 
 
-class TestMultiAIInferenceOp:
+class TestInferenceOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
         model_path = os.path.join(sample_data_path, "multiai_ultrasound", "models")
@@ -374,15 +390,14 @@ class TestMultiAIInferenceOp:
             "bmode_perspective": os.path.join(model_path, "bmode_perspective.onnx"),
         }
 
-        op = MultiAIInferenceOp(
+        op = InferenceOp(
             app,
-            name="multiai_inference",
+            name="inference",
             allocator=UnboundedAllocator(app, name="pool"),
             model_path_map=model_path_map,
-            **app.kwargs("multiai_inference"),
+            **app.kwargs("inference"),
         )
         assert isinstance(op, _Operator)
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -391,22 +406,21 @@ class TestMultiAIInferenceOp:
         # Initializing outside the context of app.run() will result in the
         # following error being logged because the GXFWrapper will not have
         # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'multi_ai_inference'  # noqa: E501
+        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'inference'  # noqa: E501
         assert captured.err.count("[error]") <= 1
         assert "warning" not in captured.err
 
 
-class TestMultiAIPostprocessorOp:
+class TestInferenceProcessorOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
-        op = MultiAIPostprocessorOp(
+        op = InferenceProcessorOp(
             app,
-            name="multiai_postprocessor",
+            name="inference_processor",
             allocator=UnboundedAllocator(app, name="pool"),
-            **app.kwargs("multiai_postprocessor"),
+            **app.kwargs("inference_processor"),
         )
         assert isinstance(op, _Operator)
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -415,7 +429,7 @@ class TestMultiAIPostprocessorOp:
         # Initializing outside the context of app.run() will result in the
         # following error being logged because the GXFWrapper will not have
         # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'multi_ai_inference'  # noqa: E501
+        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'processor'  # noqa: E501
         assert captured.err.count("[error]") <= 1
         assert "warning" not in captured.err
 
@@ -428,7 +442,6 @@ class TestSegmentationPostprocessorOp:
             name="segmentation_postprocessor",
         )
         assert isinstance(op, _Operator)
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -447,7 +460,6 @@ class TestVideoStreamRecorderOp:
         app.config(config_file)
         op = VideoStreamRecorderOp(name="recorder", fragment=app, **app.kwargs("recorder"))
         assert isinstance(op, _Operator)
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -463,7 +475,7 @@ class TestVideoStreamRecorderOp:
 class TestVideoStreamReplayerOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
-        data_path = os.environ.get("HOLOSCAN_SAMPLE_DATA_PATH", "../data")
+        data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
         op = VideoStreamReplayerOp(
             name="replayer",
             fragment=app,
@@ -471,7 +483,6 @@ class TestVideoStreamReplayerOp:
             **app.kwargs("replayer"),
         )
         assert isinstance(op, _Operator)
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -500,6 +511,10 @@ class TestVideoStreamReplayerOp:
         "text",
         "depth_map",
         "depth_map_color",
+        "points_3d",
+        "lines_3d",
+        "line_strip_3d",
+        "triangles_3d",
     ],
 )
 def test_holoviz_input_types(type_str):
@@ -520,12 +535,147 @@ def test_holoviz_depth_types(depth_type_str):
     )
 
 
+class TestHolovizOpInputSpec:
+    def test_input_type_based_initialization(self):
+        HolovizOp.InputSpec("tensor1", HolovizOp.InputType.TRIANGLES)
+
+    def test_string_based_initialization(self):
+        HolovizOp.InputSpec("tensor1", "triangles")
+
+    def test_opacity(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        opacity = spec.opacity
+        assert 0.0 <= opacity <= 1.0
+
+        spec.opacity = 0.5
+
+    def test_priority(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.LINES)
+
+        priority = spec.priority
+        assert priority >= 0
+
+        spec.priority = 5
+
+    def test_color(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.TRIANGLES_3D)
+
+        color = spec.color
+        assert len(color) == 4
+
+        spec.color = [1.0, 0.0, 0.0, 1.0]
+
+    def test_line_width(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.LINES)
+
+        line_width = spec.line_width
+        assert line_width > 0
+
+        spec.line_width = 5
+
+    def test_point_size(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.POINTS_3D)
+
+        point_size = spec.point_size
+        assert point_size > 0
+
+        spec.point_size = 2
+
+    def test_text(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.TEXT)
+
+        text = spec.text
+        assert text == []
+
+        spec.text = ["abc", "de", "fghij"]
+
+    def test_depth_map_render_mode(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.DEPTH_MAP)
+
+        depth_map_render_mode = spec.depth_map_render_mode
+        assert depth_map_render_mode == HolovizOp.DepthMapRenderMode.POINTS
+
+        spec.depth_map_render_mode = HolovizOp.DepthMapRenderMode.TRIANGLES
+
+        with pytest.raises(TypeError):
+            spec.depth_map_render_mode = 0
+
+    def test_views(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        assert spec.views == []
+
+        # add views to the spec
+        v = HolovizOp.InputSpec.View()
+        spec.views = [v, v, v]
+        assert len(spec.views) == 3
+        assert all(isinstance(v, HolovizOp.InputSpec.View) for v in spec.views)
+
+    def test_description(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        # add views to the spec
+        v = HolovizOp.InputSpec.View()
+        spec.views = [v, v, v]
+
+        description = spec.description()
+
+        assert isinstance(description, str)
+        assert "name: tensor1" in description
+        assert "type: color" in description
+
+        # check that parameters were printed for all three views
+        assert description.count("offset_x") == 3
+        assert description.count("offset_y") == 3
+        assert description.count("width") == 3
+        assert description.count("height") == 3
+
+
+class TestHolovizOpInputSpecView:
+    def test_default_initialization(self):
+        HolovizOp.InputSpec.View()
+
+    def test_offset_x(self):
+        v = HolovizOp.InputSpec.View()
+        v.offset_x = 0.3
+        assert abs(v.offset_x - 0.3) < 1e-5
+
+    def test_offset_y(self):
+        v = HolovizOp.InputSpec.View()
+        v.offset_y = 0.3
+        assert abs(v.offset_y - 0.3) < 1e-5
+
+    def test_width(self):
+        v = HolovizOp.InputSpec.View()
+        v.width = 0.8
+        assert abs(v.width - 0.8) < 1e-5
+
+    def test_height(self):
+        v = HolovizOp.InputSpec.View()
+        v.height = 0.8
+        assert abs(v.height - 0.8) < 1e-5
+
+    def test_matrix(self):
+        np = pytest.importorskip("numpy")
+
+        view = HolovizOp.InputSpec.View()
+        assert view.matrix is None
+
+        with pytest.raises(TypeError):
+            # can only set matrix with 16 element sequence
+            view.matrix = (1.0, 0.0, 0.0)
+
+        mat = np.eye(4)
+        view.matrix = mat.ravel()
+        assert view.matrix == mat.ravel().tolist()
+
+
 class TestHolovizOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
         op = HolovizOp(app, name="visualizer", **app.kwargs("holoviz"))
         assert isinstance(op, _Operator)
-        assert op.id != -1
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -588,7 +738,12 @@ class TestHolovizOp:
         ],
     )
     def test_invalid_tensors(self, tensor, app):
-        with pytest.raises(ValueError):
+        if "type" in tensor and tensor.get("type") == "invalid":
+            # unrecognized type name will raise RuntimeError, not ValueError
+            ExceptionType = RuntimeError
+        else:
+            ExceptionType = ValueError
+        with pytest.raises(ExceptionType):
             HolovizOp(
                 name="visualizer",
                 fragment=app,
@@ -627,8 +782,9 @@ class HolovizDepthMapSinkOp(Operator):
         spec.input("in")
 
     def compute(self, op_input, op_output, context):
-        op_input.receive("in")
-        # Holoviz outputs a video buffer, but there is no support for video buffers in Python yet
+        # TODO: Holoviz outputs a video buffer, but there is no support for video buffers in Python
+        # yet
+        pass
         # message = op_input.receive("in")
         # image = message.get("render_buffer_output")
 
@@ -662,7 +818,10 @@ class MyHolovizDepthMapApp(Application):
             ],
         )
 
-        sink = HolovizDepthMapSinkOp(self, name="sink")
+        # Since HolovizOp's render_buffer_output has ConditionType::kNone, we cannot depends on
+        # deadlocks to be terminated. Instead, we use a CountCondition to terminate the operator.
+        # Otherwise, the operator will run forever.
+        sink = HolovizDepthMapSinkOp(self, CountCondition(self, 1), name="sink")
 
         self.add_flow(source, holoviz, {("", "receivers")})
         self.add_flow(holoviz, sink, {("render_buffer_output", "")})

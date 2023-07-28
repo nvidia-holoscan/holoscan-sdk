@@ -13,30 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-include(ExternalProject)
-
 # Endoscopy sample data
 add_library(endoscopy_data INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/endoscopy/video/surgical_video.264")
 # Setup the installation rule
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/endoscopy DESTINATION data COMPONENT holoscan-data)
 
+# Check if we have python and ffmpeg
+find_program(FFMPEG ffmpeg)
+find_program(PYTHON3 python3)
+
 if(HOLOSCAN_DOWNLOAD_DATASETS)
+  include(HoloscanDownloadData)
+
+  # If we have ffmpeg and python we generate the GXF entities
+  set(ENDOSCOPY_DATA_VERSION "20230128")
+  set(ENDOSCOPY_DATA_MD5 "9732a54944589f7ca4f1337e8adf0838")
+
   # Download the endoscopy sample data
-  ExternalProject_Add(endoscopy_data_download
-    URL https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_endoscopy_sample_data/versions/20230128/zip
-    URL_MD5 9732a54944589f7ca4f1337e8adf0838
-    DOWNLOAD_NAME holoscan_endoscopy_sample_data_20230128.zip
+  holoscan_download_data(endoscopy
+    URL https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_endoscopy_sample_data/versions/${ENDOSCOPY_DATA_VERSION}/zip
+    URL_MD5 ${ENDOSCOPY_DATA_MD5}
     DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/endoscopy
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ""
-    INSTALL_COMMAND ""
-    EXCLUDE_FROM_ALL 1
-    BUILD_BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/endoscopy/video/surgical_video.264"
+    BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/endoscopy/video/surgical_video.264"
   )
 
   # Add dependency to force the download
-  add_dependencies(endoscopy_data endoscopy_data_download)
+  add_dependencies(endoscopy_data endoscopy_download)
 endif()
 
 # Multiai ultrasound sample data
@@ -46,19 +48,13 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/multiai_ultrasound DESTINATION dat
 
 if(HOLOSCAN_DOWNLOAD_DATASETS)
   # Download the multiai sample data
-  ExternalProject_Add(multiai_ultrasound_data_download
+  holoscan_download_data(multiai_ultrasound
     URL https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_multi_ai_ultrasound_sample_data/versions/20221201/zip
     URL_MD5 8096b080563e6a75c8e50c3b271364cd
-    DOWNLOAD_NAME holoscan_multi_ai_ultrasound_sample_data_20221201.zip
     DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/multiai_ultrasound
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ""
-    INSTALL_COMMAND ""
-    EXCLUDE_FROM_ALL 1
-    BUILD_BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/multiai_ultrasound/video/icardio_input1.avi"
+    BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/multiai_ultrasound/video/icardio_input1.avi"
   )
 
   # Add dependency to force the download
-  add_dependencies(multiai_ultrasound_data multiai_ultrasound_data_download)
+  add_dependencies(multiai_ultrasound_data multiai_ultrasound_download)
 endif()

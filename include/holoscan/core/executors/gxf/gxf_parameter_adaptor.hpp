@@ -115,9 +115,13 @@ class GXFParameterAdaptor {
         param.set_default_value();  // set default value if not set.
 
         if (!param.has_value()) {
-          HOLOSCAN_LOG_WARN(
-              "Unable to get argument for key '{}' with type '{}'", key, typeid(typeT).name());
-          return GXF_FAILURE;
+          if (param.flag() == ParameterFlag::kOptional) {
+            return GXF_SUCCESS;
+          } else {
+            HOLOSCAN_LOG_WARN(
+                "Unable to get argument for key '{}' with type '{}'", key, typeid(typeT).name());
+            return GXF_FAILURE;
+          }
         }
 
         auto& value = param.get();
@@ -227,7 +231,7 @@ class GXFParameterAdaptor {
               case ArgElementType::kIOSpec: {
                 if constexpr (std::is_same_v<typeT, holoscan::IOSpec*>) {
                   if (value) {
-                    auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(value->resource());
+                    auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(value->connector());
                     gxf_uid_t cid = gxf_resource->gxf_cid();
 
                     return GxfParameterSetHandle(context, uid, key, cid);
@@ -382,7 +386,7 @@ class GXFParameterAdaptor {
                   for (auto& io_spec : value) {
                     if (io_spec) {  // Only consider non-null IOSpecs
                       auto gxf_resource =
-                          std::dynamic_pointer_cast<GXFResource>(io_spec->resource());
+                          std::dynamic_pointer_cast<GXFResource>(io_spec->connector());
                       yaml_node.push_back(gxf_resource->gxf_cname());
                     }
                   }

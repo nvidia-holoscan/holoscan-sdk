@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
-#define MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
+#ifndef HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
+#define HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
 
 /**
  * \file
@@ -152,13 +152,13 @@ void ImGuiSetCurrentContext(ImGuiContext* context);
 void SetFont(const char* path, float size_in_pixels);
 
 /**
- * Set the Cuda stream used by Holoviz for Cuda operations.
+ * Set the CUDA stream used by Holoviz for CUDA operations.
  *
- * The default stream is 0, i.e. non-concurrent mode. All Cuda commands issued by Holoviz
+ * The default stream is 0, i.e. non-concurrent mode. All CUDA commands issued by Holoviz
  * use that stream.
  * The stream can be changed any time.
  *
- * @param stream    Cuda stream to use
+ * @param stream    CUDA stream to use
  */
 void SetCudaStream(CUstream stream);
 
@@ -194,29 +194,42 @@ void End();
 /**
  * Begin an image layer definition.
  *
- * Layer properties (priority and opacity are set to the defaults).
+ * Layer properties (priority and opacity) are set to the defaults.
  */
 void BeginImageLayer();
 
 /**
- * Defines the image data for this layer, source is Cuda device memory.
+ * Defines the image data for this layer, source is CUDA device memory.
  *
  * If the image has a alpha value it's multiplied with the layer opacity.
+ *
+ * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
+ * to the depth buffer when rendering the color image from a separate invocation of Image*() for
+ * the same layer. This enables depth-compositing image layers with other Holoviz layers.
+ * Supported depth formats are: D32_SFLOAT.
  *
  * @param width         width of the image
  * @param height        height of the image
  * @param fmt           image format
- * @param device_ptr    Cuda device memory pointer
+ * @param device_ptr    CUDA device memory pointer
+ * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
+ * contiguous in memory
  */
-void ImageCudaDevice(uint32_t width, uint32_t height, ImageFormat fmt, CUdeviceptr device_ptr);
+void ImageCudaDevice(uint32_t width, uint32_t height, ImageFormat fmt, CUdeviceptr device_ptr,
+                     size_t row_pitch = 0);
 
 /**
- * Defines the image data for this layer, source is a Cuda array.
+ * Defines the image data for this layer, source is a CUDA array.
  *
  * If the image has a alpha value it's multiplied with the layer opacity.
  *
+ * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
+ * to the depth buffer when rendering the color image from a separate invocation of Image*() for
+ * the same layer. This enables depth-compositing image layers with other Holoviz layers.
+ * Supported depth formats are: D32_SFLOAT.
+ *
  * @param fmt       image format
- * @param array     Cuda array
+ * @param array     CUDA array
  */
 void ImageCudaArray(ImageFormat fmt, CUarray array);
 
@@ -225,12 +238,20 @@ void ImageCudaArray(ImageFormat fmt, CUarray array);
  *
  * If the image has a alpha value it's multiplied with the layer opacity.
  *
+ * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
+ * to the depth buffer when rendering the color image from a separate invocation of Image*() for
+ * the same layer. This enables depth-compositing image layers with other Holoviz layers.
+ * Supported depth formats are: D32_SFLOAT.
+ *
  * @param width     width of the image
  * @param height    height of the image
  * @param fmt       image format
  * @param data      host memory pointer
+ * @param row_pitch the number of bytes between each row, if zero then data is assumed to be
+ * contiguous in memory
  */
-void ImageHost(uint32_t width, uint32_t height, ImageFormat fmt, const void* data);
+void ImageHost(uint32_t width, uint32_t height, ImageFormat fmt, const void* data,
+               size_t row_pitch = 0);
 
 /**
  * Defines the lookup table for this image layer.
@@ -264,14 +285,14 @@ void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data,
 /**
  * Start a ImGUI layer.
  *
- * Layer properties (priority and opacity are set to the defaults).
+ * Layer properties (priority and opacity) are set to the defaults.
  */
 void BeginImGuiLayer();
 
 /**
  * Start a geometry layer.
  *
- * Layer properties (priority and opacity are set to the defaults).
+ * Layer properties (priority and opacity) are set to the defaults.
  * Coordinates start with (0, 0) in the top left and end with (1, 1) in the bottom right.
  */
 void BeginGeometryLayer();
@@ -325,21 +346,13 @@ void Text(float x, float y, float size, const char* text);
  * rendered as a 3D object using points, lines or triangles.
  * Additionally a 2D array with a color value for each point in the grid can be specified.
  *
- * Depth maps are rendered in 3D and support camera movement.
- * The camera is operated using the mouse.
- *  - Orbit        (LMB)
- *  - Pan          (LMB + CTRL  | MMB)
- *  - Dolly        (LMB + SHIFT | RMB | Mouse wheel)
- *  - Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
- *  - Zoom         (Mouse wheel + SHIFT)
- *
  * @param render_mode       depth map render mode
  * @param width             width of the depth map
  * @param height            height of the depth map
  * @param depth_fmt         format of the depth map data (has to be ImageFormat::R8_UNORM)
- * @param depth_device_ptr  Cuda device memory pointer holding the depth data
+ * @param depth_device_ptr  CUDA device memory pointer holding the depth data
  * @param color_fmt         format of the color data (has to be ImageFormat::R8G8B8A8_UNORM)
- * @param color_device_ptr  Cuda device memory pointer holding the color data (optional)
+ * @param color_device_ptr  CUDA device memory pointer holding the color data (optional)
  */
 void DepthMap(DepthMapRenderMode render_mode, uint32_t width, uint32_t height,
               ImageFormat depth_fmt, CUdeviceptr depth_device_ptr, ImageFormat color_fmt,
@@ -365,24 +378,70 @@ void LayerOpacity(float opacity);
 void LayerPriority(int32_t priority);
 
 /**
+ * Add a layer view.
+ *
+ * By default a layer will fill the whole window. When using a view the layer can be placed
+ * freely within the window.
+ *
+ * Layers can also be placed in 3D space by specifying a 3D transformation matrix.
+ * Note that for geometry layers there is a default matrix which allows coordinates in the range
+ * of [0 ... 1] instead of the Vulkan [-1 ... 1] range. When specifying a matrix for a geometry
+ * layer, this default matrix is overwritten.
+ *
+ * When multiple views are specified the layer is drawn multiple times using the specified
+ * layer views.
+ *
+ * It's possible to specify a negative term for height, which flips the image. When using a negative
+ * height, one should also adjust the y value to point to the lower left corner of the viewport
+ * instead of the upper left corner.
+ *
+ * @param offset_x, offset_y offset of top-left corner of the view. Top left coordinate of the
+ * window area is (0, 0) bottom right coordinate is (1, 1)
+ * @param width, height      width and height of the view in normalized range. 1.0 is full size.
+ * @param matrix             row major 4x4 transform matrix (optional, can be nullptr)
+ */
+void LayerAddView(float offset_x, float offset_y, float width, float height,
+                  const float* matrix = nullptr);
+
+/**
  * End the current layer.
  */
 void EndLayer();
 
 /**
- * Read the framebuffer and store it to cuda device memory.
+ * Read an image from the framebuffer and store it to CUDA device memory.
+ *
+ * If fmt is a depth format, the depth image attachment of the framebuffer will be copied to
+ * device_ptr.
  *
  * Can only be called outside of Begin()/End().
  *
- * @param fmt           image format, currently only R8G8B8A8_UNORM is supported
+ * @param fmt           image format, currently only R8G8B8A8_UNORM and D32_SFLOAT are supported
  * @param width, height width and height of the region to read back, will be limited to the
  *                      framebuffer size if the framebuffer is smaller than that
  * @param buffer_size   size of the storage buffer in bytes
- * @param device_ptr    pointer to Cuda device memory to store the framebuffer into
+ * @param device_ptr    pointer to CUDA device memory to store the framebuffer into
  */
 void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
                      CUdeviceptr device_ptr);
 
+/**
+ * Get the camera pose.
+ *
+ * The camera parameters are returned in a 4x4 row major projection matrix.
+ *
+ * The camera is operated using the mouse.
+ *  - Orbit        (LMB)
+ *  - Pan          (LMB + CTRL  | MMB)
+ *  - Dolly        (LMB + SHIFT | RMB | Mouse wheel)
+ *  - Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
+ *  - Zoom         (Mouse wheel + SHIFT)
+ *
+ * @param size   size of the memory `matrix` points to in floats
+ * @param matrix pointer to a float array to store the row major projection matrix to
+ */
+void GetCameraPose(size_t size, float* matrix);
+
 }  // namespace holoscan::viz
 
-#endif /* MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP */

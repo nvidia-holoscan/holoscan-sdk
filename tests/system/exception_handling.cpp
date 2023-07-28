@@ -53,15 +53,12 @@ class MinimalThrowApp : public holoscan::Application {
 };
 
 TEST(MinimalNativeOperatorApp, TestComputeMethodExceptionHandling) {
-  load_env_log_level();
-
   auto app = make_application<MinimalThrowApp>();
 
   const std::string config_file = test_config.get_test_data_file("minimal.yaml");
   app->config(config_file);
 
-  EXPECT_EXIT(
-      app->run(), testing::ExitedWithCode(1), "Exception occurred in MinimalThrowOp::compute");
+  EXPECT_THROW({ app->run(); }, std::runtime_error);
 }
 
 }  // namespace holoscan

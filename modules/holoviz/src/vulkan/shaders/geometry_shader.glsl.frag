@@ -16,6 +16,9 @@
  */
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "push_constants.hpp"
 
 // incoming
 layout(location = 0) in vec4 i_color;

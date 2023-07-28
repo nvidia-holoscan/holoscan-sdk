@@ -32,14 +32,6 @@ function(_get_lib_file_path location target)
 
     if(imported)
         get_target_property(lib ${target} IMPORTED_LOCATION)
-
-        # If the path starts with GXF folder, take only the file name
-        get_gxf_binary_path(_GXF_folder)
-        cmake_path(IS_PREFIX _GXF_folder "${lib}" NORMALIZE _match_result)
-
-        if(_match_result)
-            get_filename_component(lib "${lib}" NAME)
-        endif()
     else()
         set(lib $<TARGET_FILE:${target}>)
     endif()
@@ -160,13 +152,14 @@ function(create_gxe_application)
         CONTENT ${GXE_APP_MANIFEST_CONTENT}
     )
 
+    # TODO: this is a hacky workaround which should be addressed in the install tree instead
+    # of trying to use relative paths
+
     # Create a manifest file with the file paths replaced to relative paths
     set(GXE_APP_MANIFEST ${CMAKE_CURRENT_BINARY_DIR}/${GXE_APP_NAME}_manifest.yaml)
     set(GXE_APP_MANIFEST_RELATIVE_PATH ${app_relative_dest_path}/${GXE_APP_NAME}_manifest.yaml)
-    get_gxf_binary_path(_GXF_folder)
     add_custom_command(OUTPUT "${GXE_APP_MANIFEST}"
         COMMAND sed
-        -e "s|${_GXF_folder}/|./gxf/|g" # '/workspace/holoscan-sdk/.cache/gxf/gxf_x86_64/' => './gxf/'
         -e "s|${CMAKE_BINARY_DIR}/|./|g" # '/workspace/holoscan-sdk/build/' => './'
         ${GXE_APP_MANIFEST_ORIGINAL} > ${GXE_APP_MANIFEST}
         VERBATIM

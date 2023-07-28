@@ -72,7 +72,8 @@ list(APPEND _GXF_EXTENSIONS
     sample
     serialization
     std
-    tensor_rt
+    stream
+    ucx
     videoencoderio
     videoencoder
     videodecoderio
@@ -109,54 +110,33 @@ foreach(component IN LISTS _GXF_LIBRARIES)
     list(APPEND GXF_LIBRARY_VARS GXF_${component}_LIBRARY)
 
     # create imported target
-    if(GXF_${component}_LIBRARY AND GXF_${component}_INCLUDE_DIR)
-
-        set(gxf_component_location "${GXF_${component}_LIBRARY}")
-
+    if(GXF_${component}_LIBRARY)
         if(NOT TARGET GXF::${component})
             # Assume SHARED, though technically UNKNOWN since we don't enforce .so
             add_library(GXF::${component} SHARED IMPORTED)
 
-            # Copy a GXF library to ${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}/ folder
-            file(COPY "${GXF_${component}_LIBRARY}"
-                DESTINATION "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}"
-                FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-            )
-
-            # Set the internal location to the binary directory
-            # This is need for RPATH to work
-            get_filename_component(gxf_component_name "${GXF_${component}_LIBRARY}" NAME)
-            set(gxf_component_location "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}/${gxf_component_name}")
-
-            # Install a GXF library as a component 'holoscan-gxf_libs'
-            # Use the copied location since RPATH is changed
-            install(FILES "${gxf_component_location}"
-                DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-                COMPONENT "holoscan-gxf_libs"
-            )
         endif()
 
-        list(APPEND GXF_${component}_INCLUDE_DIRS
-            ${GXF_${component}_INCLUDE_DIR}
-            ${GXF_common_INCLUDE_DIR}
+        ##############################################################################
+        # TODO: config/patching/install should not be in this file, only target import
+
+        # Set the internal location to the binary directory
+        get_filename_component(gxf_component_filename "${GXF_${component}_LIBRARY}" NAME)
+        set(gxf_component_build_dir "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}")
+        set(gxf_component_build_path "${gxf_component_build_dir}/${gxf_component_filename}")
+
+        # Copy the GXF library to the build folder
+        # Needed for permissions to run patchelf for RUNPATH
+        file(COPY "${GXF_${component}_LIBRARY}"
+            DESTINATION "${gxf_component_build_dir}"
+            FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
         )
 
-        # Points to the copied location of GXF
-        set_target_properties(GXF::${component} PROPERTIES
-            IMPORTED_LOCATION "${gxf_component_location}"
-
-            # Without this, make and ninja's behavior is different.
-            # GXF's shared libraries doesn't seem to set soname.
-            # (https://gitlab.kitware.com/cmake/cmake/-/issues/22307)
-            IMPORTED_NO_SONAME ON
-            INTERFACE_INCLUDE_DIRECTORIES "${GXF_${component}_INCLUDE_DIRS}"
-        )
-
+        # Patch RUNPATH
         list(APPEND _GXF_LIB_RPATH "\$ORIGIN" "\$ORIGIN/gxf_extensions")
-
-        # The video encoder/decoder libraries need an extra path for aarch64
-        # To find the right l4t libraries
         if(CMAKE_SYSTEM_PROCESSOR STREQUAL aarch64 OR CMAKE_SYSTEM_PROCESSOR STREQUAL arm64)
+            # The video encoder/decoder libraries need an extra path for aarch64
+            # To find the right l4t libraries
             if(component STREQUAL videoencoderio
             OR component STREQUAL videoencoder
             OR component STREQUAL videodecoderio
@@ -164,16 +144,38 @@ foreach(component IN LISTS _GXF_LIBRARIES)
                 list(APPEND _GXF_LIB_RPATH "/usr/lib/aarch64-linux-gnu/tegra/")
             endif()
         endif()
-
-        # Patch RUNPATH
         list(JOIN _GXF_LIB_RPATH ":" _GXF_LIB_RPATH)
         execute_process(COMMAND
             "${PATCHELF_EXECUTABLE}"
             "--set-rpath"
             "${_GXF_LIB_RPATH}"
-            "${gxf_component_location}"
+            "${gxf_component_build_path}"
         )
         unset(_GXF_LIB_RPATH)
+
+        # Install the GXF library
+        # Use the build location since RUNPATH has changed
+        install(FILES "${gxf_component_build_path}"
+            DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
+            COMPONENT "holoscan-gxf_libs"
+        )
+        ##############################################################################
+
+        # Include dirs
+        list(APPEND GXF_${component}_INCLUDE_DIRS ${GXF_common_INCLUDE_DIR})
+        if (GXF_${component}_INCLUDE_DIR)
+            list(APPEND GXF_${component}_INCLUDE_DIRS ${GXF_${component}_INCLUDE_DIR})
+        endif()
+
+        set_target_properties(GXF::${component} PROPERTIES
+            IMPORTED_LOCATION "${gxf_component_build_path}"
+
+            # Without this, make and ninja's behavior is different.
+            # GXF's shared libraries doesn't seem to set soname.
+            # (https://gitlab.kitware.com/cmake/cmake/-/issues/22307)
+            IMPORTED_NO_SONAME ON
+            INTERFACE_INCLUDE_DIRECTORIES "${GXF_${component}_INCLUDE_DIRS}"
+        )
 
         set(GXF_${component}_FOUND TRUE)
     else()
@@ -197,26 +199,40 @@ if(GXF_core_INCLUDE_DIR)
     unset(_GXF_VERSION_LINE)
 endif()
 
+##############################################################################
 # Install the Deepstream dependencies only on x86_64
+# TODO: this should not be done here, not related to the GXF import
 if(_public_GXF_recipe STREQUAL x86_64)
   file(GLOB DS_DEPS_NVUTILS "${GXF_core_INCLUDE_DIR}/x86_64/nvutils/*.so")
   file(GLOB DS_DEPS_CUVIDV4L2 "${GXF_core_INCLUDE_DIR}/x86_64/cuvidv4l2/*.so")
 
   foreach(dsdep IN LISTS DS_DEPS_NVUTILS DS_DEPS_CUVIDV4L2)
+    # Set the internal location to the binary directory
+    get_filename_component(ds_lib_filename "${dsdep}" NAME)
+    set(ds_lib_build_dir "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}")
+    set(ds_lib_build_path "${ds_lib_build_dir}/${ds_lib_filename}")
+
+    # Copy the DeepStream library to the build folder
+    # Needed for permissions to run patchelf for RUNPATH
+    file(COPY "${dsdep}"
+        DESTINATION "${ds_lib_build_dir}"
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+    )
 
     # Patch RUNPATH
     execute_process(COMMAND
-    "${PATCHELF_EXECUTABLE}"
-    "--set-rpath"
-    "\$ORIGIN"
-    "${dsdep}"
+        "${PATCHELF_EXECUTABLE}"
+        "--set-rpath"
+        "\$ORIGIN"
+        "${ds_lib_build_path}"
     )
 
-    # Install the files
-    install(FILES "${dsdep}"
-            DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-            COMPONENT "holoscan-gxf_libs"
-            )
+    # Install the DeepStream library
+    # Use the build location since RUNPATH has changed
+    install(FILES "${ds_lib_build_path}"
+        DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
+        COMPONENT "holoscan-gxf_libs"
+    )
   endforeach()
 
   # Create a symlink
@@ -232,7 +248,7 @@ if(_public_GXF_recipe STREQUAL x86_64)
     COMPONENT "holoscan-gxf_libs"
   )
 endif()
-
+##############################################################################
 
 # GXE
 find_program(GXF_gxe_PATH
@@ -247,10 +263,18 @@ if(GXF_gxe_PATH)
         add_executable(GXF::gxe IMPORTED)
     endif()
 
-    # 'gxe' is read-only file, so we need to update the permissions before patching
-    # with patchelf (https://github.com/NixOS/nixpkgs/issues/14440).
-    # Note that 'file(CHMOD)' is supported since later CMake versions(>=3.19)
-    file(CHMOD ${GXF_gxe_PATH}
+    ##############################################################################
+    # TODO: config/patching/install should not be in this file, only target import
+
+    # Set the internal location to the binary directory
+    # This is need for RPATH to work
+    set(GXE_BUILD_DIR "${CMAKE_BINARY_DIR}/bin")
+    set(GXE_BUILD_PATH "${GXE_BUILD_DIR}/gxe")
+
+    # Copy gxe binary to the build folder
+    # Needed for permissions to run patchelf for RUNPATH
+    file(COPY "${GXF_gxe_PATH}"
+        DESTINATION "${GXE_BUILD_DIR}"
         FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
     )
 
@@ -259,12 +283,22 @@ if(GXF_gxe_PATH)
         "${PATCHELF_EXECUTABLE}"
         "--set-rpath"
         "\$ORIGIN:\$ORIGIN/../${HOLOSCAN_INSTALL_LIB_DIR}"
-        "${GXF_gxe_PATH}"
+        "${GXE_BUILD_PATH}"
     )
 
-    set_target_properties(GXF::gxe PROPERTIES
-        IMPORTED_LOCATION "${GXF_gxe_PATH}"
+    # Install GXE
+    # Use the build location since RUNPATH has changed
+    install(FILES "${GXE_BUILD_PATH}"
+        DESTINATION "bin"
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+        COMPONENT "holoscan-gxf_bins"
     )
+    ##############################################################################
+
+    set_target_properties(GXF::gxe PROPERTIES
+        IMPORTED_LOCATION "${GXE_BUILD_PATH}"
+    )
+
     set(GXF_gxe_FOUND TRUE)
 else()
     set(GXF_gxe_FOUND FALSE)

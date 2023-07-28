@@ -18,7 +18,9 @@
 #include <gtest/gtest.h>
 #include <gxf/core/gxf.h>
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "../config.hpp"
 #include <holoscan/holoscan.hpp>
@@ -63,7 +65,7 @@ class PingRxOp : public Operator {
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    auto value_vector = op_input.receive<std::vector<int>>("receivers");
+    auto value_vector = op_input.receive<std::vector<int>>("receivers").value();
 
     HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: {})", count_++, value_vector.size());
 
@@ -90,8 +92,6 @@ class NativeOpApp : public holoscan::Application {
 };
 
 TEST(NativeOperatorApp, TestNativeOperatorApp) {
-  load_env_log_level();
-
   auto app = make_application<NativeOpApp>();
 
   const std::string config_file = test_config.get_test_data_file("minimal.yaml");

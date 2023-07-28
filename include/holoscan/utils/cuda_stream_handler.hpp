@@ -61,7 +61,7 @@ class CudaStreamHandler {
     for (auto&& event : cuda_events_) {
       const cudaError_t result = cudaEventDestroy(event);
       if (cudaSuccess != result) {
-        GXF_LOG_ERROR("Failed to destroy CUDA event: %s", cudaGetErrorString(result));
+        HOLOSCAN_LOG_ERROR("Failed to destroy CUDA event: %s", cudaGetErrorString(result));
       }
     }
     cuda_events_.clear();
@@ -143,7 +143,8 @@ class CudaStreamHandler {
             cudaEvent_t cuda_event;
             result = cudaEventCreateWithFlags(&cuda_event, cudaEventDisableTiming);
             if (cudaSuccess != result) {
-              GXF_LOG_ERROR("Failed to create input CUDA event: %s", cudaGetErrorString(result));
+              HOLOSCAN_LOG_ERROR("Failed to create input CUDA event: %s",
+                                 cudaGetErrorString(result));
               return GXF_FAILURE;
             }
             cuda_events_.push_back(cuda_event);
@@ -153,13 +154,14 @@ class CudaStreamHandler {
 
           result = cudaEventRecord(*event_it, cuda_stream);
           if (cudaSuccess != result) {
-            GXF_LOG_ERROR("Failed to record event for message stream: %s",
+            HOLOSCAN_LOG_ERROR("Failed to record event for message stream: %s",
                           cudaGetErrorString(result));
             return GXF_FAILURE;
           }
           result = cudaStreamWaitEvent(cuda_stream_handle_->stream().value(), *event_it);
           if (cudaSuccess != result) {
-            GXF_LOG_ERROR("Failed to record wait on message event: %s", cudaGetErrorString(result));
+            HOLOSCAN_LOG_ERROR("Failed to record wait on message event: %s",
+                               cudaGetErrorString(result));
             return GXF_FAILURE;
           }
           ++event_it;
@@ -180,7 +182,7 @@ class CudaStreamHandler {
     if (message_cuda_stream_handle_) {
       const auto maybe_stream_id = message.value().add<nvidia::gxf::CudaStreamId>();
       if (!maybe_stream_id) {
-        GXF_LOG_ERROR("Failed to add CUDA stream id to output message.");
+        HOLOSCAN_LOG_ERROR("Failed to add CUDA stream id to output message.");
         return nvidia::gxf::ToResultCode(maybe_stream_id);
       }
       maybe_stream_id.value()->stream_cid = message_cuda_stream_handle_.cid();
@@ -217,7 +219,7 @@ class CudaStreamHandler {
     if (cuda_stream_handle) { return cuda_stream_handle->stream().value(); }
     if (!default_stream_warning_) {
       default_stream_warning_ = true;
-      GXF_LOG_WARNING(
+      HOLOSCAN_LOG_WARN(
           "Parameter `cuda_stream_pool` is not set, using the default CUDA stream for CUDA "
           "operations.");
     }
@@ -239,7 +241,7 @@ class CudaStreamHandler {
       if (!has_cuda_stream_pool_) {
         // If the cuda stream pool is required return an error
         if (cuda_stream_pool_required_) {
-          GXF_LOG_ERROR("'cuda_stream_pool' is required but not set.");
+          HOLOSCAN_LOG_ERROR("'cuda_stream_pool' is required but not set.");
           return GXF_FAILURE;
         }
         return GXF_SUCCESS;
@@ -253,7 +255,7 @@ class CudaStreamHandler {
         // allocate a stream
         auto maybe_stream = cuda_stream_pool.value()->allocateStream();
         if (!maybe_stream) {
-          GXF_LOG_ERROR("Failed to allocate CUDA stream");
+          HOLOSCAN_LOG_ERROR("Failed to allocate CUDA stream");
           return nvidia::gxf::ToResultCode(maybe_stream);
         }
         cuda_stream_handle_ = std::move(maybe_stream.value());

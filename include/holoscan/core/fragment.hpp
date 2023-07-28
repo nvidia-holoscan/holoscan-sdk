@@ -18,6 +18,7 @@
 #ifndef HOLOSCAN_CORE_FRAGMENT_HPP
 #define HOLOSCAN_CORE_FRAGMENT_HPP
 
+#include <future>       // for std::future
 #include <iostream>     // for std::cout
 #include <memory>       // for std::shared_ptr
 #include <set>          // for std::set
@@ -27,8 +28,11 @@
 
 #include "common.hpp"
 #include "config.hpp"
+#include "dataflow_tracker.hpp"
 #include "executor.hpp"
 #include "graph.hpp"
+#include "network_context.hpp"
+#include "scheduler.hpp"
 
 namespace holoscan {
 
@@ -53,7 +57,7 @@ class Fragment {
    * @brief Set the name of the operator.
    *
    * @param name The name of the operator.
-   * @return The reference to this operator.
+   * @return The reference to this fragment (for chaining).
    */
   Fragment& name(const std::string& name) &;
 
@@ -61,7 +65,7 @@ class Fragment {
    * @brief Set the name of the operator.
    *
    * @param name The name of the operator.
-   * @return The reference to this operator.
+   * @return The reference to this fragment (for chaining).
    */
   Fragment&& name(const std::string& name) &&;
 
@@ -76,9 +80,16 @@ class Fragment {
    * @brief Set the application of the fragment.
    *
    * @param app The pointer to the application of the fragment.
-   * @return The reference to this fragment.
+   * @return The reference to this fragment (for chaining).
    */
   Fragment& application(Application* app);
+
+  /**
+   * @brief Get the application of the fragment.
+   *
+   * @return The pointer to the application of the fragment.
+   */
+  Application* application() const;
 
   /**
    * @brief Set the configuration of the fragment.
@@ -129,11 +140,27 @@ class Fragment {
    *
    * You can get the value of this configuration file by calling `::from_config()` method.
    *
+   * If the application is executed with `--config` option or HOLOSCAN_CONFIG_PATH environment,
+   * the configuration file is overridden by the configuration file specified by the option or
+   * environment variable.
+   *
    * @param config_file The path to the configuration file.
    * @param prefix The prefix string that is prepended to the key of the configuration. (not
    * implemented yet)
    */
   void config(const std::string& config_file, const std::string& prefix = "");
+
+  /**
+   * @brief Set the configuration of the fragment.
+   *
+   * If you want to set the configuration of the fragment manually, you can use this method.
+   * However, it is recommended to use `::config(const std::string&, const std::string&)` method
+   * because once you set the configuration manually, you cannot get the configuration from the
+   * override file (through `--config` option or HOLOSCAN_CONFIG_PATH environment variable).
+   *
+   * @param config The shared pointer to the configuration of the fragment (`Config` object).
+   */
+  void config(std::shared_ptr<Config>& config);
 
   /**
    * @brief Get the configuration of the fragment.
@@ -147,7 +174,7 @@ class Fragment {
    *
    * @return The reference to the graph of the fragment (`Graph` object.)
    */
-  Graph& graph();
+  OperatorGraph& graph();
 
   /**
    * @brief Get the executor of the fragment.
@@ -155,6 +182,35 @@ class Fragment {
    * @return The reference to the executor of the fragment (`Executor` object.)
    */
   Executor& executor();
+
+  /**
+   * @brief Get the scheduler used by the executor
+   *
+   * @return The reference to the scheduler of the fragment's executor (`Scheduler` object.)
+   */
+  std::shared_ptr<Scheduler> scheduler();
+
+  // /**
+  //  * @brief Set the scheduler used by the executor
+  //  *
+  //  * @param scheduler The scheduler to be added.
+  //  */
+  void scheduler(const std::shared_ptr<Scheduler>& scheduler);
+
+  /**
+   * @brief Get the network context used by the executor
+   *
+   * @return The reference to the network context of the fragment's executor (`NetworkContext`
+   * object.)
+   */
+  std::shared_ptr<NetworkContext> network_context();
+
+  // /**
+  //  * @brief Set the network context used by the executor
+  //  *
+  //  * @param network_context The network context to be added.
+  //  */
+  void network_context(const std::shared_ptr<NetworkContext>& network_context);
 
   /**
    * @brief Get the Argument(s) from the configuration file.
@@ -213,7 +269,8 @@ class Fragment {
     op->setup(*spec.get());
     op->spec(spec);
 
-    op->initialize();
+    // We used to initialize operator here, but now it is initialized in initialize_fragment
+    // function after a graph of a fragment has been composed.
 
     return op;
   }
@@ -227,7 +284,7 @@ class Fragment {
   template <typename OperatorT, typename... ArgsT>
   std::shared_ptr<OperatorT> make_operator(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating operator");
-    auto op = make_operator<OperatorT>("", std::forward<ArgsT>(args)...);
+    auto op = make_operator<OperatorT>("noname_operator", std::forward<ArgsT>(args)...);
     return op;
   }
 
@@ -250,7 +307,7 @@ class Fragment {
     resource->setup(*spec.get());
     resource->spec(spec);
 
-    resource->initialize();
+    // Skip initialization. `resource->initialize()` is done in GXFOperator::initialize()
 
     return resource;
   }
@@ -264,7 +321,7 @@ class Fragment {
   template <typename ResourceT, typename... ArgsT>
   std::shared_ptr<ResourceT> make_resource(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating resource");
-    auto resource = make_resource<ResourceT>("", std::forward<ArgsT>(args)...);
+    auto resource = make_resource<ResourceT>("noname_resource", std::forward<ArgsT>(args)...);
     return resource;
   }
 
@@ -302,8 +359,84 @@ class Fragment {
   template <typename ConditionT, typename... ArgsT>
   std::shared_ptr<ConditionT> make_condition(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating condition");
-    auto condition = make_condition<ConditionT>("", std::forward<ArgsT>(args)...);
+    auto condition = make_condition<ConditionT>("noname_condition", std::forward<ArgsT>(args)...);
     return condition;
+  }
+
+  /**
+   * @brief Create a new scheduler.
+   *
+   * @tparam SchedulerT The type of the scheduler.
+   * @param name The name of the scheduler.
+   * @param args The arguments for the scheduler.
+   * @return The shared pointer to the scheduler.
+   */
+  template <typename SchedulerT, typename StringT, typename... ArgsT,
+            typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
+  std::shared_ptr<SchedulerT> make_scheduler(const StringT& name, ArgsT&&... args) {
+    HOLOSCAN_LOG_DEBUG("Creating scheduler '{}'", name);
+    auto scheduler = std::make_shared<SchedulerT>(std::forward<ArgsT>(args)...);
+    scheduler->name(name);
+    scheduler->fragment(this);
+    auto spec = std::make_shared<ComponentSpec>(this);
+    scheduler->setup(*spec.get());
+    scheduler->spec(spec);
+
+    // Skip initialization. `scheduler->initialize()` is done in GXFExecutor::run()
+
+    return scheduler;
+  }
+
+  /**
+   * @brief Create a new scheduler.
+   *
+   * @tparam SchedulerT The type of the scheduler.
+   * @param args The arguments for the scheduler.
+   * @return The shared pointer to the scheduler.
+   */
+  template <typename SchedulerT, typename... ArgsT>
+  std::shared_ptr<SchedulerT> make_scheduler(ArgsT&&... args) {
+    HOLOSCAN_LOG_DEBUG("Creating scheduler");
+    auto scheduler = make_scheduler<SchedulerT>("", std::forward<ArgsT>(args)...);
+    return scheduler;
+  }
+
+  /**
+   * @brief Create a new network context.
+   *
+   * @tparam NetworkContextT The type of the network context.
+   * @param name The name of the network context.
+   * @param args The arguments for the network context.
+   * @return The shared pointer to the network context.
+   */
+  template <typename NetworkContextT, typename StringT, typename... ArgsT,
+            typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
+  std::shared_ptr<NetworkContextT> make_network_context(const StringT& name, ArgsT&&... args) {
+    HOLOSCAN_LOG_DEBUG("Creating network context '{}'", name);
+    auto network_context = std::make_shared<NetworkContextT>(std::forward<ArgsT>(args)...);
+    network_context->name(name);
+    network_context->fragment(this);
+    auto spec = std::make_shared<ComponentSpec>(this);
+    network_context->setup(*spec.get());
+    network_context->spec(spec);
+
+    // Skip initialization. `network_context->initialize()` is done in GXFExecutor::run()
+
+    return network_context;
+  }
+
+  /**
+   * @brief Create a new network context.
+   *
+   * @tparam NetworkContextT The type of the network context.
+   * @param args The arguments for the network context.
+   * @return The shared pointer to the network context.
+   */
+  template <typename NetworkContextT, typename... ArgsT>
+  std::shared_ptr<NetworkContextT> make_network_context(ArgsT&&... args) {
+    HOLOSCAN_LOG_DEBUG("Creating network_context");
+    auto network_context = make_network_context<NetworkContextT>("", std::forward<ArgsT>(args)...);
+    return network_context;
   }
 
   /**
@@ -396,8 +529,8 @@ class Fragment {
    *     add_flow(visualizer_format_converter, visualizer, {{"", "receivers"}});
    *
    *     add_flow(source, format_converter);
-   *     add_flow(format_converter, multiai_inference);
-   *     add_flow(multiai_inference, visualizer, {{"", "receivers"}});
+   *     add_flow(format_converter, inference);
+   *     add_flow(inference, visualizer, {{"", "receivers"}});
    *
    * Instead of:
    *
@@ -405,8 +538,8 @@ class Fragment {
    *     add_flow(visualizer_format_converter, visualizer, {{"", "source_video"}});
    *
    *     add_flow(source, format_converter);
-   *     add_flow(format_converter, multiai_inference);
-   *     add_flow(multiai_inference, visualizer, {{"", "tensor"}});
+   *     add_flow(format_converter, inference);
+   *     add_flow(inference, visualizer, {{"", "tensor"}});
    *
    * By using the parameter (`receivers`) with `std::vector<holoscan::IOSpec*>` type, the framework
    * creates input ports (`receivers:0` and `receivers:1`) implicitly and connects them (and adds
@@ -435,20 +568,61 @@ class Fragment {
    */
   virtual void run();
 
+  /**
+   * @brief Initialize the graph and run the graph asynchronously.
+   *
+   * This method calls `compose()` to compose the graph, and runs the graph asynchronously.
+   *
+   * @return The future object.
+   */
+  virtual std::future<void> run_async();
+
+  /**
+   * @brief Turn on data frame flow tracking.
+   *
+   * A reference to a DataFlowTracker object is returned rather than a pointer so that the
+   * developers can use it as an object without unnecessary pointer dereferencing.
+   *
+   * @param num_start_messages_to_skip The number of messages to skip at the beginning.
+   * @param num_last_messages_to_discard The number of messages to discard at the end.
+   * @param latency_threshold The minimum end-to-end latency in milliseconds to account for
+   * in the end-to-end latency metric calculations.
+   * @return A reference to the DataFlowTracker object in which results will be
+   * stored.
+   */
+  DataFlowTracker& track(uint64_t num_start_messages_to_skip = kDefaultNumStartMessagesToSkip,
+                         uint64_t num_last_messages_to_discard = kDefaultNumLastMessagesToDiscard,
+                         int latency_threshold = kDefaultLatencyThreshold);
+
+  /**
+   * @brief Get the DataFlowTracker object for this fragment.
+   *
+   * @return The pointer to the DataFlowTracker object.
+   */
+  DataFlowTracker* data_flow_tracker() { return data_flow_tracker_.get(); }
+
+  /**
+   * @brief Calls compose() if the graph is not composed yet.
+   */
+  void compose_graph();
+
  protected:
+  friend class Application;  // to access 'scheduler_' in Application
+  friend class AppDriver;
+
   template <typename ConfigT, typename... ArgsT>
-  std::unique_ptr<Config> make_config(ArgsT&&... args) {
-    return std::make_unique<ConfigT>(std::forward<ArgsT>(args)...);
+  std::shared_ptr<Config> make_config(ArgsT&&... args) {
+    return std::make_shared<ConfigT>(std::forward<ArgsT>(args)...);
   }
 
   template <typename GraphT>
-  std::unique_ptr<Graph> make_graph() {
+  std::unique_ptr<GraphT> make_graph() {
     return std::make_unique<GraphT>();
   }
 
   template <typename ExecutorT>
-  std::unique_ptr<Executor> make_executor() {
-    return std::make_unique<ExecutorT>(this);
+  std::shared_ptr<Executor> make_executor() {
+    return std::make_shared<ExecutorT>(this);
   }
 
   template <typename ExecutorT, typename... ArgsT>
@@ -456,11 +630,15 @@ class Fragment {
     return std::make_unique<ExecutorT>(std::forward<ArgsT>(args)...);
   }
 
-  std::string name_;                    ///< The name of the fragment.
-  Application* app_ = nullptr;          ///< The application that this fragment belongs to.
-  std::unique_ptr<Config> config_;      ///< The configuration of the fragment.
-  std::unique_ptr<Graph> graph_;        ///< The graph of the fragment.
-  std::unique_ptr<Executor> executor_;  ///< The executor for the fragment.
+  std::string name_;                      ///< The name of the fragment.
+  Application* app_ = nullptr;            ///< The application that this fragment belongs to.
+  std::shared_ptr<Config> config_;        ///< The configuration of the fragment.
+  std::unique_ptr<OperatorGraph> graph_;  ///< The graph of the fragment.
+  std::shared_ptr<Executor> executor_;    ///< The executor for the fragment.
+  std::shared_ptr<Scheduler> scheduler_;  ///< The scheduler used by the executor
+  std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
+  std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment
+  bool is_composed_ = false;                            ///< Whether the graph is composed or not.
 };
 
 }  // namespace holoscan

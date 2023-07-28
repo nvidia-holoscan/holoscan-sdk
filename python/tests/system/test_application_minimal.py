@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.logger import load_env_log_level
+from holoscan.resources import ManualClock, RealtimeClock
+from holoscan.schedulers import GreedyScheduler, MultiThreadScheduler
 
 
 class MinimalOp(Operator):
@@ -38,8 +41,19 @@ class MinimalApp(Application):
         self.add_operator(mx)
 
 
-def test_minimal_app(ping_config_file):
-    load_env_log_level()
+@pytest.mark.parametrize("SchedulerClass", (None, GreedyScheduler, MultiThreadScheduler))
+def test_minimal_app(ping_config_file, SchedulerClass):
     app = MinimalApp()
     app.config(ping_config_file)
+    if SchedulerClass is not None:
+        app.scheduler(SchedulerClass(app))
+    app.run()
+
+
+@pytest.mark.parametrize("SchedulerClass", (GreedyScheduler, MultiThreadScheduler))
+@pytest.mark.parametrize("ClockClass", (RealtimeClock, ManualClock))
+def test_minimal_app_with_clock(ping_config_file, SchedulerClass, ClockClass):
+    app = MinimalApp()
+    app.config(ping_config_file)
+    app.scheduler(SchedulerClass(app, clock=ClockClass(app)))
     app.run()

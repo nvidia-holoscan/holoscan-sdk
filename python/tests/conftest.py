@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,3 +46,20 @@ def ping_config_file():
     yaml_file_dir = os.path.dirname(__file__)
     config_file = os.path.join(yaml_file_dir, "app_config_ping.yaml")
     return config_file
+
+
+def pytest_configure(config):
+    os.environ["HOLOSCAN_DISABLE_BACKTRACE"] = "1"
+    config.addinivalue_line("markers", "slow: mark test as slow to run")
+
+
+def pytest_addoption(parser):
+    parser.addoption("--runslow", action="store_true", help="include tests marked slow")
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--runslow"):
+        skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+        for item in items:
+            if item.get_closest_marker("slow"):
+                item.add_marker(skip_slow)

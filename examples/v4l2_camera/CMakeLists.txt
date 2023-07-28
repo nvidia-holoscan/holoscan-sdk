@@ -13,11 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build the applications based on GXF if enabled
-add_subdirectory(gxf)
+add_subdirectory(cpp)
+add_subdirectory(python)
+
+file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 install(
   FILES README.md
-  DESTINATION "examples/v4l2_camera"
+  DESTINATION "${app_relative_dest_path}"
   COMPONENT "holoscan-examples"
 )

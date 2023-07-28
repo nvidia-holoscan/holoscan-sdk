@@ -18,6 +18,7 @@
 #ifndef HOLOSCAN_CORE_COMMON_HPP
 #define HOLOSCAN_CORE_COMMON_HPP
 
+#include "./errors.hpp"
 #include "./expected.hpp"
 #include "./forward_def.hpp"
 #include "holoscan/logger/logger.hpp"

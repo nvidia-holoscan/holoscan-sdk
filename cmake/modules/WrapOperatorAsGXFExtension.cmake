@@ -135,10 +135,22 @@ function(wrap_operator_as_gxf_extension)
       gxf_holoscan_wrapper_lib
       ${OPERATOR_TARGET}
   )
+
   if (DEFINED CODELET_TARGET_PROPERTIES)
     set_target_properties(${CODELET_TARGET_NAME}
       PROPERTIES ${CODELET_TARGET_PROPERTIES}
     )
+  endif()
+
+  # Add link directories property to find the gxf wrapping library from the install tree
+  get_target_property(CODELET_LINK_DIRECTORIES ${CODELET_TARGET_NAME} LINK_DIRECTORIES)
+  if(NOT CODELET_LINK_DIRECTORIES)
+    unset(CODELET_LINK_DIRECTORIES)
+  endif()
+  list(APPEND CODELET_LINK_DIRECTORIES ${GXF_EXTENSIONS_DIR})
+  if(CODELET_LINK_DIRECTORIES)
+    set_target_properties(${CODELET_TARGET_NAME} PROPERTIES
+                          LINK_DIRECTORIES ${CODELET_LINK_DIRECTORIES})
   endif()
 
   # Create extension library
@@ -158,4 +170,15 @@ function(wrap_operator_as_gxf_extension)
     )
   endif()
 
+  # Add link directories property to find the gxf wrapping library from the install tree
+  get_target_property(EXTENSION_LINK_DIRECTORIES ${EXTENSION_TARGET_NAME} LINK_DIRECTORIES)
+  # Sets the EXTENSION_LINK_DIRECTORIES to an empty string
+  if(NOT EXTENSION_LINK_DIRECTORIES)
+    unset(EXTENSION_LINK_DIRECTORIES)
+  endif()
+  list(APPEND EXTENSION_LINK_DIRECTORIES ${GXF_EXTENSIONS_DIR})
+  if(EXTENSION_LINK_DIRECTORIES)
+    set_target_properties(${EXTENSION_TARGET_NAME} PROPERTIES
+                          LINK_DIRECTORIES ${EXTENSION_LINK_DIRECTORIES})
+  endif()
 endfunction()

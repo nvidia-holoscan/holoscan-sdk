@@ -51,8 +51,8 @@ class Vulkan {
    */
   ~Vulkan();
 
-  struct Texture;  ///< texture object
-  struct Buffer;   ///< buffer object
+  class Texture;  ///< texture object
+  class Buffer;   ///< buffer object
 
   /**
    * Setup Vulkan using the given window.
@@ -99,7 +99,15 @@ class Vulkan {
   vk::CommandBuffer get_command_buffer();
 
   /**
-   * Create a texture to be used for interop with Cuda, see ::upload_to_texture.
+   * Set the viewport for subsequent draw commands.
+   *
+   * @param x, y              the viewport’s upper left corner [0 ... 1]
+   * @param width, height     the viewport’s size [0 ... 1]
+   */
+  void set_viewport(float x, float y, float width, float height);
+
+  /**
+   * Create a texture to be used for interop with CUDA, see ::upload_to_texture.
    * Destroy with ::destroy_texture.
    *
    * @param width, height     size
@@ -137,24 +145,29 @@ class Vulkan {
   void destroy_texture(Texture* texture);
 
   /**
-   * Upload data from Cuda device memory to a texture created with ::create_texture_for_cuda_interop
+   * Upload data from CUDA device memory to a texture created with ::create_texture_for_cuda_interop
    *
-   * @param device_ptr    Cuda device memory
+   * @param device_ptr    CUDA device memory
+   * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
+   * contiguous in memory
    * @param texture       texture to be updated
-   * @param stream        Cuda stream
+   * @param ext_stream    CUDA stream to use for operations
    */
-  void upload_to_texture(CUdeviceptr device_ptr, Texture* texture, CUstream stream = 0);
+  void upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, Texture* texture,
+                         CUstream ext_stream);
 
   /**
    * Upload data from host memory to a texture created with ::create_texture
    *
    * @param host_ptr      data to upload in host memory
+   * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
+   * contiguous in memory
    * @param texture       texture to be updated
    */
-  void upload_to_texture(const void* host_ptr, Texture* texture);
+  void upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture);
 
   /**
-   * Create a vertex or index buffer to be used for interop with Cuda, see ::upload_texture.
+   * Create a vertex or index buffer to be used for interop with CUDA, see ::upload_texture.
    * Destroy with ::destroy_buffer.
    *
    * @param data_size     size of the buffer in bytes
@@ -174,13 +187,13 @@ class Vulkan {
   Buffer* create_buffer(size_t data_size, const void* data, vk::BufferUsageFlags usage);
 
   /**
-   * Upload data from Cuda device memory to a buffer created with ::create_buffer_for_cuda_interop
+   * Upload data from CUDA device memory to a buffer created with ::create_buffer_for_cuda_interop
    *
    * @param data_size   data size
-   * @param device_ptr  Cuda device memory
+   * @param device_ptr  CUDA device memory
    * @param buffer      buffer to be updated
    * @param dst_offset  offset in buffer to copy to
-   * @param stream      Cuda stream
+   * @param stream      CUDA stream
    */
   void upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer, size_t dst_offset,
                         CUstream stream);
@@ -202,14 +215,15 @@ class Vulkan {
   void destroy_buffer(Buffer* buffer);
 
   /**
-   * Draw a texture with an optional color lookup table.
+   * Draw a texture with an optional depth texture and color lookup table.
    *
    * @param texture     texture to draw
+   * @param depth_texture depth texture to draw, can be nullptr
    * @param lut         lookup table, can be nullptr
    * @param opacity     opacity, 0.0 is transparent, 1.0 is opaque
    * @param view_matrix view matrix
    */
-  void draw_texture(Texture* texture, Texture* lut, float opacity,
+  void draw_texture(Texture* texture, Texture* depth_texture, Texture* lut, float opacity,
                     const nvmath::mat4f& view_matrix = nvmath::mat4f(1));
 
   /**
@@ -279,11 +293,11 @@ class Vulkan {
    * @param width, height width and height of the region to read back, will be limited to the
    *                      framebuffer size if the framebuffer is smaller than that
    * @param buffer_size   size of the storage buffer in bytes
-   * @param buffer        pointer to Cuda device memory to store the framebuffer into
-   * @param stream        Cuda stream
+   * @param buffer        pointer to CUDA device memory to store the framebuffer into
+   * @param ext_stream    CUDA stream to use for operations
    */
   void read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                        CUdeviceptr buffer, CUstream stream = 0);
+                        CUdeviceptr buffer, CUstream ext_stream);
 
  private:
   struct Impl;

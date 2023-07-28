@@ -20,7 +20,9 @@
 #include <yaml-cpp/yaml.h>
 
 #include <cstdlib>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "../config.hpp"
 #include "../utils.hpp"
@@ -42,10 +44,9 @@
 #include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
 #include "holoscan/operators/format_converter/format_converter.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
-#include "holoscan/operators/multiai_inference/multiai_inference.hpp"
-#include "holoscan/operators/multiai_postprocessor/multiai_postprocessor.hpp"
+#include "holoscan/operators/inference/inference.hpp"
+#include "holoscan/operators/inference_processor/inference_processor.hpp"
 #include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
-#include "holoscan/operators/tensor_rt/tensor_rt_inference.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
 #include "holoscan/operators/video_stream_replayer/video_stream_replayer.hpp"
 
@@ -73,7 +74,7 @@ TEST_F(OperatorClassesWithGXFContext, TestAJASourceOpChannelFromYAML) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::AJASourceOp>(args)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
@@ -82,7 +83,7 @@ TEST_F(OperatorClassesWithGXFContext, TestAJASourceOpChannelFromYAML) {
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
@@ -104,7 +105,7 @@ TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::AJASourceOp>(args)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
@@ -113,7 +114,7 @@ TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
@@ -147,7 +148,7 @@ TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::FormatConverterOp>(args)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
@@ -156,27 +157,8 @@ TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
-}
-
-TEST_F(OperatorClassesWithGXFContext, TestTensorRTInferenceOp) {
-  const std::string name{"segmentation_inference"};
-
-  // load most arguments from the YAML file
-  ArgList kwargs = F.from_config("segmentation_inference");
-  kwargs.add(Arg{"pool", F.make_resource<UnboundedAllocator>("pool")});
-  kwargs.add(
-      Arg{"cuda_stream_pool", F.make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5)});
-
-  testing::internal::CaptureStderr();
-
-  auto op = F.make_operator<ops::TensorRTInferenceOp>(name, kwargs);
-  EXPECT_EQ(op->name(), name);
-  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::TensorRTInferenceOp>(kwargs)));
-
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
@@ -192,7 +174,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::VideoStreamRecorderOp>(args)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
@@ -201,13 +183,13 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
   const std::string name{"replayer"};
-  const std::string sample_data_path = std::string(std::getenv("HOLOSCAN_SAMPLE_DATA_PATH"));
+  const std::string sample_data_path = std::string(std::getenv("HOLOSCAN_INPUT_PATH"));
   ArgList args{
       Arg{"directory", sample_data_path + "/endoscopy/video"s},
       Arg{"basename", "surgical_video"s},
@@ -224,7 +206,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::VideoStreamReplayerOp>(args)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
@@ -233,7 +215,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
@@ -253,7 +235,7 @@ TEST_F(OperatorClassesWithGXFContext, TestSegmentationPostprocessorOp) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::SegmentationPostprocessorOp>(args)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
@@ -263,7 +245,7 @@ TEST_F(OperatorClassesWithGXFContext, TestSegmentationPostprocessorOp) {
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
@@ -290,8 +272,7 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::HolovizOp>(kwargs)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  // EXPECT_TRUE(log_output.find("[error]") == std::string::npos);
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
@@ -300,62 +281,75 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
-TEST_F(OperatorClassesWithGXFContext, TestMultiAIInferenceOp) {
-  const std::string name{"multiai_inference"};
+TEST_F(OperatorClassesWithGXFContext, TestHolovizOpInputSpec) {
+  ops::HolovizOp::InputSpec tensor{"video", ops::HolovizOp::InputType::COLOR};
+
+  // serialize to YAML string
+  std::string description = tensor.description();
+
+  // deserialize the YAML description string into a new InputSpec
+  ops::HolovizOp::InputSpec new_spec{description};
+  EXPECT_EQ(new_spec.tensor_name_, "video");
+  EXPECT_EQ(new_spec.opacity_, 1.0);
+  EXPECT_EQ(new_spec.priority_, 0);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestInferenceOp) {
+  const std::string name{"inference"};
 
   // load most arguments from the YAML file
-  ArgList kwargs = F.from_config("multiai_inference");
+  ArgList kwargs = F.from_config("inference");
   kwargs.add(Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")});
 
   testing::internal::CaptureStderr();
 
-  auto op = F.make_operator<ops::MultiAIInferenceOp>(name, kwargs);
+  auto op = F.make_operator<ops::InferenceOp>(name, kwargs);
   EXPECT_EQ(op->name(), name);
-  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::MultiAIInferenceOp>(kwargs)));
+  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::InferenceOp>(kwargs)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
     // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'multiai_inference'
+    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'inference'
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
-TEST_F(OperatorClassesWithGXFContext, TestMultiAIPostprocessorOp) {
-  const std::string name{"multiai_postprocessor"};
+TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOp) {
+  const std::string name{"processor"};
 
   // load most arguments from the YAML file
-  ArgList kwargs = F.from_config("multiai_postprocessor");
+  ArgList kwargs = F.from_config("processor");
   kwargs.add(Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")});
 
   testing::internal::CaptureStderr();
 
-  auto op = F.make_operator<ops::MultiAIPostprocessorOp>(name, kwargs);
+  auto op = F.make_operator<ops::InferenceProcessorOp>(name, kwargs);
   EXPECT_EQ(op->name(), name);
-  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::MultiAIPostprocessorOp>(kwargs)));
+  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::InferenceProcessorOp>(kwargs)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("[error]");
+  auto error_pos = log_output.find("error");
   if (error_pos != std::string::npos) {
     // Initializing a native operator outside the context of app.run() will result in the
     // following error being logged because the GXFWrapper will not yet have been created for
     // the operator:
     //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator
-    //   'multiai_postprocessor'
+    //   'processor'
 
     // GXFWrapper was mentioned and no additional error was logged
     EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("[error]", error_pos + 1) == std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
   }
 }
 
@@ -375,7 +369,7 @@ TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOp) {
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::BayerDemosaicOp>(kwargs)));
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOpDefaultConstructor) {
@@ -386,7 +380,7 @@ TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOpDefaultConstructor) {
   auto op = F.make_operator<ops::BayerDemosaicOp>();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST(Operator, TestNativeOperatorWithoutFragment) {
@@ -398,9 +392,9 @@ TEST(Operator, TestNativeOperatorWithoutFragment) {
 
   op.initialize();
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[warning]") != std::string::npos);
+  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
   EXPECT_TRUE(log_output.find("Fragment is not set") != std::string::npos);
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 }  // namespace holoscan

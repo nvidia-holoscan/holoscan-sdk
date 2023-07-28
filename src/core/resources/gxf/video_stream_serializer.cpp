@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,9 @@
  */
 
 #include "holoscan/core/resources/gxf/video_stream_serializer.hpp"
+
+#include <memory>
+#include <vector>
 
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"

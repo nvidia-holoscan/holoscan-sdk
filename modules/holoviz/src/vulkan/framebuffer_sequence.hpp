@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,12 +72,22 @@ class FramebufferSequence {
   /**
    * @returns the framebuffer color format/
    */
-  vk::Format get_format() const { return color_format_; }
+  vk::Format get_color_format() const { return color_format_; }
+
+  /**
+   * @returns the framebuffer depth format/
+   */
+  vk::Format get_depth_format() const { return depth_format_; }
 
   /**
    * @returns the image view of a color buffer
    */
-  vk::ImageView get_image_view(uint32_t i) const;
+  vk::ImageView get_color_image_view(uint32_t i) const;
+
+  /**
+   * @returns the image view of a depth buffer
+   */
+  vk::ImageView get_depth_image_view(uint32_t i) const;
 
   /**
    * @returns the color buffer count
@@ -114,11 +124,18 @@ class FramebufferSequence {
   vk::Semaphore get_active_written_semaphore() const;
 
   /**
-   * Get the active image.
+   * Get the active color image.
    *
-   * @returns active image
+   * @returns active color image
    */
-  vk::Image get_active_image() const;
+  vk::Image get_active_color_image() const;
+
+  /**
+   * Get the active depth image.
+   *
+   * @returns active depth image
+   */
+  vk::Image get_active_depth_image() const;
 
   /**
    * Do a vkCmdPipelineBarrier for VK_IMAGE_LAYOUT_UNDEFINED to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR.
@@ -130,12 +147,13 @@ class FramebufferSequence {
 
  private:
   vk::Device device_;
-  uint32_t queue_family_index_;
+  uint32_t queue_family_index_ = 0;
   nvvk::ResourceAllocator* alloc_ = nullptr;  ///< Allocator for color buffers
 
-  vk::Format color_format_;
+  vk::Format color_format_ = vk::Format::eUndefined;
+  vk::Format depth_format_ = vk::Format::eUndefined;
 
-  uint32_t image_count_;
+  uint32_t image_count_ = 0;
 
   /// the swap chain is used if no surface is set
   std::unique_ptr<nvvk::SwapChain> swap_chain_;
@@ -146,6 +164,7 @@ class FramebufferSequence {
   vk::Semaphore active_semaphore_ = VK_NULL_HANDLE;
 
   std::vector<nvvk::Texture> color_textures_;  // color buffers when rendering offscreen
+  std::vector<nvvk::Texture> depth_textures_;
   std::vector<vk::UniqueSemaphore> semaphores_;
 };
 

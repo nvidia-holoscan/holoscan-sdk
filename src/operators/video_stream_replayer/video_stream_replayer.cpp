@@ -21,6 +21,7 @@
 #include <cinttypes>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include "gxf/core/expected.hpp"
 #include "gxf/serialization/entity_serializer.hpp"
@@ -143,7 +144,7 @@ void VideoStreamReplayerOp::initialize() {
     throw std::runtime_error(fmt::format("File open failed with code: {}", code));
   }
 
-  boolean_scheduling_term_.get()->enable_tick();
+  boolean_scheduling_term_->enable_tick();
 
   playback_index_ = 0;
   playback_count_ = 0;
@@ -203,8 +204,7 @@ void VideoStreamReplayerOp::compute(InputContext& op_input, OutputContext& op_ou
     }
     if ((!size && !repeat_) || (count_ > 0 && playback_count_ >= count_)) {
       HOLOSCAN_LOG_INFO("Reach end of file or playback count reaches to the limit. Stop ticking.");
-      auto bool_cond = boolean_scheduling_term_.get();
-      bool_cond->disable_tick();
+      boolean_scheduling_term_->disable_tick();
       index_file_stream_.clear();
       break;
     }
@@ -214,7 +214,7 @@ void VideoStreamReplayerOp::compute(InputContext& op_input, OutputContext& op_ou
         std::dynamic_pointer_cast<holoscan::VideoStreamSerializer>(entity_serializer_.get());
     // get underlying GXF EntitySerializer
     auto entity_serializer = nvidia::gxf::Handle<nvidia::gxf::EntitySerializer>::Create(
-        context.context(), vs_serializer.get()->gxf_cid());
+        context.context(), vs_serializer->gxf_cid());
     // Read entity from binary file
     nvidia::gxf::Expected<nvidia::gxf::Entity> entity =
         entity_serializer.value()->deserializeEntity(context.context(), &entity_file_stream_);

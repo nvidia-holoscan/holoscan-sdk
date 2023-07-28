@@ -28,24 +28,33 @@ enum class ArgContainerType : uint8_t;
 enum class ArgElementType;
 class ArgList;
 class ArgType;
+class CLIOptions;
+class CLIParser;
+template <typename typeT>
+struct codec;
+class CodecRegistry;
 class Condition;
 enum class ConditionType;
 class Config;
 class Component;
 class ComponentSpec;
+class Endpoint;
 class ExecutionContext;
 class ExtensionManager;
 class Executor;
 class Fragment;
 enum class FlowType;
+template <typename NodeT, typename EdgeDataElementT>
 class Graph;
 class GXFParameterAdaptor;
 class InputContext;
 class IOSpec;
 class Logger;
 class Message;
+class MessageLabel;
 class Operator;
 class OperatorSpec;
+class OperatorTimestampLabel;
 class OutputContext;
 
 template <typename ValueT>
@@ -56,7 +65,9 @@ using Parameter = MetaParameter<ValueT>;
 
 class ParameterWrapper;
 enum class ParameterFlag;
+class NetworkContext;
 class Resource;
+class Scheduler;
 
 // holoscan::gxf
 namespace gxf {
@@ -67,7 +78,29 @@ class GXFInputContext;
 class GXFOutputContext;
 class GXFResource;
 class GXFExtensionManager;
+class GXFNetworkContext;
+class GXFScheduler;
 }  // namespace gxf
+
+// Distributed Application
+class AppDriver;
+class AppWorker;
+
+// holoscan::service
+namespace service {
+class AppDriverServer;
+class AppDriverClient;
+class AppWorkerServer;
+class AppWorkerClient;
+}  // namespace service
+
+// NetworkContexts
+class UcxContext;
+
+// Schedulers
+enum class SchedulerType;
+class GreedyScheduler;
+class MultiThreadScheduler;
 
 // holoscan::ops
 namespace ops {
@@ -75,21 +108,40 @@ class GXFOperator;
 }
 
 // Conditions
+class AsynchronousCondition;
 class BooleanCondition;
 class CountCondition;
 class DownstreamMessageAffordableCondition;
 class MessageAvailableCondition;
+class PeriodicCondition;
 
 // Resources
 class Allocator;
+class AnnotatedDoubleBufferReceiver;
+class AnnotatedDoubleBufferTransmitter;
+class Clock;
 class BlockMemoryPool;
 class CudaStreamPool;
+class DoubleBufferReceiver;
+class DoubleBufferTransmitter;
+class ManualClock;
+class Receiver;
+class RealtimeClock;
+class SerializationBuffer;
 class StdComponentSerializer;
+class Transmitter;
+class UcxComponentSerializer;
+class UcxEntitySerializer;
+class UcxHoloscanComponentSerializer;
+class UcxReceiver;
+class UcxSerializationBuffer;
+class UcxTransmitter;
 class UnboundedAllocator;
 class VideoStreamSerializer;
 
 // Domain objects
 class Tensor;
+class TensorMap;
 
 }  // namespace holoscan
 

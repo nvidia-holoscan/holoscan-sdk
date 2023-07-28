@@ -24,6 +24,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <vector>
+
+#include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan::gxf {
 
@@ -44,11 +48,7 @@ void GXFExtensionManager::refresh() {
   // Configure request data
   runtime_info_ = {nullptr, kGXFExtensionsMaxSize, extension_tid_list_};
 
-  gxf_result_t result = GxfRuntimeInfo(context_, &runtime_info_);
-  if (result != GXF_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Unable to get runtime info: {}", GxfResultStr(result));
-    return;
-  }
+  HOLOSCAN_GXF_CALL_FATAL(GxfRuntimeInfo(context_, &runtime_info_));
   auto& num_extensions = runtime_info_.num_extensions;
   auto& extensions = runtime_info_.extensions;
 
@@ -212,11 +212,7 @@ bool GXFExtensionManager::load_extension(nvidia::gxf::Extension* extension, void
   extension_tids_.insert(info.id);
 
   // Load the extension
-  gxf_result_t result = GxfLoadExtensionFromPointer(context_, extension);
-  if (result != GXF_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Unable to load extension: {}", GxfResultStr(result));
-    return false;
-  }
+  HOLOSCAN_GXF_CALL_FATAL(GxfLoadExtensionFromPointer(context_, extension));
 
   // Add the extension handle to the set of handles to be closed when the manager is destroyed
   if (handle != nullptr) { extension_handles_.insert(handle); }

@@ -23,7 +23,7 @@ if [ -e ${SCRIPT_DIR}/debug_env.sh ]; then
     . ${SCRIPT_DIR}/debug_env.sh
 fi
 
-if [ -e ${SCRIPT_DIR}/../.python-version ]; then
+if [ -e ${SCRIPT_DIR}/../.python-version ] && command -v pyenv > /dev/null; then
     # Need to init in script: https://github.com/pyenv/pyenv-virtualenv/issues/204
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"

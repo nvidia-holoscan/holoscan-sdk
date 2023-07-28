@@ -16,6 +16,9 @@
  */
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "push_constants.hpp"
 
 // incoming
 layout(location = 0) in vec3 i_position;
@@ -29,15 +32,15 @@ layout(location = 0) out struct
     vec2 texCoord;
 } Out;
 
-layout(push_constant) uniform constants
-{
-    mat4x4 matrix;
-} pushConstants;
+// constants
+layout(push_constant) uniform constants {
+    PushConstantVertex vertex;
+} push_constants;
 
 void main()
 {
     Out.color    = i_color;
     Out.texCoord = i_texCoord;
 
-    gl_Position = pushConstants.matrix * vec4(i_position, 1.0);
+    gl_Position = push_constants.vertex.matrix * vec4(i_position, 1.0);
 }

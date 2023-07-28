@@ -2,6 +2,8 @@
 
 ## C++ API
 
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#interoperability-with-gxf-operators-cpp) to learn more about interoperability with GXF.*
+
 This application demonstrates interoperability between a native operator (`ProcessTensorOp`) and two GXF Codelets (`SendTensor` and `ReceiveTensor`).
 - The input and output ports are of type `holoscan::gxf::Entity` so that this operator can talk directly to the GXF codelets which send/receive GXF entities.
 - The input/output of the entity has a tensor (`holoscan::Tensor` which is converted to `holoscan::gxf::Tensor` object inside the entity) which is used by the native operator to perform some computation and then the output tensor (in a new entity) is sent to the `ReceiveTensor` operator (codelet).
@@ -33,6 +35,8 @@ This application demonstrates interoperability between a native operator (`Image
 - The output tensor (in a new entity) is sent to the `HolovizOp` operator (codelet) which gets the tensor from the entity and displays the image in the GUI. The `VideoStreamReplayerOp` operator is used to replay the video stream from the sample data.
 - The Holoscan Tensor object is interoperable with DLPack or array interfaces.
 
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#interoperability-between-wrapped-and-native-python-operators) to learn more about interoperability with C++ operators.*
+
 ### Data
 
 The following dataset is used by this example:
@@ -43,18 +47,18 @@ The following dataset is used by this example:
 * **using python wheel**:
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   # [Prerequisite] Download example .py and .yaml file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
-  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
   python3 <APP_DIR>/tensor_interop.py
   ```
 * **using deb package install**:
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
   python3 /opt/nvidia/holoscan/examples/tensor_interop/python/tensor_interop.py
   ```
 * **from NGC container**:
@@ -70,6 +74,6 @@ The following dataset is used by this example:
   ```bash
   python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
-  export HOLOSCAN_SAMPLE_DATA_PATH=${SRC_DIR}/data
+  export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data
   python3 ${BUILD_OR_INSTALL_DIR}/examples/tensor_interop/python/tensor_interop.py
   ```

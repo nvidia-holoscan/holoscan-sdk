@@ -15,6 +15,7 @@
 
 import pytest
 
+from holoscan import as_tensor
 from holoscan.core import (
     Application,
     Arg,
@@ -22,6 +23,7 @@ from holoscan.core import (
     ArgElementType,
     ArgList,
     ArgType,
+    CLIOptions,
     Component,
     ComponentSpec,
     Condition,
@@ -29,18 +31,30 @@ from holoscan.core import (
     Config,
     Executor,
     Fragment,
+    FragmentGraph,
     Graph,
     InputContext,
     IOSpec,
+    NetworkContext,
     Operator,
+    OperatorGraph,
     OperatorSpec,
     OutputContext,
     Resource,
+    Scheduler,
     _Fragment,
     py_object_to_arg,
 )
+from holoscan.core._core import OperatorSpec as OperatorSpecBase
+from holoscan.core._core import ParameterFlag, PyOperatorSpec
 from holoscan.executors import GXFExecutor
-from holoscan.graphs import FlowGraph
+from holoscan.graphs import FlowGraph, OperatorFlowGraph
+from holoscan.resources import (
+    DoubleBufferReceiver,
+    DoubleBufferTransmitter,
+    UcxReceiver,
+    UcxTransmitter,
+)
 
 
 class OpTx(Operator):
@@ -311,34 +325,18 @@ class TestResource:
             obj.custom_attribute = 5
 
 
-class TestOperatorSpec:
+class TestOperatorSpecBase:
     def test_init(self, fragment):
-        c = OperatorSpec(fragment)
+        c = OperatorSpecBase(fragment)
         assert c.params == {}
         assert c.fragment is fragment
 
     def test_input(self, fragment, capfd):
-        c = OperatorSpec(fragment)
+        c = OperatorSpecBase(fragment)
         iospec = c.input()
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "__iospec_input"
         assert iospec.io_type == IOSpec.IOType.INPUT
-
-        iospec = c.input("input_no_condition").condition(ConditionType.NONE)
-        assert isinstance(iospec, IOSpec)
-        assert iospec.name == "input_no_condition"
-        assert iospec.io_type == IOSpec.IOType.INPUT
-        assert iospec.conditions == [(ConditionType.NONE, None)]
-
-        iospec = c.input("input_message_available_condition").condition(
-            ConditionType.MESSAGE_AVAILABLE, min_size=1
-        )
-        assert isinstance(iospec, IOSpec)
-        assert iospec.name == "input_message_available_condition"
-        assert iospec.io_type == IOSpec.IOType.INPUT
-        assert len(iospec.conditions) == 1
-        assert iospec.conditions[0][0] == ConditionType.MESSAGE_AVAILABLE
-        assert iospec.conditions[0][1] is not None
 
         iospec2 = c.input("input2")
         assert iospec2.name == "input2"
@@ -351,28 +349,62 @@ class TestOperatorSpec:
         assert "error" in captured.err
         assert "already exists" in captured.err
 
+    def test_input_condition_none(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = c.input("input_no_condition").condition(ConditionType.NONE)
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "input_no_condition"
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert iospec.conditions == [(ConditionType.NONE, None)]
+
+    def test_input_condition_message_available(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = c.input("input_message_available_condition").condition(
+            ConditionType.MESSAGE_AVAILABLE, min_size=1
+        )
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "input_message_available_condition"
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert len(iospec.conditions) == 1
+        assert iospec.conditions[0][0] == ConditionType.MESSAGE_AVAILABLE
+        assert iospec.conditions[0][1] is not None
+
+    def test_input_connector_default(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = c.input("input_no_condition").connector(IOSpec.ConnectorType.DEFAULT)
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "input_no_condition"
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert iospec.connector() is None
+
+    @pytest.mark.parametrize("kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1)])
+    def test_input_connector_double_buffer(self, fragment, capfd, kwargs):
+        c = OperatorSpecBase(fragment)
+        iospec = c.input("input_no_condition").connector(
+            IOSpec.ConnectorType.DOUBLE_BUFFER, **kwargs
+        )
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "input_no_condition"
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert isinstance(iospec.connector(), DoubleBufferReceiver)
+
+    @pytest.mark.parametrize(
+        "kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1, address="0.0.0.0", port=13337)]
+    )
+    def test_input_connector_ucx(self, fragment, capfd, kwargs):
+        c = OperatorSpecBase(fragment)
+        iospec = c.input("input_no_condition").connector(IOSpec.ConnectorType.UCX, **kwargs)
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "input_no_condition"
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert isinstance(iospec.connector(), UcxReceiver)
+
     def test_output(self, fragment, capfd):
-        c = OperatorSpec(fragment)
+        c = OperatorSpecBase(fragment)
         iospec = c.output()
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "__iospec_output"
         assert iospec.io_type == IOSpec.IOType.OUTPUT
-
-        iospec = c.output("output_no_condition").condition(ConditionType.NONE)
-        assert isinstance(iospec, IOSpec)
-        assert iospec.name == "output_no_condition"
-        assert iospec.io_type == IOSpec.IOType.OUTPUT
-        assert iospec.conditions == [(ConditionType.NONE, None)]
-
-        iospec = c.output("output_downstream_message_affordable_condition").condition(
-            ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE, min_size=1
-        )
-        assert isinstance(iospec, IOSpec)
-        assert iospec.name == "output_downstream_message_affordable_condition"
-        assert iospec.io_type == IOSpec.IOType.OUTPUT
-        assert len(iospec.conditions) == 1
-        assert iospec.conditions[0][0] == ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE
-        assert iospec.conditions[0][1] is not None
 
         iospec2 = c.input("output2")
         assert iospec2.name == "output2"
@@ -384,10 +416,65 @@ class TestOperatorSpec:
         assert "error" in captured.err
         assert "already exists" in captured.err
 
+    def test_output_condition_none(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = c.output("output_no_condition").condition(ConditionType.NONE)
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "output_no_condition"
+        assert iospec.io_type == IOSpec.IOType.OUTPUT
+        assert iospec.conditions == [(ConditionType.NONE, None)]
+
+    def test_output_condition_downstream_message_affordable(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = c.output("output_downstream_message_affordable_condition").condition(
+            ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE, min_size=1
+        )
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "output_downstream_message_affordable_condition"
+        assert iospec.io_type == IOSpec.IOType.OUTPUT
+        assert len(iospec.conditions) == 1
+        assert iospec.conditions[0][0] == ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE
+        assert iospec.conditions[0][1] is not None
+
+    def test_output_connector_default(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = c.output("output_no_condition").connector(IOSpec.ConnectorType.DEFAULT)
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "output_no_condition"
+        assert iospec.io_type == IOSpec.IOType.OUTPUT
+        assert iospec.connector() is None
+
+    @pytest.mark.parametrize("kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1)])
+    def test_output_connector_double_buffer(self, fragment, capfd, kwargs):
+        c = OperatorSpecBase(fragment)
+        iospec = c.output("output_no_condition").connector(
+            IOSpec.ConnectorType.DOUBLE_BUFFER, **kwargs
+        )
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "output_no_condition"
+        assert iospec.io_type == IOSpec.IOType.OUTPUT
+        assert isinstance(iospec.connector(), DoubleBufferTransmitter)
+
+    @pytest.mark.parametrize(
+        "kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1, address="0.0.0.0", port=13337)]
+    )
+    def test_output_connector_ucx(self, fragment, capfd, kwargs):
+        c = OperatorSpecBase(fragment)
+        iospec = c.output("output_no_condition").connector(IOSpec.ConnectorType.UCX, **kwargs)
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "output_no_condition"
+        assert iospec.io_type == IOSpec.IOType.OUTPUT
+        assert isinstance(iospec.connector(), UcxTransmitter)
+
     def test_dynamic_attribute_not_allowed(self, fragment):
-        obj = OperatorSpec(fragment)
+        obj = OperatorSpecBase(fragment)
         with pytest.raises(AttributeError):
             obj.custom_attribute = 5
+
+    def test_optional_parameter(self, fragment):
+        op_tx, _ = get_tx_and_rx_ops(fragment)
+        c = PyOperatorSpec(fragment, op_tx)
+        c.param("optional_param", 5, flag=ParameterFlag.OPTIONAL)
 
 
 class TestInputContext:
@@ -450,6 +537,10 @@ class TestFragment:
         f = Fragment()
         f.name == ""
 
+    def test_init_with_wrong_args(self):
+        with pytest.raises(ValueError, match=r".*must be the Application.*"):
+            Fragment(Fragment())
+
     def test_name(self, fragment):
         fragment.name = "fragment_1"
         assert fragment.name == "fragment_1"
@@ -459,11 +550,15 @@ class TestFragment:
 
     def test_application(self, fragment):
         app = Application()
-        fragment.application(app)
+        fragment.application = app
 
     def test_graph(self, fragment):
         # first call to fragment.graph constructs a FlowGraph object
         graph = fragment.graph
+        assert isinstance(graph, OperatorGraph)
+        assert isinstance(graph, OperatorFlowGraph)
+        assert not isinstance(graph, FragmentGraph)
+        # former Graph and FlowGraph names also still present
         assert isinstance(graph, Graph)
         assert isinstance(graph, FlowGraph)
 
@@ -534,8 +629,94 @@ class TestFragment:
 
 class TestApplication:
     def test_init(self):
+        import sys
+
+        # Note that executing the following code (Application()) under PyTest can cause a segfault
+        # if Application.__init__() in python/holoscan/core/__init__.py raises an exception before
+        # calling '_Application.__init__(self, *args, **kwargs)',
+        # triggering Application.__repr__() to be called, which in turn calls
+        # Application::name() when the Application object is not fully initialized.
+        #
+        #   .def(
+        #       "__repr__",
+        #       [](const Application& app) {
+        #         return fmt::format("<holoscan.Application: name:{}>", app.name());
+        #       },
+        #       py::call_guard<py::gil_scoped_release>(),
+        #       R"doc(Return repr(self).)doc");
+        #
+        # Please make sure that no exceptions are raised before calling '_Application.__init__()' in
+        # Application.__init__() in python/holoscan/core/__init__.py.
+        #
+        # This issue was handled by taking the pointer to the Application (not the reference) and
+        # checking if it is nullptr before calling Application::name() in Application.__repr__().
         app = Application()
         assert isinstance(app, _Fragment)
+        assert len(app.argv) > 0
+        assert app.argv == sys.argv
+
+        app = Application([sys.executable, *sys.argv])
+        assert len(app.argv) > 0
+        assert app.argv == sys.argv
+        assert repr(CLIOptions()) == repr(app.options)
+
+    def test_init_with_argv(self):
+        import sys
+
+        app = Application([])
+        assert app.argv == sys.argv
+
+        app = Application([sys.executable])
+        assert app.argv == [""]
+
+        app = Application(
+            [
+                sys.executable,
+                "app.py",
+                "arg1",
+                "--driver",
+                "--option1=value1",
+                "arg2",
+                "--option2",
+                "value2",
+                "--worker",
+                "arg3",
+                "--address",
+                "10.0.0.1",
+                "arg4",
+                "--worker-address=10.0.0.2",
+                "arg5",
+                "--fragments=fragment_1",
+                "arg6",
+                "--config=config.yaml",
+                "arg7",
+                "--fragments",
+                "fragment_2,fragment_3",
+            ]
+        )
+        assert app.argv == [
+            "app.py",
+            "arg1",
+            "--option1=value1",
+            "arg2",
+            "--option2",
+            "value2",
+            "arg3",
+            "arg4",
+            "arg5",
+            "arg6",
+            "arg7",
+        ]
+        assert repr(
+            CLIOptions(
+                run_driver=True,
+                run_worker=True,
+                driver_address="10.0.0.1",
+                worker_address="10.0.0.2",
+                worker_targets=["fragment_1", "fragment_2", "fragment_3"],
+                config_path="config.yaml",
+            )
+        ) == repr(app.options)
 
     def test_name(self, app):
         app.name = "app_1"
@@ -543,6 +724,31 @@ class TestApplication:
 
         with pytest.raises(TypeError):
             app.name = 5
+
+    def test_description(self, app):
+        app.description = "my app description"
+        assert app.description == "my app description"
+
+        with pytest.raises(TypeError):
+            app.description = 5
+
+    def test_version(self, app):
+        app.version = "1.2.3"
+        assert app.version == "1.2.3"
+
+        with pytest.raises(TypeError):
+            app.version = 5
+
+    def test_options(self, app):
+        assert app.options.run_driver is False
+        assert app.options.run_worker is False
+        assert app.options.driver_address == ""
+        assert app.options.worker_address == ""
+        assert app.options.worker_targets == []
+        assert app.options.config_path == ""
+
+        with pytest.raises(AttributeError):
+            app.options = 3
 
     def test_graph(self, app):
         # first call to app.graph constructs a FlowGraph object
@@ -591,13 +797,31 @@ class TestApplication:
         app.add_operator(op_tx)
         app.add_operator(op_rx)
 
+    def test_add_fragment(self, app, config_file):
+        app.config(config_file)
+
+        fragment1 = Fragment(app, name="fragment1")
+        fragment2 = Fragment(app, name="fragment2")
+
+        app.add_fragment(fragment1)
+        app.add_fragment(fragment2)
+
+    def test_reserved_fragment_name(self, app, config_file, capfd):
+        app.config(config_file)
+
+        Fragment(app, name="all")
+
+        captured = capfd.readouterr()
+        assert "Fragment name 'all' is reserved" in captured.err
+
     def test_add_flow(self, app, config_file, capfd):
         app.config(config_file)
 
         op_tx, op_rx = get_tx_and_rx_ops(app)
 
         # list of 2-tuples
-        app.add_flow(op_tx, op_rx, {("tensor", "in1")})
+        with pytest.raises(TypeError):
+            app.add_flow(op_tx, op_rx, [("tensor", "in1")])
         # set of 2-tuples
         app.add_flow(op_tx, op_rx, {("tensor", "in2")})
 
@@ -607,6 +831,62 @@ class TestApplication:
         captured = capfd.readouterr()
         assert "error" in captured.err
         assert "nonexistent" in captured.err
+
+    def test_add_operators_with_same_name(self, app, config_file, capfd):
+        app.config(config_file)
+
+        op_tx = OpTx(app, name="op")
+        op_rx = OpRx(app, name="op")
+
+        app.add_operator(op_tx)
+        with pytest.raises(RuntimeError):
+            app.add_operator(op_rx)
+
+        with pytest.raises(RuntimeError):
+            app.add_flow(op_tx, op_rx, {("tensor", "in2")})
+
+        captured = capfd.readouterr()
+        assert "duplicate name" in captured.err
+
+    def test_add_flow_fragments(self, app, config_file, capfd):
+        app.config(config_file)
+
+        fragment1 = Fragment(app, "fragment1")
+        fragment2 = Fragment(app, "fragment2")
+
+        # list of 2-tuples
+        with pytest.raises(TypeError):
+            app.add_flow(fragment1, fragment2, [("blur_image", "sharpen_image")])
+        # set of 2-tuples
+        app.add_flow(fragment1, fragment2, {("blur_image", "sharpen_image")})
+
+        # using empty dict (should raise a TypeError because port_pairs accept Set[Tuple[str,str]])
+        with pytest.raises(TypeError):
+            app.add_flow(fragment1, fragment2, {})
+
+        # using empty set shows an error message ('Unable to add fragment flow with empty
+        # port_pairs')
+        app.add_flow(fragment1, fragment2, set())
+
+        captured = capfd.readouterr()
+        assert "error" in captured.err
+        assert "empty port_pairs" in captured.err
+
+    def test_add_fragments_with_same_name(self, app, config_file, capfd):
+        app.config(config_file)
+
+        fragment1 = Fragment(app, "fragment")
+        fragment2 = Fragment(app, "fragment")
+
+        app.add_fragment(fragment1)
+        with pytest.raises(RuntimeError):
+            app.add_fragment(fragment2)
+
+        with pytest.raises(RuntimeError):
+            app.add_flow(fragment1, fragment2, {("blur_image", "sharpen_image")})
+
+        captured = capfd.readouterr()
+        assert "duplicate name" in captured.err
 
     def test_dynamic_attribute(self, app):
         # verify that attributes not in the underlying C++ class can be
@@ -620,37 +900,33 @@ class TestIOSpec:
         [("input", IOSpec.IOType.INPUT), ("output", IOSpec.IOType.OUTPUT)],
     )
     def test_init(self, fragment, name, io_type):
-        op_spec = OperatorSpec(fragment)
+        op_spec = OperatorSpecBase(fragment)
         io_spec = IOSpec(op_spec, name, io_type)
         assert io_spec.name == name
         assert io_spec.io_type == io_type
-        assert io_spec.resource is None
+        assert io_spec.connector() is None
         assert io_spec.conditions == []
 
         if name == "output":
-            assert repr(io_spec) == "<IOSpec: name=output, io_type=OUTPUT>"
+            assert repr(io_spec) == "<IOSpec: name=output, io_type=OUTPUT, connector_type=DEFAULT>"
         elif name == "input":
-            assert repr(io_spec) == "<IOSpec: name=input, io_type=INPUT>"
+            assert repr(io_spec) == "<IOSpec: name=input, io_type=INPUT, connector_type=DEFAULT>"
 
     @pytest.mark.parametrize(
         "name, io_type",
         [("input", IOSpec.IOType.INPUT), ("output", IOSpec.IOType.OUTPUT)],
     )
     def test_kwarg_init(self, fragment, name, io_type):
-        op_spec = OperatorSpec(fragment)
+        op_spec = OperatorSpecBase(fragment)
         io_spec = IOSpec(op_spec=op_spec, name=name, io_type=io_type)
         assert io_spec.name == name
         assert io_spec.io_type == io_type
 
     def test_dynamic_attribute_not_allowed(self, fragment):
-        op_spec = OperatorSpec(fragment)
+        op_spec = OperatorSpecBase(fragment)
         io_spec = IOSpec(op_spec=op_spec, name="in", io_type=IOSpec.IOType.INPUT)
         with pytest.raises(AttributeError):
             io_spec.custom_attribute = 5
-
-
-# Various classes/enums below here have minimal Python functionality and may
-# not all be needed.
 
 
 class TestExecutor:
@@ -662,3 +938,53 @@ class TestExecutor:
         obj = Executor(fragment)
         with pytest.raises(AttributeError):
             obj.custom_attribute = 5
+
+
+class TestScheduler:
+    def test_base_class_init(self, fragment):
+        s = Scheduler(name="greedy")
+        s.name == "greedy"
+        len(s.args) == 0
+        # id and fragment will not yet have been set
+        s.id == -1
+        s.fragment is None
+
+
+class TestNetworkContext:
+    def test_base_class_init(self, fragment):
+        s = NetworkContext(name="network")
+        s.name == "network"
+        len(s.args) == 0
+        # id and fragment will not yet have been set
+        s.id == -1
+        s.fragment is None
+
+
+class TestAsTensor:
+    @pytest.mark.parametrize("use_cupy", [False, True])
+    def test_as_tensor_stride_workaround(self, use_cupy):
+        # Due to a bug in CuPy<13.0.0a1, it is possible for cupy.astype or cupy.asarray
+        # to convert an array that is both C and F contiguous into Fortran-style strides
+        # which is inconsistent with NumPy behavior. We force a copy of such an array that
+        # is both C and F contiguous to always have C-contiguous strides so that the
+        # as_tensor behavior is consistent regardless of the CuPy version.
+
+        if use_cupy:
+            xp = pytest.importorskip("cupy")
+        else:
+            xp = pytest.importorskip("numpy")
+
+        coords = xp.array([0.1, 0.1, 0.1], dtype=xp.float32).reshape((1, 1, 3))
+        assert coords.strides == (12, 12, 4)
+
+        coords_F = coords.astype(xp.float32, order="F")
+        assert coords_F.strides == (4, 4, 4)
+
+        tensor = as_tensor(coords)
+        assert tensor.strides == coords.strides
+
+        # an array that is both C and F contiguous will become tensor with C contiguous strides
+        assert coords_F.flags.c_contiguous and coords_F.flags.f_contiguous
+
+        tensor_F = as_tensor(coords_F)
+        assert tensor_F.strides == coords.strides

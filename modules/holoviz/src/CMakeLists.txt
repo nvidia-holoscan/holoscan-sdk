@@ -34,8 +34,6 @@ list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geomet
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_shader.glsl.vert")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_text_shader.glsl.frag")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_text_shader.glsl.vert")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_lut_float_shader.glsl.frag")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_lut_uint_shader.glsl.frag")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_shader.glsl.frag")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_shader.glsl.vert")
 
@@ -76,7 +74,7 @@ target_sources(${PROJECT_NAME}
     )
 
 target_compile_definitions(${PROJECT_NAME}
-    PUBLIC
+    PRIVATE
         VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
     )
 

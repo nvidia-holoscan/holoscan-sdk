@@ -17,6 +17,9 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <vector>
+
 #include <cuda/cuda_service.hpp>
 #include <holoviz/holoviz.hpp>
 #include "headless_fixture.hpp"
@@ -40,6 +43,10 @@ std::ostream& operator<<(std::ostream& os, const PrimitiveTopology& topology) {
     CASE(viz::PrimitiveTopology::CROSS_LIST);
     CASE(viz::PrimitiveTopology::RECTANGLE_LIST);
     CASE(viz::PrimitiveTopology::OVAL_LIST);
+    CASE(viz::PrimitiveTopology::POINT_LIST_3D);
+    CASE(viz::PrimitiveTopology::LINE_LIST_3D);
+    CASE(viz::PrimitiveTopology::LINE_STRIP_3D);
+    CASE(viz::PrimitiveTopology::TRIANGLE_LIST_3D);
     default:
       os.setstate(std::ios_base::failbit);
   }
@@ -57,7 +64,7 @@ class PrimitiveTopology : public TestHeadless,
 TEST_P(PrimitiveTopology, Primitive) {
   const viz::PrimitiveTopology topology = GetParam();
 
-  uint32_t crc;
+  uint32_t color_crc, depth_crc;
   uint32_t primitive_count;
   std::vector<float> data;
   switch (topology) {
@@ -65,7 +72,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       primitive_count = 1;
       data.push_back(0.5f);
       data.push_back(0.5f);
-      crc = 0xE81FD1BB;
+      color_crc = 0x3088e839;
+      depth_crc = 0x748e4c96;
       break;
     case viz::PrimitiveTopology::LINE_LIST:
       primitive_count = 2;
@@ -78,7 +86,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.3f);
       data.push_back(0.2f);
       data.push_back(0.4f);
-      crc = 0xF7E63B21;
+      color_crc = 0xa64ef48a;
+      depth_crc = 0x802dbbb0;
       break;
     case viz::PrimitiveTopology::LINE_STRIP:
       primitive_count = 2;
@@ -89,7 +98,8 @@ TEST_P(PrimitiveTopology, Primitive) {
 
       data.push_back(0.3f);
       data.push_back(0.2f);
-      crc = 0x392E35D8;
+      color_crc = 0xa1e2f97a;
+      depth_crc = 0xfae233b9;
       break;
     case viz::PrimitiveTopology::TRIANGLE_LIST:
       primitive_count = 2;
@@ -106,7 +116,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.8f);
       data.push_back(0.25f);
       data.push_back(0.6f);
-      crc = 0xB29BAA37;
+      color_crc = 0x1e4e5c9b;
+      depth_crc = 0x101577b;
       break;
     case viz::PrimitiveTopology::CROSS_LIST:
       primitive_count = 2;
@@ -117,7 +128,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.1f);
       data.push_back(0.3f);
       data.push_back(0.01f);
-      crc = 0xa32f4dcb;
+      color_crc = 0xa54496e9;
+      depth_crc = 0x44098c3f;
       break;
     case viz::PrimitiveTopology::RECTANGLE_LIST:
       primitive_count = 2;
@@ -130,7 +142,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.2f);
       data.push_back(0.5f);
       data.push_back(0.3f);
-      crc = 0x355A2C00;
+      color_crc = 0x77f7b3e8;
+      depth_crc = 0xf67bacdc;
       break;
     case viz::PrimitiveTopology::OVAL_LIST:
       primitive_count = 2;
@@ -143,7 +156,73 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.4f);
       data.push_back(0.05f);
       data.push_back(0.07f);
-      crc = 0xA907614F;
+      color_crc = 0x83ed3ac2;
+      depth_crc = 0x41d7da93;
+      break;
+    case viz::PrimitiveTopology::POINT_LIST_3D:
+      primitive_count = 1;
+      data.push_back(-0.5f);
+      data.push_back(0.5f);
+      data.push_back(0.8f);
+      color_crc = 0x83063d37;
+      depth_crc = 0x1273ab78;
+      break;
+    case viz::PrimitiveTopology::LINE_LIST_3D:
+      primitive_count = 2;
+      data.push_back(-0.1f);
+      data.push_back(-0.1f);
+      data.push_back(0.1f);
+      data.push_back(0.9f);
+      data.push_back(0.9f);
+      data.push_back(0.3f);
+
+      data.push_back(-0.7f);
+      data.push_back(-0.3f);
+      data.push_back(0.2f);
+      data.push_back(0.2f);
+      data.push_back(0.4f);
+      data.push_back(0.5f);
+      color_crc = 0x30cd7e29;
+      depth_crc = 0xa31c2460;
+      break;
+    case viz::PrimitiveTopology::LINE_STRIP_3D:
+      primitive_count = 2;
+      data.push_back(-0.1f);
+      data.push_back(-0.1f);
+      data.push_back(0.1f);
+      data.push_back(0.7f);
+      data.push_back(0.9f);
+      data.push_back(0.3f);
+
+      data.push_back(-0.3f);
+      data.push_back(-0.2f);
+      data.push_back(0.2f);
+      color_crc = 0x6c8cfdee;
+      depth_crc = 0xc2d73af1;
+      break;
+    case viz::PrimitiveTopology::TRIANGLE_LIST_3D:
+      primitive_count = 2;
+      data.push_back(-0.1f);
+      data.push_back(-0.1f);
+      data.push_back(0.f);
+      data.push_back(0.5f);
+      data.push_back(0.9f);
+      data.push_back(0.1f);
+      data.push_back(0.9f);
+      data.push_back(0.1f);
+      data.push_back(0.2f);
+
+      data.push_back(-0.05f);
+      data.push_back(-0.7f);
+      data.push_back(0.3f);
+      data.push_back(0.15f);
+      data.push_back(0.8f);
+      data.push_back(0.2f);
+      data.push_back(0.25f);
+      data.push_back(0.6f);
+      data.push_back(0.5f);
+      color_crc = 0xd4cb9a45;
+      depth_crc = 0xb45187a8;
       break;
     default:
       EXPECT_TRUE(false) << "Unhandled primitive topoplogy";
@@ -169,7 +248,8 @@ TEST_P(PrimitiveTopology, Primitive) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareResultCRC32({crc});
+  CompareColorResultCRC32({color_crc});
+  CompareDepthResultCRC32({depth_crc});
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -177,7 +257,9 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(viz::PrimitiveTopology::POINT_LIST, viz::PrimitiveTopology::LINE_LIST,
                     viz::PrimitiveTopology::LINE_STRIP, viz::PrimitiveTopology::TRIANGLE_LIST,
                     viz::PrimitiveTopology::CROSS_LIST, viz::PrimitiveTopology::RECTANGLE_LIST,
-                    viz::PrimitiveTopology::OVAL_LIST));
+                    viz::PrimitiveTopology::OVAL_LIST, viz::PrimitiveTopology::POINT_LIST_3D,
+                    viz::PrimitiveTopology::LINE_LIST_3D, viz::PrimitiveTopology::LINE_STRIP_3D,
+                    viz::PrimitiveTopology::TRIANGLE_LIST_3D));
 
 // Fixture that initializes Holoviz
 class GeometryLayer : public TestHeadless {};
@@ -193,7 +275,7 @@ TEST_F(GeometryLayer, Text) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareResultCRC32({0xc68d7716});
+  CompareColorResultCRC32({0xcb23d3cf});
 }
 
 TEST_F(GeometryLayer, TextClipped) {
@@ -204,7 +286,7 @@ TEST_F(GeometryLayer, TextClipped) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareResultCRC32({0x8a9c008});
+  CompareColorResultCRC32({0xd8f49994});
 }
 
 class GeometryLayerWithFont : public TestHeadless {
@@ -233,7 +315,7 @@ TEST_F(GeometryLayerWithFont, Text) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareResultCRC32({0xbccffe56});
+  CompareColorResultCRC32({0xb149eac7});
 }
 
 // Fixture that initializes Holoviz
@@ -246,7 +328,8 @@ TEST_P(DepthMapRenderMode, DepthMap) {
   const uint32_t map_height = 8;
 
   // allocate device memory
-  viz::CudaService::ScopedPush cuda_context = viz::CudaService::get().PushContext();
+  viz::CudaService cuda_service(0);
+  viz::CudaService::ScopedPush cuda_context = cuda_service.PushContext();
 
   viz::UniqueCUdeviceptr depth_ptr;
   depth_ptr.reset([this] {
@@ -274,13 +357,13 @@ TEST_P(DepthMapRenderMode, DepthMap) {
   uint32_t crc;
   switch (depth_map_render_mode) {
     case viz::DepthMapRenderMode::POINTS:
-      crc = 0x1eb98bfa;
+      crc = 0xcd990f6d;
       break;
     case viz::DepthMapRenderMode::LINES:
-      crc = 0xbf3be45a;
+      crc = 0x92a330ea;
       break;
     case viz::DepthMapRenderMode::TRIANGLES:
-      crc = 0x5ac3bd4b;
+      crc = 0x97856df3;
       break;
   }
   EXPECT_NO_THROW(viz::Begin());
@@ -297,7 +380,7 @@ TEST_P(DepthMapRenderMode, DepthMap) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareResultCRC32({crc});
+  CompareColorResultCRC32({crc});
 }
 
 INSTANTIATE_TEST_SUITE_P(GeometryLayer, DepthMapRenderMode,
@@ -354,8 +437,31 @@ TEST_F(GeometryLayer, Errors) {
 
   EXPECT_NO_THROW(viz::BeginGeometryLayer());
 
-  // Primitive function errors, first call the passing function
-  EXPECT_NO_THROW(viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 1, data.size(), data.data()));
+  struct {
+    viz::PrimitiveTopology topology;
+    uint32_t values;
+  } required[] = {
+      {viz::PrimitiveTopology::POINT_LIST, 2},
+      {viz::PrimitiveTopology::LINE_LIST, 4},
+      {viz::PrimitiveTopology::LINE_STRIP, 4},
+      {viz::PrimitiveTopology::TRIANGLE_LIST, 6},
+      {viz::PrimitiveTopology::CROSS_LIST, 3},
+      {viz::PrimitiveTopology::RECTANGLE_LIST, 4},
+      {viz::PrimitiveTopology::OVAL_LIST, 4},
+      {viz::PrimitiveTopology::POINT_LIST_3D, 3},
+      {viz::PrimitiveTopology::LINE_LIST_3D, 6},
+      {viz::PrimitiveTopology::LINE_STRIP_3D, 6},
+      {viz::PrimitiveTopology::TRIANGLE_LIST_3D, 9},
+  };
+
+  for (auto&& cur : required) {
+    std::vector<float> data(cur.values, 0.f);
+    // Primitive function errors, first call the passing function
+    EXPECT_NO_THROW(viz::Primitive(cur.topology, 1, data.size(), data.data()));
+    // it's an error to call Primitive with a data size which is too small for the primitive count
+    EXPECT_THROW(viz::Primitive(cur.topology, 1, data.size() - 1, data.data()), std::runtime_error);
+  }
+
   // it's an error to call Primitive with a primitive count of zero
   EXPECT_THROW(viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 0, data.size(), data.data()),
                std::invalid_argument);
@@ -365,9 +471,6 @@ TEST_F(GeometryLayer, Errors) {
   // it's an error to call Primitive with a null data pointer
   EXPECT_THROW(viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 1, data.size(), nullptr),
                std::invalid_argument);
-  // it's an error to call Primitive with a data size which is too small for the primitive count
-  EXPECT_THROW(viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 1, data.size() - 1, data.data()),
-               std::runtime_error);
 
   // Text function errors, first call the passing function
   EXPECT_NO_THROW(viz::Text(0.5f, 0.5f, 0.1f, "Text"));
@@ -381,7 +484,8 @@ TEST_F(GeometryLayer, Errors) {
   const uint32_t map_height = 8;
 
   // allocate device memory
-  viz::CudaService::ScopedPush cuda_context = viz::CudaService::get().PushContext();
+  viz::CudaService cuda_service(0);
+  viz::CudaService::ScopedPush cuda_context = cuda_service.PushContext();
   viz::UniqueCUdeviceptr depth_ptr;
   depth_ptr.reset([this] {
     CUdeviceptr device_ptr;

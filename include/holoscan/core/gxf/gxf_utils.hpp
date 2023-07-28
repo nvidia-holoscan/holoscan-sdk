@@ -19,14 +19,75 @@
 #define HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
 
 #include <gxf/core/gxf.h>
-
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <string>
 
+#include <common/backtrace.hpp>
 #include <common/type_name.hpp>
 
 #include "holoscan/logger/logger.hpp"
+
+// macro like GXF_ASSERT_SUCCESS, but uses HOLOSCAN_LOG_ERROR and includes line/filename info
+// Note: HOLOSCAN_GXF_CALL depends on GNU C statement expressions ({ })
+//       https://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html
+#define HOLOSCAN_GXF_CALL(stmt)                                                     \
+  ({                                                                                \
+    gxf_result_t code = (stmt);                                                     \
+    if (code != GXF_SUCCESS) {                                                      \
+      HOLOSCAN_LOG_ERROR("GXF call {} in line {} of file {} failed with '{}' ({})", \
+                         #stmt,                                                     \
+                         __LINE__,                                                  \
+                         __FILE__,                                                  \
+                         GxfResultStr(code),                                        \
+                         code);                                                     \
+      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) { PrettyPrintBacktrace(); }   \
+    }                                                                               \
+    code;                                                                           \
+  })
+
+#define HOLOSCAN_GXF_CALL_FATAL(stmt)                                                 \
+  {                                                                                   \
+    gxf_result_t code = HOLOSCAN_GXF_CALL(stmt);                                      \
+    if (code != GXF_SUCCESS) { throw std::runtime_error("failure during GXF call"); } \
+  }
+
+#define HOLOSCAN_GXF_CALL_MSG(stmt, ...)                          \
+  ({                                                              \
+    gxf_result_t code = HOLOSCAN_GXF_CALL(stmt);                  \
+    if (code != GXF_SUCCESS) { HOLOSCAN_LOG_ERROR(__VA_ARGS__); } \
+    code;                                                         \
+  })
+
+#define HOLOSCAN_GXF_CALL_MSG_FATAL(stmt, ...)                                        \
+  {                                                                                   \
+    gxf_result_t code = HOLOSCAN_GXF_CALL_MSG(stmt, __VA_ARGS__);                     \
+    if (code != GXF_SUCCESS) { throw std::runtime_error("failure during GXF call"); } \
+  }
+
+// Duplicate of HOLOSCAN_GXF_CALL but without a backtrace and logs a warning instead of an error.
+#define HOLOSCAN_GXF_CALL_WARN(stmt)                                               \
+  ({                                                                               \
+    gxf_result_t code = (stmt);                                                    \
+    if (code != GXF_SUCCESS) {                                                     \
+      HOLOSCAN_LOG_WARN("GXF call {} in line {} of file {} failed with '{}' ({})", \
+                        #stmt,                                                     \
+                        __LINE__,                                                  \
+                        __FILE__,                                                  \
+                        GxfResultStr(code),                                        \
+                        code);                                                     \
+    }                                                                              \
+    code;                                                                          \
+  })
+
+// Duplicate of HOLOSCAN_GXF_CALL_MSG but logs a warning instead of an error.
+#define HOLOSCAN_GXF_CALL_WARN_MSG(stmt, ...)                    \
+  ({                                                             \
+    gxf_result_t code = HOLOSCAN_GXF_CALL_WARN(stmt);            \
+    if (code != GXF_SUCCESS) { HOLOSCAN_LOG_WARN(__VA_ARGS__); } \
+    code;                                                        \
+  })
 
 namespace holoscan::gxf {
 
@@ -43,16 +104,33 @@ inline gxf_result_t add_connection(gxf_context_t context, gxf_uid_t source_cid,
   gxf_result_t code;
   gxf_uid_t connect_eid;
   const GxfEntityCreateInfo connect_entity_create_info = {nullptr, GXF_ENTITY_CREATE_PROGRAM_BIT};
-  code = GxfCreateEntity(context, &connect_entity_create_info, &connect_eid);
+  HOLOSCAN_GXF_CALL(GxfCreateEntity(context, &connect_entity_create_info, &connect_eid));
 
   gxf_tid_t connect_tid;
-  code = GxfComponentTypeId(context, "nvidia::gxf::Connection", &connect_tid);
+  HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, "nvidia::gxf::Connection", &connect_tid));
   gxf_uid_t connect_cid;
-  code = GxfComponentAdd(context, connect_eid, connect_tid, "", &connect_cid);
+  HOLOSCAN_GXF_CALL(GxfComponentAdd(context, connect_eid, connect_tid, "", &connect_cid));
 
-  code = GxfParameterSetHandle(context, connect_cid, "source", source_cid);
+  HOLOSCAN_GXF_CALL(GxfParameterSetHandle(context, connect_cid, "source", source_cid));
   code = GxfParameterSetHandle(context, connect_cid, "target", target_cid);
   return code;
+}
+
+/**
+ * @brief Create a GXF Component.
+ *
+ * @param context The GXF context.
+ * @param component_type_name The GXF Component type.
+ * @param component_name The name of the component.
+ * @param eid The entity ID to which the component will be added.
+ * @param cid The newly created component's ID will be returned here.
+ */
+inline void create_gxf_component(gxf_context_t context, const char* component_type_name,
+                                 const char* component_name, gxf_uid_t eid, gxf_uid_t* cid) {
+  gxf_tid_t tid;
+  HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, component_type_name, &tid));
+
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentAdd(context, eid, tid, component_name, cid));
 }
 
 /**
@@ -63,10 +141,8 @@ inline gxf_result_t add_connection(gxf_context_t context, gxf_uid_t source_cid,
  * @return The result code.
  */
 inline gxf_uid_t get_component_eid(gxf_context_t context, gxf_uid_t cid) {
-  gxf_result_t code;
   gxf_uid_t eid;
-  code = GxfComponentEntity(context, cid, &eid);
-  (void)code;
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentEntity(context, cid, &eid));
   return eid;
 }
 
@@ -78,18 +154,15 @@ inline gxf_uid_t get_component_eid(gxf_context_t context, gxf_uid_t cid) {
  * @return The full component name.
  */
 inline std::string get_full_component_name(gxf_context_t context, gxf_uid_t cid) {
-  gxf_result_t code;
-
   const char* cname;
-  code = GxfComponentName(context, cid, &cname);
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(context, cid, &cname));
   gxf_uid_t eid;
-  code = GxfComponentEntity(context, cid, &eid);
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentEntity(context, cid, &eid));
   const char* ename;
-  code = GxfComponentName(context, eid, &ename);
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(context, eid, &ename));
 
   std::stringstream sstream;
   sstream << ename << "/" << cname;
-  (void)code;
   return sstream.str();
 }
 

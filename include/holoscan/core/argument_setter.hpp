@@ -259,6 +259,10 @@ class ArgumentSetter {
                       auto& arg_value = std::any_cast<std::shared_ptr<Condition>&>(any_arg);
                       auto converted_value = std::dynamic_pointer_cast<
                           typename holoscan::type_info<typeT>::derived_type>(arg_value);
+                      // Initialize the condition in case the condition created by
+                      // Fragment::make_condition<T>() is added to the operator as an argument.
+                      if (converted_value) { converted_value->initialize(); }
+
                       param = converted_value;
                     }
                     break;
@@ -270,6 +274,10 @@ class ArgumentSetter {
                       auto& arg_value = std::any_cast<std::shared_ptr<Resource>&>(any_arg);
                       auto converted_value = std::dynamic_pointer_cast<
                           typename holoscan::type_info<typeT>::derived_type>(arg_value);
+                      // Initialize the resource in case the resource created by
+                      // Fragment::make_resource<T>() is added to the operator as an argument.
+                      if (converted_value) { converted_value->initialize(); }
+
                       param = converted_value;
                     }
                     break;
@@ -364,9 +372,14 @@ class ArgumentSetter {
                       typeT converted_value;
                       converted_value.reserve(arg_value.size());
                       for (auto& arg_value_item : arg_value) {
-                        converted_value.push_back(
-                            std::dynamic_pointer_cast<
-                                typename holoscan::type_info<typeT>::derived_type>(arg_value_item));
+                        auto&& condition = std::dynamic_pointer_cast<
+                            typename holoscan::type_info<typeT>::derived_type>(arg_value_item);
+
+                        // Initialize the condition in case the condition created by
+                        // Fragment::make_condition<T>() is added to the operator as an argument.
+                        if (condition) { condition->initialize(); }
+
+                        converted_value.push_back(condition);
                       }
                       param = converted_value;
                     }
@@ -381,9 +394,14 @@ class ArgumentSetter {
                       typeT converted_value;
                       converted_value.reserve(arg_value.size());
                       for (auto& arg_value_item : arg_value) {
-                        converted_value.push_back(
-                            std::dynamic_pointer_cast<
-                                typename holoscan::type_info<typeT>::derived_type>(arg_value_item));
+                        auto&& resource = std::dynamic_pointer_cast<
+                            typename holoscan::type_info<typeT>::derived_type>(arg_value_item);
+
+                        // Initialize the resource in case the resource created by
+                        // Fragment::make_resource<T>() is added to the operator as an argument.
+                        if (resource) { resource->initialize(); }
+
+                        converted_value.push_back(resource);
                       }
                       param = converted_value;
                     }

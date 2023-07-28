@@ -66,8 +66,6 @@ class MinimalApp : public holoscan::Application {
 };
 
 TEST(MinimalNativeOperatorApp, TestMinimalNativeOperatorApp) {
-  load_env_log_level();
-
   auto app = make_application<MinimalApp>();
 
   const std::string config_file = test_config.get_test_data_file("minimal.yaml");
@@ -80,6 +78,34 @@ TEST(MinimalNativeOperatorApp, TestMinimalNativeOperatorApp) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("value: 5.3") != std::string::npos);
+}
+
+TEST(MinimalNativeOperatorApp, TestMinimalNativeOperatorAppMultiThread) {
+  // use TRACE log level to be able to check detailed messages in the output
+  set_log_level(LogLevel::TRACE);
+
+  auto app = make_application<MinimalApp>();
+
+  const std::string config_file = test_config.get_test_data_file("minimal.yaml");
+  app->config(config_file);
+
+  // capture output to check that the expected messages were logged
+  testing::internal::CaptureStderr();
+
+  // configure and assign the scheduler
+  app->scheduler(app->make_scheduler<MultiThreadScheduler>(
+      "multithread-scheduler", app->from_config("multithread_scheduler")));
+
+  app->run();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("value: 5.3") != std::string::npos);
+  // check that the expected parameters were sent onto GXF
+  EXPECT_TRUE(log_output.find("setting GXF parameter 'worker_thread_number'") != std::string::npos);
+  EXPECT_TRUE(log_output.find("setting GXF parameter 'stop_on_deadlock'") != std::string::npos);
+  EXPECT_TRUE(log_output.find("setting GXF parameter 'check_recession_period_ms'") !=
+              std::string::npos);
+  EXPECT_TRUE(log_output.find("setting GXF parameter 'max_duration_ms'") != std::string::npos);
 }
 
 }  // namespace holoscan

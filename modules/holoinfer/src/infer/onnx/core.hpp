@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,8 +58,8 @@ class OnnxInfer : public InferBase {
    * @param output_buffer Output DataBuffer, is populated with inferred results
    * @return InferStatus
    * */
-  InferStatus do_inference(std::shared_ptr<DataBuffer>& input_data,
-                           std::shared_ptr<DataBuffer>& output_buffer);
+  InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
+                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer);
 
   /**
    * @brief Populate class parameters with model details and values
@@ -78,15 +78,29 @@ class OnnxInfer : public InferBase {
 
   /**
    * @brief Get input data dimensions to the model
-   * @return Vector of values as dimension
+   * @return Vector of input dimensions. Each dimension is a vector of int64_t corresponding to
+   *         the shape of the input tensor.
    * */
-  std::vector<int64_t> get_input_dims() const;
+  std::vector<std::vector<int64_t>> get_input_dims() const;
 
   /**
    * @brief Get output data dimensions from the model
-   * @return Vector of values as dimension
+   * @return Vector of input dimensions. Each dimension is a vector of int64_t corresponding to
+   *         the shape of the input tensor.
    * */
-  std::vector<int64_t> get_output_dims() const;
+  std::vector<std::vector<int64_t>> get_output_dims() const;
+
+  /**
+   * @brief Get input data types from the model
+   * @return Vector of values as datatype per input tensor
+   * */
+  std::vector<holoinfer_datatype> get_input_datatype() const;
+
+  /**
+   * @brief Get output data types from the model
+   * @return Vector of values as datatype per output tensor
+   * */
+  std::vector<holoinfer_datatype> get_output_datatype() const;
 
   void cleanup() {
     session_.reset();
@@ -107,10 +121,10 @@ class OnnxInfer : public InferBase {
 
   size_t input_nodes_{0}, output_nodes_{0};
 
-  std::vector<int64_t> input_dims_{};
-  std::vector<int64_t> output_dims_{};
+  std::vector<std::vector<int64_t>> input_dims_{};
+  std::vector<std::vector<int64_t>> output_dims_{};
 
-  ONNXTensorElementDataType input_type_, output_type_;
+  std::vector<holoinfer_datatype> input_type_, output_type_;
 
   std::vector<const char*> input_names_;
   std::vector<const char*> output_names_;
@@ -124,12 +138,16 @@ class OnnxInfer : public InferBase {
   Ort::MemoryInfo memory_info_ = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator,
                                                             OrtMemType::OrtMemTypeDefault);
 
-  std::vector<float> input_tensor_values_;
-  std::vector<float> output_tensor_values_;
-
   Ort::MemoryInfo memory_info_cuda_ =
       Ort::MemoryInfo("Cuda", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
   std::unique_ptr<Ort::Allocator> memory_allocator_cuda_;
+
+  holoinfer_datatype get_holoinfer_datatype(ONNXTensorElementDataType datatype);
+
+  Ort::Value create_tensor(const std::shared_ptr<DataBuffer>& input_buffer,
+                           const std::vector<int64_t>& dims);
+  void transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                          const size_t& index);
 };
 
 }  // namespace inference

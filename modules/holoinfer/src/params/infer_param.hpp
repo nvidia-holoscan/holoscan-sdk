@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace holoscan {
 namespace inference {
@@ -30,15 +31,23 @@ class Params {
   Params(const std::string&, const std::string&, bool);
   const std::string get_model_path() const;
   const std::string get_instance_name() const;
+  const std::vector<std::string> get_input_tensor_names() const;
+  const std::vector<std::string> get_output_tensor_names() const;
   bool get_cuda_flag() const;
+  int get_device_id() const;
   void set_model_path(const std::string&);
+  void set_device_id(int);
   void set_instance_name(const std::string&);
   void set_cuda_flag(bool);
+  void set_tensor_names(const std::vector<std::string>&, bool);
 
  private:
   bool use_cuda_;
   std::string model_file_path_;
   std::string instance_name_;
+  int device_id_;
+  std::vector<std::string> in_tensor_names_;
+  std::vector<std::string> out_tensor_names_;
 };
 
 }  // namespace inference

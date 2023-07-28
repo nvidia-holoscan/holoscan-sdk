@@ -17,8 +17,12 @@
 
 #include "holoscan/core/gxf/entity.hpp"
 
+#include <string>
+#include <utility>
+
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/execution_context.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan::gxf {
 
@@ -28,16 +32,12 @@ Entity Entity::New(ExecutionContext* context) {
 
   gxf_uid_t eid;
   const GxfEntityCreateInfo info{};
-  const gxf_result_t code = GxfCreateEntity(gxf_context, &info, &eid);
-  if (code != GXF_SUCCESS) {
-    throw std::runtime_error("Unable to create entity");
+  HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntity(gxf_context, &info, &eid));
+  auto result = Shared(gxf_context, eid);
+  if (!result) {
+    throw std::runtime_error("Unable to increment entity reference count");
   } else {
-    auto result = Shared(gxf_context, eid);
-    if (!result) {
-      throw std::runtime_error("Unable to increment entity reference count");
-    } else {
-      return Entity(std::move(result.value()));
-    }
+    return Entity(std::move(result.value()));
   }
 }
 

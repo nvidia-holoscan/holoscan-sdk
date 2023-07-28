@@ -17,19 +17,21 @@
 
 #include "ping_tx_op.hpp"
 
+#include <memory>
+
 namespace holoscan {
 namespace ops {
 
-void PingTxOp::setup(OperatorSpec& spec) {
+void PingMultiTxOp::setup(OperatorSpec& spec) {
   spec.output<int>("out1");
   spec.output<int>("out2");
 }
 
-void PingTxOp::compute(InputContext&, OutputContext& op_output, ExecutionContext&) {
-  auto value1 = std::make_shared<int>(1);
+void PingMultiTxOp::compute(InputContext&, OutputContext& op_output, ExecutionContext&) {
+  int value1 = 1;
   op_output.emit(value1, "out1");
 
-  auto value2 = std::make_shared<int>(100);
+  int value2 = 100;
   op_output.emit(value2, "out2");
 }
 

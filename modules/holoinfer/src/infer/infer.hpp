@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,13 +31,18 @@ namespace inference {
 class InferBase {
  public:
   /**
+   * @brief Default destructor
+   * */
+  virtual ~InferBase() = default;
+
+  /**
    * @brief Does the Core inference
    * @param input_data Input DataBuffer
    * @param output_buffer Output DataBuffer, is populated with inferred results
    * @return InferStatus
    * */
-  virtual InferStatus do_inference(std::shared_ptr<DataBuffer>& input_data,
-                                   std::shared_ptr<DataBuffer>& output_buffer) {
+  virtual InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
+                                   std::vector<std::shared_ptr<DataBuffer>>& output_buffer) {
     return InferStatus();
   }
 
@@ -45,13 +50,28 @@ class InferBase {
    * @brief Get input data dimensions to the model
    * @return Vector of values as dimension
    * */
-  virtual std::vector<int64_t> get_input_dims() const { return {}; }
+  virtual std::vector<std::vector<int64_t>> get_input_dims() const { return {}; }
 
   /**
    * @brief Get output data dimensions from the model
-   * @return Vector of values as dimension
+   * @return Vector of input dimensions. Each dimension is a vector of int64_t corresponding to
+   *         the shape of the input tensor.
    * */
-  virtual std::vector<int64_t> get_output_dims() const { return {}; }
+  virtual std::vector<std::vector<int64_t>> get_output_dims() const { return {}; }
+
+  /**
+   * @brief Get input data types from the model
+   * @return Vector of input dimensions. Each dimension is a vector of int64_t corresponding to
+   *         the shape of the input tensor.
+   * */
+  virtual std::vector<holoinfer_datatype> get_input_datatype() const { return {}; }
+
+  /**
+   * @brief Get output data types from the model
+   * @return Vector of values as datatype per output tensor
+   * */
+  virtual std::vector<holoinfer_datatype> get_output_datatype() const { return {}; }
+
   virtual void cleanup() {}
 };
 

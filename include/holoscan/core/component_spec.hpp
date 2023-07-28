@@ -60,6 +60,19 @@ class ComponentSpec {
    */
   Fragment* fragment() { return fragment_; }
 
+  /**
+   * @brief Define a parameter for this component.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param parameter The parameter to define.
+   * @param key The key (name) of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
+   */
+  template <typename typeT>
+  void param(Parameter<typeT>& parameter, const char* key,
+             ParameterFlag flag = ParameterFlag::kNone) {
+    param(parameter, key, "N/A", "N/A", flag);
+  }
 
   /**
    * @brief Define a parameter for this component.
@@ -67,23 +80,15 @@ class ComponentSpec {
    * @tparam typeT The type of the parameter.
    * @param parameter The parameter to define.
    * @param key The key (name) of the parameter.
-   */
-  template <typename typeT>
-  void param(Parameter<typeT>& parameter, const char* key) {
-    param(parameter, key, "N/A", "N/A");
-  }
-  /**
-   * @brief Define a parameter for this component.
-   *
-   * @tparam typeT The type of the parameter.
-   * @param parameter The parameter to define.
-   * @param key The key (name) of the parameter.
    * @param headline The headline of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
    */
   template <typename typeT>
-  void param(Parameter<typeT>& parameter, const char* key, const char* headline) {
-    param(parameter, key, headline, "N/A");
+  void param(Parameter<typeT>& parameter, const char* key, const char* headline,
+             ParameterFlag flag = ParameterFlag::kNone) {
+    param(parameter, key, headline, "N/A", flag);
   }
+
   /**
    * @brief Define a parameter for this component.
    *
@@ -92,10 +97,38 @@ class ComponentSpec {
    * @param key The key (name) of the parameter.
    * @param headline The headline of the parameter.
    * @param description The description of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
    */
   template <typename typeT>
   void param(Parameter<typeT>& parameter, const char* key, const char* headline,
-             const char* description);
+             const char* description, ParameterFlag flag = ParameterFlag::kNone);
+
+  /**
+   * @brief Define a parameter for this component.
+   *
+   * This method is to catch the following case:
+   *
+   * ```cpp
+   * ...
+   *     spec.param(int64_value_, "int64_param", "int64_t param", "Example int64_t parameter.", {});
+   * ...
+   * private:
+   *  Parameter<int64_t> int64_param_;
+   * ```
+   *
+   * Otherwise, `{}` will be treated as `ParameterFlag::kNone` instead of `std::initializer_list`.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param parameter The parameter to define.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   * @param description The description of the parameter.
+   * @param init_list The initializer list of the parameter.
+   */
+  template <typename typeT>
+  void param(Parameter<typeT>& parameter, const char* key, const char* headline,
+             const char* description, std::initializer_list<void*> init_list);
+
   /**
    * @brief Define a parameter that has a default value.
    *
@@ -105,10 +138,28 @@ class ComponentSpec {
    * @param headline The headline of the parameter.
    * @param description The description of the parameter.
    * @param default_value The default value of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
    */
   template <typename typeT>
   void param(Parameter<typeT>& parameter, const char* key, const char* headline,
-             const char* description, typeT default_value);
+             const char* description, const typeT& default_value,
+             ParameterFlag flag = ParameterFlag::kNone);
+
+  /**
+   * @brief Define a parameter that has a default value.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param parameter The parameter to get.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   * @param description The description of the parameter.
+   * @param default_value The default value of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
+   */
+  template <typename typeT>
+  void param(Parameter<typeT>& parameter, const char* key, const char* headline,
+             const char* description, typeT&& default_value,
+             ParameterFlag flag = ParameterFlag::kNone);
 
   /**
    * @brief Get the parameters of this component.
@@ -148,4 +199,4 @@ class ComponentSpec {
 // ------------------------------------------------------------------------------------------------
 #include "./component_spec-inl.hpp"
 
-#endif  // HOLOSCAN_CORE_COMPONENT_SPEC_HPP
+#endif /* HOLOSCAN_CORE_COMPONENT_SPEC_HPP */

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,8 @@
 
 #include <iostream>
 #include <string>
+
+#include "./gxf_utils.hpp"
 
 namespace holoscan::gxf {
 
@@ -47,6 +49,8 @@ class GXFComponent {
   std::string& gxf_cname() { return gxf_cname_; }
   void gxf_cname(const std::string& name) { gxf_cname_ = name; }
 
+  void* gxf_cptr() { return gxf_cptr_; }
+
   void gxf_initialize() {
     if (gxf_context_ == nullptr) {
       HOLOSCAN_LOG_ERROR("Initializing with null GXF context");
@@ -57,13 +61,11 @@ class GXFComponent {
       return;
     }
 
-    gxf_result_t code;
-    code = GxfComponentTypeId(gxf_context_, gxf_typename(), &gxf_tid_);
-    code = GxfComponentAdd(gxf_context_, gxf_eid_, gxf_tid_, gxf_cname().c_str(), &gxf_cid_);
-    code =
-        GxfComponentPointer(gxf_context_, gxf_cid_, gxf_tid_, reinterpret_cast<void**>(&gxf_cptr_));
-
-    (void)code;
+    HOLOSCAN_GXF_CALL(GxfComponentTypeId(gxf_context_, gxf_typename(), &gxf_tid_));
+    HOLOSCAN_GXF_CALL(
+        GxfComponentAdd(gxf_context_, gxf_eid_, gxf_tid_, gxf_cname().c_str(), &gxf_cid_));
+    HOLOSCAN_GXF_CALL(GxfComponentPointer(
+        gxf_context_, gxf_cid_, gxf_tid_, reinterpret_cast<void**>(&gxf_cptr_)));
   }
 
  protected:

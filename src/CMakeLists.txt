@@ -60,10 +60,13 @@ endfunction()
 add_holoscan_library(logger logger/logger.cpp)
 target_link_libraries(logger
     PUBLIC
-    fmt::fmt-header-only
-
+        fmt::fmt-header-only
     PRIVATE
-    spdlog::spdlog_header_only
+        spdlog::spdlog_header_only
+)
+target_compile_definitions(logger
+    INTERFACE
+        FMT_HEADER_ONLY=1
 )
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -75,62 +78,131 @@ endif()
 # ##############################################################################
 # # Add library: holoscan::core
 # ##############################################################################
+
+set(CORE_PROTO_FILES
+    core/services/proto/app_driver.proto
+    core/services/proto/app_worker.proto
+    core/services/proto/connection_item.proto
+    core/services/proto/error_code.proto
+    core/services/proto/health_checking.proto
+    core/services/proto/system_resource.proto
+    core/services/proto/result.proto
+)
+
+grpc_generate_cpp(CORE_GRPC_SRCS CORE_GRPC_HDRS ${CORE_PROTO_FILES})
+
 add_holoscan_library(core
+    core/app_driver.cpp
+    core/app_worker.cpp
     core/application.cpp
     core/arg.cpp
     core/argument_setter.cpp
+    core/cli_options.cpp
+    core/cli_parser.cpp
+    core/codec_registry.cpp
     core/component.cpp
     core/component_spec.cpp
     core/condition.cpp
+    core/conditions/gxf/asynchronous.cpp
     core/conditions/gxf/boolean.cpp
     core/conditions/gxf/count.cpp
     core/conditions/gxf/downstream_affordable.cpp
+    core/conditions/gxf/periodic.cpp
     core/conditions/gxf/message_available.cpp
     core/config.cpp
+    core/dataflow_tracker.cpp
     core/domain/tensor.cpp
+    core/endpoint.cpp
+    core/errors.cpp
     core/executors/gxf/gxf_executor.cpp
     core/executors/gxf/gxf_parameter_adaptor.cpp
     core/fragment.cpp
+    core/fragment_scheduler.cpp
     core/graphs/flow_graph.cpp
     core/gxf/entity.cpp
     core/gxf/gxf_condition.cpp
     core/gxf/gxf_execution_context.cpp
     core/gxf/gxf_extension_manager.cpp
     core/gxf/gxf_io_context.cpp
+    core/gxf/gxf_network_context.cpp
     core/gxf/gxf_operator.cpp
     core/gxf/gxf_resource.cpp
+    core/gxf/gxf_scheduler.cpp
     core/gxf/gxf_tensor.cpp
     core/gxf/gxf_wrapper.cpp
     core/io_spec.cpp
+    core/messagelabel.cpp
+    core/network_context.cpp
+    core/network_contexts/gxf/ucx_context.cpp
     core/operator.cpp
     core/operator_spec.cpp
     core/resource.cpp
     core/resources/gxf/allocator.cpp
+    core/resources/gxf/annotated_double_buffer_receiver.cpp
+    core/resources/gxf/annotated_double_buffer_transmitter.cpp
     core/resources/gxf/block_memory_pool.cpp
+    core/resources/gxf/clock.cpp
     core/resources/gxf/cuda_stream_pool.cpp
     core/resources/gxf/double_buffer_receiver.cpp
     core/resources/gxf/double_buffer_transmitter.cpp
+    core/resources/gxf/dfft_collector.cpp
+    core/resources/gxf/manual_clock.cpp
+    core/resources/gxf/realtime_clock.cpp
     core/resources/gxf/receiver.cpp
+    core/resources/gxf/serialization_buffer.cpp
     core/resources/gxf/std_component_serializer.cpp
     core/resources/gxf/transmitter.cpp
+    core/resources/gxf/ucx_component_serializer.cpp
+    core/resources/gxf/ucx_entity_serializer.cpp
+    core/resources/gxf/ucx_holoscan_component_serializer.cpp
+    core/resources/gxf/ucx_receiver.cpp
+    core/resources/gxf/ucx_serialization_buffer.cpp
+    core/resources/gxf/ucx_transmitter.cpp
     core/resources/gxf/video_stream_serializer.cpp
+    core/scheduler.cpp
+    core/schedulers/greedy_fragment_allocation.cpp
+    core/schedulers/gxf/greedy_scheduler.cpp
+    core/schedulers/gxf/multithread_scheduler.cpp
+    core/services/app_driver/client.cpp
+    core/services/app_driver/service_impl.cpp
+    core/services/app_driver/server.cpp
+    core/services/app_worker/client.cpp
+    core/services/app_worker/service_impl.cpp
+    core/services/app_worker/server.cpp
+    core/services/common/virtual_operator.cpp
+    core/services/health_checking/service_impl.cpp
+    core/signal_handler.cpp
+    core/system/cpu_resource_monitor.cpp
+    core/system/gpu_resource_monitor.cpp
+    core/system/network_utils.cpp
+    core/system/system_resource_manager.cpp
+    core/system/topology.cpp
+    ${CORE_GRPC_SRCS}
 )
 
 target_link_libraries(core
     PUBLIC
+        ${CMAKE_DL_LIBS}  # for dlopen
         holoscan::logger
         CUDA::cudart
         fmt::fmt-header-only
         GXF::core
         GXF::cuda
+        GXF::serialization  # for nvidia::gxf::Endpoint
         GXF::std
         yaml-cpp
+    PRIVATE
+        hwloc
+        gRPC::grpc++
+        gRPC::grpc++_reflection
+        protobuf::libprotobuf
 )
 
 target_include_directories(core
     PUBLIC
       $<BUILD_INTERFACE:${tl-expected_SOURCE_DIR}/include>
       $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
+      $<BUILD_INTERFACE:${cli11_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
 )
 

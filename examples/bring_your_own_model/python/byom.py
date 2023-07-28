@@ -17,11 +17,10 @@ import os
 from argparse import ArgumentParser
 
 from holoscan.core import Application
-from holoscan.logger import load_env_log_level
 from holoscan.operators import (
     FormatConverterOp,
     HolovizOp,
-    MultiAIInferenceOp,
+    InferenceOp,
     SegmentationPostprocessorOp,
     VideoStreamReplayerOp,
 )
@@ -43,7 +42,7 @@ class BYOMApp(Application):
         self.name = "BYOM App"
 
         if data == "none":
-            data = os.environ.get("HOLOSCAN_SAMPLE_DATA_PATH", "../data")
+            data = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
         self.sample_data_path = data
 
@@ -57,7 +56,6 @@ class BYOMApp(Application):
             raise ValueError(f"Could not find video data: {self.video_dir=}")
 
     def compose(self):
-
         host_allocator = UnboundedAllocator(self, name="host_allocator")
 
         source = VideoStreamReplayerOp(
@@ -68,7 +66,7 @@ class BYOMApp(Application):
             self, name="preprocessor", pool=host_allocator, **self.kwargs("preprocessor")
         )
 
-        inference = MultiAIInferenceOp(
+        inference = InferenceOp(
             self,
             name="inference",
             allocator=host_allocator,
@@ -101,8 +99,6 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
-    load_env_log_level()
 
     config_file = os.path.join(os.path.dirname(__file__), "byom.yaml")
 

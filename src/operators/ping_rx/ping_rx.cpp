@@ -24,8 +24,8 @@ void PingRxOp::setup(OperatorSpec& spec) {
 }
 
 void PingRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
-  auto value = op_input.receive<int>("in");
-  std::cout << "Rx message value: " << *(value.get()) << std::endl;
+  auto value = op_input.receive<int>("in").value();
+  HOLOSCAN_LOG_INFO("Rx message value: {}", value);
 }
 
 }  // namespace holoscan::ops

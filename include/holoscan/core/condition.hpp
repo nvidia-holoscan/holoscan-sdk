@@ -102,6 +102,8 @@ enum class ConditionType {
                                  ///< (nvidia::gxf::DownstreamReceptiveSchedulingTerm)
   kCount,                        ///< nvidia::gxf::CountSchedulingTerm
   kBoolean,                      ///< nvidia::gxf::BooleanSchedulingTerm
+  kPeriodic,                     ///< nvidia::gxf::PeriodicSchedulingTerm
+  kAsynchronous,                 ///< nvidia::gxf::AsynchronousSchedulingTerm
 };
 
 /**
@@ -205,6 +207,7 @@ class Condition : public Component {
 
  protected:
   std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
+  bool is_initialized_ = false;          ///< Whether the condition is initialized.
 };
 
 }  // namespace holoscan

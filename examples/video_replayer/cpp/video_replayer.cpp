@@ -36,7 +36,7 @@ class VideoReplayerApp : public holoscan::Application {
 int main(int argc, char** argv) {
   // Get the yaml configuration file
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
-  config_path += "/video_replayer.yaml";
+  config_path /= std::filesystem::path("video_replayer.yaml");
   if ( argc >= 2 ) {
     config_path = argv[1];
   }

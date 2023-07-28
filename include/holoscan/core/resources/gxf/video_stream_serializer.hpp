@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,12 @@
 
 namespace holoscan {
 
+/**
+ * @brief Video stream entity serializer.
+ *
+ * Used by VideoStreamReplayerOp to deserialize video streams and by VideoStreamRecorderOp to
+ * serialize video streams.
+ */
 class VideoStreamSerializer : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(VideoStreamSerializer, GXFResource)

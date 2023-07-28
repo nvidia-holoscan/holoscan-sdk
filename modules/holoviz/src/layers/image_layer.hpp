@@ -49,17 +49,30 @@ class ImageLayer : public Layer {
    *
    * If the image has a alpha value it's multiplied with the layer opacity.
    *
+   * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
+   * to the depth buffer when rendering the color image from a separate invocation of image_*() for
+   * the same layer. This enables depth-compositing image layers with other Holoviz layers.
+   * Supported depth formats are: D32_SFLOAT.
+   *
    * @param width         width of the image
    * @param height        height of the image
    * @param fmt           image format
    * @param device_ptr    Cuda device memory pointer
+   * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
+   * contiguous in memory
    */
-  void image_cuda_device(uint32_t width, uint32_t height, ImageFormat fmt, CUdeviceptr device_ptr);
+  void image_cuda_device(uint32_t width, uint32_t height, ImageFormat fmt, CUdeviceptr device_ptr,
+                         size_t row_pitch = 0);
 
   /**
    * Defines the image data for this layer, source is a Cuda array.
    *
    * If the image has a alpha value it's multiplied with the layer opacity.
+   *
+   * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
+   * to the depth buffer when rendering the color image from a separate invocation of image_*() for
+   * the same layer. This enables depth-compositing image layers with other Holoviz layers.
+   * Supported depth formats are: D32_SFLOAT.
    *
    * @param fmt       image format
    * @param array     Cuda array
@@ -67,14 +80,24 @@ class ImageLayer : public Layer {
   void image_cuda_array(ImageFormat fmt, CUarray array);
 
   /**
-   * Defines the image data for this layer, source is a Cuda array.
+   * Defines the image data for this layer, source is host memory.
    *
    * If the image has a alpha value it's multiplied with the layer opacity.
    *
+   * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
+   * to the depth buffer when rendering the color image from a separate invocation of image_*() for
+   * the same layer. This enables depth-compositing image layers with other Holoviz layers.
+   * Supported depth formats are: D32_SFLOAT.
+   *
+   * @param width     width of the image
+   * @param height    height of the image
    * @param fmt       image format
-   * @param array     Cuda array
+   * @param data      host memory pointer
+   * @param row_pitch the number of bytes between each row, if zero then data is assumed to be
+   * contiguous in memory
    */
-  void image_host(uint32_t width, uint32_t height, ImageFormat fmt, const void* data);
+  void image_host(uint32_t width, uint32_t height, ImageFormat fmt, const void* data,
+                  size_t row_pitch = 0);
 
   /**
    * Defines the lookup table for this image layer.

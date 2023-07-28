@@ -21,48 +21,167 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <memory>
+#include <string>
 
 namespace holoscan {
 
+bool Logger::log_pattern_set_by_user = false;
+bool Logger::log_level_set_by_user = false;
+
+static std::string get_concrete_log_pattern(std::string pattern) {
+  // Convert to uppercase
+  std::string log_pattern = pattern;
+  std::transform(log_pattern.begin(), log_pattern.end(), log_pattern.begin(), [](unsigned char c) {
+    return std::toupper(c);
+  });
+
+  if (log_pattern == "SHORT") {
+    return "[%^%l%$] %v";
+  } else if (log_pattern == "DEFAULT") {
+    return "[%^%l%$] [%s:%#] %v";
+  } else if (log_pattern == "LONG") {
+    return "[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [%s:%#] %v";
+  } else if (log_pattern == "FULL") {
+    return "[%Y-%m-%d %H:%M:%S.%e] [%t] [%n] [%^%l%$] [%s:%#] %v";
+  } else {
+    // Return the original pattern
+    return pattern;
+  }
+}
+
+std::string& Logger::pattern() {
+  static std::string log_pattern = "[%^%l%$] [%s:%#] %v";
+  return log_pattern;
+}
+
 static std::shared_ptr<spdlog::logger>& get_logger(const std::string& name = "holoscan") {
-  static auto logger = spdlog::stderr_color_mt(name);
+  static auto logger = [&name] {
+    auto tmp_logger = spdlog::stderr_color_mt(name);
+    // Set default log level and pattern
+    tmp_logger->set_level(spdlog::level::info);
+    tmp_logger->set_pattern(Logger::pattern());
+    return tmp_logger;
+  }();
+
   return logger;
 }
 
-void Logger::load_env_level() {
-  const char* env_p = std::getenv("HOLOSCAN_LOG_LEVEL");
+void set_log_level(LogLevel level) {
+  static const char* level_str[7] = {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL", "OFF"};
+  bool is_overridden_by_env = false;
 
-  if (env_p) {
-    auto log_level_str = std::string_view(env_p);
-    if (log_level_str == "TRACE") {
-      set_log_level(LogLevel::TRACE);
-    } else if (log_level_str == "DEBUG") {
-      set_log_level(LogLevel::DEBUG);
-    } else if (log_level_str == "INFO") {
-      set_log_level(LogLevel::INFO);
-    } else if (log_level_str == "WARN") {
-      set_log_level(LogLevel::WARN);
-    } else if (log_level_str == "ERROR") {
-      set_log_level(LogLevel::ERROR);
-    } else if (log_level_str == "CRITICAL") {
-      set_log_level(LogLevel::CRITICAL);
-    } else if (log_level_str == "OFF") {
-      set_log_level(LogLevel::OFF);
+  Logger::set_level(level, &is_overridden_by_env);
+
+  if (is_overridden_by_env) {
+    LogLevel new_log_level = Logger::level();
+    HOLOSCAN_LOG_DEBUG(
+        "Log level would be overridden by HOLOSCAN_LOG_LEVEL environment variable to '{}'",
+        level_str[static_cast<int>(new_log_level)]);
+  }
+}
+
+void set_log_pattern(std::string pattern) {
+  bool is_overridden_by_env = false;
+
+  // https://spdlog.docsforge.com/v1.x/0.faq/#colors-do-not-appear-when-using-custom-format
+  Logger::set_pattern(pattern, &is_overridden_by_env);
+
+  if (is_overridden_by_env) {
+    const char* env_p = std::getenv("HOLOSCAN_LOG_FORMAT");
+    if (env_p) {
+      HOLOSCAN_LOG_DEBUG(
+          "Log format would be overridden by HOLOSCAN_LOG_FORMAT environment variable to '{}'",
+          env_p);
     }
   }
 }
 
-void Logger::set_level(LogLevel level) {
+void Logger::set_level(LogLevel level, bool* is_overridden_by_env) {
+  const char* env_p = std::getenv("HOLOSCAN_LOG_LEVEL");
+  // Override the environment variable if the user has set the log level
+  if (env_p) {
+    LogLevel env_level = level;
+    std::string log_level(env_p);
+    std::transform(log_level.begin(), log_level.end(), log_level.begin(), [](unsigned char c) {
+      return std::toupper(c);
+    });
+    if (log_level == "TRACE") {
+      env_level = LogLevel::TRACE;
+    } else if (log_level == "DEBUG") {
+      env_level = LogLevel::DEBUG;
+    } else if (log_level == "INFO") {
+      env_level = LogLevel::INFO;
+    } else if (log_level == "WARN") {
+      env_level = LogLevel::WARN;
+    } else if (log_level == "ERROR") {
+      env_level = LogLevel::ERROR;
+    } else if (log_level == "CRITICAL") {
+      env_level = LogLevel::CRITICAL;
+    } else if (log_level == "OFF") {
+      env_level = LogLevel::OFF;
+    }
+
+    if (is_overridden_by_env) { *is_overridden_by_env = true; }
+    level = env_level;
+  }
+
   get_logger()->set_level(static_cast<spdlog::level::level_enum>(level));
+
+  Logger::log_level_set_by_user = true;
 }
 
 LogLevel Logger::level() {
   return static_cast<LogLevel>(get_logger()->level());
 }
 
-void Logger::set_pattern(std::string pattern) {
-  get_logger()->set_pattern(pattern);
+void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
+  // Consider the pattern set by the user if it is not empty
+  if (!pattern.empty()) { Logger::log_pattern_set_by_user = true; }
+
+  // Get the concrete log pattern
+  pattern = get_concrete_log_pattern(pattern);
+
+  const char* env_p = std::getenv("HOLOSCAN_LOG_FORMAT");
+  // Override the environment variable if the user has set the log level
+  if (env_p) {
+    std::string env_pattern;
+    std::string log_pattern = env_p;
+    env_pattern = get_concrete_log_pattern(log_pattern);
+
+    if (is_overridden_by_env) { *is_overridden_by_env = true; }
+
+    pattern = env_pattern;
+  }
+
+  if (pattern.empty()) {
+    // The following code sets the logger's format pattern, it takes effect only if the pattern
+    // hasn't already been set by the user from directly calling Logger::set_pattern, or via the
+    // HOLOSCAN_LOG_FORMAT env variable
+    if (!Logger::log_pattern_set_by_user) {
+      switch (Logger::level()) {
+        case LogLevel::OFF:
+        case LogLevel::CRITICAL:
+        case LogLevel::ERROR:
+        case LogLevel::WARN:
+        case LogLevel::INFO:
+          // [%s:%#] for showing filename:line_number
+          pattern = "[%^%l%$] [%s:%#] %v";
+          break;
+        case LogLevel::DEBUG:
+        case LogLevel::TRACE:
+          // Display info for [time] [thread] [tool] [level] [filename:line_number] message
+          pattern = "[%Y-%m-%d %H:%M:%S.%e][%t][%n][%^%l%$][%s:%#] %v";
+      }
+    }
+  }
+
+  if (!pattern.empty()) {
+    Logger::pattern() = pattern;
+    get_logger()->set_pattern(pattern);
+  }
 }
 
 bool Logger::should_backtrace() {

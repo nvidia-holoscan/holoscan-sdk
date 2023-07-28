@@ -26,7 +26,10 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/gxf/gxf_operator.hpp"
+#include "holoscan/core/io_context.hpp"
+#include "holoscan/core/io_spec.hpp"
+#include "holoscan/core/operator.hpp"
+#include "holoscan/core/operator_spec.hpp"
 #include "./ntv2channel.hpp"
 
 namespace holoscan::ops {

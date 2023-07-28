@@ -145,6 +145,22 @@ struct _type_info<Parameter<std::array<T, N>>> {
 template <typename T>
 using type_info = _type_info<std::decay_t<T>>;
 
+// remove_pointer/remove_pointer_t
+// (This implementation removes both std::shared_ptr and raw pointers.)
+
+template <typename T>
+struct remove_pointer {
+  using type = std::remove_pointer_t<T>;
+};
+
+template <typename T>
+struct remove_pointer<std::shared_ptr<T>> {
+  using type = T;
+};
+
+template <typename T>
+using remove_pointer_t = typename remove_pointer<T>::type;
+
 // is_scalar/is_scalar_t/is_scalar_v
 
 template <typename T>
@@ -183,6 +199,20 @@ using is_array_t = typename is_array<T>::type;
 template <typename T>
 inline constexpr bool is_array_v = is_array<std::decay_t<T>>::value;
 
+// is_shared_ptr/is_shared_ptr_t/is_shared_ptr_v
+
+template <typename T>
+struct is_shared_ptr : public std::integral_constant<bool, false> {};
+
+template <typename T>
+struct is_shared_ptr<std::shared_ptr<T>> : public std::integral_constant<bool, true> {};
+
+template <typename T>
+using is_shared_ptr_t = typename is_shared_ptr<T>::type;
+
+template <typename T>
+inline constexpr bool is_shared_ptr_v = is_shared_ptr<std::decay_t<T>>::value;
+
 // is_yaml_convertable/is_yaml_convertable_t/is_yaml_convertable_v
 
 template <typename T>
@@ -207,7 +237,7 @@ inline constexpr bool is_one_of_v = ((std::is_same_v<T, ArgsT> || ...));
 // is_one_of_derived_v
 
 template <typename T, typename... ArgsT>
-inline constexpr bool is_one_of_derived_v = ((std::is_base_of_v<T, ArgsT> || ...));
+inline constexpr bool is_one_of_derived_v = ((std::is_base_of_v<ArgsT, T> || ...));
 
 // dimension_of_v
 

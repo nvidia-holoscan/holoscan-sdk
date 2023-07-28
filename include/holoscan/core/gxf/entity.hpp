@@ -29,6 +29,7 @@
 
 #include "gxf/multimedia/video.hpp"
 #include "holoscan/core/gxf/gxf_tensor.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/type_traits.hpp"
 
 // Forward declaration
@@ -76,9 +77,7 @@ class Entity : public nvidia::gxf::Entity {
     auto tid_result =
         GxfComponentTypeId(context(), nvidia::TypenameAsString<holoscan::gxf::GXFTensor>(), &tid);
     if (tid_result != GXF_SUCCESS) {
-      if (log_errors) {
-        HOLOSCAN_LOG_ERROR("Unable to get component type id: {}", tid_result);
-      }
+      if (log_errors) { HOLOSCAN_LOG_ERROR("Unable to get component type id: {}", tid_result); }
       return nullptr;
     }
 
@@ -131,22 +130,11 @@ class Entity : public nvidia::gxf::Entity {
                                         holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
   void add(std::shared_ptr<DataT>& data, const char* name = nullptr) {
     gxf_tid_t tid;
-    const auto tid_result =
-        GxfComponentTypeId(context(), nvidia::TypenameAsString<holoscan::gxf::GXFTensor>(), &tid);
-    if (tid_result != GXF_SUCCESS) {
-      throw std::runtime_error(fmt::format(
-          "Unable to get component type id from 'holoscan::gxf::GXFTensor' (error code: {})",
-          tid_result));
-    }
+    HOLOSCAN_GXF_CALL_FATAL(
+        GxfComponentTypeId(context(), nvidia::TypenameAsString<holoscan::gxf::GXFTensor>(), &tid));
 
     gxf_uid_t cid;
-    const auto cid_result = GxfComponentAdd(context(), eid(), tid, name, &cid);
-    if (cid_result != GXF_SUCCESS) {
-      throw std::runtime_error(
-          fmt::format("Unable to add a component with the name '{}' (error code: {})",
-                      name == nullptr ? "" : name,
-                      cid_result));
-    }
+    HOLOSCAN_GXF_CALL_FATAL(GxfComponentAdd(context(), eid(), tid, name, &cid));
 
     auto handle = nvidia::gxf::Handle<holoscan::gxf::GXFTensor>::Create(context(), cid);
     holoscan::gxf::GXFTensor* tensor_ptr = handle->get();

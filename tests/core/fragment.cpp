@@ -21,6 +21,8 @@
 #include <gxf/core/gxf.h>
 
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "../config.hpp"
 #include "common/assert.hpp"
@@ -41,6 +43,8 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
+#include "holoscan/operators/ping_rx/ping_rx.hpp"
+#include "holoscan/operators/ping_tx/ping_tx.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
 
 using namespace std::string_literals;
@@ -85,6 +89,13 @@ TEST(Fragment, TestFragmentConfig) {
 
   ArgList args = F.from_config("format_converter_replayer"s);
   EXPECT_EQ(args.size(), 4);
+
+  args = F.from_config("format_converter_replayer.out_tensor_name");
+  Arg& arg = *args.begin();
+  EXPECT_EQ(arg.arg_type().element_type(), ArgElementType::kYAMLNode);
+  EXPECT_EQ(arg.arg_type().container_type(), ArgContainerType::kNative);
+  EXPECT_EQ(arg.name(), "out_tensor_name");
+  EXPECT_EQ(args.as<std::string>(), "source_video");
 
   // verify that second call to config raises a warning
   testing::internal::CaptureStderr();
@@ -160,7 +171,85 @@ TEST(Fragment, TestFragmentGraph) {
   // First call to graph creates a FlowGraph object
   // F.graph() returns a pointer to the abstract Graph base class so use
   // static_cast here
-  FlowGraph G = static_cast<FlowGraph&>(F.graph());
+  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+}
+
+TEST(Fragment, TestAddOperator) {
+  Fragment F;
+  auto op = F.make_operator<Operator>("op");
+
+  F.add_operator(op);
+
+  // First call to graph creates a FlowGraph object
+  // F.graph() returns a pointer to the abstract Graph base class so use
+  // static_cast here
+  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+
+  // verify that the operator was added to the graph
+  auto nodes = G.get_nodes();
+  EXPECT_EQ(nodes.size(), 1);
+  EXPECT_EQ(nodes[0], op);
+}
+
+TEST(Application, TestAddOperatorsWithSameName) {
+  Fragment F;
+
+  auto tx = F.make_operator<ops::PingTxOp>("op");
+  auto rx = F.make_operator<ops::PingRxOp>("op");
+
+  F.add_operator(tx);
+
+  EXPECT_THROW(F.add_operator(rx), holoscan::RuntimeError);
+  EXPECT_THROW(F.add_flow(tx, rx, {{"out", "in"}}), holoscan::RuntimeError);
+}
+
+TEST(Fragment, TestAddFlow) {
+  Fragment F;
+
+  auto tx = F.make_operator<ops::PingTxOp>("tx");
+  auto rx = F.make_operator<ops::PingRxOp>("rx");
+
+  F.add_flow(tx, rx, {{"out", "in"}});
+
+  // First call to graph creates a FlowGraph object
+  // F.graph() returns a pointer to the abstract Graph base class so use
+  // static_cast here
+  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+
+  // verify that the operators and edges were added to the graph
+  auto nodes = G.get_nodes();
+  EXPECT_EQ(nodes.size(), 2);
+  auto find_tx = G.find_node([&tx](const holoscan::OperatorNodeType& node) { return node == tx; });
+  auto find_rx = G.find_node([&rx](const holoscan::OperatorNodeType& node) { return node == rx; });
+  EXPECT_TRUE(find_tx);
+  EXPECT_TRUE(find_rx);
+  auto port_map = G.get_port_map(tx, rx);
+  EXPECT_TRUE(port_map);
+  EXPECT_EQ(std::begin(*port_map.value())->first, "out");
+  auto& input_port_set = std::begin(*port_map.value())->second;
+  EXPECT_EQ(input_port_set.size(), 1);
+  EXPECT_EQ(*(input_port_set.begin()), "in");
+}
+
+TEST(Fragment, TestOperatorOrder) {
+  Fragment F;
+
+  auto rx2 = F.make_operator<ops::PingRxOp>("rx2");
+  auto tx = F.make_operator<ops::PingTxOp>("tx");
+  auto rx = F.make_operator<ops::PingRxOp>("rx");
+  auto tx2 = F.make_operator<ops::PingTxOp>("tx2");
+
+  F.add_operator(tx2);
+  F.add_flow(tx, rx, {{"out", "in"}});
+  F.add_flow(tx2, rx2, {{"out", "in"}});
+
+  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+  auto order = G.get_nodes();
+
+  const std::vector<std::string> expected_order = {"tx2", "tx", "rx", "rx2"};
+  // verify that the operators were added to the graph in the correct order
+  EXPECT_EQ(order.size(), expected_order.size());
+  for (size_t i = 0; i < order.size(); i++) { EXPECT_EQ(order[i]->name(), expected_order[i]); }
 }
 
 TEST(Fragment, TestFragmentExecutor) {

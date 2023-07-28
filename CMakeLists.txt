@@ -24,6 +24,7 @@ set(HOLOSCAN_PACKAGE_NAME holoscan)
 # ##############################################################################
 option(BUILD_SHARED_LIBS "Build Shared Libraries" ON)
 option(HOLOSCAN_BUILD_MODULES "Build Holoscan SDK Modules" ON)
+option(HOLOSCAN_BUILD_LIBTORCH "Build support for the LibTorch backend" ON)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
 option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
 option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
@@ -95,6 +96,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
 
+# Don't append suffix to shared libraries for debug build
+set(CMAKE_DEBUG_POSTFIX "")
+
 # ##############################################################################
 # # RAPIDS CMAKE configurations
 # # (https://docs.rapids.ai/api/rapids-cmake/stable/api.html)
@@ -127,6 +131,13 @@ include(SetupCache)
 # ##############################################################################
 # # Define dependencies
 # ##############################################################################
+
+# Include pthread (add 'Threads::Threads' target to link against)
+# (https://cmake.org/cmake/help/v3.18/module/FindThreads.html)
+set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+find_package(Threads REQUIRED)
+
 include(cmake/setup_dependencies.cmake)
 
 # ##############################################################################
@@ -164,23 +175,28 @@ endif()
 list(APPEND HOLOSCAN_INSTALL_TARGETS
     logger
     core
-    gxf_holoscan_wrapper_lib
     holoviz
+    holoviz_imgui
     holoinfer
     infer_utils
     op_aja
+    op_async_ping_rx
+    op_async_ping_tx
     op_bayer_demosaic
     op_format_converter
     op_holoviz
-    op_multiai_inference
-    op_multiai_postprocessor
+    op_inference
+    op_inference_processor
     op_ping_rx
     op_ping_tx
     op_segmentation_postprocessor
-    op_tensor_rt
     op_video_stream_recorder
     op_video_stream_replayer
+    op_v4l2
 )
+if (${HOLOSCAN_BUILD_LIBTORCH})
+    list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_torch)
+endif()
 
 # Add PUBLIC dependencies to our install target
 # Note: required due to. However, could only export but not install?
@@ -214,6 +230,12 @@ install(DIRECTORY ${tl-expected_SOURCE_DIR}/include/tl/
 # Copy bundled dlpack headers
 install(DIRECTORY ${dlpack_SOURCE_DIR}/include/dlpack/
     DESTINATION include/3rdparty/dlpack
+    COMPONENT holoscan-core
+)
+
+# Copy bundled cli11 headers
+install(DIRECTORY ${cli11_SOURCE_DIR}/include/CLI/
+    DESTINATION include/3rdparty/CLI
     COMPONENT holoscan-core
 )
 
@@ -253,6 +275,27 @@ COMPONENT "holoscan-gxf_libs"
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/cmake/modules/wrap_operator_as_gxf_template"
 DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 COMPONENT "holoscan-gxf_libs"
+)
+
+# Install CMake scripts to download data from NGC so it can be reused by HoloHub
+install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/HoloscanDownloadData.cmake"
+DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
+COMPONENT "holoscan-core"
+)
+
+install(FILES "${CMAKE_SOURCE_DIR}/scripts/download_ngc_data"
+              "${CMAKE_SOURCE_DIR}/scripts/convert_video_to_gxf_entities.py"
+              "${CMAKE_SOURCE_DIR}/scripts/gxf_entity_codec.py"
+DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
+PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+COMPONENT "holoscan-core"
+)
+
+# Install CMake script to download example data from NGC
+install(FILES "${CMAKE_SOURCE_DIR}/scripts/download_example_data"
+DESTINATION "examples"
+PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+COMPONENT "holoscan-core"
 )
 
 # Define docs and hooks
@@ -359,7 +402,7 @@ if(HOLOSCAN_BUILD_COVERAGE)
         "${CMAKE_SOURCE_DIR}/modules/holoviz/src/*"
         "${CMAKE_SOURCE_DIR}/modules/holoinfer/src/*"
         "${CMAKE_SOURCE_DIR}/src/*"
-        "${CMAKE_SOURCE_DIR}/python/src/*"
+        "${CMAKE_SOURCE_DIR}/python/holoscan/*"
 	PYTEST_EXECUTABLE pytest --pyargs "${CMAKE_BINARY_DIR}/python/lib/tests" || true
 	PYTEST_EXTRACT "*holoscan*"
 	)
@@ -412,13 +455,6 @@ if(HOLOSCAN_BUILD_PYTHON)
     find_package(Python3  REQUIRED COMPONENTS Interpreter Development)
     superbuild_depend(pybind11)
     add_subdirectory(python)
-endif()
-
-# ##############################################################################
-# # Add documentation
-# ##############################################################################
-if(HOLOSCAN_BUILD_DOCS)
-    add_subdirectory(docs)
 endif()
 
 include(HoloscanCPack)

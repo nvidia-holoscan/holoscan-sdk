@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,13 +18,15 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_IO_CONTEXT_HPP
 #define HOLOSCAN_CORE_GXF_GXF_IO_CONTEXT_HPP
 
+#include <memory>
 #include <string>
 #include <unordered_map>
-#include <memory>
 
 #include "../io_context.hpp"
 
 namespace holoscan::gxf {
+
+nvidia::gxf::Receiver* get_gxf_receiver(const std::unique_ptr<IOSpec>& input_spec);
 
 /**
  * @brief Class to hold the input context for a GXF Operator.
@@ -36,33 +38,30 @@ class GXFInputContext : public InputContext {
   /**
    * @brief Construct a new GXFInputContext object.
    *
-   * @param context The pointer to the GXF context.
+   * @param execution_context The pointer to the execution context.
    * @param op The pointer to the GXFOperator object.
    */
-  GXFInputContext(gxf_context_t context, Operator* op);
+  GXFInputContext(ExecutionContext* execution_context, Operator* op);
 
   /**
    * @brief Construct a new GXFInputContext object
    *
-   * @param context The pointer to the GXF context.
+   * @param execution_context The pointer to the execution context.
    * @param op The pointer to the GXFOperator object.
    * @param inputs inputs The references to the map of the input specs.
    */
-  GXFInputContext(gxf_context_t context, Operator* op,
-                  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs)
-      : InputContext(op, inputs), gxf_context_(context) {}
+  GXFInputContext(ExecutionContext* execution_context, Operator* op,
+                  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs);
 
   /**
-   * @brief Get GXF context.
+   * @brief Get a pointer to the GXF execution runtime.
    * @return The pointer to the GXF context.
    */
-  gxf_context_t gxf_context() const { return gxf_context_; }
+  gxf_context_t gxf_context() const;
 
  protected:
+  bool empty_impl(const char* name = nullptr) override;
   std::any receive_impl(const char* name = nullptr, bool no_error_message = false) override;
-
- private:
-  gxf_context_t gxf_context_ = nullptr;  ///< The pointer to the GXF context.
 };
 
 /**
@@ -75,35 +74,30 @@ class GXFOutputContext : public OutputContext {
   /**
    * @brief Construct a new GXFOutputContext object.
    *
-   * @param context The pointer to the GXF context.
+   * @param execution_context The pointer to the execution context.
    * @param op The pointer to the GXFOperator object.
    */
-  GXFOutputContext(gxf_context_t context, Operator* op);
+  GXFOutputContext(ExecutionContext* execution_context, Operator* op);
 
   /**
    * @brief Construct a new GXFOutputContext object
    *
-   * @param context The pointer to the GXF context.
+   * @param execution_context The pointer to the execution context.
    * @param op The pointer to the GXFOperator object.
    * @param outputs outputs The references to the map of the output specs.
    */
-  GXFOutputContext(gxf_context_t context, Operator* op,
-                   std::unordered_map<std::string,
-                   std::unique_ptr<IOSpec>>& outputs) : OutputContext(op, outputs),
-                                                        gxf_context_(context) {}
+  GXFOutputContext(ExecutionContext* execution_context, Operator* op,
+                   std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs);
 
   /**
-   * @brief Get GXF context.
+   * @brief Get pointer to the GXF execution runtime.
    * @return The pointer to the GXF context.
    */
-  gxf_context_t gxf_context() const { return gxf_context_; }
+  gxf_context_t gxf_context() const;
 
  protected:
   void emit_impl(std::any data, const char* name = nullptr,
                  OutputType out_type = OutputType::kSharedPointer) override;
-
- private:
-  gxf_context_t gxf_context_ = nullptr;     ///< The pointer to the GXF context.
 };
 
 }  // namespace holoscan::gxf

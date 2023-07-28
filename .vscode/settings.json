@@ -115,12 +115,18 @@
         "ios": "cpp",
         "version": "cpp",
         "span": "cpp",
-        "charconv": "cpp"
+        "charconv": "cpp",
+        "cuchar": "cpp",
+        "propagate_const": "cpp",
+        "ranges": "cpp"
     },
     "git.alwaysSignOff": true,
     "git.untrackedChanges": "separate",
     "editor.formatOnSave": true,
     "editor.formatOnSaveMode": "modifications",
+    "[python]": {
+        "editor.formatOnSaveMode": "file",
+    },
     // "[cmake]": {
     // 	"editor.formatOnSave": false,
     // },
@@ -140,7 +146,8 @@
     "cmake.configureArgs": [
         "--log-context",
         "-DFETCHCONTENT_QUIET=Off",
-        "-DHOLOSCAN_USE_CCACHE=On"
+        "-DHOLOSCAN_USE_CCACHE=On",
+        "-DHOLOSCAN_BUILD_LIBTORCH=1"
         // "--trace",
         // "--trace-expand",
     ],
@@ -150,7 +157,7 @@
     "C_Cpp.codeAnalysis.clangTidy.enabled": false,
     "C_Cpp.codeAnalysis.clangTidy.useBuildPath": false,
     "C/C++ Include Guard.Macro Type": "Filepath",
-    "C/C++ Include Guard.Path Skip": 1,
+    "C/C++ Include Guard.Path Skip": 2,
     "C/C++ Include Guard.Path Depth": 0,
     "C/C++ Include Guard.Remove Extension": false,
     "sonarlint.pathToCompileCommands": "${command:cmake.buildDirectory}/compile_commands.json",
@@ -164,7 +171,9 @@
             "env": {
                 "LD_LIBRARY_PATH": "${command:cmake.buildDirectory}/lib:${command:cmake.buildDirectory}/lib/gxf_extensions:${env:LD_LIBRARY_PATH}",
                 "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/tests/data",
-                "HOLOSCAN_SAMPLE_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/data",
+                "HOLOSCAN_INPUT_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/data",
+                "HOLOSCAN_LOG_LEVEL": "DEBUG",
+                "HOLOSCAN_EXECUTOR_LOG_LEVEL": "INFO",
             }
         },
         {
@@ -175,15 +184,28 @@
             "env": {
                 "LD_LIBRARY_PATH": "${command:cmake.buildDirectory}/lib:${command:cmake.buildDirectory}/lib/gxf_extensions:${env:LD_LIBRARY_PATH}",
                 "HOLOSCAN_TESTS_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/tests/data",
-                "HOLOSCAN_SAMPLE_DATA_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/data",
+                "HOLOSCAN_INPUT_PATH": "/workspace/holoscan-sdk/${env:HOLOSCAN_PUBLIC_FOLDER}/data",
             }
         },
     ],
     "python.analysis.extraPaths": [
-        // variable substitution, e.g. using ${command:cmake.buildDirectory} is not working here
-        "./build-debug-x86_64/python/lib"
+        // variable substitution, e.g. using ${command:cmake.buildDirectory}/${env:HOLOSCAN_PUBLIC_FOLDER} is not working here
+        // Put the build folder first because most Python functionality depends on Python bindings (.so files).
+        // Without it, VSCode cannot find modules such as `_core`.
+        "./public/build-debug-x86_64/python/lib",
+        "./build-debug-x86_64/python/lib",
+        "./public/python",
+        "./python",
     ],
+    // TODO: Generate .pyi files and support autocomplete for C++ modules
+    // "python.autoComplete.extraPaths": [],
     "python.formatting.provider": "black",
+    "python.linting.flake8Enabled": false,
+    "python.linting.enabled": true,
+    "python.linting.mypyEnabled": true,
+    "isort.importStrategy": "fromEnvironment",
+    "isort.check": true,
+    "cpplint.cpplintPath": "/home/holoscan-sdk/.local/bin/cpplint",
     // It seems that Pytest Discovery feature in VSCode needs to be improved
     // - https://github.com/microsoft/vscode-python/issues/17242
     // - https://github.com/microsoft/vscode-python/issues/19790

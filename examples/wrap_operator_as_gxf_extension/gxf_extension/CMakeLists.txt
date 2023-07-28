@@ -32,7 +32,7 @@ wrap_operator_as_gxf_extension(
   EXTENSION_NAME "PingTxNativeOpExtension"
   EXTENSION_DESCRIPTION "Ping Tx Native Operator extension"
   EXTENSION_AUTHOR "NVIDIA"
-  EXTENSION_VERSION "0.5.1"
+  EXTENSION_VERSION "0.5.0"
   EXTENSION_LICENSE "Apache-2.0"
   EXTENSION_TARGET_NAME "gxf_wrapped_ping_tx_native_op" # optional, defaults to EXTENSION_NAME lowercase
   EXTENSION_TARGET_PROPERTIES
@@ -57,7 +57,7 @@ wrap_operator_as_gxf_extension(
   EXTENSION_NAME "PingRxNativeOpExtension"
   EXTENSION_DESCRIPTION "Ping Rx Native Operator extension"
   EXTENSION_AUTHOR "NVIDIA"
-  EXTENSION_VERSION "0.5.1"
+  EXTENSION_VERSION "0.5.0"
   EXTENSION_LICENSE "Apache-2.0"
   EXTENSION_TARGET_NAME "gxf_wrapped_ping_rx_native_op" # optional, defaults to EXTENSION_NAME lowercase
   EXTENSION_TARGET_PROPERTIES

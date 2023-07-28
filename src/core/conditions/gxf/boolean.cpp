@@ -15,9 +15,11 @@
  * limitations under the License.
  */
 
-#include <gxf/std/scheduling_terms.hpp>
-
 #include "holoscan/core/conditions/gxf/boolean.hpp"
+
+#include <string>
+
+#include <gxf/std/scheduling_terms.hpp>
 
 #include "holoscan/core/component_spec.hpp"
 

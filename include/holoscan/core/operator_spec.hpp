@@ -26,9 +26,9 @@
 #include <utility>
 #include <vector>
 
+#include "./common.hpp"
 #include "./component_spec.hpp"
 #include "./io_spec.hpp"
-#include "./common.hpp"
 namespace holoscan {
 
 /**
@@ -126,16 +126,53 @@ class OperatorSpec : public ComponentSpec {
    * @param key The key (name) of the parameter.
    * @param headline The headline of the parameter.
    * @param description The description of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
    */
   void param(Parameter<holoscan::IOSpec*>& parameter, const char* key, const char* headline,
-             const char* description) {
+             const char* description, ParameterFlag flag = ParameterFlag::kNone) {
     parameter.key_ = key;
     parameter.headline_ = headline;
     parameter.description_ = description;
+    parameter.flag_ = flag;
 
     auto [_, is_exist] = params_.try_emplace(key, parameter);
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
   }
+
+  /**
+   * @brief Define an IOSpec* parameter for this operator.
+   *
+   * This method is to catch the following case:
+   *
+   * ```cpp
+   * ...
+   *     spec.param(iospec1_, "iospec1", "IO Spec", "Example IO Spec.", {});
+   * ...
+   * private:
+   *  Parameter<holoscan::IOSpec*> iospec1_;
+   * ```
+   *
+   * Otherwise, `{}` will be treated as `ParameterFlag::kNone` instead of `std::initializer_list`.
+   *
+   * @param parameter The parameter to define.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   * @param description The description of the parameter.
+   * @param init_list The initializer list of the parameter.
+   */
+  void param(Parameter<holoscan::IOSpec*>& parameter, const char* key, const char* headline,
+             const char* description, std::initializer_list<void*> init_list) {
+    (void)init_list;
+    parameter.key_ = key;
+    parameter.headline_ = headline;
+    parameter.description_ = description;
+    // Set default value to nullptr
+    parameter.default_value_ = static_cast<holoscan::IOSpec*>(nullptr);
+
+    auto [_, is_exist] = params_.try_emplace(key, parameter);
+    if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
+  }
+
   /**
    * @brief Define an IOSpec* parameter with a default value for this operator.
    *
@@ -144,11 +181,13 @@ class OperatorSpec : public ComponentSpec {
    * @param headline The headline of the parameter.
    * @param description The description of the parameter.
    * @param default_value The default value of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
    */
   void param(Parameter<holoscan::IOSpec*>& parameter, const char* key, const char* headline,
-             const char* description, holoscan::IOSpec* default_value) {
+             const char* description, holoscan::IOSpec* default_value,
+             ParameterFlag flag = ParameterFlag::kNone) {
     parameter.default_value_ = default_value;
-    param(parameter, key, headline, description);
+    param(parameter, key, headline, description, flag);
   }
 
   /**
@@ -158,16 +197,53 @@ class OperatorSpec : public ComponentSpec {
    * @param key The key (name) of the parameter.
    * @param headline The headline of the parameter.
    * @param description The description of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
    */
   void param(Parameter<std::vector<holoscan::IOSpec*>>& parameter, const char* key,
-             const char* headline, const char* description) {
+             const char* headline, const char* description,
+             ParameterFlag flag = ParameterFlag::kNone) {
     parameter.key_ = key;
     parameter.headline_ = headline;
     parameter.description_ = description;
+    parameter.flag_ = flag;
 
     auto [_, is_exist] = params_.try_emplace(key, parameter);
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
   }
+
+  /**
+   * @brief Define a IOSpec* vector parameter for this operator.
+   *
+   * This method is to catch the following case:
+   *
+   * ```cpp
+   * ...
+   *     spec.param(iospec1_, "iospec1", "IO Spec", "Example IO Spec.", {});
+   * ...
+   * private:
+   *  Parameter<std::vector<holoscan::IOSpec*>> iospec1_;
+   * ```
+   *
+   * Otherwise, `{}` will be treated as `ParameterFlag::kNone` instead of `std::initializer_list`.
+   *
+   * @param parameter The parameter to define.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   * @param description The description of the parameter.
+   * @param init_list The initializer list of the parameter.
+   */
+  void param(Parameter<std::vector<holoscan::IOSpec*>>& parameter, const char* key,
+             const char* headline, const char* description,
+             std::initializer_list<holoscan::IOSpec*> init_list) {
+    parameter.key_ = key;
+    parameter.headline_ = headline;
+    parameter.description_ = description;
+    parameter.default_value_ = init_list;  // create a vector from initializer list
+
+    auto [_, is_exist] = params_.try_emplace(key, parameter);
+    if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
+  }
+
   /**
    * @brief Define an IOSpec* parameter with a default value for this operator.
    *
@@ -176,12 +252,14 @@ class OperatorSpec : public ComponentSpec {
    * @param headline The headline of the parameter.
    * @param description The description of the parameter.
    * @param default_value The default value of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
    */
   void param(Parameter<std::vector<holoscan::IOSpec*>>& parameter, const char* key,
              const char* headline, const char* description,
-             std::vector<holoscan::IOSpec*> default_value) {
+             std::vector<holoscan::IOSpec*> default_value,
+             ParameterFlag flag = ParameterFlag::kNone) {
     parameter.default_value_ = default_value;
-    param(parameter, key, headline, description);
+    param(parameter, key, headline, description, flag);
   }
 
   /**

@@ -19,78 +19,45 @@
 #define HOLOSCAN_CORE_RESOURCES_GXF_DOUBLE_BUFFER_TRANSMITTER_HPP
 
 #include <string>
-// gxf/std/double_buffer_transmitter.hpp is missing in the GXF SDK
-// The following is a copy of the file from the GXF SDK until it is fixed
-// TODO: Remove this file once the issue is fixed
-////////////////////////////////////////////////////////////////////////////////////////////////////
-#include <memory>
 
-#include "gxf/core/component.hpp"
-#include "gxf/core/entity.hpp"
-#include "gxf/core/handle.hpp"
-#include "gxf/std/gems/staging_queue/staging_queue.hpp"
-#include "gxf/std/transmitter.hpp"
-
-namespace nvidia {
-namespace gxf {
-
-// A transmitter which uses a double-buffered queue where messages are pushed to a backstage after
-// they are published. Outgoing messages are not immediately available and need to be
-// moved to the backstage first.
-class DoubleBufferTransmitter : public Transmitter {
- public:
-  using queue_t = ::gxf::staging_queue::StagingQueue<Entity>;
-
-  gxf_result_t registerInterface(Registrar* registrar) override;
-
-  gxf_result_t initialize() override;
-
-  gxf_result_t deinitialize() override;
-
-  gxf_result_t pop_abi(gxf_uid_t* uid) override;
-
-  gxf_result_t push_abi(gxf_uid_t other) override;
-
-  gxf_result_t peek_abi(gxf_uid_t* uid, int32_t index) override;
-
-  size_t capacity_abi() override;
-
-  size_t size_abi() override;
-
-  gxf_result_t publish_abi(gxf_uid_t uid) override;
-
-  size_t back_size_abi() override;
-
-  gxf_result_t sync_abi() override;
-
-  Parameter<uint64_t> capacity_;
-  Parameter<uint64_t> policy_;
-
- private:
-  std::unique_ptr<queue_t> queue_;
-};
-
-}  // namespace gxf
-}  // namespace nvidia
-////////////////////////////////////////////////////////////////////////////////////////////////////
+#include "gxf/std/double_buffer_transmitter.hpp"
 
 #include "./transmitter.hpp"
 
 namespace holoscan {
 
+// Forward declarations
+class AnnotatedDoubleBufferTransmitter;
+
+/**
+ * @brief Double buffer transmitter class.
+ *
+ * The DoubleBufferTransmitter class is used to emit messages to another operator within a
+ * fragment.
+ */
 class DoubleBufferTransmitter : public Transmitter {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(DoubleBufferTransmitter, Transmitter)
   DoubleBufferTransmitter() = default;
   DoubleBufferTransmitter(const std::string& name, nvidia::gxf::DoubleBufferTransmitter* component);
 
-  const char* gxf_typename() const override { return "nvidia::gxf::DoubleBufferTransmitter"; }
+  DoubleBufferTransmitter(const std::string& name, AnnotatedDoubleBufferTransmitter* component);
+
+  const char* gxf_typename() const override;
 
   void setup(ComponentSpec& spec) override;
 
- private:
+  /**
+   * @brief Track the data flow of the receiver and use holoscan::AnnotatedDoubleBufferTransmitter
+   * as the GXF Component.
+   */
+  void track();
+
   Parameter<uint64_t> capacity_;
   Parameter<uint64_t> policy_;
+
+ private:
+  bool tracking_ = false;  ///< Used to decide whether to use data flow tracking or not.
 };
 
 }  // namespace holoscan

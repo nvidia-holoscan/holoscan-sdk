@@ -143,12 +143,11 @@ enum class LogLevel {
  */
 class Logger {
  public:
-  static void load_env_level();
-
-  static void set_level(LogLevel level);
+  static void set_level(LogLevel level, bool* is_overridden_by_env = nullptr);
   static LogLevel level();
 
-  static void set_pattern(std::string pattern);
+  static void set_pattern(std::string pattern = "", bool* is_overridden_by_env = nullptr);
+  static std::string& pattern();
 
   static bool should_backtrace();
   static void disable_backtrace();
@@ -175,6 +174,20 @@ class Logger {
     log_message(level, format, fmt::make_args_checked<ArgsT...>(format, args...));
   }
 
+  /**
+   * @brief Flag to indicate if the log pattern was set by the user.
+   */
+  static bool log_pattern_set_by_user;
+
+  /**
+   * @brief Flag to indicate if the log level was set by the user.
+   *
+   * This is used to set the default log level (INFO) in Application::Application() if the user has
+   * not set the log level explicitly before Application::Application() is called and no environment
+   * variable (HOLOSCAN_LOG_LEVEL) is set.
+   */
+  static bool log_level_set_by_user;
+
  private:
   static void log_message(const char* file, int line, const char* function_name, LogLevel level,
                           fmt::string_view format, fmt::format_args args);
@@ -182,8 +195,10 @@ class Logger {
 };
 
 /**
- * @brief set the log level of the Holoscan Application from the environment variable
- * `HOLOSCAN_LOG_LEVEL`.
+ * @brief Set global logging level.
+ *
+ * If the environment variable `HOLOSCAN_LOG_LEVEL` is set, the log level will be overridden by the
+ * value of the environment variable.
  *
  * `HOLOSCAN_LOG_LEVEL` can be set to one of the following values:
  *
@@ -198,19 +213,10 @@ class Logger {
  * ```bash
  * export HOLOSCAN_LOG_LEVEL=TRACE
  * ```
- */
-inline void load_env_log_level() {
-  Logger::load_env_level();
-}
-
-/**
- * @brief Set global logging level.
  *
  * @param level The new log level.
  */
-inline void set_log_level(LogLevel level) {
-  Logger::set_level(level);
-}
+void set_log_level(LogLevel level);
 
 /**
  * @brief Get global logging level.
@@ -222,18 +228,29 @@ inline LogLevel log_level() {
 }
 
 /**
- * @brief Set global format string.
+ * @brief Set global log format string.
  *
- * Please refer to the [spdlog
+ * If the environment variable `HOLOSCAN_LOG_FORMAT` is set, the log pattern will be overridden by
+ * the value of the environment variable.
+ *
+ * If the user has not set the log pattern explicitly before Application::Application() is called
+ * and no environment variable (HOLOSCAN_LOG_FORMAT) is set, the default log pattern will be used.
+ *
+ * `HOLOSCAN_LOG_FORMAT` can be set to one of the following values:
+ *
+ * - SHORT: prints message severity level, and message
+ * - DEFAULT: prints message severity level, filename:linenumber, and message
+ * - LONG: prints timestamp, application, message severity level, filename:linenumber, and message
+ * - FULL: prints timestamp, thread id, application, message severity level, filename:linenumber,
+ * and message
+ *
+ * Or, a custom format string can be specified. Please refer to the [spdlog
  * documentation](https://spdlog.docsforge.com/v1.x/3.custom-formatting/#customizing-format-using-set_pattern)
  * for the format string syntax.
  *
  * @param pattern The format string.
  */
-inline void set_log_pattern(std::string pattern) {
-  // https://spdlog.docsforge.com/v1.x/0.faq/#colors-do-not-appear-when-using-custom-format
-  Logger::set_pattern(pattern);
-}
+void set_log_pattern(std::string pattern = "");
 
 /**
  * @brief Print a trace message to the log.
@@ -293,6 +310,17 @@ inline void log_error(const FormatT& format, ArgsT&&... args) {
 template <typename FormatT, typename... ArgsT>
 inline void log_critical(const FormatT& format, ArgsT&&... args) {
   Logger::log(LogLevel::CRITICAL, format, std::forward<ArgsT>(args)...);
+}
+
+/**
+ * @brief Print a message to the log.
+ *
+ * The format string follows the [fmtlib format string syntax](https://fmt.dev/latest/syntax.html).
+ */
+template <typename FormatT, typename... ArgsT>
+inline void log_message(const char* file, int line, const char* function_name, LogLevel level,
+                        const FormatT& format, ArgsT&&... args) {
+  Logger::log(file, line, function_name, level, format, std::forward<ArgsT>(args)...);
 }
 
 }  // namespace holoscan

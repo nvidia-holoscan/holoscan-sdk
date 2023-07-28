@@ -17,6 +17,8 @@
 
 #include "holoscan/core/resources/gxf/transmitter.hpp"
 
+#include <string>
+
 namespace holoscan {
 
 Transmitter::Transmitter(const std::string& name, nvidia::gxf::Transmitter* component)

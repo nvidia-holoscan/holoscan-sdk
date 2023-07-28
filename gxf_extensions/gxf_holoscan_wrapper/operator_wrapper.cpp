@@ -17,12 +17,18 @@
 
 #include "operator_wrapper.hpp"
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "gxf/cuda/cuda_stream_pool.hpp"
 #include "gxf/std/scheduling_term.hpp"
 #include "gxf/std/unbounded_allocator.hpp"
 // #include "gxf/std/block_memory_pool.hpp" // TODO: uncomment when available in GXF SDK package
 
 #include "holoscan/core/common.hpp"
+#include "holoscan/core/conditions/gxf/asynchronous.hpp"
+#include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/io_context.hpp"
@@ -32,15 +38,13 @@
 
 namespace holoscan::gxf {
 
-// Whether the log level has been set from the environment.
-static bool g_operator_wrapper_env_log_level_set = false;
-
 OperatorWrapper::OperatorWrapper() : nvidia::gxf::Codelet() {
-  // Check if the environment variable for log level has been set.
-  if (!g_operator_wrapper_env_log_level_set) {
-    g_operator_wrapper_env_log_level_set = true;
-    holoscan::load_env_log_level();
-  }
+  // Set the log level from the environment variable if it exists.
+  // Or, set the default log level to INFO if it hasn't been set by the user.
+  if (!Logger::log_level_set_by_user) { holoscan::set_log_level(LogLevel::INFO); }
+  // Set the log format from the environment variable if it exists.
+  // Or, set the default log format depending on the log level if it hasn't been set by the user.
+  holoscan::set_log_pattern();
 }
 
 gxf_result_t OperatorWrapper::initialize() {
@@ -100,6 +104,10 @@ gxf_result_t OperatorWrapper::initialize() {
           GxfComponentTypeId(
               context(), "nvidia::gxf::BooleanSchedulingTerm", &boolean_condition_tid);
 
+          gxf_tid_t async_condition_tid{};
+          GxfComponentTypeId(
+              context(), "nvidia::gxf::AsynchronousSchedulingTerm", &async_condition_tid);
+
           if (condition_tid == boolean_condition_tid) {
             nvidia::gxf::BooleanSchedulingTerm* boolean_condition_ptr = nullptr;
             code = GxfComponentPointer(context(),
@@ -110,6 +118,18 @@ gxf_result_t OperatorWrapper::initialize() {
             if (boolean_condition_ptr) {
               auto condition =
                   std::make_shared<holoscan::BooleanCondition>(tag, boolean_condition_ptr);
+              op_->add_arg(Arg(param_ptr->key()) = condition);
+            }
+          } else if (condition_tid == async_condition_tid) {
+            nvidia::gxf::AsynchronousSchedulingTerm* async_condition_ptr = nullptr;
+            code = GxfComponentPointer(context(),
+                                       condition_cid,
+                                       condition_tid,
+                                       reinterpret_cast<void**>(&async_condition_ptr));
+
+            if (async_condition_ptr) {
+              auto condition =
+                  std::make_shared<holoscan::AsynchronousCondition>(tag, async_condition_ptr);
               op_->add_arg(Arg(param_ptr->key()) = condition);
             }
           } else {

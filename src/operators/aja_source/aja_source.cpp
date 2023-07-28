@@ -22,8 +22,10 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "gxf/multimedia/video.hpp"
+#include "holoscan/core/condition.hpp"
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_spec.hpp"
@@ -400,11 +402,12 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
   // holoscan::gxf::Entity
   bool have_overlay_in = false;
   holoscan::gxf::Entity overlay_in_message;
-  try {
-    overlay_in_message = op_input.receive<gxf::Entity>("overlay_buffer_input");
+  auto maybe_overlay_message = op_input.receive<gxf::Entity>("overlay_buffer_input");
+  if (maybe_overlay_message) {
+    overlay_in_message = maybe_overlay_message.value();
     have_overlay_in = true;
-  } catch (const std::runtime_error& r_) {
-    HOLOSCAN_LOG_TRACE("Failed to find overlay_buffer_input: {}", std::string(r_.what()));
+  } else {
+    HOLOSCAN_LOG_TRACE("Failed to find overlay_buffer_input");
   }
 
   if (enable_overlay_ && have_overlay_in) {
@@ -414,9 +417,8 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
       // Overlay uses HW frames 2 and 3.
       current_overlay_hw_frame_ = ((current_overlay_hw_frame_ + 1) % 2) + 2;
 
-      const auto& buffer = overlay_buffer.get();
-      ULWord* ptr = reinterpret_cast<ULWord*>(buffer->pointer());
-      device_.DMAWriteFrame(current_overlay_hw_frame_, ptr, buffer->size());
+      ULWord* ptr = reinterpret_cast<ULWord*>(overlay_buffer->pointer());
+      device_.DMAWriteFrame(current_overlay_hw_frame_, ptr, overlay_buffer->size());
       device_.SetOutputFrame(overlay_channel_, current_overlay_hw_frame_);
       device_.SetMixerMode(0, NTV2MIXERMODE_MIX);
     } catch (const std::runtime_error& r_) {

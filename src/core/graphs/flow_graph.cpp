@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,100 +17,189 @@
 
 #include "holoscan/core/graphs/flow_graph.hpp"
 
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "holoscan/core/errors.hpp"
+#include "holoscan/core/fragment.hpp"
+#include "holoscan/core/operator.hpp"
+
 namespace holoscan {
 
-using NodeType = std::shared_ptr<Operator>;
-using EdgeDataElementType = std::unordered_map<std::string, std::set<std::string, std::less<>>>;
-using EdgeDataType = std::shared_ptr<EdgeDataElementType>;
+// Explicit instantiation
+//   for OperatorFlowGraph
+template class FlowGraph<OperatorNodeType, OperatorEdgeDataElementType>;
+//   for FragmentFlowGraph
+template class FlowGraph<FragmentNodeType, FragmentEdgeDataElementType>;
 
-void FlowGraph::add_operator(const NodeType& op) {
-  (void)op;
-  if (succ_.find(op) == succ_.end()) {
-    if (!op) {
-      HOLOSCAN_LOG_ERROR("Calling add_operator() with nullptr");
+template <typename NodeT, typename EdgeDataElementT>
+void FlowGraph<NodeT, EdgeDataElementT>::add_node(const NodeT& node) {
+  if (succ_.find(node) == succ_.end()) {
+    if (!node) {
+      HOLOSCAN_LOG_ERROR("Calling add_node() with nullptr");
       return;
     }
-    succ_[op] = std::unordered_map<NodeType, EdgeDataType>();
-    pred_[op] = std::unordered_map<NodeType, EdgeDataType>();
+    // If there is already a node with the same name, it will raise an error.
+    if (name_map_.find(node->name()) != name_map_.end()) {
+      HOLOSCAN_LOG_ERROR("Calling add_node() with a node ('{}') that has a duplicate name",
+                         node->name());
+      throw RuntimeError(ErrorCode::kDuplicateName);
+    }
+
+    succ_[node] = std::unordered_map<NodeType, EdgeDataType>();
+    pred_[node] = std::unordered_map<NodeType, EdgeDataType>();
+    ordered_nodes_.push_back(node);
+    name_map_[node->name()] = node;
   }
 }
 
-void FlowGraph::add_flow(const NodeType& op_u, const NodeType& op_v, const EdgeDataType& port_map) {
-  if (succ_.find(op_u) == succ_.end()) {
-    if (!op_u) {
-      HOLOSCAN_LOG_ERROR("Calling add_flow() with nullptr (op_u is nullptr)");
+template <typename NodeT, typename EdgeDataElementT>
+void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const NodeType& node_v,
+                                                  const EdgeDataType& port_map) {
+  if (succ_.find(node_u) == succ_.end()) {
+    if (!node_u) {
+      HOLOSCAN_LOG_ERROR("Calling add_flow() with nullptr (node_u is nullptr)");
       return;
     }
-    succ_[op_u] = std::unordered_map<NodeType, EdgeDataType>();
-    pred_[op_u] = std::unordered_map<NodeType, EdgeDataType>();
+    // If there is already a node with the same name, it will raise an error.
+    if (name_map_.find(node_u->name()) != name_map_.end()) {
+      HOLOSCAN_LOG_ERROR("Calling add_flow() with a node ('{}') that has a duplicate name",
+                         node_u->name());
+      throw RuntimeError(ErrorCode::kDuplicateName);
+    }
+
+    succ_[node_u] = std::unordered_map<NodeType, EdgeDataType>();
+    pred_[node_u] = std::unordered_map<NodeType, EdgeDataType>();
+    ordered_nodes_.push_back(node_u);
+    name_map_[node_u->name()] = node_u;
   }
-  if (succ_.find(op_v) == succ_.end()) {
-    if (!op_v) {
-      HOLOSCAN_LOG_ERROR("Calling add_flow() with nullptr (op_v is nullptr)");
+  if (succ_.find(node_v) == succ_.end()) {
+    if (!node_v) {
+      HOLOSCAN_LOG_ERROR("Calling add_flow() with nullptr (node_v is nullptr)");
       return;
     }
-    succ_[op_v] = std::unordered_map<NodeType, EdgeDataType>();
-    pred_[op_v] = std::unordered_map<NodeType, EdgeDataType>();
+    // If there is already a node with the same name, it will raise an error.
+    if (name_map_.find(node_v->name()) != name_map_.end()) {
+      HOLOSCAN_LOG_ERROR("Calling add_flow() with a node ('{}') that has a duplicate name",
+                         node_v->name());
+      throw RuntimeError(ErrorCode::kDuplicateName);
+    }
+
+    succ_[node_v] = std::unordered_map<NodeType, EdgeDataType>();
+    pred_[node_v] = std::unordered_map<NodeType, EdgeDataType>();
+    ordered_nodes_.push_back(node_v);
+    name_map_[node_v->name()] = node_v;
   }
 
-  auto it_edgedata = succ_[op_u].find(op_v);
-  if (it_edgedata != succ_[op_u].end()) {
+  auto it_edgedata = succ_[node_u].find(node_v);
+  if (it_edgedata != succ_[node_u].end()) {
     const auto& datadict = it_edgedata->second;
     if (port_map) {
       for (auto& [key, value] : *port_map) { datadict->insert({key, value}); }
     }
-    succ_[op_u][op_v] = datadict;
-    pred_[op_v][op_u] = datadict;
+    succ_[node_u][node_v] = datadict;
+    pred_[node_v][node_u] = datadict;
   } else {
     auto datadict = std::make_shared<EdgeDataElementType>();
 
     if (port_map) {
       for (auto& [key, value] : *port_map) { datadict->insert({key, value}); }
     }
-    succ_[op_u][op_v] = datadict;
-    pred_[op_v][op_u] = datadict;
+    succ_[node_u][node_v] = datadict;
+    pred_[node_v][node_u] = datadict;
   }
 }
 
-std::optional<EdgeDataType> FlowGraph::get_port_map(const NodeType& op_u, const NodeType& op_v) {
-  auto it_u = succ_.find(op_u);
+template <typename NodeT, typename EdgeDataElementT>
+std::optional<typename FlowGraph<NodeT, EdgeDataElementT>::EdgeDataType>
+FlowGraph<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u, const NodeType& node_v) {
+  auto it_u = succ_.find(node_u);
   if (it_u == succ_.end()) { return std::nullopt; }
-  auto it_v = it_u->second.find(op_v);
+  auto it_v = it_u->second.find(node_v);
   if (it_v == it_u->second.end()) { return std::nullopt; }
   return it_v->second;
 }
 
-bool FlowGraph::is_root(const NodeType& op) {
-  if (auto it_pred = pred_.find(op); it_pred->second.empty()) { return true; }
+template <typename NodeT, typename EdgeDataElementT>
+bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) {
+  auto it_pred = pred_.find(node);
+  if (it_pred->second.empty()) { return true; }
 
   return false;
 }
 
-bool FlowGraph::is_leaf(const NodeType& op) {
-  if (auto it_succ = succ_.find(op); it_succ->second.empty()) { return true; }
+template <typename NodeT, typename EdgeDataElementT>
+bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) {
+  auto it_succ = succ_.find(node);
+  if (it_succ->second.empty()) { return true; }
   return false;
 }
 
-std::vector<NodeType> FlowGraph::get_root_operators() {
+template <typename NodeT, typename EdgeDataElementT>
+std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
+FlowGraph<NodeT, EdgeDataElementT>::get_root_nodes() {
   std::vector<NodeType> roots;
-  for (const auto& [op, _] : pred_) {
-    if (is_root(op)) { roots.push_back(op); }
+  for (const auto& [node, _] : pred_) {
+    if (is_root(node)) { roots.push_back(node); }
   }
   return roots;
 }
 
-std::vector<NodeType> FlowGraph::get_operators() {
-  std::vector<NodeType> ops;
-  for (const auto& [op, _] : succ_) { ops.push_back(op); }
-  return ops;
+template <typename NodeT, typename EdgeDataElementT>
+std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
+FlowGraph<NodeT, EdgeDataElementT>::get_nodes() {
+  std::vector<NodeType> nodes;
+  nodes.reserve(ordered_nodes_.size());  // pre-allocate memory
+  for (const auto& node : ordered_nodes_) { nodes.push_back(node); }
+  return nodes;
 }
 
-std::vector<NodeType> FlowGraph::get_next_operators(const NodeType& op) {
-  std::vector<NodeType> ops;
-  auto it_succ = succ_.find(op);
-  if (it_succ == succ_.end()) { return ops; }
-  for (const auto& [op_next, _] : it_succ->second) { ops.push_back(op_next); }
-  return ops;
+template <typename NodeT, typename EdgeDataElementT>
+std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
+FlowGraph<NodeT, EdgeDataElementT>::get_next_nodes(const NodeType& node) {
+  std::vector<NodeType> nodes;
+  auto it_succ = succ_.find(node);
+  if (it_succ == succ_.end()) { return nodes; }
+  nodes.reserve(it_succ->second.size());  // pre-allocate memory
+  for (const auto& [node_next, _] : it_succ->second) { nodes.push_back(node_next); }
+  return nodes;
+}
+
+template <typename NodeT, typename EdgeDataElementT>
+std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
+FlowGraph<NodeT, EdgeDataElementT>::get_previous_nodes(const NodeType& node) {
+  std::vector<NodeType> nodes;
+  auto it_prev = pred_.find(node);
+  if (it_prev == pred_.end()) { return nodes; }
+  nodes.reserve(it_prev->second.size());
+  for (const auto& [node_prev, _] : it_prev->second) { nodes.push_back(node_prev); }
+  return nodes;
+}
+
+template <typename NodeT, typename EdgeDataElementT>
+typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
+    const NodePredicate& pred) {
+  for (const auto& [node, _] : succ_) {
+    if (pred(node)) { return node; }
+  }
+  return nullptr;
+}
+
+template <typename NodeT, typename EdgeDataElementT>
+typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
+    const NodeType& node) {
+  auto it_prev = pred_.find(node);
+  if (it_prev == pred_.end()) { return nullptr; }
+  return it_prev->first;
+}
+
+template <typename NodeT, typename EdgeDataElementT>
+typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
+    std::string name) {
+  if (name_map_.find(name) == name_map_.end()) { return nullptr; }
+  return name_map_[name];
 }
 
 }  // namespace holoscan

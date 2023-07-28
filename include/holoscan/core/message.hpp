@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <any>
 #include <memory>
+#include <utility>
 
 #include "./common.hpp"
 
@@ -32,8 +33,8 @@ namespace holoscan {
  * It wraps a `std::any` object and provides a type-safe interface to access the data.
  *
  * This class is used by the `holoscan::gxf::GXFWrapper` to support the Holoscan native operator.
- * The `holoscan::gxf::GXFWrapper` will hold the object of this class and delegate the message to the
- * Holoscan native operator.
+ * The `holoscan::gxf::GXFWrapper` will hold the object of this class and delegate the message to
+ * the Holoscan native operator.
  */
 class Message {
  public:
@@ -47,7 +48,9 @@ class Message {
    *
    * @param value The value to be wrapped by the message.
    */
-  explicit Message(std::any value) : value_(value) {}
+  template <typename typeT,
+            typename = std::enable_if_t<!std::is_same_v<std::decay_t<typeT>, Message>>>
+  explicit Message(typeT&& value) : value_(std::forward<typeT>(value)) {}
 
   /**
    * @brief Set the value object.
@@ -56,8 +59,8 @@ class Message {
    * @param value The value to be wrapped by the message.
    */
   template <typename ValueT>
-  void set_value(ValueT value) {
-    value_ = value;
+  void set_value(ValueT&& value) {
+    value_ = std::forward<ValueT>(value);
   }
 
   /**

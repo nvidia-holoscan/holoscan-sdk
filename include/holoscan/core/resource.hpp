@@ -92,10 +92,23 @@ namespace holoscan {
  */
 class Resource : public Component {
  public:
+  /**
+   * @brief Resource type used for the initialization of the resource.
+   */
+  enum class ResourceType {
+    kNative,  ///< Native resource.
+    kGXF,     ///< GXF resource.
+  };
+
   Resource() = default;
 
   Resource(Resource&&) = default;
 
+  /**
+   * @brief Construct a new Resource object.
+   *
+   * @param args The arguments to be passed to the resource.
+   */
   HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()
   explicit Resource(ArgT&& arg, ArgsT&&... args) {
     add_arg(std::forward<ArgT>(arg));
@@ -103,6 +116,13 @@ class Resource : public Component {
   }
 
   ~Resource() override = default;
+
+  /**
+   * @brief Get the resource type.
+   *
+   * @return The resource type.
+   */
+  ResourceType resource_type() const { return resource_type_; }
 
   using Component::name;
   /**
@@ -172,6 +192,8 @@ class Resource : public Component {
    */
   virtual void setup(ComponentSpec& spec) { (void)spec; }
 
+  void initialize() override;
+
   /**
    * @brief Get a YAML representation of the resource.
    *
@@ -180,7 +202,9 @@ class Resource : public Component {
   YAML::Node to_yaml_node() const override;
 
  protected:
-  std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
+  ResourceType resource_type_ = ResourceType::kNative;  ///< The type of the resource.
+  std::shared_ptr<ComponentSpec> spec_;                 ///< The component specification.
+  bool is_initialized_ = false;                         ///< Whether the resource is initialized.
 };
 
 }  // namespace holoscan

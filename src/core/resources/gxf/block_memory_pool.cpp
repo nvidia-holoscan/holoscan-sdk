@@ -17,20 +17,24 @@
 
 #include "holoscan/core/resources/gxf/block_memory_pool.hpp"
 
+#include <string>
+
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan {
 
 BlockMemoryPool::BlockMemoryPool(const std::string& name, nvidia::gxf::BlockMemoryPool* component)
     : Allocator(name, component) {
   int32_t storage_type = 0;
-  GxfParameterGetInt32(gxf_context_, gxf_cid_, "storage_type", &storage_type);
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfParameterGetInt32(gxf_context_, gxf_cid_, "storage_type", &storage_type));
   storage_type_ = storage_type;
   uint64_t block_size = 0;
-  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "block_size", &block_size);
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "block_size", &block_size));
   block_size_ = block_size;
   uint64_t num_blocks = 0;
-  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "num_blocks", &num_blocks);
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "num_blocks", &num_blocks));
   num_blocks_ = num_blocks;
 }
 

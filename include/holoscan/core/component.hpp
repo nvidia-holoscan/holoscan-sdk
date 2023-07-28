@@ -167,7 +167,7 @@ class Component {
   friend class Executor;
 
   int64_t id_ = -1;               ///< The ID of the component.
-  std::string name_;              ///< Name of the component
+  std::string name_ = "";         ///< Name of the component
   Fragment* fragment_ = nullptr;  ///< Pointer to the fragment that owns this component
   std::vector<Arg> args_;         ///< List of arguments
 };

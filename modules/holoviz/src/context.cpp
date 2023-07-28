@@ -19,8 +19,11 @@
 
 #include <imgui.h>
 
+#include <list>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 #include <holoscan/logger/logger.hpp>
 #include <nvh/nvprint.hpp>
@@ -71,7 +74,13 @@ void nvprint_callback(int level, const char* fmt) {
 
 namespace holoscan::viz {
 
-struct Context::Impl {
+class Context::Impl {
+ public:
+  void setup() {
+    vulkan_.reset(new Vulkan);
+    vulkan_->setup(window_.get(), font_path_, font_size_in_pixels_);
+  }
+
   InitFlags flags_ = InitFlags::NONE;
   CUstream cuda_stream_ = 0;
   std::string font_path_;
@@ -111,9 +120,8 @@ Context::Context() : impl_(new Impl) {
 
 void Context::init(GLFWwindow* window, InitFlags flags) {
   impl_->window_.reset(new GLFWWindow(window));
-  impl_->vulkan_.reset(new Vulkan);
-  impl_->vulkan_->setup(impl_->window_.get(), impl_->font_path_, impl_->font_size_in_pixels_);
   impl_->flags_ = flags;
+  impl_->setup();
 }
 
 void Context::init(uint32_t width, uint32_t height, const char* title, InitFlags flags) {
@@ -122,17 +130,15 @@ void Context::init(uint32_t width, uint32_t height, const char* title, InitFlags
   } else {
     impl_->window_.reset(new GLFWWindow(width, height, title, flags));
   }
-  impl_->vulkan_.reset(new Vulkan);
-  impl_->vulkan_->setup(impl_->window_.get(), impl_->font_path_, impl_->font_size_in_pixels_);
   impl_->flags_ = flags;
+  impl_->setup();
 }
 
 void Context::init(const char* display_name, uint32_t width, uint32_t height, uint32_t refresh_rate,
                    InitFlags flags) {
   impl_->window_.reset(new ExclusiveWindow(display_name, width, height, refresh_rate, flags));
-  impl_->vulkan_.reset(new Vulkan);
-  impl_->vulkan_->setup(impl_->window_.get(), impl_->font_path_, impl_->font_size_in_pixels_);
   impl_->flags_ = flags;
+  impl_->setup();
 }
 
 void Context::shutdown() {
@@ -251,6 +257,7 @@ void Context::end_layer() {
       ///       the 'soft' parameters to the re-used layer
       (*it)->set_opacity(impl_->active_layer_->get_opacity());
       (*it)->set_priority(impl_->active_layer_->get_priority());
+      (*it)->set_views(impl_->active_layer_->get_views());
 
       // replace the current active layer with the cached item
       impl_->active_layer_ = std::move(*it);

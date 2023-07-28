@@ -25,6 +25,12 @@
 #include "./allocator.hpp"
 
 namespace holoscan {
+
+/**
+ * @brief CUDA stream pool allocator.
+ *
+ * An allocator that creates a pool of CUDA streams.
+ */
 class CudaStreamPool : public Allocator {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(CudaStreamPool, Allocator)

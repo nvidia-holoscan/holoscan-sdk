@@ -6,6 +6,8 @@ There are two operators involved in this example:
   1. a transmitter, set to transmit a sequence of integers from 1-10 to it's 'out' port
   2. a receiver that prints the received values to the terminal
 
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/ping_simple.html) for step-by-step documentation of this example.*
+
 ## C++ Run instructions
 
 * **using deb package install or NGC container**:

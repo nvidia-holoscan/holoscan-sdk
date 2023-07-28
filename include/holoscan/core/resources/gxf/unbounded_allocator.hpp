@@ -26,6 +26,11 @@
 
 namespace holoscan {
 
+/**
+ * @brief Unbounded memory allocator.
+ *
+ * An allocator that uses dynamic host or device memory allocation without an upper bound.
+ */
 class UnboundedAllocator : public Allocator {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(UnboundedAllocator, Allocator)

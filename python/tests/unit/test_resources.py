@@ -18,13 +18,23 @@ from holoscan.gxf import GXFResource
 from holoscan.resources import (
     Allocator,
     BlockMemoryPool,
+    Clock,
     CudaStreamPool,
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
+    ManualClock,
     MemoryStorageType,
+    RealtimeClock,
     Receiver,
+    SerializationBuffer,
     StdComponentSerializer,
     Transmitter,
+    UcxComponentSerializer,
+    UcxEntitySerializer,
+    UcxHoloscanComponentSerializer,
+    UcxReceiver,
+    UcxSerializationBuffer,
+    UcxTransmitter,
     UnboundedAllocator,
     VideoStreamSerializer,
 )
@@ -185,3 +195,200 @@ class TestVideoStreamSerializer:
 
     def test_default_initialization(self, app):
         VideoStreamSerializer(app)
+
+
+class TestManualClock:
+    def test_kwarg_based_initialization(self, app, capfd):
+        clk = ManualClock(
+            fragment=app,
+            name="manual",
+            initial_timestamp=100,
+        )
+        assert isinstance(clk, Clock)
+        assert isinstance(clk, GXFResource)
+        assert isinstance(clk, Resource)
+        assert clk.id != -1
+        assert clk.gxf_typename == "nvidia::gxf::ManualClock"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_positional_initialization(self, app):
+        ManualClock(app, 100, "manual")
+
+
+class TestRealtimeClock:
+    def test_kwarg_based_initialization(self, app, capfd):
+        clk = RealtimeClock(
+            fragment=app,
+            name="realtime",
+            initial_time_offset=10.0,
+            initial_time_scale=2.0,
+            use_time_since_epoch=True,
+        )
+        assert isinstance(clk, Clock)
+        assert isinstance(clk, GXFResource)
+        assert isinstance(clk, Resource)
+        assert clk.id != -1
+        assert clk.gxf_typename == "nvidia::gxf::RealtimeClock"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_positional_initialization(self, app):
+        RealtimeClock(app, 10.0, 2.0, True, "realtime")
+
+
+class TestSerializationBuffer:
+    def test_kwarg_based_initialization(self, app, capfd):
+        res = SerializationBuffer(
+            fragment=app,
+            allocator=UnboundedAllocator(fragment=app, name="host_allocator"),
+            buffer_size=16 * 1024**2,
+            name="serialization_buffer",
+        )
+        assert isinstance(res, GXFResource)
+        assert isinstance(res, Resource)
+        assert res.id != -1
+        assert res.gxf_typename == "nvidia::gxf::SerializationBuffer"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+
+class TestUcxSerializationBuffer:
+    def test_kwarg_based_initialization(self, app, capfd):
+        res = UcxSerializationBuffer(
+            fragment=app,
+            allocator=UnboundedAllocator(fragment=app, name="host_allocator"),
+            buffer_size=16 * 1024**2,
+            name="ucx_serialization_buffer",
+        )
+        assert isinstance(res, GXFResource)
+        assert isinstance(res, Resource)
+        assert res.id != -1
+        assert res.gxf_typename == "nvidia::gxf::UcxSerializationBuffer"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+
+class TestUcxComponentSerializer:
+    def test_kwarg_based_initialization(self, app, capfd):
+        res = UcxComponentSerializer(
+            fragment=app,
+            allocator=UnboundedAllocator(fragment=app, name="host_allocator"),
+            name="ucx_component_serializer",
+        )
+        assert isinstance(res, GXFResource)
+        assert isinstance(res, Resource)
+        assert res.id != -1
+        assert res.gxf_typename == "nvidia::gxf::UcxComponentSerializer"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+
+class TestUcxHoloscanComponentSerializer:
+    def test_kwarg_based_initialization(self, app, capfd):
+        res = UcxHoloscanComponentSerializer(
+            fragment=app,
+            allocator=UnboundedAllocator(fragment=app, name="host_allocator"),
+            name="ucx_holoscan_component_serializer",
+        )
+        assert isinstance(res, GXFResource)
+        assert isinstance(res, Resource)
+        assert res.id != -1
+        assert res.gxf_typename == "nvidia::gxf::UcxHoloscanComponentSerializer"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+
+class TestUcxEntitySerializer:
+    def test_intialization_default_serializers(self, app, capfd):
+        res = UcxEntitySerializer(
+            fragment=app,
+            verbose_warning=False,
+            name="ucx_entity_serializer",
+        )
+        assert isinstance(res, GXFResource)
+        assert isinstance(res, Resource)
+        assert res.id != -1
+        assert res.gxf_typename == "nvidia::gxf::UcxEntitySerializer"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+
+class TestUcxReceiver:
+    def test_kwarg_based_initialization(self, app, capfd):
+        buffer = UcxSerializationBuffer(
+            fragment=app,
+            allocator=UnboundedAllocator(fragment=app, name="host_allocator"),
+            buffer_size=16 * 1024**2,
+            name="ucx_serialization_buffer",
+        )
+        res = UcxReceiver(
+            fragment=app,
+            buffer=buffer,
+            capacity=1,
+            policy=2,
+            address="0.0.0.0",
+            port=13337,
+            name="ucx_receiver",
+        )
+        assert isinstance(res, GXFResource)
+        assert isinstance(res, Resource)
+        assert isinstance(res, Receiver)
+        assert res.id != -1
+        assert res.gxf_typename == "nvidia::gxf::UcxReceiver"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+
+class TestUcxTransmitter:
+    def test_kwarg_based_initialization(self, app, capfd):
+        buffer = UcxSerializationBuffer(
+            fragment=app,
+            allocator=UnboundedAllocator(fragment=app, name="host_allocator"),
+            buffer_size=16 * 1024**2,
+            name="ucx_serialization_buffer",
+        )
+        res = UcxTransmitter(
+            fragment=app,
+            buffer=buffer,
+            capacity=1,
+            policy=2,
+            receiver_address="0.0.0.0",
+            port=13337,
+            maximum_connection_retries=10,
+            name="ucx_transmitter",
+        )
+        assert isinstance(res, GXFResource)
+        assert isinstance(res, Resource)
+        assert isinstance(res, Transmitter)
+        assert res.id != -1
+        assert res.gxf_typename == "nvidia::gxf::UcxTransmitter"
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err

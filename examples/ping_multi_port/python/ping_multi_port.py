@@ -15,7 +15,6 @@
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.logger import load_env_log_level
 
 # define a custom class to represent data used in the app
 
@@ -151,6 +150,5 @@ class MyPingApp(Application):
 
 
 if __name__ == "__main__":
-    load_env_log_level()
     app = MyPingApp()
     app.run()

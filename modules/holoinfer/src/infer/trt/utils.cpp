@@ -17,21 +17,16 @@
 
 #include "utils.hpp"
 
-#include <filesystem>
-
 #include <NvInferPlugin.h>
 #include <NvOnnxParser.h>
 
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
+
 namespace holoscan {
 namespace inference {
-
-cudaError_t check_cuda(cudaError_t result) {
-  if (result != cudaSuccess) {
-    HOLOSCAN_LOG_ERROR("Cuda runtime error: {}", cudaGetErrorString(result));
-    assert(result == cudaSuccess);
-  }
-  return result;
-}
 
 bool valid_file_path(const std::string& filepath) {
   return std::filesystem::exists(filepath);
@@ -54,7 +49,14 @@ bool generate_engine_path(const NetworkOptions& options, const std::string& onnx
                 + gpu_name + "."
                 + std::to_string(device_prop.major) + "."
                 + std::to_string(device_prop.minor) + "."
-                + std::to_string(device_prop.multiProcessorCount) + ".trt.engine";
+                + std::to_string(device_prop.multiProcessorCount)
+                + ".trt."
+                + std::to_string(NV_TENSORRT_MAJOR) + "."
+                + std::to_string(NV_TENSORRT_MINOR) + "."
+                + std::to_string(NV_TENSORRT_PATCH) + "."
+                + std::to_string(NV_TENSORRT_BUILD)
+                + ".engine";
+
   if (options.use_fp16) {
     engine_path += ".fp16";
   } else {
@@ -149,7 +151,16 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   if (!plan) { return false; }
 
   std::ofstream outfile(engine_path, std::ofstream::binary);
+  if (!outfile) {
+    HOLOSCAN_LOG_ERROR("Cannot write engine file as: {}", engine_path);
+    return false;
+  }
+
   outfile.write(reinterpret_cast<const char*>(plan->data()), plan->size());
+  if (outfile.fail()) {
+    HOLOSCAN_LOG_ERROR("Cannot write engine file as: {}", engine_path);
+    return false;
+  }
 
   HOLOSCAN_LOG_INFO("Engine file generated, saved as: {}", engine_path);
 

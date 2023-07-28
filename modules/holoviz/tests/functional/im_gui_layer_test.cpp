@@ -18,6 +18,8 @@
 #include <gtest/gtest.h>
 #include <imgui.h>
 
+#include <vector>
+
 #include <holoviz/holoviz.hpp>
 #include <util/unique_value.hpp>
 #include "headless_fixture.hpp"
@@ -66,10 +68,10 @@ TEST_F(ImGuiLayer, Window) {
     EXPECT_NO_THROW(viz::End());
   }
 
-  CompareResultCRC32({
-    0xb374795b,  // RTX 6000, RTX A5000
-    0x40899a2e   // RTX A6000
-    });
+  CompareColorResultCRC32({
+      0xf9db0778,  // RTX 6000, RTX A5000
+      0x0a26e40d   // RTX A6000
+  });
 }
 
 TEST_F(ImGuiLayer, Errors) {

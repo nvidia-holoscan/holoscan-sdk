@@ -17,6 +17,8 @@
 
 #include "holoscan/operators/ping_tx/ping_tx.hpp"
 
+#include <memory>
+
 namespace holoscan::ops {
 
 void PingTxOp::setup(OperatorSpec& spec) {
@@ -24,7 +26,7 @@ void PingTxOp::setup(OperatorSpec& spec) {
 }
 
 void PingTxOp::compute(InputContext&, OutputContext& op_output, ExecutionContext&) {
-  auto value = std::make_shared<int>(index_++);
+  int value = index_++;
   op_output.emit(value, "out");
 }
 

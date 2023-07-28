@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,10 +30,11 @@ namespace holoscan {
 
 template <typename typeT>
 void ComponentSpec::param(Parameter<typeT>& parameter, const char* key, const char* headline,
-                          const char* description) {
+                          const char* description, ParameterFlag flag) {
   parameter.key_ = key;
   parameter.headline_ = headline;
   parameter.description_ = description;
+  parameter.flag_ = flag;
 
   if constexpr (is_one_of_v<typename holoscan::type_info<typeT>::element_type,
                             std::shared_ptr<Resource>,
@@ -47,10 +48,50 @@ void ComponentSpec::param(Parameter<typeT>& parameter, const char* key, const ch
 
 template <typename typeT>
 void ComponentSpec::param(Parameter<typeT>& parameter, const char* key, const char* headline,
-                          const char* description, typeT default_value) {
+                          const char* description, std::initializer_list<void*>) {
   parameter.key_ = key;
   parameter.headline_ = headline;
   parameter.description_ = description;
+
+  parameter.default_value_ = typeT{};
+
+  if constexpr (is_one_of_v<typename holoscan::type_info<typeT>::element_type,
+                            std::shared_ptr<Resource>,
+                            std::shared_ptr<Condition>>) {
+    ArgumentSetter::ensure_type<typeT>();
+    ::holoscan::gxf::GXFParameterAdaptor::ensure_type<typeT>();
+  }
+
+  params_.try_emplace(key, ParameterWrapper{parameter});
+}
+
+template <typename typeT>
+void ComponentSpec::param(Parameter<typeT>& parameter, const char* key, const char* headline,
+                          const char* description, const typeT& default_value, ParameterFlag flag) {
+  parameter.key_ = key;
+  parameter.headline_ = headline;
+  parameter.description_ = description;
+  parameter.flag_ = flag;
+
+  parameter.default_value_ = default_value;
+
+  if constexpr (is_one_of_v<typename holoscan::type_info<typeT>::element_type,
+                            std::shared_ptr<Resource>,
+                            std::shared_ptr<Condition>>) {
+    ArgumentSetter::ensure_type<typeT>();
+    ::holoscan::gxf::GXFParameterAdaptor::ensure_type<typeT>();
+  }
+
+  params_.try_emplace(key, ParameterWrapper{parameter});
+}
+
+template <typename typeT>
+void ComponentSpec::param(Parameter<typeT>& parameter, const char* key, const char* headline,
+                          const char* description, typeT&& default_value, ParameterFlag flag) {
+  parameter.key_ = key;
+  parameter.headline_ = headline;
+  parameter.description_ = description;
+  parameter.flag_ = flag;
 
   parameter.default_value_ = std::move(default_value);
 

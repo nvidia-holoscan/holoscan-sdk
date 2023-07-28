@@ -18,8 +18,10 @@ add_subdirectory(gxf_app)
 add_subdirectory(ping_rx_native_op)
 add_subdirectory(ping_tx_native_op)
 
+file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+
 install(
   FILES README.md
-  DESTINATION "examples/wrap_operator_as_gxf_extension"
+  DESTINATION "${app_relative_dest_path}"
   COMPONENT "holoscan-examples"
 )

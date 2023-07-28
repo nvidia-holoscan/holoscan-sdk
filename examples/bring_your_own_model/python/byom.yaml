@@ -27,14 +27,12 @@ preprocessor:  # FormatConverter
   resize_width: 512
   resize_height: 512
 
-inference:  # MultiaAIInference
+inference:  # Inference
   backend: "trt"
   pre_processor_map: 
     "byom_model": ["source_video"]
   inference_map: 
-    "byom_model": "output"
-  in_tensor_names: ["source_video"]
-  out_tensor_names: ["output"]
+    "byom_model": ["output"]
 
 postprocessor:  # SegmentationPostprocessor
   in_tensor_name: output

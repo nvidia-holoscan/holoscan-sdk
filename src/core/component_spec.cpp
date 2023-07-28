@@ -15,12 +15,25 @@
  * limitations under the License.
  */
 #include "holoscan/core/component_spec.hpp"
+
+#include <string>
+#include <unordered_map>
+
 #include "holoscan/core/fragment.hpp"
+
+using std::string_literals::operator""s;
 
 namespace holoscan {
 
 YAML::Node ComponentSpec::to_yaml_node() const {
   YAML::Node node;
+
+  std::unordered_map<ParameterFlag, std::string> parameterflag_namemap{
+      {ParameterFlag::kNone, "kNone"s},
+      {ParameterFlag::kOptional, "kOptional"s},
+      {ParameterFlag::kDynamic, "kDynamic"s},
+  };
+
   if (fragment_) {
     node["fragment"] = fragment_->name();
   } else {
@@ -34,6 +47,7 @@ YAML::Node ComponentSpec::to_yaml_node() const {
     param_node["name"] = name;
     param_node["type"] = type;
     param_node["description"] = param->description();
+    param_node["flag"] = parameterflag_namemap[param->flag()];
     node["params"].push_back(param_node);
   }
   return node;

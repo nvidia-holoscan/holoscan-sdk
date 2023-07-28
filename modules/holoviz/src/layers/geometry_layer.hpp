@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef MODULES_HOLOVIZ_SRC_LAYERS_GEOMETRY_LAYER_HPP
-#define MODULES_HOLOVIZ_SRC_LAYERS_GEOMETRY_LAYER_HPP
+#ifndef HOLOVIZ_SRC_LAYERS_GEOMETRY_LAYER_HPP
+#define HOLOVIZ_SRC_LAYERS_GEOMETRY_LAYER_HPP
 
 #include <cuda.h>
 
@@ -118,4 +118,4 @@ class GeometryLayer : public Layer {
 
 }  // namespace holoscan::viz
 
-#endif /* MODULES_HOLOVIZ_SRC_LAYERS_GEOMETRY_LAYER_HPP */
+#endif /* HOLOVIZ_SRC_LAYERS_GEOMETRY_LAYER_HPP */

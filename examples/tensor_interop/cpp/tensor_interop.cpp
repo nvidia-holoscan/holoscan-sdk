@@ -16,12 +16,19 @@
  */
 
 #include <cuda_runtime.h>
-
-#include <holoscan/holoscan.hpp>
+#include <any>
+#include <memory>
+#include <string>
+#include <typeinfo>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <gxf/std/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
 #include <holoscan/core/gxf/gxf_extension_registrar.hpp>
 #include <holoscan/core/gxf/gxf_tensor.hpp>
+#include <holoscan/holoscan.hpp>
 
 #include "./receive_tensor_gxf.hpp"
 #include "./send_tensor_gxf.hpp"
@@ -73,32 +80,34 @@ class ProcessTensorOp : public Operator {
   ProcessTensorOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<gxf::Entity>("in");
-    spec.output<gxf::Entity>("out");
+    spec.input<holoscan::TensorMap>("in");
+    spec.output<holoscan::TensorMap>("out");
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    // The type of `in_message` is 'holoscan::gxf::Entity'.
-    auto in_message = op_input.receive<gxf::Entity>("in");
-    // The type of `tensor` is 'std::shared_ptr<holoscan::Tensor>'.
-    auto tensor = in_message.get<Tensor>();
+    // The type of `in_message` is 'holoscan::TensorMap'.
+    auto in_message = op_input.receive<holoscan::TensorMap>("in").value();
+    // the type of out_message is TensorMap
+    TensorMap out_message;
 
-    // Process with 'tensor' here.
-    cudaError_t cuda_status;
-
-    size_t data_size = tensor->nbytes();
-    std::vector<uint8_t> in_data(data_size);
-    CUDA_TRY(cudaMemcpy(in_data.data(), tensor->data(), data_size, cudaMemcpyDeviceToHost));
-
-    for (size_t i = 0; i < data_size; i++) { in_data[i] *= 2; }
-
-    CUDA_TRY(cudaMemcpy(tensor->data(), in_data.data(), data_size, cudaMemcpyHostToDevice));
-
-    // Create a new message (Entity)
-    auto out_message = gxf::Entity::New(&context);
-    out_message.add(tensor, "tensor");
-
+    for (auto& [key, tensor] : in_message) {  // Process with 'tensor' here.
+      cudaError_t cuda_status;
+      size_t data_size = tensor->nbytes();
+      std::vector<uint8_t> in_data(data_size);
+      CUDA_TRY(cudaMemcpy(in_data.data(), tensor->data(), data_size, cudaMemcpyDeviceToHost));
+      HOLOSCAN_LOG_INFO("ProcessTensorOp Before key: '{}', shape: ({}), data: [{}]",
+                        key,
+                        fmt::join(tensor->shape(), ","),
+                        fmt::join(in_data, ","));
+      for (size_t i = 0; i < data_size; i++) { in_data[i] *= 2; }
+      HOLOSCAN_LOG_INFO("ProcessTensorOp After key: '{}', shape: ({}), data: [{}]",
+                        key,
+                        fmt::join(tensor->shape(), ","),
+                        fmt::join(in_data, ","));
+      CUDA_TRY(cudaMemcpy(tensor->data(), in_data.data(), data_size, cudaMemcpyHostToDevice));
+      out_message.insert({key, tensor});
+    }
     // Send the processed message.
     op_output.emit(out_message);
   };
@@ -165,8 +174,6 @@ class App : public holoscan::Application {
 };
 
 int main(int argc, char** argv) {
-  holoscan::load_env_log_level();
-
   auto app = holoscan::make_application<App>();
   app->run();
 

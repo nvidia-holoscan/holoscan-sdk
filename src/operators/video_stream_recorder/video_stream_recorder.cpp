@@ -70,7 +70,7 @@ void VideoStreamRecorderOp::initialize() {
   if (basename_.has_value()) {
     path += basename_.get();
   } else {
-    path += receiver_.get()->name();
+    path += receiver_->name();
   }
 
   // Initialize index file stream as write-only
@@ -120,14 +120,14 @@ void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_ou
   // avoid warning about unused variable
   (void)op_output;
 
-  auto entity = op_input.receive<gxf::Entity>("input");
+  auto entity = op_input.receive<gxf::Entity>("input").value();
 
   // dynamic cast from holoscan::Resource to holoscan::VideoStreamSerializer
   auto vs_serializer =
       std::dynamic_pointer_cast<holoscan::VideoStreamSerializer>(entity_serializer_.get());
   // get the Handle to the underlying GXF EntitySerializer
   auto entity_serializer = nvidia::gxf::Handle<nvidia::gxf::EntitySerializer>::Create(
-      context.context(), vs_serializer.get()->gxf_cid());
+      context.context(), vs_serializer->gxf_cid());
   nvidia::gxf::Expected<size_t> size =
       entity_serializer.value()->serializeEntity(entity, &binary_file_stream_);
   if (!size) {

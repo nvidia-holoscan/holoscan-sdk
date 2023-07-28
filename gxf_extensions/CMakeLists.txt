@@ -29,7 +29,6 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib/gxf_extensions)
 
 add_subdirectory(opengl)
 add_subdirectory(stream_playback)
-add_subdirectory(tensor_rt)
-add_subdirectory(v4l2)
 add_subdirectory(bayer_demosaic)
 add_subdirectory(gxf_holoscan_wrapper)
+add_subdirectory(ucx)

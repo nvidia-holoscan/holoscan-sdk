@@ -38,16 +38,14 @@ class NativeOpApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::PingTxOp>("tx", make_condition<CountCondition>(10));
-    auto rx = make_operator<ops::PingRxOp>("rx");
+    auto tx = make_operator<ops::PingMultiTxOp>("tx", make_condition<CountCondition>(10));
+    auto rx = make_operator<ops::PingMultiRxOp>("rx");
 
     add_flow(tx, rx, {{"out1", "receivers"}, {"out2", "receivers"}});
   }
 };
 
 TEST(NativeOperatorPingApp, TestNativeOperatorPingApp) {
-  load_env_log_level();
-
   auto app = make_application<NativeOpApp>();
 
   const std::string config_file = test_config.get_test_data_file("minimal.yaml");

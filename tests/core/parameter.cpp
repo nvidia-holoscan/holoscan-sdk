@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,9 +19,11 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <string>
 #include <typeinfo>
 
+#include "dummy_classes.hpp"
 
 namespace holoscan {
 
@@ -77,6 +79,30 @@ TEST(Parameter, TestMetaParameterInt) {
   ASSERT_EQ(p.get(), 8);
 }
 
+TEST(Parameter, TestMetaParameterTryGet) {
+  // check try_get() returning std::nullopt
+  MetaParameter p = MetaParameter<int>();
+  EXPECT_FALSE(p.try_get().has_value());
+  EXPECT_EQ(p.try_get(), std::nullopt);
+
+  // r-value (expecting move)
+  Parameter<DummyIntClass> int_param{DummyIntClass{15}};
+  auto& int_param_val = int_param.try_get();
+  EXPECT_EQ(int_param_val.has_value(), true);
+  int_param_val.value().set(20);
+  EXPECT_EQ(int_param.get(), DummyIntClass{20});
+
+  // l-value (expecting copy)
+  auto dummy_val2 = DummyIntClass{15};
+  Parameter<DummyIntClass> int_param2{dummy_val2};
+  auto& int_param_val2 = int_param2.try_get();
+  EXPECT_EQ(int_param_val2.has_value(), true);
+  int_param_val2.value().set(20);
+
+  EXPECT_EQ(int_param2.get(), DummyIntClass{20});
+  EXPECT_NE(int_param2.get(), dummy_val2);
+}
+
 TEST(Parameter, TestMetaParameterUninitialized) {
   // test uninitialized metaparameter
   MetaParameter p2 = MetaParameter<double>();
@@ -93,6 +119,30 @@ TEST(Parameter, TestMetaParameterUninitialized) {
         }
       },
       std::runtime_error);
+}
+
+TEST(Parameter, TestArrowOperator) {
+  std::string str = "hello";
+
+  Parameter<std::string*> param_str_ptr;
+  param_str_ptr = &str;
+  ASSERT_EQ(param_str_ptr->size(), 5);
+
+  Parameter<std::shared_ptr<std::string>> param_str_shared_ptr;
+  param_str_shared_ptr = std::make_shared<std::string>(str);
+  ASSERT_EQ(param_str_shared_ptr->size(), 5);
+}
+
+TEST(Parameter, TestAsteriskOperator) {
+  int data = 10;
+
+  Parameter<int*> param_int_ptr;
+  param_int_ptr = &data;
+  ASSERT_EQ(*param_int_ptr, 10);
+
+  Parameter<std::shared_ptr<int>> param_int_shared_ptr;
+  param_int_shared_ptr = std::make_shared<int>(data);
+  ASSERT_EQ(*param_int_shared_ptr, 10);
 }
 
 }  // namespace holoscan

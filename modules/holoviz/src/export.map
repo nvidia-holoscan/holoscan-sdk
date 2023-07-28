@@ -36,9 +36,9 @@
             "holoscan::viz::End()";
 
             "holoscan::viz::BeginImageLayer()";
-            "holoscan::viz::ImageCudaDevice(unsigned int, unsigned int, holoscan::viz::ImageFormat, unsigned long long)";
+            "holoscan::viz::ImageCudaDevice(unsigned int, unsigned int, holoscan::viz::ImageFormat, unsigned long long, unsigned long)";
             "holoscan::viz::ImageCudaArray(holoscan::viz::ImageFormat, CUarray_st*)";
-            "holoscan::viz::ImageHost(unsigned int, unsigned int, holoscan::viz::ImageFormat, void const*)";
+            "holoscan::viz::ImageHost(unsigned int, unsigned int, holoscan::viz::ImageFormat, void const*, unsigned long)";
             "holoscan::viz::LUT(unsigned int, holoscan::viz::ImageFormat, unsigned long, void const*, bool)";
 
             "holoscan::viz::BeginImGuiLayer()";
@@ -53,11 +53,13 @@
 
             "holoscan::viz::LayerOpacity(float)";
             "holoscan::viz::LayerPriority(int)";
-            "holoscan::viz::LayerViewCamera(holoscan::viz::Vector3f*, holoscan::viz::Vector3f*, holoscan::viz::Vector3f*)";
+            "holoscan::viz::LayerAddView(float, float, float, float, float const*)";
 
             "holoscan::viz::EndLayer()";
 
             "holoscan::viz::ReadFramebuffer(holoscan::viz::ImageFormat, unsigned int, unsigned int, unsigned long, unsigned long long)";
+
+            "holoscan::viz::GetCameraPose(unsigned long, float*)";
         };
     local:
         *;

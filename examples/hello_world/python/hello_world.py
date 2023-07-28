@@ -48,6 +48,10 @@ class HelloWorldApp(Application):
         self.add_operator(hello)
 
 
-if __name__ == "__main__":
+def main():
     app = HelloWorldApp()
     app.run()
+
+
+if __name__ == "__main__":
+    main()

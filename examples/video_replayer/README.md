@@ -2,7 +2,9 @@
 
 Minimal example to demonstrate the use of the video stream replayer operator to load video from disk. The video frames need to have been converted to a gxf entity format, as shown [here](../../scripts/README.md#convert_video_to_gxf_entitiespy).
 
-> Note: Support for H264 stream support is in progress
+> Note: Support for H264 stream support is in progress and can be found on [HoloHub](https://nvidia-holoscan.github.io/holohub)
+
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/video_replayer.html) for step-by-step documentation of this example.*
 
 ## Data
 
@@ -38,16 +40,16 @@ The following dataset is used by this example:
 * **using python wheel**:
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
-  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
   python3 <APP_DIR>/video_replayer.py
   ```
 * **using deb package install**:
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
   python3 /opt/nvidia/holoscan/examples/video_replayer/python/video_replayer.py
   ```
 * **from NGC container**:
@@ -62,6 +64,6 @@ The following dataset is used by this example:
 * **source (local env)**:
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
-  export HOLOSCAN_SAMPLE_DATA_PATH=${SRC_DIR}/data
+  export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data
   python3 ${BUILD_OR_INSTALL_DIR}/examples/video_replayer/python/video_replayer.py
   ```

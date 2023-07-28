@@ -19,8 +19,10 @@
 
 #include <gxf/core/gxf.h>
 
+#include <string>
+
 #include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/executor.hpp"
+#include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
 
@@ -32,17 +34,29 @@ GXFCondition::GXFCondition(const std::string& name, nvidia::gxf::SchedulingTerm*
   gxf_context_ = term->context();
   gxf_eid_ = term->eid();
   gxf_cid_ = term->cid();
-  GxfComponentType(gxf_context_, gxf_cid_, &gxf_tid_);
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context_, gxf_cid_, &gxf_tid_));
   gxf_cname_ = name;
   gxf_cptr_ = term;
 }
 
 void GXFCondition::initialize() {
+  if (is_initialized_) {
+    HOLOSCAN_LOG_DEBUG("GXFCondition '{}' is already initialized. Skipping...", name());
+    return;
+  }
+
   Condition::initialize();
-  gxf_context_ = fragment()->executor().context();
+  auto& executor = fragment()->executor();
+  auto gxf_executor = dynamic_cast<GXFExecutor*>(&executor);
+  if (gxf_executor == nullptr) {
+    HOLOSCAN_LOG_ERROR("GXFCondition '{}' is not initialized with a GXFExecutor", name());
+    return;
+  }
+  gxf_context_ = executor.context();
 
   // Set GXF component name
-  gxf_cname(name());
+  std::string gxf_component_name = fmt::format("{}", name());
+  gxf_cname(gxf_component_name);
 
   GXFComponent::gxf_initialize();
 
@@ -55,7 +69,6 @@ void GXFCondition::initialize() {
   }
   auto& spec = *spec_;
 
-  gxf_result_t code;
   // Set arguments
   auto& params = spec.params();
   for (auto& arg : args_) {
@@ -75,12 +88,12 @@ void GXFCondition::initialize() {
 
   // Set Handler parameters
   for (auto& [key, param_wrap] : params) {
-    code = ::holoscan::gxf::GXFParameterAdaptor::set_param(
-        gxf_context_, gxf_cid_, key.c_str(), param_wrap);
+    HOLOSCAN_GXF_CALL(::holoscan::gxf::GXFParameterAdaptor::set_param(
+        gxf_context_, gxf_cid_, key.c_str(), param_wrap));
     // TODO: handle error
     HOLOSCAN_LOG_TRACE("GXFCondition '{}':: setting GXF parameter '{}'", name(), key);
   }
-  (void)code;
+  is_initialized_ = true;
 }
 
 }  // namespace holoscan::gxf

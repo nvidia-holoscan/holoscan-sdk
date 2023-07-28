@@ -17,7 +17,6 @@
 #ifndef HOLOINFER_TRT_UTILS_H
 #define HOLOINFER_TRT_UTILS_H
 
-#include <assert.h>
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
@@ -77,12 +76,6 @@ bool valid_file_path(const std::string& filepath);
  */
 bool generate_engine_path(const NetworkOptions& options, const std::string& model_path,
                                std::string& engine_name);
-
-/**
- * @brief Checks Cuda result status
- * @param result Cuda result code
- */
-cudaError_t check_cuda(cudaError_t result);
 
 /**
  * @brief Build the (trt engine) network

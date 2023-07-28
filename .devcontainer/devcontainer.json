@@ -4,6 +4,7 @@
     "name": "C++",
     // Use 'initialize-command.sh' to execute initialization commands before the container is created.
     "initializeCommand": ".devcontainer/initialize-command.sh",
+    "postCreateCommand": ".devcontainer/post-create-command.sh",
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
@@ -21,7 +22,8 @@
         //
         // Uncomment the following line to use AJA Capture Card
         // "--device=/dev/ajantv20:/dev/ajantv20",
-        // Uncomment the following line to use /dev/video0. Also, execute 'sudo chmod 666 /dev/video0' inside the container.
+        // Uncomment the following 2 lines to use /dev/video0.
+        // "--group-add=video",
         // "--device=/dev/video0:/dev/video0",
         "--cap-add=SYS_PTRACE",
         "--security-opt=seccomp=unconfined",
@@ -57,13 +59,14 @@
                 "akiramiyakoda.cppincludeguard",
                 "ms-vscode.cpptools-extension-pack",
                 "matepek.vscode-catch2-test-adapter",
-                "ms-vscode.makefile-tools",
                 "ms-python.python",
                 "ms-python.vscode-pylance",
+                "ms-python.isort", // note: automatic installation of this can cause a dependency issue with 'ms-python.python'
                 "shardulm94.trailing-spaces",
                 "stkb.rewrap",
                 "shd101wyy.markdown-preview-enhanced",
                 "cschlosser.doxdocgen",
+                "mine.cpplint",
             ]
         }
     },

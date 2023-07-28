@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 #include "holoscan/core/component.hpp"
+
+#include <string>
+
 #include "holoscan/core/fragment.hpp"
 
 namespace holoscan {

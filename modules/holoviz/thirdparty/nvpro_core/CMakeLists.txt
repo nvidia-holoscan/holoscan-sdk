@@ -135,12 +135,9 @@ if(NOT nvpro_core_POPULATED)
 
   set_target_properties(holoviz_imgui
     PROPERTIES POSITION_INDEPENDENT_CODE ON
+    EXPORT_NAME viz::imgui
     )
 
-  install(TARGETS holoviz_imgui EXPORT holoviz_imguiConfig
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    COMPONENT "holoscan-dependencies"
-    )
 
   install(
     FILES

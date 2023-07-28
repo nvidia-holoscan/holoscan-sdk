@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 
+#include <memory>
+#include <vector>
+
 #include "holoscan/holoscan.hpp"
 
 class ValueData {
@@ -42,8 +45,8 @@ class PingTxOp : public Operator {
   PingTxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.output<ValueData>("out1");
-    spec.output<ValueData>("out2");
+    spec.output<std::shared_ptr<ValueData>>("out1");
+    spec.output<std::shared_ptr<ValueData>>("out2");
   }
 
   void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
@@ -63,16 +66,16 @@ class PingMxOp : public Operator {
   PingMxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<ValueData>("in1");
-    spec.input<ValueData>("in2");
-    spec.output<ValueData>("out1");
-    spec.output<ValueData>("out2");
+    spec.input<std::shared_ptr<ValueData>>("in1");
+    spec.input<std::shared_ptr<ValueData>>("in2");
+    spec.output<std::shared_ptr<ValueData>>("out1");
+    spec.output<std::shared_ptr<ValueData>>("out2");
     spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this value", 2);
   }
 
   void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
-    auto value1 = op_input.receive<ValueData>("in1");
-    auto value2 = op_input.receive<ValueData>("in2");
+    auto value1 = op_input.receive<std::shared_ptr<ValueData>>("in1").value();
+    auto value2 = op_input.receive<std::shared_ptr<ValueData>>("in2").value();
 
     HOLOSCAN_LOG_INFO("Middle message received (count: {})", count_++);
 
@@ -103,7 +106,8 @@ class PingRxOp : public Operator {
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    auto value_vector = op_input.receive<std::vector<ValueData>>("receivers");
+    auto value_vector =
+        op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
 
     HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: {})", count_++, value_vector.size());
 
@@ -135,7 +139,6 @@ class MyPingApp : public holoscan::Application {
 };
 
 int main(int argc, char** argv) {
-  holoscan::load_env_log_level();
   auto app = holoscan::make_application<MyPingApp>();
   app->run();
 

@@ -2,6 +2,8 @@
 
 Minimal example to demonstrate the use of the aja source operator to capture device input and stream to holoviz operator.
 
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/aja_setup.html) to setup the AJA Card.*
+
 ## C++ Run instructions
 
 * **using deb package install or NGC container**:

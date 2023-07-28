@@ -16,64 +16,44 @@ limitations under the License.
 """  # no qa
 
 import os
+import random
 from argparse import ArgumentParser
 
 import numpy as np
 
-import holoscan as hs
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.gxf import Entity
-from holoscan.logger import load_env_log_level
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 
-try:
-    import cupy as cp
-except ImportError:
-    raise ImportError(
-        "CuPy must be installed to run this example. See "
-        "https://docs.cupy.dev/en/stable/install.html"
-    )
-
-sample_data_path = os.environ.get("HOLOSCAN_SAMPLE_DATA_PATH", "../data")
+sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
 
 # Define custom Operators for use in the demo
-class ImageProcessingOp(Operator):
-    """Example of an operator processing input video (as a tensor).
+class GeometryGenerationOp(Operator):
+    """Example creating geometric primitives for overlay on a video.
 
     This operator has:
-        inputs:  "input_tensor"
-        outputs: "output_tensor"
+        outputs: outputs, output_specs
 
-    The data from each input is processed by a CuPy gaussian filter and
-    the result is sent to the output.
+    The entity transmitted on the "outputs" port will contain several additional internally
+    generated tensors ("boxes", "crosses", "ovals", etc.) that correspond to coordinates defining
+    various types of geometric primitives that will be displayed by the downstream Holoviz
+    operator.
 
-    In this demo, the input and output image (2D RGB) is an 3D array of shape
-    (height, width, channels).
+    The entity transmitted on the "output_specs" port is a text label of a randomly varying color.
     """
 
-    def __init__(self, fragment, *args, sigma=1.0, **kwargs):
+    def __init__(self, fragment, *args, **kwargs):
         self.count = 1
 
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.input("input_tensor")
         spec.output("outputs")
+        spec.output("output_specs")
 
     def compute(self, op_input, op_output, context):
-        message = op_input.receive("input_tensor")
-
-        input_tensor = message.get()
-        # dim the video by a factor of 2 (preserving uint8 dtype)
-        output_array = cp.asarray(input_tensor) // 2
-
-        # pass through the input tensor unmodified under the name "video"
-        out_message = Entity(context)
-        out_message.add(hs.as_tensor(output_array), "video")
-
-        # Now draw various different types of geometric primitives.
+        # Draw various different types of geometric primitives.
         # In all cases, x and y are normalized coordinates in the range [0, 1].
         # x runs from left to right and y from bottom to top. All coordinates
         # should be defined using a single precision (np.float32) dtype.
@@ -86,18 +66,17 @@ class ImageProcessingOp(Operator):
         # box: (x1, y1), (x2, y2).
         box_coords = np.asarray(
             # fmt: off
-            [
+             [
                 (0.1, 0.2), (0.8, 0.5),
                 (0.2, 0.4), (0.3, 0.6),
                 (0.3, 0.5), (0.4, 0.7),
                 (0.5, 0.7), (0.6, 0.9),
-            ],
+             ],
             # fmt: on
             dtype=np.float32,
         )
         # append initial axis of shape 1
         box_coords = box_coords[np.newaxis, :, :]
-        out_message.add(hs.as_tensor(box_coords), "boxes")
 
         ########################################
         # Create a tensor defining two triangles
@@ -105,15 +84,14 @@ class ImageProcessingOp(Operator):
         # Each triangle is defined by a set of 3 (x, y) coordinate pairs.
         triangle_coords = np.asarray(
             # fmt: off
-            [
+                [
                 (0.1, 0.8), (0.18, 0.75), (0.14, 0.66),
                 (0.3, 0.8), (0.38, 0.75), (0.34, 0.56),
-            ],
+                ],
             # fmt: on
             dtype=np.float32,
         )
         triangle_coords = triangle_coords[np.newaxis, :, :]
-        out_message.add(hs.as_tensor(triangle_coords), "triangles")
 
         ######################################
         # Create a tensor defining two crosses
@@ -127,7 +105,6 @@ class ImageProcessingOp(Operator):
             dtype=np.float32,
         )
         cross_coords = cross_coords[np.newaxis, :, :]
-        out_message.add(hs.as_tensor(cross_coords), "crosses")
 
         ######################################
         # Create a tensor defining three ovals
@@ -142,7 +119,6 @@ class ImageProcessingOp(Operator):
             dtype=np.float32,
         )
         oval_coords = oval_coords[np.newaxis, :, :]
-        out_message.add(hs.as_tensor(oval_coords), "ovals")
 
         #######################################
         # Create a time-varying "points" tensor
@@ -154,7 +130,6 @@ class ImageProcessingOp(Operator):
         self.count += 1
         # Stack and then add an axis so the final shape is (1, n_points, 2)
         point_coords = np.stack((x, y), axis=-1)[np.newaxis, :, :]
-        out_message.add(hs.as_tensor(point_coords), "points")
 
         ####################################
         # Create a tensor for "label_coords"
@@ -168,9 +143,51 @@ class ImageProcessingOp(Operator):
             dtype=np.float32,
         )
         label_coords = label_coords[np.newaxis, :, :]
-        out_message.add(hs.as_tensor(label_coords), "label_coords")
 
+        ####################################
+        # Create a tensor for "dynamic_text"
+        ####################################
+        # Set of two (x, y) points marking the location of text
+        dynamic_text = np.asarray(
+            [
+                (0.0, 0.0),
+            ],
+            dtype=np.float32,
+        )
+        dynamic_text = dynamic_text[np.newaxis, :, :]
+
+        out_message = {
+            "boxes": box_coords,
+            "triangles": triangle_coords,
+            "crosses": cross_coords,
+            "ovals": oval_coords,
+            "points": point_coords,
+            "label_coords": label_coords,
+            "dynamic_text": dynamic_text,
+        }
+
+        # emit the tensors
         op_output.emit(out_message, "outputs")
+
+        ########################################
+        # Create a input spec for "dynamic_text"
+        ########################################
+        # To dynamically change the input spec create a list of HolovizOp.InputSpec objects
+        # and pass it to Holoviz.
+        # All properties of the input spec (type, color, text, line width, ...) can be changed
+        # dynamically.
+        specs = []
+        spec = HolovizOp.InputSpec("dynamic_text", "text")
+        spec.text = ["Frame " + str(self.count)]
+        spec.color = [
+            random.uniform(0.0, 1.0),
+            random.uniform(0.0, 1.0),
+            random.uniform(0.0, 1.0),
+            1.0,
+        ]
+        specs.append(spec)
+        # emit the output specs
+        op_output.emit(specs, "output_specs")
 
 
 # Now define a simple application using the operators defined above
@@ -180,11 +197,11 @@ class MyVideoProcessingApp(Application):
     This application has the following operators:
 
     - VideoStreamReplayerOp
-    - ImageProcessingOp
+    - GeometryGenerationOp
     - HolovizOp
 
-    The VideoStreamReplayerOp reads a video file and sends the frames to the ImageProcessingOp.
-    The ImageProcessingOp processes the frames and sends the processed frames to the HolovizOp.
+    The VideoStreamReplayerOp reads a video file and sends the frames to the GeometryGenerationOp.
+    The GeometryGenerationOp processes the frames and sends the processed frames to the HolovizOp.
     The HolovizOp displays the processed frames.
     """
 
@@ -194,9 +211,9 @@ class MyVideoProcessingApp(Application):
         Parameters
         ----------
         config_count : optional
-        Limits the number of frames to show before the application ends.
-        Set to 0 by default. The video stream will not automatically stop.
-        Any positive integer will limit on the number of frames displayed.
+            Limits the number of frames to show before the application ends.
+            Set to 0 by default. The video stream will not automatically stop.
+            Any positive integer will limit on the number of frames displayed.
         """
         super().__init__()
 
@@ -219,10 +236,9 @@ class MyVideoProcessingApp(Application):
             count=self.count,  # default: 0 (no frame count restriction)
         )
 
-        image_processing = ImageProcessingOp(
+        image_processing = GeometryGenerationOp(
             self,
-            name="image_processing",
-            sigma=0.0,
+            name="geometry_layer_object_generator",
         )
 
         visualizer = HolovizOp(
@@ -231,7 +247,9 @@ class MyVideoProcessingApp(Application):
             width=width,
             height=height,
             tensors=[
-                dict(name="video", type="color", opacity=1.0, priority=0),
+                # name="" here to match the output of VideoStreamReplayerOp
+                dict(name="", type="color", opacity=0.5, priority=0),
+                # The remaining tensors below come from GeometryGenerationOp
                 # Parameters defining the rectangle primitives
                 dict(
                     name="boxes",
@@ -302,26 +320,21 @@ class MyVideoProcessingApp(Application):
                 ),
             ],
         )
-        self.add_flow(source, image_processing)
+        self.add_flow(source, visualizer, {("output", "receivers")})
         self.add_flow(image_processing, visualizer, {("outputs", "receivers")})
+        self.add_flow(image_processing, visualizer, {("output_specs", "input_specs")})
 
 
 if __name__ == "__main__":
-    load_env_log_level()
-    app = MyVideoProcessingApp()
     # Parse args
     parser = ArgumentParser(description="Example video processing application")
     parser.add_argument(
         "-c",
         "--count",
-        default="none",
+        default=0,
         help="Set the number of frames to display the video",
     )
     args = parser.parse_args()
-    count = args.count
-    if count == "none":
-        app = MyVideoProcessingApp()
-    else:
-        app = MyVideoProcessingApp(config_count=count)
+    app = MyVideoProcessingApp(config_count=args.count)
 
     app.run()

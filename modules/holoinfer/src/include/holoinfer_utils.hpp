@@ -46,64 +46,11 @@
 namespace holoscan {
 namespace inference {
 
-void timer_init(TimePoint& _t);
-
-using GXFTransmitters = std::vector<nvidia::gxf::Handle<nvidia::gxf::Transmitter>>;
-using GXFReceivers = std::vector<nvidia::gxf::Handle<nvidia::gxf::Receiver>>;
-
 /**
- * Extracts data from multi GXF Receivers.
- *
- * @param receivers             Vector of GXF Receivers
- * @param in_tensors            Input tensor names
- * @param data_per_tensor       Map is updated with output tensor name as key mapped to data buffer
- * @param dims_per_tensor       Map is updated with tensor name as key mapped to dimension of
- *                              input tensor
- * @param cuda_buffer_out       Flag defining the location of output memory (Device or Host)
- * @param module                Module that called for data extraction
- *
- * @returns GXF result code
+ * @brief Checks Cuda result status
+ * @param result Cuda result code
  */
-gxf_result_t _HOLOSCAN_EXTERNAL_API_ multiai_get_data_per_model(
-    const GXFReceivers& receivers, const std::vector<std::string>& in_tensors,
-    DataMap& data_per_tensor, std::map<std::string, std::vector<int>>& dims_per_tensor,
-    bool cuda_buffer_out, const std::string& module);
-
-/**
- * Transmits multiple buffers via multi GXF Transmitters.
- *
- * @param context           GXF context for transmission
- * @param model_map         Map of model name as key, mapped to a tensor name
- * @param data_map          Map of tensor name as key, mapped to the data buffer as a vector of
- *                          float32 type
- * @param transmitters      Vector of GXF Transmitters
- * @param out_tensors       Output tensor names
- * @param data_per_model    Map is updated with output tensor name as key mapped to data buffer
- * @param out_dims_map      Map is updated with model name as key mapped to dimension of
- *                          output tensor as a vector
- * @param in_on_cuda        Flag to demonstrate if memory storage of input buffers is on CUDA
- * @param out_on_cuda       Flag to demonstrate if memory storage of output message is on CUDA
- * @param element_type      Data type of input buffers (float32 only)
- * @param module            Module that called for data transmission
- * @param allocator         GXF Memory allocator
- *
- * @returns GXF result code
- */
-gxf_result_t _HOLOSCAN_EXTERNAL_API_ multiai_transmit_data_per_model(
-    gxf_context_t& context, const Mappings& model_map, DataMap& data_map,
-    const GXFTransmitters& transmitters, const std::vector<std::string>& out_tensors,
-    DimType& out_dims_map, bool in_on_cuda, bool out_on_cuda,
-    const nvidia::gxf::PrimitiveType& element_type, const std::string& module,
-    const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator);
-
-/**
- * @brief Maps data per tensor to data per model
- * @param model_data_mapping Model to tensor mapping
- * @param data_per_model Map to be populated with model as key name and value as DataBuffer
- * @param data_per_input_tensor Map with key as tensor name and value as DataBuffer
- */
-InferStatus map_data_to_model_from_tensor(const MultiMappings& model_data_mapping,
-                                          DataMap& data_per_model, DataMap& data_per_input_tensor);
+cudaError_t check_cuda(cudaError_t result);
 
 /**
  * Reports error with module, submodule and message
@@ -128,32 +75,47 @@ void _HOLOSCAN_EXTERNAL_API_ raise_error(const std::string& module, const std::s
  * @brief Checks for correctness of inference parameters from configuration.
  * @param model_path_map Map with model name as key, path to model as value
  * @param pre_processor_map Map of model name as key, mapped to vector of tensor names
- * @param inference_map Map with model name as key, output tensor name as value
+ * @param inference_map Map with model name as key, mapped to vector of output tensor names
  * @param in_tensor_names Input tensor names
  * @param out_tensor_names Output tensor names
  * @return InferStatus with appropriate code and message
  */
-InferStatus multiai_inference_validity_check(const Mappings& model_path_map,
-                                             const MultiMappings& pre_processor_map,
-                                             const Mappings& inference_map,
-                                             const std::vector<std::string>& in_tensor_names,
-                                             const std::vector<std::string>& out_tensor_names);
+InferStatus inference_validity_check(const Mappings& model_path_map,
+                                     const MultiMappings& pre_processor_map,
+                                     const MultiMappings& inference_map,
+                                     std::vector<std::string>& in_tensor_names,
+                                     std::vector<std::string>& out_tensor_names);
 
 /**
  * @brief Checks for correctness of processing parameters from configuration.
- * @param processed_map Map with input tensor name as key, output tensor name as value
+ * @param processed_map Map with input tensor name as key, mapped to vector of output tensor names
  * @param in_tensor_names Input tensor names
  * @param out_tensor_names Output tensor names
  */
-InferStatus multiai_processor_validity_check(const Mappings& processed_map,
-                                             const std::vector<std::string>& in_tensor_names,
-                                             const std::vector<std::string>& out_tensor_names);
+InferStatus processor_validity_check(const MultiMappings& processed_map,
+                                     const std::vector<std::string>& in_tensor_names,
+                                     const std::vector<std::string>& out_tensor_names);
 
 /**
  * @brief Checks if the processor is arm based
  */
 bool is_platform_aarch64();
 
+void timer_init(TimePoint& _t);
+gxf_result_t timer_check(TimePoint& start, TimePoint& end, const std::string& module);
+void string_split(const std::string& line, std::vector<std::string>& tokens, char c);
+
+using node_type = std::map<std::string, std::map<std::string, std::string>>;
+static const std::map<std::string, holoinfer_datatype> kHoloInferDataTypeMap = {
+    {"kFloat32", holoinfer_datatype::h_Float32},
+    {"kInt32", holoinfer_datatype::h_Int32},
+    {"kInt8", holoinfer_datatype::h_Int8},
+    {"kUInt8", holoinfer_datatype::h_UInt8},
+    {"kInt64", holoinfer_datatype::h_Int64}};
+
+InferStatus parse_yaml_node(const node_type& in_config, std::vector<std::string>& names,
+                            std::vector<std::vector<int64_t>>& dims,
+                            std::vector<holoinfer_datatype>& types);
 }  // namespace inference
 }  // namespace holoscan
 #endif

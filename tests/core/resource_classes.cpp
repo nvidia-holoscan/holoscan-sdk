@@ -18,7 +18,9 @@
 #include <gtest/gtest.h>
 #include <gxf/core/gxf.h>
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "../config.hpp"
 #include "../utils.hpp"
@@ -33,7 +35,16 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
+#include "holoscan/core/resources/gxf/manual_clock.hpp"
+#include "holoscan/core/resources/gxf/realtime_clock.hpp"
+#include "holoscan/core/resources/gxf/serialization_buffer.hpp"
 #include "holoscan/core/resources/gxf/std_component_serializer.hpp"
+#include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
+#include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
+#include "holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp"
+#include "holoscan/core/resources/gxf/ucx_receiver.hpp"
+#include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
+#include "holoscan/core/resources/gxf/ucx_transmitter.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 #include "holoscan/core/resources/gxf/video_stream_serializer.hpp"
 #include "common/assert.hpp"
@@ -148,6 +159,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUnboundedAllocatorAllocation) {
   auto resource = F.make_resource<UnboundedAllocator>(name);
 
   int nbytes = 1024 * 1024;
+  resource->initialize();
   bool is_avail = resource->is_available(nbytes);
   EXPECT_EQ(is_avail, true);
 
@@ -217,4 +229,171 @@ TEST_F(ResourceClassesWithGXFContext, TestAllocatorDefaultConstructor) {
   auto resource = F.make_resource<Allocator>();
 }
 
+TEST_F(ResourceClassesWithGXFContext, TestRealtimeClock) {
+  const std::string name{"realtime"};
+  ArgList arglist{
+      Arg{"initial_time_offset", 0.0},
+      Arg{"initial_time_scale", 1.0},
+      Arg{"use_time_since_epoch", false},
+  };
+  auto resource = F.make_resource<RealtimeClock>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<RealtimeClock>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::RealtimeClock"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestRealtimeClockDefaultConstructor) {
+  auto resource = F.make_resource<RealtimeClock>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestManualClock) {
+  const std::string name{"realtime"};
+  ArgList arglist{
+      Arg{"initial_timestamp", static_cast<int64_t>(0)},
+  };
+  auto resource = F.make_resource<ManualClock>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<ManualClock>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::ManualClock"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestManualClockDefaultConstructor) {
+  auto resource = F.make_resource<ManualClock>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestSerializationBuffer) {
+  const std::string name{"serialization_buffer"};
+  ArgList arglist{
+      Arg{"allocator", F.make_resource<UnboundedAllocator>("unbounded_alloc")},
+      Arg{"buffer_size", static_cast<size_t>(16 * 1024 * 1024)},
+  };
+  auto resource = F.make_resource<SerializationBuffer>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<SerializationBuffer>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::SerializationBuffer"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestSerializationBufferDefaultConstructor) {
+  auto resource = F.make_resource<SerializationBuffer>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxSerializationBuffer) {
+  const std::string name{"serialization_buffer"};
+  ArgList arglist{
+      Arg{"allocator", F.make_resource<UnboundedAllocator>("unbounded_alloc")},
+      Arg{"buffer_size", static_cast<size_t>(16 * 1024 * 1024)},
+  };
+  auto resource = F.make_resource<UcxSerializationBuffer>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxSerializationBuffer>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxSerializationBuffer"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxSerializationBufferDefaultConstructor) {
+  auto resource = F.make_resource<UcxSerializationBuffer>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxComponentSerializer) {
+  const std::string name{"ucx_component_serializer"};
+  ArgList arglist{
+      Arg{"allocator", F.make_resource<UnboundedAllocator>("unbounded_alloc")},
+  };
+  auto resource = F.make_resource<UcxComponentSerializer>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxComponentSerializer>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxComponentSerializer"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxComponentSerializerDefaultConstructor) {
+  auto resource = F.make_resource<UcxComponentSerializer>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxHoloscanComponentSerializer) {
+  const std::string name{"ucx_holoscan_component_serializer"};
+  ArgList arglist{
+      Arg{"allocator", F.make_resource<UnboundedAllocator>("unbounded_alloc")},
+  };
+  auto resource = F.make_resource<UcxHoloscanComponentSerializer>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxHoloscanComponentSerializer>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxHoloscanComponentSerializer"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxHoloscanComponentSerializerDefaultConstructor) {
+  auto resource = F.make_resource<UcxHoloscanComponentSerializer>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxEntitySerializer) {
+  const std::string name{"entity_serializer"};
+
+  auto component_serializer = F.make_resource<UcxEntitySerializer>(
+      name, Arg{"allocator", F.make_resource<UnboundedAllocator>("unbounded_alloc")});
+  std::vector<std::shared_ptr<holoscan::Resource>> component_serializers{component_serializer};
+
+  ArgList arglist{
+      Arg{"component_serializers", component_serializers},
+      Arg{"verbose_warning,", false},
+  };
+  auto resource = F.make_resource<UcxEntitySerializer>(name, arglist);
+
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxEntitySerializer>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxEntitySerializer"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxEntitySerializerDefaultConstructor) {
+  auto resource = F.make_resource<UcxEntitySerializer>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxReceiver) {
+  const std::string name{"receiver"};
+
+  ArgList buffer_arglist{
+      Arg{"allocator", F.make_resource<UnboundedAllocator>("unbounded_alloc")},
+      Arg{"buffer_size", static_cast<size_t>(16 * 1024 * 1024)},
+  };
+  auto buffer = F.make_resource<UcxSerializationBuffer>("buffer", buffer_arglist);
+
+  ArgList arglist{
+      Arg{"buffer", buffer},
+      Arg{"capacity", static_cast<uint64_t>(1)},
+      Arg{"policy", static_cast<uint64_t>(2)},
+      Arg{"address", std::string("0.0.0.0")},
+      Arg{"port", static_cast<int32_t>(13337)},
+  };
+  auto resource = F.make_resource<UcxReceiver>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxReceiver>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxReceiver"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxReceiverDefaultConstructor) {
+  auto resource = F.make_resource<UcxReceiver>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitter) {
+  const std::string name{"transmitter"};
+
+  ArgList buffer_arglist{
+      Arg{"allocator", F.make_resource<UnboundedAllocator>("unbounded_alloc")},
+      Arg{"buffer_size", static_cast<size_t>(16 * 1024 * 1024)},
+  };
+  auto buffer = F.make_resource<UcxSerializationBuffer>("buffer", buffer_arglist);
+
+  ArgList arglist{
+      Arg{"buffer", buffer},
+      Arg{"capacity", static_cast<uint64_t>(1)},
+      Arg{"policy", static_cast<uint64_t>(2)},
+      Arg{"address", std::string("0.0.0.0")},
+      Arg{"port", static_cast<int32_t>(13337)},
+  };
+  auto resource = F.make_resource<UcxTransmitter>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxTransmitter>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxTransmitter"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitterDefaultConstructor) {
+  auto resource = F.make_resource<UcxTransmitter>();
+}
 }  // namespace holoscan

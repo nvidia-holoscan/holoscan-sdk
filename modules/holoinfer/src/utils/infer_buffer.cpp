@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,12 @@
  * limitations under the License.
  */
 
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <holoinfer_buffer.hpp>
 
 namespace holoscan {
@@ -29,50 +35,31 @@ namespace inference {
  */
 uint32_t get_element_size(holoinfer_datatype element_type) noexcept {
   switch (element_type) {
-    case holoinfer_datatype::hFloat:
+    case holoinfer_datatype::h_Float32:
+    case holoinfer_datatype::h_Int32:
       return 4;
+    case holoinfer_datatype::h_Int64:
+      return 8;
+    case holoinfer_datatype::h_Int8:
+    case holoinfer_datatype::h_UInt8:
+      return 1;
   }
   return 0;
 }
 
-/*
- * @brief Allocate buffer on host and device
- *
- * @param buffers Map with keyword as model name or tensor name, and value as DataBuffer. The map
- * is populated in this function.
- * @param dims Dimension of the allocation
- * @param keyname Storage name in the map against the created DataBuffer
- * @returns InferStatus with appropriate code and message
- */
-InferStatus allocate_host_device_buffers(DataMap& buffers, std::vector<int64_t>& dims,
-                                         const std::string& keyname) {
+InferStatus allocate_buffers(DataMap& buffers, std::vector<int64_t>& dims,
+                             holoinfer_datatype datatype, const std::string& keyname,
+                             bool allocate_cuda, int device_id) {
   size_t buffer_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
 
-  auto data_buffer = std::make_shared<DataBuffer>();
+  auto data_buffer = std::make_shared<DataBuffer>(datatype, device_id);
+  if (!data_buffer) {
+    InferStatus status = InferStatus(holoinfer_code::H_ERROR);
+    status.set_message("Data buffer creation failed for " + keyname);
+    return status;
+  }
   data_buffer->host_buffer.resize(buffer_size);
-  data_buffer->device_buffer->resize(buffer_size);
-
-  buffers.insert({keyname, std::move(data_buffer)});
-
-  return InferStatus();
-}
-
-/*
- * @brief Allocate buffer on host
- *
- * @param buffers Map with keyword as model name or tensor name, and value as DataBuffer. The map
- * is populated in this function.
- * @param dims Dimension of the allocation
- * @param keyname Storage name in the map against the created DataBuffer
- * @returns InferStatus with appropriate code and message
- */
-InferStatus allocate_host_buffers(DataMap& buffers, std::vector<int64_t>& dims,
-                                  const std::string& keyname) {
-  size_t buffer_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
-
-  auto data_buffer = std::make_shared<DataBuffer>();
-  data_buffer->host_buffer.resize(buffer_size);
-
+  if (allocate_cuda) { data_buffer->device_buffer->resize(buffer_size); }
   buffers.insert({keyname, std::move(data_buffer)});
   return InferStatus();
 }
@@ -85,8 +72,13 @@ void DeviceFree::operator()(void* ptr) const {
   cudaFree(ptr);
 }
 
-DataBuffer::DataBuffer() {
-  device_buffer = std::make_shared<DeviceBuffer>();
+DataBuffer::DataBuffer(holoinfer_datatype data_type, int device_id)
+    : type_(data_type), device_id_(device_id) {
+  device_buffer = std::make_shared<DeviceBuffer>(type_);
+  if (!device_buffer) {
+    throw std::runtime_error("Device buffer creation failed in DataBuffer constructor");
+  }
+  host_buffer.set_type(type_);
 }
 
 DeviceBuffer::DeviceBuffer(holoinfer_datatype type)
@@ -109,12 +101,12 @@ size_t DeviceBuffer::get_bytes() const {
   return this->size() * get_element_size(type_);
 }
 
-void DeviceBuffer::resize(size_t element_size) {
-  size_ = element_size;
-  if (capacity_ < element_size) {
+void DeviceBuffer::resize(size_t number_of_elements) {
+  size_ = number_of_elements;
+  if (capacity_ < number_of_elements) {
     free_(buffer_);
     if (!allocator_(&buffer_, this->get_bytes())) { throw std::bad_alloc{}; }
-    capacity_ = element_size;
+    capacity_ = number_of_elements;
   }
 }
 

@@ -28,6 +28,11 @@ namespace holoscan {
 
 enum struct MemoryStorageType { kHost = 0, kDevice = 1, kSystem = 2 };
 
+/**
+ * @brief Base class for all allocators.
+ *
+ * Allocators are used to allocate resources such as memory or CUDA threads.
+ */
 class Allocator : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(Allocator, GXFResource)

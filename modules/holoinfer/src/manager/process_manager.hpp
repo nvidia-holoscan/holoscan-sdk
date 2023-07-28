@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,12 +25,13 @@
 #include <vector>
 
 #include <holoinfer.hpp>
+#include <holoinfer_utils.hpp>
 #include <process/data_processor.hpp>
 
 namespace holoscan {
 namespace inference {
 /*
- * @brief Manager class for multi ai processing
+ * @brief Manager class for processing
  */
 class ManagerProcessor {
  public:
@@ -52,24 +53,38 @@ class ManagerProcessor {
    *
    * @returns InferStatus with appropriate code and message
    */
-  InferStatus initialize(const MultiMappings& process_operations);
+  InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
 
   /*
    * @brief Executes post processing operations and generates the result
    *
-   * @param tensor_oper_map Map where tensor name is the key, and operations to perform on
+   * @param tensor_oper_map Map with tensor name as the key, and operations to perform on
    * the tensor as vector of strings.
-   * @param in_out_tensor_map Map where input tensor name is the key, and generated output tensor
-   * name is the value
-   * @param inferred_result_map Map with output tensor name as key, and related DataBuffer as value
-   * @param dimension_map Map with model name as key and related output dimension as value. One-one
-   * mapping supported.
+   * @param in_out_tensor_map Map with input tensor name as the key, and generated output tensor
+   * names is the value (as vector of strings)
+   * @param inferred_result_map Map with output tensor name as key, and related DataBuffer as
+   * value
+   * @param dimension_map Map with tensor name as key and related output dimension as value.
    * @returns InferStatus with appropriate code and message
    */
-  InferStatus process(const MultiMappings& tensor_oper_map, const Mappings& in_out_tensor_map,
+  InferStatus process(const MultiMappings& tensor_oper_map, const MultiMappings& in_out_tensor_map,
                       DataMap& inferred_result_map,
                       const std::map<std::string, std::vector<int>>& dimension_map);
 
+  /*
+   * @brief Executes post processing operations for multi tensor I/O
+   *
+   * @param tensor_name String containing input tensor names separated by :
+   * @param tensor_oper_map Map with tensor names as the key, and operations to perform on
+   * the tensor as vector of strings.
+   * @param inferred_result_map Map Contains output tensor name as key, and related DataBuffer as
+   * value
+   * @param dimension_map Map with tensor name as key and related output dimension as value.
+   * @returns InferStatus with appropriate code and message
+   */
+  InferStatus process_multi_tensor_operation(
+      const std::string tensor_name, const std::vector<std::string>& tensor_oper_map,
+      DataMap& inferred_result_map, const std::map<std::string, std::vector<int>>& dimension_map);
   /*
    * @brief Get processed data
    *
@@ -89,7 +104,7 @@ class ManagerProcessor {
   std::unique_ptr<DataProcessor> infer_data_;
 
   /// Map with tensor name as key and related Databuffer as value
-  DataMap processed_data_map_;  // TODO: make it generic per operation
+  DataMap processed_data_map_;
 
   /// Map with tensor name as key and related Dimension as value
   DimType processed_dims_map_;

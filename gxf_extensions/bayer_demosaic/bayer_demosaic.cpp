@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,8 @@
 #include <cuda_runtime.h>
 
 #include <iostream>
+#include <string>
+#include <utility>
 
 #include "bayer_demosaic.hpp"
 
@@ -138,7 +140,7 @@ gxf_result_t BayerDemosaic::tick() {
         element_type = gxf::PrimitiveType::kUnsigned8;
         break;
       default:
-        GXF_LOG_ERROR("Unsupported input format: %d\n", buffer_info.color_format);
+        GXF_LOG_ERROR("Unsupported input format: %d\n", (int)(buffer_info.color_format));
         return GXF_FAILURE;
     }
 
@@ -160,7 +162,7 @@ gxf_result_t BayerDemosaic::tick() {
       if (buffer_size > device_scratch_buffer_.size()) {
         device_scratch_buffer_.resize(pool_, buffer_size, gxf::MemoryStorageType::kDevice);
         if (!device_scratch_buffer_.pointer()) {
-          GXF_LOG_ERROR("Failed to allocate device scratch buffer (%d bytes)", buffer_size);
+          GXF_LOG_ERROR("Failed to allocate device scratch buffer (%zu bytes)", buffer_size);
           return GXF_FAILURE;
         }
       }
@@ -195,8 +197,9 @@ gxf_result_t BayerDemosaic::tick() {
 
   if (element_type != gxf::PrimitiveType::kUnsigned8 &&
       element_type != gxf::PrimitiveType::kUnsigned16) {
-    GXF_LOG_ERROR("Unexpected bytes in element representation %d (size %d)", element_type,
-                                                                            element_size);
+    GXF_LOG_ERROR("Unexpected bytes in element representation %d (size %d)",
+                  (int32_t)element_type,
+                  element_size);
     return GXF_FAILURE;
   }
 

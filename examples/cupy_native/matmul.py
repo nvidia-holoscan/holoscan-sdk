@@ -15,7 +15,6 @@
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.logger import load_env_log_level
 
 try:
     import cupy as cp
@@ -77,6 +76,5 @@ class MatMulApp(Application):
 
 
 if __name__ == "__main__":
-    load_env_log_level()
     app = MatMulApp()
     app.run()

@@ -77,16 +77,17 @@ void BeginImageLayer() {
   Context::get().begin_image_layer();
 }
 
-void ImageCudaDevice(uint32_t w, uint32_t h, ImageFormat fmt, CUdeviceptr device_ptr) {
-  Context::get().get_active_image_layer()->image_cuda_device(w, h, fmt, device_ptr);
+void ImageCudaDevice(uint32_t w, uint32_t h, ImageFormat fmt, CUdeviceptr device_ptr,
+                     size_t row_pitch) {
+  Context::get().get_active_image_layer()->image_cuda_device(w, h, fmt, device_ptr, row_pitch);
 }
 
 void ImageCudaArray(ImageFormat fmt, CUarray array) {
   Context::get().get_active_image_layer()->image_cuda_array(fmt, array);
 }
 
-void ImageHost(uint32_t w, uint32_t h, ImageFormat fmt, const void* data) {
-  Context::get().get_active_image_layer()->image_host(w, h, fmt, data);
+void ImageHost(uint32_t w, uint32_t h, ImageFormat fmt, const void* data, size_t row_pitch) {
+  Context::get().get_active_image_layer()->image_host(w, h, fmt, data, row_pitch);
 }
 
 void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data, bool normalized) {
@@ -137,6 +138,34 @@ void LayerPriority(int32_t priority) {
   Context::get().get_active_layer()->set_priority(priority);
 }
 
+void LayerAddView(float offset_x, float offset_y, float width, float height, const float* matrix) {
+  Layer::View view;
+  view.offset_x = offset_x;
+  view.offset_y = offset_y;
+  view.width = width;
+  view.height = height;
+  if (matrix) {
+    // nvmath::mat4f is column major, the incoming matrix is row major, transpose while copying
+    view.matrix = nvmath::mat4f(matrix[0],
+                                matrix[4],
+                                matrix[8],
+                                matrix[12],
+                                matrix[1],
+                                matrix[5],
+                                matrix[9],
+                                matrix[13],
+                                matrix[2],
+                                matrix[6],
+                                matrix[10],
+                                matrix[14],
+                                matrix[3],
+                                matrix[7],
+                                matrix[11],
+                                matrix[15]);
+  }
+  Context::get().get_active_layer()->add_view(view);
+}
+
 void EndLayer() {
   Context::get().end_layer();
 }
@@ -144,6 +173,19 @@ void EndLayer() {
 void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
                      CUdeviceptr device_ptr) {
   Context::get().read_framebuffer(fmt, width, height, buffer_size, device_ptr);
+}
+
+void GetCameraPose(size_t size, float* matrix) {
+  if (size != 16) { throw std::invalid_argument("Size of the matrix array should be 16"); }
+  if (matrix == nullptr) { throw std::invalid_argument("Pointer to matrix should not be nullptr"); }
+
+  nvmath::mat4f view_matrix;
+  Context::get().get_window()->get_view_matrix(&view_matrix);
+
+  // nvmath::mat4f is column major, the outgoing matrix is row major, transpose while copying
+  for (uint32_t row = 0; row < 4; ++row) {
+    for (uint32_t col = 0; col < 4; ++col) { matrix[row * 4 + col] = view_matrix(row, col); }
+  }
 }
 
 }  // namespace holoscan::viz

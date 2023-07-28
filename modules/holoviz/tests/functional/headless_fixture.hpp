@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +50,13 @@ class TestHeadless : public ::testing::Test {
   ///@}
 
   /**
+   * Set the CUDA device ordinal to be used for CUDA operations.
+   *
+   * @param device_ordinal CUDA device ordinal
+   */
+  void SetCUDADevice(uint32_t device_ordinal);
+
+  /**
    * Setup random pixel data.
    *
    * @param format pixel format
@@ -58,34 +65,61 @@ class TestHeadless : public ::testing::Test {
   void SetupData(holoscan::viz::ImageFormat format, uint32_t rand_seed = 1);
 
   /**
-   * Read back data from the Holoviz window.
+   * Read back color data from the Holoviz window.
    *
-   * @param read_data vector to hold the read back data
+   * @param color_data vector to hold the color data
+   * @param depth_data vector to hold the depth data
    */
-  void ReadData(std::vector<uint8_t>& read_data);
+  void ReadColorData(std::vector<uint8_t>& color_data);
 
   /**
-   * Read back data and compare with the data generated with SetupData().
+   * Read back depth data from the Holoviz window.
+   *
+   * @param depth_data vector to hold the depth data
+   */
+  void ReadDepthData(std::vector<float>& depth_data);
+
+  /**
+   * Read back color data and compare with the data generated with SetupData().
    *
    * @returns false if read back and generated data do not match
    */
-  bool CompareResult();
+  bool CompareColorResult();
 
   /**
-   * Read back data, generate a CRC32 and compare with the provided CRC32's.
+   * Read back depth data and compare with the data generated with SetupData().
+   *
+   * @returns false if read back and generated data do not match
+   */
+  bool CompareDepthResult();
+
+  /**
+   * Read back color data, generate a CRC32 and compare with the provided CRC32's.
    *
    * @param crc32 vector of expected CRC32's
    *
-   * @returns false if read back and generated data do not match
+   * @returns false if CRC32 of read back does not match provided CRC32
    */
-  bool CompareResultCRC32(const std::vector<uint32_t> crc32);
+  bool CompareColorResultCRC32(const std::vector<uint32_t> crc32);
+
+  /**
+   * Read back depth data, generate a CRC32 and compare with the provided CRC32's.
+   *
+   * @param crc32 vector of expected CRC32's
+   *
+   * @returns false if CRC32 of read back does not match provided CRC32
+   */
+  bool CompareDepthResultCRC32(const std::vector<uint32_t> crc32);
+
+  uint32_t device_ordinal_ = 0;
 
   const uint32_t lut_size_ = 8;
 
   const uint32_t width_ = 64;
   const uint32_t height_ = 32;
 
-  std::vector<uint8_t> data_;
+  std::vector<uint8_t> color_data_;
+  std::vector<float> depth_data_;
 };
 
 #endif /* HOLOVIZ_TESTS_FUNCTIONAL_HEADLESS_FIXTURE_HPP */

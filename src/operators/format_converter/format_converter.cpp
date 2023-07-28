@@ -17,6 +17,7 @@
 
 #include "holoscan/operators/format_converter/format_converter.hpp"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,7 +37,7 @@
   ({                                                                                       \
     cudaError_t _holoscan_cuda_err = stmt;                                                 \
     if (cudaSuccess != _holoscan_cuda_err) {                                               \
-      GXF_LOG_ERROR("CUDA Runtime call %s in line %d of file %s failed with '%s' (%d).\n", \
+      HOLOSCAN_LOG_ERROR("CUDA Runtime call %s in line %d of file %s failed with '%s' (%d).\n", \
                     #stmt,                                                                 \
                     __LINE__,                                                              \
                     __FILE__,                                                              \
@@ -163,6 +164,9 @@ void FormatConverterOp::initialize() {
 }
 
 void FormatConverterOp::start() {
+  resize_buffer_ = std::make_unique<nvidia::gxf::MemoryBuffer>();
+  channel_buffer_ = std::make_unique<nvidia::gxf::MemoryBuffer>();
+  device_scratch_buffer_ = std::make_unique<nvidia::gxf::MemoryBuffer>();
   out_dtype_ = toFormatDType(out_dtype_str_.get());
   if (out_dtype_ == FormatDType::kUnknown) {
     throw std::runtime_error(
@@ -207,15 +211,18 @@ void FormatConverterOp::start() {
 }
 
 void FormatConverterOp::stop() {
-  resize_buffer_.freeBuffer();
-  channel_buffer_.freeBuffer();
-  device_scratch_buffer_.freeBuffer();
+  // Destroy the memory buffers here because GXF context is needed to destroy these buffers,
+  // and GXF context would not be available after stop(). GXF context would not be available
+  // when the FormatConverterOp destructor is being called as well.
+  resize_buffer_.reset();
+  channel_buffer_.reset();
+  device_scratch_buffer_.reset();
 }
 
 void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output,
                                 ExecutionContext& context) {
   // Process input message
-  auto in_message = op_input.receive<gxf::Entity>("source_video");
+  auto in_message = op_input.receive<gxf::Entity>("source_video").value();
 
   // get the CUDA stream from the input message
   gxf_result_t stream_handler_result =
@@ -238,7 +245,7 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
   // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
   auto pool = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
-                                                                  pool_.get()->gxf_cid());
+                                                                  pool_->gxf_cid());
 
   // Get either the Tensor or VideoBuffer attached to the message
   bool is_video_buffer;
@@ -257,7 +264,7 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
     // NOTE: VideoBuffer::moveToTensor() converts VideoBuffer instance to the Tensor instance
     // with an unexpected shape:  [width, height] or [width, height, num_planes].
-    // And, if we use moveToTensor() to convert VideoBuffer to Tensor, we may lose the the original
+    // And, if we use moveToTensor() to convert VideoBuffer to Tensor, we may lose the original
     // video buffer when the VideoBuffer instance is used in other places. For that reason, we
     // directly access internal data of VideoBuffer instance to access Tensor data.
     const auto& buffer_info = frame->video_frame_info();
@@ -268,6 +275,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
         out_channels = in_channels;
         out_shape = nvidia::gxf::Shape{
             static_cast<int32_t>(buffer_info.height), static_cast<int32_t>(buffer_info.width), 4};
+        break;
+      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB:
+        in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned8;
+        in_channels = 3;  // RGB
+        out_channels = in_channels;
+        out_shape = nvidia::gxf::Shape{
+            static_cast<int32_t>(buffer_info.height), static_cast<int32_t>(buffer_info.width), 3};
         break;
       case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12:
         in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned8;
@@ -303,17 +317,19 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     // as needed for the NPP resize/convert operations.
     if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost) {
       size_t buffer_size = rows * columns * in_channels;
-      if (buffer_size > device_scratch_buffer_.size()) {
-        device_scratch_buffer_.resize(
+      if (buffer_size > device_scratch_buffer_->size()) {
+        device_scratch_buffer_->resize(
             pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
-        if (!device_scratch_buffer_.pointer()) {
+        if (!device_scratch_buffer_->pointer()) {
           throw std::runtime_error(
               fmt::format("Failed to allocate device scratch buffer ({} bytes)", buffer_size));
         }
       }
-      CUDA_TRY(cudaMemcpy(
-          device_scratch_buffer_.pointer(), frame->pointer(), buffer_size, cudaMemcpyHostToDevice));
-      in_tensor_data = device_scratch_buffer_.pointer();
+      CUDA_TRY(cudaMemcpy(device_scratch_buffer_->pointer(),
+                          frame->pointer(),
+                          buffer_size,
+                          cudaMemcpyHostToDevice));
+      in_tensor_data = device_scratch_buffer_->pointer();
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
     }
   } else {
@@ -463,20 +479,20 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
     const void* in_tensor_data, const int32_t rows, const int32_t columns, const int16_t channels,
     const nvidia::gxf::PrimitiveType primitive_type, const int32_t resize_width,
     const int32_t resize_height) {
-  if (resize_buffer_.size() == 0) {
+  if (resize_buffer_->size() == 0) {
     auto frag = fragment();
 
     // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
     auto pool = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(frag->executor().context(),
-                                                                    pool_.get()->gxf_cid());
+                                                                    pool_->gxf_cid());
 
     uint64_t buffer_size = resize_width * resize_height * channels;
-    resize_buffer_.resize(pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
+    resize_buffer_->resize(pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
   }
 
-  const auto converted_tensor_ptr = resize_buffer_.pointer();
+  const auto converted_tensor_ptr = resize_buffer_->pointer();
   if (converted_tensor_ptr == nullptr) {
-    GXF_LOG_ERROR("Failed to allocate memory for the resizing image");
+    HOLOSCAN_LOG_ERROR("Failed to allocate memory for the resizing image");
     return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr);
   }
 
@@ -503,7 +519,7 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
                                          npp_stream_ctx_);
           break;
         default:
-          GXF_LOG_ERROR("Unsupported input primitive type for resizing image");
+          HOLOSCAN_LOG_ERROR("Unsupported input primitive type for resizing image");
           return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr);
       }
       break;
@@ -522,12 +538,12 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
                                          npp_stream_ctx_);
           break;
         default:
-          GXF_LOG_ERROR("Unsupported input primitive type for resizing image");
+          HOLOSCAN_LOG_ERROR("Unsupported input primitive type for resizing image");
           return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr);
       }
       break;
     default:
-      GXF_LOG_ERROR("Unsupported input primitive type for resizing image (%d, %d)",
+      HOLOSCAN_LOG_ERROR("Unsupported input primitive type for resizing image (%d, %d)",
                     channels,
                     static_cast<int32_t>(primitive_type));
       return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr);
@@ -640,18 +656,18 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
       const auto in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
       const auto out_tensor_ptr = static_cast<float*>(out_tensor_data);
 
-      if (channel_buffer_.size() == 0) {
+      if (channel_buffer_->size() == 0) {
         auto frag = fragment();
 
         // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
         auto pool = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(frag->executor().context(),
-                                                                        pool_.get()->gxf_cid());
+                                                                        pool_->gxf_cid());
 
         uint64_t buffer_size = rows * columns * 3;  // 4 channels -> 3 channels
-        channel_buffer_.resize(pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
+        channel_buffer_->resize(pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
       }
 
-      const auto converted_tensor_ptr = channel_buffer_.pointer();
+      const auto converted_tensor_ptr = channel_buffer_->pointer();
       if (converted_tensor_ptr == nullptr) {
         throw std::runtime_error("Failed to allocate memory for the channel conversion");
       }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,13 @@
 
 #include <cuda_runtime.h>
 
-#include "holoscan/core/domain/tensor.hpp"
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "holoscan/core/common.hpp"
+#include "holoscan/core/domain/tensor.hpp"
 
 #define CUDA_TRY(stmt)                                                                  \
   {                                                                                     \
@@ -34,6 +39,12 @@
   }
 
 namespace holoscan {
+
+DLManagedMemoryBuffer::DLManagedMemoryBuffer(DLManagedTensor* self) : self_(self) {}
+
+DLManagedMemoryBuffer::~DLManagedMemoryBuffer() {
+  if (self_ && self_->deleter != nullptr) { self_->deleter(self_); }
+}
 
 Tensor::Tensor(DLManagedTensor* dl_managed_tensor_ptr) {
   dl_ctx_ = std::make_shared<DLManagedTensorCtx>();

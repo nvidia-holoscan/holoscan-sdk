@@ -34,12 +34,12 @@ class PingMxOp : public Operator {
   }
 
   void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
-    auto value = op_input.receive<int>("in");
+    auto value = op_input.receive<int>("in").value();
 
-    std::cout << "Middle message value: " << *(value.get()) << std::endl;
+    std::cout << "Middle message value: " << value << std::endl;
 
     // Multiply the value by the multiplier parameter
-    *(value.get()) *= multiplier_;
+    value *= multiplier_;
 
     op_output.emit(value);
   };

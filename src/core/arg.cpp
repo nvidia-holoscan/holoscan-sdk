@@ -17,6 +17,9 @@
 
 #include "holoscan/core/arg.hpp"
 
+#include <string>
+#include <vector>
+
 namespace holoscan {
 
 std::string ArgType::to_string() const {

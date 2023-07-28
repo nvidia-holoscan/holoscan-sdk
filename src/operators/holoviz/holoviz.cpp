@@ -19,9 +19,15 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <list>
+#include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
+#include "holoscan/core/codecs.hpp"
+#include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/executor.hpp"
@@ -29,6 +35,7 @@
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
+#include "holoscan/operators/holoviz/codecs.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
@@ -37,23 +44,21 @@
 #include "gxf/std/tensor.hpp"
 #include "holoviz/holoviz.hpp"  // holoviz module
 
-#define CUDA_TRY(stmt)                                                                     \
-  ({                                                                                       \
-    cudaError_t _holoscan_cuda_err = stmt;                                                 \
-    if (cudaSuccess != _holoscan_cuda_err) {                                               \
-      GXF_LOG_ERROR("CUDA Runtime call %s in line %d of file %s failed with '%s' (%d).\n", \
-                    #stmt,                                                                 \
-                    __LINE__,                                                              \
-                    __FILE__,                                                              \
-                    cudaGetErrorString(_holoscan_cuda_err),                                \
-                    _holoscan_cuda_err);                                                   \
-    }                                                                                      \
-    _holoscan_cuda_err;                                                                    \
+#define CUDA_TRY(stmt)                                                                          \
+  ({                                                                                            \
+    cudaError_t _holoscan_cuda_err = stmt;                                                      \
+    if (cudaSuccess != _holoscan_cuda_err) {                                                    \
+      HOLOSCAN_LOG_ERROR("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).\n", \
+                         #stmt,                                                                 \
+                         __LINE__,                                                              \
+                         __FILE__,                                                              \
+                         cudaGetErrorString(_holoscan_cuda_err),                                \
+                         _holoscan_cuda_err);                                                   \
+    }                                                                                           \
+    _holoscan_cuda_err;                                                                         \
   })
 
 namespace viz = holoscan::viz;
-
-namespace {
 
 /// Buffer information, can be initialized either with a tensor or a video buffer
 struct BufferInfo {
@@ -111,8 +116,8 @@ struct BufferInfo {
         channels = 4;
         break;
       default:
-        GXF_LOG_ERROR("Unsupported input format: %" PRId64 "\n",
-                      static_cast<int64_t>(buffer_info.color_format));
+        HOLOSCAN_LOG_ERROR("Unsupported input format: {}\n",
+                           static_cast<int64_t>(buffer_info.color_format));
         return GXF_FAILURE;
     }
 
@@ -141,6 +146,8 @@ struct BufferInfo {
   nvidia::gxf::Tensor::stride_array_t stride;
 };
 
+namespace {
+
 /**
  * Get the Holoviz image format for a given buffer.
  *
@@ -149,7 +156,7 @@ struct BufferInfo {
  */
 nvidia::gxf::Expected<viz::ImageFormat> getImageFormatFromTensor(const BufferInfo& buffer_info) {
   if (buffer_info.rank != 3) {
-    GXF_LOG_ERROR("Invalid tensor rank count, expected 3, got %u", buffer_info.rank);
+    HOLOSCAN_LOG_ERROR("Invalid tensor rank count, expected 3, got {}", buffer_info.rank);
     return nvidia::gxf::Unexpected{GXF_INVALID_DATA_FORMAT};
   }
 
@@ -177,9 +184,9 @@ nvidia::gxf::Expected<viz::ImageFormat> getImageFormatFromTensor(const BufferInf
     }
   }
   if (image_format == static_cast<viz::ImageFormat>(-1)) {
-    GXF_LOG_ERROR("Element type %d and channel count %d not supported",
-                  static_cast<int>(buffer_info.element_type),
-                  buffer_info.shape.dimension(3));
+    HOLOSCAN_LOG_ERROR("Element type {} and channel count {} not supported",
+                       static_cast<int>(buffer_info.element_type),
+                       buffer_info.shape.dimension(3));
     return nvidia::gxf::Unexpected{GXF_INVALID_DATA_FORMAT};
   }
 
@@ -187,7 +194,7 @@ nvidia::gxf::Expected<viz::ImageFormat> getImageFormatFromTensor(const BufferInf
 }
 
 /// table to convert input type to string
-static const std::array<std::pair<holoscan::ops::HolovizOp::InputType, std::string>, 13>
+static const std::array<std::pair<holoscan::ops::HolovizOp::InputType, std::string>, 17>
     kInputTypeToStr{{{holoscan::ops::HolovizOp::InputType::UNKNOWN, "unknown"},
                      {holoscan::ops::HolovizOp::InputType::COLOR, "color"},
                      {holoscan::ops::HolovizOp::InputType::COLOR_LUT, "color_lut"},
@@ -200,7 +207,11 @@ static const std::array<std::pair<holoscan::ops::HolovizOp::InputType, std::stri
                      {holoscan::ops::HolovizOp::InputType::OVALS, "ovals"},
                      {holoscan::ops::HolovizOp::InputType::TEXT, "text"},
                      {holoscan::ops::HolovizOp::InputType::DEPTH_MAP, "depth_map"},
-                     {holoscan::ops::HolovizOp::InputType::DEPTH_MAP_COLOR, "depth_map_color"}}};
+                     {holoscan::ops::HolovizOp::InputType::DEPTH_MAP_COLOR, "depth_map_color"},
+                     {holoscan::ops::HolovizOp::InputType::POINTS_3D, "points_3d"},
+                     {holoscan::ops::HolovizOp::InputType::LINES_3D, "lines_3d"},
+                     {holoscan::ops::HolovizOp::InputType::LINE_STRIP_3D, "line_strip_3d"},
+                     {holoscan::ops::HolovizOp::InputType::TRIANGLES_3D, "triangles_3d"}}};
 
 /**
  * Convert a string to a input type enum
@@ -304,52 +315,6 @@ nvidia::gxf::Expected<holoscan::ops::HolovizOp::InputType> detectInputType(
   return nvidia::gxf::Unexpected{GXF_FAILURE};
 }
 
-/**
- * Log the input spec
- *
- * @param input_specs input spec to log
- */
-void logInputSpec(const std::vector<holoscan::ops::HolovizOp::InputSpec>& input_specs) {
-  std::stringstream ss;
-  ss << "Input spec:" << std::endl;
-  for (auto&& input_spec : input_specs) {
-    ss << "- name: '" << input_spec.tensor_name_ << "'" << std::endl;
-    ss << "   type: '" << inputTypeToString(input_spec.type_) << "'" << std::endl;
-    ss << "   opacity: " << input_spec.opacity_ << std::endl;
-    ss << "   priority: " << input_spec.priority_ << std::endl;
-    if ((input_spec.type_ == holoscan::ops::HolovizOp::InputType::POINTS) ||
-        (input_spec.type_ == holoscan::ops::HolovizOp::InputType::LINES) ||
-        (input_spec.type_ == holoscan::ops::HolovizOp::InputType::LINE_STRIP) ||
-        (input_spec.type_ == holoscan::ops::HolovizOp::InputType::TRIANGLES) ||
-        (input_spec.type_ == holoscan::ops::HolovizOp::InputType::CROSSES) ||
-        (input_spec.type_ == holoscan::ops::HolovizOp::InputType::RECTANGLES) ||
-        (input_spec.type_ == holoscan::ops::HolovizOp::InputType::OVALS) ||
-        (input_spec.type_ == holoscan::ops::HolovizOp::InputType::TEXT)) {
-      ss << "   color: [";
-      for (auto it = input_spec.color_.cbegin(); it < input_spec.color_.cend(); ++it) {
-        ss << *it;
-        if (it + 1 != input_spec.color_.cend()) { ss << ", "; }
-      }
-      ss << "]" << std::endl;
-      ss << "   line_width: " << input_spec.line_width_ << std::endl;
-      ss << "   point_size: " << input_spec.point_size_ << std::endl;
-      if (input_spec.type_ == holoscan::ops::HolovizOp::InputType::TEXT) {
-        ss << "   text: [";
-        for (auto it = input_spec.text_.cbegin(); it < input_spec.text_.cend(); ++it) {
-          ss << *it;
-          if (it + 1 != input_spec.text_.cend()) { ss << ", "; }
-        }
-        ss << "]" << std::endl;
-      }
-      if (input_spec.type_ == holoscan::ops::HolovizOp::InputType::DEPTH_MAP) {
-        ss << "   depth_map_render_mode: '"
-           << depthMapRenderModeToString(input_spec.depth_map_render_mode_) << "'" << std::endl;
-      }
-    }
-  }
-  HOLOSCAN_LOG_INFO(ss.str());
-}
-
 }  // namespace
 
 /**
@@ -363,17 +328,40 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
     node["name"] = input_spec.tensor_name_;
     node["opacity"] = std::to_string(input_spec.opacity_);
     node["priority"] = std::to_string(input_spec.priority_);
-    node["color"] = input_spec.color_;
-    node["line_width"] = std::to_string(input_spec.line_width_);
-    node["point_size"] = std::to_string(input_spec.point_size_);
-    node["text"] = input_spec.text_;
-    node["depth_map_render_mode"] = depthMapRenderModeToString(input_spec.depth_map_render_mode_);
+    switch (input_spec.type_) {
+      case holoscan::ops::HolovizOp::InputType::POINTS:
+      case holoscan::ops::HolovizOp::InputType::LINES:
+      case holoscan::ops::HolovizOp::InputType::LINE_STRIP:
+      case holoscan::ops::HolovizOp::InputType::TRIANGLES:
+      case holoscan::ops::HolovizOp::InputType::CROSSES:
+      case holoscan::ops::HolovizOp::InputType::RECTANGLES:
+      case holoscan::ops::HolovizOp::InputType::OVALS:
+      case holoscan::ops::HolovizOp::InputType::POINTS_3D:
+      case holoscan::ops::HolovizOp::InputType::LINES_3D:
+      case holoscan::ops::HolovizOp::InputType::LINE_STRIP_3D:
+      case holoscan::ops::HolovizOp::InputType::TRIANGLES_3D:
+        node["color"] = input_spec.color_;
+        node["line_width"] = std::to_string(input_spec.line_width_);
+        node["point_size"] = std::to_string(input_spec.point_size_);
+        break;
+      case holoscan::ops::HolovizOp::InputType::TEXT:
+        node["color"] = input_spec.color_;
+        node["text"] = input_spec.text_;
+        break;
+      case holoscan::ops::HolovizOp::InputType::DEPTH_MAP:
+        node["depth_map_render_mode"] =
+            depthMapRenderModeToString(input_spec.depth_map_render_mode_);
+        break;
+      default:
+        break;
+    }
+    for (auto&& view : input_spec.views_) { node["views"].push_back(view); }
     return node;
   }
 
   static bool decode(const Node& node, holoscan::ops::HolovizOp::InputSpec& input_spec) {
     if (!node.IsMap()) {
-      GXF_LOG_ERROR("InputSpec: expected a map");
+      HOLOSCAN_LOG_ERROR("InputSpec: expected a map");
       return false;
     }
 
@@ -386,28 +374,99 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
       input_spec.type_ = maybe_input_type.value();
       input_spec.opacity_ = node["opacity"].as<float>(input_spec.opacity_);
       input_spec.priority_ = node["priority"].as<int32_t>(input_spec.priority_);
-      input_spec.color_ = node["color"].as<std::vector<float>>(input_spec.color_);
-      input_spec.line_width_ = node["line_width"].as<float>(input_spec.line_width_);
-      input_spec.point_size_ = node["point_size"].as<float>(input_spec.point_size_);
-      input_spec.text_ = node["text"].as<std::vector<std::string>>(input_spec.text_);
+      switch (input_spec.type_) {
+        case holoscan::ops::HolovizOp::InputType::LINES:
+        case holoscan::ops::HolovizOp::InputType::LINE_STRIP:
+        case holoscan::ops::HolovizOp::InputType::TRIANGLES:
+        case holoscan::ops::HolovizOp::InputType::CROSSES:
+        case holoscan::ops::HolovizOp::InputType::RECTANGLES:
+        case holoscan::ops::HolovizOp::InputType::OVALS:
+        case holoscan::ops::HolovizOp::InputType::POINTS_3D:
+        case holoscan::ops::HolovizOp::InputType::LINES_3D:
+        case holoscan::ops::HolovizOp::InputType::LINE_STRIP_3D:
+        case holoscan::ops::HolovizOp::InputType::TRIANGLES_3D:
+          input_spec.color_ = node["color"].as<std::vector<float>>(input_spec.color_);
+          input_spec.line_width_ = node["line_width"].as<float>(input_spec.line_width_);
+          input_spec.point_size_ = node["point_size"].as<float>(input_spec.point_size_);
+          break;
+        case holoscan::ops::HolovizOp::InputType::TEXT:
+          input_spec.color_ = node["color"].as<std::vector<float>>(input_spec.color_);
+          input_spec.text_ = node["text"].as<std::vector<std::string>>(input_spec.text_);
+          break;
+        case holoscan::ops::HolovizOp::InputType::DEPTH_MAP:
+          if (node["depth_map_render_mode"]) {
+            const auto maybe_depth_map_render_mode =
+                depthMapRenderModeFromString(node["depth_map_render_mode"].as<std::string>());
+            if (maybe_depth_map_render_mode) {
+              input_spec.depth_map_render_mode_ = maybe_depth_map_render_mode.value();
+            }
+          }
+          break;
+        default:
+          break;
+      }
 
-      if (node["depth_map_render_mode"]) {
-        const auto maybe_depth_map_render_mode =
-            depthMapRenderModeFromString(node["depth_map_render_mode"].as<std::string>());
-        if (maybe_depth_map_render_mode) {
-          input_spec.depth_map_render_mode_ = maybe_depth_map_render_mode.value();
-        }
+      if (node["views"]) {
+        input_spec.views_ =
+            node["views"].as<std::vector<holoscan::ops::HolovizOp::InputSpec::View>>();
       }
 
       return true;
     } catch (const std::exception& e) {
-      GXF_LOG_ERROR(e.what());
+      HOLOSCAN_LOG_ERROR(e.what());
+      return false;
+    }
+  }
+};
+
+/**
+ * Custom YAML parser for InputSpec::View class
+ */
+template <>
+struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
+  static Node encode(const holoscan::ops::HolovizOp::InputSpec::View& view) {
+    Node node;
+    node["offset_x"] = view.offset_x_;
+    node["offset_y"] = view.offset_y_;
+    node["width"] = view.width_;
+    node["height"] = view.height_;
+    if (view.matrix_.has_value()) { node["matrix"] = view.matrix_.value(); }
+    return node;
+  }
+
+  static bool decode(const Node& node, holoscan::ops::HolovizOp::InputSpec::View& view) {
+    if (!node.IsMap()) {
+      HOLOSCAN_LOG_ERROR("InputSpec: expected a map");
+      return false;
+    }
+
+    // YAML is using exceptions, catch them
+    try {
+      view.offset_x_ = node["offset_x"].as<float>(view.offset_x_);
+      view.offset_y_ = node["offset_y"].as<float>(view.offset_y_);
+      view.width_ = node["width"].as<float>(view.width_);
+      view.height_ = node["height"].as<float>(view.height_);
+      if (node["matrix"]) { view.matrix_ = node["matrix"].as<std::array<float, 16>>(); }
+
+      return true;
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_ERROR(e.what());
       return false;
     }
   }
 };
 
 namespace holoscan::ops {
+
+HolovizOp::InputSpec::InputSpec(const std::string& tensor_name, const std::string& type_str)
+    : tensor_name_(tensor_name) {
+  const auto maybe_type = inputTypeFromString(type_str);
+  if (!maybe_type) {
+    throw std::runtime_error("");
+    return;
+  }
+  type_ = maybe_type.value();
+}
 
 void HolovizOp::setup(OperatorSpec& spec) {
   constexpr uint32_t DEFAULT_WIDTH = 1920;
@@ -420,6 +479,9 @@ void HolovizOp::setup(OperatorSpec& spec) {
   constexpr bool DEFAULT_HEADLESS = false;
 
   spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+
+  spec.input<std::any>("input_specs").condition(ConditionType::kNone);
+
   auto& render_buffer_input =
       spec.input<gxf::Entity>("render_buffer_input").condition(ConditionType::kNone);
   spec.param(render_buffer_input_,
@@ -436,12 +498,22 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "using that one, else it allocates a new buffer.",
              &render_buffer_output);
 
+  auto& camera_pose_output =
+      spec.output<std::array<float, 16>>("camera_pose_output").condition(ConditionType::kNone);
+  spec.param(camera_pose_output_,
+             "camera_pose_output",
+             "CameraPoseOutput",
+             "Output the camera pose. The camera parameters are returned in a 4x4 row major "
+             "projection matrix.",
+             &camera_pose_output);
+
   spec.param(
       tensors_,
       "tensors",
       "Input Tensors",
       "List of input tensors. 'name' is required, 'type' is optional (unknown, color, color_lut, "
-      "points, lines, line_strip, triangles, crosses, rectangles, ovals, text).",
+      "points, lines, line_strip, triangles, crosses, rectangles, ovals, text, points_3d, "
+      "lines_3d, line_strip_3d, triangles_3d).",
       std::vector<InputSpec>());
 
   spec.param(color_lut_,
@@ -544,10 +616,177 @@ void HolovizOp::enable_conditional_port(const std::string& port_name) {
   if (disable_port) { add_arg(Arg(port_name) = static_cast<holoscan::IOSpec*>(nullptr)); }
 }
 
+void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_output,
+                                  ExecutionContext& context) {
+  auto entity = nvidia::gxf::Entity::New(context.context());
+  if (!entity) {
+    throw std::runtime_error("Failed to allocate message for the render buffer output.");
+  }
+
+  auto video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>("render_buffer_output");
+  if (!video_buffer) {
+    throw std::runtime_error("Failed to allocate the video buffer for the render buffer output.");
+  }
+
+  if (render_buffer_input_enabled_) {
+    // check if there is a input buffer given to copy the output into
+    auto render_buffer_input = op_input.receive<gxf::Entity>("render_buffer_input").value();
+    if (!render_buffer_input) {
+      throw std::runtime_error("No message available at 'render_buffer_input'.");
+    }
+
+    // Get the empty input buffer
+    const auto& video_buffer_in =
+        static_cast<nvidia::gxf::Entity>(render_buffer_input).get<nvidia::gxf::VideoBuffer>();
+    if (!video_buffer_in) {
+      throw std::runtime_error("No video buffer attached to message on 'render_buffer_input'.");
+    }
+
+    const nvidia::gxf::VideoBufferInfo info = video_buffer_in.value()->video_frame_info();
+
+    if ((info.color_format != nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA)) {
+      throw std::runtime_error("Invalid render buffer input, expected an RGBA buffer.");
+    }
+
+    video_buffer.value()->wrapMemory(info,
+                                     video_buffer_in.value()->size(),
+                                     video_buffer_in.value()->storage_type(),
+                                     video_buffer_in.value()->pointer(),
+                                     nullptr);
+  } else {
+    // if there is no input buffer given, allocate one
+    if (!allocator_.get()) {
+      throw std::runtime_error("No render buffer input specified and no allocator set.");
+    }
+
+    // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
+    auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
+                                                                         allocator_->gxf_cid());
+
+    video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
+        width_,
+        height_,
+        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_BLOCK_LINEAR,
+        nvidia::gxf::MemoryStorageType::kDevice,
+        allocator.value());
+    if (!video_buffer.value()->pointer()) {
+      throw std::runtime_error("Failed to allocate render output buffer.");
+    }
+  }
+
+  // read the framebuffer
+  viz::ReadFramebuffer(viz::ImageFormat::R8G8B8A8_UNORM,
+                       width_,
+                       height_,
+                       video_buffer.value()->size(),
+                       reinterpret_cast<CUdeviceptr>(video_buffer.value()->pointer()));
+
+  // Output the filled render buffer object
+  auto result = gxf::Entity(std::move(entity.value()));
+  op_output.emit(result, "render_buffer_output");
+}
+
+void HolovizOp::set_input_spec(const InputSpec& input_spec) {
+  viz::LayerPriority(input_spec.priority_);
+  viz::LayerOpacity(input_spec.opacity_);
+  for (auto&& view : input_spec.views_) {
+    const float* matrix = nullptr;
+    if (view.matrix_.has_value()) { matrix = view.matrix_.value().data(); }
+    viz::LayerAddView(view.offset_x_, view.offset_y_, view.width_, view.height_, matrix);
+  }
+}
+
+void HolovizOp::set_input_spec_geometry(const InputSpec& input_spec) {
+  // first set common layer properties
+  set_input_spec(input_spec);
+
+  // now set geometry layer specific properties
+  std::array<float, 4> color{1.f, 1.f, 1.f, 1.f};
+  for (size_t index = 0; index < std::min(input_spec.color_.size(), color.size()); ++index) {
+    color[index] = input_spec.color_[index];
+  }
+  viz::Color(color[0], color[1], color[2], color[3]);
+  viz::PointSize(input_spec.point_size_);
+  viz::LineWidth(input_spec.line_width_);
+}
+
+void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
+                                 const BufferInfo& buffer_info_depth_map,
+                                 InputSpec* const input_spec_depth_map_color,
+                                 const BufferInfo& buffer_info_depth_map_color) {
+  /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
+  /// configurable
+  const auto height = buffer_info_depth_map.shape.dimension(0);
+  const auto width = buffer_info_depth_map.shape.dimension(1);
+
+  viz::ImageFormat depth_map_color_fmt = viz::ImageFormat::R8G8B8A8_UNORM;
+  CUdeviceptr depth_map_color_device_ptr = 0;
+  if (input_spec_depth_map_color) {
+    // if there is a color buffer, the size has to match
+
+    /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
+    /// configurable
+    const auto color_height = buffer_info_depth_map_color.shape.dimension(0);
+    const auto color_width = buffer_info_depth_map_color.shape.dimension(1);
+    if ((width != color_width) || (height != color_height)) {
+      throw std::runtime_error(
+          fmt::format("The buffer dimensions {}x{} of the depth map color buffer '{}' need to "
+                      "match the depth map '{}' dimensions {}x{}",
+                      color_width,
+                      color_height,
+                      buffer_info_depth_map_color.name,
+                      buffer_info_depth_map.name,
+                      width,
+                      height));
+    }
+    auto maybe_image_format = getImageFormatFromTensor(buffer_info_depth_map_color);
+    if (!maybe_image_format) {
+      auto code = nvidia::gxf::ToResultCode(maybe_image_format);
+      throw std::runtime_error(fmt::format("failed setting input format with code {}", code));
+    }
+    depth_map_color_fmt = maybe_image_format.value();
+
+    depth_map_color_device_ptr =
+        reinterpret_cast<CUdeviceptr>(buffer_info_depth_map_color.buffer_ptr);
+  }
+
+  viz::DepthMapRenderMode depth_map_render_mode;
+  switch (input_spec_depth_map->depth_map_render_mode_) {
+    case DepthMapRenderMode::POINTS:
+      depth_map_render_mode = viz::DepthMapRenderMode::POINTS;
+      break;
+    case DepthMapRenderMode::LINES:
+      depth_map_render_mode = viz::DepthMapRenderMode::LINES;
+      break;
+    case DepthMapRenderMode::TRIANGLES:
+      depth_map_render_mode = viz::DepthMapRenderMode::TRIANGLES;
+      break;
+    default:
+      throw std::runtime_error(
+          fmt::format("Unhandled depth map render mode {}",
+                      depthMapRenderModeToString(input_spec_depth_map->depth_map_render_mode_)));
+  }
+
+  // start a geometry layer containing the depth map
+  viz::BeginGeometryLayer();
+  set_input_spec_geometry(*input_spec_depth_map);
+
+  const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info_depth_map.buffer_ptr);
+  viz::DepthMap(depth_map_render_mode,
+                width,
+                height,
+                viz::ImageFormat::R8_UNORM,
+                cu_buffer_ptr,
+                depth_map_color_fmt,
+                depth_map_color_device_ptr);
+  viz::EndLayer();
+}
+
 void HolovizOp::initialize() {
   register_converter<std::vector<InputSpec>>();
+  register_codec<std::vector<InputSpec>>("std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
 
-  // Set up prerequisite parameters before calling GXFOperator::initialize()
+  // Set up prerequisite parameters before calling Operator::initialize()
   auto frag = fragment();
 
   // Find if there is an argument for 'window_close_scheduling_term'
@@ -565,10 +804,12 @@ void HolovizOp::initialize() {
   // TODO: avoid duplicate computations between check_port_enabled and enable_conditional_port
   render_buffer_input_enabled_ = check_port_enabled("render_buffer_input");
   render_buffer_output_enabled_ = check_port_enabled("render_buffer_output");
+  camera_pose_output_enabled_ = check_port_enabled("camera_pose_output");
 
   // Conditional inputs and outputs are enabled using a boolean argument
   enable_conditional_port("render_buffer_input");
   enable_conditional_port("render_buffer_output");
+  enable_conditional_port("camera_pose_output");
 
   // parent class initialize() call must be after the argument additions above
   Operator::initialize();
@@ -606,14 +847,14 @@ void HolovizOp::start() {
   }
 
   // cast Condition to BooleanCondition
-  auto bool_cond = window_close_scheduling_term_.get();
-  bool_cond->enable_tick();
+  window_close_scheduling_term_->enable_tick();
 
   // Copy the user defined input spec list to the internal input spec list. If there is no user
   // defined input spec it will be generated from the first messages received.
   if (!tensors_.get().empty()) {
-    input_spec_.reserve(tensors_.get().size());
-    input_spec_.insert(input_spec_.begin(), tensors_.get().begin(), tensors_.get().end());
+    initial_input_spec_.reserve(tensors_.get().size());
+    initial_input_spec_.insert(
+        initial_input_spec_.begin(), tensors_.get().begin(), tensors_.get().end());
   }
 }
 
@@ -623,7 +864,8 @@ void HolovizOp::stop() {
 
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                         ExecutionContext& context) {
-  std::vector<gxf::Entity> messages_h = op_input.receive<std::vector<gxf::Entity>>("receivers");
+  std::vector<gxf::Entity> messages_h =
+      op_input.receive<std::vector<gxf::Entity>>("receivers").value();
 
   // create vector of nvidia::gxf::Entity as expected by the code below
   std::vector<nvidia::gxf::Entity> messages;
@@ -635,40 +877,66 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   }
 
   // cast Condition to BooleanCondition
-  auto bool_cond = window_close_scheduling_term_.get();
   if (viz::WindowShouldClose()) {
-    bool_cond->disable_tick();
+    window_close_scheduling_term_->disable_tick();
     return;
   }
 
   // nothing to do if minimized
   if (viz::WindowIsMinimized()) { return; }
 
-  // if user provided it, we have a input spec which had been copied at start().
-  // else we build the input spec automatically by inspecting the tensors/videobuffers of all
-  // messages
-  if (input_spec_.empty()) {
-    // get all tensors and video buffers of all messages and build the input spec
-    for (auto&& message : messages) {
-      const auto tensors = message.findAll<nvidia::gxf::Tensor>();
-      for (auto&& tensor : tensors.value()) {
+  // build the input spec list
+  std::vector<InputSpec> input_spec_list(initial_input_spec_);
+
+  // check the messages for input specs, they are added to the list
+  if (!op_input.empty("input_specs")) {
+    auto msg_input_specs =
+        op_input.receive<std::vector<holoscan::ops::HolovizOp::InputSpec>>("input_specs").value();
+    input_spec_list.insert(input_spec_list.end(), msg_input_specs.begin(), msg_input_specs.end());
+  }
+
+  // then get all tensors and video buffers of all messages, check if an input spec for the tensor
+  // is already there, if not try to detect the input spec from the tensor or video buffer
+  // information
+  for (auto&& message : messages) {
+    const auto tensors = message.findAll<nvidia::gxf::Tensor>();
+    for (auto&& tensor : tensors.value()) {
+      // check if an input spec with the same tensor name already exist
+      const std::string tensor_name(tensor->name());
+      const auto it = std::find_if(
+          std::begin(input_spec_list), std::end(input_spec_list), [&tensor_name](const auto& v) {
+            return v.tensor_name_ == tensor_name;
+          });
+
+      if (it == std::end(input_spec_list)) {
+        // no input spec found, try to detect
         BufferInfo buffer_info;
         if (buffer_info.init(tensor.value()) != GXF_FAILURE) {
           // try to detect the input type, if we can't detect it, ignore the tensor
           const auto maybe_input_type = detectInputType(buffer_info, !lut_.empty());
           if (maybe_input_type) {
-            input_spec_.emplace_back(tensor->name(), maybe_input_type.value());
+            input_spec_list.emplace_back(tensor->name(), maybe_input_type.value());
           }
         }
       }
-      const auto video_buffers = message.findAll<nvidia::gxf::VideoBuffer>();
-      for (auto&& video_buffer : video_buffers.value()) {
+    }
+    const auto video_buffers = message.findAll<nvidia::gxf::VideoBuffer>();
+    for (auto&& video_buffer : video_buffers.value()) {
+      // check if an input spec with the same tensor name already exist
+      const std::string tensor_name(video_buffer->name());
+      const auto it = std::find_if(
+          std::begin(input_spec_list), std::end(input_spec_list), [&tensor_name](const auto& v) {
+            return v.tensor_name_ == tensor_name;
+          });
+
+      if (it == std::end(input_spec_list)) {
+        // no input spec found, try to detect
         BufferInfo buffer_info;
         if (buffer_info.init(video_buffer.value()) != GXF_FAILURE) {
           // try to detect the input type, if we can't detect it, ignore the tensor
           const auto maybe_input_type = detectInputType(buffer_info, !lut_.empty());
           if (maybe_input_type) {
-            input_spec_.emplace_back(video_buffer->name(), maybe_input_type.value());
+            input_spec_list.emplace_back(video_buffer->name(), maybe_input_type.value());
           }
         }
       }
@@ -695,7 +963,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
   // get the tensors attached to the messages by the tensor names defined by the input spec and
   // display them
-  for (auto& input_spec : input_spec_) {
+  for (auto& input_spec : input_spec_list) {
     nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>> maybe_input_tensor =
         nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
     nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>> maybe_input_video =
@@ -730,6 +998,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       throw std::runtime_error(fmt::format("Unsupported buffer format tensor/video buffer '{}'",
                                            input_spec.tensor_name_));
     }
+
+    // If the buffer is empty, skip processing it
+    if (buffer_info.bytes_size == 0) { continue; }
 
     // if the input type is unknown it now can be detected using the image properties
     if (input_spec.type_ == InputType::UNKNOWN) {
@@ -785,8 +1056,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
         // start an image layer
         viz::BeginImageLayer();
-        viz::LayerPriority(input_spec.priority_);
-        viz::LayerOpacity(input_spec.opacity_);
+        set_input_spec(input_spec);
 
         if (input_spec.type_ == InputType::COLOR_LUT) {
           viz::LUT(lut_.size() / 4,
@@ -798,11 +1068,11 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
           // if it's the device convert to `CUDeviceptr`
           const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
-          viz::ImageCudaDevice(width, height, image_format, cu_buffer_ptr);
+          viz::ImageCudaDevice(width, height, image_format, cu_buffer_ptr, buffer_info.stride[0]);
         } else {
           // convert to void * if using the system/host
           const auto host_buffer_ptr = reinterpret_cast<const void*>(buffer_info.buffer_ptr);
-          viz::ImageHost(width, height, image_format, host_buffer_ptr);
+          viz::ImageHost(width, height, image_format, host_buffer_ptr, buffer_info.stride[0]);
         }
         viz::EndLayer();
       } break;
@@ -814,7 +1084,11 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       case InputType::CROSSES:
       case InputType::RECTANGLES:
       case InputType::OVALS:
-      case InputType::TEXT: {
+      case InputType::TEXT:
+      case InputType::POINTS_3D:
+      case InputType::LINES_3D:
+      case InputType::LINE_STRIP_3D:
+      case InputType::TRIANGLES_3D: {
         // geometry layer
         if (buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat32) {
           throw std::runtime_error(fmt::format(
@@ -842,13 +1116,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
         // start a geometry layer
         viz::BeginGeometryLayer();
-        viz::LayerPriority(input_spec.priority_);
-        viz::LayerOpacity(input_spec.opacity_);
-        std::array<float, 4> color{1.f, 1.f, 1.f, 1.f};
-        for (size_t index = 0; index < std::min(input_spec.color_.size(), color.size()); ++index) {
-          color[index] = input_spec.color_[index];
-        }
-        viz::Color(color[0], color[1], color[2], color[3]);
+        set_input_spec_geometry(input_spec);
 
         /// @todo this is assuming NHW, should either auto-detect (if possible) or make user
         /// configurable
@@ -862,6 +1130,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
             throw std::runtime_error(
                 fmt::format("Expected two or three values per text, but got '{}'", components));
           }
+          if (input_spec.text_.empty()) {
+            throw std::runtime_error(fmt::format("No text has been specified by input spec '{}'.",
+                                                 input_spec.tensor_name_));
+          }
           const float* src_coord = reinterpret_cast<const float*>(buffer_info.buffer_ptr);
           for (int32_t index = 0; index < coordinates; ++index) {
             viz::Text(
@@ -873,101 +1145,154 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
             src_coord += components;
           }
         } else {
-          viz::LineWidth(input_spec.line_width_);
-
           std::vector<float> coords;
           viz::PrimitiveTopology topology;
           uint32_t primitive_count;
           uint32_t coordinate_count;
           uint32_t values_per_coordinate;
           std::vector<float> default_coord;
-          if (input_spec.type_ == InputType::POINTS) {
-            // point primitives, one coordinate (x, y) per primitive
-            if (components != 2) {
-              throw std::runtime_error(
-                  fmt::format("Expected two values per point, but got '{}'", components));
-            }
+          switch (input_spec.type_) {
+            case InputType::POINTS:
+              // point primitives, one coordinate (x, y) per primitive
+              if (components != 2) {
+                throw std::runtime_error(
+                    fmt::format("Expected two values per point, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::POINT_LIST;
+              primitive_count = coordinates;
+              coordinate_count = primitive_count;
+              values_per_coordinate = 2;
+              default_coord = {0.f, 0.f};
+              break;
+            case InputType::LINES:
+              // line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
+              if (components != 2) {
+                throw std::runtime_error(
+                    fmt::format("Expected two values per line vertex, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::LINE_LIST;
+              primitive_count = coordinates / 2;
+              coordinate_count = primitive_count * 2;
+              values_per_coordinate = 2;
+              default_coord = {0.f, 0.f};
+              break;
+            case InputType::LINE_STRIP:
+              // line strip primitive, a line primitive i is defined by each coordinate (xi, yi) and
+              // the following (xi+1, yi+1)
+              if (components != 2) {
+                throw std::runtime_error(fmt::format(
+                    "Expected two values per line strip vertex, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::LINE_STRIP;
+              primitive_count = coordinates - 1;
+              coordinate_count = coordinates;
+              values_per_coordinate = 2;
+              default_coord = {0.f, 0.f};
+              break;
+            case InputType::TRIANGLES:
+              // triangle primitive, three coordinates (x0, y0), (x1, y1) and (x2, y2) per primitive
+              if (components != 2) {
+                throw std::runtime_error(fmt::format(
+                    "Expected two values per triangle vertex, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::TRIANGLE_LIST;
+              primitive_count = coordinates / 3;
+              coordinate_count = primitive_count * 3;
+              values_per_coordinate = 2;
+              default_coord = {0.f, 0.f};
+              break;
+            case InputType::CROSSES:
+              // cross primitive, a cross is defined by the center coordinate and the size (xi, yi,
+              // si)
+              if ((components < 2) || (components > 3)) {
+                throw std::runtime_error(fmt::format(
+                    "Expected two or three values per cross, but got '{}'", components));
+              }
 
-            viz::PointSize(input_spec.point_size_);
-
-            topology = viz::PrimitiveTopology::POINT_LIST;
-            primitive_count = coordinates;
-            coordinate_count = primitive_count;
-            values_per_coordinate = 2;
-            default_coord = {0.f, 0.f};
-          } else if (input_spec.type_ == InputType::LINES) {
-            // line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
-            if (components != 2) {
+              topology = viz::PrimitiveTopology::CROSS_LIST;
+              primitive_count = coordinates;
+              coordinate_count = primitive_count;
+              values_per_coordinate = 3;
+              default_coord = {0.f, 0.f, 0.05f};
+              break;
+            case InputType::RECTANGLES:
+              // axis aligned rectangle primitive, each rectangle is defined by two coordinates (xi,
+              // yi) and (xi+1, yi+1)
+              if (components != 2) {
+                throw std::runtime_error(fmt::format(
+                    "Expected two values per rectangle vertex, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::RECTANGLE_LIST;
+              primitive_count = coordinates / 2;
+              coordinate_count = primitive_count * 2;
+              values_per_coordinate = 2;
+              default_coord = {0.f, 0.f};
+              break;
+            case InputType::OVALS:
+              // oval primitive, an oval primitive is defined by the center coordinate and the axis
+              // sizes (xi, yi, sxi, syi)
+              if ((components < 2) || (components > 4)) {
+                throw std::runtime_error(fmt::format(
+                    "Expected two, three or four values per oval, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::OVAL_LIST;
+              primitive_count = coordinates;
+              coordinate_count = primitive_count;
+              values_per_coordinate = 4;
+              default_coord = {0.f, 0.f, 0.05f, 0.05f};
+              break;
+            case InputType::POINTS_3D:
+              // point primitives, one coordinate (x, y, z) per primitive
+              if (components != 3) {
+                throw std::runtime_error(
+                    fmt::format("Expected three values per 3D point, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::POINT_LIST_3D;
+              primitive_count = coordinates;
+              coordinate_count = primitive_count;
+              values_per_coordinate = 3;
+              default_coord = {0.f, 0.f, 0.f};
+              break;
+            case InputType::LINES_3D:
+              // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
+              if (components != 3) {
+                throw std::runtime_error(fmt::format(
+                    "Expected three values per 3D line vertex, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::LINE_LIST_3D;
+              primitive_count = coordinates / 2;
+              coordinate_count = primitive_count * 2;
+              values_per_coordinate = 3;
+              default_coord = {0.f, 0.f, 0.f};
+              break;
+            case InputType::LINE_STRIP_3D:
+              // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
+              if (components != 3) {
+                throw std::runtime_error(fmt::format(
+                    "Expected three values per 3D line strip vertex, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::LINE_STRIP_3D;
+              primitive_count = coordinates - 1;
+              coordinate_count = coordinates;
+              values_per_coordinate = 3;
+              default_coord = {0.f, 0.f};
+              break;
+            case InputType::TRIANGLES_3D:
+              // triangle primitive, three coordinates (x0, y0, z0), (x1, y1, z1) and (x2, y2, z2)
+              // per primitive
+              if (components != 3) {
+                throw std::runtime_error(fmt::format(
+                    "Expected three values per 3D triangle vertex, but got '{}'", components));
+              }
+              topology = viz::PrimitiveTopology::TRIANGLE_LIST_3D;
+              primitive_count = coordinates / 3;
+              coordinate_count = primitive_count * 3;
+              values_per_coordinate = 3;
+              default_coord = {0.f, 0.f};
+              break;
+            default:
               throw std::runtime_error(
-                  fmt::format("Expected two values per line vertex, but got '{}'", components));
-            }
-            topology = viz::PrimitiveTopology::LINE_LIST;
-            primitive_count = coordinates / 2;
-            coordinate_count = primitive_count * 2;
-            values_per_coordinate = 2;
-            default_coord = {0.f, 0.f};
-          } else if (input_spec.type_ == InputType::LINE_STRIP) {
-            // line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
-            if (components != 2) {
-              throw std::runtime_error(fmt::format(
-                  "Expected two values per line strip vertex, but got '{}'", components));
-            }
-            topology = viz::PrimitiveTopology::LINE_STRIP;
-            primitive_count = coordinates - 1;
-            coordinate_count = coordinates;
-            values_per_coordinate = 2;
-            default_coord = {0.f, 0.f};
-          } else if (input_spec.type_ == InputType::TRIANGLES) {
-            // triangle primitive, three coordinates (x0, y0), (x1, y1) and (x2, y2) per primitive
-            if (components != 2) {
-              throw std::runtime_error(
-                  fmt::format("Expected two values per triangle vertex, but got '{}'", components));
-            }
-            topology = viz::PrimitiveTopology::TRIANGLE_LIST;
-            primitive_count = coordinates / 3;
-            coordinate_count = primitive_count * 3;
-            values_per_coordinate = 2;
-            default_coord = {0.f, 0.f};
-          } else if (input_spec.type_ == InputType::CROSSES) {
-            // cross primitive, a cross is defined by the center coordinate and the size (xi, yi,
-            // si)
-            if ((components < 2) || (components > 3)) {
-              throw std::runtime_error(
-                  fmt::format("Expected two or three values per cross, but got '{}'", components));
-            }
-
-            topology = viz::PrimitiveTopology::CROSS_LIST;
-            primitive_count = coordinates;
-            coordinate_count = primitive_count;
-            values_per_coordinate = 3;
-            default_coord = {0.f, 0.f, 0.05f};
-          } else if (input_spec.type_ == InputType::RECTANGLES) {
-            // axis aligned rectangle primitive, each rectangle is defined by two coordinates (xi,
-            // yi) and (xi+1, yi+1)
-            if (components != 2) {
-              throw std::runtime_error(fmt::format(
-                  "Expected two values per rectangle vertex, but got '{}'", components));
-            }
-            topology = viz::PrimitiveTopology::RECTANGLE_LIST;
-            primitive_count = coordinates / 2;
-            coordinate_count = primitive_count * 2;
-            values_per_coordinate = 2;
-            default_coord = {0.f, 0.f};
-          } else if (input_spec.type_ == InputType::OVALS) {
-            // oval primitive, an oval primitive is defined by the center coordinate and the axis
-            // sizes (xi, yi, sxi, syi)
-            if ((components < 2) || (components > 4)) {
-              throw std::runtime_error(fmt::format(
-                  "Expected two, three or four values per oval, but got '{}'", components));
-            }
-            topology = viz::PrimitiveTopology::OVAL_LIST;
-            primitive_count = coordinates;
-            coordinate_count = primitive_count;
-            values_per_coordinate = 4;
-            default_coord = {0.f, 0.f, 0.05f, 0.05f};
-          } else {
-            throw std::runtime_error(
-                fmt::format("Unhandled tensor type '{}'", inputTypeToString(input_spec.type_)));
+                  fmt::format("Unhandled tensor type '{}'", inputTypeToString(input_spec.type_)));
           }
 
           // copy coordinates
@@ -1073,163 +1398,43 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
   // we now have both tensors to render a depth map
   if (input_spec_depth_map) {
-    /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
-    /// configurable
-    const auto height = buffer_info_depth_map.shape.dimension(0);
-    const auto width = buffer_info_depth_map.shape.dimension(1);
-
-    viz::ImageFormat depth_map_color_fmt = viz::ImageFormat::R8G8B8A8_UNORM;
-    CUdeviceptr depth_map_color_device_ptr = 0;
-    if (input_spec_depth_map_color) {
-      // if there is a color buffer, the size has to match
-
-      /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
-      /// configurable
-      const auto color_height = buffer_info_depth_map_color.shape.dimension(0);
-      const auto color_width = buffer_info_depth_map_color.shape.dimension(1);
-      if ((width != color_width) || (height != color_height)) {
-        throw std::runtime_error(
-            fmt::format("The buffer dimensions {}x{} of the depth map color buffer '{}' need to "
-                        "match the depth map '{}' dimensions {}x{}",
-                        color_width,
-                        color_height,
-                        buffer_info_depth_map_color.name,
-                        buffer_info_depth_map.name,
-                        width,
-                        height));
-      }
-      auto maybe_image_format = getImageFormatFromTensor(buffer_info_depth_map_color);
-      if (!maybe_image_format) {
-        auto code = nvidia::gxf::ToResultCode(maybe_image_format);
-        throw std::runtime_error(fmt::format("failed setting input format with code {}", code));
-      }
-      depth_map_color_fmt = maybe_image_format.value();
-
-      depth_map_color_device_ptr =
-          reinterpret_cast<CUdeviceptr>(buffer_info_depth_map_color.buffer_ptr);
-    }
-
-    viz::DepthMapRenderMode depth_map_render_mode;
-    switch (input_spec_depth_map->depth_map_render_mode_) {
-      case DepthMapRenderMode::POINTS:
-        depth_map_render_mode = viz::DepthMapRenderMode::POINTS;
-        break;
-      case DepthMapRenderMode::LINES:
-        depth_map_render_mode = viz::DepthMapRenderMode::LINES;
-        break;
-      case DepthMapRenderMode::TRIANGLES:
-        depth_map_render_mode = viz::DepthMapRenderMode::TRIANGLES;
-        break;
-      default:
-        throw std::runtime_error(
-            fmt::format("Unhandled depth map render mode {}",
-                        depthMapRenderModeToString(input_spec_depth_map->depth_map_render_mode_)));
-    }
-
-    // start a geometry layer containing the depth map
-    viz::BeginGeometryLayer();
-    viz::LayerPriority(input_spec_depth_map->priority_);
-    viz::LayerOpacity(input_spec_depth_map->opacity_);
-    std::array<float, 4> color{1.f, 1.f, 1.f, 1.f};
-    for (size_t index = 0; index < std::min(input_spec_depth_map->color_.size(), color.size());
-         ++index) {
-      color[index] = input_spec_depth_map->color_[index];
-    }
-    viz::Color(color[0], color[1], color[2], color[3]);
-
-    if (depth_map_render_mode == viz::DepthMapRenderMode::POINTS) {
-      viz::PointSize(input_spec_depth_map->point_size_);
-    } else if (depth_map_render_mode == viz::DepthMapRenderMode::LINES) {
-      viz::LineWidth(input_spec_depth_map->line_width_);
-    }
-
-    const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info_depth_map.buffer_ptr);
-    viz::DepthMap(depth_map_render_mode,
-                  width,
-                  height,
-                  viz::ImageFormat::R8_UNORM,
-                  cu_buffer_ptr,
-                  depth_map_color_fmt,
-                  depth_map_color_device_ptr);
-    viz::EndLayer();
+    render_depth_map(input_spec_depth_map,
+                     buffer_info_depth_map,
+                     input_spec_depth_map_color,
+                     buffer_info_depth_map_color);
   }
 
   viz::End();
 
   // check if the render buffer should be output
-  if (render_buffer_output_enabled_) {
-    auto entity = nvidia::gxf::Entity::New(context.context());
-    if (!entity) {
-      throw std::runtime_error("Failed to allocate message for the render buffer output.");
-    }
+  if (render_buffer_output_enabled_) { read_frame_buffer(op_input, op_output, context); }
 
-    auto video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>("render_buffer_output");
-    if (!video_buffer) {
-      throw std::runtime_error("Failed to allocate the video buffer for the render buffer output.");
-    }
+  // check if the the camera pose should be output
+  if (camera_pose_output_enabled_) {
+    auto camera_pose_output = std::make_shared<std::array<float, 16>>();
 
-    if (render_buffer_input_enabled_) {
-      // check if there is a input buffer given to copy the output into
-      auto render_buffer_input = op_input.receive<gxf::Entity>("render_buffer_input");
-      if (!render_buffer_input) {
-        throw std::runtime_error("No message available at 'render_buffer_input'.");
-      }
+    viz::GetCameraPose(camera_pose_output->size(), camera_pose_output->data());
 
-      // Get the empty input buffer
-      const auto& video_buffer_in =
-          static_cast<nvidia::gxf::Entity>(render_buffer_input).get<nvidia::gxf::VideoBuffer>();
-      if (!video_buffer_in) {
-        throw std::runtime_error("No video buffer attached to message on 'render_buffer_input'.");
-      }
-
-      const nvidia::gxf::VideoBufferInfo info = video_buffer_in.value()->video_frame_info();
-
-      if ((info.color_format != nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA)) {
-        throw std::runtime_error("Invalid render buffer input, expected an RGBA buffer.");
-      }
-
-      video_buffer.value()->wrapMemory(info,
-                                       video_buffer_in.value()->size(),
-                                       video_buffer_in.value()->storage_type(),
-                                       video_buffer_in.value()->pointer(),
-                                       nullptr);
-    } else {
-      // if there is no input buffer given, allocate one
-      if (!allocator_.get()) {
-        throw std::runtime_error("No render buffer input specified and no allocator set.");
-      }
-
-      // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
-      auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(
-          context.context(), allocator_.get()->gxf_cid());
-
-      video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
-          width_,
-          height_,
-          nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_BLOCK_LINEAR,
-          nvidia::gxf::MemoryStorageType::kDevice,
-          allocator.value());
-      if (!video_buffer.value()->pointer()) {
-        throw std::runtime_error("Failed to allocate render output buffer.");
-      }
-    }
-
-    // read the framebuffer
-    viz::ReadFramebuffer(viz::ImageFormat::R8G8B8A8_UNORM,
-                         width_,
-                         height_,
-                         video_buffer.value()->size(),
-                         reinterpret_cast<CUdeviceptr>(video_buffer.value()->pointer()));
-
-    // Output the filled render buffer object
-    auto result = gxf::Entity(std::move(entity.value()));
-    op_output.emit(result);
+    op_output.emit(camera_pose_output, "camera_pose_output");
   }
 
   if (is_first_tick_) {
-    logInputSpec(input_spec_);
+    // log the input spec
+    YAML::Emitter emitter;
+    emitter << YAML::Node(input_spec_list);
+    HOLOSCAN_LOG_INFO("Input spec:\n{}\n", emitter.c_str());
     is_first_tick_ = false;
   }
 }
 
+std::string HolovizOp::InputSpec::description() const {
+  YAML::Emitter emitter;
+  emitter << YAML::convert<holoscan::ops::HolovizOp::InputSpec>::encode(*this);
+  return emitter.c_str();
+}
+
+HolovizOp::InputSpec::InputSpec(const std::string& yaml_description) {
+  YAML::Node input_spec_node = YAML::Load(yaml_description);
+  YAML::convert<holoscan::ops::HolovizOp::InputSpec>::decode(input_spec_node, *this);
+}
 }  // namespace holoscan::ops

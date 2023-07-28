@@ -23,11 +23,11 @@
 namespace holoscan {
 namespace ops {
 
-class PingTxOp : public Operator {
+class PingMultiTxOp : public Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingTxOp)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingMultiTxOp)
 
-  PingTxOp() = default;
+  PingMultiTxOp() = default;
 
   void setup(OperatorSpec& spec) override;
 

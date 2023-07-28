@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,18 +24,26 @@ namespace holoscan::viz {
  * Primitive topology
  */
 enum class PrimitiveTopology {
-  POINT_LIST,      ///< point primitives, one coordinate (x, y) per primitive
-  LINE_LIST,       ///< line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
-  LINE_STRIP,      ///< line strip primitive, a line primitive i is defined by
-                   ///  each coordinate (xi, yi) and the following (xi+1, yi+1)
-  TRIANGLE_LIST,   ///< triangle primitive, three coordinates
-                   ///  (x0, y0), (x1, y1) and (x2, y2) per primitive
-  CROSS_LIST,      ///< cross primitive, a cross is defined by the center coordinate
-                   ///  and the size (xi, yi, si)
-  RECTANGLE_LIST,  ///< axis aligned rectangle primitive,
-                   ///  each rectangle is defined by two coordinates (xi, yi) and (xi+1, yi+1)
-  OVAL_LIST,       ///< oval primitive, an oval primitive is defined by the center coordinate
-                   ///  and the axis sizes (xi, yi, sxi, syi)
+  POINT_LIST,        ///< point primitives, one coordinate (x, y) per primitive
+  LINE_LIST,         ///< line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
+  LINE_STRIP,        ///< line strip primitive, a line primitive i is defined by
+                     ///  each coordinate (xi, yi) and the following (xi+1, yi+1)
+  TRIANGLE_LIST,     ///< triangle primitive, three coordinates
+                     ///  (x0, y0), (x1, y1) and (x2, y2) per primitive
+  CROSS_LIST,        ///< cross primitive, a cross is defined by the center coordinate
+                     ///  and the size (xi, yi, si)
+  RECTANGLE_LIST,    ///< axis aligned rectangle primitive,
+                     ///  each rectangle is defined by two coordinates (xi, yi) and (xi+1, yi+1)
+  OVAL_LIST,         ///< oval primitive, an oval primitive is defined by the center coordinate
+                     ///  and the axis sizes (xi, yi, sxi, syi)
+  POINT_LIST_3D,     ///< 3D point primitives, one coordinate (x, y, z) per primitive
+  LINE_LIST_3D,      ///< 3D line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per
+                     ///  primitive
+  LINE_STRIP_3D,     ///< 3D line strip primitive, a line primitive i is defined by
+                     ///  each coordinate (xi, yi, zi) and (xi+1, yi+1, zi+1) per
+                     ///  primitive
+  TRIANGLE_LIST_3D,  ///< 3D triangle primitive, three coordinates
+                     ///  (x0, y0, z0), (x1, y1, z1) and (x2, y2, z2) per primitive
 };
 
 }  // namespace holoscan::viz

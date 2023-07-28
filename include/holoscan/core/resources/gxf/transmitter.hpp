@@ -26,6 +26,11 @@
 
 namespace holoscan {
 
+/**
+ * @brief Base transmitter class.
+ *
+ * Transmitters are used by output ports to emit messages.
+ */
 class Transmitter : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(Transmitter, GXFResource)

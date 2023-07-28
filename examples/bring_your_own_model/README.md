@@ -1,6 +1,8 @@
-# Bring Your Own Model - Ultrasound
+# Bring Your Own Model
 
-This example shows how to use the [Bring Your Own Model](https://docs.nvidia.com/clara-holoscan/sdk-user-guide/clara_holoscan_applications.html#bring-your-own-model-byom-customizing-the-ultrasound-segmentation-application-for-your-model) (BYOM) concept for Holoscan by replacing the existing identity model.
+This example shows how to run inference with Holoscan and provides a mechanism, to replace the existing identity model with another model.
+
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/byom.html) for step-by-step documentation of this example.*
 
 ## Data
 
@@ -18,16 +20,16 @@ through how to modify the python example code to run the application with an ult
 * **using python wheel**:
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   # [Prerequisite] Download `model` and `python` folders below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
-  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
   python3 <APP_DIR>/python/byom.py
   ```
 * **using deb package install**:
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
+  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  export HOLOSCAN_SAMPLE_DATA_PATH=<DATA_DIR>
   # Need to enable write permission in the model directory to write the engine file (use with caution)
   sudo chmod a+w /opt/nvidia/holoscan/examples/bring_your_own_model/model
   python3 /opt/nvidia/holoscan/examples/bring_your_own_model/python/byom.py
@@ -44,6 +46,6 @@ through how to modify the python example code to run the application with an ult
 * **source (local env)**:
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
-  export HOLOSCAN_SAMPLE_DATA_PATH=${SRC_DIR}/data
+  export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data
   python3 ${BUILD_OR_INSTALL_DIR}/examples/bring_your_own_model/python/byom.py
   ```

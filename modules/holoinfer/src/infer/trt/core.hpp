@@ -36,8 +36,8 @@ class TrtInfer : public InferBase {
   /**
    * @brief Constructor
    */
-  TrtInfer(const std::string& model_path, const std::string& model_name, bool enable_fp16,
-           bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out);
+  TrtInfer(const std::string& model_path, const std::string& model_name, int device_id,
+           bool enable_fp16, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out);
 
   /**
    * @brief Destructor
@@ -50,20 +50,34 @@ class TrtInfer : public InferBase {
    * @param output_buffer Output DataBuffer, is populated with inferred results
    * @return InferStatus
    * */
-  InferStatus do_inference(std::shared_ptr<DataBuffer>& input_data,
-                           std::shared_ptr<DataBuffer>& output_buffer);
+  InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
+                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer);
 
   /**
    * @brief Get input data dimensions to the model
    * @return Vector of values as dimension
    * */
-  std::vector<int64_t> get_input_dims() const;
+  std::vector<std::vector<int64_t>> get_input_dims() const;
 
   /**
    * @brief Get output data dimensions from the model
-   * @return Vector of values as dimension
+   * @return Vector of input dimensions. Each dimension is a vector of int64_t corresponding to
+   *         the shape of the input tensor.
    * */
-  std::vector<int64_t> get_output_dims() const;
+  std::vector<std::vector<int64_t>> get_output_dims() const;
+
+  /**
+   * @brief Get input data types from the model
+   * @return Vector of input dimensions. Each dimension is a vector of int64_t corresponding to
+   *         the shape of the input tensor.
+   * */
+  std::vector<holoinfer_datatype> get_input_datatype() const;
+
+  /**
+   * @brief Get output data types from the model
+   * @return Vector of values as datatype per output tensor
+   * */
+  std::vector<holoinfer_datatype> get_output_datatype() const;
 
   void cleanup() {}
 
@@ -75,13 +89,16 @@ class TrtInfer : public InferBase {
   std::string model_name_;
 
   /// @brief Dimensions of input buffer
-  std::vector<int64_t> input_dims_;
+  std::vector<std::vector<int64_t>> input_dims_;
 
   /// @brief Dimensions of output buffer
-  std::vector<int64_t> output_dims_;
+  std::vector<std::vector<int64_t>> output_dims_;
 
-  /// @brief Data bindings for inference
-  std::shared_ptr<std::vector<void*>> inference_bindings;
+  /// @brief Vector of input data types
+  std::vector<holoinfer_datatype> in_data_types_;
+
+  /// @brief Vector of output data types
+  std::vector<holoinfer_datatype> out_data_types_;
 
   /// @brief Use FP16 in TRT engine file generation
   bool enable_fp16_;
@@ -114,6 +131,8 @@ class TrtInfer : public InferBase {
   /// @brief Options to generate TRT engine file from onnx
   NetworkOptions network_options_;
 
+  /// @brief GPU ID to do inference on
+  int device_id_;
   /// @brief Logger object
   Logger logger_;
 
@@ -128,6 +147,9 @@ class TrtInfer : public InferBase {
 
   /// @brief Cuda stream
   cudaStream_t cuda_stream_ = nullptr;
+
+  /// @brief Inference runtime
+  std::unique_ptr<nvinfer1::IRuntime> infer_runtime_;
 };
 
 }  // namespace inference

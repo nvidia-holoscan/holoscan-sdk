@@ -18,14 +18,21 @@
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
+#include <any>
 #include <cstdint>
 #include <regex>
 #include <string>
+#include <tuple>
 #include <typeinfo>
+#include <vector>
 
+#include "../config.hpp"
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/parameter.hpp"
 
 using namespace std::string_literals;
+
+static HoloscanTestConfig test_config;
 
 namespace holoscan {
 
@@ -301,6 +308,47 @@ TEST(Arg, TestArgList2) {
   Arg a2 = args[2];
   EXPECT_EQ(a2.name(), "str_arg");
   EXPECT_EQ(std::any_cast<std::string>(a2.value()), s1);
+}
+
+TEST(Arg, TestArgListAs) {
+  Fragment F;
+  const std::string config_file = test_config.get_test_data_file("minimal.yaml");
+  F.config(config_file);
+
+  // use from_config so that the Arg contained has YAML::Node type as required by as<T>()
+  ArgList args = F.from_config("value");
+  EXPECT_EQ(args.size(), 1);
+  double v = args.as<double>();
+  EXPECT_EQ(v, 5.3);
+  // could also cast to string
+  std::string vstr = args.as<std::string>();
+  EXPECT_EQ(vstr, std::string{"5.3"});
+
+  // after adding a second element to the ArgList
+  // as<T>() still returns only the first element
+  args.add(Arg{"value2", 8.0});
+  double v2 = args.as<double>();
+  EXPECT_EQ(v2, 5.3);
+}
+
+TEST(Arg, TestArgListAsError) {
+  Fragment F;
+  const std::string config_file = test_config.get_test_data_file("minimal.yaml");
+  F.config(config_file);
+
+  // use from_config so that the Arg contained has YAML::Node type as required by as<T>()
+  ArgList args = F.from_config("value");
+
+  testing::internal::CaptureStderr();
+
+  // if the YAML node cannot be parsed a default constructed value is returned
+  int v_int = args.as<int>();
+  EXPECT_EQ(v_int, int{});
+
+  // an error will have been logged about the failed parsing
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Unable to parse YAML node") != std::string::npos);
 }
 
 TEST(Arg, TestArgListDescription) {

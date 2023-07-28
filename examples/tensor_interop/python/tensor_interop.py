@@ -18,10 +18,7 @@ limitations under the License.
 import os
 import sys
 
-import holoscan as hs
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.gxf import Entity
-from holoscan.logger import load_env_log_level
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 
 try:
@@ -33,7 +30,7 @@ except ImportError:
         "https://docs.cupy.dev/en/stable/install.html"
     )
 
-sample_data_path = os.environ.get("HOLOSCAN_SAMPLE_DATA_PATH", "../data")
+sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
 
 # Define custom Operators for use in the demo
@@ -47,7 +44,7 @@ class ImageProcessingOp(Operator):
     The data from each input is processed by a CuPy gaussian filter and
     the result is sent to the output.
 
-    In this demo, the input and output image (2D RGB) is an 3D array of shape
+    In this demo, the input and output image (2D RGB) is a 3D array of shape
     (height, width, channels).
     """
 
@@ -63,25 +60,26 @@ class ImageProcessingOp(Operator):
         spec.param("sigma")
 
     def compute(self, op_input, op_output, context):
-        message = op_input.receive("input_tensor")
+        # in_message is of dict
+        in_message = op_input.receive("input_tensor")
 
-        input_tensor = message.get()
+        # out_message is of dict
+        out_message = dict()
 
-        print(f"message received (count: {self.count})")
-        self.count += 1
+        for key, value in in_message.items():
+            print(f"message received (count: {self.count})")
+            self.count += 1
 
-        cp_array = cp.asarray(input_tensor)
+            cp_array = cp.asarray(value)
 
-        # smooth along first two axes, but not the color channels
-        sigma = (self.sigma, self.sigma, 0)
+            # smooth along first two axes, but not the color channels
+            sigma = (self.sigma, self.sigma, 0)
 
-        # process cp_array
-        cp_array = ndi.gaussian_filter(cp_array, sigma)
+            # process cp_array
+            cp_array = ndi.gaussian_filter(cp_array, sigma)
 
-        out_message = Entity(context)
-        output_tensor = hs.as_tensor(cp_array)
+            out_message[key] = cp_array
 
-        out_message.add(output_tensor)
         op_output.emit(out_message, "output_tensor")
 
 
@@ -130,8 +128,6 @@ class MyVideoProcessingApp(Application):
 
 
 if __name__ == "__main__":
-    load_env_log_level()
-
     config_file = os.path.join(os.path.dirname(__file__), "tensor_interop.yaml")
 
     if len(sys.argv) >= 2:

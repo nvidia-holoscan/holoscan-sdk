@@ -17,6 +17,8 @@
 
 #include "holoscan/core/resources/gxf/receiver.hpp"
 
+#include <string>
+
 namespace holoscan {
 
 Receiver::Receiver(const std::string& name, nvidia::gxf::Receiver* component)

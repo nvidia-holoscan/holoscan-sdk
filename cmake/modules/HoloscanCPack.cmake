@@ -13,6 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Copy NOTICE file for installation
+install(FILES ${CMAKE_CURRENT_LIST_DIR}/cpack/NOTICE.txt
+    DESTINATION .
+    COMPONENT holoscan-cpack
+)
+
+# CPACK config
 set(CPACK_PACKAGE_NAME ${PROJECT_NAME} CACHE STRING "Holoscan SDK")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Holoscan SDK"
     CACHE STRING "Package description for Holoscan SDK"
@@ -28,8 +35,8 @@ set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Julien Jomier")
 
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt")
-set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.txt")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
 
 # Sets the package name as debian format
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
@@ -55,7 +62,9 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS "cuda-cudart-dev-11-4 | cuda-cudart-dev-11-5 \
 cuda-nvcc-11-4 | cuda-nvcc-11-5 | cuda-nvcc-11-6 | cuda-nvcc-11-7 | cuda-nvcc-11-8, \
 libnpp-11-4 | libnpp-11-5 | libnpp-11-6 | libnpp-11-7 | libnpp-11-8, \
 libnvinfer-bin (>= 8.2.3), \
-libvulkan1 (>=1.2.131), libx11-6 (>=1.6.9)")
+libvulkan1 (>=1.2.131), libx11-6 (>=1.6.9), \
+libv4l-0 (>=1.18.0), \
+python3-pip (>=20.0.2)")
 
 include(CPack)
 
@@ -70,3 +79,4 @@ cpack_add_component(holoscan-gxf_bins)
 cpack_add_component(holoscan-modules)
 cpack_add_component(holoscan-dependencies)
 cpack_add_component(holoscan-examples)
+cpack_add_component(holoscan-cpack)

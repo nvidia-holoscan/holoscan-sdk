@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,14 +33,14 @@ void MessageAvailableCondition::setup(ComponentSpec& spec) {
              "The scheduling term permits execution if the given receiver has at least the "
              "given number of messages available.",
              1UL);
-  // TODO(gbae): This is an optional parameter. Should support optional parameters.
   spec.param(
       front_stage_max_size_,
       "front_stage_max_size",
       "Maximum front stage message count",
       "If set the scheduling term will only allow execution if the number of messages in the front "
       "stage does not exceed this count. It can for example be used in combination with codelets "
-      "which do not clear the front stage in every tick.");
+      "which do not clear the front stage in every tick.",
+      ParameterFlag::kOptional);
 }
 
 }  // namespace holoscan

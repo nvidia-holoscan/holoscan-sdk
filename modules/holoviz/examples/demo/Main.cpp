@@ -29,18 +29,38 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <holoviz/holoviz.hpp>
 
 namespace viz = holoscan::viz;
 
+enum class Source { HOST, DEVICE, ARRAY };
 static const char* source_items[]{"Host", "Device", "Array"};
+
 static const char* format_items[]{"R8_UINT", "R8G8B8_UNORM", "R8G8B8A8_UNORM"};
 static viz::ImageFormat formats[]{
     viz::ImageFormat::R8_UINT, viz::ImageFormat::R8G8B8_UNORM, viz::ImageFormat::R8G8B8A8_UNORM};
 
-enum class Source { HOST, DEVICE, ARRAY };
+// define the '<<' operators to get a nice output
+#define CASE(VALUE)            \
+  case VALUE:                  \
+    os << std::string(#VALUE); \
+    break;
+
+std::ostream& operator<<(std::ostream& os, const Source& source) {
+  switch (source) {
+    CASE(Source::HOST)
+    CASE(Source::DEVICE)
+    CASE(Source::ARRAY)
+    default:
+      os.setstate(std::ios_base::failbit);
+  }
+  return os;
+}
+
+#undef CASE
 
 // options
 bool benchmark_mode = false;
@@ -57,6 +77,10 @@ int image_layer_priority = 0;
 bool show_geometry_layer = true;
 float geometry_layer_opacity = 1.f;
 int geometry_layer_priority = 1;
+
+bool show_geometry_3d_layer = true;
+float geometry_3d_layer_opacity = 1.f;
+int geometry_3d_layer_priority = 2;
 
 uint32_t width = 1920;
 uint32_t height = 1080;
@@ -81,7 +105,10 @@ CUdeviceptr cu_device_mem_r8g8b8 = 0;
 CUdeviceptr cu_device_mem_r8g8b8a8 = 0;
 
 void tick() {
-  if (start.time_since_epoch().count() == 0) { start = std::chrono::steady_clock::now(); }
+  if (start.time_since_epoch().count() == 0) {
+    start = std::chrono::steady_clock::now();
+    iterations = 0;
+  }
 
   viz::Begin();
   if (show_ui) {
@@ -122,11 +149,19 @@ void tick() {
                (static_cast<uint32_t>((color[3] * 255.f) + 0.5f) << 24);
       }
     }
+
     ImGui::Separator();
     ImGui::Checkbox("Geometry layer", &show_geometry_layer);
     if (show_geometry_layer) {
       ImGui::SliderFloat("Opacity##geom", &geometry_layer_opacity, 0.f, 1.f);
       ImGui::SliderInt("Priority##geom", &geometry_layer_priority, -10, 10);
+    }
+
+    ImGui::Separator();
+    ImGui::Checkbox("3D Geometry layer", &show_geometry_3d_layer);
+    if (show_geometry_3d_layer) {
+      ImGui::SliderFloat("Opacity##geom3d", &geometry_3d_layer_opacity, 0.f, 1.f);
+      ImGui::SliderInt("Priority##geom3d", &geometry_3d_layer_priority, -10, 10);
     }
 
     ImGui::Text("%.1f frames/s", fps);
@@ -252,6 +287,46 @@ void tick() {
       const float data[]{0.9f, 0.95f, 0.1f, 0.1f, 0.95f, 0.975f, 0.05f, 0.1f};
       viz::LineWidth(3.f);
       viz::Primitive(viz::PrimitiveTopology::OVAL_LIST, 2, sizeof(data) / sizeof(data[0]), data);
+    }
+
+    viz::EndLayer();
+  }
+
+  if (show_geometry_3d_layer) {
+    viz::BeginGeometryLayer();
+    viz::LayerOpacity(geometry_3d_layer_opacity);
+    viz::LayerPriority(geometry_3d_layer_priority);
+
+    {
+      const float x_min = -0.25f;
+      const float x_max = 0.25f;
+      const float y_min = -0.25f;
+      const float y_max = 0.25f;
+      const float z_min = -0.25f;
+      const float z_max = 0.25f;
+      const float data[]{
+          x_min, y_min, z_min, x_max, y_min, z_min, x_min, y_max, z_min, x_max, y_max, z_min,
+          x_min, y_min, z_max, x_max, y_min, z_max, x_min, y_max, z_max, x_max, y_max, z_max,
+          x_min, y_max, z_min, x_min, y_min, z_min, x_max, y_max, z_min, x_max, y_min, z_min,
+          x_min, y_max, z_max, x_min, y_min, z_max, x_max, y_max, z_max, x_max, y_min, z_max,
+          x_min, y_max, z_min, x_min, y_max, z_max, x_min, y_min, z_min, x_min, y_min, z_max,
+          x_max, y_max, z_min, x_max, y_max, z_max, x_max, y_min, z_min, x_max, y_min, z_max};
+      viz::Color(0.75f, 0.f, 0.25f, 1.f);
+      viz::LineWidth(4.f);
+      viz::Primitive(
+          viz::PrimitiveTopology::LINE_LIST_3D, 12, sizeof(data) / sizeof(data[0]), data);
+
+      viz::Color(0.f, 1.f, 0.f, 1.f);
+      viz::PointSize(6.f);
+      viz::Primitive(
+          viz::PrimitiveTopology::POINT_LIST_3D, 24, sizeof(data) / sizeof(data[0]), data);
+    }
+    {
+      const float data[]{-0.125f, -0.125f, 0.f, 0.125f, -0.125f, 0.f, 0.125f, 0.125f, 0.f};
+
+      viz::Color(0.f, 0.f, 1.f, 1.f);
+      viz::Primitive(
+          viz::PrimitiveTopology::TRIANGLE_LIST_3D, 1, sizeof(data) / sizeof(data[0]), data);
     }
 
     viz::EndLayer();
@@ -410,6 +485,7 @@ int main(int argc, char** argv) {
         benchmark_mode = true;
         show_ui = false;
         show_geometry_layer = false;
+        show_geometry_3d_layer = false;
         break;
       case 'l':
         headless_mode = true;
@@ -451,8 +527,16 @@ int main(int argc, char** argv) {
   }
 
   if (benchmark_mode) {
-    do { tick(); } while (elapsed.count() < 2000);
-    std::cout << float(iterations) / (float(elapsed.count()) / 1000.f) << " fps" << std::endl;
+    for (auto source : {Source::DEVICE, Source::HOST}) {
+      current_source = source;
+      for (auto format_index : {2, 1, 0}) {
+        current_format_index = format_index;
+        start = std::chrono::steady_clock::time_point();
+        do { tick(); } while (elapsed.count() < 2000);
+        std::cout << current_source << " " << format_items[current_format_index] << " "
+                  << float(iterations) / (float(elapsed.count()) / 1000.f) << " fps" << std::endl;
+      }
+    }
   } else if (headless_mode) {
     tick();
 

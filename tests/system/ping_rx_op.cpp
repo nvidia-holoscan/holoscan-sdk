@@ -17,19 +17,21 @@
 
 #include "ping_rx_op.hpp"
 
+#include <vector>
+
 namespace holoscan {
 namespace ops {
 
-void PingRxOp::setup(OperatorSpec& spec) {
+void PingMultiRxOp::setup(OperatorSpec& spec) {
   spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
 }
 
-void PingRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
-  auto value_vector = op_input.receive<std::vector<int>>("receivers");
+void PingMultiRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+  auto value_vector = op_input.receive<std::vector<int>>("receivers").value();
 
   HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: {})", count_++, value_vector.size());
   for (int i = 0; i < value_vector.size(); ++i) {
-    HOLOSCAN_LOG_INFO("Rx message value{}: {}", i + 1, *(value_vector[i].get()));
+    HOLOSCAN_LOG_INFO("Rx message value{}: {}", i + 1, value_vector[i]);
   }
 }
 

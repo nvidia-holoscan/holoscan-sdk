@@ -78,8 +78,10 @@ superbuild_depend(fmt_rapids)
 superbuild_depend(expected_rapids)
 
 superbuild_depend(spdlog_rapids)
-# superbuild_depend(rmm_rapids)
 superbuild_depend(dlpack_rapids)
+superbuild_depend(hwloc)
+superbuild_depend(cli11_rapids)
+superbuild_depend(grpc)
 
 # GXF dependencies
 superbuild_depend(gxf)
@@ -87,8 +89,12 @@ superbuild_depend(glfw_rapids)
 superbuild_depend(glad_rapids)
 superbuild_depend(tensorrt)
 superbuild_depend(ajantv2_rapids)
+superbuild_depend(ucx)
 
 # Testing dependencies
 if(HOLOSCAN_BUILD_TESTS)
     superbuild_depend(gtest_rapids)
 endif()
+
+# V4L2
+superbuild_depend(v4l2)

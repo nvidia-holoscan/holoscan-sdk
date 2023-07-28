@@ -25,27 +25,11 @@ from holoscan.logger import (
     flush,
     flush_level,
     flush_on,
-    load_env_log_level,
     log_level,
     set_log_level,
     set_log_pattern,
     should_backtrace,
 )
-
-
-@pytest.mark.parametrize("level", ("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "OFF"))
-def test_load_env_log_level(level):
-    # remember current log level
-    orig_level = log_level()
-    try:
-        os.environ["HOLOSCAN_LOG_LEVEL"] = level
-
-        load_env_log_level()
-        assert log_level() == getattr(LogLevel, level)
-
-    finally:
-        # restore the logging level prior to the test
-        set_log_level(orig_level)
 
 
 def test_set_log_pattern():
@@ -64,11 +48,29 @@ def test_set_log_pattern():
     ),
 )
 def test_set_log_level(level):
+    # remember existing environment variable
+    orig_env = os.environ.get("HOLOSCAN_LOG_LEVEL")
+    # remember current log level
     orig_level = log_level()
     try:
+        # remove the environment variable
+        if "HOLOSCAN_LOG_LEVEL" in os.environ:
+            del os.environ["HOLOSCAN_LOG_LEVEL"]
         set_log_level(level)
         assert log_level() == level
+        # set INFO to the environment variable
+        os.environ["HOLOSCAN_LOG_LEVEL"] = "INFO"
+        # now set_log_level should not change the log level
+        set_log_level(level)
+        assert log_level() == LogLevel.INFO
     finally:
+        # restore the environment variable
+        if orig_env is None:
+            if "HOLOSCAN_LOG_LEVEL" in os.environ:
+                del os.environ["HOLOSCAN_LOG_LEVEL"]
+        else:
+            os.environ["HOLOSCAN_LOG_LEVEL"] = orig_env
+        # restore the logging level prior to the test
         set_log_level(orig_level)
 
 

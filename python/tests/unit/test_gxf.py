@@ -22,9 +22,11 @@ from holoscan.gxf import (
     GXFCondition,
     GXFExecutionContext,
     GXFInputContext,
+    GXFNetworkContext,
     GXFOperator,
     GXFOutputContext,
     GXFResource,
+    GXFScheduler,
 )
 
 # need any operator based on GXFOperator for testing here
@@ -115,7 +117,8 @@ class TestGXFInputContext:
         app.config(config_file)
         context = app.executor.context
         op = GXFOperator()
-        input_context = GXFInputContext(context, op)
+        exec_context = GXFExecutionContext(context, op)
+        input_context = GXFInputContext(exec_context, op)
         assert isinstance(input_context, GXFInputContext)
 
 
@@ -124,7 +127,8 @@ class TestGXFOutputContext:
         app.config(config_file)
         context = app.executor.context
         op = GXFOperator()
-        output_context = GXFOutputContext(context, op)
+        exec_context = GXFExecutionContext(context, op)
+        output_context = GXFOutputContext(exec_context, op)
         assert isinstance(output_context, GXFOutputContext)
 
 
@@ -173,3 +177,15 @@ class TestGXFOperator:
     # def test_initialize(self):
     #     op = GXFOperator()
     #     op.initialize()
+
+
+class TestGXFScheduler:
+    def test_base_class_init(self):
+        with pytest.raises(TypeError):
+            GXFScheduler()
+
+
+class TestGXFNetworkContext:
+    def test_base_class_init(self):
+        with pytest.raises(TypeError):
+            GXFNetworkContext()

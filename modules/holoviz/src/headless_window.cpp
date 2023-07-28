@@ -19,6 +19,8 @@
 
 #include <imgui.h>
 
+#include <vector>
+
 namespace holoscan::viz {
 
 /**

@@ -22,20 +22,31 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
+#include <holoinfer_constants.hpp>
 #include <holoinfer_utils.hpp>
 #include <infer/infer.hpp>
+
+#if __has_include(<onnxruntime_c_api.h>)
+#define use_onnxruntime 1
 #include <infer/onnx/core.hpp>
+#endif
+
+#ifdef use_torch
+#include <infer/torch/core.hpp>
+#endif
+
 #include <infer/trt/core.hpp>
 #include <params/infer_param.hpp>
 
 namespace holoscan {
 namespace inference {
 /**
- * @brief Manager class for multi ai inference
+ * @brief Manager class for inference
  */
 class ManagerInfer {
  public:
@@ -45,16 +56,21 @@ class ManagerInfer {
   ManagerInfer();
 
   /**
+   * @brief Destructor
+   */
+  ~ManagerInfer();
+
+  /**
    * @brief Create inference settings and memory
    *
-   * @param multiai_specs Multi AI specifications for inference
+   * @param inference_specs specifications for inference
    *
    * @returns InferStatus with appropriate code and message
    */
-  InferStatus set_inference_params(std::shared_ptr<MultiAISpecs>& multiai_specs);
+  InferStatus set_inference_params(std::shared_ptr<InferenceSpecs>& inference_specs);
 
   /**
-   * @brief Prepares and launches multi ai inference
+   * @brief Prepares and launches single/multiple inference
    *
    * @param preprocess_data_map Input DataMap with model name as key and DataBuffer as value
    * @param output_data_map Output DataMap with tensor name as key and DataBuffer as value
@@ -81,12 +97,6 @@ class ManagerInfer {
   void cleanup();
 
   /**
-   * @brief Prints input and output data dimensions per model
-   *
-   */
-  void print_dimensions();
-
-  /**
    * @brief Get input dimension per model
    *
    * @returns Map with model name as key and dimension as value
@@ -110,27 +120,54 @@ class ManagerInfer {
   /// Flag to demonstrate if output data buffer will be on cuda
   bool cuda_buffer_out_ = false;
 
+  /// @brief Flag to demonstrate if multi-GPU feature has Peer to Peer transfer enabled.
+  bool mgpu_p2p_transfer = true;
+
+  /// @brief Map to store cuda streams associated with each input tensor in each model on GPU-dt.
+  /// Will be used with Multi-GPU feature.
+  std::map<std::string, std::map<std::string, cudaStream_t>> input_streams_gpudt;
+
+  /// @brief Map to store cuda streams associated with each output tensor in each model on GPU-dt.
+  /// Will be used with Multi-GPU feature.
+  std::map<std::string, std::map<std::string, cudaStream_t>> output_streams_gpudt;
+
+  /// @brief Map to store cuda streams associated with each input tensor in each model on the
+  /// inference device.  Will be used with Multi-GPU feature.
+  std::map<std::string, std::map<std::string, cudaStream_t>> input_streams_device;
+
+  /// @brief Map to store cuda streams associated with each output tensor in each model on the
+  /// inference device. Will be used with Multi-GPU feature.
+  std::map<std::string, std::map<std::string, cudaStream_t>> output_streams_device;
+
   /// Map storing parameters per model
   std::map<std::string, std::unique_ptr<Params>> infer_param_;
 
   /// Map storing Inference context per model
   std::map<std::string, std::unique_ptr<InferBase>> holo_infer_context_;
 
-  /// Map storing model to tensor map. Currently supports one-one mapping
-  std::map<std::string, std::string> inference_map_;
-
   /// Map storing input dimension per model
   DimType models_input_dims_;
+
+  /// Output buffer for multi-GPU inference
+  std::map<std::string, DataMap> mgpu_output_buffer_;
+
+  /// Input buffer for multi-gpu inference
+  std::map<std::string, DataMap> mgpu_input_buffer_;
+
+  /// Data transfer GPU. Default: 0. Not configurable in this release.
+  int device_gpu_dt = 0;
 
   /// Map storing inferred output dimension per tensor
   DimType models_output_dims_;
 
-  /// Map storing Backends supported. Onnxruntime and TRT is supported
-  std::map<std::string, bool> supported_backend_{
-      {"onnxrt", true}, {"trt", true}, {"pytorch", false}};
+  /// Map storing Backends supported with holoinfer mapping
+  inline static std::map<std::string, holoinfer_backend> supported_backend_{
+      {"onnxrt", holoinfer_backend::h_onnx},
+      {"trt", holoinfer_backend::h_trt},
+      {"torch", holoinfer_backend::h_torch}};
 };
 
-/// Pointer to manager class for multi ai inference
+/// Pointer to manager class for inference
 std::unique_ptr<ManagerInfer> manager;
 
 }  // namespace inference

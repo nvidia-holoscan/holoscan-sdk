@@ -84,6 +84,10 @@ class FormatConverterOp : public holoscan::Operator {
   Parameter<int32_t> resize_mode_;
   Parameter<std::vector<int>> out_channel_order_;
 
+  std::unique_ptr<nvidia::gxf::MemoryBuffer> resize_buffer_;
+  std::unique_ptr<nvidia::gxf::MemoryBuffer> channel_buffer_;
+  std::unique_ptr<nvidia::gxf::MemoryBuffer> device_scratch_buffer_;
+
   Parameter<std::shared_ptr<Allocator>> pool_;
 
   Parameter<std::string> in_dtype_str_;
@@ -96,9 +100,6 @@ class FormatConverterOp : public holoscan::Operator {
   nvidia::gxf::PrimitiveType out_primitive_type_ = nvidia::gxf::PrimitiveType::kCustom;
   FormatConversionType format_conversion_type_ = FormatConversionType::kUnknown;
 
-  nvidia::gxf::MemoryBuffer resize_buffer_;
-  nvidia::gxf::MemoryBuffer channel_buffer_;
-  nvidia::gxf::MemoryBuffer device_scratch_buffer_;
   NppStreamContext npp_stream_ctx_{};
 
   CudaStreamHandler cuda_stream_handler_;

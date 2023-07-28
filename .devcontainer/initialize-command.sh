@@ -66,7 +66,5 @@ echo "Mounting ${icd_file} to /usr/share/vulkan/icd.d/nvidia_icd.json through /t
 #   ./run build_image`
 #
 # as an initialization command.
-# It also runs `./run install_gxf` to install the GXF library.
 docker buildx use default
-${TOP}/run build_image
-${TOP}/run install_gxf
+${TOP}/run build_image --build_libtorch true

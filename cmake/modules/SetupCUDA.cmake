@@ -28,11 +28,6 @@ list(APPEND CMAKE_MESSAGE_CONTEXT "buildconfig")
 
 message(STATUS "Configuring CUDA Compiler")
 
-# If a toolchain file was provided, include it now to read any CMAKE_CUDA variables it may define.
-if(DEFINED CMAKE_TOOLCHAIN_FILE)
-    include(${CMAKE_TOOLCHAIN_FILE})
-endif()
-
 # Setup CMAKE_CUDA_HOST_COMPILER
 if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
     message(STATUS "Setting CUDA host compiler to use the same CXX compiler defined by CMAKE_CXX_COMPILER(${CMAKE_CXX_COMPILER})")

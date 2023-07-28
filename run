@@ -304,115 +304,6 @@ run_docker() {
 }
 
 #===============================================================================
-# Section: Tool
-#===============================================================================
-
-install_gxf_desc() { c_echo 'Install GXF in the ${TOP}/.cache/gxf directory
-
-This downloads and extracts the GXF package from NGC into "${TOP}/.cache/gxf".
-
-Environments:
-   GXF_TAG: the tag of the GXF package to download
-   NGC_CLI_API_KEY: the API key of NGC (see https://ngc.nvidia.com/setup/api-key)
-   NGC_CLI_ORG: the organization name of NGC CLI
-   NGC_CLI_TEAM: the team name of NGC CLI
-'
-}
-install_gxf() {
-    local gxf_tag=${GXF_TAG:-2.5.0-6b2e34ec}
-    local ngc_cli_org=${NGC_CLI_ORG:-nvidia}
-    local ngc_cli_team=${NGC_CLI_TEAM:-clara-holoscan}
-    local GXF_MODIFIED=false
-    local ngc_orgteam_opt=""
-    local download_command=ngc
-
-    if [ -n "${NGC_CLI_API_KEY}" ]; then
-        ngc_orgteam_opt="--org ${ngc_cli_org} --team ${ngc_cli_team}"
-    fi
-
-    mkdir -p ${TOP}/.cache
-    pushd ${TOP}/.cache >/dev/null
-
-    # Check if wget or ngc is installed
-    if ! command -v ngc > /dev/null; then
-      c_echo W "'ngc' cli command not found, using 'wget'"
-      download_command=wget
-      if ! command -v wget > /dev/null; then
-          fatal R "Please install " W "wget" R " or the " W "ngc" R " command to run install_gxf. Follow the instructions in https://ngc.nvidia.com/setup/installers/cli to install NGC CLI."
-      fi
-    fi
-
-    if [ ! -f gxf_x86_64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz ]; then
-        if [ "${download_command}" == "wget" ]; then
-            run_command wget --content-disposition https://api.ngc.nvidia.com/v2/resources/${ngc_cli_org}/${ngc_cli_team}/gxf_x86_64_holoscan_sdk/versions/${gxf_tag}/zip -O gxf_x86_64_holoscan_sdk_${gxf_tag}.zip
-            if [ $? -ne 0 ]; then
-               fatal R "Unable to download " W "${ngc_cli_org}/${ngc_cli_team}/gxf_x86_64_holoscan_sdk:${gxf_tag}" R " Make sure you have access to NGC via your browser."
-            fi
-            run_command unzip gxf_x86_64_holoscan_sdk_${gxf_tag}.zip -d gxf_x86_64_holoscan_sdk_v${gxf_tag} \
-             && run_command rm gxf_x86_64_holoscan_sdk_${gxf_tag}.zip
-        else
-            run_command ngc registry resource download-version ${ngc_orgteam_opt} "${ngc_cli_org}/${ngc_cli_team}/gxf_x86_64_holoscan_sdk:${gxf_tag}"
-            if [ $? -ne 0 ]; then
-                fatal R "Unable to download " W "${ngc_cli_org}/${ngc_cli_team}/gxf_x86_64_holoscan_sdk:${gxf_tag}" R ".
-    If you are using a private registry, please try to configure NGC CLI ('ngc config set') or change NGC_CLI_API_KEY, NGC_CLI_ORG, and NGC_CLI_TEAM environment variables to the correct API key and organization name/team of NGC CLI." B '
-        # configure NGC CLI
-        ngc config set
-
-        # Or, export NGC_CLI_API_KEY, NGC_CLI_ORG, and NGC_CLI_TEAM environment variables to the private registry.
-        export NGC_CLI_API_KEY=<your-api-key> # see https://ngc.nvidia.com/setup/api-key
-        export NGC_CLI_ORG=<ngc-organization>
-        export NGC_CLI_TEAM=<ngc-team>'
-            fi
-        fi
-        GXF_MODIFIED=true
-    fi
-    if [ ! -f gxf_arm64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz ]; then
-        if [ "${download_command}" == "wget" ]; then
-            run_command wget --content-disposition https://api.ngc.nvidia.com/v2/resources/${ngc_cli_org}/${ngc_cli_team}/gxf_arm64_holoscan_sdk/versions/${gxf_tag}/zip -O gxf_arm64_holoscan_sdk_${gxf_tag}.zip
-            if [ $? -ne 0 ]; then
-               fatal R "Unable to download " W "${ngc_cli_org}/${ngc_cli_team}/gxf_arm64_holoscan_sdk:${gxf_tag}" R " Make sure you have access to NGC via your browser."
-            fi
-            run_command unzip gxf_arm64_holoscan_sdk_${gxf_tag}.zip -d gxf_arm64_holoscan_sdk_v${gxf_tag} \
-             && run_command rm gxf_arm64_holoscan_sdk_${gxf_tag}.zip
-        else
-            run_command ngc registry resource download-version ${ngc_orgteam_opt} "${ngc_cli_org}/${ngc_cli_team}/gxf_arm64_holoscan_sdk:${gxf_tag}"
-            if [ $? -ne 0 ]; then
-                fatal R "Unable to download " W "${ngc_cli_org}/${ngc_cli_team}/gxf_arm64_holoscan_sdk:${gxf_tag}" R ".
-    If you are using a private registry, please try to configure NGC CLI ('ngc config set') or change NGC_CLI_API_KEY, NGC_CLI_ORG, and NGC_CLI_TEAM environment variables to the correct API key and organization name/team of NGC CLI." B '
-        # configure NGC CLI
-        ngc config set
-
-        # Or, export NGC_CLI_API_KEY, NGC_CLI_ORG, and NGC_CLI_TEAM environment variables to the private registry.
-        export NGC_CLI_API_KEY=<your-api-key> # see https://ngc.nvidia.com/setup/api-key
-        export NGC_CLI_ORG=<ngc-organization>
-        export NGC_CLI_TEAM=<ngc-team>'
-            fi
-        fi
-        GXF_MODIFIED=true
-    fi
-
-    if [ "${GXF_MODIFIED}" == "true" ] || [ ! -e ${TOP}/.cache/gxf/gxf ]; then
-        run_command mkdir -p ${TOP}/.cache/gxf
-        run_command rm -rf ${TOP}/.cache/gxf/*
-
-        run_command tar -zxf gxf_x86_64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz -C ${TOP}/.cache/gxf --strip-components=1
-        run_command tar -zxf gxf_arm64_holoscan_sdk_v${gxf_tag}/gxf_*.tar.gz -C ${TOP}/.cache/gxf --strip-components=1
-
-        # Patch GXF to remove its support for complex cuda primitives,
-        # due to limitation in the CUDA Toolkit 11.6 with C++17
-        # Support will be added when upgrading to CUDA Toolkit 11.7+
-        # with libcu++ 1.8.0+: https://github.com/NVIDIA/libcudacxx/pull/234
-        run_command patch -suNb ${TOP}/.cache/gxf/gxf/std/tensor.hpp ${TOP}/patches/gxf_remove_complex_primitives_support.patch
-        run_command mv ${TOP}/.cache/gxf/gxf/std/complex.hpp ${TOP}/.cache/gxf/gxf/std/complex.hpp.orig
-    else
-        c_echo_err W "GXF is already installed"
-    fi
-
-    popd >/dev/null
-
-}
-
-#===============================================================================
 # Section: Build
 #===============================================================================
 
@@ -452,6 +343,22 @@ get_platform_str() {
     esac
 
     echo -n "${platform_str}"
+}
+
+get_build_libtorch_str() {
+    local build_libtorch="${1:-}"
+    local build_libtorch_str
+
+    case "${build_libtorch}" in
+        true|yes|1)
+            build_libtorch_str=true
+            ;;
+        false|no|0)
+            build_libtorch_str=false
+            ;;
+    esac
+
+    echo -n "${build_libtorch_str}"
 }
 
 get_gpu_str() {
@@ -514,6 +421,57 @@ clear_cache() {
     run_command rm -rf ${TOP}/.cache/gxf
 }
 
+install_python_dev_deps() {
+    if [ -n "${VIRTUAL_ENV}" ] || [ -n "${CONDA_PREFIX}" ]; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.txt
+        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.dev.txt
+    else
+        c_echo_err R "You must be in a virtual environment to install dependencies."
+        if [ ! -e "$TOP/.venv/dev/bin/python3" ]; then
+            c_echo_err W "Installing a virtual environment at " G "$TOP/.venv/dev" W " ..."
+            run_command ${HOLOSCAN_PY_EXE} -m venv "$TOP/.venv/dev"
+        fi
+
+        c_echo_err W "Please activate the virtual environment at " G "$TOP/.venv/dev" W " and execute the setup command again."
+        c_echo_err
+        c_echo_err G "  source $TOP/.venv/dev/bin/activate"
+        c_echo_err G "  $0 $CMD $ARGS"
+        exit 1
+    fi
+}
+
+setup_cli_dev_desc() { c_echo 'Setup development environment for Holoscan CLI
+'
+}
+
+setup_cli_dev() {
+    c_echo W "Setup Holoscan CLI development environment..."
+
+    if [ -f "/.dockerenv" ]; then
+        c_echo_err "WARNING: devcontainer is not supported for CLI development"
+        exit
+    fi
+
+    install_python_dev_deps
+
+    local gpu_type=$(lsmod | grep -q nvgpu && echo "igpu" || echo "dgpu")
+    local arch_type="amd64"
+    [ "$(uname -m)" = "aarch64" ] && arch_type=arm64
+    local build_path =$SCRIPT_DIR/build-${arch_type}-${gpu_type}/python/lib/holoscan
+    if [ -d "${build_path}" ]; then
+        c_echo "Found build directory: $SOURCE"
+    else
+        c_echo_err "Build directory ${build_path} not found, please run ./run build first"
+        exit
+    fi
+
+    DEST=$SCRIPT_DIR/python/holoscan
+    c_echo "Removing existing symlinks from $DEST/**/*.so"
+    find $DEST -name *.so -delete
+    c_echo "Creating symlinks from $SOURCE/* to $DEST"
+    cp -as $SOURCE/* $DEST &> /dev/null
+}
+
 setup_desc() { c_echo 'Setup development environment
 '
 }
@@ -548,6 +506,9 @@ build_image_desc() { c_echo 'Build dev image
   --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
         Default: current host platform
         Associated environment variable: HOLOSCAN_BUILD_PLATFORM
+  --build_libtorch [true | false] : Build libtorch in the dev container
+        Default: true
+        Associated environment variable: BUILD_LIBTORCH
   --gpu [igpu | dgpu] : Specify the GPU stack (integrated vs discrete)
         Default: current host platform
         Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
@@ -556,6 +517,7 @@ build_image_desc() { c_echo 'Build dev image
 build_image() {
     # Parse env variables first or set default values
     local platform="${HOLOSCAN_BUILD_PLATFORM:-$(get_platform_str $(uname -p))}"
+    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-true}"
     local gpu=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
 
     # Parse CLI arguments next
@@ -567,6 +529,9 @@ build_image() {
         if [ "$arg" = "--platform" ]; then
            platform=$(get_platform_str "${ARGS[i+1]}")
         fi
+        if [ "$arg" = "--build_libtorch" ]; then
+           build_libtorch=$(get_build_libtorch_str "${ARGS[i+1]}")
+        fi
         if [ "$arg" = "--gpu" ]; then
            gpu=$(get_gpu_str "${ARGS[i+1]}")
         fi
@@ -576,6 +541,7 @@ build_image() {
     run_command export DOCKER_BUILDKIT=1
     run_command docker build \
         --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --build-arg BUILD_LIBTORCH=${build_libtorch} \
         --build-arg GPU_TYPE=${gpu} \
         --platform ${platform} \
         --network=host \
@@ -591,6 +557,9 @@ Arguments:
   --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
         Default: current host platform
         Associated environment variable: HOLOSCAN_BUILD_PLATFORM
+  --build_libtorch [true | false] : Build the SDK with libtorch support
+        Default: true
+        Associated environment variable: HOLOSCAN_BUILD_LIBTORCH
   --gpu [igpu | dgpu] : Specify the GPU stack (integrated vs discrete)
         Default: current host GPU
         Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
@@ -621,6 +590,7 @@ build() {
     local build_path="${CMAKE_BUILD_PATH:-build}"
     local install_prefix="${CMAKE_INSTALL_PREFIX:-install}"
     local reconfigure=false
+    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-true}"
 
     # Parse CLI arguments next
     ARGS=("$@")
@@ -630,6 +600,9 @@ build() {
         arg="${ARGS[i]}"
         if [ "$arg" = "--platform" ]; then
            platform=$(get_platform_str "${ARGS[i+1]}")
+        fi
+        if [ "$arg" = "--build_libtorch" ]; then
+           build_libtorch=$(get_build_libtorch_str "${ARGS[i+1]}")
         fi
         if [ "$arg" = "--gpu" ]; then
            gpu=$(get_gpu_str "${ARGS[i+1]}")
@@ -654,8 +627,17 @@ build() {
     done
 
     setup
-    build_image --platform ${platform} --gpu ${gpu}
-    install_gxf
+    build_image --platform ${platform} --build_libtorch ${build_libtorch} --gpu ${gpu}
+
+    # Tegra (iGPU) limitation requires to mount the /usr/lib/aarch64-linux-gnu/tegra folder
+    # in the container for buildtime, which is handled by the NVIDIA runtime from the container
+    # toolkit. This is not ideal as it needs these drivers libraries at buildtime, which prevents
+    # cross-compilation to aarch64-igpu mode from aarch64-dgpu or x86_64 at this time.
+    if [ "$gpu" = "igpu" ]; then
+        runtime=nvidia
+    else
+        runtime=runc
+    fi
 
     # DOCKER PARAMETERS
     #
@@ -664,6 +646,13 @@ build() {
     #
     # --rm
     #   Deletes the container after the command runs
+    #
+    # --runtime ${runtime}
+    #   Docker runtime. Should ideally be runc for build (no need for drivers) but tegra/igpu needs
+    #   nvidia runtime due to limitation described above.
+    #
+    # --platform ${platform}
+    #   Platform to build
     #
     # -u $(id -u):$(id -g)
     #   Ensures the generated files (build, install...) are owned by $USER and not root
@@ -692,6 +681,8 @@ build() {
     #   the previous archs will be real only.
     #
     run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host -it \
+        --runtime=${runtime} \
+        --platform ${platform} \
         -u $(id -u):$(id -g) \
         -v ${TOP}:/workspace/holoscan-sdk \
         -w /workspace/holoscan-sdk \
@@ -701,6 +692,7 @@ build() {
             if [ ! -f '${build_path}/build.ninja' ] || ${reconfigure} ; then \
                 cmake -S . -B ${build_path} -G Ninja \
                   -D CMAKE_CUDA_ARCHITECTURES=\"${cuda_archs}\" \
+                  -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
                   -D CMAKE_BUILD_TYPE=${build_type}; \
             fi \
             && cmake --build ${build_path} -j \
@@ -718,6 +710,51 @@ build() {
 #===============================================================================
 # Section: Test
 #===============================================================================
+
+install_lint_deps_desc() { c_echo 'Install lint dependencies
+
+This command will install the dependencies required to run the linting tools.
+
+- Python linting: ruff, isort, black, mypy
+- C++ linting: cpplint
+- Spelling: codespell
+'
+}
+install_lint_deps() {
+    # We use $(command) || exit_code=1 to run all linting tools, and exit
+    # with failure after all commands were executed if any of them failed
+    local exit_code=0
+
+    pushd ${TOP} > /dev/null
+
+    c_echo W "Install Lint Dependencies for Python"
+    if ! command -v ruff &> /dev/null; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install ruff || exit_code=1
+    fi
+    if ! command -v isort &> /dev/null; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install isort || exit_code=1
+    fi
+    if ! command -v black &> /dev/null; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install black || exit_code=1
+    fi
+    if ! command -v mypy &> /dev/null; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install mypy || exit_code=1
+    fi
+
+    c_echo W "Install Lint Dependencies for C++"
+    if ! command -v cpplint &> /dev/null; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install cpplint || exit_code=1
+    fi
+
+    c_echo W "Install Lint Dependencies for Code Spelling"
+    if ! command -v codespell &> /dev/null; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install codespell || exit_code=1
+    fi
+
+    popd > /dev/null
+
+    exit $exit_code
+}
 
 lint_desc() { c_echo 'Lint the repository
 
@@ -755,12 +792,13 @@ lint() {
             --exclude install \
             --exclude build-\* \
             --exclude install-\* \
+            --exclude src/core/services/generated \
             --recursive $DIR_TO_RUN \
         | { grep -v "Ignoring\|Done processing" || true; } || exit_code=1
 
 
     c_echo W "Code spelling"
-    run_command codespell $DIR_TO_RUN || exit_code=1
+    run_command codespell $DIR_TO_RUN --skip="*.onnx" || exit_code=1
 
     popd > /dev/null
 
@@ -810,7 +848,7 @@ coverage() {
         -e DISPLAY=$DISPLAY \
         -v $nvidia_icd_json:$nvidia_icd_json:ro \
         -e HOLOSCAN_LIB_PATH=/workspace/holoscan-sdk/${working_dir}/lib \
-        -e HOLOSCAN_SAMPLE_DATA_PATH=/workspace/holoscan-sdk/data \
+        -e HOLOSCAN_INPUT_PATH=/workspace/holoscan-sdk/data \
         -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
         -e HOLOSCAN_LOG_LEVEL=INFO \
         -e PYTHONPATH=/workspace/holoscan-sdk/${working_dir}/python/lib \
@@ -880,7 +918,33 @@ launch() {
         fi
     done
 
-    c_echo W "Launching (mount_device_opt:" G "${mount_device_opt}" W ")..."
+    # Issue #4101714: latest Holopack/Jetpack (Tegra) are missing device nodes for the iGPU in
+    # /etc/nvidia-container-runtime/host-files-for-container.d/l4t.csv for the NVIDIA container
+    # toolkit to mount. This list might become obsolete or out-of-date. Another option is to just
+    # run with --privileged to expose all device nodes from the host.
+    if [ "$(get_host_gpu)" = "igpu" ]; then
+        mount_device_opt+=" --device /dev/nvgpu/igpu0/nvsched"
+        mount_device_opt+=" --device /dev/nvgpu/igpu0/sched"
+        mount_device_opt+=" --device /dev/nvhost-ctrl-isp"
+        mount_device_opt+=" --device /dev/nvhost-ctrl-nvdec"
+        mount_device_opt+=" --device /dev/nvhost-ctxsw-gpu"
+        mount_device_opt+=" --device /dev/nvhost-isp"
+        mount_device_opt+=" --device /dev/nvhost-isp-thi"
+        mount_device_opt+=" --device /dev/nvhost-nvcsi"
+        mount_device_opt+=" --device /dev/nvhost-nvsched-gpu"
+        mount_device_opt+=" --device /dev/nvhost-power-gpu"
+        mount_device_opt+=" --device /dev/nvhost-prof-ctx-gpu"
+        mount_device_opt+=" --device /dev/nvhost-prof-dev-gpu"
+        mount_device_opt+=" --device /dev/nvhost-sched-gpu"
+        mount_device_opt+=" --device /dev/nvhost-tsec"
+        mount_device_opt+=" --device /dev/nvhost-tsg-gpu"
+        mount_device_opt+=" --device /dev/nvhost-vi0"
+        mount_device_opt+=" --device /dev/nvhost-vi0-thi"
+        mount_device_opt+=" --device /dev/nvhost-vi1"
+        mount_device_opt+=" --device /dev/nvhost-vi1-thi"
+        mount_device_opt+=" --device /dev/nvidia0"
+        mount_device_opt+=" --device /dev/nvidia-modeset"
+    fi
 
     # Find the nvidia_icd.json file which could reside at different paths
     # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
@@ -926,9 +990,12 @@ launch() {
     # --device /dev/ajantv2${i}:/dev/ajantv2${i}
     #   Bind AJA capture cards for NTV2
     #
+    # --device /dev/[nvgpu|nvhost|nvidia]
+    #   Bind midding iGPU device nodes (see issue description above)
+    #
     # -e PYTHONPATH
     # -e HOLOSCAN_LIB_PATH
-    # -e HOLOSCAN_SAMPLE_DATA_PATH
+    # -e HOLOSCAN_INPUT_PATH
     #   Define paths needed by the python applications
     #
     # -e CUPY_CACHE_DIR
@@ -946,12 +1013,17 @@ launch() {
         -v /tmp/.X11-unix:/tmp/.X11-unix \
         -e DISPLAY \
         ${mount_device_opt} \
+        --group-add video \
         -v $nvidia_icd_json:$nvidia_icd_json:ro \
         -e PYTHONPATH=/workspace/holoscan-sdk/${working_dir}/python/lib \
         -e HOLOSCAN_LIB_PATH=/workspace/holoscan-sdk/${working_dir}/lib \
-        -e HOLOSCAN_SAMPLE_DATA_PATH=/workspace/holoscan-sdk/data \
+        -e HOLOSCAN_INPUT_PATH=/workspace/holoscan-sdk/data \
         -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
         -e CUPY_CACHE_DIR=/workspace/holoscan-sdk/.cupy/kernel_cache \
+        --ipc=host \
+        --cap-add=CAP_SYS_PTRACE \
+        --ulimit memlock=-1 \
+        --ulimit stack=67108864 \
         holoscan-sdk-dev "$@"
 }
 
@@ -1066,7 +1138,7 @@ parse_args() {
     shift $((OPTIND-1))
 
     CMD="$1"
-    shift
+    shift || true  # ignore error if no arguments are left
 
     ARGS=("$@")
     # Check if the command has `--help`, `-h`, or `--dryrun`, and override the CMD

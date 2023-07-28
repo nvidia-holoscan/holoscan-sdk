@@ -17,7 +17,11 @@
 
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 
+#include <string>
+
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
+#include "holoscan/core/resources/gxf/annotated_double_buffer_receiver.hpp"
 
 namespace holoscan {
 
@@ -25,16 +29,40 @@ DoubleBufferReceiver::DoubleBufferReceiver(const std::string& name,
                                            nvidia::gxf::DoubleBufferReceiver* component)
     : Receiver(name, component) {
   uint64_t capacity = 0;
-  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "capacity", &capacity);
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "capacity", &capacity));
   capacity_ = capacity;
   uint64_t policy = 0;
-  GxfParameterGetUInt64(gxf_context_, gxf_cid_, "policy", &policy);
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "policy", &policy));
   policy_ = policy;
+}
+
+DoubleBufferReceiver::DoubleBufferReceiver(const std::string& name,
+                                           AnnotatedDoubleBufferReceiver* component)
+    : Receiver(name, component) {
+  uint64_t capacity = 0;
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "capacity", &capacity));
+  capacity_ = capacity;
+  uint64_t policy = 0;
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "policy", &policy));
+  policy_ = policy;
+  tracking_ = true;
+}
+
+const char* DoubleBufferReceiver::gxf_typename() const {
+  if (tracking_) {
+    return "holoscan::AnnotatedDoubleBufferReceiver";
+  } else {
+    return "nvidia::gxf::DoubleBufferReceiver";
+  }
 }
 
 void DoubleBufferReceiver::setup(ComponentSpec& spec) {
   spec.param(capacity_, "capacity", "Capacity", "", 1UL);
   spec.param(policy_, "policy", "Policy", "0: pop, 1: reject, 2: fault", 2UL);
+}
+
+void DoubleBufferReceiver::track() {
+  tracking_ = true;
 }
 
 }  // namespace holoscan

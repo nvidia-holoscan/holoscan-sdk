@@ -20,13 +20,16 @@
 
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "./common.hpp"
 #include "./extension_manager.hpp"
+#include "./graph.hpp"
 #include "./operator.hpp"
 
 namespace holoscan {
@@ -50,8 +53,26 @@ class Executor {
 
   /**
    * @brief Run the graph.
+   *
+   * @param graph The reference to the graph.
    */
-  virtual void run(Graph& graph) { (void)graph; }
+  virtual void run(OperatorGraph& graph) { (void)graph; }
+
+  /**
+   * @brief Run the graph asynchronously.
+   *
+   * @param graph The reference to the graph.
+   * @return The future object.
+   */
+  virtual std::future<void> run_async(OperatorGraph& graph) {
+    (void)graph;
+    return {};
+  }
+
+  /**
+   * @brief Interrupt the execution.
+   */
+  virtual void interrupt() {}
 
   /**
    * @brief Set the pointer to the fragment of the executor.
@@ -91,11 +112,24 @@ class Executor {
   virtual std::shared_ptr<ExtensionManager> extension_manager() { return extension_manager_; }
 
  protected:
-  friend class Fragment;  // make Fragment a friend class to access protected members of Executor
-                          // (add_receivers()).
-  friend class Operator;  // make Operator a friend class to access protected members of Executor
-                          // (initialize_operator()).
+  friend class Fragment;        // make Fragment a friend class to access protected members of
+                                // Executor (add_receivers()).
+  friend class Operator;        // make Operator a friend class to access protected members of
+                                // Executor (initialize_operator()).
+  friend class Scheduler;       // make Scheduler a friend class to access protected members of
+                                // Executor (initialize_scheduler()).
+  friend class NetworkContext;  // make NetworkContext a friend class to access protected members
+                                // of Executor (initialize_network_context()).
 
+  /**
+   * @brief Initialize the fragment_ in this Executor.
+   *
+   * This method is called by run() to initialize the fragment and the graph of operators in the
+   * fragment before execution.
+   *
+   * @return true if fragment initialization is successful. Otherwise, false.
+   */
+  virtual bool initialize_fragment() { return false; }
   /**
    * @brief Initialize the given operator.
    *
@@ -114,6 +148,40 @@ class Executor {
   }
 
   /**
+   * @brief Initialize the given scheduler.
+   *
+   * This method is called by Scheduler::initialize() to initialize the operator.
+   *
+   * Depending on the type of the scheduler, this method may be overridden to initialize the
+   * scheduler. For example, the default executor (GXFExecutor) initializes the scheduler using the
+   * GXF API and sets the operator's ID to the ID of the GXF scheduler.
+   *
+   * @param sch The pointer to the scheduler.
+   * @return true if the scheduler is initialized successfully. Otherwise, false.
+   */
+  virtual bool initialize_scheduler(Scheduler* sch) {
+    (void)sch;
+    return false;
+  }
+
+  /**
+   * @brief Initialize the given network context.
+   *
+   * This method is called by NetworkContext::initialize() to initialize the operator.
+   *
+   * Depending on the type of the network context, this method may be overridden to initialize the
+   * network context. For example, the default executor (GXFExecutor) initializes the network
+   * context using the GXF API and sets the operator's ID to the ID of the GXF network context.
+   *
+   * @param network_context The pointer to the network context.
+   * @return true if the network context is initialized successfully. Otherwise, false.
+   */
+  virtual bool initialize_network_context(NetworkContext* network_context) {
+    (void)network_context;
+    return false;
+  }
+
+  /**
    * @brief Add the receivers as input ports of the given operator.
    *
    * This method is to be called by the Fragment::add_flow() method to support for the case where
@@ -125,22 +193,24 @@ class Executor {
    * @param op The reference to the shared pointer of the operator.
    * @param receivers_name The name of the receivers whose parameter type is
    * 'std::vector<holoscan::IOSpec*>'.
-   * @param input_labels The reference to the set of input port labels of the operator.
+   * @param new_input_labels The reference to the vector of input port labels to which the input
+   * port labels are added. In the case of multiple receivers, the input port label is updated to
+   * '<parameter name>:<index>' (e.g. 'receivers' => 'receivers:<index>').
    * @param iospec_vector The reference to the vector of IOSpec pointers.
    * @return true if the receivers are added successfully. Otherwise, false.
    */
   virtual bool add_receivers(const std::shared_ptr<Operator>& op, const std::string& receivers_name,
-                             std::set<std::string, std::less<>>& input_labels,
+                             std::vector<std::string>& new_input_labels,
                              std::vector<holoscan::IOSpec*>& iospec_vector) {
     (void)op;
     (void)receivers_name;
-    (void)input_labels;
+    (void)new_input_labels;
     (void)iospec_vector;
     return false;
   }
 
-  Fragment* fragment_ = nullptr;  ///< The fragment of the executor.
-  void* context_ = nullptr;       ///< The context.
+  Fragment* fragment_ = nullptr;                         ///< The fragment of the executor.
+  void* context_ = nullptr;                              ///< The context.
   std::shared_ptr<ExtensionManager> extension_manager_;  ///< The extension manager.
 };
 
