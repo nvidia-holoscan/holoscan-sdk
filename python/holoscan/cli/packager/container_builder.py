@@ -89,9 +89,11 @@ class BuilderBase:
         builder = create_and_get_builder(Constants.LOCAL_BUILDX_BUILDER_NAME)
 
         build_result = PlatformBuildResults(platform_parameters)
-
-        cache_to = {"type": "local", "dest": self._build_parameters.build_cache}
-        cache_from = [{"type": "local", "src": self._build_parameters.build_cache}]
+        cache_to = {}
+        cache_from = []
+        if not self._build_parameters.no_cache:
+            cache_to = {"type": "local", "dest": self._build_parameters.build_cache}
+            cache_from = [{"type": "local", "src": self._build_parameters.build_cache}]
         if platform_parameters.base_image is not None:
             cache_from.append({"type": "registry", "ref": platform_parameters.base_image})
         if platform_parameters.build_image is not None:
@@ -99,8 +101,6 @@ class BuilderBase:
         builds = {
             "builder": builder,
             "cache": not self._build_parameters.no_cache,
-            "cache_from": cache_from,
-            "cache_to": cache_to,
             "context_path": self._temp_dir,
             "file": dockerfile,
             "platforms": [platform_parameters.docker_arch],
@@ -108,6 +108,10 @@ class BuilderBase:
             "pull": True,
             "tags": [platform_parameters.tag],
         }
+        if cache_to != {}:
+            builds["cache_to"] = cache_to
+        if cache_from != []:
+            builds["cache_from"] = cache_from
 
         export_to_tar_ball = False
         if self._build_parameters.tarball_output is not None:
