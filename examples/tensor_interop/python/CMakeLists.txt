@@ -23,13 +23,13 @@ add_custom_target(python_tensor_interop ALL
   BYPRODUCTS "tensor_interop.py"
 )
 
-# Copy endoscopy tool tracking config file
+# Copy the config file
 add_custom_target(python_tensor_interop_yaml
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.yaml" ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS "tensor_interop.yaml"
   BYPRODUCTS "tensor_interop.yaml"
 )
-add_dependencies(python_tensor_interop python_tensor_interop_yaml endoscopy_data)
+add_dependencies(python_tensor_interop python_tensor_interop_yaml racerx_data)
 
 # Install the app
 install(FILES
@@ -41,16 +41,51 @@ install(FILES
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+
+  set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
+  set(SOURCE_VIDEO_BASENAME python_tensor_interop_output)
+  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/tensor_interop/)
+
+  file(MAKE_DIRECTORY ${RECORDING_DIR})
+
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING ${CONFIG_STRING})
+  string(APPEND CONFIG_STRING "  enable_render_buffer_output: true\n\nrecorder:\n  directory: \"${RECORDING_DIR}\"\n  basename: \"${SOURCE_VIDEO_BASENAME}\"")
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/python_tensor_interop_testing_config.yaml)
   file(WRITE ${CONFIG_FILE} ${CONFIG_STRING})
- 
+
+  # Patch the current example to enable recording the rendering window
+  add_custom_command(OUTPUT tensor_interop_test.py
+  PRE_LINK
+  COMMAND patch -u -o tensor_interop_test.py ${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.py
+      ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/tensor_interop/python_tensor_interop.patch
+  )
+
+  add_custom_target(python_tensor_interop_test ALL
+    DEPENDS "tensor_interop_test.py"
+  )
+
   add_test(NAME EXAMPLE_PYTHON_TENSOR_INTEROP_TEST
-    COMMAND python3 tensor_interop.py ${CONFIG_FILE}
+    COMMAND python3 tensor_interop_test.py --config ${CONFIG_FILE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_TENSOR_INTEROP_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )
+
+  # Add a test to check the validity of the frames
+  add_test(NAME EXAMPLE_PYTHON_TENSOR_INTEROP_RENDER_TEST
+      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      --source_video_dir ${RECORDING_DIR}
+      --source_video_basename ${SOURCE_VIDEO_BASENAME}
+      --output_dir ${RECORDING_DIR}
+      --validation_frames_dir ${VALIDATION_FRAMES_DIR}
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
+  set_tests_properties(EXAMPLE_PYTHON_TENSOR_INTEROP_RENDER_TEST PROPERTIES
+    DEPENDS EXAMPLE_PYTHON_TENSOR_INTEROP_TEST
+    PASS_REGULAR_EXPRESSION "Valid video output!"
+  )
+
 endif()

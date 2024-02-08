@@ -64,7 +64,7 @@ class PrimitiveTopology : public TestHeadless,
 TEST_P(PrimitiveTopology, Primitive) {
   const viz::PrimitiveTopology topology = GetParam();
 
-  uint32_t color_crc, depth_crc;
+  std::vector<uint32_t> color_crc, depth_crc;
   uint32_t primitive_count;
   std::vector<float> data;
   switch (topology) {
@@ -72,8 +72,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       primitive_count = 1;
       data.push_back(0.5f);
       data.push_back(0.5f);
-      color_crc = 0x3088e839;
-      depth_crc = 0x748e4c96;
+      color_crc = {0x3088e839};
+      depth_crc = {0x748e4c96};
       break;
     case viz::PrimitiveTopology::LINE_LIST:
       primitive_count = 2;
@@ -86,8 +86,14 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.3f);
       data.push_back(0.2f);
       data.push_back(0.4f);
-      color_crc = 0xa64ef48a;
-      depth_crc = 0x802dbbb0;
+      color_crc = {
+          0xe96c7246,  // RTX 6000, RTX A5000, RTX A6000
+          0x5f7bf4d3   // T4
+      };
+      depth_crc = {
+          0x802dbbb0,  // RTX 6000, RTX A5000, RTX A6000
+          0xbd6bedea   // T4
+      };
       break;
     case viz::PrimitiveTopology::LINE_STRIP:
       primitive_count = 2;
@@ -98,8 +104,14 @@ TEST_P(PrimitiveTopology, Primitive) {
 
       data.push_back(0.3f);
       data.push_back(0.2f);
-      color_crc = 0xa1e2f97a;
-      depth_crc = 0xfae233b9;
+      color_crc = {
+          0x162496c0,  // RTX 6000, RTX A5000, RTX A6000
+          0x9118f5cb   // T4
+      };
+      depth_crc = {
+          0xfae233b9,  // RTX 6000, RTX A5000, RTX A6000
+          0x92c04b5    // T4
+      };
       break;
     case viz::PrimitiveTopology::TRIANGLE_LIST:
       primitive_count = 2;
@@ -116,8 +128,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.8f);
       data.push_back(0.25f);
       data.push_back(0.6f);
-      color_crc = 0x1e4e5c9b;
-      depth_crc = 0x101577b;
+      color_crc = {0x9de9f5f3};
+      depth_crc = {0x101577b};
       break;
     case viz::PrimitiveTopology::CROSS_LIST:
       primitive_count = 2;
@@ -128,8 +140,14 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.1f);
       data.push_back(0.3f);
       data.push_back(0.01f);
-      color_crc = 0xa54496e9;
-      depth_crc = 0x44098c3f;
+      color_crc = {
+          0xb507fa88,  // RTX 6000, RTX A5000, RTX A6000
+          0xf298654    // T4
+      };
+      depth_crc = {
+          0x44098c3f,  // RTX 6000, RTX A5000, RTX A6000
+          0x6fe44aee   // T4
+      };
       break;
     case viz::PrimitiveTopology::RECTANGLE_LIST:
       primitive_count = 2;
@@ -142,8 +160,14 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.2f);
       data.push_back(0.5f);
       data.push_back(0.3f);
-      color_crc = 0x77f7b3e8;
-      depth_crc = 0xf67bacdc;
+      color_crc = {
+          0x19a05481,  // RTX 6000, RTX A5000, RTX A6000
+          0xf1f8f1b3   // T4
+      };
+      depth_crc = {
+          0xf67bacdc,  // RTX 6000, RTX A5000, RTX A6000
+          0x41396ef5   // T4
+      };
       break;
     case viz::PrimitiveTopology::OVAL_LIST:
       primitive_count = 2;
@@ -156,16 +180,22 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.4f);
       data.push_back(0.05f);
       data.push_back(0.07f);
-      color_crc = 0x83ed3ac2;
-      depth_crc = 0x41d7da93;
+      color_crc = {
+          0x2341eef6,  // RTX 6000, RTX A5000, RTX A6000
+          0xae3f0636   // T4
+      };
+      depth_crc = {
+          0x41d7da93,  // RTX 6000, RTX A5000, RTX A6000
+          0x7e44520d   // T4
+      };
       break;
     case viz::PrimitiveTopology::POINT_LIST_3D:
       primitive_count = 1;
       data.push_back(-0.5f);
       data.push_back(0.5f);
       data.push_back(0.8f);
-      color_crc = 0x83063d37;
-      depth_crc = 0x1273ab78;
+      color_crc = {0x83063d37};
+      depth_crc = {0x1273ab78};
       break;
     case viz::PrimitiveTopology::LINE_LIST_3D:
       primitive_count = 2;
@@ -182,8 +212,14 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.2f);
       data.push_back(0.4f);
       data.push_back(0.5f);
-      color_crc = 0x30cd7e29;
-      depth_crc = 0xa31c2460;
+      color_crc = {
+          0x30cd7e29,  // RTX 6000, RTX A5000, RTX A6000
+          0x697c858d   // T4
+      };
+      depth_crc = {
+          0xa31c2460,  // RTX 6000, RTX A5000, RTX A6000
+          0x2eb67c7e   // T4
+      };
       break;
     case viz::PrimitiveTopology::LINE_STRIP_3D:
       primitive_count = 2;
@@ -197,8 +233,14 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(-0.3f);
       data.push_back(-0.2f);
       data.push_back(0.2f);
-      color_crc = 0x6c8cfdee;
-      depth_crc = 0xc2d73af1;
+      color_crc = {
+          0x6c8cfdee,  // RTX 6000, RTX A5000, RTX A6000
+          0xf8e2cd1f   // T4
+      };
+      depth_crc = {
+          0xc2d73af1,  // RTX 6000, RTX A5000, RTX A6000
+          0x48ecd6f9   // T4
+      };
       break;
     case viz::PrimitiveTopology::TRIANGLE_LIST_3D:
       primitive_count = 2;
@@ -221,11 +263,11 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.25f);
       data.push_back(0.6f);
       data.push_back(0.5f);
-      color_crc = 0xd4cb9a45;
-      depth_crc = 0xb45187a8;
+      color_crc = {0x9d0d88};
+      depth_crc = {0xb45187a8};
       break;
     default:
-      EXPECT_TRUE(false) << "Unhandled primitive topoplogy";
+      EXPECT_TRUE(false) << "Unhandled primitive topology";
   }
 
   EXPECT_NO_THROW(viz::Begin());
@@ -248,8 +290,8 @@ TEST_P(PrimitiveTopology, Primitive) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareColorResultCRC32({color_crc});
-  CompareDepthResultCRC32({depth_crc});
+  CompareColorResultCRC32(color_crc);
+  CompareDepthResultCRC32(depth_crc);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -354,16 +396,19 @@ TEST_P(DepthMapRenderMode, DepthMap) {
   EXPECT_EQ(cuMemcpyHtoD(color_ptr.get(), color_data.data(), color_data.size() * sizeof(uint32_t)),
             CUDA_SUCCESS);
 
-  uint32_t crc;
+  std::vector<uint32_t> crc;
   switch (depth_map_render_mode) {
     case viz::DepthMapRenderMode::POINTS:
-      crc = 0xcd990f6d;
+      crc = {0xcd990f6d};
       break;
     case viz::DepthMapRenderMode::LINES:
-      crc = 0x92a330ea;
+      crc = {
+          0x92a330ea,  // RTX 6000, RTX A5000, RTX A6000
+          0xfd6f60f0   // T4
+      };
       break;
     case viz::DepthMapRenderMode::TRIANGLES:
-      crc = 0x97856df3;
+      crc = {0x97856df3};
       break;
   }
   EXPECT_NO_THROW(viz::Begin());
@@ -380,7 +425,7 @@ TEST_P(DepthMapRenderMode, DepthMap) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareColorResultCRC32({crc});
+  CompareColorResultCRC32(crc);
 }
 
 INSTANTIATE_TEST_SUITE_P(GeometryLayer, DepthMapRenderMode,

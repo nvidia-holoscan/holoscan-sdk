@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,23 @@ Operator to get a video stream from a V4L2 source.
 
 // V4L2VideoCaptureOp Constructor
 PYDOC(V4L2VideoCaptureOp_python, R"doc(
-Operator to get a video stream from a V4L2 source. Built-in HDMI capture card or USB cam.
+Operator to get a video stream from a V4L2 source (e.g. Built-in HDMI capture card or USB camera)
+
+https://www.kernel.org/doc/html/v4.9/media/uapi/v4l/v4l2.html
+
+Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
+ - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
+   pixel format will be automatically selected. However, only `AB24` and `YUYV` are then supported.
+   If a pixel format is specified in the yaml file, then this format will be used. However, note
+   that the operator then expects that this format can be encoded as RGBA32. If not, the behaviour
+   is undefined.
+ - Output stream is on host. Always RGBA32 at this time.
+
+Use `holoscan.operators.FormatConverterOp` to move data from the host to a GPU device.
+
+Named output:
+    signal: nvidia::gxf::VideoBuffer
+        Emits a message containing a video buffer on the host with format GXF_VIDEO_FORMAT_RGBA.
 
 Parameters
 ----------

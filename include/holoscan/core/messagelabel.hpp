@@ -21,6 +21,7 @@
 #include <chrono>
 #include <iterator>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "./forward_def.hpp"
@@ -76,6 +77,8 @@ struct OperatorTimestampLabel {
 
   OperatorTimestampLabel& operator=(const OperatorTimestampLabel& o);
 
+  void set_pub_timestamp_to_current() { pub_timestamp = get_current_time_us(); }
+
   Operator* operator_ptr = nullptr;
 
   // The timestamp when an Operator receives from an input
@@ -97,16 +100,21 @@ struct OperatorTimestampLabel {
 class MessageLabel {
  public:
   using TimestampedPath = std::vector<OperatorTimestampLabel>;
+  using PathOperators = std::unordered_set<std::string>;
 
   MessageLabel() {
     // By default, allocate DEFAULT_NUM_PATHS paths in the message_paths
     message_paths.reserve(DEFAULT_NUM_PATHS);
   }
 
-  MessageLabel(const MessageLabel& m) : message_paths(m.message_paths) {}
+  MessageLabel(const MessageLabel& m)
+      : message_paths(m.message_paths), message_path_operators(m.message_path_operators) {}
 
   MessageLabel& operator=(const MessageLabel& m) {
-    if (this != &m) this->message_paths = m.message_paths;
+    if (this != &m) {
+      this->message_paths = m.message_paths;
+      this->message_path_operators = m.message_path_operators;
+    }
     return *this;
   }
 
@@ -147,12 +155,33 @@ class MessageLabel {
   double get_e2e_latency_ms(int index) { return ((double)get_e2e_latency(index) / 1000); }
 
   /**
+   * @brief Get the end-to-end latency of a TimestampedPath in microseconds. It is a utility
+   * function in the class and not dependent on the object of this class. Therefore, it's a static
+   * function.
+   *
+   * @param path The path for which to get the latency
+   * @return The end-to-end latency of the path in ms
+   */
+  static double get_path_e2e_latency_ms(TimestampedPath path) {
+    int64_t latency = path.back().pub_timestamp - path.front().rec_timestamp;
+    return (static_cast<double>(latency) / 1000);
+  }
+
+  /**
    * @brief Get the Timestamped path at the given index.
    *
    * @param index The index of the path to get
    * @return TimestampedPath& The timestamped path at the given index
    */
   TimestampedPath get_path(int index);
+
+  /**
+   * @brief Get the path name string which is comma-separated values of the operator names.
+   *
+   * @param index The index of the path to get
+   * @return The path name string
+   */
+  std::string get_path_name(int index);
 
   /**
    * @brief Get the OperatorTimestampLabel at the given path and operator index
@@ -182,6 +211,15 @@ class MessageLabel {
   void set_operator_rec_timestamp(int path_index, int op_index, int64_t rec_timestamp);
 
   /**
+   * @brief Check if an operator is present in the MessageLabel. Returns an empty vector if the
+   * operator is not present in any path.
+   *
+   * @param op_name The name of the operator to check
+   * @return List of path indexes where the operator is present
+   */
+  std::vector<int> has_operator(std::string op_name);
+
+  /**
    * @brief Add a new Operator timestamp to all the paths in a message label.
    *
    * @param o_timestamp The new operator timestamp to be added
@@ -199,7 +237,7 @@ class MessageLabel {
    *
    * @param path The path to be added.
    */
-  void add_new_path(TimestampedPath path) { message_paths.push_back(path); }
+  void add_new_path(TimestampedPath path);
 
   /**
    * @brief Convert the MessageLabel to a string.
@@ -209,6 +247,8 @@ class MessageLabel {
    */
   std::string to_string() const;
 
+  static std::string to_string(TimestampedPath path);
+
   /**
    * @brief Print the to_string() in the standard output with a heading for the MessageLabel.
    *
@@ -217,6 +257,10 @@ class MessageLabel {
 
  private:
   std::vector<TimestampedPath> message_paths;
+
+  /// List of paths where each path is a set of name of the operators
+  /// This variable is used to quickly check whether an operator is in a path
+  std::vector<PathOperators> message_path_operators;
 };
 }  // namespace holoscan
 

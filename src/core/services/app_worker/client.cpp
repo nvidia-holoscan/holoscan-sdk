@@ -21,6 +21,8 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/fragment.hpp"
@@ -32,10 +34,15 @@ AppWorkerClient::AppWorkerClient(const std::string& worker_address,
                                  std::shared_ptr<grpc::Channel> channel)
     : worker_address_(worker_address),
       stub_(holoscan::service::AppWorkerService::NewStub(channel)) {
-  // Extract IP address part
-  auto colon_pos = worker_address.find(':');
-  worker_ip_ =
-      colon_pos != std::string::npos ? worker_address.substr(0, colon_pos) : worker_address;
+  // Call parse_address to handle the parsing of the worker address.
+  auto [extracted_ip, _] =
+      CLIOptions::parse_address(worker_address,
+                                "0.0.0.0",  // default IP address, if needed.
+                                "");        // default port is empty, since we only want the IP.
+
+  // Assign the extracted IP to worker_ip_. We don't need to enclose IPv6 in brackets for this use
+  // case.
+  worker_ip_ = extracted_ip;
 }
 
 const std::string& AppWorkerClient::ip_address() const {
@@ -72,6 +79,70 @@ std::vector<int32_t> AppWorkerClient::available_ports(uint32_t number_of_ports, 
                        status.error_message());
   }
   return ports;
+}
+
+MultipleFragmentsPortMap AppWorkerClient::fragment_port_info(
+    const std::vector<std::string>& fragment_names) {
+  holoscan::service::FragmentInfoRequest request;
+  for (const auto& frag_name : fragment_names) { request.add_fragment_names(frag_name); }
+
+  MultipleFragmentsPortMap target_fragments_port_map;
+  target_fragments_port_map.reserve(fragment_names.size());
+
+  holoscan::service::FragmentInfoResponse response;
+  grpc::ClientContext context;
+  grpc::Status status = stub_->GetFragmentInfo(&context, request, &response);
+
+  if (status.ok()) {
+    HOLOSCAN_LOG_INFO("GetFragmentInfo response ({}) received", worker_address_);
+
+    const auto& fragments_port_info = response.multi_fragment_port_info();
+
+    for (const auto& target_info : fragments_port_info.targets_info()) {
+      FragmentPortMap fragment_port_map;
+      std::string frag_name;
+      if (target_info.has_fragment_name()) {
+        frag_name = target_info.fragment_name();
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "MultiFragmentPortInfo in FragmentAllocationRequest did not contain a fragment name");
+        continue;
+      }
+      for (const auto& op_info : target_info.operators_info()) {
+        std::string op_name;
+        if (op_info.has_operator_name()) {
+          op_name = op_info.operator_name();
+        } else {
+          HOLOSCAN_LOG_ERROR(
+              "MultiFragmentPortInfo_FragmentPortInfo in FragmentAllocationRequest did not contain "
+              "an operator name");
+          continue;
+        }
+
+        std::unordered_set<std::string> input_names;
+        input_names.reserve(op_info.input_names_size());
+        for (auto& in : op_info.input_names()) { input_names.insert(in); }
+
+        std::unordered_set<std::string> output_names;
+        output_names.reserve(op_info.output_names_size());
+        for (auto& out : op_info.output_names()) { output_names.insert(out); }
+
+        std::unordered_set<std::string> receiver_names;
+        receiver_names.reserve(op_info.receiver_names_size());
+        for (auto& recv : op_info.receiver_names()) { receiver_names.insert(recv); }
+
+        fragment_port_map.try_emplace(std::move(op_name),
+                                      std::move(input_names),
+                                      std::move(output_names),
+                                      std::move(receiver_names));
+      }
+      target_fragments_port_map.try_emplace(std::move(frag_name), std::move(fragment_port_map));
+    }
+  } else {
+    HOLOSCAN_LOG_INFO(
+        "GetFragmentInfo rpc failed ({}): {}", worker_address_, status.error_message());
+  }
+  return target_fragments_port_map;
 }
 
 bool AppWorkerClient::fragment_execution(
@@ -122,6 +193,9 @@ bool AppWorkerClient::fragment_execution(
                 break;
               case holoscan::ArgElementType::kInt32:
                 connector_arg->set_int_value(std::any_cast<int32_t>(arg.value()));
+                break;
+              case holoscan::ArgElementType::kUnsigned32:
+                connector_arg->set_uint_value(std::any_cast<uint32_t>(arg.value()));
                 break;
               case holoscan::ArgElementType::kFloat64:
                 connector_arg->set_double_value(std::any_cast<double>(arg.value()));

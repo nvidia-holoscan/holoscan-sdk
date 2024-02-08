@@ -23,6 +23,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -182,6 +183,11 @@ class Operator : public Component {
    * @return The reference to this operator.
    */
   Operator& name(const std::string& name) {
+    // Operator::parse_port_name requires that "." is not allowed in the Operator name
+    if (name.find(".") != std::string::npos) {
+      throw std::invalid_argument(fmt::format(
+          "The . character is reserved and cannot be used in the operator name ('{}').", name));
+    }
     name_ = name;
     return *this;
   }
@@ -347,6 +353,15 @@ class Operator : public Component {
   bool is_root();
 
   /**
+   * @brief Returns whether the operator is a user-defined root operator i.e., the first operator
+   * added to the graph.
+   *
+   * @return True, if the operator is a user-defined root operator; false, otherwise
+   */
+
+  bool is_user_defined_root();
+
+  /**
    * @brief Returns whether the operator is a leaf operator based on its fragment's graph
    *
    * @return True, if the operator is a leaf operator; false, otherwise
@@ -498,8 +513,8 @@ class Operator : public Component {
    *
    *   template <>
    *   struct codec<Coordinate> {
-   *     static expected<size_t, RuntimeError> serialize(const Coordinate& value, Endpoint* endpoint) {
-   *       return serialize_trivial_type<Coordinate>(value, endpoint);
+   *     static expected<size_t, RuntimeError> serialize(const Coordinate& value, Endpoint*
+   * endpoint) { return serialize_trivial_type<Coordinate>(value, endpoint);
    *     }
    *     static expected<Coordinate, RuntimeError> deserialize(Endpoint* endpoint) {
    *       return deserialize_trivial_type<Coordinate>(endpoint);
@@ -563,6 +578,15 @@ class Operator : public Component {
    */
   void update_input_message_label(std::string input_name, MessageLabel m) {
     input_message_labels[input_name] = m;
+  }
+
+  /**
+   * @brief Delete the input_message_labels map entry for the given input_name
+   *
+   * @param input_name The input port name for which the MessageLabel is deleted
+   */
+  void delete_input_message_label(std::string input_name) {
+    input_message_labels.erase(input_name);
   }
 
   /**

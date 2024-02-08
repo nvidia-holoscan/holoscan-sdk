@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -59,6 +60,7 @@
 #include "holoscan/core/resources/gxf/dfft_collector.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
+#include "holoscan/core/services/common/forward_op.hpp"
 #include "holoscan/core/services/common/virtual_operator.hpp"
 #include "holoscan/core/signal_handler.hpp"
 
@@ -79,7 +81,6 @@ static const std::vector<std::string> kDefaultGXFExtensions{
 };
 
 static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
-    "libgxf_bayer_demosaic.so",
     "libgxf_stream_playback.so",  // keep for use of VideoStreamSerializer
     "libgxf_ucx_holoscan.so",     // serialize holoscan::gxf::GXFTensor and holoscan::Message
 };
@@ -240,40 +241,6 @@ GXFExecutor::~GXFExecutor() {
   }
 }
 
-static gxf_uid_t add_entity_group(void* context, std::string name) {
-  gxf_uid_t entity_group_gid = kNullUid;
-  HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntityGroup(context, name.c_str(), &entity_group_gid));
-  return entity_group_gid;
-}
-
-static std::pair<gxf_tid_t, gxf_uid_t> create_gpu_device_entity(void* context,
-                                                                std::string entity_name) {
-  // Get GPU device type id
-  gxf_tid_t device_tid = GxfTidNull();
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(context, "nvidia::gxf::GPUDevice", &device_tid));
-
-  // Create a GPUDevice entity
-  gxf_uid_t device_eid = kNullUid;
-  GxfEntityCreateInfo entity_create_info = {entity_name.c_str(), GXF_ENTITY_CREATE_PROGRAM_BIT};
-  HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntity(context, &entity_create_info, &device_eid));
-  GXF_ASSERT_NE(device_eid, kNullUid);
-  return std::make_pair(device_tid, device_eid);
-}
-
-static gxf_uid_t create_gpu_device_component(void* context, gxf_tid_t device_tid,
-                                             gxf_uid_t device_eid, std::string component_name,
-                                             int32_t dev_id = 0) {
-  // Create the GPU device component
-  gxf_uid_t device_cid = kNullUid;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfComponentAdd(context, device_eid, device_tid, component_name.c_str(), &device_cid));
-  GXF_ASSERT_NE(device_cid, kNullUid);
-
-  // set the device ID parameter
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterSetInt32(context, device_cid, "dev_id", dev_id));
-  return device_cid;
-}
-
 void GXFExecutor::add_operator_to_entity_group(gxf_context_t context, gxf_uid_t entity_group_gid,
                                                std::shared_ptr<Operator> op) {
   gxf_uid_t op_eid = kNullUid;
@@ -284,6 +251,8 @@ void GXFExecutor::add_operator_to_entity_group(gxf_context_t context, gxf_uid_t 
     const std::string op_entity_name = fmt::format("{}{}", entity_prefix_, op->name());
     HOLOSCAN_GXF_CALL_FATAL(GxfEntityFind(context, op_entity_name.c_str(), &op_eid));
   }
+
+  HOLOSCAN_LOG_DEBUG("Adding operator eid '{}' to entity group '{}'", op_eid, entity_group_gid);
   HOLOSCAN_GXF_CALL_FATAL(GxfUpdateEntityGroup(context, entity_group_gid, op_eid));
 }
 
@@ -763,10 +732,30 @@ ConnectionMapType generate_connection_map(
 
 /**
  * @brief Populate virtual_ops vector and add corresponding connections to fragment.
+ *
+ * When VirtualTransmitterOp is created, UCXTransmitter's 'local_address' is set by the environment
+ * variable 'HOLOSCAN_UCX_SOURCE_ADDRESS' so that UCXTransmitter can create a UCX client endpoint
+ * using the local IP address.
+ * HOLOSCAN_UCX_SOURCE_ADDRESS may or may not have a port number (`<ip>:<port>`), but the port
+ * number would be ignored because there can be multiple UCXTransmitters in the fragments that are
+ * running on the same node, so specifying the port number is error-prone.
  */
 void create_virtual_operators_and_connections(
     Fragment* fragment, const ConnectionMapType& connection_map,
     std::vector<std::shared_ptr<ops::VirtualOperator>>& virtual_ops) {
+  // Get the local source address from the environment variable 'HOLOSCAN_UCX_SOURCE_ADDRESS'.
+  std::string source_ip = "0.0.0.0";
+
+  const char* source_address = std::getenv("HOLOSCAN_UCX_SOURCE_ADDRESS");
+  if (source_address != nullptr && source_address[0] != '\0') {
+    HOLOSCAN_LOG_DEBUG("The environment variable 'HOLOSCAN_UCX_SOURCE_ADDRESS' is set to '{}'",
+                       source_address);
+    std::string source_address_str(source_address);
+    auto [ip, _] = holoscan::CLIOptions::parse_address(source_address_str, "0.0.0.0", "0");
+    // Convert port string 'port' to int32_t.
+    source_ip = ip;
+  }
+
   for (auto& [op, port_map] : connection_map) {
     for (auto& [port_name, connections] : port_map) {
       int connection_index = 0;
@@ -775,6 +764,15 @@ void create_virtual_operators_and_connections(
 
         std::shared_ptr<ops::VirtualOperator> virtual_op;
         if (io_type == IOSpec::IOType::kOutput) {
+          // Update local_address and local_port of the UCXTransmitter based on
+          // the `source_address` from the environment variable
+          // 'HOLOSCAN_UCX_SOURCE_ADDRESS' (issue 4233845).
+          // The `source_port` would be ignored.
+          HOLOSCAN_LOG_DEBUG("Updating 'local_address' of the UCXTransmitter in '{}.{}' to '{}'",
+                             fragment->name(),
+                             connection->name,
+                             source_ip);
+          connection->args.add(Arg("local_address", source_ip));
           virtual_op = std::make_shared<ops::VirtualTransmitterOp>(
               port_name, IOSpec::ConnectorType::kUCX, connection->args);
         } else {
@@ -791,28 +789,46 @@ void create_virtual_operators_and_connections(
         virtual_op->spec(spec);
 
         if (io_type == IOSpec::IOType::kOutput) {
-          // connect op.port_name to virtual_op.port_name
+          // Connect op.port_name to virtual_op.port_name
           fragment->add_flow(op, virtual_op, {{port_name, port_name}});
         } else {
-          // connect virtual_op.port_name to op.port_name
-          fragment->add_flow(virtual_op, op, {{port_name, port_name}});
-
+          int param_index = -1;
           // If we cannot find the port_name in the op's input, it means that
           // the port name is the parameter name and the parameter type is
           // 'std::vector<holoscan::IOSpec*>'.
-          // In this case, we need to correct VirtualReceiverOp's port name to
-          // the parameter name ('<parameter name>:<index>').
+          // In this case, we need to use the indexed input port name to avoid
+          // name conflict ('<port name>:<index>').
           auto op_spec = op->spec();
           auto& op_spec_inputs = op_spec->inputs();
           if (op_spec_inputs.find(port_name) == op_spec_inputs.end()) {
             auto& op_params = op_spec->params();
             const std::any& any_value = op_params[port_name].value();
             auto& param = *std::any_cast<Parameter<std::vector<holoscan::IOSpec*>>*>(any_value);
-            std::vector<holoscan::IOSpec*>& iospec_vector = param.get();
-            int param_index = iospec_vector.size() - 1;
-            // Set the port name to <parameter name>:<index>
-            virtual_op->port_name(fmt::format("{}:{}", port_name, param_index));
+            auto iospec_vector = param.try_get();
+            if (iospec_vector == std::nullopt) {
+              param_index = 0;
+            } else {
+              param_index = iospec_vector.value().size();
+            }
           }
+
+          // Create and insert a forward operator to connect virtual_op.port_name to op.port_name
+          const std::string forward_op_name =
+              param_index == -1
+                  ? fmt::format("forward_{}_{}", op->name(), port_name)
+                  : fmt::format("forward_{}_{}:{}", op->name(), port_name, param_index);
+          auto forward_op = fragment->make_operator<ops::ForwardOp>(forward_op_name);
+          auto& in_spec =
+              forward_op->spec()->inputs()["in"];  // get the input spec of the forward op
+
+          // Create the connector for in_spec from the virtual_op
+          in_spec->connector(virtual_op->connector_type(), virtual_op->arg_list());
+
+          // Connect virtual_op.port_name to forward_op.in
+          fragment->add_flow(virtual_op, forward_op, {{port_name, "in"}});
+
+          // Connect forward_op.out  to op.port_name
+          fragment->add_flow(forward_op, op, {{"out", port_name}});
         }
       }
     }
@@ -853,13 +869,7 @@ void connect_ucx_transmitters_to_virtual_ops(
         }
       } break;
       case IOSpec::IOType::kInput: {
-        // It should have only one successor.
-        auto first_receiver_op = graph.get_next_nodes(virtual_op)[0];
-        auto& port_name = virtual_op->port_name();
-
-        auto& in_spec = first_receiver_op->spec()->inputs()[port_name];
-        // Create the connector for in_spec from the virtual_op
-        in_spec->connector(virtual_op->connector_type(), virtual_op->arg_list());
+        // Nothing to do. Handled in create_virtual_operators_and_connections().
       } break;
     }
   }
@@ -998,11 +1008,15 @@ void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
 
               auto prev_connector_receiver_address = prev_ucx_connector->receiver_address();
               auto prev_connector_port = prev_ucx_connector->port();
+              auto prev_connector_local_address = prev_ucx_connector->local_address();
+              auto prev_connector_local_port = prev_ucx_connector->local_port();
               transmitter = std::make_shared<UcxTransmitter>(
                   Arg("capacity", prev_connector_capacity),
                   Arg("policy", prev_connector_policy),
                   Arg("receiver_address", prev_connector_receiver_address),
-                  Arg("port", prev_connector_port));
+                  Arg("port", prev_connector_port),
+                  Arg("local_address", prev_connector_local_address),
+                  Arg("local_port", prev_connector_local_port));
             }
             auto broadcast_out_port_name = fmt::format("{}_{}", op->name(), port_name);
             transmitter->name(broadcast_out_port_name);
@@ -1049,6 +1063,7 @@ using TargetConnectionsMapType = std::unordered_map<gxf_uid_t, TargetsInfo>;
 void create_broadcast_components(gxf_context_t context,             // context_
                                  const std::string& entity_prefix,  // entity_prefix_
                                  holoscan::OperatorGraph::NodeType op,
+                                 std::list<gxf_uid_t>& implicit_broadcast_entities,
                                  BroadcastEidMapType& broadcast_eids,
                                  const TargetConnectionsMapType& connections) {
   gxf_tid_t broadcast_tid = GxfTidNull();
@@ -1105,6 +1120,9 @@ void create_broadcast_components(gxf_context_t context,             // context_
                                                                 GXF_ENTITY_CREATE_PROGRAM_BIT};
       HOLOSCAN_GXF_CALL_FATAL(
           GxfCreateEntity(context, &broadcast_entity_create_info, &broadcast_eid));
+
+      // Add the broadcast_eid to the list of implicit broadcast entities
+      implicit_broadcast_entities.push_back(broadcast_eid);
 
       // Add the broadcast_eid for the current operator and the source port name
       broadcast_eids[op][source_cname] = broadcast_eid;
@@ -1242,11 +1260,15 @@ bool GXFExecutor::initialize_fragment() {
         break;
       } else {
         // If we have not visited all nodes, we have a cycle in the graph.
-        HOLOSCAN_LOG_ERROR(
+        HOLOSCAN_LOG_DEBUG(
             "Worklist is empty, but not all nodes have been visited. There is a cycle.");
-        HOLOSCAN_LOG_ERROR("Application is being aborted.");
-        // Holoscan supports DAG for fragments. Cycles will be supported in a future release.
-        return false;
+
+        for (auto& node : operators) {
+          if (indegrees[node]) {  // if indegrees is still positive add to the worklist
+            indegrees[node] = 0;  // artificially breaking the cycle
+            worklist.push_back(node);
+          }
+        }
       }
     }
     const auto& op = worklist.front();
@@ -1270,8 +1292,6 @@ bool GXFExecutor::initialize_fragment() {
     auto prev_operators = graph.get_previous_nodes(op);
 
     for (auto& prev_op : prev_operators) {
-      auto prev_gxf_op = std::dynamic_pointer_cast<ops::GXFOperator>(prev_op);
-
       auto port_map = graph.get_port_map(prev_op, op);
       if (!port_map.has_value()) {
         HOLOSCAN_LOG_ERROR("Could not find port map for {} -> {}", prev_op->name(), op->name());
@@ -1303,9 +1323,15 @@ bool GXFExecutor::initialize_fragment() {
         }
 
         for (const auto& [source_port, target_ports] : *port_map_val) {
-          auto source_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
-              prev_op->spec()->outputs()[source_port]->connector());
-          gxf_uid_t source_cid = source_gxf_resource->gxf_cid();
+          gxf_uid_t source_cid = -1;
+          // Only if previous operator is initialized, then source edge cid is valid
+          // For cycles, a previous operator may not have been initialized yet
+          if (prev_op->id() != -1) {  // id of an operator is -1 if it is not initialized
+            auto source_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
+                prev_op->spec()->outputs()[source_port]->connector());
+            source_cid = source_gxf_resource->gxf_cid();
+          }
+
           if (target_ports.size() > 1) {
             HOLOSCAN_LOG_ERROR(
                 "Source port is connected to multiple target ports without Broadcast component. "
@@ -1320,10 +1346,19 @@ bool GXFExecutor::initialize_fragment() {
             const auto& target_port = target_ports.begin();
             auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
                 op->spec()->inputs()[*target_port]->connector());
-            gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
-            ::holoscan::gxf::add_connection(context, source_cid, target_cid);
-            HOLOSCAN_LOG_DEBUG(
-                "Connected directly source : {} -> target : {}", source_port, *target_port);
+            // For cycles, a previous operator may not have been initialized yet, so we don't
+            // connect them here. We connect them as a forward/downstream connection when we
+            // visit the operator which is connected to the current operator.
+            if (prev_op->id() != -1) {
+              gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
+              ::holoscan::gxf::add_connection(context, source_cid, target_cid);
+              HOLOSCAN_LOG_DEBUG(
+                  "Connected directly source : {} -> target : {}", source_port, *target_port);
+            } else {
+              HOLOSCAN_LOG_DEBUG("Connection source: {} -> target: {} will be added later",
+                                 source_port,
+                                 *target_port);
+            }
           }
         }
       }
@@ -1377,11 +1412,55 @@ bool GXFExecutor::initialize_fragment() {
             std::move(next_op));  // next_op is moved because get_next_nodes returns a new vector
       }
     }
+    // Iterate through downstream connections and find the direct ones to connect, only if
+    // downstream operator is already initialized. This is to handle cycles in the graph.
+    for (auto [source_cid, target_info] : connections) {
+      if (target_info.second.size() == 1) {
+        // There is a direct connection without Broadcast
+        // Check if next op is already initialized, that means, it's a cycle and we can add the
+        // connection now
+        auto tmp_next_op = target_info.second.begin()->first;
+        if (tmp_next_op->id() != -1 && target_info.first != IOSpec::ConnectorType::kUCX) {
+          // Operator is already initialized
+          HOLOSCAN_LOG_DEBUG("next op {} is already initialized, due to a cycle.",
+                             tmp_next_op->name());
+          auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
+              tmp_next_op->spec()->inputs()[target_info.second.begin()->second]->connector());
+          gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
+          ::holoscan::gxf::add_connection(context, source_cid, target_cid);
+          HOLOSCAN_LOG_TRACE(
+              "Next Op {} is connected to the current Op  {} as a downstream connection due to a "
+              "cycle.",
+              tmp_next_op->name(),
+              op_name);
+        }
+      }
+    }
 
     // Create the Broadcast components and add their IDs to broadcast_eids, but do not add any
     // transmitter to the Broadcast entity. The transmitters will be added later when the incoming
     // edges to the respective operators are processed.
-    create_broadcast_components(context, entity_prefix_, op, broadcast_eids, connections);
+    create_broadcast_components(
+        context, entity_prefix_, op, implicit_broadcast_entities_, broadcast_eids, connections);
+    if (op_type != Operator::OperatorType::kVirtual) {
+      for (auto& next_op : graph.get_next_nodes(op)) {
+        if (next_op->id() != -1 && next_op->operator_type() != Operator::OperatorType::kVirtual) {
+          HOLOSCAN_LOG_DEBUG(
+              "next_op of {} is {}. It is already initialized.", op_name, next_op->name());
+          // next operator is already initialized, so connect the broadcast component to the next
+          // operator's input port, if there is any
+          auto port_map = graph.get_port_map(op, next_op);
+          if (!port_map.has_value()) {
+            HOLOSCAN_LOG_ERROR("Could not find port map for {} -> {}", op_name, next_op->name());
+            return false;
+          }
+          if (broadcast_eids.find(op) != broadcast_eids.end()) {
+            connect_broadcast_to_previous_op(
+                context_, fragment_, broadcast_eids, next_op, op, port_map.value());
+          }
+        }
+      }
+    }
   }
   return true;
 }
@@ -1645,11 +1724,19 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       for (auto op : graph.get_nodes()) {
         if (op->is_leaf()) {
           dfft_collector_ptr->add_leaf_op(op.get());
-        } else if (op->is_root()) {
+        } else if (op->is_root() || op->is_user_defined_root()) {
           dfft_collector_ptr->add_root_op(op.get());
         }
       }
     }
+
+    // Cache TIDs for UcxReceiver and UcxTransmitter
+    gxf_tid_t ucx_receiver_tid = GxfTidNull();
+    gxf_tid_t ucx_transmitter_tid = GxfTidNull();
+    HOLOSCAN_GXF_CALL_FATAL(
+        GxfComponentTypeId(context, "nvidia::gxf::UcxReceiver", &ucx_receiver_tid));
+    HOLOSCAN_GXF_CALL_FATAL(
+        GxfComponentTypeId(context, "nvidia::gxf::UcxTransmitter", &ucx_transmitter_tid));
 
     // network context initialization after connection entities were created (see GXF's program.cpp)
     if (fragment_->network_context()) {
@@ -1661,13 +1748,17 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       network_context->initialize();
 
       std::string entity_group_name = "network_entity_group";
-      auto entity_group_gid = add_entity_group(context_, entity_group_name);
+      auto entity_group_gid = ::holoscan::gxf::add_entity_group(context_, entity_group_name);
 
       std::string device_entity_name = fmt::format("{}gpu_device_entity", entity_prefix_);
       std::string device_component_name = "gpu_device_component";
-      auto [gpu_device_tid, gpu_device_eid] = create_gpu_device_entity(context, device_entity_name);
-      create_gpu_device_component(
-          context, gpu_device_tid, gpu_device_eid, device_component_name, 0);
+      auto [gpu_device_tid, gpu_device_eid] =
+          ::holoscan::gxf::create_gpu_device_entity(context, device_entity_name);
+
+      int32_t gpu_id =
+          static_cast<int32_t>(AppDriver::get_int_env_var("HOLOSCAN_UCX_DEVICE_ID", 0));
+      ::holoscan::gxf::create_gpu_device_component(
+          context, gpu_device_tid, gpu_device_eid, device_component_name, gpu_id);
 
       // Note: GxfUpdateEntityGroup
       //   calls Runtime::GxfUpdateEntityGroup(gid, eid)
@@ -1707,6 +1798,23 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
         }
       }
 
+      // Add implicit broadcast entities to the network entity group if they have a UCX connector
+      for (auto& broadcast_eid : implicit_broadcast_entities_) {
+        bool has_ucx_connector = false;
+
+        if (gxf::has_component(context, broadcast_eid, ucx_receiver_tid) ||
+            gxf::has_component(context, broadcast_eid, ucx_transmitter_tid)) {
+          has_ucx_connector = true;
+        }
+
+        // Add the entity to the entity group if it has a UCX connector
+        if (has_ucx_connector) {
+          HOLOSCAN_LOG_DEBUG("Adding implicit broadcast eid '{}' to entity group '{}'",
+                             broadcast_eid,
+                             entity_group_gid);
+          HOLOSCAN_GXF_CALL_FATAL(GxfUpdateEntityGroup(context, entity_group_gid, broadcast_eid));
+        }
+      }
     } else {
       HOLOSCAN_LOG_DEBUG("GXFExecutor::run: no NetworkContext to initialize");
 
@@ -1724,6 +1832,21 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
           if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
             throw std::runtime_error("UCX-based connection found, but there is no NetworkContext.");
           }
+        }
+      }
+
+      // Find any implicit broadcast entities with a UCX connector and raise an error.
+      for (auto& broadcast_eid : implicit_broadcast_entities_) {
+        bool has_ucx_connector = false;
+
+        if (gxf::has_component(context, broadcast_eid, ucx_receiver_tid) ||
+            gxf::has_component(context, broadcast_eid, ucx_transmitter_tid)) {
+          has_ucx_connector = true;
+        }
+
+        // Add the entity to the entity group if it has a UCX connector
+        if (has_ucx_connector) {
+          throw std::runtime_error("UCX-based connection found, but there is no NetworkContext.");
         }
       }
     }
@@ -1837,7 +1960,7 @@ void GXFExecutor::register_extensions() {
     extension_factory.add_type<holoscan::Tensor>("Holoscan's Tensor type",
                                                  {0xa5eb0ed57d7f4aa2, 0xb5865ccca0ef955c});
 
-    // Add a new type of Double Buffer Receiver and Tramsmitter
+    // Add a new type of Double Buffer Receiver and Transmitter
     extension_factory
         .add_component<holoscan::AnnotatedDoubleBufferReceiver, nvidia::gxf::DoubleBufferReceiver>(
             "Holoscan's annotated double buffer receiver",

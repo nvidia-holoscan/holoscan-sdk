@@ -13,7 +13,7 @@ As for `example/tensor_interop/python/tensor_interop.py`, this application demon
 ### Data
 
 The following dataset is used by this example:
-[📦️ (NGC) Sample App Data for AI-based Endoscopy Tool Tracking](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_endoscopy_sample_data/files?version=20230128).
+[📦️ (NGC) Sample RacerX Video Data](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_racerx_video/files?version=20231009).
 
 ### Run instructions
 
@@ -24,7 +24,7 @@ The following dataset is used by this example:
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 -m pip install numpy
-  python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
+  python3 -m pip install cupy-cuda12x
   python3 <APP_DIR>/holoviz_geometry.py
   ```
 * **using deb package install**:
@@ -32,7 +32,7 @@ The following dataset is used by this example:
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
   export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   python3 -m pip install numpy
-  python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
+  python3 -m pip install cupy-cuda12x
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
   python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_geometry.py
   ```
@@ -48,7 +48,7 @@ The following dataset is used by this example:
 * **source (local env)**:
   ```bash
   python3 -m pip install numpy
-  python3 -m pip install cupy-cuda11x # Append `-f https://pip.cupy.dev/aarch64` on aarch64
+  python3 -m pip install cupy-cuda12x
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data
   python3 ${BUILD_OR_INSTALL_DIR}/examples/holoviz/python/holoviz_geometry.py

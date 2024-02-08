@@ -59,6 +59,10 @@ std::vector<FragmentNodeType>& AppWorker::target_fragments() {
   return target_fragments_;
 }
 
+FragmentGraph& AppWorker::fragment_graph() {
+  return *fragment_graph_;
+}
+
 service::AppWorkerServer* AppWorker::server(std::unique_ptr<service::AppWorkerServer>&& server) {
   worker_server_ = std::move(server);
   return worker_server_.get();
@@ -76,14 +80,10 @@ bool AppWorker::execute_fragments(
     return false;
   }
 
-  // If UCX_PROTO_ENABLE is not already set, set it to enable UCX Protocols v2
-  setenv("UCX_PROTO_ENABLE", "y", 0);
-  // Reuse address
-  // (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
-  setenv("UCX_TCP_CM_REUSEADDR", "y", 0);
-
-  // exclude CUDA Interprocess Communication if we are on iGPU
-  AppDriver::exclude_cuda_ipc_transport_on_igpu();
+  // // exclude CUDA Interprocess Communication if we are on iGPU
+  // AppDriver::exclude_cuda_ipc_transport_on_igpu();
+  // Disable CUDA Interprocess Communication (issue 4318442)
+  AppDriver::set_ucx_to_exclude_cuda_ipc();
 
   // Initialize scheduled fragments
   auto& scheduled_fragments = scheduled_fragments_;

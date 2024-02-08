@@ -18,6 +18,7 @@
 #include "holoscan/core/cli_parser.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -49,8 +50,8 @@ void CLIParser::initialize(std::string app_description, std::string app_version)
         "--worker-address",
         options_.worker_address,
         "The address (`[<IP or hostname>][:<port>]`) of the App Worker. If not specified, the App "
-        "Worker uses the default host address ('0.0.0.0') with the default port number "
-        "randomly chosen from unused ports (between 10000 and 32767).");
+        "Worker uses the default host address ('0.0.0.0') with a randomly chosen port number "
+        "between 10000 and 32767 that is not currently in use.");
     app_.add_option(
             "--fragments",
             options_.worker_targets,
@@ -72,8 +73,24 @@ void CLIParser::initialize(std::string app_description, std::string app_version)
 
 std::vector<std::string>& CLIParser::parse(std::vector<std::string>& argv) {
   try {
-    // Set the application name
-    if (!argv.empty()) { app_.name(argv[0]); }
+    if (!argv.empty()) {
+      // Set the application name
+      std::string app_name;
+      if (argv.size() > 1 && argv[1].find(".py") != std::string::npos) {
+        // For Python applications argv[0] is the Python binary and argv[1] is the .py file name
+        app_name = argv[1];
+      } else {
+        app_name = argv[0];
+      }
+      // retain only the binary name without the full path
+      try {
+        app_name = std::filesystem::path(app_name).filename();
+      } catch (const std::exception& e) {
+        HOLOSCAN_LOG_WARN(
+            "Unable to extract filename from app_name: {}. Exception: {}", app_name, e.what());
+      }
+      app_.name(app_name);
+    }
 
     // CLI::App::parse() accepts the arguments in the reverse order
     std::reverse(argv.begin(), argv.end());

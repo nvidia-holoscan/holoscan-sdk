@@ -16,6 +16,7 @@
  */
 
 #include "holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp"
+#include <gxf/core/gxf.h>
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
@@ -29,7 +30,18 @@ gxf_result_t AnnotatedDoubleBufferTransmitter::publish_abi(gxf_uid_t uid) {
     return GXF_FAILURE;
   } else {
     auto gxf_entity = nvidia::gxf::Entity::Shared(context(), uid);
-    auto buffer = gxf_entity.value().add<MessageLabel>();
+    gxf_entity->deactivate();  // GXF Entity might be activated by the caller; so deactivate it to
+                               // add MessageLabel
+    auto buffer = gxf_entity.value().add<MessageLabel>("message_label");
+
+    // We do not activate the GXF Entity because these message entities are not supposed to be
+    // activated by default.
+
+    if (!buffer) {
+      // Fail early if we cannot add the MessageLabel
+      HOLOSCAN_LOG_ERROR(GxfResultStr(buffer.error()));
+      return buffer.error();
+    }
 
     MessageLabel m;
     m = op()->get_consolidated_input_label();
@@ -40,7 +52,7 @@ gxf_result_t AnnotatedDoubleBufferTransmitter::publish_abi(gxf_uid_t uid) {
   // Call the Base class' publish_abi now
   gxf_result_t code = nvidia::gxf::DoubleBufferTransmitter::publish_abi(uid);
 
-  if (op()->is_root()) {
+  if (op()->is_root() || op()->is_user_defined_root()) {
     if (!op_transmitter_name_pair_.size())
       op_transmitter_name_pair_ = fmt::format("{}->{}", op()->name(), name());
     op()->update_published_messages(op_transmitter_name_pair_);

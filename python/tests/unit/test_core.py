@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import pytest
 
@@ -251,8 +253,9 @@ class TestCondition:
     def test_fragment(self, fragment):
         c = Condition()
         assert c.fragment is None
-        c.fragment = fragment
-        assert c.fragment is fragment
+        # not allowed to assign fragment
+        with pytest.raises(AttributeError):
+            c.fragment = fragment
 
     def test_add_arg(self):
         c = Condition()
@@ -303,8 +306,9 @@ class TestResource:
     def test_fragment(self, fragment):
         r = Resource()
         assert r.fragment is None
-        r.fragment = fragment
-        assert r.fragment is fragment
+        # not allowed to assign fragment
+        with pytest.raises(AttributeError):
+            r.fragment = fragment
 
     def test_add_arg(self):
         r = Resource()
@@ -343,7 +347,7 @@ class TestOperatorSpecBase:
         assert iospec.io_type == IOSpec.IOType.INPUT
 
         # Calling a second time with the same name will log an error to the
-        # console. TODO: test this
+        # console.
         iospec2 = c.input("input2")
         captured = capfd.readouterr()
         assert "error" in captured.err
@@ -498,7 +502,7 @@ class TestOutputContext:
 
 def test_condition_type():
     # just verifies that the various enums exist
-    (
+    (  # noqa: B018
         ConditionType.NONE,
         ConditionType.MESSAGE_AVAILABLE,
         ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
@@ -535,7 +539,7 @@ class TestConfig:
 class TestFragment:
     def test_init(self):
         f = Fragment()
-        f.name == ""
+        assert f.name == ""
 
     def test_init_with_wrong_args(self):
         with pytest.raises(ValueError, match=r".*must be the Application.*"):
@@ -588,7 +592,6 @@ class TestFragment:
 
     def test_from_config_missing_key(self, fragment, config_file, capfd):
         fragment.config(config_file)
-        # TODO: verify that this logs an error
         nonexistent_kwargs = fragment.from_config("nonexistent")
         assert nonexistent_kwargs.size == 0
         msg = "Unable to find the parameter item/map with key 'nonexistent'"
@@ -779,7 +782,6 @@ class TestApplication:
 
     def test_from_config_missing_key(self, app, config_file, capfd):
         app.config(config_file)
-        # TODO: verify that this logs an error
         nonexistent_kwargs = app.from_config("nonexistent")
         assert nonexistent_kwargs.size == 0
         msg = "Unable to find the parameter item/map with key 'nonexistent'"
@@ -907,10 +909,13 @@ class TestIOSpec:
         assert io_spec.connector() is None
         assert io_spec.conditions == []
 
+        repr_str = repr(io_spec)
         if name == "output":
-            assert repr(io_spec) == "<IOSpec: name=output, io_type=OUTPUT, connector_type=DEFAULT>"
+            assert "io_type: kOutput" in repr_str
         elif name == "input":
-            assert repr(io_spec) == "<IOSpec: name=input, io_type=INPUT, connector_type=DEFAULT>"
+            assert "io_type: kInput" in repr_str
+        assert f"name: {io_spec.name}" in repr_str
+        assert "connector_type: kDefault" in repr_str
 
     @pytest.mark.parametrize(
         "name, io_type",
@@ -943,21 +948,21 @@ class TestExecutor:
 class TestScheduler:
     def test_base_class_init(self, fragment):
         s = Scheduler(name="greedy")
-        s.name == "greedy"
-        len(s.args) == 0
+        assert s.name == "greedy"
+        assert len(s.args) == 0
         # id and fragment will not yet have been set
-        s.id == -1
-        s.fragment is None
+        assert s.id == -1
+        assert s.fragment is None
 
 
 class TestNetworkContext:
     def test_base_class_init(self, fragment):
         s = NetworkContext(name="network")
-        s.name == "network"
-        len(s.args) == 0
+        assert s.name == "network"
+        assert len(s.args) == 0
         # id and fragment will not yet have been set
-        s.id == -1
-        s.fragment is None
+        assert s.id == -1
+        assert s.fragment is None
 
 
 class TestAsTensor:
@@ -968,23 +973,20 @@ class TestAsTensor:
         # which is inconsistent with NumPy behavior. We force a copy of such an array that
         # is both C and F contiguous to always have C-contiguous strides so that the
         # as_tensor behavior is consistent regardless of the CuPy version.
-
-        if use_cupy:
-            xp = pytest.importorskip("cupy")
-        else:
-            xp = pytest.importorskip("numpy")
+        xp = pytest.importorskip("cupy" if use_cupy else "numpy")
 
         coords = xp.array([0.1, 0.1, 0.1], dtype=xp.float32).reshape((1, 1, 3))
         assert coords.strides == (12, 12, 4)
 
-        coords_F = coords.astype(xp.float32, order="F")
-        assert coords_F.strides == (4, 4, 4)
+        coords_f = coords.astype(xp.float32, order="F")
+        assert coords_f.strides == (4, 4, 4)
 
         tensor = as_tensor(coords)
         assert tensor.strides == coords.strides
 
         # an array that is both C and F contiguous will become tensor with C contiguous strides
-        assert coords_F.flags.c_contiguous and coords_F.flags.f_contiguous
+        assert coords_f.flags.c_contiguous
+        assert coords_f.flags.f_contiguous
 
-        tensor_F = as_tensor(coords_F)
-        assert tensor_F.strides == coords.strides
+        tensor_f = as_tensor(coords_f)
+        assert tensor_f.strides == coords.strides

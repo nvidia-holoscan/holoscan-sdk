@@ -14,5 +14,7 @@
 # limitations under the License.
 
 holoscan_pybind11_module(schedulers
+    greedy_scheduler.cpp
+    multithread_scheduler.cpp
     schedulers.cpp
 )

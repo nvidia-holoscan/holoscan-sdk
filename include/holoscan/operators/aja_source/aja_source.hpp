@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,22 @@ namespace holoscan::ops {
 
 /**
  * @brief Operator class to get the video stream from AJA capture card.
+ *
+ * **Named inputs:**
+ *     - *overlay_buffer_input*: `nvidia::gxf::VideoBuffer` (optional)
+ *         - The operator does not require a message on this input port in order for ``compute`` to
+ *         be called. If a message is found, and `enable_overlay` is true, the image will be
+ *         mixed with the image captured by the AJA card. If `enable_overlay` is false, any message
+ *         on this port will be ignored.
+ *
+ * **Named outputs:**
+ *     - *video_buffer_output*: `nvidia::gxf::VideoBuffer`
+ *         - The output video frame from the AJA capture card. If ``overlay_rdma`` is true, this
+ *         video buffer will be on the device, otherwise it will be in pinned host memory.
+ *     - *overlay_buffer_output*: `nvidia::gxf::VideoBuffer` (optional)
+ *         - This output port will only emit a video buffer when ``enable_overlay`` is true. If
+ *         ``overlay_rdma`` is true, this video buffer will be on the device, otherwise it will be
+ *         in pinned host memory.
  */
 class AJASourceOp : public holoscan::Operator {
  public:

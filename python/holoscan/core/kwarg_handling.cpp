@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include <pybind11/numpy.h>
-#include <pybind11/pybind11.h>  // py::dtype, py::array
+#include <pybind11/numpy.h>     // py::dtype, py::array
+#include <pybind11/pybind11.h>
 #include <pybind11/stl.h>       // needed for py::cast to work with std::vector types
 
 #include <cstdint>
@@ -30,6 +30,7 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/resource.hpp"
 #include "kwarg_handling.hpp"
+#include "kwarg_handling_pydoc.hpp"
 
 using std::string_literals::operator""s;
 using pybind11::literals::operator""_a;
@@ -393,6 +394,23 @@ py::dict arglist_to_kwargs(ArgList& arglist) {
     d[arg.name().c_str()] = obj;
   }
   return d;
+}
+
+void init_kwarg_handling(py::module_& m) {
+  // Additional functions with no counterpart in the C++ API
+  //    (e.g. helpers for converting Python objects to C++ API Arg/ArgList objects)
+  //    These functions are defined in ../kwarg_handling.cpp
+  m.def("py_object_to_arg",
+        &py_object_to_arg,
+        "obj"_a,
+        "name"_a = "",
+        doc::KwargHandling::doc_py_object_to_arg);
+  m.def("kwargs_to_arglist", &kwargs_to_arglist, doc::KwargHandling::doc_kwargs_to_arglist);
+  m.def("arg_to_py_object", &arg_to_py_object, "arg"_a, doc::KwargHandling::doc_arg_to_py_object);
+  m.def("arglist_to_kwargs",
+        &arglist_to_kwargs,
+        "arglist"_a,
+        doc::KwargHandling::doc_arglist_to_kwargs);
 }
 
 }  // namespace holoscan

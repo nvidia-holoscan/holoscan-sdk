@@ -1,0 +1,25 @@
+--- examples/video_replayer_distributed/cpp/video_replayer_distributed.cpp	2023-12-11 14:11:08.450220903 -0800
++++ build-x86_64/examples/video_replayer_distributed/cpp/video_replayer_distributed_test.cpp	2023-12-11 14:34:46.866029318 -0800
+@@ -24,6 +24,12 @@
+ #include <holoscan/operators/holoviz/holoviz.hpp>
+ #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
+ 
++#ifdef RECORD_OUTPUT
++  #include <../tests/recorder.hpp>
++  #include <holoscan/operators/format_converter/format_converter.hpp>
++  #include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
++#endif
++
+ class Fragment1 : public holoscan::Fragment {
+  public:
+   void compose() override {
+@@ -51,6 +57,9 @@
+ 
+     auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"));
+     add_operator(visualizer);
++
++    // Recorder to validate the video output
++    RECORDER(visualizer);
+   }
+ };
+ 

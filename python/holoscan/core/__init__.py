@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,7 @@ create a custom application.
 # threads are created (by C++ modules using pybind11).
 # Otherwise you will get an assert tlock.locked() error on exit.
 # (CLARAHOLOS-765)
-import threading as _threading  # noqa: F401
+import threading as _threading  # noqa: F401, I001
 
 from ..graphs._graphs import FragmentGraph, OperatorGraph
 from ._core import Application as _Application
@@ -143,7 +143,7 @@ __all__ = [
 
 
 class Application(_Application):
-    def __init__(self, argv=[], *args, **kwargs):
+    def __init__(self, argv=None, *args, **kwargs):
         # If no arguments are provided, instead of letting the C++ API initialize the application
         # from the command line (through '/proc/self/cmdline'), we initialize the application
         # with the command line arguments retrieved from the Python interpreter.
@@ -247,6 +247,18 @@ Fragment.__init__.__doc__ = _Fragment.__init__.__doc__
 
 
 class Operator(_Operator):
+    def __setattr__(self, name, value):
+        readonly_attributes = [
+            "fragment",
+            "conditions",
+            "resources",
+            "operator_type",
+            "description",
+        ]
+        if name in readonly_attributes:
+            raise AttributeError(f'cannot override read-only property "{name}"')
+        super().__setattr__(name, value)
+
     def __init__(self, fragment, *args, **kwargs):
         if not isinstance(fragment, _Fragment):
             raise ValueError(
@@ -266,11 +278,26 @@ class Operator(_Operator):
         """Default implementation of setup method."""
         pass
 
+    def initialize(self):
+        """Default implementation of initialize"""
+        pass
+
+    def start(self):
+        """Default implementation of start"""
+        pass
+
+    def compute(self, op_input, op_output, context):
+        """Default implementation of compute"""
+        pass
+
+    def stop(self):
+        """Default implementation of stop"""
+        pass
+
 
 # copy docstrings defined in core_pydoc.hpp
 Operator.__doc__ = _Operator.__doc__
 Operator.__init__.__doc__ = _Operator.__init__.__doc__
-# TODO: remove from core_pydoc.hpp and just define docstrings in this file?
 
 
 class Tracker:

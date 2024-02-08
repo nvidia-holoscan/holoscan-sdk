@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/app_worker.hpp"
@@ -39,6 +40,47 @@ AppWorkerServer::AppWorkerServer(holoscan::AppWorker* app_worker) : app_worker_(
 AppWorkerServer::~AppWorkerServer() = default;
 
 void AppWorkerServer::start() {
+  // Update server address
+  auto& server_address = app_worker_->options()->worker_address;
+
+  // Parse the server address using the parse_address method.
+  auto [server_ip, server_port] = CLIOptions::parse_address(
+      server_address,
+      "0.0.0.0",  // default IP address
+      "");        // We will determine the default port using get_unused_network_ports
+
+  // If server_port is empty, find an unused network port and use it as the default port.
+  if (server_port.empty()) {
+    auto unused_ports = get_unused_network_ports(1, kMinNetworkPort, kMaxNetworkPort);
+    if (unused_ports.empty()) {
+      HOLOSCAN_LOG_ERROR("No unused ports found");
+      return;
+    }
+    server_port = std::to_string(unused_ports[0]);
+  }
+
+  // Enclose IPv6 address in brackets if port is not empty and it's an IPv6 address.
+  if (server_ip.find(':') != std::string::npos && !server_port.empty()) {
+    server_ip = fmt::format("[{}]", server_ip);
+  }
+
+  // Reassemble server_address using the parsed IP and port.
+  server_address = fmt::format("{}:{}", server_ip, server_port);
+
+  // Set HOLOSCAN_UCX_SOURCE_ADDRESS environment variable if the `--worker-address` CLI option is
+  // specified with a value other than '0.0.0.0' (default) for IPv4 or '::' for IPv6.
+  // (See issue 4233845)
+  if (server_ip != "0.0.0.0" && server_ip != "::") {
+    const char* source_address = std::getenv("HOLOSCAN_UCX_SOURCE_ADDRESS");
+    if (source_address == nullptr || source_address[0] == '\0') {
+      auto associated_local_ip = get_associated_local_ip(server_ip);
+      if (!associated_local_ip.empty()) {
+        HOLOSCAN_LOG_DEBUG("Setting HOLOSCAN_UCX_SOURCE_ADDRESS to {}", associated_local_ip);
+        setenv("HOLOSCAN_UCX_SOURCE_ADDRESS", server_ip.c_str(), 0);
+      }
+    }
+  }
+
   server_thread_ = std::make_unique<std::thread>(&AppWorkerServer::run, this);
 }
 
@@ -76,14 +118,14 @@ bool AppWorkerServer::connect_to_driver(int32_t max_connection_retry_count,
   auto gpuinfo = system_resource_manager.gpu_monitor()->gpu_info(GPUMetricFlag::MEMORY_USAGE);
 
   const auto& worker_address = app_worker_->options()->worker_address;
-  auto worker_port = CLIOptions::parse_port(worker_address);
+  auto [worker_ip, worker_port] = CLIOptions::parse_address(worker_address, "0.0.0.0", "0", true);
 
   // Connect to driver and send fragment allocation request
   bool connection_result = false;
   int attempt_count = 0;
   while (attempt_count < max_connection_retry_count && should_stop_ == false) {
-    connection_result =
-        driver_client_->fragment_allocation(worker_port, target_fragments, cpuinfo, gpuinfo);
+    connection_result = driver_client_->fragment_allocation(
+        worker_ip, worker_port, target_fragments, cpuinfo, gpuinfo);
     if (connection_result) {
       break;
     } else {
@@ -99,29 +141,11 @@ bool AppWorkerServer::connect_to_driver(int32_t max_connection_retry_count,
 }
 
 void AppWorkerServer::run() {
-  // Get IP address and port
-  auto& server_address = app_worker_->options()->worker_address;
-
-  // Set default IP address and port if not specified
-  auto split = server_address.find(':');
-  if (split == std::string::npos) {
-    std::string ip;
-    if (server_address.empty() || server_address == "") {
-      ip = "0.0.0.0";
-    } else {
-      ip = server_address;
-    }
-    auto unused_ports = get_unused_network_ports(1, kMinNetworkPort, kMaxNetworkPort);
-    if (unused_ports.empty()) {
-      HOLOSCAN_LOG_ERROR("No unused ports found");
-      return;
-    }
-    int32_t unused_port = unused_ports[0];
-    server_address.assign(fmt::format("{}:{}", ip, unused_port));
-  } else if (split == 0) {
-    std::string port = server_address.substr(1);
-    server_address.assign(fmt::format("0.0.0.0:{}", port));
-  }
+  // Always launch gRPC service on "0.0.0.0"
+  std::string server_address = app_worker_->options()->worker_address;
+  auto server_ip = "0.0.0.0";
+  auto server_port = holoscan::CLIOptions::parse_port(server_address);
+  server_address = fmt::format("{}:{}", server_ip, server_port);
 
   AppWorkerServiceImpl app_worker_service(app_worker_);
 
@@ -156,9 +180,11 @@ void AppWorkerServer::fragment_executors_future(std::future<void>& future) {
 }
 
 void AppWorkerServer::notify_worker_execution_finished(holoscan::AppWorkerTerminationCode code) {
-  auto& server_address = app_worker_->options()->worker_address;
+  auto& worker_address = app_worker_->options()->worker_address;
 
-  driver_client_->worker_execution_finished(CLIOptions::parse_port(server_address), code);
+  auto [worker_ip, worker_port] = CLIOptions::parse_address(worker_address, "0.0.0.0", "0", true);
+
+  driver_client_->worker_execution_finished(worker_ip, worker_port, code);
 }
 
 }  // namespace holoscan::service

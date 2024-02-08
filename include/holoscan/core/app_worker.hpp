@@ -65,6 +65,8 @@ class AppWorker {
 
   std::vector<FragmentNodeType>& target_fragments();
 
+  FragmentGraph& fragment_graph();
+
   service::AppWorkerServer* server(std::unique_ptr<service::AppWorkerServer>&& server);
 
   service::AppWorkerServer* server();

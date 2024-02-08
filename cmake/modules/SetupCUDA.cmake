@@ -14,47 +14,23 @@
 # limitations under the License.
 
 # In this file, we:
-# 1. Set up the CMAKE_CUDA_HOST_COMPILER to use CMAKE_CXX_COMPILER if not Clang
+# 1. Set a default value for CMAKE_CUDA_ARCHITECTURES
 # 2. Use enable_language(CUDA) to retrieve CMAKE_CUDA_COMPILER_ID and CMAKE_CUDA_COMPILER_VERSION
-# (this requires caching and unsetting CMAKE_CUDA_ARCHITECTURES beforehand to avoid errors)
-# 3. Parse and update CMAKE_CUDA_ARCHITECTURES to support NATIVE and ALL architectures, and filter
-# out unsupported archs on current host.
-#
-# Some of this process will be simplified when updating to CMAKE 3.23+ with enhanced support for
-# CMAKE_CUDA_ARCHITECTURES
-#
+# 3. Parse and update CMAKE_CUDA_ARCHITECTURES to override `all` and `all-major` versions
+#    as well as create PTX for the last arch only
 
-list(APPEND CMAKE_MESSAGE_CONTEXT "buildconfig")
+message(STATUS "Configuring CUDA Architectures")
 
-message(STATUS "Configuring CUDA Compiler")
-
-# Setup CMAKE_CUDA_HOST_COMPILER
-if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
-    message(STATUS "Setting CUDA host compiler to use the same CXX compiler defined by CMAKE_CXX_COMPILER(${CMAKE_CXX_COMPILER})")
-    # Set host compiler if we are not using clang
-    # Clang (>=8) doesn't seem to be compatible with CUDA (>=11.4)
-    # - https://forums.developer.nvidia.com/t/cuda-issues-with-clang-compiler/177589
-    # - https://forums.developer.nvidia.com/t/building-with-clang-cuda-11-3-0-works-but-with-cuda-11-3-1-fails-regression/182176
-    if(NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-        set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
-    endif()
+# Default
+# Needed before enable_language(CUDA) or project(... LANGUAGE CUDA)
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    message(STATUS "CMAKE_CUDA_ARCHITECTURES not defined, setting it to `native`")
+    set(CMAKE_CUDA_ARCHITECTURES "native")
 endif()
 
-# Keep track of original CMAKE_CUDA_ARCHITECTURES and unset to avoid errors when calling
-# 'enable_language(CUDA)' with CMAKE_CUDA_ARCHITECTURES set to 'ALL' or 'NATIVE'
-set(CMAKE_CUDA_ARCHITECTURES_CACHE ${CMAKE_CUDA_ARCHITECTURES})
-unset(CMAKE_CUDA_ARCHITECTURES)
-unset(CMAKE_CUDA_ARCHITECTURES CACHE)
-
-# Delayed CUDA language enablement to make CMAKE_CUDA_COMPILER_ID and CMAKE_CUDA_COMPILER_VERSION
-# available for CMAKE_CUDA_ARCHITECTURES setup
+# Enable CUDA language
+# Generates CMAKE_CUDA_COMPILER_ID and CMAKE_CUDA_COMPILER_VERSION needed below
 enable_language(CUDA)
-
-# Restore original CMAKE_CUDA_ARCHITECTURES
-set(CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES_CACHE} CACHE STRING "CUDA architectures to build for" FORCE)
-unset(CMAKE_CUDA_ARCHITECTURES_CACHE)
-
-message(STATUS "Configuring CUDA Architecture")
 
 # Function to filter archs and create PTX for last arch
 function(update_cmake_cuda_architectures supported_archs warn)
@@ -62,29 +38,29 @@ function(update_cmake_cuda_architectures supported_archs warn)
 
     if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
         if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0.0)
-            if ("90a" IN_LIST supported_archs AND ${warn})
+            if("90a" IN_LIST supported_archs AND ${warn})
                 message(WARNING "sm90a not supported with nvcc < 12.0.0")
             endif()
             list(REMOVE_ITEM supported_archs "90a")
         endif()
         if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 11.8.0)
-            if ("90" IN_LIST supported_archs AND ${warn})
+            if("90" IN_LIST supported_archs AND ${warn})
                 message(WARNING "sm90 not supported with nvcc < 11.8.0")
             endif()
-            if ("89" IN_LIST supported_archs AND ${warn})
+            if("89" IN_LIST supported_archs AND ${warn})
                 message(WARNING "sm89 not supported with nvcc < 11.8.0")
             endif()
             list(REMOVE_ITEM supported_archs "90")
             list(REMOVE_ITEM supported_archs "89")
         endif()
         if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 11.5.0)
-            if ("87" IN_LIST supported_archs AND ${warn})
+            if("87" IN_LIST supported_archs AND ${warn})
                 message(WARNING "sm87 not supported with nvcc < 11.5.0")
             endif()
             list(REMOVE_ITEM supported_archs "87")
         endif()
         if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 11.2.0)
-            if ("86" IN_LIST supported_archs AND ${warn})
+            if("86" IN_LIST supported_archs AND ${warn})
                 message(WARNING "sm86 not supported with nvcc < 11.2.0")
             endif()
             list(REMOVE_ITEM supported_archs "86")
@@ -100,34 +76,20 @@ function(update_cmake_cuda_architectures supported_archs warn)
     set(CMAKE_CUDA_ARCHITECTURES ${supported_archs} PARENT_SCOPE)
 endfunction()
 
-# Default to 'NATIVE' if no CUDA_ARCHITECTURES are specified.
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
-    set(CMAKE_CUDA_ARCHITECTURES "NATIVE")
-    message(STATUS "CMAKE_CUDA_ARCHITECTURES is not defined. Using 'NATIVE' to "
-        "build only for locally available architecture through rapids_cuda_set_architectures(). "
-        "Please specify -DCMAKE_CUDA_ARCHITECTURES='ALL' to support all archs.")
-else()
-    message(STATUS "Requested CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
-endif()
-
-if(CMAKE_CUDA_ARCHITECTURES STREQUAL "NATIVE")
-    # Let RAPIDS-CUDA handle "NATIVE"
-    # https://docs.rapids.ai/api/rapids-cmake/nightly/command/rapids_cuda_set_architectures.html
-    rapids_cuda_set_architectures(NATIVE)
-elseif(CMAKE_CUDA_ARCHITECTURES STREQUAL "ALL")
-    # Since `rapids_cuda_init_architectures()` cannot handle all the supported architecture,
-    # (only 60;70;75;80;86 are considered. See https://github.com/rapidsai/rapids-cmake/blob/branch-22.08/rapids-cmake/cuda/set_architectures.cmake#L60)
-    # we need to have our own logic to add all architectures.
-    # FYI, since CMake 3.23, it supports CUDA_ARCHITECTURES (https://cmake.org/cmake/help/latest/prop_tgt/CUDA_ARCHITECTURES.html)
-    # Note: 72  is Xavier
-    #       87  is Orin
-    #       90a is Thor
+# CMake "all" and "all-major" have too many CUDA archs, all the way back to sm_20
+#   https://gitlab.kitware.com/cmake/cmake/-/blob/master/Modules/CUDA/architectures.cmake
+# Rapids does not list/support embedded devices (Xavier sm_72, Orin sm_87, Thor sm_90a)
+#   https://github.com/rapidsai/rapids-cmake/blob/branch-23.09/rapids-cmake/cuda/set_architectures.cmake#L60)
+# We need to have our own logic to select our own architectures and create PTX for the latest arch
+# for forward compatibility. Only keep the default cmake behavior for native archs input.
+if(CMAKE_CUDA_ARCHITECTURES STREQUAL "all")
     set(CMAKE_CUDA_ARCHITECTURES "60;70;72;75;80;86;87;89;90;90a")
     update_cmake_cuda_architectures("${CMAKE_CUDA_ARCHITECTURES}" FALSE)
-elseif()
+elseif(CMAKE_CUDA_ARCHITECTURES STREQUAL "all-major")
+    set(CMAKE_CUDA_ARCHITECTURES "60;70;80;90")
+    update_cmake_cuda_architectures("${CMAKE_CUDA_ARCHITECTURES}" FALSE)
+elseif(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
     update_cmake_cuda_architectures("${CMAKE_CUDA_ARCHITECTURES}" TRUE)
 endif()
 
 message(STATUS "Using CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
-
-list(POP_BACK CMAKE_MESSAGE_CONTEXT)

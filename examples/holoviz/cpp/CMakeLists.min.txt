@@ -38,5 +38,7 @@ if(BUILD_TESTING)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST PROPERTIES
-  PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking.")
+    PASS_REGULAR_EXPRESSION "Received camera pose:"
+    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+  )
 endif()

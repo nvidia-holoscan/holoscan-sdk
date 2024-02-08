@@ -1,0 +1,15 @@
+diff --git a/imconfig.h b/imconfig.h
+index c854832e..1750d46d 100644
+--- a/imconfig.h
++++ b/imconfig.h
+@@ -122,3 +122,10 @@ namespace ImGui
+     void MyFunction(const char* name, const MyMatrix44& v);
+ }
+ */
++
++struct ImGuiContext;
++namespace holoscan::viz {
++extern thread_local ImGuiContext* g_im_gui_context;
++}  // namespace holoscan::viz
++
++#define GImGui holoscan::viz::g_im_gui_context

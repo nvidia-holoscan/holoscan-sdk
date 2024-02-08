@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 # We import cli, core and gxf to make sure they're available before other modules that rely on them
 from . import cli, core, gxf
@@ -31,7 +33,7 @@ def as_tensor(obj):
         # Here we force any array that is both C and F contiguous to have C-ordered strides
         # We do this for both NumPy and CuPy arrays for consistency.
 
-        # nd array, but with only 1 non-singleton dimension
+        # nd-array, but with only 1 non-singleton dimension
         nd_singleton = (obj.ndim > 1) and (sum(tuple(s > 1 for s in obj.shape)) == 1)
         if nd_singleton and obj.flags.forc:
             # determine expected strides for a C-contiguous array
@@ -77,7 +79,8 @@ def as_tensor(obj):
 
                     warnings.warn(
                         "Unexpected strides encountered during call to `as_tensor` and no copy "
-                        "method was available. Leaving the strides unchanged."
+                        "method was available. Leaving the strides unchanged.",
+                        stacklevel=2,
                     )
 
     return core.Tensor.as_tensor(obj)

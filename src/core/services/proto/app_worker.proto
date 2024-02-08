@@ -22,6 +22,7 @@ package holoscan.service;
 import "connection_item.proto";
 import "error_code.proto";
 import "result.proto";
+import "multi_fragment_port_info.proto";
 
 message AvailablePortsRequest {
   uint32 number_of_ports = 1;
@@ -46,6 +47,14 @@ message FragmentExecutionResponse {
   Result result = 1;
 }
 
+message FragmentInfoRequest {
+  repeated string fragment_names = 1;
+}
+
+message FragmentInfoResponse {
+  MultiFragmentPortInfo multi_fragment_port_info = 1;
+}
+
 message TerminateWorkerRequest {
   ErrorCode code = 1;
 }
@@ -56,6 +65,7 @@ message TerminateWorkerResponse {
 
 service AppWorkerService {
   rpc GetAvailablePorts(AvailablePortsRequest) returns (AvailablePortsResponse) {}
+  rpc GetFragmentInfo(FragmentInfoRequest) returns (FragmentInfoResponse) {}
   rpc ExecuteFragments(FragmentExecutionRequest) returns (FragmentExecutionResponse) {}
   rpc TerminateWorker(TerminateWorkerRequest) returns (TerminateWorkerResponse) {}
 }

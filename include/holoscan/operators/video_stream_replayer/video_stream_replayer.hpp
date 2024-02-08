@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,11 @@ namespace holoscan::ops {
 
 /**
  * @brief Operator class to replay a video stream from a file.
+ *
+ * **Named outputs:**
+ *     - *output*: `nvidia::gxf::Tensor`
+ *         - A message containing a video frame deserialized from disk.
+ *
  */
 class VideoStreamReplayerOp : public holoscan::Operator {
  public:

@@ -1,17 +1,21 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
+
+from typing import List
 
 
 class HoloscanSdkError(Exception):
@@ -26,25 +30,25 @@ class WrongApplicationPathError(HoloscanSdkError):
     pass
 
 
-class UnknownApplicationType(HoloscanSdkError):
+class UnknownApplicationTypeError(HoloscanSdkError):
     """Raise when wrong application path is specified."""
 
     pass
 
 
-class InvalidSdk(HoloscanSdkError):
+class InvalidSdkError(HoloscanSdkError):
     """Raise when the SDK version or SDK file is not supported."""
 
     pass
 
 
-class FailedToDetectSDKVersion(HoloscanSdkError):
+class FailedToDetectSDKVersionError(HoloscanSdkError):
     """Raise when unable to detect the SDK version."""
 
     pass
 
 
-class InvalidApplicationConfiguration(HoloscanSdkError):
+class InvalidApplicationConfigurationError(HoloscanSdkError):
     """
     Raise when required configuration value cannot be found
     in the application configuration files."""
@@ -52,7 +56,7 @@ class InvalidApplicationConfiguration(HoloscanSdkError):
     pass
 
 
-class IncompatiblePlatformConfiguration(HoloscanSdkError):
+class IncompatiblePlatformConfigurationError(HoloscanSdkError):
     """
     Raise when the platforms given by the user are incompatible."""
 
@@ -66,19 +70,19 @@ class RunContainerError(HoloscanSdkError):
     pass
 
 
-class InvalidManifest(HoloscanSdkError):
+class InvalidManifestError(HoloscanSdkError):
     """
     Raise when the manifest is invalid."""
 
     pass
 
 
-class ErrorReadingManifest(HoloscanSdkError):
+class ManifestReadError(HoloscanSdkError):
     """
     Raise when the manifest is invalid."""
 
 
-class ErrorDownloadingExternalAsset(HoloscanSdkError):
+class ExternalAssetDownloadError(HoloscanSdkError):
     """
     Raise when the manifest is invalid."""
 
@@ -90,15 +94,25 @@ class InvalidSourceFileError(HoloscanSdkError):
     pass
 
 
-class InvalidTagValue(HoloscanSdkError):
+class InvalidTagValueError(HoloscanSdkError):
     """
     Raise when the Docker tag is invalid."""
 
     pass
 
 
-class InvalidSharedMemoryValue(HoloscanSdkError):
+class InvalidSharedMemoryValueError(HoloscanSdkError):
     """
     Raise when the shared memory value is invalid."""
 
     pass
+
+
+class UnmatchedDeviceError(HoloscanSdkError):
+    """
+    Raise when the shared memory value is invalid."""
+
+    def __init__(self, unmatched_devices: List[str], *args: object) -> None:
+        super().__init__(
+            f"The following devices cannot be found in /dev/: {str.join(',', unmatched_devices)}"
+        )

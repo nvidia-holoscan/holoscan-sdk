@@ -34,6 +34,11 @@ class LevelParameterizedTestFixture : public ::testing::TestWithParam<LogLevel> 
 
 TEST(Logger, TestLoggingPattern) {
   auto orig_level = log_level();
+  const char* env_orig = std::getenv("HOLOSCAN_LOG_LEVEL");
+  const char* env_format = std::getenv("HOLOSCAN_LOG_FORMAT");
+
+  // Unset HOLOSCAN_LOG_LEVEL environment variable so that the log level is not overridden
+  unsetenv("HOLOSCAN_LOG_LEVEL");
 
   set_log_level(LogLevel::INFO);
   // log without the actual message (%v)
@@ -50,11 +55,22 @@ TEST(Logger, TestLoggingPattern) {
   EXPECT_TRUE(log_output.find("[thread") != std::string::npos);
   EXPECT_TRUE(log_output.find("my_message") == std::string::npos);
 
-  // restore original log level
+  // restore the original log level
   set_log_level(orig_level);
 
-  // restore default logging pattern or test cases run afterwards may fail
-  set_log_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%n] %v");
+  // restore the original environment variable
+  if (env_orig) {
+    setenv("HOLOSCAN_LOG_LEVEL", env_orig, 1);
+  } else {
+    unsetenv("HOLOSCAN_LOG_LEVEL");
+  }
+
+  // restore the original log format
+  if (env_format) {
+    setenv("HOLOSCAN_LOG_FORMAT", env_format, 1);
+  } else {
+    unsetenv("HOLOSCAN_LOG_FORMAT");
+  }
 }
 
 TEST(Logger, TestDefaultLogPattern) {
@@ -106,8 +122,15 @@ TEST(Logger, TestDefaultLogPattern) {
   //    => expected log pattern is DEFAULT (after Application::Application()).
   Logger::log_pattern_set_by_user = false;
   unsetenv("HOLOSCAN_LOG_FORMAT");
+  set_log_pattern("DEFAULT");
   app = holoscan::make_application<Application>();
   EXPECT_EQ(Logger::pattern(), "[%^%l%$] [%s:%#] %v");
+
+  // Unset HOLOSCAN_LOG_LEVEL environment variable so that the log level is not overridden
+  unsetenv("HOLOSCAN_LOG_LEVEL");
+
+  // restore the original log level
+  set_log_level(orig_level);
 
   // restore the original environment variable
   if (env_orig) {
@@ -122,9 +145,6 @@ TEST(Logger, TestDefaultLogPattern) {
   } else {
     unsetenv("HOLOSCAN_LOG_FORMAT");
   }
-
-  // restore the original log level
-  set_log_level(orig_level);
 }
 
 TEST(Logger, TestLoggingFlushLevel) {
@@ -155,6 +175,11 @@ TEST(Logger, TestLoggingBacktrace) {
 }
 
 TEST_P(LevelParameterizedTestFixture, TestLoggingGetSet) {
+  const char* env_orig = std::getenv("HOLOSCAN_LOG_LEVEL");
+
+  // Unset HOLOSCAN_LOG_LEVEL environment variable so that the log level is not overridden
+  unsetenv("HOLOSCAN_LOG_LEVEL");
+
   // check the current logging level
   auto orig_level = log_level();
 
@@ -165,6 +190,13 @@ TEST_P(LevelParameterizedTestFixture, TestLoggingGetSet) {
 
   // restore the original level
   set_log_level(orig_level);
+
+  // restore the original environment variable
+  if (env_orig) {
+    setenv("HOLOSCAN_LOG_LEVEL", env_orig, 1);
+  } else {
+    unsetenv("HOLOSCAN_LOG_LEVEL");
+  }
 }
 
 INSTANTIATE_TEST_CASE_P(LoggingTests, LevelParameterizedTestFixture,
@@ -206,18 +238,26 @@ TEST_P(LevelParameterizedTestFixture, TestLoadEnvLogLevel) {
   holoscan::set_log_level(LogLevel::INFO);  // set an arbitrary level to load from the environment
   EXPECT_EQ(log_level(), desired_level);
 
+  // Unset HOLOSCAN_LOG_LEVEL environment variable so that the log level is not overridden
+  unsetenv("HOLOSCAN_LOG_LEVEL");
+
+  // restore the original log level
+  set_log_level(orig_level);
+
   // restore the original log level
   if (env_orig) {
     setenv("HOLOSCAN_LOG_LEVEL", env_orig, 1);
   } else {
     unsetenv("HOLOSCAN_LOG_LEVEL");
   }
-
-  // restore the original log level
-  set_log_level(orig_level);
 }
 
 TEST_P(LevelParameterizedTestFixture, TestLoggingMacros) {
+  const char* env_orig = std::getenv("HOLOSCAN_LOG_LEVEL");
+
+  // Unset HOLOSCAN_LOG_LEVEL environment variable so that the log level is not overridden
+  unsetenv("HOLOSCAN_LOG_LEVEL");
+
   // check the current logging level
   auto orig_level = log_level();
 
@@ -305,6 +345,13 @@ TEST_P(LevelParameterizedTestFixture, TestLoggingMacros) {
 
   // restore the original log level
   set_log_level(orig_level);
+
+  // restore the original environment variable
+  if (env_orig) {
+    setenv("HOLOSCAN_LOG_LEVEL", env_orig, 1);
+  } else {
+    unsetenv("HOLOSCAN_LOG_LEVEL");
+  }
 }
 
 TEST(Logger, TestDefaultLogLevel) {
@@ -359,15 +406,18 @@ TEST(Logger, TestDefaultLogLevel) {
   app = holoscan::make_application<Application>();
   EXPECT_EQ(log_level(), LogLevel::INFO);
 
+  // Unset HOLOSCAN_LOG_LEVEL environment variable so that the log level is not overridden
+  unsetenv("HOLOSCAN_LOG_LEVEL");
+
+  // restore the original log level
+  set_log_level(orig_level);
+
   // restore the original environment variable
   if (env_orig) {
     setenv("HOLOSCAN_LOG_LEVEL", env_orig, 1);
   } else {
     unsetenv("HOLOSCAN_LOG_LEVEL");
   }
-
-  // restore the original log level
-  set_log_level(orig_level);
 }
 
 }  // namespace holoscan

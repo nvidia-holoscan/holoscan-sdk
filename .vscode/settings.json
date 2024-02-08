@@ -124,9 +124,6 @@
     "git.untrackedChanges": "separate",
     "editor.formatOnSave": true,
     "editor.formatOnSaveMode": "modifications",
-    "[python]": {
-        "editor.formatOnSaveMode": "file",
-    },
     // "[cmake]": {
     // 	"editor.formatOnSave": false,
     // },
@@ -147,7 +144,8 @@
         "--log-context",
         "-DFETCHCONTENT_QUIET=Off",
         "-DHOLOSCAN_USE_CCACHE=On",
-        "-DHOLOSCAN_BUILD_LIBTORCH=1"
+        "-DHOLOSCAN_BUILD_LIBTORCH=1",
+        "-DHOLOSCAN_BUILD_ORT=1"
         // "--trace",
         // "--trace-expand",
     ],
@@ -197,22 +195,28 @@
         "./public/python",
         "./python",
     ],
-    // TODO: Generate .pyi files and support autocomplete for C++ modules
-    // "python.autoComplete.extraPaths": [],
-    "python.formatting.provider": "black",
-    "python.linting.flake8Enabled": false,
-    "python.linting.enabled": true,
-    "python.linting.mypyEnabled": true,
-    "isort.importStrategy": "fromEnvironment",
-    "isort.check": true,
     "cpplint.cpplintPath": "/home/holoscan-sdk/.local/bin/cpplint",
-    // It seems that Pytest Discovery feature in VSCode needs to be improved
-    // - https://github.com/microsoft/vscode-python/issues/17242
-    // - https://github.com/microsoft/vscode-python/issues/19790
-    // https://code.visualstudio.com/docs/python/testing#_test-configuration-settings
-    // "python.testing.pytestArgs": [
-    //     "build-debug-x86_64"
-    // ],
-    // "python.testing.unittestEnabled": false,
-    // "python.testing.pytestEnabled": true,
+    "[python]": {
+        // ruff linting and formatting configuration
+        // see: https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "file",
+        "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "never"
+        },
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "lint.args": [
+            "--config=pyproject.toml"
+        ],
+        // It seems that Pytest Discovery feature in VSCode needs to be improved
+        // - https://github.com/microsoft/vscode-python/issues/17242
+        // - https://github.com/microsoft/vscode-python/issues/19790
+        // https://code.visualstudio.com/docs/python/testing#_test-configuration-settings
+        // "testing.pytestArgs": [
+        //     "build-debug-x86_64"
+        // ],
+        // "testing.unittestEnabled": false,
+        // "testing.pytestEnabled": true,
+    },
 }

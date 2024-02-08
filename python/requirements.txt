@@ -1,6 +1,9 @@
-cloudpickle~=2.2
-python-on-whales~=0.60
-Jinja2~=3.1
-packaging~=23.1
-pyyaml~=6.0
-requests~=2.28
+pip==23.3.2
+cupy-cuda12x==12.2
+cloudpickle==2.2.1
+python-on-whales==0.60.1
+Jinja2==3.1.2
+packaging==23.1
+pyyaml==6.0
+requests==2.28.2
+psutil==5.9.6

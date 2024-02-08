@@ -29,8 +29,8 @@ add_library(gxf_stream_playback SHARED
   stream_playback_ext.cpp
 )
 target_link_libraries(gxf_stream_playback
-  PUBLIC
-    gxf_stream_playback_lib
+  PUBLIC  gxf_stream_playback_lib
+  PRIVATE holoscan_security_flags
 )
 # Install GXF extension as a component 'holoscan-gxf_extensions'
 install_gxf_extension(gxf_stream_playback)

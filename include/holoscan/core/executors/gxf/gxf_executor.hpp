@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <functional>
 #include <future>
+#include <list>
 #include <memory>
 #include <set>
 #include <string>
@@ -220,7 +221,8 @@ class GXFExecutor : public holoscan::Executor {
   /// The connection items for virtual operators.
   std::vector<std::shared_ptr<holoscan::ConnectionItem>> connection_items_;
 
-  /// local_network_port
+  /// The list of implicit broadcast entities to be added to the network entity group.
+  std::list<gxf_uid_t> implicit_broadcast_entities_;
 };
 
 }  // namespace holoscan::gxf

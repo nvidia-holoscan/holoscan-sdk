@@ -22,11 +22,75 @@
 
 #include <iostream>
 #include <memory>
+#include <regex>
 #include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "../core/common.hpp"
+
+namespace {
+bool is_space(unsigned char c) {
+  return c == ' ';
+}
+}  // namespace
+
+/**
+ * Custom YAML parser for std::complex types
+ *
+ * Handles parsing of strings containing a complex floating point value.
+ *
+ * Examples of valid strings are:
+ *    "1.0 + 2.5j"
+ *    "-1.0 - 3i"
+ *    "1+3.3j"
+ *
+ * There may be 0 or 1 space between a + or - sign and the digits.
+ * Either "i" or "j" must appear immediately after the second number.
+ */
+template <typename typeT>
+struct YAML::convert<std::complex<typeT>> {
+  static Node encode(const std::complex<typeT>& data) {
+    Node node;
+    node =
+        std::string{fmt::format("{}{}{}j", data.real(), (data.imag() < 0) ? "" : "+", data.imag())};
+    return node;
+  }
+
+  static bool decode(const Node& node, std::complex<typeT>& data) {
+    if (!node.IsScalar()) {
+      HOLOSCAN_LOG_ERROR("complex<T> decode: expected a scalar");
+      return false;
+    }
+    std::string value = node.as<std::string>();
+
+    std::regex complex_reg("\\s*([+-]?\\s?\\d*\\.?\\d+)\\s?([+-]{1}\\s?\\d*\\.?\\d+)[ij]{1}\\s*$");
+    std::smatch m;
+    if (std::regex_search(value, m, complex_reg)) {
+      if (m.size() != 3) {
+        HOLOSCAN_LOG_ERROR("unexpected match size: {},  matched: {}", m.size(), m.str(0));
+      }
+      // extract the real and imaginary components of the number
+      std::string real_str = m.str(1);
+      std::string imag_str = m.str(2);
+
+      // remove any white space around + or - (necessary for std::stod to work)
+      real_str.erase(std::remove_if(real_str.begin(), real_str.end(), is_space), real_str.end());
+      imag_str.erase(std::remove_if(imag_str.begin(), imag_str.end(), is_space), imag_str.end());
+
+      // format real and imaginary strings as floating point
+      double real = std::stod(real_str);
+      double imag = std::stod(imag_str);
+      data = std::complex<typeT>(real, imag);
+    } else {
+      HOLOSCAN_LOG_ERROR("failed to match expected regex for complex<T>");
+      return false;
+    }
+    return true;
+  }
+};
+
 namespace holoscan {
 
 template <typename typeT, typename valueT = void>
@@ -65,6 +129,20 @@ struct YAMLNodeParser<uint8_t> {
   static uint8_t parse(const YAML::Node& node) {
     try {
       return static_cast<uint8_t>(node.as<uint32_t>());
+    } catch (...) {
+      std::stringstream ss;
+      ss << node;
+      HOLOSCAN_LOG_ERROR("Unable to parse YAML node: '{}'", ss.str());
+      return 0;
+    }
+  }
+};
+
+template <typename typeT>
+struct YAMLNodeParser<std::complex<typeT>> {
+  static std::complex<typeT> parse(const YAML::Node& node) {
+    try {
+      return static_cast<std::complex<typeT>>(node.as<std::complex<typeT>>());
     } catch (...) {
       std::stringstream ss;
       ss << node;

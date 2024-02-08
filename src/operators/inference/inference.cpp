@@ -158,7 +158,7 @@ void InferenceOp::setup(OperatorSpec& spec) {
   spec.param(parallel_inference_, "parallel_inference", "Parallel inference", "", true);
   spec.param(receivers_, "receivers", "Receivers", "List of receivers", {});
   spec.param(transmitter_, "transmitter", "Transmitter", "Transmitter", {&transmitter});
-  cuda_stream_handler_.defineParams(spec);
+  cuda_stream_handler_.define_params(spec);
 }
 
 void InferenceOp::initialize() {

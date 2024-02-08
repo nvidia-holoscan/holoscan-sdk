@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,24 +24,25 @@ namespace holoscan::viz {
 namespace {
 
 /**
- * Convert from R8G8B8 to R8G8B8A8 (set alpha to 0xFF)
+ * Convert from R8G8B8 to R8G8B8A8 (set alpha to provided value)
  */
 __global__ void ConvertR8G8B8ToR8G8B8A8Kernel(uint32_t width, uint32_t height, const uint8_t* src,
-                                              size_t src_pitch, CUsurfObject dst_surface) {
+                                              size_t src_pitch, CUsurfObject dst_surface,
+                                              uint8_t alpha) {
   const uint2 launch_index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
   if ((launch_index.x >= width) || (launch_index.y >= height)) { return; }
 
   const size_t src_offset = launch_index.x * 3 + launch_index.y * src_pitch;
 
-  const uchar4 data{src[src_offset + 0], src[src_offset + 1], src[src_offset + 2], 0xFF};
+  const uchar4 data{src[src_offset + 0], src[src_offset + 1], src[src_offset + 2], alpha};
   surf2Dwrite(data, dst_surface, launch_index.x * sizeof(uchar4), launch_index.y);
 }
 
 }  // namespace
 
 void ConvertR8G8B8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src, size_t src_pitch,
-                             CUarray dst, CUstream stream) {
+                             CUarray dst, CUstream stream, uint8_t alpha) {
   UniqueCUsurfObject dst_surface;
 
   dst_surface.reset([dst] {
@@ -57,7 +58,7 @@ void ConvertR8G8B8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src, s
   const dim3 launch_grid((width + (block_dim.x - 1)) / block_dim.x,
                          (height + (block_dim.y - 1)) / block_dim.y);
   ConvertR8G8B8ToR8G8B8A8Kernel<<<launch_grid, block_dim, 0, stream>>>(
-      width, height, reinterpret_cast<const uint8_t*>(src), src_pitch, dst_surface.get());
+      width, height, reinterpret_cast<const uint8_t*>(src), src_pitch, dst_surface.get(), alpha);
 }
 
 namespace {

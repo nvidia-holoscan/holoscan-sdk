@@ -18,6 +18,7 @@
 #include "service_impl.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 #include "holoscan/core/app_driver.hpp"
@@ -64,10 +65,18 @@ grpc::Status AppDriverServiceImpl::AllocateFragments(
   }
 
   std::string client_address = context->peer();
+  std::string worker_ip = request->worker_ip();
   auto& worker_port = request->worker_port();
 
-  // Construct worker_address using client_address's IP and the app worker's port
-  std::string worker_address = fmt::format("{}:{}", parse_ip(client_address), worker_port);
+  std::string worker_address;
+  if (worker_ip.empty() || worker_ip == "0.0.0.0") {
+    // Construct worker_address using client_address's IP and the app worker's port
+    HOLOSCAN_LOG_DEBUG("AppWorker IP is not specified ('{}'). Will use a peer IP instead.",
+                       worker_ip);
+    worker_address = fmt::format("{}:{}", parse_ip_from_peer(client_address), worker_port);
+  } else {
+    worker_address = fmt::format("{}:{}", worker_ip, worker_port);
+  }
 
   // Get fragment names from the request and simply log them.
   auto& fragment_names = request->fragment_names();
@@ -75,7 +84,7 @@ grpc::Status AppDriverServiceImpl::AllocateFragments(
 
   // Print the client's IP address (<protocol>:<ip>:<port>)
   HOLOSCAN_LOG_INFO(
-      "Connected from the client IP: {} (worker port: {})", client_address, worker_port);
+      "Connected from the client address: {} (worker address: {})", client_address, worker_address);
 
   if (Logger::level() <= LogLevel::DEBUG) {
     HOLOSCAN_LOG_DEBUG("  Worker address: {}", worker_address);
@@ -113,18 +122,75 @@ grpc::Status AppDriverServiceImpl::AllocateFragments(
   return grpc::Status::OK;
 }
 
-std::string AppDriverServiceImpl::parse_ip(const std::string& peer) {
-  // Parse the IP address from a peer address ("[protocol]:[ip]:[port]")
-  auto pivot = peer.find_first_of(':');
-  if (pivot == std::string::npos) { return ""; }
+std::string AppDriverServiceImpl::uri_decode(const std::string& src) {
+  std::string result;
+  result.reserve(src.size());  // reserve space to avoid reallocations
 
-  std::string ip = peer.substr(pivot + 1, peer.find_last_of(':') - pivot - 1);
+  for (size_t i = 0; i < src.size(); ++i) {
+    char ch = src[i];
+    if (ch == '+') {
+      result += ' ';
+    } else if (ch == '%' && i + 2 < src.size()) {
+      int value;
+      // Use sscanf to read the hex value
+      if (std::sscanf(src.substr(i + 1, 2).c_str(), "%x", &value) == 1) {
+        result += static_cast<char>(value);
+        i += 2;  // skip the next two characters
+      } else {
+        // If conversion fails, retain the original '%' character
+        result += '%';
+      }
+    } else {
+      result += ch;
+    }
+  }
+
+  return result;
+}
+
+std::string AppDriverServiceImpl::parse_ip_from_peer(const std::string& peer) {
+  // Parse the IP address from a peer address ("[protocol]:[ip]:[port]" where [protocol] is 'ipv4'
+  // or 'ipv6').
+
+  // Decode URI-encoded characters from the peer string.
+  std::string decoded_peer = uri_decode(peer);
+
+  // Find where the IP address begins, which is after the first colon.
+  auto ip_start = decoded_peer.find(':');
+  if (ip_start == std::string::npos) { return ""; }
+
+  // Extract the substring containing the IP address and the port.
+  std::string ip_and_port = decoded_peer.substr(ip_start + 1);
+
+  // Parse the IP address and port using the CLIOptions::parse_address method.
+  // We can pass empty strings for the default IP and port since we're only interested in the IP.
+  auto [ip, _] = CLIOptions::parse_address(ip_and_port,
+                                           "",     // no default IP address required
+                                           "0",    // pass a valid string to get enclosing brackets
+                                                   // for IPv6 addresses
+                                           true);  // enclose IPv6 addresses in brackets
+
   return ip;
 }
 
-std::string AppDriverServiceImpl::parse_port(const std::string& peer) {
-  // Parse the port number from a peer address ("[protocol]:[ip]:[port]")
-  std::string port = peer.substr(peer.find_last_of(':') + 1);
+std::string AppDriverServiceImpl::parse_port_from_peer(const std::string& peer) {
+  // Parse the port number from a peer address ("[protocol]:[ip]:[port]" where [protocol] is 'ipv4'
+  // or 'ipv6').
+
+  // Decode URI-encoded characters from the peer string.
+  std::string decoded_peer = uri_decode(peer);
+
+  // Find where the IP address begins, which is after the first colon.
+  auto ip_start = decoded_peer.find(':');
+  if (ip_start == std::string::npos) { return ""; }
+
+  // Extract the substring containing the IP address and the port.
+  std::string ip_and_port = decoded_peer.substr(ip_start + 1);
+
+  // Use CLIOptions::parse_port to parse the port from the address.
+  // We pass an empty string for the default_port since we're only interested in the extracted port.
+  std::string port = CLIOptions::parse_port(ip_and_port, "");
+
   return port;
 }
 
@@ -169,10 +235,16 @@ grpc::Status AppDriverServiceImpl::ReportWorkerExecutionFinished(
     holoscan::service::WorkerExecutionFinishedResponse* response) {
   (void)context;
   std::string client_address = context->peer();
+  std::string worker_ip = request->worker_ip();
   auto& worker_port = request->worker_port();
 
-  // Construct worker_id using client_address's IP and the app worker's port
-  std::string worker_id = fmt::format("{}:{}", parse_ip(client_address), worker_port);
+  std::string worker_id;
+  if (worker_ip.empty() || worker_ip == "0.0.0.0") {
+    // Construct worker_id using client_address's IP and the app worker's port
+    worker_id = fmt::format("{}:{}", parse_ip_from_peer(client_address), worker_port);
+  } else {
+    worker_id = fmt::format("{}:{}", worker_ip, worker_port);
+  }
 
   AppWorkerTerminationCode worker_termination_code = AppWorkerTerminationCode::kSuccess;
   auto& worker_termination_status = request->status();

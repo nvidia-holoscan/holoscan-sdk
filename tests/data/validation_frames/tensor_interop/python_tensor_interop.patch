@@ -1,0 +1,38 @@
+--- examples/tensor_interop/python/tensor_interop.py	2023-11-05 19:17:26.710302091 -0800
++++ examples/tensor_interop/python/tensor_interop_test.py	2023-11-20 16:44:15.675280252 -0800
+@@ -19,7 +19,9 @@
+ import sys
+ 
+ from holoscan.core import Application, Operator, OperatorSpec
+-from holoscan.operators import HolovizOp, VideoStreamReplayerOp
++from holoscan.operators import HolovizOp, VideoStreamReplayerOp, VideoStreamRecorderOp, FormatConverterOp
++from holoscan.resources import UnboundedAllocator
++
+ 
+ try:
+     import cupy as cp
+@@ -126,6 +128,24 @@
+         self.add_flow(source, image_processing)
+         self.add_flow(image_processing, visualizer, {("", "receivers")})
+ 
++        recorder_format_converter = FormatConverterOp(
++            self,
++            name="recorder_format_converter",
++            in_dtype="rgba8888",
++            out_dtype="rgb888",
++            pool=UnboundedAllocator(self, name="pool")
++        )
++        recorder = VideoStreamRecorderOp(
++            self,
++            name="recorder",
++            **self.kwargs("recorder")
++        )
++
++        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
++
++        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(recorder_format_converter, recorder)
++
+ 
+ if __name__ == "__main__":
+     config_file = os.path.join(os.path.dirname(__file__), "tensor_interop.yaml")

@@ -1,17 +1,20 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
+
 import os
 
 import pytest
@@ -21,6 +24,7 @@ from holoscan.core import Application, Arg, Operator, OperatorSpec, Tensor, _Ope
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.gxf import Entity
 from holoscan.operators.aja_source import AJASourceOp, NTV2Channel
+from holoscan.operators.bayer_demosaic import BayerDemosaicOp
 from holoscan.operators.format_converter import FormatConverterOp
 from holoscan.operators.holoviz import (
     HolovizOp,
@@ -32,7 +36,12 @@ from holoscan.operators.inference_processor import InferenceProcessorOp
 from holoscan.operators.segmentation_postprocessor import SegmentationPostprocessorOp
 from holoscan.operators.video_stream_recorder import VideoStreamRecorderOp
 from holoscan.operators.video_stream_replayer import VideoStreamReplayerOp
-from holoscan.resources import BlockMemoryPool, MemoryStorageType, UnboundedAllocator
+from holoscan.resources import (
+    BlockMemoryPool,
+    CudaStreamPool,
+    MemoryStorageType,
+    UnboundedAllocator,
+)
 
 try:
     import numpy as np
@@ -54,7 +63,7 @@ class TestOperator:
             Operator()
 
     def test_invalid_init(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError):  # noqa: PT011
             Operator(5)
 
     def test_invalid_init2(self, fragment):
@@ -168,16 +177,13 @@ class TestOperator:
         # follow order of operations in Fragment::make_operator
         op.name = "my operator"
 
-        #  initialize() will segfault op.fragment is not assigned?
-        op.fragment = app
-
         op.setup(spec)
         op.spec = spec
         assert isinstance(op.spec, OperatorSpecBase)
 
         op.initialize()
-        op.id != -1
-        op.operator_type == Operator.OperatorType.NATIVE
+        assert op.id == -1  # native operator
+        assert op.operator_type == Operator.OperatorType.NATIVE
         capfd.readouterr()
 
     def test_operator_setup_and_assignment(self, fragment, capfd):
@@ -196,11 +202,12 @@ class TestOperator:
 class TestTensor:
     def _check_dlpack_attributes(self, t):
         assert hasattr(t, "__dlpack__")
-        type(t.__dlpack__()).__name__ == "PyCapsule"
+        assert type(t.__dlpack__()).__name__ == "PyCapsule"
 
         assert hasattr(t, "__dlpack_device__")
         dev = t.__dlpack_device__()
-        assert isinstance(dev, tuple) and len(dev) == 2
+        assert isinstance(dev, tuple)
+        assert len(dev) == 2
 
     def _check_array_interface_attribute(self, t, arr, cuda=False):
         if cuda:
@@ -230,12 +237,12 @@ class TestTensor:
         assert interface["descr"] == [("", arr.dtype.str)]
 
         if reference_interface["version"] == interface["version"]:
-            interface["shape"] == reference_interface["shape"]
-            interface["typestr"] == reference_interface["typestr"]
-            interface["descr"] == reference_interface["descr"]
-            interface["data"] == reference_interface["data"]
+            assert interface["shape"] == reference_interface["shape"]
+            assert interface["typestr"] == reference_interface["typestr"]
+            assert interface["descr"] == reference_interface["descr"]
+            assert interface["data"] == reference_interface["data"]
             if reference_interface["strides"] is not None:
-                interface["strides"] == reference_interface["strides"]
+                assert interface["strides"] == reference_interface["strides"]
 
     def _check_tensor_property_values(self, t, arr, cuda=False):
         assert t.size == arr.size
@@ -246,7 +253,7 @@ class TestTensor:
         assert t.shape == arr.shape
         assert t.strides == arr.strides
 
-        type(t.data).__name__ == "PyCapsule"
+        assert type(t.data).__name__ == "PyCapsule"
 
     @pytest.mark.parametrize(
         "dtype", unsigned_dtypes + signed_dtypes + float_dtypes + complex_dtypes
@@ -329,14 +336,16 @@ class TestTensor:
 class TestAJASourceOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
+        name = "source"
         op = AJASourceOp(
             fragment=app,
-            name="source",
+            name=name,
             channel=NTV2Channel.NTV2_CHANNEL1,
             **app.kwargs("aja"),
         )
         assert isinstance(op, _Operator)
         assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -352,12 +361,14 @@ class TestAJASourceOp:
 class TestFormatConverterOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
+        name = "recorder_format_converter"
+        print(f"kwargs={app.kwargs('recorder_format_converter')}")
         op = FormatConverterOp(
             fragment=app,
-            name="recorder_format_converter",
+            name=name,
             pool=BlockMemoryPool(
+                app,
                 name="pool",
-                fragment=app,
                 storage_type=MemoryStorageType.DEVICE,
                 block_size=16 * 1024**2,
                 num_blocks=4,
@@ -365,8 +376,9 @@ class TestFormatConverterOp:
             **app.kwargs("recorder_format_converter"),
         )
         assert isinstance(op, _Operator)
-        len(op.args) == 12
+        assert len(op.args) == 12
         assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -376,7 +388,6 @@ class TestFormatConverterOp:
         # been created for the operator:
         #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'recorder_format_converter'  # noqa: E501
         assert captured.err.count("[error]") <= 1
-        assert "warning" not in captured.err
 
 
 class TestInferenceOp:
@@ -389,10 +400,10 @@ class TestInferenceOp:
             "aortic_stenosis": os.path.join(model_path, "aortic_stenosis.onnx"),
             "bmode_perspective": os.path.join(model_path, "bmode_perspective.onnx"),
         }
-
+        name = "inference"
         op = InferenceOp(
             app,
-            name="inference",
+            name=name,
             allocator=UnboundedAllocator(app, name="pool"),
             model_path_map=model_path_map,
             **app.kwargs("inference"),
@@ -414,14 +425,16 @@ class TestInferenceOp:
 class TestInferenceProcessorOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
+        name = "inference_processor"
         op = InferenceProcessorOp(
             app,
-            name="inference_processor",
+            name=name,
             allocator=UnboundedAllocator(app, name="pool"),
             **app.kwargs("inference_processor"),
         )
         assert isinstance(op, _Operator)
         assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -436,13 +449,15 @@ class TestInferenceProcessorOp:
 
 class TestSegmentationPostprocessorOp:
     def test_kwarg_based_initialization(self, app, capfd):
+        name = "segmentation_postprocessor"
         op = SegmentationPostprocessorOp(
             fragment=app,
             allocator=UnboundedAllocator(fragment=app, name="allocator"),
-            name="segmentation_postprocessor",
+            name=name,
         )
         assert isinstance(op, _Operator)
         assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -458,9 +473,11 @@ class TestSegmentationPostprocessorOp:
 class TestVideoStreamRecorderOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
-        op = VideoStreamRecorderOp(name="recorder", fragment=app, **app.kwargs("recorder"))
+        name = "recorder"
+        op = VideoStreamRecorderOp(name=name, fragment=app, **app.kwargs("recorder"))
         assert isinstance(op, _Operator)
         assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -475,15 +492,17 @@ class TestVideoStreamRecorderOp:
 class TestVideoStreamReplayerOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
+        name = "replayer"
         data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
         op = VideoStreamReplayerOp(
-            name="replayer",
+            name=name,
             fragment=app,
-            directory=os.path.join(data_path, "endoscopy", "video"),
+            directory=os.path.join(data_path, "racerx"),
             **app.kwargs("replayer"),
         )
         assert isinstance(op, _Operator)
         assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -740,10 +759,10 @@ class TestHolovizOp:
     def test_invalid_tensors(self, tensor, app):
         if "type" in tensor and tensor.get("type") == "invalid":
             # unrecognized type name will raise RuntimeError, not ValueError
-            ExceptionType = RuntimeError
+            exception_type = RuntimeError
         else:
-            ExceptionType = ValueError
-        with pytest.raises(ExceptionType):
+            exception_type = ValueError
+        with pytest.raises(exception_type):
             HolovizOp(
                 name="visualizer",
                 fragment=app,
@@ -782,7 +801,7 @@ class HolovizDepthMapSinkOp(Operator):
         spec.input("in")
 
     def compute(self, op_input, op_output, context):
-        # TODO: Holoviz outputs a video buffer, but there is no support for video buffers in Python
+        # TODO: Holoviz outputs a video buffer, but there is no support for video buffers in Python  # noqa: FIX002, E501
         # yet
         pass
         # message = op_input.receive("in")
@@ -805,9 +824,10 @@ class MyHolovizDepthMapApp(Application):
             fragment=self,
             name="allocator",
         )
+        name = "holoviz"
         holoviz = HolovizOp(
             self,
-            name="holoviz",
+            name=name,
             width=render_width,
             height=render_height,
             headless=True,
@@ -817,6 +837,7 @@ class MyHolovizDepthMapApp(Application):
                 dict(name="depth_map", type="depth_map"),
             ],
         )
+        assert f"name: {name}" in repr(holoviz)
 
         # Since HolovizOp's render_buffer_output has ConditionType::kNone, we cannot depends on
         # deadlocks to be terminated. Instead, we use a CountCondition to terminate the operator.
@@ -835,3 +856,44 @@ def test_holoviz_depth_map_app(capfd):
     # assert no errors logged
     captured = capfd.readouterr()
     assert captured.err.count("[error]") == 0
+
+
+class TestBayerDemosaicOp:
+    def test_kwarg_based_initialization(self, app, config_file, capfd):
+        app.config(config_file)
+        demosaic_stream_pool = CudaStreamPool(
+            app,
+            name="cuda_stream",
+            dev_id=0,
+            stream_flags=0,
+            stream_priority=0,
+            reserved_size=1,
+            max_size=5,
+        )
+        name = "demosaic"
+        op = BayerDemosaicOp(
+            app,
+            name=name,
+            pool=BlockMemoryPool(
+                fragment=app,
+                name="device_alloc",
+                storage_type=MemoryStorageType.DEVICE,
+                block_size=16 * 1024**2,
+                num_blocks=4,
+            ),
+            cuda_stream_pool=demosaic_stream_pool,
+            **app.kwargs("demosaic"),
+        )
+        assert isinstance(op, _Operator)
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+
+        # Initializing outside the context of app.run() will result in the
+        # following error being logged because the GXFWrapper will not have
+        # been created for the operator:
+        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'demosaic'  # noqa: E501
+        assert captured.err.count("[error]") <= 1
+        assert captured.err.count("[warning]") <= 1

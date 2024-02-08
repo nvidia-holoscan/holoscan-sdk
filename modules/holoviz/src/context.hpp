@@ -38,14 +38,35 @@ class GeometryLayer;
 class Layer;
 
 /**
- * The Context object is the central object for Holoviz to store all the state. It's a singleton.
+ * The Context object is the central object for Holoviz to store all the state. It is stored per
+ * thread.
  */
 class Context : public NonCopyable {
  public:
   /**
-   * @returns the context instance
+   * Construct a new Context object
+   */
+  Context();
+
+  /**
+   * Destroy the Context object
+   */
+  ~Context();
+
+  /**
+   * @returns the context instance current to this thread, nullptr if none is current
+   */
+  static Context* get_current();
+
+  /**
+   * @returns the context instance, create one if none is current
    */
   static Context& get();
+
+  /**
+   * Set the context instance of this thread.
+   */
+  static void set(Context* context);
 
   /**
    * Initialize the context with an existing GLFWwindow object
@@ -80,31 +101,11 @@ class Context : public NonCopyable {
             InitFlags flags);
 
   /**
-   * Shutdown and cleanup the global context.
-   */
-  void shutdown();
-
-  /**
    * Get the window object.
    *
    * @return window object
    */
   Window* get_window() const;
-
-  /**
-   * If using ImGui, create a context and pass it to Holoviz, do this before calling viz::Init().
-   *
-   * Background: The ImGui context is a global variable and global variables are not shared
-   * across so/DLL boundaries. Therefore the app needs to create the ImGui context first and
-   *  then provides the pointer to Holoviz like this:
-   * @code{.cpp}
-   * ImGui::CreateContext();
-   * holoscan::viz::ImGuiSetCurrentContext(ImGui::GetCurrentContext());
-   * @endcode
-   *
-   * @param context   ImGui context
-   */
-  void im_gui_set_current_context(ImGuiContext* context);
 
   /**
    * Set the Cuda stream used by Holoviz for Cuda operations.
@@ -172,9 +173,11 @@ class Context : public NonCopyable {
    *                      framebuffer size if the framebuffer is smaller than that
    * @param buffer_size   size of the storage buffer in bytes
    * @param device_ptr    pointer to Cuda device memory to store the framebuffer into
+   * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
+   * contiguous in memory
    */
   void read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                        CUdeviceptr device_ptr);
+                        CUdeviceptr device_ptr, size_t row_pitch = 0);
 
   /**
    * @returns the active layer
@@ -192,8 +195,6 @@ class Context : public NonCopyable {
   GeometryLayer* get_active_geometry_layer() const;
 
  private:
-  Context();
-
   struct Impl;
   std::shared_ptr<Impl> impl_;
 };

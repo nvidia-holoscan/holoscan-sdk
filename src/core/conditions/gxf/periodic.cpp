@@ -44,9 +44,9 @@ void PeriodicCondition::setup(ComponentSpec& spec) {
   spec.param(recess_period_,
              "recess_period",
              "RecessPeriod",
-             "The recess period indicates the minimum amount of time which has to pass before the"
-             "entity is permitted to execute again. The period is specified as a string containing"
-             "a number and an (optional) unit. If no unit is given the value is assumed to be"
+             "The recess period indicates the minimum amount of time which has to pass before the "
+             "entity is permitted to execute again. The period is specified as a string containing "
+             "a number and an (optional) unit. If no unit is given the value is assumed to be "
              "in nanoseconds. Supported units are: Hz, s, ms. Example: 10ms, 10000000, 0.2s, 50Hz");
 }
 

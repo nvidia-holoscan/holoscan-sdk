@@ -29,7 +29,7 @@ aja:
   overlay_rdma: true
 
 replayer:
-  basename: "surgical_video"
+  basename: "racerx"
   frame_rate: 0 # as specified in timestamps
   repeat: true # default: false
   realtime: true # default: true

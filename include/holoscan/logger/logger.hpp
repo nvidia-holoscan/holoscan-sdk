@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_LOGGER_HPP
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>  // allows fmt to format std::array, std::vector, etc.
 
 #include <chrono>
 #include <memory>
@@ -34,8 +35,8 @@
 #define HOLOSCAN_LOG_LEVEL_CRITICAL 5
 #define HOLOSCAN_LOG_LEVEL_OFF 6
 
-// Please define (or call CMake's `set_compile_definitions` with) HOLOSCAN_LOG_ACTIVE_LEVEL before
-// including <holoscan/holoscan.h> to one of the above levels if you want to skip logging at
+// Please define (or call CMake's `target_compile_definitions` with) HOLOSCAN_LOG_ACTIVE_LEVEL
+// before including <holoscan/holoscan.h> to one of the above levels if you want to skip logging at
 // a certain level at compile time.
 //
 // E.g.,
@@ -44,6 +45,15 @@
 //     ...
 //
 // Then, it will only log at the WARN(3)/ERROR(4)/CRITICAL(5) levels.
+//
+// You can define GXF_LOG_ACTIVE_LEVEL in your build system. For instance, in CMake, use:
+//
+//     target_compile_definitions(my_target PRIVATE HOLOSCAN_LOG_ACTIVE_LEVEL=3)
+//
+// This sets the active logging level to WARN(3) for the target `my_target`.
+//
+// Alternatively, define HOLOSCAN_LOG_ACTIVE_LEVEL at compile time by passing
+// `-DHOLOSCAN_LOG_ACTIVE_LEVEL=3` directly to the compiler.
 
 // Workaround for zero-arguments
 // (https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0306r2.html)

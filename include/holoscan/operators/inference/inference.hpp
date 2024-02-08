@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,10 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/gxf/gxf_operator.hpp"
+#include "holoscan/core/io_context.hpp"
+#include "holoscan/core/io_spec.hpp"
+#include "holoscan/core/operator.hpp"
+#include "holoscan/core/operator_spec.hpp"
 #include "holoscan/utils/cuda_stream_handler.hpp"
 
 #include <holoinfer.hpp>
@@ -36,6 +39,18 @@ namespace holoscan::ops {
 /**
  * @brief Inference Operator class to perform single/multi model inference.
  *
+ * **Named inputs:**
+ *     - *receivers*: multi-receiver accepting `nvidia::gxf::Tensor`(s)
+ *         - Any number of upstream ports may be connected to this `receivers` port. The operator
+ *         will search across all messages for tensors matching those specified in
+ *         `in_tensor_names`. These are the set of input tensors used by the models in
+ *         `inference_map`.
+ *
+ * **Named outputs:**
+ *     - *transmitter*: `nvidia::gxf::Tensor`(s)
+ *         - A message containing tensors corresponding to the inference results from all models
+ *         will be emitted. The names of the tensors transmitted correspond to those in
+ *         `out_tensor_names`.
  */
 class InferenceOp : public holoscan::Operator {
  public:

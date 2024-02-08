@@ -19,8 +19,10 @@
 #include <yaml-cpp/yaml.h>
 
 #include <any>
+#include <complex>
 #include <cstdint>
 #include <regex>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <typeinfo>
@@ -120,6 +122,10 @@ void any_to_arg(const std::any& value, Arg& arg) {
     arg = std::any_cast<int32_t>(value);
   else if (value.type() == typeid(int64_t))
     arg = std::any_cast<int64_t>(value);
+  else if (value.type() == typeid(std::complex<float>))
+    arg = std::any_cast<std::complex<float>>(value);
+  else if (value.type() == typeid(std::complex<double>))
+    arg = std::any_cast<std::complex<double>>(value);
   else if (value.type() == typeid(YAML::Node))
     arg = std::any_cast<YAML::Node>(value);
   else if (value.type() == typeid(std::string))
@@ -152,6 +158,11 @@ INSTANTIATE_TEST_CASE_P(
         ParamTuple{std::uint16_t{1}, ArgElementType::kUnsigned16, ArgContainerType::kNative},
         ParamTuple{std::uint32_t{1}, ArgElementType::kUnsigned32, ArgContainerType::kNative},
         ParamTuple{std::uint64_t{1}, ArgElementType::kUnsigned64, ArgContainerType::kNative},
+        ParamTuple{
+            std::complex<float>{1.0, 2.0}, ArgElementType::kComplex64, ArgContainerType::kNative},
+        ParamTuple{std::complex<double>{1.1, -2.5},
+                   ArgElementType::kComplex128,
+                   ArgContainerType::kNative},
         ParamTuple{YAML::Node(), ArgElementType::kYAMLNode, ArgContainerType::kNative},
         ParamTuple{std::string{"abcd"}, ArgElementType::kString, ArgContainerType::kNative},
         ParamTuple{CustomType(), ArgElementType::kCustom, ArgContainerType::kNative},
@@ -168,14 +179,16 @@ static std::vector<std::tuple<const char*, std::any, std::optional<std::vector<s
         {"A", 7.0, {{"7"}}},
         {"B", 7.0F, {{"7"}}},
         {"C", false, {{"false"}}},
-        {"D", int8_t{1}, {{"\"\\x01\""}}},  // hex
+        {"D", int8_t{1}, {{"1"}}},
         {"E", int16_t{1}, {{"1"}}},
         {"F", int32_t{1}, {{"1"}}},
         {"G", int64_t{1}, {{"1"}}},
-        {"H", uint8_t{1}, {{"\"\\x01\""}}},  // hex
+        {"H", uint8_t{1}, {{"1"}}},
         {"I", uint16_t{1}, {{"1"}}},
         {"J", uint32_t{1}, {{"1"}}},
         {"K", uint64_t{1}, {{"1"}}},
+        {"cf", std::complex<float>{1.0, 2.0}, {{"1+2j"}}},
+        {"cd", std::complex<double>{1.14, -2.503}, {{"1.14-2.503j"}}},
         {"L", YAML::Node(YAML::NodeType::Null), {{"~"}}},
         {"M", std::string{"abcd"}, {{"abcd"}}},
         {"N", std::vector<std::string>{"abcd", "ef", "ghijklm"}, {{"abcd", "ef", "ghijklm"}}},
@@ -363,6 +376,35 @@ TEST(Arg, TestArgListDescription) {
     description = fmt::format("{}\n  - {}", description, indented_arg_description);
   }
   EXPECT_EQ(args.description(), description);
+}
+
+TEST(Yaml, TestYamlCplxDecode) {
+  // works with spaces around + and with "j" to indicate imaginary component
+  YAML::Node node = YAML::Load("2.0 + 1.5j");
+  std::complex<float> cf = node.as<std::complex<float>>();
+  EXPECT_EQ(cf.real(), 2.0f);
+  EXPECT_EQ(cf.imag(), 1.5f);
+
+  // works without white space and with "i" to indicate imaginary component
+  node = YAML::Load("-2.102-3i");
+  std::complex<double> cd = node.as<std::complex<double>>();
+  EXPECT_EQ(cd.real(), -2.102);
+  EXPECT_EQ(cd.imag(), -3.0);
+}
+
+TEST(Yaml, TestYamlCplxDecodeInvalid) {
+  // invalid case (missing "i" or "j" on second number)
+  YAML::Node node = YAML::Load("-2 + 3");
+  std::complex<double> cd2;
+  EXPECT_THROW({ cd2 = node.as<std::complex<double>>(); }, std::runtime_error);
+
+  // invalid case ("i" or "j" on first number)
+  node = YAML::Load("-2i + 3");
+  EXPECT_THROW({ cd2 = node.as<std::complex<double>>(); }, std::runtime_error);
+
+  // invalid case ("k" is not a valid imaginary component indicator)
+  node = YAML::Load("-2 + 3k");
+  EXPECT_THROW({ cd2 = node.as<std::complex<double>>(); }, std::runtime_error);
 }
 
 }  // namespace holoscan

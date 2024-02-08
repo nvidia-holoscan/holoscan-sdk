@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,7 @@ using bad_expected_access = tl::bad_expected_access<E>;
 
 using unexpect_t = tl::unexpect_t;
 
-static constexpr unexpect_t unexpect{};
+static constexpr unexpect_t unexpect{};  // codespell-ignore
 
 /**
  * @brief Construct a new unexpected object

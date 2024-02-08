@@ -13,32 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Endoscopy sample data
-add_library(endoscopy_data INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/endoscopy/video/surgical_video.264")
+# RacerX sample data
+add_library(racerx_data INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/racerx/racerx-small.mp4")
 # Setup the installation rule
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/endoscopy DESTINATION data COMPONENT holoscan-data)
-
-# Check if we have python and ffmpeg
-find_program(FFMPEG ffmpeg)
-find_program(PYTHON3 python3)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/racerx DESTINATION data COMPONENT holoscan-data)
 
 if(HOLOSCAN_DOWNLOAD_DATASETS)
   include(HoloscanDownloadData)
 
-  # If we have ffmpeg and python we generate the GXF entities
-  set(ENDOSCOPY_DATA_VERSION "20230128")
-  set(ENDOSCOPY_DATA_MD5 "9732a54944589f7ca4f1337e8adf0838")
+  set(RACERX_DATA_VERSION "20231009")
+  set(RACERX_DATA_MD5 "86cd7e5477bb9eaa0cfc0547912d77b2")
 
-  # Download the endoscopy sample data
-  holoscan_download_data(endoscopy
-    URL https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_endoscopy_sample_data/versions/${ENDOSCOPY_DATA_VERSION}/zip
-    URL_MD5 ${ENDOSCOPY_DATA_MD5}
+  # Download the racerX sample data
+  holoscan_download_data(racerx
+    URL https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_racerx_video/versions/${RACERX_DATA_VERSION}/zip
+    URL_MD5 ${RACERX_DATA_MD5}
     DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}
-    BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/endoscopy/video/surgical_video.264"
+    BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/racerx/racerx-small.mp4"
   )
 
   # Add dependency to force the download
-  add_dependencies(endoscopy_data endoscopy_download)
+  add_dependencies(racerx_data racerx_download)
 endif()
 
 # Multiai ultrasound sample data

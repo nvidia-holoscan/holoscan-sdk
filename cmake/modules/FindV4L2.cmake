@@ -20,13 +20,13 @@
 #
 # A new imported target is created under the V4L2 namespace.
 
-FIND_PATH(V4L2_INCLUDE_DIR
+find_path(V4L2_INCLUDE_DIR
   NAMES libv4l2.h
   PATH_SUFFIXES v4l2 video4linux
   DOC "The Video4Linux Version 2 (v4l2) include directory"
 )
 
-FIND_LIBRARY(V4L2_LIBRARY
+find_library(V4L2_LIBRARY
   NAMES v4l2
   DOC "The Video4Linux Version 2 (v4l2) library"
   REQUIRED
@@ -39,8 +39,8 @@ set_target_properties(V4L2 PROPERTIES
   INTERFACE_SYSTEM_INCLUDE_DIRECTORIES ${V4L2_INCLUDE_DIR}
 )
 
-INCLUDE(FindPackageHandleStandardArgs)
-FIND_PACKAGE_HANDLE_STANDARD_ARGS(V4L2 
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(V4L2
     FOUND_VAR V4L2_FOUND
     REQUIRED_VARS V4L2_INCLUDE_DIR
 )

@@ -16,6 +16,7 @@
 ---
 value: 5.3
 str_value: test_string
+cplx_value: 5.3 + 2j
 
 multithread_scheduler:
   worker_thread_number: 1

@@ -92,7 +92,9 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncRxApp) {
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Async ping rx thread entering") != std::string::npos);
   EXPECT_TRUE(log_output.find("Async ping rx thread exiting") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
   EXPECT_TRUE(log_output.find("Async ping tx thread entering") == std::string::npos);
   EXPECT_TRUE(log_output.find("Async ping tx thread exiting") == std::string::npos);
@@ -115,7 +117,9 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncTxApp) {
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Async ping tx thread entering") != std::string::npos);
   EXPECT_TRUE(log_output.find("Async ping tx thread exiting") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
   EXPECT_TRUE(log_output.find("Async ping rx thread entering") == std::string::npos);
   EXPECT_TRUE(log_output.find("Async ping rx thread exiting") == std::string::npos);
@@ -140,7 +144,9 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncTxRxApp) {
   EXPECT_TRUE(log_output.find("Async ping rx thread entering") != std::string::npos);
   EXPECT_TRUE(log_output.find("Async ping tx thread exiting") != std::string::npos);
   EXPECT_TRUE(log_output.find("Async ping rx thread exiting") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

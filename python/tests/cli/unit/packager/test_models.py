@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import os
 import pathlib
@@ -31,13 +33,14 @@ class TestModels:
 
     def test_models_file(self, monkeypatch):
         monkeypatch.setattr(pathlib.Path, "is_file", lambda x: True)
-        model_path = pathlib.Path("/my/model/cool_model_file")
+        model_path = pathlib.Path("/my/model/cool_model_file.ext")
         models = Models()
 
         result = models.build(model_path)
 
-        assert "cool_model_file" in result
-        assert result["cool_model_file"] == model_path.parent
+        assert len(result) == 1
+        assert model_path.stem in result
+        assert result[model_path.stem] == model_path
 
     def test_models_dir_with_single_model(self, monkeypatch):
         monkeypatch.setattr(pathlib.Path, "is_file", lambda x: False)
@@ -49,6 +52,7 @@ class TestModels:
 
         result = models.build(model_path)
 
+        assert len(result) == 1
         assert "cool_model_dir" in result
         assert result["cool_model_dir"] == model_path
 
@@ -63,6 +67,7 @@ class TestModels:
 
         result = models.build(model_path)
 
+        assert len(result) == 3
         assert "model1" in result
         assert "model2" in result
         assert "model3" in result

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,8 @@ class GXFMemoryBuffer;  // forward declaration
 /**
  * @brief Class to wrap GXF Tensor holding DLPack tensor structure.
  *
+ * This class inherits nvidia::gxf::Tensor and is used with DLManagedTensorCtx class to wrap
+ * the GXF Tensor.
  */
 class GXFTensor : public nvidia::gxf::Tensor {
  public:
@@ -42,20 +44,32 @@ class GXFTensor : public nvidia::gxf::Tensor {
   /**
    * @brief Construct a new GXFTensor object.
    *
-   * This constructor is used to wrap a GXF Tensor object.
-   * The given nvidia::gxf::Tensor object is modified to point to the shared memory buffer so that
-   * the memory buffer is shared between the GXF's Tensor object and the GXFTensor object.
-   *
-   * @param tensor Tensor to wrap.
-   */
-  explicit GXFTensor(nvidia::gxf::Tensor& tensor);
-
-  /**
-   * @brief Construct a new GXFTensor object.
-   *
    * @param dl_ctx DLManagedTensorCtx object to wrap.
    */
   explicit GXFTensor(std::shared_ptr<DLManagedTensorCtx>& dl_ctx);
+
+  /**
+   * @brief Construct a new GXFTensor object from a GXF Tensor.
+   *
+   * This constructor wraps a GXF Tensor object. When the GXF Tensor object is modified
+   * to point to a shared memory buffer, updates should be protected using a mutex.
+   * To mitigate thread contention when different threads access different tensors,
+   * this method uses hash-selected mutexes.
+   *
+   * A set of mutexes is allocated in a static array. To select which mutex to lock,
+   * this method uses a simple hash function based on the provided ID. The selected
+   * mutex ensures safe access to the Tensor's data pointer across multiple threads.
+   *
+   * For the ID (`id`), the GXF component's ID can be used to indicate a specific
+   * GXF Tensor object. If no ID is provided, the mutex associated with ID 0 is used.
+   * If the ID is -1, no mutex is utilized.
+   *
+   * @param tensor The GXF Tensor object to be converted.
+   * @param id The ID associated with the GXF Tensor, representing the GXF component's ID.
+   *           Defaults to 0.
+   * @return The GXFTensor object created from the provided GXF Tensor.
+   */
+  explicit GXFTensor(nvidia::gxf::Tensor& tensor, int64_t id = 0);
 
   /**
    * @brief Get DLDevice object from the GXF Tensor.
@@ -121,8 +135,7 @@ class GXFMemoryBuffer : public nvidia::gxf::MemoryBuffer {
   explicit GXFMemoryBuffer(nvidia::gxf::MemoryBuffer&& other)
       : nvidia::gxf::MemoryBuffer(std::forward<nvidia::gxf::MemoryBuffer>(other)) {}
 
-  nvidia::gxf::Tensor::stride_array_t gxf_strides;  ///< Strides of the GXF Tensor.
-  std::vector<int64_t> dl_shape;                    ///< Shape of the GXF Tensor.
+  std::vector<int64_t> dl_shape;    ///< Shape of the GXF Tensor.
   std::vector<int64_t> dl_strides;  ///< Strides of the GXF Tensor. This is used to calculate the
                                     ///< strides of the DLTensor.
 };

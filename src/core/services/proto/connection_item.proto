@@ -38,7 +38,8 @@ message ConnectorArg
     oneof value {
         string str_value = 2;
         int32 int_value = 3;
-        double double_value = 4;
+        uint32 uint_value = 4;
+        double double_value = 5;
     }
 }
 

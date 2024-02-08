@@ -24,6 +24,7 @@
 #include <set>
 #include <string>
 #include <typeinfo>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -35,6 +36,8 @@
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
+
+using std::string_literals::operator""s;
 
 namespace holoscan {
 
@@ -150,6 +153,41 @@ void Fragment::network_context(const std::shared_ptr<NetworkContext>& network_co
 
 std::shared_ptr<NetworkContext> Fragment::network_context() {
   return network_context_;
+}
+
+namespace {  // anonymous details to avoid polluting holoscan namespace
+
+std::unordered_set<std::string> nested_yaml_map_keys_(YAML::Node yaml_node) {
+  std::unordered_set<std::string> keys;
+  for (auto it = yaml_node.begin(); it != yaml_node.end(); ++it) {
+    const auto& key = it->first.as<std::string>();
+    const auto& value = it->second;
+    keys.emplace(key);
+    if (value.IsMap()) {
+      std::unordered_set<std::string> inner_keys = nested_yaml_map_keys_(it->second);
+      for (const auto& inner_key : inner_keys) {
+        keys.emplace(key + "."s + inner_key);
+      }
+    }
+  }
+  return keys;
+}
+
+}  // namespace
+
+std::unordered_set<std::string> Fragment::config_keys() {
+  auto& yaml_nodes = config().yaml_nodes();
+
+  std::unordered_set<std::string> all_keys;
+  for (const auto& yaml_node : yaml_nodes) {
+    if (yaml_node.IsMap()) {
+      auto node_keys = nested_yaml_map_keys_(yaml_node);
+      for (const auto& k : node_keys) {
+        all_keys.insert(k);
+      }
+    }
+  }
+  return all_keys;
 }
 
 ArgList Fragment::from_config(const std::string& key) {
@@ -450,6 +488,56 @@ void Fragment::compose_graph() {
   }
   is_composed_ = true;
   compose();
+
+  // Protect against the case where no add_operator or add_flow calls were made
+  if (!graph_) {
+    HOLOSCAN_LOG_ERROR(fmt::format(
+      "Fragment '{}' does not have any operators. Please check that there is at least one call to"
+      "`add_operator` or `add_flow` during `Fragment::compose`.",
+      name()));
+    graph();
+  }
+}
+
+FragmentPortMap Fragment::port_info() const {
+  HOLOSCAN_LOG_TRACE("getting port info for fragment: {}", name_);
+  FragmentPortMap fragment_port_info;
+  if (!is_composed_ || !graph_) {
+    HOLOSCAN_LOG_ERROR("The fragment and its graph must be composed before calling port_info");
+    return fragment_port_info;
+  }
+  std::vector<OperatorNodeType> operators = graph_->get_nodes();
+  for (auto op : operators) {
+    HOLOSCAN_LOG_TRACE("\toperator: {}", name_, op->name());
+    OperatorSpec* op_spec = op->spec();
+
+    // set of input port names
+    std::unordered_set<std::string> input_names;
+    input_names.reserve(op_spec->inputs().size());
+    for (auto& in : op_spec->inputs()) { input_names.insert(in.first); }
+    HOLOSCAN_LOG_TRACE("\t\tadded {} inputs", input_names.size());
+
+    // set of output port names
+    std::unordered_set<std::string> output_names;
+    output_names.reserve(op_spec->outputs().size());
+    for (auto& out : op_spec->outputs()) { output_names.insert(out.first); }
+    HOLOSCAN_LOG_TRACE("\t\tadded {} outputs", output_names.size());
+
+    // set of multi-receiver parameter names
+    std::unordered_set<std::string> receiver_names;
+    for (auto& [param_name, param] : op_spec->params()) {
+      // receivers parameter type is 'std::vector<holoscan::IOSpec*>'.
+      if (std::type_index(param.type()) ==
+          std::type_index(typeid(std::vector<holoscan::IOSpec*>))) {
+        receiver_names.insert(param_name);
+      }
+    }
+    HOLOSCAN_LOG_TRACE("\t\tadded {} receivers", receiver_names.size());
+
+    fragment_port_info.try_emplace(
+        op->name(), std::move(input_names), std::move(output_names), std::move(receiver_names));
+  }
+  return fragment_port_info;
 }
 
 }  // namespace holoscan

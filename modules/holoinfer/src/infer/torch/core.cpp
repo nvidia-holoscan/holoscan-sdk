@@ -394,6 +394,13 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
     infer_stream = c10::cuda::getStreamFromPool(true);
     stream_guard = std::make_unique<c10::cuda::CUDAStreamGuard>(infer_stream);
 
+    auto status = populate_model_details();
+    if (status.get_code() != holoinfer_code::H_SUCCESS) {
+      HOLOSCAN_LOG_ERROR(status.get_message());
+      HOLOSCAN_LOG_ERROR("Torch core: Error populating model parameters");
+      throw std::runtime_error("Torch core: constructor failed.");
+    }
+
     HOLOSCAN_LOG_INFO("Loading torchscript: {}", model_path_);
     inference_module_ = torch::jit::load(model_path_);
     inference_module_.eval();
@@ -408,11 +415,6 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
     inference_module_.to(infer_device_);
 
     torch::NoGradGuard no_grad;
-    auto status = populate_model_details();
-    if (status.get_code() != holoinfer_code::H_SUCCESS) {
-      HOLOSCAN_LOG_ERROR("Torch core: Error populating model parameters");
-      throw std::runtime_error("Torch core: constructor failed.");
-    }
   } catch (const c10::Error& exception) {
     HOLOSCAN_LOG_ERROR(exception.what());
     throw;

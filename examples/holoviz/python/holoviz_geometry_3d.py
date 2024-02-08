@@ -1,19 +1,19 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+ http://www.apache.org/licenses/LICENSE-2.0
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-"""  # no qa
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import random
 import time
@@ -39,9 +39,7 @@ class Item:
             self.type = random.choice(["points_3d", "lines_3d", "triangles_3d"])
         if self.type == "points_3d":
             count = 1
-        elif self.type == "lines_3d":
-            count = 2
-        elif self.type == "line_strip_3d":
+        elif self.type in ["lines_3d", "line_strip_3d"]:
             count = 2
         elif self.type == "triangles_3d":
             count = 3
@@ -101,8 +99,7 @@ class Geometry3dOp(Operator):
         out_message = dict()
 
         # Now draw various different types of geometric primitives.
-        # In all cases, x, y and z are coordinates in 3d space. All coordinates
-        # should be defined using a single precision (np.float32) dtype.
+        # In all cases, x, y and z are coordinates in 3d space.
 
         prim_coords = {}
         prim_coords["points_3d"] = []
@@ -116,12 +113,7 @@ class Geometry3dOp(Operator):
             item.update()
 
         for name, coords in prim_coords.items():
-            coords = np.asarray(
-                coords,
-                dtype=np.float32,
-            )
-            coords = coords[np.newaxis, :, :]
-            out_message[name] = coords
+            out_message[name] = np.asarray(coords)
         op_output.emit(out_message, "outputs")
 
 
@@ -203,6 +195,11 @@ class MyGeometry3DApp(Application):
         self.add_flow(geometry_3d, visualizer, {("outputs", "receivers")})
 
 
+def main(config_count):
+    app = MyGeometry3DApp(config_count=config_count)
+    app.run()
+
+
 if __name__ == "__main__":
     # Parse args
     parser = ArgumentParser(description="Example Holoviz geometry 3D application")
@@ -214,5 +211,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    app = MyGeometry3DApp(config_count=args.count)
-    app.run()
+    main(config_count=args.count)

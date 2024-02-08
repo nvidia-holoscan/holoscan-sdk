@@ -117,7 +117,7 @@ pybind11::tuple vector2pytuple(const std::vector<T>& vec) {
 template <typename PT, typename T>
 pybind11::tuple array2pytuple(const T* arr, size_t length) {
   py::tuple result(length);
-  for (int index = 0; index < length; ++index) {
+  for (size_t index = 0; index < length; ++index) {
     const auto& value = arr[index];
     PyTuple_SET_ITEM(result.ptr(),
                      index,

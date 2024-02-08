@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import logging
 import os
@@ -22,7 +24,7 @@ from typing import Any, Dict, Optional
 from ..common.constants import SDK, Constants, DefaultValues
 from ..common.dockerutils import parse_docker_image_name_and_tag
 from ..common.enum_types import ApplicationType, Arch, Platform, PlatformConfiguration, SdkType
-from ..common.exceptions import InvalidTagValue, UnknownApplicationType
+from ..common.exceptions import InvalidTagValueError, UnknownApplicationTypeError
 
 
 class PlatformParameters:
@@ -37,7 +39,7 @@ class PlatformParameters:
         (self._tag_prefix, self._version) = parse_docker_image_name_and_tag(tag)
 
         if self._tag_prefix is None:
-            raise InvalidTagValue(f"'{tag}' is not a valid Docker tag. Format: name[:tag]")
+            raise InvalidTagValueError(f"'{tag}' is not a valid Docker tag. Format: name[:tag]")
 
         if self._version is None:
             self._version = version
@@ -103,7 +105,7 @@ class PlatformParameters:
         if value is not None and hasattr(value, "name"):
             self._data["monai_deploy_sdk_filename"] = value.name
         elif value == Constants.PYPI_INSTALL_SOURCE:
-            self._data["monai_deploy_sdk_filenamename"] = Constants.PYPI_INSTALL_SOURCE
+            self._data["monai_deploy_sdk_filename"] = Constants.PYPI_INSTALL_SOURCE
 
     @property
     def version(self) -> str:
@@ -226,7 +228,8 @@ class PackageBuildParameters:
         self._data["no_cache"] = False
         self._data["pip_packages"] = None
         self._data["requirements_file_path"] = None
-        self._data["sdk_version"] = None
+        self._data["holoscan_sdk_version"] = None
+        self._data["monai_deploy_app_sdk_version"] = None
         self._data["title"] = None
         self._data["version"] = None
 
@@ -320,7 +323,7 @@ class PackageBuildParameters:
 
     @property
     def docs(self) -> Path:
-        return self._data["docs"] if "docs" in self._data else None
+        return self._data.get("docs", None)
 
     @docs.setter
     def docs(self, value: Path):
@@ -329,7 +332,7 @@ class PackageBuildParameters:
 
     @property
     def models(self) -> Dict[str, Path]:
-        return self._data["models"] if "models" in self._data else None
+        return self._data.get("models", None)
 
     @models.setter
     def models(self, value: Dict[str, Path]):
@@ -450,12 +453,20 @@ class PackageBuildParameters:
         self._data["sdk_type"] = value.value
 
     @property
-    def sdk_version(self) -> str:
-        return self._data["sdk_version"]
+    def holoscan_sdk_version(self) -> str:
+        return self._data["holoscan_sdk_version"]
 
-    @sdk_version.setter
-    def sdk_version(self, value: str):
-        self._data["sdk_version"] = value
+    @holoscan_sdk_version.setter
+    def holoscan_sdk_version(self, value: str):
+        self._data["holoscan_sdk_version"] = value
+
+    @property
+    def monai_deploy_app_sdk_version(self) -> str:
+        return self._data["monai_deploy_app_sdk_version"]
+
+    @monai_deploy_app_sdk_version.setter
+    def monai_deploy_app_sdk_version(self, value: str):
+        self._data["monai_deploy_app_sdk_version"] = value
 
     @property
     def to_jina(self) -> Dict[str, Any]:
@@ -473,7 +484,7 @@ class PackageBuildParameters:
             elif os.access(self.application, os.X_OK):
                 return ApplicationType.Binary
 
-        raise UnknownApplicationType(
+        raise UnknownApplicationTypeError(
             f"""\n\nUnable to determine application type. Please ensure the application path
             contains one of the following:
     \t- Python directory/module with '{Constants.PYTHON_MAIN_FILE}'
@@ -490,9 +501,7 @@ class PackageBuildParameters:
             )
         elif self.application_type == ApplicationType.PythonModule:
             return f'["{Constants.PYTHON_EXECUTABLE}", "{self._data["app_dir"]}"]'
-        elif self.application_type == ApplicationType.CppCMake:
-            return f'["{os.path.join(self._data["app_dir"], os.path.basename(self.application))}"]'
-        elif self.application_type == ApplicationType.Binary:
+        elif self.application_type in [ApplicationType.CppCMake, ApplicationType.Binary]:
             return f'["{os.path.join(self._data["app_dir"], os.path.basename(self.application))}"]'
 
-        raise UnknownApplicationType("Unsupported application type.")
+        raise UnknownApplicationTypeError("Unsupported application type.")

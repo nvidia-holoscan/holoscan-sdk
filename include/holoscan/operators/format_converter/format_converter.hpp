@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,10 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/gxf/gxf_operator.hpp"
+#include "holoscan/core/io_context.hpp"
+#include "holoscan/core/io_spec.hpp"
+#include "holoscan/core/operator.hpp"
+#include "holoscan/core/operator_spec.hpp"
 #include "holoscan/utils/cuda_stream_handler.hpp"
 
 namespace holoscan::ops {
@@ -47,6 +50,24 @@ enum class FormatConversionType {
 
 /**
  * @brief Operator class to convert the data format of the input data.
+ *
+ * **Named inputs:**
+ *     - *source_video*: `nvidia::gxf::Tensor` or `nvidia::gxf::VideoBuffer`
+ *         - The input video frame to process. If the input is a VideoBuffer it must be in format
+ *         GXF_VIDEO_FORMAT_RGBA, GXF_VIDEO_FORMAT_RGB or GXF_VIDEO_FORMAT_NV12. This video
+ *         buffer may be in either host or device memory (a host->device copy is performed if
+ *         needed). If a video buffer is not found, the input port message is searched for a tensor
+ *         with the name specified by `in_tensor_name`. This must be a device tensor in one of
+ *         several supported formats (unsigned 8-bit int or float32 graycale, unsigned 8-bit int
+ *         RGB or RGBA YUV420 or NV12).
+ *
+ * **Named outputs:**
+ *     - *tensor*: `nvidia::gxf::Tensor`
+ *         - The output video frame after processing. The shape, data type and number of channels
+ *         of this output tensor will depend on the specific parameters that were set for this
+ *         operator. The name of the Tensor transmitted on this port is determined by
+ *         `out_tensor_name`.
+ *
  */
 class FormatConverterOp : public holoscan::Operator {
  public:
@@ -62,12 +83,14 @@ class FormatConverterOp : public holoscan::Operator {
                ExecutionContext& context) override;
   void stop() override;
 
-  nvidia::gxf::Expected<void*> resizeImage(const void* in_tensor_data, const int32_t rows,
-                                           const int32_t columns, const int16_t channels,
-                                           const nvidia::gxf::PrimitiveType primitive_type,
-                                           const int32_t resize_width, const int32_t resize_height);
-  void convertTensorFormat(const void* in_tensor_data, void* out_tensor_data, const int32_t rows,
-                           const int32_t columns, const int16_t in_channels,
+  nvidia::gxf::Expected<void*> resizeImage(
+      const void* in_tensor_data, const std::vector<nvidia::gxf::ColorPlane>& in_color_planes,
+      const int32_t rows, const int32_t columns, const int16_t channels,
+      const nvidia::gxf::PrimitiveType primitive_type, const int32_t resize_width,
+      const int32_t resize_height);
+  void convertTensorFormat(const void* in_tensor_data,
+                           const std::vector<nvidia::gxf::ColorPlane>& in_color_planes,
+                           void* out_tensor_data, const int32_t rows, const int32_t columns,
                            const int16_t out_channels);
 
  private:

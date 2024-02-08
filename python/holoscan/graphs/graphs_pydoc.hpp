@@ -37,7 +37,7 @@ namespace FlowGraph {
 
 // Constructor
 PYDOC(FlowGraph, R"doc(
-Directed acyclic graph (DAG) class.
+Directed graph class.
 )doc")
 
 PYDOC(add_node, R"doc(
@@ -81,6 +81,22 @@ bool
     Whether the node is a root node
 )doc")
 
+PYDOC(is_user_defined_root, R"doc(
+Check if the node is a user-defined root node. 
+
+A user-defined root is the first node added to the graph.
+
+Parameters
+----------
+node : holoscan.core.Operator | holoscan.core.Fragment
+    A node in the graph.
+
+Returns
+-------
+bool
+    Whether the node is a user-defined root node
+)doc")
+
 PYDOC(is_leaf, R"doc(
 Check if the node is a leaf node.
 
@@ -93,6 +109,15 @@ Returns
 -------
 bool
     Whether the node is a leaf node
+)doc")
+
+PYDOC(has_cycle, R"doc(
+Get all root nodes of the cycles if the graph has cycle(s). Otherwise, an empty list is returned.
+
+Returns
+-------
+list of Operator or Fragment
+    A list containing all root nodes of the cycles in the graph.
 )doc")
 
 PYDOC(get_root_nodes, R"doc(
@@ -151,4 +176,4 @@ The graph's context (as an opaque PyCapsule object)
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_GRAPHS_PYDOC_HPP
+#endif /* PYHOLOSCAN_GRAPHS_PYDOC_HPP */

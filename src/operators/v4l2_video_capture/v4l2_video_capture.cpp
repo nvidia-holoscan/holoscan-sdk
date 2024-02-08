@@ -266,19 +266,19 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
     // Update format with valid user-given format
     pixel_format_use_ = pixel_format;
   } else if (pixel_format_.get() == "auto") {
-    // Currently, only AR24 and YUYV are supported in auto mode
-    uint32_t ar24 = v4l2_fourcc('A', 'R', '2', '4');
+    // Currently, AB24 and YUYV are supported in auto mode
+    uint32_t ab24 = v4l2_fourcc('A', 'B', '2', '4');
     uint32_t yuyv = v4l2_fourcc('Y', 'U', 'Y', 'V');
 
-    if (pixel_format_supported(fd_, ar24)) {
-      pixel_format_use_ = ar24;
+    if (pixel_format_supported(fd_, ab24)) {
+      pixel_format_use_ = ab24;
     } else if (pixel_format_supported(fd_, yuyv)) {
       pixel_format_use_ = yuyv;
     } else {
       throw std::runtime_error(
-          "Automatic setting of pixel format failed: device does not support AR24 or YUYV. If you "
-          "are sure that the device pixel format is RGBA, please specify the pixel format in the "
-          "yaml configuration file.");
+          "Automatic setting of pixel format failed: device does not support AB24 or YUYV. "
+          " If you are sure that the device pixel format is RGBA, please specify the pixel format "
+          "in the yaml configuration file.");
     }
   }
 

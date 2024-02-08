@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "holoscan/core/app_driver.hpp"
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/system/network_utils.hpp"
 #include "holoscan/logger/logger.hpp"
 
@@ -42,10 +43,62 @@ grpc::Status AppWorkerServiceImpl::GetAvailablePorts(
   std::vector<int> used_ports;
   for (const auto& port : request->used_ports()) { used_ports.push_back(port); }
 
-  std::vector<int> unused_ports = get_unused_network_ports(
-      request->number_of_ports(), request->min_port(), request->max_port(), used_ports);
+  // Get preferred network ports from environment variable
+  auto prefer_ports = get_preferred_network_ports("HOLOSCAN_UCX_PORTS");
+  std::vector<int> unused_ports = get_unused_network_ports(request->number_of_ports(),
+                                                           request->min_port(),
+                                                           request->max_port(),
+                                                           used_ports,
+                                                           prefer_ports);
 
   for (int port : unused_ports) { response->add_unused_ports(port); }
+
+  return grpc::Status::OK;
+}
+
+grpc::Status AppWorkerServiceImpl::GetFragmentInfo(
+    grpc::ServerContext* context, const holoscan::service::FragmentInfoRequest* request,
+    holoscan::service::FragmentInfoResponse* response) {
+  (void)context;
+
+  // create MultipleFragmentsPortMap with fragment port info for the requested fragments
+  MultipleFragmentsPortMap scheduled_fragments_map;
+  scheduled_fragments_map.reserve(request->fragment_names_size());
+
+  auto& frag_graph = app_worker_->fragment_graph();
+  for (const auto& fragment_name : request->fragment_names()) {
+    auto fragment = frag_graph.find_node(fragment_name);
+    if (!fragment) {
+      HOLOSCAN_LOG_ERROR("Did not find fragment {} in the worker's fragment graph", fragment_name);
+      continue;
+    }
+    try {
+      fragment->compose_graph();
+    } catch (const std::exception& exception) {
+      HOLOSCAN_LOG_ERROR("GetFragmentInfo failed: {}", exception.what());
+      return grpc::Status::CANCELLED;
+    }
+    scheduled_fragments_map.try_emplace(fragment->name(), fragment->port_info());
+  }
+
+  // convert scheduled_fragments_map to the form needed for the response
+  auto scheduled_fragments_info = response->mutable_multi_fragment_port_info();
+  for (const auto& [frag_name, op_info_map] : scheduled_fragments_map) {
+    holoscan::service::MultiFragmentPortInfo_FragmentPortInfo frag_info;
+
+    frag_info.set_fragment_name(frag_name);
+    for (const auto& [op_name, port_tuple] : op_info_map) {
+      holoscan::service::MultiFragmentPortInfo_OperatorPortInfo op_info;
+      op_info.set_operator_name(op_name);
+      const auto& [in_names, out_names, receiver_names] = port_tuple;
+      for (const auto& in_name : in_names) { op_info.add_input_names(in_name); }
+      for (const auto& out_name : out_names) { op_info.add_output_names(out_name); }
+      for (const auto& recv_name : receiver_names) { op_info.add_receiver_names(recv_name); }
+      frag_info.add_operators_info()->CopyFrom(op_info);
+    }
+
+    scheduled_fragments_info->add_targets_info()->CopyFrom(frag_info);
+  }
 
   return grpc::Status::OK;
 }
@@ -110,15 +163,19 @@ grpc::Status AppWorkerServiceImpl::ExecuteFragments(
 
         switch (arg.value_case()) {
           case holoscan::service::ConnectorArg::ValueCase::kStrValue:
-            HOLOSCAN_LOG_DEBUG("Arg Value: {}", arg.str_value());
+            HOLOSCAN_LOG_DEBUG("Arg Value: {} (string)", arg.str_value());
             arg_list.add(holoscan::Arg(arg.key(), arg.str_value()));
             break;
           case holoscan::service::ConnectorArg::ValueCase::kIntValue:
-            HOLOSCAN_LOG_DEBUG("Arg Value: {}", arg.int_value());
+            HOLOSCAN_LOG_DEBUG("Arg Value: {} (int32)", arg.int_value());
             arg_list.add(holoscan::Arg(arg.key(), arg.int_value()));
             break;
+          case holoscan::service::ConnectorArg::ValueCase::kUintValue:
+            HOLOSCAN_LOG_DEBUG("Arg Value: {} (uint32)", arg.uint_value());
+            arg_list.add(holoscan::Arg(arg.key(), arg.uint_value()));
+            break;
           case holoscan::service::ConnectorArg::ValueCase::kDoubleValue:
-            HOLOSCAN_LOG_DEBUG("Arg Value: {}", arg.double_value());
+            HOLOSCAN_LOG_DEBUG("Arg Value: {} (double)", arg.double_value());
             arg_list.add(holoscan::Arg(arg.key(), arg.double_value()));
             break;
           default:

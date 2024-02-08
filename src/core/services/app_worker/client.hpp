@@ -29,7 +29,7 @@
 
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/forward_def.hpp"
-
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/services/common/network_constants.hpp"
 
 namespace holoscan::service {
@@ -44,6 +44,8 @@ class AppWorkerClient {
                                        uint32_t min_port = kMinNetworkPort,
                                        uint32_t max_port = kMaxNetworkPort,
                                        const std::vector<uint32_t>& used_ports = {});
+
+  MultipleFragmentsPortMap fragment_port_info(const std::vector<std::string>& fragment_names);
 
   bool fragment_execution(
       const std::vector<std::shared_ptr<Fragment>>& fragments,

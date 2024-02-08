@@ -90,8 +90,6 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
   if (!builder) { return false; }
 
-  builder->setMaxBatchSize(network_options.max_batch_size);
-
   auto explicit_batch =
       1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
   auto network =
@@ -139,7 +137,7 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
     config->addOptimizationProfile(profile);
   }
 
-  config->setMaxWorkspaceSize(network_options.max_memory);
+  config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, network_options.max_memory);
 
   if (network_options.use_fp16) { config->setFlag(nvinfer1::BuilderFlag::kFP16); }
 

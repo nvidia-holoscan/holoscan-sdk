@@ -33,6 +33,7 @@ layout(depth_less) out float gl_FragDepth;
 // sampler
 layout(binding = SAMPLE_BINDING_COLOR) uniform sampler2D colorSampler;
 layout(binding = SAMPLE_BINDING_COLOR_U) uniform usampler2D coloruSampler;
+layout(binding = SAMPLE_BINDING_COLOR_S) uniform isampler2D coloriSampler;
 layout(binding = SAMPLE_BINDING_LUT) uniform sampler2D lutSampler;
 layout(binding = SAMPLE_BINDING_DEPTH) uniform sampler2D depthSampler;
 
@@ -52,6 +53,9 @@ void main()
       color = textureLod(lutSampler, vec2(index, 0.f), 0);
     } else if ((push_constants.fragment.flags & PUSH_CONSTANT_FRAGMENT_FLAG_LUT_U) != 0) {
       const uint index = texture(coloruSampler, i_texCoord).x;
+      color = textureLod(lutSampler, vec2(float(index), 0.f), 0);
+    } else if ((push_constants.fragment.flags & PUSH_CONSTANT_FRAGMENT_FLAG_LUT_S) != 0) {
+      const uint index = texture(coloriSampler, i_texCoord).x;
       color = textureLod(lutSampler, vec2(float(index), 0.f), 0);
     }
   }

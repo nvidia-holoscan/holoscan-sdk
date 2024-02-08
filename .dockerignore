@@ -31,6 +31,8 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+runtime_docker/install
+runtime_docker/*.txt
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

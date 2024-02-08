@@ -46,11 +46,34 @@
     _holoscan_nvml_err;                                                                    \
   })
 
+#define HOLOSCAN_NVML_CALL_WARN(stmt)                                                      \
+  ({                                                                                       \
+    nvml::nvmlReturn_t _holoscan_nvml_err = -1;                                            \
+    if (handle_ == nullptr) {                                                              \
+      HOLOSCAN_LOG_ERROR(                                                                  \
+          "NVML library not loaded but NVML method '{}' in line {} of file {} was called", \
+          #stmt,                                                                           \
+          __LINE__,                                                                        \
+          __FILE__);                                                                       \
+    } else {                                                                               \
+      _holoscan_nvml_err = stmt;                                                           \
+      if (_holoscan_nvml_err != 0) {                                                       \
+        HOLOSCAN_LOG_WARN("NVML call '{}' in line {} of file {} failed with '{}' ({})",    \
+                          #stmt,                                                           \
+                          __LINE__,                                                        \
+                          __FILE__,                                                        \
+                          nvmlErrorString(_holoscan_nvml_err),                             \
+                          _holoscan_nvml_err);                                             \
+      }                                                                                    \
+    }                                                                                      \
+    _holoscan_nvml_err;                                                                    \
+  })
+
 #define HOLOSCAN_NVML_CALL_RETURN(stmt)                               \
   {                                                                   \
     nvml::nvmlReturn_t _holoscan_nvml_err = HOLOSCAN_NVML_CALL(stmt); \
     if (_holoscan_nvml_err != 0) {                                    \
-      close();                                                        \
+      shutdown_nvml();                                                \
       return;                                                         \
     }                                                                 \
   }
@@ -60,7 +83,7 @@
     nvml::nvmlReturn_t _holoscan_nvml_err = HOLOSCAN_NVML_CALL(stmt); \
     if (_holoscan_nvml_err != 0) {                                    \
       HOLOSCAN_LOG_ERROR(__VA_ARGS__);                                \
-      close();                                                        \
+      shutdown_nvml();                                                \
       return return_value;                                            \
     }                                                                 \
   }
@@ -94,7 +117,7 @@
   {                                                                            \
     holoscan::cuda::cudaError_t _holoscan_cuda_err = HOLOSCAN_CUDA_CALL(stmt); \
     if (_holoscan_cuda_err != 0) {                                             \
-      close();                                                                 \
+      shutdown_cuda_runtime();                                                 \
       return;                                                                  \
     }                                                                          \
   }
@@ -104,7 +127,7 @@
     holoscan::cuda::cudaError_t _holoscan_cuda_err = HOLOSCAN_CUDA_CALL(stmt); \
     if (_holoscan_cuda_err != 0) {                                             \
       HOLOSCAN_LOG_ERROR(__VA_ARGS__);                                         \
-      close();                                                                 \
+      shutdown_cuda_runtime();                                                 \
       return return_value;                                                     \
     }                                                                          \
   }
@@ -114,7 +137,7 @@ namespace holoscan {
 namespace {
 constexpr char kDefaultNvmlLibraryPath[] = "libnvidia-ml.so.1";  // /usr/lib/x86_64-linux-gnu/
 constexpr const char* kDefaultCudaRuntimeLibraryPaths[] = {
-    "libcudart.so.11.0", "libcudart.so"};  // /usr/local/cuda/lib64/
+    "libcudart.so.12", "libcudart.so"};  // /usr/local/cuda/lib64/
 }  // namespace
 
 GPUResourceMonitor::GPUResourceMonitor(uint64_t metric_flags) : metric_flags_(metric_flags) {
@@ -130,41 +153,12 @@ void GPUResourceMonitor::init() {
   close();
 
   handle_ = dlopen(kDefaultNvmlLibraryPath, RTLD_NOW);
-  const char* libcudart_path = nullptr;
+  if (handle_) { HOLOSCAN_LOG_DEBUG("NVML library loaded from '{}'", kDefaultNvmlLibraryPath); }
 
-  if (handle_ == nullptr) {
-    HOLOSCAN_LOG_DEBUG(
-        "Unable to load NVML shared library from '{}'. Trying to use CUDA Runtime API instead.",
-        kDefaultNvmlLibraryPath);
-    for (uint32_t i = 0; i < sizeof(kDefaultCudaRuntimeLibraryPaths) / sizeof(char*); ++i) {
-      libcudart_path = kDefaultCudaRuntimeLibraryPaths[i];
-      cuda_handle_ = dlopen(libcudart_path, RTLD_NOW);
-      if (cuda_handle_ != nullptr) { break; }
-    }
-    if (cuda_handle_ == nullptr) {
-      HOLOSCAN_LOG_WARN(
-          "Unable to load CUDA Runtime API shared library from '{}'. GPU Information will not be "
-          "available.",
-          libcudart_path);
-      return;
-    }
-    HOLOSCAN_LOG_DEBUG("CUDA Runtime API library loaded from '{}'", libcudart_path);
-    bind_cuda_runtime_methods();
-    int gpu_count = 0;
-    HOLOSCAN_CUDA_CALL_RETURN(cudaGetDeviceCount(&gpu_count));
-    gpu_count_ = gpu_count;
-  } else {
-    HOLOSCAN_LOG_DEBUG("NVML library loaded from '{}'", kDefaultNvmlLibraryPath);
-
-    bind_nvml_methods();
-
-    HOLOSCAN_NVML_CALL_RETURN(nvmlInit());
-
-    // Get the GPU count and initialize the GPU info vector
-    HOLOSCAN_NVML_CALL(nvmlDeviceGetCount(&gpu_count_));
-
-    // Initialize nvml devices vector
-    nvml_devices_.resize(gpu_count_, nullptr);
+  if (!init_nvml()) {
+    // If NVML initialization fails (e.g., iGPU case: nvml is not fully supported),
+    // try to use CUDA Runtime API.
+    if (!init_cuda_runtime()) { return; }
   }
 
   // Initialize the GPU info vector
@@ -172,18 +166,9 @@ void GPUResourceMonitor::init() {
 }
 
 void GPUResourceMonitor::close() {
-  if (handle_) {
-    nvml::nvmlReturn_t result = nvmlShutdown();
-    if (result != 0) { HOLOSCAN_LOG_ERROR("Could not shutdown NVML"); }
-    dlclose(handle_);
-    handle_ = nullptr;
-    is_cached_ = false;
-  }
-  if (cuda_handle_) {
-    dlclose(cuda_handle_);
-    cuda_handle_ = nullptr;
-    is_cached_ = false;
-  }
+  shutdown_nvml();
+  shutdown_cuda_runtime();
+  gpu_count_ = 0;
 }
 
 uint64_t GPUResourceMonitor::metric_flags() const {
@@ -235,66 +220,66 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
           "Could not get the device name for GPU {}",
           index);
 
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(nvmlDeviceGetPciInfo(device, &gpu_info.pci),
-                                          gpu_info,
-                                          "Could not get the PCI info for GPU {}",
-                                          index);
+      // The following information is optional.
+      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetPciInfo(device, &gpu_info.pci)) != 0) {
+        gpu_info.pci = {};
+      }
 
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(
-          nvmlDeviceGetSerial(device, gpu_info.serial, NVML_DEVICE_SERIAL_BUFFER_SIZE),
-          gpu_info,
-          "Could not get the serial number for GPU {}",
-          index);
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(
-          nvmlDeviceGetUUID(device, gpu_info.uuid, NVML_DEVICE_UUID_BUFFER_SIZE),
-          gpu_info,
-          "Could not get the UUID for GPU {}",
-          index);
+      if (HOLOSCAN_NVML_CALL_WARN(
+              nvmlDeviceGetSerial(device, gpu_info.serial, NVML_DEVICE_SERIAL_BUFFER_SIZE)) != 0) {
+        strncpy(gpu_info.serial, "Not Supported", NVML_DEVICE_SERIAL_BUFFER_SIZE - 1);
+      }
+
+      if (HOLOSCAN_NVML_CALL_WARN(
+              nvmlDeviceGetUUID(device, gpu_info.uuid, NVML_DEVICE_UUID_BUFFER_SIZE)) != 0) {
+        strncpy(gpu_info.uuid, "Not Supported", NVML_DEVICE_UUID_BUFFER_SIZE - 1);
+      }
     }
 
     if (metric_flags & GPUMetricFlag::GPU_UTILIZATION) {
-      nvml::nvmlUtilization_t utilization;
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(nvmlDeviceGetUtilizationRates(device, &utilization),
-                                          gpu_info,
-                                          "Could not get the utilization rates for GPU {}",
-                                          index);
+      nvml::nvmlUtilization_t utilization{};
+
+      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetUtilizationRates(device, &utilization)) != 0) {
+        HOLOSCAN_LOG_DEBUG("Could not get the utilization rates for GPU {}", index);
+      }
+
       gpu_info.gpu_utilization = utilization.gpu;
       gpu_info.memory_utilization = utilization.memory;
     }
 
     if (metric_flags & GPUMetricFlag::MEMORY_USAGE) {
-      nvml::nvmlMemory_t memory;
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(nvmlDeviceGetMemoryInfo(device, &memory),
-                                          gpu_info,
-                                          "Could not get the memory info for GPU {}",
-                                          index);
+      nvml::nvmlMemory_t memory{};
+
+      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetMemoryInfo(device, &memory)) != 0) {
+        HOLOSCAN_LOG_DEBUG("Could not get the memory info for GPU {}", index);
+      }
       gpu_info.memory_total = memory.total;
       gpu_info.memory_free = memory.free;
       gpu_info.memory_used = memory.used;
-      gpu_info.memory_usage = 100.0 * memory.used / memory.total;
+      gpu_info.memory_usage = memory.total ? 100.0 * memory.used / memory.total : 0.0f;
     }
 
     if (metric_flags & GPUMetricFlag::POWER_LIMIT) {
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(
-          nvmlDeviceGetPowerManagementLimit(device, &gpu_info.power_limit),
-          gpu_info,
-          "Could not get the power limit for GPU {}",
-          index);
+      if (HOLOSCAN_NVML_CALL_WARN(
+              nvmlDeviceGetPowerManagementLimit(device, &gpu_info.power_limit)) != 0) {
+        HOLOSCAN_LOG_DEBUG("Could not get the power limit for GPU {}", index);
+        gpu_info.power_limit = 0;
+      }
     }
 
     if (metric_flags & GPUMetricFlag::POWER_USAGE) {
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(nvmlDeviceGetPowerUsage(device, &gpu_info.power_usage),
-                                          gpu_info,
-                                          "Could not get the power usage for GPU {}",
-                                          index);
+      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetPowerUsage(device, &gpu_info.power_usage)) != 0) {
+        HOLOSCAN_LOG_DEBUG("Could not get the power usage for GPU {}", index);
+        gpu_info.power_usage = 0;
+      }
     }
 
     if (metric_flags & GPUMetricFlag::TEMPERATURE) {
-      HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(
-          nvmlDeviceGetTemperature(device, nvml::NVML_TEMPERATURE_GPU, &gpu_info.temperature),
-          gpu_info,
-          "Could not get the temperature for GPU {}",
-          index);
+      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetTemperature(
+              device, nvml::NVML_TEMPERATURE_GPU, &gpu_info.temperature)) != 0) {
+        HOLOSCAN_LOG_DEBUG("Could not get the temperature for GPU {}", index);
+        gpu_info.temperature = 0;
+      }
     }
   } else if (cuda_handle_) {
     if (metric_flags & GPUMetricFlag::GPU_DEVICE_ID) {
@@ -521,16 +506,16 @@ bool GPUResourceMonitor::bind_nvml_methods() {
 bool GPUResourceMonitor::bind_cuda_runtime_methods() {
   // for cudaGetErrorString method
   cudaGetErrorString =
-      reinterpret_cast<cuda::cudaGetErrorString_t>(dlsym(handle_, "cudaGetErrorString"));
+      reinterpret_cast<cuda::cudaGetErrorString_t>(dlsym(cuda_handle_, "cudaGetErrorString"));
   // for cudaGetDeviceCount method
   cudaGetDeviceCount =
-      reinterpret_cast<cuda::cudaGetDeviceCount_t>(dlsym(handle_, "cudaGetDeviceCount"));
+      reinterpret_cast<cuda::cudaGetDeviceCount_t>(dlsym(cuda_handle_, "cudaGetDeviceCount"));
   // for cudaGetDeviceProperties method
-  cudaGetDeviceProperties =
-      reinterpret_cast<cuda::cudaGetDeviceProperties_t>(dlsym(handle_, "cudaGetDeviceProperties"));
+  cudaGetDeviceProperties = reinterpret_cast<cuda::cudaGetDeviceProperties_t>(
+      dlsym(cuda_handle_, "cudaGetDeviceProperties"));
   // for cudaDeviceGetPCIBusId method
   cudaDeviceGetPCIBusId =
-      reinterpret_cast<cuda::cudaDeviceGetPCIBusId_t>(dlsym(handle_, "cudaDeviceGetPCIBusId"));
+      reinterpret_cast<cuda::cudaDeviceGetPCIBusId_t>(dlsym(cuda_handle_, "cudaDeviceGetPCIBusId"));
   // for cudaMemGetInfo method
   cudaMemGetInfo = reinterpret_cast<cuda::cudaMemGetInfo_t>(dlsym(handle_, "cudaMemGetInfo"));
 
@@ -538,11 +523,104 @@ bool GPUResourceMonitor::bind_cuda_runtime_methods() {
       cudaGetDeviceProperties == nullptr || cudaDeviceGetPCIBusId == nullptr ||
       cudaMemGetInfo == nullptr) {
     HOLOSCAN_LOG_ERROR("Could not find CUDA Runtime function(s)");
-    close();
+    shutdown_cuda_runtime();
     return false;
   }
 
   return true;
+}
+
+bool GPUResourceMonitor::init_nvml() {
+  // Skip if handle_ is nullptr
+  if (handle_ == nullptr) { return false; }
+
+  bind_nvml_methods();
+
+  HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(nvmlInit(), false, "Could not initialize NVML");
+
+  // Get the GPU count and initialize the GPU info vector
+  HOLOSCAN_NVML_CALL(nvmlDeviceGetCount(&gpu_count_));
+
+  // Initialize nvml devices vector
+  nvml_devices_.resize(gpu_count_, nullptr);
+
+  // If one of the GPUs is an iGPU (having 'nvgpu'), then we use CUDA Runtime API to get the GPU
+  // information.
+  if (gpu_count_ > 0) {
+    bool use_nvml = true;
+    for (uint32_t index = 0; index < gpu_count_; ++index) {
+      nvml::nvmlDevice_t& device = nvml_devices_[index];
+      nvml::nvmlReturn_t result = -1;
+      result = nvmlDeviceGetHandleByIndex(index, &device);
+      if (result != 0) {
+        HOLOSCAN_LOG_DEBUG("Could not get the device handle for GPU {}", index);
+        use_nvml = false;
+        break;
+      }
+      char name[NVML_DEVICE_NAME_BUFFER_SIZE]{};
+      result = nvmlDeviceGetName(device, name, NVML_DEVICE_NAME_BUFFER_SIZE);
+      if (strstr(name, "nvgpu") != nullptr) {
+        HOLOSCAN_LOG_DEBUG("Found an iGPU ({}). Using CUDA Runtime API instead.", name);
+        use_nvml = false;
+        break;
+      }
+    }
+    if (!use_nvml) {
+      shutdown_nvml();
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool GPUResourceMonitor::init_cuda_runtime() {
+  // Skip if already initialized
+  if (cuda_handle_ != nullptr) { return true; }
+
+  const char* libcudart_path = "";
+
+  HOLOSCAN_LOG_DEBUG(
+      "Unable to use the NVML shared library from '{}'. Trying to use CUDA Runtime API instead.",
+      kDefaultNvmlLibraryPath);
+  for (uint32_t i = 0; i < sizeof(kDefaultCudaRuntimeLibraryPaths) / sizeof(char*); ++i) {
+    libcudart_path = kDefaultCudaRuntimeLibraryPaths[i];
+    cuda_handle_ = dlopen(libcudart_path, RTLD_NOW);
+    if (cuda_handle_ != nullptr) { break; }
+  }
+  if (cuda_handle_ == nullptr) {
+    HOLOSCAN_LOG_WARN(
+        "Unable to load CUDA Runtime API shared library from '{}'. GPU Information will not be "
+        "available.",
+        libcudart_path);
+    return false;
+  }
+  HOLOSCAN_LOG_DEBUG("CUDA Runtime API library loaded from '{}'", libcudart_path);
+  bind_cuda_runtime_methods();
+  int gpu_count = 0;
+  HOLOSCAN_CUDA_CALL_RETURN_VALUE_MSG(
+      cudaGetDeviceCount(&gpu_count), false, "Could not get the number of GPUs");
+  gpu_count_ = gpu_count;
+
+  return true;
+}
+
+void GPUResourceMonitor::shutdown_nvml() {
+  if (handle_) {
+    nvml::nvmlReturn_t result = nvmlShutdown();
+    if (result != 0) { HOLOSCAN_LOG_ERROR("Could not shutdown NVML"); }
+    dlclose(handle_);
+    handle_ = nullptr;
+    is_cached_ = false;
+  }
+}
+
+void GPUResourceMonitor::shutdown_cuda_runtime() {
+  if (cuda_handle_) {
+    dlclose(cuda_handle_);
+    cuda_handle_ = nullptr;
+    is_cached_ = false;
+  }
 }
 
 }  // namespace holoscan

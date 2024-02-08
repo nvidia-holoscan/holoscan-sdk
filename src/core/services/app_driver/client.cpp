@@ -35,13 +35,15 @@ AppDriverClient::AppDriverClient(const std::string& driver_address,
     : driver_address_(driver_address),
       stub_(holoscan::service::AppDriverService::NewStub(channel)) {}
 
-bool AppDriverClient::fragment_allocation(const std::string& worker_port,
+bool AppDriverClient::fragment_allocation(const std::string& worker_ip,
+                                          const std::string& worker_port,
                                           const std::vector<FragmentNodeType>& target_fragments,
                                           const CPUInfo& cpuinfo,
                                           const std::vector<GPUInfo>& gpuinfo) {
   holoscan::service::FragmentAllocationRequest request;
 
-  request.mutable_worker_port()->assign(worker_port);
+  request.set_worker_ip(worker_ip);
+  request.set_worker_port(worker_port);
 
   // Adding fragment names
   for (const auto& fragment : target_fragments) { request.add_fragment_names(fragment->name()); }
@@ -87,9 +89,12 @@ bool AppDriverClient::fragment_allocation(const std::string& worker_port,
     return false;
   }
 }
-bool AppDriverClient::worker_execution_finished(const std::string& worker_port,
+
+bool AppDriverClient::worker_execution_finished(const std::string& worker_ip,
+                                                const std::string& worker_port,
                                                 AppWorkerTerminationCode code) {
   holoscan::service::WorkerExecutionFinishedRequest request;
+  request.set_worker_ip(worker_ip);
   request.set_worker_port(worker_port);
 
   holoscan::service::Result* worker_termination_status = new holoscan::service::Result();

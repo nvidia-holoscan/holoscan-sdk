@@ -16,6 +16,7 @@
  */
 
 #include <bits/stdc++.h>  // unordered map find
+#include <fmt/format.h>
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
@@ -263,24 +264,49 @@ TEST(OperatorSpec, TestOperatorSpecDescription) {
   spec.input<holoscan::Tensor>("holoscan_tensor_in");
   spec.output<holoscan::Tensor>("holoscan_tensor_out");
 
-    Parameter<bool> b;
-    Parameter<std::array<int, 5>> i;
-    Parameter<std::vector<std::vector<double>>> d;
-    Parameter<std::vector<std::string>> s;
-    spec.param(b, "bool_scalar", "Boolean parameter", "true or false");
-    spec.param(i, "int_array", "Int array parameter", "5 integers");
-    spec.param(
-        d, "double_vec_of_vec", "Double 2D vector parameter", "double floats in double vector");
-    spec.param(s, "string_vector", "String vector parameter", "");
-
-    std::string description = fmt::format(R"({}
+  Parameter<bool> b;
+  Parameter<std::array<int, 5>> i;
+  Parameter<std::vector<std::vector<double>>> d;
+  Parameter<std::vector<std::string>> s;
+  spec.param(b, "bool_scalar", "Boolean parameter", "true or false");
+  spec.param(i, "int_array", "Int array parameter", "5 integers");
+  spec.param(
+      d, "double_vec_of_vec", "Double 2D vector parameter", "double floats in double vector");
+  spec.param(s, "string_vector", "String vector parameter", "");
+  std::string tensor_typename = typeid(holoscan::Tensor).name();
+  std::string entity_typename = typeid(holoscan::gxf::Entity).name();
+  std::string description = fmt::format(R"({}
 inputs:
-  - holoscan_tensor_in
-  - gxf_entity_in
+  - name: holoscan_tensor_in
+    io_type: kInput
+    typeinfo_name: {}
+    connector_type: kDefault
+    conditions:
+      []
+  - name: gxf_entity_in
+    io_type: kInput
+    typeinfo_name: {}
+    connector_type: kDefault
+    conditions:
+      []
 outputs:
-  - holoscan_tensor_out
-  - gxf_entity_out)",
-                                          ComponentSpec(spec).description());
-    EXPECT_EQ(spec.description(), description);
+  - name: holoscan_tensor_out
+    io_type: kOutput
+    typeinfo_name: {}
+    connector_type: kDefault
+    conditions:
+      []
+  - name: gxf_entity_out
+    io_type: kOutput
+    typeinfo_name: {}
+    connector_type: kDefault
+    conditions:
+      [])",
+                                        ComponentSpec(spec).description(),
+                                        tensor_typename,
+                                        entity_typename,
+                                        tensor_typename,
+                                        entity_typename);
+  EXPECT_EQ(spec.description(), description);
 }
 }  // namespace holoscan

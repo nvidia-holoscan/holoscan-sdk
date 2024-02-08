@@ -31,12 +31,11 @@
 #include <holoinfer_utils.hpp>
 #include <infer/infer.hpp>
 
-#if __has_include(<onnxruntime_c_api.h>)
-#define use_onnxruntime 1
+#if use_onnxruntime
 #include <infer/onnx/core.hpp>
 #endif
 
-#ifdef use_torch
+#if use_torch
 #include <infer/torch/core.hpp>
 #endif
 

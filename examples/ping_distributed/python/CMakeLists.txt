@@ -37,7 +37,35 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Rx message value: 10"
+    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "AssertionError:"
+  )
+
+  add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST
+    COMMAND python3 ping_distributed.py --gpu
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    FAIL_REGULAR_EXPRESSION "AssertionError:"
+  )
+
+  add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST
+    COMMAND python3 ping_distributed.py --help
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Usage: ping_distributed.py \\[OPTIONS\\]"
+  )
+
+  add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_INVALID_DEVICE_TEST
+    COMMAND python3 ping_distributed.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  # Use a negative id to test with a non-existent device
+  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_INVALID_DEVICE_TEST PROPERTIES
+    ENVIRONMENT "HOLOSCAN_UCX_DEVICE_ID=-5"
+    PASS_REGULAR_EXPRESSION "GPUDevice value found and cached. dev_id: -5"
+    PASS_REGULAR_EXPRESSION "cudaSetDevice Failed - 101, device id -5"
   )
 endif()

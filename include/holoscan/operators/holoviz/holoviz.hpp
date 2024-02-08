@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,9 +32,16 @@
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/utils/cuda_stream_handler.hpp"
 
-struct BufferInfo;
+namespace holoscan::viz {
+
+typedef void* InstanceHandle;
+
+}  // namespace holoscan::viz
 
 namespace holoscan::ops {
+
+// forward declaration
+struct BufferInfo;
 
 /**
  * @brief Operator class for data visualization.
@@ -44,6 +51,41 @@ namespace holoscan::ops {
  * input tensors when only the `receivers` parameter list is specified. Else the input specification
  * can be set at creation time using the `tensors` parameter or at runtime when passing input
  * specifications to the `input_specs` port.
+ *
+ * **Named inputs:**
+ *     - *receivers*: multi-receiver accepting `nvidia::gxf::Tensor` and/or
+ *     `nvidia::gxf::VideoBuffer`
+ *         - Any number of upstream ports may be connected to this `receivers` port. This port can
+ *         accept either VideoBuffers or Tensors. These inputs can be in either host or device
+ *         memory. Each tensor or video buffer will result in a layer. The operator autodetects the
+ *         layer type for certain input types (e.g. a video buffer will result in an image layer). For
+ *         other input types or more complex use cases, input specifications can be provided either at
+ *         initialization time as a parameter or dynamically at run time (via `input_specs`). On each
+ *         call to `compute`, tensors corresponding to all names specified in the `tensors` parameter
+ *         must be found or an exception will be raised. Any extra, named tensors not present in the
+ *         `tensors` parameter specification (or optional, dynamic `input_specs` input) will be
+ *         ignored.
+ *     - *input_specs*: `std::vector<holoscan::ops::HolovizOp::InputSpec>` (optional)
+ *         - A list of `InputSpec` objects. This port can be used to dynamically update the overlay
+ *         specification at run time. No inputs are required on this port in order for the operator
+ *         to `compute`.
+ *     - *render_buffer_input*: `nvidia::gxf::VideoBuffer` (optional)
+ *         - An empty render buffer can optionally be provided. The video buffer must have format
+ *         GXF_VIDEO_FORMAT_RGBA and be in device memory. This input port only exists if
+ *         `enable_render_buffer_input` was set to true, in which case `compute` will only be
+ *         called when a message arrives on this input.
+ *
+ * **Named outputs:**
+ *     - *render_buffer_output*: `nvidia::gxf::VideoBuffer` (optional)
+ *         - Output for a filled render buffer. If an input render buffer is specified, it is using
+ *         that one, else it allocates a new buffer. The video buffer will have format
+ *         GXF_VIDEO_FORMAT_RGBA and will be in device memory. This output is useful for offline
+ *         rendering or headless mode. This output port only exists if `enable_render_buffer_output`
+ *         was set to true.
+ *     - *camera_pose_output*: `std::array<float, 16>` (optional)
+ *         - The camera pose. The parameters returned represent the values of a 4x4 row major
+ *         projection matrix. This output port only exists if `enable_camera_pose_output` was set to
+ *         true.
  *
  * 1. Parameters
  *
@@ -176,9 +218,9 @@ namespace holoscan::ops {
  *
  *    In all cases, `x` and `y` are normalized coordinates in the range `[0, 1]`. The `x` and `y`
  *    correspond to the horizontal and vertical axes of the display, respectively. The origin `(0,
- *    0)` is at the top left of the display. All coordinates should be defined using a single
- *    precision float data type. Geometric primitives outside of the visible area are clipped.
- *    Coordinate arrays are expected to have the shape `(1, N, C)` where `N` is the coordinate count
+ *    0)` is at the top left of the display.
+ *    Geometric primitives outside of the visible area are clipped.
+ *    Coordinate arrays are expected to have the shape `(N, C)` where `N` is the coordinate count
  *    and `C` is the component count for each coordinate.
  *
  *    - Points are defined by a `(x, y)` coordinate pair.
@@ -260,7 +302,7 @@ class HolovizOp : public Operator {
    */
   enum class InputType {
     UNKNOWN,     ///< unknown type, the operator tries to guess the type by inspecting the tensor
-    COLOR,       ///< RGB or RGBA color 2d image
+    COLOR,       ///< GRAY, RGB or RGBA 2d color image
     COLOR_LUT,   ///< single channel 2d image, color is looked up
     POINTS,      ///< point primitives, one coordinate (x, y) per primitive
     LINES,       ///< line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
@@ -374,8 +416,8 @@ class HolovizOp : public Operator {
   };
 
  private:
-  void enable_conditional_port(const std::string& name);
-  bool check_port_enabled(const std::string& name);
+  bool enable_conditional_port(const std::string& name,
+                               bool set_none_condition_on_disabled = false);
   void set_input_spec(const InputSpec& input_spec);
   void set_input_spec_geometry(const InputSpec& input_spec);
   void read_frame_buffer(InputContext& op_input, OutputContext& op_output,
@@ -408,6 +450,7 @@ class HolovizOp : public Operator {
   Parameter<std::string> font_path_;
 
   // internal state
+  viz::InstanceHandle instance_ = nullptr;
   std::vector<float> lut_;
   std::vector<InputSpec> initial_input_spec_;
   CudaStreamHandler cuda_stream_handler_;

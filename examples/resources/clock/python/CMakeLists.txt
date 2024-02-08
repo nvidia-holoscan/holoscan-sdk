@@ -41,5 +41,5 @@ if(HOLOSCAN_BUILD_TESTS)
   )
   set_tests_properties(EXAMPLE_RESOURCES_PYTHON_PING_CLOCK_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "final timestamp"
-  )  
+  )
 endif()

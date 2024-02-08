@@ -83,9 +83,14 @@ int main(int argc, char** argv) {
   // Get the configuration
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path += "/v4l2_camera.yaml";
-  app.config(config_path);
+  if ( argc >= 2 ) {
+    config_path = argv[1];
+  }
 
+  app.config(config_path);
   app.run();
+
+  HOLOSCAN_LOG_INFO("Application has finished running.");
 
   return 0;
 }

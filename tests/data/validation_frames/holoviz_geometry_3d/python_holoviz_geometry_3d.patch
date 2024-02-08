@@ -1,0 +1,49 @@
+--- ../examples/holoviz/python/holoviz_geometry_3d.py	2023-12-05 08:22:54.405987782 +0000
++++ examples/holoviz/python/holoviz_geometry_3d_test.py	2023-12-07 23:11:25.155227107 +0000
+@@ -23,7 +23,8 @@
+ 
+ from holoscan.conditions import CountCondition
+ from holoscan.core import Application, Operator, OperatorSpec
+-from holoscan.operators import HolovizOp
++from holoscan.operators import HolovizOp, VideoStreamRecorderOp, FormatConverterOp
++from holoscan.resources import UnboundedAllocator
+ 
+ 
+ # This holds the information on a 3d geometric primitive
+@@ -193,9 +194,29 @@
+                     color=[0.0, 0.0, 1.0, 1.0],
+                 ),
+             ],
++            enable_render_buffer_output=True
+         )
+         self.add_flow(geometry_3d, visualizer, {("outputs", "receivers")})
+ 
++        recorder_format_converter = FormatConverterOp(
++            self,
++            name="recorder_format_converter",
++            in_dtype="rgba8888",
++            out_dtype="rgb888",
++            pool=UnboundedAllocator(self, name="pool")
++        )
++        recorder = VideoStreamRecorderOp(
++            self,
++            name="recorder",
++            directory="RECORDING_DIR",
++            basename="SOURCE_VIDEO_BASENAME"
++        )
++
++        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
++
++        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(recorder_format_converter, recorder)
++
+ 
+ def main(config_count):
+     app = MyGeometry3DApp(config_count=config_count)
+@@ -212,5 +233,5 @@
+         help="Set the number of frames to display",
+     )
+     args = parser.parse_args()
+-
++    random.seed(10)
+     main(config_count=args.count)

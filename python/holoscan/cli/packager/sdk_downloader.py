@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import logging
 import os
@@ -23,7 +25,7 @@ import requests
 
 from ..common.artifact_sources import ArtifactSources
 from ..common.enum_types import Arch
-from ..common.exceptions import ErrorDownloadingExternalAsset, InvalidSdk
+from ..common.exceptions import ExternalAssetDownloadError, InvalidSdkError
 
 
 def download_health_probe_file(
@@ -43,7 +45,7 @@ def download_health_probe_file(
         artifact_sources (ArtifactSources): artifact source
 
     Raises:
-        ErrorDownloadingExternalAsset: when unable to download gRPC health probe
+        ExternalAssetDownloadError: when unable to download gRPC health probe
 
     Returns:
         Path: path to the downloaded file
@@ -61,12 +63,12 @@ def download_health_probe_file(
         logger.info(f"Downloading gRPC health probe from {download_url}...")
         response = requests.get(download_url)
         if not response.ok:
-            raise ErrorDownloadingExternalAsset(
+            raise ExternalAssetDownloadError(
                 f"failed to download health probe utility from {download_url} with "
                 "HTTP status {response.status_code}."
             )
     except Exception as e:
-        raise ErrorDownloadingExternalAsset(f"error downloading health probe: {e}")
+        raise ExternalAssetDownloadError(f"error downloading health probe: {e}") from e
 
     try:
         logger.info(f"Saving gRPC health probe to {target_file}...")
@@ -74,7 +76,7 @@ def download_health_probe_file(
             f.write(response.content)
         return Path(target_file)
     except Exception as e:
-        raise ErrorDownloadingExternalAsset(f"error saving health probe: {e}")
+        raise ExternalAssetDownloadError(f"error saving health probe: {e}") from e
 
 
 def download_sdk_debian_file(
@@ -96,7 +98,7 @@ def download_sdk_debian_file(
         artifact_sources (ArtifactSources): artifact source
 
     Raises:
-        InvalidSdk: when unable to download the Holoscan SDK Debian package
+        InvalidSdkError: when unable to download the Holoscan SDK Debian package
 
     Returns:
         Path: path to the downloaded file
@@ -107,25 +109,35 @@ def download_sdk_debian_file(
         )
         response = requests.get(debian_package_source)
         if not response.ok:
-            raise InvalidSdk(
+            raise InvalidSdkError(
                 f"failed to download SDK from {debian_package_source} with "
                 "HTTP status {response.status_code}."
             )
     except Exception as ex:
-        raise InvalidSdk(f"failed to download SDK from {debian_package_source}", ex)
+        raise InvalidSdkError(f"failed to download SDK from {debian_package_source}", ex) from ex
 
-    try:
-        z = zipfile.ZipFile(BytesIO(response.content))
-        unzip_dir = os.path.join(temp_dir, f"{sdk_version}_{arch.name}")
-        logger.info(f"Extracting Debian Package to {unzip_dir}...")
-        z.extractall(unzip_dir)
-    except Exception as ex:
-        raise InvalidSdk(f"failed to unzip SDK from {debian_package_source}", ex)
+    if debian_package_source.endswith(".deb"):
+        filename = Path(debian_package_source).name
+        output_dir = os.path.join(temp_dir, f"{sdk_version}_{arch.name}")
+        os.mkdir(output_dir)
+        file_path = os.path.join(output_dir, filename)
+        with open(file_path, "wb") as f:
+            f.write(response.content)
+        logger.info(f"Debian package for {arch.name} downloaded to {file_path}")
+        return Path(file_path)
+    else:
+        try:
+            z = zipfile.ZipFile(BytesIO(response.content))
+            unzip_dir = os.path.join(temp_dir, f"{sdk_version}_{arch.name}")
+            logger.info(f"Extracting Debian Package to {unzip_dir}...")
+            z.extractall(unzip_dir)
+        except Exception as ex:
+            raise InvalidSdkError(f"failed to unzip SDK from {debian_package_source}", ex) from ex
 
-    for file in os.listdir(unzip_dir):
-        if file.endswith(".deb"):
-            file_path = os.path.join(unzip_dir, file)
-            logger.info(f"Debian package for {arch.name} downloaded {file_path}")
-            return Path(file_path)
+        for file in os.listdir(unzip_dir):
+            if file.endswith(".deb"):
+                file_path = os.path.join(unzip_dir, file)
+                logger.info(f"Debian package for {arch.name} downloaded to {file_path}")
+                return Path(file_path)
 
-    raise InvalidSdk(f"Debian package not found in {debian_package_source}")
+        raise InvalidSdkError(f"Debian package not found in {debian_package_source}")

@@ -42,6 +42,7 @@ class ProcessingTests {
   void parameter_test();
   void parameter_setup_test();
   void print_summary();
+  int get_status();
 
  private:
   /// Default parameters for inference

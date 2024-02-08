@@ -1,0 +1,62 @@
+
+% SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+% SPDX-License-Identifier: Apache-2.0
+%
+% Licensed under the Apache License, Version 2.0 (the "License");
+% you may not use this file except in compliance with the License.
+% You may obtain a copy of the License at
+%
+% http://www.apache.org/licenses/LICENSE-2.0
+%
+% Unless required by applicable law or agreed to in writing, software
+% distributed under the License is distributed on an "AS IS" BASIS,
+% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+% See the License for the specific language governing permissions and
+% limitations under the License.
+
+% Define some nvidia colors
+\usepackage{xcolor}
+\definecolor{nvgreen}{RGB}{118,185,0}
+\definecolor{nvgreen2}{RGB}{0,72,49}
+\definecolor{nvgreen3}{RGB}{0,132,113}
+
+% Change the colors of sections and subsections
+\usepackage{sectsty}
+\chapterfont{\color{nvgreen2}}
+\sectionfont{\color{nvgreen2}}
+\subsectionfont{\color{nvgreen2}}
+
+% Use images and set graphics path for logo
+\usepackage{graphicx}
+\graphicspath{{engine/build/sphinx}}
+
+% Modify the header/footer
+\makeatletter
+  \fancypagestyle{normal}{
+
+    % Need higher header because of logo
+    \setlength\headheight{26pt}
+
+    % footer / header areas
+    \fancyhf{}
+    \fancyfoot[LE,RO]{{\thepage}}
+    \fancyfoot[LO]{{\nouppercase{\rightmark}}}
+    \fancyfoot[RE]{{\nouppercase{\leftmark}}}
+    \fancyhead[LE,RO]{{\py@HeaderFamily \@title}}
+    \fancyhead[LO,RE]{{\includegraphics[width=2cm]{nvidia}}}
+
+    % green header
+    \renewcommand{\headrulewidth}{0.4pt}
+    \renewcommand{\headrule}{\hbox to\headwidth{%
+        \color{nvgreen}\leaders\hrule height \headrulewidth\hfill}}
+
+    % green footer
+    \renewcommand{\footrulewidth}{0.4pt}
+    \renewcommand{\footrule}{\hbox to\headwidth{%
+        \color{nvgreen}\leaders\hrule height \headrulewidth\hfill}}
+
+    %% define chaptermark with \@chappos when \@chappos is available for Japanese
+    %\spx@ifundefined{@chappos}{}
+    %  {\def\chaptermark##1{\markboth{\@chapapp\space\thechapter\space\@chappos\space ##1}{}}}
+  }
+\makeatother

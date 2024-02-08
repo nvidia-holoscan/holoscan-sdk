@@ -32,10 +32,10 @@ set(GLSL_SOURCE_FILES)
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_color_shader.glsl.vert")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_shader.glsl.frag")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_shader.glsl.vert")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_text_shader.glsl.frag")
-list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/geometry_text_shader.glsl.vert")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_shader.glsl.frag")
 list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/image_shader.glsl.vert")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/imgui_shader.glsl.frag")
+list(APPEND GLSL_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/imgui_shader.glsl.vert")
 
 set(GLSLANGVALIDATOR ${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE})
 compile_glsl(
@@ -97,6 +97,7 @@ target_link_libraries(${PROJECT_NAME}
         nvpro_core
         holoscan::viz::imgui
         holoscan::logger
+        holoscan_security_flags
 
     PUBLIC
         CUDA::cuda_driver

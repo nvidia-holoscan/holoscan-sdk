@@ -9,6 +9,7 @@
         "dockerfile": "Dockerfile",
         "args": {
             "BUILDKIT_INLINE_CACHE": "1", // Enable Docker BuildKit cache
+            "HOLOSCAN_BUILD_IMAGE": "${localEnv:HOLOSCAN_BUILD_IMAGE}", // Base image name
         }
         // buildcontainer.json doesn't support build.secrets field
         // (https://github.com/microsoft/vscode-remote-release/issues/4841)
@@ -34,16 +35,12 @@
         // Set the following environment variables to use the same folder name as the host machine.
         // This is needed to launch container from the workspace folder that is not same as the SDK source root folder.
         "HOLOSCAN_PUBLIC_FOLDER": "${env:HOLOSCAN_PUBLIC_FOLDER}",
+        // This is necessary to prevent memory overuse during the SDK build process.
+        // The `CMAKE_BUILD_PARALLEL_LEVEL` environment variable is set by the `run vscode` command.
+        "CMAKE_BUILD_PARALLEL_LEVEL": "${env:CMAKE_BUILD_PARALLEL_LEVEL}",
     },
     "mounts": [
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
-        // Mount Vulkan driver ICD configuration.
-        // Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-        // The configurations files are installed to different locations depending on the installation method.
-        // (whether installing with deb packages or with run files)
-        // By the 'initializeCommand' script, the ICD configurations are copied to /tmp/holoscan_nvidia_icd.json and
-        // we mount it to /usr/share/vulkan/icd.d/nvidia_icd.json
-        "source=/tmp/holoscan_nvidia_icd.json,target=/usr/share/vulkan/icd.d/nvidia_icd.json,type=bind,consistency=cached",
     ],
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/holoscan-sdk,type=bind,consistency=cached",
     "workspaceFolder": "/workspace/holoscan-sdk",
@@ -61,12 +58,13 @@
                 "matepek.vscode-catch2-test-adapter",
                 "ms-python.python",
                 "ms-python.vscode-pylance",
-                "ms-python.isort", // note: automatic installation of this can cause a dependency issue with 'ms-python.python'
+                "charliermarsh.ruff",
                 "shardulm94.trailing-spaces",
                 "stkb.rewrap",
                 "shd101wyy.markdown-preview-enhanced",
                 "cschlosser.doxdocgen",
                 "mine.cpplint",
+                "benjamin-simmonds.pythoncpp-debug" , // Python/C++ debugging
             ]
         }
     },

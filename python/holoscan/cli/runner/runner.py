@@ -1,31 +1,41 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
 from argparse import Namespace
+from glob import glob
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from ..common.dockerutils import create_or_use_network, docker_run, image_exists
-from ..common.exceptions import ErrorReadingManifest
-from ..common.utils import get_requested_gpus, print_manifest_json, run_cmd
+from ..common.exceptions import ManifestReadError, UnmatchedDeviceError
+from ..common.utils import (
+    compare_versions,
+    get_requested_gpus,
+    print_manifest_json,
+    run_cmd,
+    run_cmd_output,
+)
 from .resources import get_shared_memory_size
 
 logger = logging.getLogger("runner")
@@ -53,7 +63,7 @@ docker rm -v $docker_id > /dev/null
 """
         returncode = run_cmd(cmd)
         if returncode != 0:
-            raise ErrorReadingManifest("Error reading manifest file form the package.")
+            raise ManifestReadError("Error reading manifest file form the package.")
 
         app_json = Path(f"{info_dir}/app.json")
         pkg_json = Path(f"{info_dir}/pkg.json")
@@ -89,6 +99,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
     fragments: str = args.fragments if args.fragments else None
     network: str = create_or_use_network(args.network, map_name)
     nic: str = args.nic if args.nic else None
+    use_all_nics: bool = args.use_all_nics
     config: Path = args.config if args.config else None
     address: str = args.address if args.address else None
     worker_address: str = args.worker_address if args.worker_address else None
@@ -96,6 +107,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
     user: str = f"{args.uid}:{args.gid}"
     hostname: str = None
     terminal: bool = args.terminal
+    platform_config: str = pkg_info["platformConfig"] if "platformConfig" in pkg_info else None
     shared_memory_size: Optional[str] = (
         get_shared_memory_size(pkg_info, worker, driver, fragments, args.shm_size)
         if args.shm_size
@@ -103,6 +115,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
     )
 
     commands = []
+    devices = _lookup_devices(args.device) if args.device else []
 
     if driver:
         commands.append("--driver")
@@ -137,12 +150,42 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
         commands,
         network,
         nic,
+        use_all_nics,
         config,
         render,
         user,
         terminal,
+        devices,
+        platform_config,
         shared_memory_size,
+        args.uid == 0,
     )
+
+
+def _lookup_devices(devices: List[str]) -> List[str]:
+    """
+    Looks up matching devices in /dev and returns a list
+    of fully qualified device paths.
+
+    Raises exception if any devices cannot be found.
+    """
+    matched_devices = []
+    unmatched_devices = []
+
+    for dev in devices:
+        pattern = dev
+        if not pattern.startswith("/"):
+            pattern = "/dev/" + pattern
+        found_devices = glob(pattern)
+        if len(found_devices) == 0:
+            unmatched_devices.append(dev)
+        else:
+            matched_devices.extend(found_devices)
+
+    if len(unmatched_devices) > 0:
+        raise UnmatchedDeviceError(unmatched_devices)
+
+    return matched_devices
 
 
 def _dependency_verification(map_name: str) -> bool:
@@ -215,6 +258,18 @@ def _pkg_specific_dependency_verification(pkg_info: dict) -> bool:
         logger.info('--> Verifying if "%s" is installed...\n', prog)
         if not shutil.which(prog):
             logger.error('"%s" not installed, please install NVIDIA Container Toolkit.', prog)
+            return False
+
+        logger.info('--> Verifying "%s" version...\n', prog)
+        output = run_cmd_output("nvidia-ctk --version | grep version")
+        match = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", output)
+        min_ctk_version = "1.12.0"
+        recommended_ctk_version = "1.14.1"
+        if compare_versions(min_ctk_version, match.group()) > 0:
+            logger.error(
+                f"Found '{prog}' Version {match.group()}. "
+                f"Version {min_ctk_version}+ is required ({recommended_ctk_version}+ recommended)."
+            )
             return False
 
     return True

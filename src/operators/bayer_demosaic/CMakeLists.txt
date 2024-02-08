@@ -16,8 +16,8 @@
 add_holoscan_operator(bayer_demosaic bayer_demosaic.cpp)
 
 target_link_libraries(op_bayer_demosaic
-    PUBLIC holoscan::core
+    PUBLIC
+        holoscan::core
+        CUDA::cudart
+        CUDA::nppicc
 )
-
-# Wraps the GXF extension
-add_dependencies(op_bayer_demosaic gxf_bayer_demosaic)

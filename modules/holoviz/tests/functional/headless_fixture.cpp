@@ -20,7 +20,10 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -40,10 +43,11 @@ void Fill(void* data, size_t elements, T or_mask = T(),
 }
 
 template <>
-void Fill(void* data, size_t elements, float or_mask, float and_mask) {
+void Fill(void* data, size_t elements, float min, float max) {
   // fill volume with random data
   for (size_t index = 0; index < elements; ++index) {
-    reinterpret_cast<float*>(data)[index] = static_cast<float>(std::rand()) / RAND_MAX;
+    reinterpret_cast<float*>(data)[index] =
+        std::max(min, std::min(max, static_cast<float>(std::rand()) / RAND_MAX));
   }
 }
 
@@ -65,35 +69,114 @@ void TestHeadless::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
   uint32_t channels;
   uint32_t component_size;
   switch (format) {
-    case viz::ImageFormat::R8G8B8_UNORM:
-      channels = 3;
-      component_size = sizeof(uint8_t);
-      color_data_.resize(width_ * height_ * channels * component_size);
-      Fill<uint8_t>(color_data_.data(), width_ * height_ * channels);
-      break;
-    case viz::ImageFormat::R8G8B8A8_UNORM:
-      channels = 4;
-      component_size = sizeof(uint8_t);
-      color_data_.resize(width_ * height_ * channels * component_size);
-      Fill<uint32_t>(color_data_.data(), width_ * height_, 0xFF000000);
-      break;
     case viz::ImageFormat::R8_UINT:
+    case viz::ImageFormat::R8_SINT:
       channels = 1;
       component_size = sizeof(uint8_t);
       color_data_.resize(width_ * height_ * channels * component_size);
       Fill<uint8_t>(color_data_.data(), width_ * height_, 0x00, lut_size_ - 1);
       break;
     case viz::ImageFormat::R8_UNORM:
+    case viz::ImageFormat::R8_SRGB:
       channels = 1;
       component_size = sizeof(uint8_t);
       color_data_.resize(width_ * height_ * channels * component_size);
-      Fill<uint8_t>(color_data_.data(), width_ * height_, 0x00, 0xFF);
+      Fill<uint8_t>(color_data_.data(), width_ * height_);
+      break;
+    case viz::ImageFormat::R8_SNORM:
+      channels = 1;
+      component_size = sizeof(int8_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<int8_t>(color_data_.data(), width_ * height_);
+      break;
+    case viz::ImageFormat::R16_UINT:
+    case viz::ImageFormat::R16_SINT:
+      channels = 1;
+      component_size = sizeof(uint16_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint16_t>(color_data_.data(), width_ * height_, 0x00, lut_size_ - 1);
+      break;
+    case viz::ImageFormat::R16_UNORM:
+      channels = 1;
+      component_size = sizeof(uint16_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint16_t>(color_data_.data(), width_ * height_);
+      break;
+    case viz::ImageFormat::R16_SNORM:
+      channels = 1;
+      component_size = sizeof(int16_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<int16_t>(color_data_.data(), width_ * height_);
+      break;
+    case viz::ImageFormat::R32_UINT:
+    case viz::ImageFormat::R32_SINT:
+      channels = 1;
+      component_size = sizeof(uint32_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint32_t>(color_data_.data(), width_ * height_, 0x00, lut_size_ - 1);
+      break;
+    case viz::ImageFormat::R32_SFLOAT:
+      channels = 1;
+      component_size = sizeof(float);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<float>(color_data_.data(), width_ * height_, 0.f, float(lut_size_ - 1));
+      break;
+    case viz::ImageFormat::R8G8B8_UNORM:
+    case viz::ImageFormat::R8G8B8_SRGB:
+      channels = 3;
+      component_size = sizeof(uint8_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint8_t>(color_data_.data(), width_ * height_ * channels);
+      break;
+    case viz::ImageFormat::R8G8B8_SNORM:
+      channels = 3;
+      component_size = sizeof(int8_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<int8_t>(color_data_.data(), width_ * height_ * channels, 0x0, 0x7F);
+      break;
+    case viz::ImageFormat::R8G8B8A8_UNORM:
+    case viz::ImageFormat::R8G8B8A8_SRGB:
+      channels = 4;
+      component_size = sizeof(uint8_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint32_t>(color_data_.data(), width_ * height_, 0xFF000000);
+      break;
+    case viz::ImageFormat::R8G8B8A8_SNORM:
+      channels = 4;
+      component_size = sizeof(int8_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint32_t>(color_data_.data(), width_ * height_, 0x7F000000, 0x7F7F7F7F);
+      break;
+    case viz::ImageFormat::R16G16B16A16_UNORM:
+      channels = 4;
+      component_size = sizeof(uint16_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint64_t>(color_data_.data(), width_ * height_, 0xFFFF000000000000UL);
+      break;
+    case viz::ImageFormat::R16G16B16A16_SNORM:
+      channels = 4;
+      component_size = sizeof(int16_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint64_t>(
+          color_data_.data(), width_ * height_, 0x7FFF000000000000UL, 0x7FFF7FFF7FFF7FFFUL);
+      break;
+    case viz::ImageFormat::D16_UNORM:
+      channels = 1;
+      component_size = sizeof(uint16_t);
+      depth_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint16_t>(depth_data_.data(), width_ * height_);
+      break;
+    case viz::ImageFormat::X8_D24_UNORM:
+      channels = 1;
+      component_size = sizeof(uint32_t);
+      depth_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint32_t>(depth_data_.data(), width_ * height_, 0, 0x00FFFFFF);
       break;
     case viz::ImageFormat::D32_SFLOAT:
       channels = 1;
       component_size = sizeof(float);
       depth_data_.resize(width_ * height_ * channels * component_size);
-      Fill<float>(depth_data_.data(), width_ * height_, 0.f, 0.f);
+      Fill<float>(depth_data_.data(), width_ * height_, 0.f, std::numeric_limits<float>::max());
       break;
     default:
       ASSERT_TRUE(false) << "Unsupported image format " << static_cast<int>(format);
@@ -165,8 +248,8 @@ static std::string BuildFileName(const std::string& end) {
 
 bool TestHeadless::CompareColorResult() {
   const uint32_t components = color_data_.size() / (width_ * height_);
-  if ((components != 3) && (components != 4)) {
-    EXPECT_TRUE(false) << "Can compare R8G8B8_UNORM or R8G8B8A8_UNORM data only";
+  if ((components != 1) && (components != 3) && (components != 4)) {
+    EXPECT_TRUE(false) << "Can compare R8_UNORM, R8G8B8_UNORM or R8G8B8A8_UNORM data only";
     return false;
   }
 
@@ -176,12 +259,12 @@ bool TestHeadless::CompareColorResult() {
   for (size_t index = 0; index < width_ * height_; ++index) {
     bool different = false;
     for (uint32_t component = 0; component < components; ++component) {
-      different |=
-          (color_data_[index * components + component] != color_data[index * 4 + component]);
+      different |= std::abs(color_data_[index * components + component] -
+                            color_data[index * 4 + component]) > 1;
     }
     if (different) {
-      const std::string ref_file_name = BuildFileName("ref");
-      const std::string fail_file_name = BuildFileName("fail");
+      const std::string ref_file_name = BuildFileName("color_ref");
+      const std::string fail_file_name = BuildFileName("color_fail");
 
       stbi_write_png(ref_file_name.c_str(), width_, height_, components, color_data_.data(), 0);
       stbi_write_png(fail_file_name.c_str(), width_, height_, 4, color_data.data(), 0);
@@ -205,8 +288,8 @@ bool TestHeadless::CompareDepthResult() {
 
   for (size_t index = 0; index < depth_data_.size(); ++index) {
     if (depth_data_[index] != depth_data[index]) {
-      const std::string ref_file_name = BuildFileName("ref");
-      const std::string fail_file_name = BuildFileName("fail");
+      const std::string ref_file_name = BuildFileName("depth_ref");
+      const std::string fail_file_name = BuildFileName("depth_fail");
 
       // convert to single channel uint8_t assuming depth is between 0...1
       std::vector<uint8_t> image_data(depth_data_.size());
@@ -227,26 +310,46 @@ bool TestHeadless::CompareDepthResult() {
   return true;
 }
 
+static const char* const crc_instructions = R"(
+To check images, set the HOLOVIZ_TEST_GEN_IMAGES environment variable and run the test on
+a configuration where the test passes. This will generate images with the `_ref` suffix.
+Compare these images with the `_fail` images. Update or add the CRC values of the test
+accordingly.
+)";
+
 bool TestHeadless::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
   std::vector<uint8_t> read_data;
   ReadColorData(read_data);
 
   const uint32_t read_crc32 = stbiw__crc32(read_data.data(), read_data.size());
 
+  std::string image_file_name;
+  bool passed;
   if (std::find(crc32.begin(), crc32.end(), read_crc32) == crc32.end()) {
-    const std::string fail_file_name = BuildFileName("fail");
-
-    stbi_write_png(fail_file_name.c_str(), width_, height_, 4, read_data.data(), 0);
+    image_file_name = BuildFileName("color_fail");
 
     std::ostringstream str;
     str << "CRC mismatch, expected {" << std::hex << std::setw(8);
     for (auto&& value : crc32) { str << "0x" << value << ", "; }
-    str << "} but calculated 0x" << read_crc32 << ", wrote failing image to " << fail_file_name;
+    str << "} but calculated 0x" << read_crc32 << ", wrote failing image to " << image_file_name
+        << ". " << crc_instructions;
     EXPECT_FALSE(true) << str.str();
-    return false;
+
+    passed = false;
+  } else {
+    if (std::getenv("HOLOVIZ_TEST_GEN_IMAGES")) {
+      image_file_name = BuildFileName("color_ref");
+      std::cout << "Test passed and HOLOVIZ_TEST_GEN_IMAGES is set, writing image to "
+                << image_file_name << ". " << std::endl;
+    }
+    passed = true;
   }
 
-  return true;
+  if (!image_file_name.empty()) {
+    stbi_write_png(image_file_name.c_str(), width_, height_, 4, read_data.data(), 0);
+  }
+
+  return passed;
 }
 
 bool TestHeadless::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
@@ -256,23 +359,35 @@ bool TestHeadless::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
   const uint32_t read_crc32 = stbiw__crc32(reinterpret_cast<unsigned char*>(read_data.data()),
                                            read_data.size() * sizeof(float));
 
+  std::string image_file_name;
+  bool passed;
   if (std::find(crc32.begin(), crc32.end(), read_crc32) == crc32.end()) {
-    const std::string fail_file_name = BuildFileName("fail");
+    image_file_name = BuildFileName("depth_fail");
 
+    std::ostringstream str;
+    str << "CRC mismatch, expected {" << std::hex << std::setw(8);
+    for (auto&& value : crc32) { str << "0x" << value << ", "; }
+    str << "} but calculated 0x" << read_crc32 << ", wrote failing image to " << image_file_name
+        << ". " << crc_instructions;
+    EXPECT_FALSE(true) << str.str();
+
+    passed = false;
+  } else {
+    if (std::getenv("HOLOVIZ_TEST_GEN_IMAGES")) {
+      image_file_name = BuildFileName("depth_ref");
+      std::cout << "Test passed and HOLOVIZ_TEST_GEN_IMAGES is set, writing image to "
+                << image_file_name << ". " << std::endl;
+    }
+  }
+
+  if (!image_file_name.empty()) {
     // convert to single channel uint8_t assuming depth is between 0...1
     std::vector<uint8_t> image_data(read_data.size());
     for (size_t index = 0; index < read_data.size(); ++index) {
       image_data[index] = static_cast<uint8_t>(read_data[index] * 255.f + 0.5f);
     }
 
-    stbi_write_png(fail_file_name.c_str(), width_, height_, 1, image_data.data(), 0);
-
-    std::ostringstream str;
-    str << "CRC mismatch, expected {" << std::hex << std::setw(8);
-    for (auto&& value : crc32) { str << "0x" << value << ", "; }
-    str << "} but calculated 0x" << read_crc32 << ", wrote failing image to " << fail_file_name;
-    EXPECT_FALSE(true) << str.str();
-    return false;
+    stbi_write_png(image_file_name.c_str(), width_, height_, 1, image_data.data(), 0);
   }
 
   return true;

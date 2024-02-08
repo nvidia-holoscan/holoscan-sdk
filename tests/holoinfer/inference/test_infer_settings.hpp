@@ -20,8 +20,6 @@
 #include <holoinfer.hpp>
 #include <holoinfer_utils.hpp>
 
-#define use_onnxruntime 1
-
 namespace HoloInfer = holoscan::inference;
 
 static const bool is_x86_64 = !HoloInfer::is_platform_aarch64();

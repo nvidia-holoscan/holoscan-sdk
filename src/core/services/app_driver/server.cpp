@@ -53,17 +53,31 @@ void AppDriverServer::wait() {
 }
 
 void AppDriverServer::run() {
-  static const auto health_check_port = std::to_string(kDefaultHealthCheckingPort);
-  static const auto app_driver_port = std::to_string(kDefaultAppDriverPort);
-
-  // Get AppServer IP address and port
-  auto server_address = app_driver_->options()->driver_address;
+  // Always launch gRPC service on "0.0.0.0" (all interfaces)
+  std::string server_address = app_driver_->options()->driver_address;
+  auto server_ip = "0.0.0.0";
   auto server_port = holoscan::CLIOptions::parse_port(server_address);
+  server_address = fmt::format("{}:{}", server_ip, server_port);
 
   // Start health checking server if needed
   std::unique_ptr<grpc::Server> health_check_server;
   grpc::health::v1::HealthImpl health_checking_service(app_driver_);
   if (need_health_check_) {
+    int32_t health_check_port = kDefaultHealthCheckingPort;
+
+    // Check the environment variable for the port (`HOLOSCAN_HEALTH_CHECK_PORT`)
+    const char* env_health_check_port = std::getenv("HOLOSCAN_HEALTH_CHECK_PORT");
+    if (env_health_check_port != nullptr && env_health_check_port[0] != '\0') {
+      HOLOSCAN_LOG_DEBUG("Using environment variable HOLOSCAN_HEALTH_CHECK_PORT={}",
+                         env_health_check_port);
+      try {
+        health_check_port = std::stoi(env_health_check_port);
+      } catch (const std::exception& e) {
+        HOLOSCAN_LOG_ERROR(
+            "Failed to parse HOLOSCAN_HEALTH_CHECK_PORT={}: {}", env_health_check_port, e.what());
+      }
+    }
+
     grpc::ServerBuilder health_check_builder;
     health_check_builder.AddListeningPort(fmt::format("0.0.0.0:{}", health_check_port),
                                           grpc::InsecureServerCredentials());

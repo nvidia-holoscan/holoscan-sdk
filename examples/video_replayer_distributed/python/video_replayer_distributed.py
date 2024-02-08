@@ -42,7 +42,7 @@ class Fragment1(Fragment):
         path = os.environ.get(
             "HOLOSCAN_INPUT_PATH", os.path.join(os.path.dirname(__file__), "data")
         )
-        return os.path.join(path, "endoscopy/video")
+        return os.path.join(path, "racerx")
 
 
 class Fragment2(Fragment):

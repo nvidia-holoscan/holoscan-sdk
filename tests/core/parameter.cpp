@@ -71,12 +71,30 @@ TEST(Parameter, TestMetaParameterInt) {
   // value assignment
   int new_val = 7;
   p = new_val;
-  ASSERT_EQ(p.get(), 7);
+  ASSERT_EQ(p.get(), new_val);
 
   // const value assignment
   const int new_val2 = 8;
   p = new_val2;
-  ASSERT_EQ(p.get(), 8);
+  ASSERT_EQ(p.get(), new_val2);
+}
+
+TEST(Parameter, TestMetaParameterComplex) {
+  // test initialized metaparameter
+  MetaParameter p = MetaParameter<std::complex<float>>({5.0, -2.0});
+  ASSERT_TRUE(p.has_value());
+  std::complex<float> val = p.get();
+  ASSERT_EQ(val, std::complex<float>(5.0, -2.0));
+
+  // value assignment
+  auto new_val = std::complex<float>(7.5, 3.0);
+  p = new_val;
+  ASSERT_EQ(p.get(), new_val);
+
+  // const value assignment
+  const std::complex<float> new_val2 = new_val;
+  p = new_val2;
+  ASSERT_EQ(p.get(), new_val2);
 }
 
 TEST(Parameter, TestMetaParameterTryGet) {

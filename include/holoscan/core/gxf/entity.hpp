@@ -63,7 +63,6 @@ class Entity : public nvidia::gxf::Entity {
   operator bool() const { return !is_null(); }
 
   // Gets a component by type. Asserts if no such component.
-  // Adds a component with given type
   template <typename DataT,
             typename = std::enable_if_t<!holoscan::is_vector_v<DataT> &&
                                         holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
@@ -118,12 +117,12 @@ class Entity : public nvidia::gxf::Entity {
     } else {
       // Create a holoscan::Tensor object from the newly constructed GXF Tensor object. (~680 ns)
       auto handle = nvidia::gxf::Handle<nvidia::gxf::Tensor>::Create(context(), cid);
-      auto gxf_tensor = holoscan::gxf::GXFTensor(*handle->get());
+      // Mutex-protected conversion (Issue 4272363)
+      auto gxf_tensor = holoscan::gxf::GXFTensor(*handle->get(), cid);
       auto tensor = gxf_tensor.as_tensor();
       return tensor;
     }
   }
-
   // Adds a component with given type
   template <typename DataT,
             typename = std::enable_if_t<!holoscan::is_vector_v<DataT> &&

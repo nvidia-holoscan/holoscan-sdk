@@ -51,19 +51,27 @@ class UcxTransmitter : public Transmitter {
   void setup(ComponentSpec& spec) override;
   void initialize() override;
 
-  /// @brief The IPv4 network address used by the corresponding receiver.
+  /// The IPv4 network address used by the corresponding receiver.
   std::string receiver_address();
 
-  /// @brief The network port used by the receiver.
-  int32_t port();
+  /// The network port used by the receiver.
+  uint32_t port();
+
+  /// The local address to use for connection.
+  std::string local_address();
+
+  /// The local network port to use for connection.
+  uint32_t local_port();
 
   Parameter<uint64_t> capacity_;
   Parameter<uint64_t> policy_;
 
  private:
   Parameter<std::string> receiver_address_;
-  Parameter<int32_t> port_;                        // just <int> in the GXF extension
-  Parameter<int32_t> maximum_connection_retries_;  // just <int> in the GXF extension
+  Parameter<std::string> local_address_;
+  Parameter<uint32_t> port_;
+  Parameter<uint32_t> local_port_;
+  Parameter<uint32_t> maximum_connection_retries_;
   Parameter<std::shared_ptr<UcxSerializationBuffer>> buffer_;
   // TODO: support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;

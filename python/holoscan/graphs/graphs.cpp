@@ -126,7 +126,13 @@ class PyGraph : public Graph<NodeT, EdgeDataElementT> {
     PYBIND11_OVERRIDE(void, GraphT, add_flow, node_u, node_v, port_map);
   }
   bool is_root(const NodeType& node) override { PYBIND11_OVERRIDE(bool, GraphT, is_root, node); }
+  bool is_user_defined_root(const NodeType& node) override {
+    PYBIND11_OVERRIDE(bool, GraphT, is_user_defined_root, node);
+  }
   bool is_leaf(const NodeType& node) override { PYBIND11_OVERRIDE(bool, GraphT, is_leaf, node); }
+  std::vector<NodeType> has_cycle() override {
+    PYBIND11_OVERRIDE(std::vector<NodeType>, GraphT, has_cycle);
+  }
   std::vector<NodeType> get_root_nodes() override {
     PYBIND11_OVERRIDE(std::vector<NodeType>, GraphT, get_root_nodes);
   }

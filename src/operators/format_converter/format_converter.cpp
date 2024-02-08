@@ -33,18 +33,18 @@
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
-#define CUDA_TRY(stmt)                                                                     \
-  ({                                                                                       \
-    cudaError_t _holoscan_cuda_err = stmt;                                                 \
-    if (cudaSuccess != _holoscan_cuda_err) {                                               \
-      HOLOSCAN_LOG_ERROR("CUDA Runtime call %s in line %d of file %s failed with '%s' (%d).\n", \
-                    #stmt,                                                                 \
-                    __LINE__,                                                              \
-                    __FILE__,                                                              \
-                    cudaGetErrorString(_holoscan_cuda_err),                                \
-                    _holoscan_cuda_err);                                                   \
-    }                                                                                      \
-    _holoscan_cuda_err;                                                                    \
+#define CUDA_TRY(stmt)                                                                          \
+  ({                                                                                            \
+    cudaError_t _holoscan_cuda_err = stmt;                                                      \
+    if (cudaSuccess != _holoscan_cuda_err) {                                                    \
+      HOLOSCAN_LOG_ERROR("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).\n", \
+                         #stmt,                                                                 \
+                         __LINE__,                                                              \
+                         __FILE__,                                                              \
+                         cudaGetErrorString(_holoscan_cuda_err),                                \
+                         _holoscan_cuda_err);                                                   \
+    }                                                                                           \
+    _holoscan_cuda_err;                                                                         \
   })
 
 namespace holoscan::ops {
@@ -226,13 +226,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
   // get the CUDA stream from the input message
   gxf_result_t stream_handler_result =
-      cuda_stream_handler_.fromMessage(context.context(), in_message);
+      cuda_stream_handler_.from_message(context.context(), in_message);
   if (stream_handler_result != GXF_SUCCESS) {
     throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
   }
 
   // assign the CUDA stream to the NPP stream context
-  npp_stream_ctx_.hStream = cuda_stream_handler_.getCudaStream(context.context());
+  npp_stream_ctx_.hStream = cuda_stream_handler_.get_cuda_stream(context.context());
 
   nvidia::gxf::Shape out_shape{0, 0, 0};
   void* in_tensor_data = nullptr;
@@ -242,10 +242,11 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
   int32_t columns = 0;
   int16_t in_channels = 0;
   int16_t out_channels = 0;
+  std::vector<nvidia::gxf::ColorPlane> in_color_planes;
 
   // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
-  auto pool = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
-                                                                  pool_->gxf_cid());
+  auto pool =
+      nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(), pool_->gxf_cid());
 
   // Get either the Tensor or VideoBuffer attached to the message
   bool is_video_buffer;
@@ -296,7 +297,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
             break;
           default:
             throw std::runtime_error(fmt::format("Unsupported format conversion: {} -> {}\n",
-                                                 in_dtype_str_.get(), out_dtype_str_.get()));
+                                                 in_dtype_str_.get(),
+                                                 out_dtype_str_.get()));
             break;
         }
         break;
@@ -312,6 +314,7 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     in_tensor_data = frame->pointer();
     rows = buffer_info.height;
     columns = buffer_info.width;
+    in_color_planes = buffer_info.color_planes;
 
     // If the buffer is in host memory, copy it to a device (GPU) buffer
     // as needed for the NPP resize/convert operations.
@@ -346,12 +349,21 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     holoscan::gxf::GXFTensor in_tensor_gxf{in_tensor->dl_ctx()};
     out_shape = in_tensor_gxf.shape();
     in_tensor_data = in_tensor_gxf.pointer();
+    if (in_tensor_data == nullptr) {
+      // This should never happen, but just in case...
+      HOLOSCAN_LOG_ERROR("Unable to get tensor data pointer. nullptr returned.");
+    }
     in_primitive_type = in_tensor_gxf.element_type();
     in_memory_storage_type = in_tensor_gxf.storage_type();
     rows = in_tensor_gxf.shape().dimension(0);
     columns = in_tensor_gxf.shape().dimension(1);
     in_channels = in_tensor_gxf.shape().dimension(2);
     out_channels = in_channels;
+    in_color_planes.resize(1);
+    in_color_planes[0].width = columns;
+    in_color_planes[0].height = rows;
+    in_color_planes[0].stride = in_tensor_gxf.stride(0);
+    in_color_planes[0].size = in_color_planes[0].height * in_color_planes[0].stride;
   }
 
   if (in_memory_storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
@@ -392,6 +404,7 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
   // Resize the input image before converting data type
   if (resize_width_ > 0 && resize_height_ > 0) {
     auto resize_result = resizeImage(in_tensor_data,
+                                     in_color_planes,
                                      rows,
                                      columns,
                                      in_channels,
@@ -405,6 +418,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     in_tensor_data = resize_result.value();
     rows = resize_height_;
     columns = resize_width_;
+
+    // update in_color_planes to reflect the resized image (will always be contiguous)
+    const uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(in_primitive_type);
+    in_color_planes[0].width = resize_width_;
+    in_color_planes[0].height = resize_height_;
+    in_color_planes[0].stride = resize_width_ * in_channels * element_size;
+    in_color_planes[0].size = in_color_planes[0].height * in_color_planes[0].stride;
   }
 
   // Create output message
@@ -457,15 +477,19 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
   // Set tensor to constant using NPP
   if (in_channels == 2 || in_channels == 3 || in_channels == 4) {
     // gxf_result_t convert_result = convertTensorFormat(
-    convertTensorFormat(
-        in_tensor_data, out_tensor.value()->pointer(), rows, columns, in_channels, out_channels);
+    convertTensorFormat(in_tensor_data,
+                        in_color_planes,
+                        out_tensor.value()->pointer(),
+                        rows,
+                        columns,
+                        out_channels);
 
   } else {
     throw std::runtime_error("Only support 3 or 4 channel input tensor");
   }
 
   // pass the CUDA stream to the output message
-  stream_handler_result = cuda_stream_handler_.toMessage(out_message);
+  stream_handler_result = cuda_stream_handler_.to_message(out_message);
   if (stream_handler_result != GXF_SUCCESS) {
     throw std::runtime_error("Failed to add the CUDA stream to the outgoing messages");
   }
@@ -476,7 +500,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 }
 
 nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
-    const void* in_tensor_data, const int32_t rows, const int32_t columns, const int16_t channels,
+    const void* in_tensor_data, const std::vector<nvidia::gxf::ColorPlane>& in_color_planes,
+    const int32_t rows, const int32_t columns, const int16_t channels,
     const nvidia::gxf::PrimitiveType primitive_type, const int32_t resize_width,
     const int32_t resize_height) {
   if (resize_buffer_->size() == 0) {
@@ -508,7 +533,7 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
       switch (primitive_type) {
         case nvidia::gxf::PrimitiveType::kUnsigned8:
           status = nppiResize_8u_C3R_Ctx(static_cast<const Npp8u*>(in_tensor_data),
-                                         columns * channels,
+                                         in_color_planes[0].stride,
                                          src_size,
                                          src_roi,
                                          converted_tensor_ptr,
@@ -527,7 +552,7 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
       switch (primitive_type) {
         case nvidia::gxf::PrimitiveType::kUnsigned8:
           status = nppiResize_8u_C4R_Ctx(static_cast<const Npp8u*>(in_tensor_data),
-                                         columns * channels,
+                                         in_color_planes[0].stride,
                                          src_size,
                                          src_roi,
                                          converted_tensor_ptr,
@@ -544,8 +569,8 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
       break;
     default:
       HOLOSCAN_LOG_ERROR("Unsupported input primitive type for resizing image (%d, %d)",
-                    channels,
-                    static_cast<int32_t>(primitive_type));
+                         channels,
+                         static_cast<int32_t>(primitive_type));
       return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr);
       break;
   }
@@ -557,13 +582,13 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
 
 // gxf_result_t FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void*
 // out_tensor_data,
-void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* out_tensor_data,
-                                            const int32_t rows, const int32_t columns,
-                                            const int16_t in_channels, const int16_t out_channels) {
+void FormatConverterOp::convertTensorFormat(
+    const void* in_tensor_data, const std::vector<nvidia::gxf::ColorPlane>& in_color_planes,
+    void* out_tensor_data, const int32_t rows, const int32_t columns, const int16_t out_channels) {
   const uint32_t src_typesize = nvidia::gxf::PrimitiveTypeSize(in_primitive_type_);
   const uint32_t dst_typesize = nvidia::gxf::PrimitiveTypeSize(out_primitive_type_);
 
-  const int32_t src_step = columns * in_channels * src_typesize;
+  const int32_t src_step = in_color_planes[0].stride;
   const int32_t dst_step = columns * out_channels * dst_typesize;
 
   const auto& out_channel_order = out_channel_order_.get();
@@ -576,11 +601,14 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
       const auto in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
       auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      cudaError_t cuda_status = CUDA_TRY(cudaMemcpyAsync(out_tensor_ptr,
-                                                         in_tensor_ptr,
-                                                         src_step * rows,
-                                                         cudaMemcpyDeviceToDevice,
-                                                         npp_stream_ctx_.hStream));
+      cudaError_t cuda_status = CUDA_TRY(cudaMemcpy2DAsync(out_tensor_ptr,
+                                                           dst_step,
+                                                           in_tensor_ptr,
+                                                           src_step,
+                                                           columns * out_channels * dst_typesize,
+                                                           rows,
+                                                           cudaMemcpyDeviceToDevice,
+                                                           npp_stream_ctx_.hStream));
       if (cuda_status) { throw std::runtime_error("Failed to copy GPU data to GPU memory."); }
       status = NPP_SUCCESS;
       break;
@@ -625,7 +653,7 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
       status = nppiSwapChannels_8u_C3C4R_Ctx(in_tensor_ptr,
                                              src_step,
                                              out_tensor_ptr,
-                                             out_channels * dst_typesize * columns,
+                                             dst_step,
                                              roi,
                                              dst_order,
                                              alpha_value_.get(),
@@ -643,13 +671,8 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
         }
         for (int i = 0; i < 3; i++) { dst_order[i] = out_channel_order[i]; }
       }
-      status = nppiSwapChannels_8u_C4C3R_Ctx(in_tensor_ptr,
-                                             src_step,
-                                             out_tensor_ptr,
-                                             out_channels * dst_typesize * columns,
-                                             roi,
-                                             dst_order,
-                                             npp_stream_ctx_);
+      status = nppiSwapChannels_8u_C4C3R_Ctx(
+          in_tensor_ptr, src_step, out_tensor_ptr, dst_step, roi, dst_order, npp_stream_ctx_);
       break;
     }
     case FormatConversionType::kRGBA8888ToFloat32: {
@@ -680,18 +703,18 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
         for (int i = 0; i < 3; i++) { dst_order[i] = out_channel_order[i]; }
       }
 
+      const int32_t channel_buffer_step = columns * out_channels * src_typesize;
       status = nppiSwapChannels_8u_C4C3R_Ctx(in_tensor_ptr,
                                              src_step,
                                              converted_tensor_ptr,
-                                             out_channels * src_typesize * columns,
+                                             channel_buffer_step,
                                              roi,
                                              dst_order,
                                              npp_stream_ctx_);
 
       if (status == NPP_SUCCESS) {
-        const int32_t new_src_step = columns * out_channels * src_typesize;
         status = nppiScale_8u32f_C3R_Ctx(converted_tensor_ptr,
-                                         new_src_step,
+                                         channel_buffer_step,
                                          out_tensor_ptr,
                                          dst_step,
                                          roi,
@@ -718,10 +741,9 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
       const int32_t out_y_step = color_planes[0].stride;
       const int32_t out_u_step = color_planes[1].stride;
       const int32_t out_v_step = color_planes[2].stride;
-      int32_t out_yuv_steps[3] = { out_y_step, out_u_step, out_v_step };
+      int32_t out_yuv_steps[3] = {out_y_step, out_u_step, out_v_step};
 
-      status = nppiRGBToYUV420_8u_C3P3R(in_tensor_ptr, src_step, out_yuv_ptrs,
-                                        out_yuv_steps, roi);
+      status = nppiRGBToYUV420_8u_C3P3R(in_tensor_ptr, src_step, out_yuv_ptrs, out_yuv_steps, roi);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(
             fmt::format("rgb888 to yuv420 conversion failed (NPP error code: {})", status));
@@ -730,21 +752,19 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
     }
     case FormatConversionType::kYUV420ToRGBA8888: {
       nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420> color_format;
-      auto color_planes = color_format.getDefaultColorPlanes(columns, rows);
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
-      const auto in_u_ptr = in_y_ptr + color_planes[0].size;
-      const auto in_v_ptr = in_u_ptr + color_planes[1].size;
+      const auto in_u_ptr = in_y_ptr + in_color_planes[0].size;
+      const auto in_v_ptr = in_u_ptr + in_color_planes[1].size;
       const uint8_t* in_yuv_ptrs[3] = {in_y_ptr, in_u_ptr, in_v_ptr};
 
-      const int32_t in_y_step = color_planes[0].stride;
-      const int32_t in_u_step = color_planes[1].stride;
-      const int32_t in_v_step = color_planes[2].stride;
-      int32_t in_yuv_steps[3] = { in_y_step, in_u_step, in_v_step };
+      const int32_t in_y_step = in_color_planes[0].stride;
+      const int32_t in_u_step = in_color_planes[1].stride;
+      const int32_t in_v_step = in_color_planes[2].stride;
+      int32_t in_yuv_steps[3] = {in_y_step, in_u_step, in_v_step};
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status = nppiYUV420ToRGB_8u_P3AC4R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr,
-                                        dst_step, roi);
+      status = nppiYUV420ToRGB_8u_P3AC4R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(
             fmt::format("yuv420 to rgba8888 conversion failed (NPP error code: {})", status));
@@ -753,21 +773,19 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
     }
     case FormatConversionType::kYUV420ToRGB888: {
       nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420> color_format;
-      auto color_planes = color_format.getDefaultColorPlanes(columns, rows);
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
-      const auto in_u_ptr = in_y_ptr + color_planes[0].size;
-      const auto in_v_ptr = in_u_ptr + color_planes[1].size;
+      const auto in_u_ptr = in_y_ptr + in_color_planes[0].size;
+      const auto in_v_ptr = in_u_ptr + in_color_planes[1].size;
       const uint8_t* in_yuv_ptrs[3] = {in_y_ptr, in_u_ptr, in_v_ptr};
 
-      const int32_t in_y_step = color_planes[0].stride;
-      const int32_t in_u_step = color_planes[1].stride;
-      const int32_t in_v_step = color_planes[2].stride;
-      int32_t in_yuv_steps[3] = { in_y_step, in_u_step, in_v_step };
+      const int32_t in_y_step = in_color_planes[0].stride;
+      const int32_t in_u_step = in_color_planes[1].stride;
+      const int32_t in_v_step = in_color_planes[2].stride;
+      int32_t in_yuv_steps[3] = {in_y_step, in_u_step, in_v_step};
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status = nppiYUV420ToRGB_8u_P3C3R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr,
-                                        dst_step, roi);
+      status = nppiYUV420ToRGB_8u_P3C3R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(
             fmt::format("yuv420 to rgb888 conversion failed (NPP error code: {})", status));
@@ -777,16 +795,15 @@ void FormatConverterOp::convertTensorFormat(const void* in_tensor_data, void* ou
     case FormatConversionType::kNV12ToRGB888: {
       nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12> color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
-      auto color_planes = color_format.getDefaultColorPlanes(columns, rows);
-      const auto in_uv_ptr = in_y_ptr + color_planes[0].size;
+      const auto in_uv_ptr = in_y_ptr + in_color_planes[0].size;
       const uint8_t* in_y_uv_ptrs[2] = {in_y_ptr, in_uv_ptr};
 
-      const int32_t in_y_uv_step = color_planes[0].stride;
+      const int32_t in_y_uv_step = in_color_planes[0].stride;
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status = nppiNV12ToRGB_709HDTV_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr,
-                                        dst_step, roi);
+      status =
+          nppiNV12ToRGB_709HDTV_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(
             fmt::format("NV12 to rgb888 conversion failed (NPP error code: {})", status));
@@ -920,7 +937,7 @@ void FormatConverterOp::setup(OperatorSpec& spec) {
 
   spec.param(pool_, "pool", "Pool", "Pool to allocate the output message.");
 
-  cuda_stream_handler_.defineParams(spec);
+  cuda_stream_handler_.define_params(spec);
 
   // TODO (gbae): spec object holds an information about errors
   // TODO (gbae): incorporate std::expected to not throw exceptions

@@ -74,10 +74,6 @@ list(APPEND _GXF_EXTENSIONS
     std
     stream
     ucx
-    videoencoderio
-    videoencoder
-    videodecoderio
-    videodecoder
 )
 
 # Common headers
@@ -163,7 +159,7 @@ foreach(component IN LISTS _GXF_LIBRARIES)
 
         # Include dirs
         list(APPEND GXF_${component}_INCLUDE_DIRS ${GXF_common_INCLUDE_DIR})
-        if (GXF_${component}_INCLUDE_DIR)
+        if(GXF_${component}_INCLUDE_DIR)
             list(APPEND GXF_${component}_INCLUDE_DIRS ${GXF_${component}_INCLUDE_DIR})
         endif()
 
@@ -198,57 +194,6 @@ if(GXF_core_INCLUDE_DIR)
     set(GXF_VERSION ${CMAKE_MATCH_1})
     unset(_GXF_VERSION_LINE)
 endif()
-
-##############################################################################
-# Install the Deepstream dependencies only on x86_64
-# TODO: this should not be done here, not related to the GXF import
-if(_public_GXF_recipe STREQUAL x86_64)
-  file(GLOB DS_DEPS_NVUTILS "${GXF_core_INCLUDE_DIR}/x86_64/nvutils/*.so")
-  file(GLOB DS_DEPS_CUVIDV4L2 "${GXF_core_INCLUDE_DIR}/x86_64/cuvidv4l2/*.so")
-
-  foreach(dsdep IN LISTS DS_DEPS_NVUTILS DS_DEPS_CUVIDV4L2)
-    # Set the internal location to the binary directory
-    get_filename_component(ds_lib_filename "${dsdep}" NAME)
-    set(ds_lib_build_dir "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}")
-    set(ds_lib_build_path "${ds_lib_build_dir}/${ds_lib_filename}")
-
-    # Copy the DeepStream library to the build folder
-    # Needed for permissions to run patchelf for RUNPATH
-    file(COPY "${dsdep}"
-        DESTINATION "${ds_lib_build_dir}"
-        FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-    )
-
-    # Patch RUNPATH
-    execute_process(COMMAND
-        "${PATCHELF_EXECUTABLE}"
-        "--set-rpath"
-        "\$ORIGIN"
-        "${ds_lib_build_path}"
-    )
-
-    # Install the DeepStream library
-    # Use the build location since RUNPATH has changed
-    install(FILES "${ds_lib_build_path}"
-        DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-        COMPONENT "holoscan-gxf_libs"
-    )
-  endforeach()
-
-  # Create a symlink
-  INSTALL(CODE "execute_process( \
-    COMMAND ${CMAKE_COMMAND} -E create_symlink \
-    libnvv4l2.so \
-    libv4l2.so.0 \
-    COMMAND ${CMAKE_COMMAND} -E create_symlink \
-    libnvv4lconvert.so \
-    libv4lconvert.so.0 \
-    WORKING_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/${HOLOSCAN_INSTALL_LIB_DIR}\"
-    )"
-    COMPONENT "holoscan-gxf_libs"
-  )
-endif()
-##############################################################################
 
 # GXE
 find_program(GXF_gxe_PATH

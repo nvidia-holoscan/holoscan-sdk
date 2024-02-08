@@ -36,5 +36,5 @@ if(BUILD_TESTING)
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
           )
   set_tests_properties(EXAMPLE_CPP_PING_VECTOR_TEST PROPERTIES
-                      PASS_REGULAR_EXPRESSION "Rx message value\\[1\\]\\[4\\]: 42")
+                       PASS_REGULAR_EXPRESSION "Rx message receiver value\\[1\\]\\[4\\]: 126")
 endif()

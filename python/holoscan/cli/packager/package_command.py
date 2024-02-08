@@ -1,21 +1,22 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import argparse
 import logging
-import os
 from argparse import ArgumentParser, _SubParsersAction
 from typing import List
 
@@ -169,14 +170,14 @@ def create_package_parser(
     user_group.add_argument(
         "--uid",
         type=str,
-        default=os.getuid(),
-        help=f"UID associated with the username.  (default:{os.getuid()})",
+        default=1000,
+        help="UID associated with the username.  (default:1000)",
     )
     user_group.add_argument(
         "--gid",
         type=str,
-        default=os.getgid(),
-        help=f"GID associated with the username. (default:{os.getgid()})",
+        default=1000,
+        help="GID associated with the username. (default:1000)",
     )
     parser.set_defaults(no_cache=False)
     return parser

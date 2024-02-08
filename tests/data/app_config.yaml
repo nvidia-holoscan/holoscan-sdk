@@ -23,7 +23,6 @@
 #   - libgxf_cuda.so
 #   - libgxf_multimedia.so
 #   - libgxf_serialization.so
-#   - libgxf_bayer_demosaic.so
 #   - libgxf_stream_playback.so
 
 source: "replayer" # or "aja"
@@ -37,8 +36,8 @@ aja:
   overlay_rdma: true
 
 replayer:
-  directory: "../data/endoscopy/video"
-  basename: "surgical_video"
+  directory: "../data/racerx"
+  basename: "racerx"
   frame_rate: 0   # as specified in timestamps
   repeat: true    # default: false
   realtime: true  # default: true
@@ -110,6 +109,25 @@ holoviz:
         - Irrigator
         - Spec.Bag
 
+holoviz_tensor_input:
+  tensors:
+    - name: "tensor"
+      type: color
+      opacity: 1.0
+      priority: 0
+
+holoviz_headless:
+  headless: true
+
+holoviz_enable_ports:
+  enable_render_buffer_output: true
+
+holoviz_disable_ports:
+  enable_render_buffer_output: false
+
+holoviz_invalid_ports:
+  enable_render_buffer_output: "wrong type"
+
 segmentation_inference:  # TensorRtInference
   model_file_path: ../data/ultrasound/model/us_unet_256x256_nhwc.onnx
   engine_cache_dir: ../data/ultrasound/model/us_unet_256x256_nhwc_engines
@@ -136,7 +154,7 @@ inference:
     "icardio_plax_chamber": ["plax_cham_pre_proc"]
     "icardio_aortic_stenosis": ["aortic_pre_proc"]
     "icardio_bmode_perspective": ["bmode_pre_proc"]
-  inference_map: 
+  inference_map:
     "icardio_plax_chamber": ["plax_cham_infer"]
     "icardio_aortic_stenosis": ["aortic_infer"]
     "icardio_bmode_perspective": ["bmode_infer"]

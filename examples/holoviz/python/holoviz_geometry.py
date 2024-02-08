@@ -1,19 +1,19 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+ http://www.apache.org/licenses/LICENSE-2.0
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-"""  # no qa
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import os
 import random
@@ -25,6 +25,31 @@ from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 
 sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
+
+
+class CameraPoseRxOp(Operator):
+    """Simple receiver operator.
+
+    This operator has a single input port:
+        input: "in"
+
+    This is an example of a native operator with one input port.
+    On each tick, it receives an integer from the "in" port.
+    """
+
+    def __init__(self, fragment, *args, **kwargs):
+        self.count = 0
+        # Need to call the base class constructor last
+        super().__init__(fragment, *args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        spec.input("in")
+
+    def compute(self, op_input, op_output, context):
+        value = op_input.receive("in")
+        if self.count == 0:
+            print(f"Received camera pose: {value}")
+        self.count += 1
 
 
 # Define custom Operators for use in the demo
@@ -55,8 +80,7 @@ class GeometryGenerationOp(Operator):
     def compute(self, op_input, op_output, context):
         # Draw various different types of geometric primitives.
         # In all cases, x and y are normalized coordinates in the range [0, 1].
-        # x runs from left to right and y from bottom to top. All coordinates
-        # should be defined using a single precision (np.float32) dtype.
+        # x runs from left to right and y from bottom to top.
 
         ##########################################
         # Create a tensor defining four rectnagles
@@ -65,33 +89,25 @@ class GeometryGenerationOp(Operator):
         # 2-tuples defining the upper-left and lower-right coordinates of a
         # box: (x1, y1), (x2, y2).
         box_coords = np.asarray(
-            # fmt: off
-             [
+            [
                 (0.1, 0.2), (0.8, 0.5),
                 (0.2, 0.4), (0.3, 0.6),
                 (0.3, 0.5), (0.4, 0.7),
                 (0.5, 0.7), (0.6, 0.9),
-             ],
-            # fmt: on
-            dtype=np.float32,
-        )
-        # append initial axis of shape 1
-        box_coords = box_coords[np.newaxis, :, :]
+            ],
+
+        )  # fmt: skip
 
         ########################################
         # Create a tensor defining two triangles
         ########################################
         # Each triangle is defined by a set of 3 (x, y) coordinate pairs.
         triangle_coords = np.asarray(
-            # fmt: off
-                [
+            [
                 (0.1, 0.8), (0.18, 0.75), (0.14, 0.66),
                 (0.3, 0.8), (0.38, 0.75), (0.34, 0.56),
-                ],
-            # fmt: on
-            dtype=np.float32,
-        )
-        triangle_coords = triangle_coords[np.newaxis, :, :]
+            ],
+        )  # fmt: skip
 
         ######################################
         # Create a tensor defining two crosses
@@ -102,9 +118,7 @@ class GeometryGenerationOp(Operator):
                 (0.25, 0.25, 0.05),
                 (0.75, 0.25, 0.10),
             ],
-            dtype=np.float32,
-        )
-        cross_coords = cross_coords[np.newaxis, :, :]
+        )  # fmt: skip
 
         ######################################
         # Create a tensor defining three ovals
@@ -116,20 +130,18 @@ class GeometryGenerationOp(Operator):
                 (0.50, 0.65, 0.02, 0.15),
                 (0.75, 0.65, 0.05, 0.10),
             ],
-            dtype=np.float32,
-        )
-        oval_coords = oval_coords[np.newaxis, :, :]
+        )  # fmt: skip
 
         #######################################
         # Create a time-varying "points" tensor
         #######################################
         # Set of (x, y) points with 50 points equally spaced along x whose y
         # coordinate varies sinusoidally over time.
-        x = np.linspace(0, 1.0, 50, dtype=np.float32)
+        x = np.linspace(0, 1.0, 50)
         y = 0.8 + 0.1 * np.sin(8 * np.pi * x + self.count / 60 * 2 * np.pi)
         self.count += 1
-        # Stack and then add an axis so the final shape is (1, n_points, 2)
-        point_coords = np.stack((x, y), axis=-1)[np.newaxis, :, :]
+        # Stack so the final shape is (n_points, 2)
+        point_coords = np.stack((x, y), axis=-1)
 
         ####################################
         # Create a tensor for "label_coords"
@@ -140,9 +152,7 @@ class GeometryGenerationOp(Operator):
                 (0.10, 0.1),
                 (0.70, 0.1),
             ],
-            dtype=np.float32,
-        )
-        label_coords = label_coords[np.newaxis, :, :]
+        )  # fmt: skip
 
         ####################################
         # Create a tensor for "dynamic_text"
@@ -152,9 +162,7 @@ class GeometryGenerationOp(Operator):
             [
                 (0.0, 0.0),
             ],
-            dtype=np.float32,
-        )
-        dynamic_text = dynamic_text[np.newaxis, :, :]
+        )  # fmt: skip
 
         out_message = {
             "boxes": box_coords,
@@ -222,14 +230,14 @@ class MyVideoProcessingApp(Application):
     def compose(self):
         width = 854
         height = 480
-        video_dir = os.path.join(sample_data_path, "endoscopy", "video")
+        video_dir = os.path.join(sample_data_path, "racerx")
         if not os.path.exists(video_dir):
             raise ValueError(f"Could not find video data: {video_dir=}")
         source = VideoStreamReplayerOp(
             self,
             name="replayer",
             directory=video_dir,
-            basename="surgical_video",
+            basename="racerx",
             frame_rate=0,  # as specified in timestamps
             repeat=True,  # default: false
             realtime=True,  # default: true
@@ -246,6 +254,7 @@ class MyVideoProcessingApp(Application):
             name="holoviz",
             width=width,
             height=height,
+            enable_camera_pose_output=True,
             tensors=[
                 # name="" here to match the output of VideoStreamReplayerOp
                 dict(name="", type="color", opacity=0.5, priority=0),
@@ -320,9 +329,20 @@ class MyVideoProcessingApp(Application):
                 ),
             ],
         )
+        # Since we specified `enable_camera_pose_output=True` for the visualizer, we can connect
+        # this output port to a receiver to print the camera pose. This receiver will just print
+        # the camera pose the first time one is received.
+        rx = CameraPoseRxOp(self, name="rx")
+
         self.add_flow(source, visualizer, {("output", "receivers")})
         self.add_flow(image_processing, visualizer, {("outputs", "receivers")})
         self.add_flow(image_processing, visualizer, {("output_specs", "input_specs")})
+        self.add_flow(visualizer, rx, {("camera_pose_output", "in")})
+
+
+def main(config_count):
+    app = MyVideoProcessingApp(config_count=config_count)
+    app.run()
 
 
 if __name__ == "__main__":
@@ -335,6 +355,4 @@ if __name__ == "__main__":
         help="Set the number of frames to display the video",
     )
     args = parser.parse_args()
-    app = MyVideoProcessingApp(config_count=args.count)
-
-    app.run()
+    main(config_count=args.count)

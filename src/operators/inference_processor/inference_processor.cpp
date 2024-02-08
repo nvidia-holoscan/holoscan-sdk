@@ -133,7 +133,7 @@ void InferenceProcessorOp::setup(OperatorSpec& spec) {
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
   spec.param(receivers_, "receivers", "Receivers", "List of receivers", {});
   spec.param(transmitter_, "transmitter", "Transmitter", "Transmitter", {&transmitter});
-  cuda_stream_handler_.defineParams(spec);
+  cuda_stream_handler_.define_params(spec);
 }
 
 void InferenceProcessorOp::conditional_disable_output_port(const std::string& port_name) {

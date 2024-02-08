@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,10 @@
 #include <string>
 #include <utility>
 
+#include "holoscan/core/io_context.hpp"
+#include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/operator_spec.hpp"
 #include "holoscan/utils/cuda_stream_handler.hpp"
 #include "segmentation_postprocessor.cuh"
 
@@ -31,6 +34,20 @@ using holoscan::ops::segmentation_postprocessor::NetworkOutputType;
 
 namespace holoscan::ops {
 
+/**
+ * @brief Operator carrying out post-processing operations on segmentation outputs.
+ *
+ * **Named inputs:**
+ *     - *in_tensor*: `nvidia::gxf::Tensor`
+ *         - Expects a message containing a 32-bit floating point tensor with name
+ *         `in_tensor_name`. The expected data layout of this tensor is HWC, NCHW or NHWC format as
+ *         specified via `data_format`.
+ *
+ * **Named outputs:**
+ *     - *out_tensor*: `nvidia::gxf::Tensor`
+ *         - Emits a message containing a tensor named "out_tensor" that contains the segmentation
+ *         labels. This tensor will have unsigned 8-bit integer data type and shape (H, W, 1).
+ */
 class SegmentationPostprocessorOp : public Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(SegmentationPostprocessorOp)

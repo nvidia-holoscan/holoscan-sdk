@@ -17,4 +17,44 @@
 
 #include "holoscan/core/io_spec.hpp"
 
-namespace holoscan {}  // namespace holoscan
+#include <string>
+#include <unordered_map>
+
+using std::string_literals::operator""s;
+
+namespace holoscan {
+
+YAML::Node IOSpec::to_yaml_node() const {
+  YAML::Node node;
+
+  std::unordered_map<IOType, std::string> iotype_namemap{
+      {IOType::kInput, "kInput"s},
+      {IOType::kOutput, "kOutput"s},
+  };
+
+  std::unordered_map<ConnectorType, std::string> connectortype_namemap{
+      {ConnectorType::kDefault, "kDefault"s},
+      {ConnectorType::kDoubleBuffer, "kDoubleBuffer"s},
+      {ConnectorType::kUCX, "kUCX"s},
+  };
+
+  node["name"] = name();
+  node["io_type"] = iotype_namemap[io_type()];
+  node["typeinfo_name"] = std::string{typeinfo()->name()};
+  node["connector_type"] = connectortype_namemap[connector_type()];
+  auto conn = connector();
+  if (conn) { node["connector"] = conn->to_yaml_node(); }
+  node["conditions"] = YAML::Node(YAML::NodeType::Sequence);
+  for (const auto& c : conditions_) {
+    if (c.second) { node["conditions"].push_back(c.second->to_yaml_node()); }
+  }
+  return node;
+}
+
+std::string IOSpec::description() const {
+  YAML::Emitter emitter;
+  emitter << to_yaml_node();
+  return emitter.c_str();
+}
+
+}  // namespace holoscan

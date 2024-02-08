@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "holoscan/utils/yaml_parser.hpp"
+
 namespace holoscan {
 
 std::string ArgType::to_string() const {
@@ -34,7 +36,17 @@ std::string ArgType::to_string() const {
 
 template <typename T>
 inline static YAML::Node scalar_as_node(const std::any& val) {
-  return YAML::Node(std::any_cast<T>(val));
+  // Cast uint8_t and int8_t values to uint16_t and int16_t respectively to ensure they do not
+  // appear as non-UTF-8 characters in python due to
+  // https://pybind11.readthedocs.io/en/stable/advanced/cast/strings.html#returning-c-strings-to-python
+  //   e.g. We want 255 as uint8_t to appear as 255 and not <unicode character> in Arg::description
+  if constexpr (std::is_same_v<std::decay_t<T>, uint8_t>) {
+    return YAML::Node(static_cast<uint16_t>(std::any_cast<T>(val)));
+  } else if constexpr (std::is_same_v<std::decay_t<T>, int8_t>) {
+    return YAML::Node(static_cast<int16_t>(std::any_cast<T>(val)));
+  } else {
+    return YAML::Node(std::any_cast<T>(val));
+  }
 }
 
 template <typename T>
@@ -44,9 +56,7 @@ inline static YAML::Node vector_as_node(const std::any& val) {
   } catch (const std::bad_cast& e) {  // 2d:  std::vector<std::vector<T>>
     try {
       return YAML::Node(std::any_cast<std::vector<std::vector<T>>>(val));
-    } catch (const std::bad_cast& e) {
-      return YAML::Node(YAML::NodeType::Undefined);
-    }
+    } catch (const std::bad_cast& e) { return YAML::Node(YAML::NodeType::Undefined); }
   }
 }
 
@@ -89,6 +99,10 @@ inline static YAML::Node any_as_node(const std::any& val, ArgType type) {
       return any_as_node<float>(val, container_t);
     case ArgElementType::kFloat64:
       return any_as_node<double>(val, container_t);
+    case ArgElementType::kComplex64:
+      return any_as_node<std::complex<float>>(val, container_t);
+    case ArgElementType::kComplex128:
+      return any_as_node<std::complex<double>>(val, container_t);
     case ArgElementType::kString:
       return any_as_node<std::string>(val, container_t);
     case ArgElementType::kYAMLNode:

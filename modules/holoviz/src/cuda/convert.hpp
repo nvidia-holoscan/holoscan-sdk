@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,9 +33,10 @@ namespace holoscan::viz {
  * @param src_pitch     source image line pitch
  * @param dst           destination image data pointer
  * @param stream        stream to use for this operation
+ * @param alpha         alpha value
  */
 void ConvertR8G8B8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src, size_t src_pitch,
-                             CUarray dst, CUstream stream);
+                             CUarray dst, CUstream stream, uint8_t alpha);
 
 /**
  * Convert an image form B8G8R8A8 (32 bit) to R8G8B8A8 (32 bit).

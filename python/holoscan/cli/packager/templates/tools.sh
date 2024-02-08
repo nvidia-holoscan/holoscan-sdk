@@ -252,7 +252,7 @@ copy_app() {
 }
 
 copy_configs() {
-    if [ ! -d "${EXPORT_ROOT}/config/" ] 
+    if [ ! -d "${EXPORT_ROOT}/config/" ]
     then
         mkdir -p ${EXPORT_ROOT}/config/
     fi
@@ -378,7 +378,8 @@ main() {
     else # all other commands will launch the application
         local command=$(jq -r '.command | fromjson | join(" ")' ${HOLOSCAN_APP_MANIFEST_PATH} 2>/dev/null)
         if [ -n "${command}" ]; then
-            info "Launching application ${command} ${@}..."
+            args=$(printf " %s" "${@}")
+            info "Launching application ${command} ${args:1}..."
             eval ${command} "$@"
             exit_code=$?
             if [ $exit_code -ne 0 ] && [ -f /.dockerenv ] && [ "$HOLOSCAN_HOSTING_SERVICE" != "HOLOSCAN_RUN" ]; then
@@ -396,8 +397,6 @@ main() {
                 c_echo nocolor "           -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \\"
                 c_echo nocolor "           -e DISPLAY=\$DISPLAY \\"
                 c_echo nocolor "           -v /tmp/.X11-unix:/tmp/.X11-unix \\"
-                c_echo nocolor "           -v /usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/nvidia_icd.json \\"
-                c_echo nocolor "           -v /etc/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json \\"
                 c_echo nocolor "           -v \${MY-INPUT-DATA}:/var/holoscan/input \\"
                 c_echo nocolor "           my-container-image[:tag]"
                 newline

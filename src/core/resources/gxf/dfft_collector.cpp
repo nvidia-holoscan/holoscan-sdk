@@ -46,7 +46,12 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
     return GXF_FAILURE;
   }
 
-  if (leaf_ops_.find(codelet_id) != leaf_ops_.end()) {
+  // Sometimes, Entity Monitor is called in GXF without tick, start or stop but just to check
+  // scheduling condition and abort doing anything. getExecutionCount() is tested to check whether a
+  // tick really happened for a leaf operator
+  if (leaf_ops_.find(codelet_id) != leaf_ops_.end() &&
+      codelet.value()->getExecutionCount() > leaf_last_execution_count_[codelet_id]) {
+    leaf_last_execution_count_[codelet_id] = codelet.value()->getExecutionCount();
     MessageLabel m = leaf_ops_[codelet_id]->get_consolidated_input_label();
     leaf_ops_[codelet_id]->reset_input_message_labels();
 
@@ -70,6 +75,7 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
 
 void DFFTCollector::add_leaf_op(holoscan::Operator* op) {
   leaf_ops_[op->id()] = op;
+  leaf_last_execution_count_[op->id()] = 0;
 }
 
 void DFFTCollector::add_root_op(holoscan::Operator* op) {

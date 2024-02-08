@@ -21,6 +21,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,8 @@
 #include "holoscan/operators/holoviz/holoviz.hpp"
 #include "holoscan/operators/inference/inference.hpp"
 #include "holoscan/operators/inference_processor/inference_processor.hpp"
+#include "holoscan/operators/ping_rx/ping_rx.hpp"
+#include "holoscan/operators/ping_tx/ping_tx.hpp"
 #include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
 #include "holoscan/operators/video_stream_replayer/video_stream_replayer.hpp"
@@ -72,6 +75,7 @@ TEST_F(OperatorClassesWithGXFContext, TestAJASourceOpChannelFromYAML) {
   auto op = F.make_operator<ops::AJASourceOp>(name, args);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::AJASourceOp>(args)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -103,6 +107,7 @@ TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
   auto op = F.make_operator<ops::AJASourceOp>(name, args);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::AJASourceOp>(args)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -146,6 +151,9 @@ TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
   auto op = F.make_operator<ops::FormatConverterOp>(name, args);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::FormatConverterOp>(args)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
+
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -172,6 +180,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
   auto op = F.make_operator<ops::VideoStreamRecorderOp>(name, args);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::VideoStreamRecorderOp>(args)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -191,8 +200,8 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
   const std::string name{"replayer"};
   const std::string sample_data_path = std::string(std::getenv("HOLOSCAN_INPUT_PATH"));
   ArgList args{
-      Arg{"directory", sample_data_path + "/endoscopy/video"s},
-      Arg{"basename", "surgical_video"s},
+      Arg{"directory", sample_data_path + "/racerx"s},
+      Arg{"basename", "racerx"s},
       Arg{"batch_size", static_cast<size_t>(1UL)},
       Arg{"ignore_corrupted_entities", true},
       Arg{"frame_rate", 0.f},
@@ -204,6 +213,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
   auto op = F.make_operator<ops::VideoStreamReplayerOp>(name, args);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::VideoStreamReplayerOp>(args)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -233,6 +243,7 @@ TEST_F(OperatorClassesWithGXFContext, TestSegmentationPostprocessorOp) {
   auto op = F.make_operator<ops::SegmentationPostprocessorOp>(name, args);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::SegmentationPostprocessorOp>(args)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -270,6 +281,7 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
   auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::HolovizOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -310,6 +322,7 @@ TEST_F(OperatorClassesWithGXFContext, TestInferenceOp) {
   auto op = F.make_operator<ops::InferenceOp>(name, kwargs);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::InferenceOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -337,6 +350,7 @@ TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOp) {
   auto op = F.make_operator<ops::InferenceProcessorOp>(name, kwargs);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::InferenceProcessorOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   auto error_pos = log_output.find("error");
@@ -367,20 +381,39 @@ TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOp) {
   auto op = F.make_operator<ops::BayerDemosaicOp>(name, kwargs);
   EXPECT_EQ(op->name(), name);
   EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::BayerDemosaicOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  auto error_pos = log_output.find("error");
+  if (error_pos != std::string::npos) {
+    // Initializing a native operator outside the context of app.run() will result in the
+    // following error being logged because the GXFWrapper will not yet have been created for
+    // the operator:
+    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'bayer_demosaic'
+
+    // GXFWrapper was mentioned and no additional error was logged
+    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
+  }
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOpDefaultConstructor) {
-  const std::string name{"bayer_demosaic"};
-
   testing::internal::CaptureStderr();
 
   auto op = F.make_operator<ops::BayerDemosaicOp>();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  auto error_pos = log_output.find("error");
+  if (error_pos != std::string::npos) {
+    // Initializing a native operator outside the context of app.run() will result in the
+    // following error being logged because the GXFWrapper will not yet have been created for
+    // the operator:
+    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'bayer_demosaic'
+
+    // GXFWrapper was mentioned and no additional error was logged
+    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
+    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
+  }
 }
 
 TEST(Operator, TestNativeOperatorWithoutFragment) {
@@ -397,4 +430,36 @@ TEST(Operator, TestNativeOperatorWithoutFragment) {
   EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
+TEST_F(OperatorClassesWithGXFContext, TestPingRxOpOp) {
+  const std::string name{"rx"};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::PingRxOp>(name);
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestPingTxOpOp) {
+  const std::string name{"tx"};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::PingTxOp>(name);
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestInvalidOperatorName) {
+  EXPECT_THROW(
+      {
+        // "." character is not allowed in operator names
+        auto op = F.make_operator<ops::PingRxOp>("rx.1");
+      },
+      std::invalid_argument);
+}
 }  // namespace holoscan

@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 from pathlib import Path
 from typing import Any, Dict
@@ -58,11 +60,11 @@ class ApplicationManifest:
         self._data["environment"] = value
 
     @property
-    def input(self) -> Dict[str, str]:
+    def input(self) -> Dict[str, str]:  # noqa: A003
         return self._data["input"]
 
     @input.setter
-    def input(self, value: Dict[str, str]):
+    def input(self, value: Dict[str, str]):  # noqa: A003
         self._data["input"] = value
 
     @property
@@ -147,6 +149,15 @@ class PackageManifest:
         self._data["models"] = None
         self._data["resources"] = None
         self._data["version"] = None
+        self._data["platformConfig"] = None
+
+    @property
+    def platform_config(self) -> str:
+        return self._data["platformConfig"]
+
+    @platform_config.setter
+    def platform_config(self, value: str):
+        self._data["platformConfig"] = value
 
     @property
     def api_version(self) -> str:

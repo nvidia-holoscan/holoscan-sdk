@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,13 +27,60 @@ void HoloInferTests::holoinfer_assert(const HoloInfer::InferStatus& status,
                                       const std::string& test_name,
                                       HoloInfer::holoinfer_code assert_type) {
   total_test_count++;
+  status.display_message();
+  bool test_status = true;
   if (status.get_code() != assert_type) {
-    status.display_message();
-    std::cerr << "Test " << current_test << ": " << test_name << " in " << module << " -> FAIL.\n";
     fail_test_count++;
+    test_status = false;
   } else {
-    std::cout << "Test " << current_test << ": " << test_name << " in " << module << " -> PASS.\n";
     pass_test_count++;
+  }
+
+  auto test_id = module + std::to_string(current_test);
+
+  if (test_tracker.find(test_id) == test_tracker.end()) {
+    test_tracker.insert({test_id, test_status});
+#if use_torch
+    holoinfer_assert_with_message(status, module, current_test, test_name, "context setup failure");
+#endif
+    if (test_tracker.at(test_id)) {
+      std::cout << "Test " << current_test << ": " << test_name << " in " << module
+                << " -> PASS.\n";
+    } else {
+      std::cerr << "Test " << current_test << ": " << test_name << " in " << module
+                << " -> FAIL.\n";
+    }
+  } else {
+    std::cout << "Test: " << current_test << " executed with status as: " << test_status ? "PASS\n"
+                                                                                         : "FAIL\n";
+  }
+}
+
+void HoloInferTests::holoinfer_assert_with_message(const HoloInfer::InferStatus& status,
+                                                   const std::string& module,
+                                                   unsigned int current_test,
+                                                   const std::string& test_name,
+                                                   const std::string& message) {
+  auto status_message = status.get_message();
+  auto index = status_message.find(message);
+  bool test_status = (index != std::string::npos) ? false : true;
+
+  auto test_id = module + std::to_string(current_test);
+
+  if (test_tracker.find(test_id) != test_tracker.end()) {
+    if (!test_status && test_tracker.at(test_id)) {
+      test_tracker.at(test_id) = false;
+      pass_test_count--;
+      fail_test_count++;
+    }
+  } else {
+    total_test_count++;
+    test_tracker.insert({test_id, test_status});
+    if (!test_status) {
+      fail_test_count++;
+    } else {
+      pass_test_count++;
+    }
   }
 }
 
@@ -43,6 +90,11 @@ void HoloInferTests::print_summary() {
   std::cout << "Tests passed     :\t" << pass_test_count << " ("
             << 100.0 * (float(pass_test_count) / float(total_test_count)) << "%)\n";
   std::cout << "Tests failed     :\t" << fail_test_count << "\n\n";
+}
+
+int HoloInferTests::get_status() {
+  if (fail_test_count > 0) return 1;
+  return 0;
 }
 
 void HoloInferTests::clear_specs() {
@@ -73,8 +125,13 @@ void HoloInferTests::setup_specifications() {
 }
 
 HoloInfer::InferStatus HoloInferTests::create_specifications() {
-  setup_specifications();
-  return setup_inference();
+  HoloInfer::InferStatus status = HoloInfer::InferStatus(HoloInfer::holoinfer_code::H_ERROR);
+
+  try {
+    setup_specifications();
+    status = setup_inference();
+  } catch (const std::runtime_error& rt) { return status; }
+  return status;
 }
 
 HoloInfer::InferStatus HoloInferTests::call_parameter_check_inference() {
@@ -101,6 +158,13 @@ HoloInfer::InferStatus HoloInferTests::prepare_for_inference() {
 }
 
 HoloInfer::InferStatus HoloInferTests::do_inference() {
-  return holoscan_infer_context_->execute_inference(inference_specs_->data_per_tensor_,
-                                                    inference_specs_->output_per_model_);
+  HoloInfer::InferStatus status = HoloInfer::InferStatus(HoloInfer::holoinfer_code::H_ERROR);
+
+  try {
+    return holoscan_infer_context_->execute_inference(inference_specs_->data_per_tensor_,
+                                                      inference_specs_->output_per_model_);
+  } catch (...) {
+    std::cout << "Exception occurred in inference.\n";
+    return status;
+  }
 }

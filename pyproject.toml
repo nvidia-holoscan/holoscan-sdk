@@ -13,32 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[tool.isort]
-profile = "black"
-line_length = 100
-known_first_party = "holoscan"
-skip_glob = ["build*/*", "install*/*", ".cache/*"]
-
-[tool.black]
-line-length = 100
-target-version = ['py37']
-include = '\.pyi?$'
-extend-exclude = '''
-# A regex preceded with ^/ will apply only to files and directories
-# in the root of the project.
-(
-  ^.cache/*    # exclude .cache folder
-  | ^build*/*  # exclude build folders
-  | ^install*/*  # exclude install folders
-)
-'''
-
 [tool.codespell]
 skip = "_deps,build*,.cache,html,_build,_static,generated,latex,install*,.git,xml,vale"
 ignore-words-list = "nd,bu,dne,unexpect"
 
 [tool.ruff]
-line-length = 103  # 103 to avoid E501 warnings from the copyright header
+# see: https://docs.astral.sh/ruff/rules/
+select = [
+  "E",     # Pyflakes
+  "W",     # Pyflakes
+  "F",     # Pyflakes
+  "I",     # isort
+  "UP",    # pyupgrade
+  "SIM",   # flake8-simplify
+  "B",     # flake8-bugbear
+  "A",     # flake8-builtins (avoid shadowing of Python builtins)
+  "N",     # pep8-naming (enforce pep8 naming conventions)
+  "YTT",   # flake8-2020 (check for misuse of sys.version or sys.version_info)
+  "ICN",   # flake8-import-conventions (e.g. enforce importing numpy as np)
+  "T10",   # flake8-debugger (ensure no leftover trace/breakpoint commands)
+  "PT",    # flake8-pytest-style
+  "FIX",   # flake8-fixme (warn on leftover TODO statements)
+  "NPY",   # numpy-specific rules
+  "PERF",  # performance related rules
+]
+line-length = 100
 exclude = [
   "_build",
   "_deps",
@@ -52,10 +51,27 @@ exclude = [
   ".git",
   "xml"
 ]
+fix = false  # don't automatically apply fixes (can override with ruff --fix)
+fixable = ["ALL"]  # list of rule codes or prefixes to consider fixable
+target-version = "py38"
+ignore = [
+  "PT006"  # don't enforce csv vs. list vs. tuple for first argument of parametrize
+]
 
 [tool.ruff.per-file-ignores]
-# commented ignore ported from flake8 as E203 is not checked by ruff
-# "scripts/convert_video_to_gxf_entities.py" = ["E203"]
+# ignore line length for __init__.py files (due to copyright header not in triple quotes)
+# (For API documentation, the __init__.py files need sphinx autosummary commands in the first
+#  triple quote comment block, so the copyright header is commented as individual lines)
+"python/holoscan/**/__init__.py" = ["E501"]
+"scripts/gxf_entity_codec.py" = ["N815"]  # allow mixed-case enum names in this utility script
 
 [tool.ruff.isort]
 known-first-party = ["holoscan"]
+combine-as-imports = false
+force-single-line = false
+order-by-type = true
+
+[tool.ruff.lint.flake8-import-conventions.aliases]
+# Declare the default aliases.
+cupy = "cp"
+numpy = "np"

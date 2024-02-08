@@ -17,9 +17,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
-#include <string>
 #include <memory>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -35,8 +36,6 @@ enum class Source { HOST, CUDA_DEVICE };
 enum class Reuse { DISABLE, ENABLE };
 
 enum class UseLut { DISABLE, ENABLE, ENABLE_WITH_NORMALIZE };
-
-enum class UseDepth { DISABLE, ENABLE };
 
 enum class UseStream { DISABLE, ENABLE };
 
@@ -78,16 +77,6 @@ std::ostream& operator<<(std::ostream& os, const UseLut& use_lut) {
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const UseDepth& use_depth) {
-  switch (use_depth) {
-    CASE(UseDepth::DISABLE)
-    CASE(UseDepth::ENABLE)
-    default:
-      os.setstate(std::ios_base::failbit);
-  }
-  return os;
-}
-
 std::ostream& operator<<(std::ostream& os, const UseStream& use_stream) {
   switch (use_stream) {
     CASE(UseStream::DISABLE)
@@ -104,19 +93,30 @@ namespace viz {
 std::ostream& operator<<(std::ostream& os, const ImageFormat& format) {
   switch (format) {
     CASE(ImageFormat::R8_UINT)
+    CASE(ImageFormat::R8_SINT)
+    CASE(ImageFormat::R8_UNORM)
+    CASE(ImageFormat::R8_SNORM)
+    CASE(ImageFormat::R8_SRGB)
     CASE(ImageFormat::R16_UINT)
+    CASE(ImageFormat::R16_SINT)
+    CASE(ImageFormat::R16_UNORM)
+    CASE(ImageFormat::R16_SNORM)
     CASE(ImageFormat::R16_SFLOAT)
     CASE(ImageFormat::R32_UINT)
+    CASE(ImageFormat::R32_SINT)
     CASE(ImageFormat::R32_SFLOAT)
     CASE(ImageFormat::R8G8B8_UNORM)
-    CASE(ImageFormat::B8G8R8_UNORM)
+    CASE(ImageFormat::R8G8B8_SNORM)
+    CASE(ImageFormat::R8G8B8_SRGB)
     CASE(ImageFormat::R8G8B8A8_UNORM)
-    CASE(ImageFormat::B8G8R8A8_UNORM)
+    CASE(ImageFormat::R8G8B8A8_SNORM)
+    CASE(ImageFormat::R8G8B8A8_SRGB)
     CASE(ImageFormat::R16G16B16A16_UNORM)
+    CASE(ImageFormat::R16G16B16A16_SNORM)
     CASE(ImageFormat::R16G16B16A16_SFLOAT)
     CASE(ImageFormat::R32G32B32A32_SFLOAT)
-    CASE(ImageFormat::R8_UNORM)
-    CASE(ImageFormat::R16_UNORM)
+    CASE(ImageFormat::D16_UNORM)
+    CASE(ImageFormat::X8_D24_UNORM)
     CASE(ImageFormat::D32_SFLOAT)
     default:
       os.setstate(std::ios_base::failbit);
@@ -128,36 +128,76 @@ std::ostream& operator<<(std::ostream& os, const ImageFormat& format) {
 
 #undef CASE
 
-class ImageLayer : public TestHeadless,
-                   public testing::WithParamInterface<std::tuple<Source, Reuse, UseLut, UseDepth>> {
-};
+class ImageLayer
+    : public TestHeadless,
+      public testing::WithParamInterface<std::tuple<Source, Reuse, UseLut, viz::ImageFormat>> {};
 
 TEST_P(ImageLayer, Image) {
   const Source source = std::get<0>(GetParam());
   const bool reuse = std::get<1>(GetParam()) == Reuse::ENABLE;
   const UseLut use_lut = std::get<2>(GetParam());
-  const bool use_depth = std::get<3>(GetParam()) == UseDepth::ENABLE;
+  const viz::ImageFormat image_format = std::get<3>(GetParam());
 
-  const viz::ImageFormat kLutFormat = viz::ImageFormat::R8G8B8A8_UNORM;
-
-  viz::ImageFormat color_format = viz::ImageFormat::R8G8B8A8_UNORM;
-  if (use_lut == UseLut::ENABLE) {
-    color_format = viz::ImageFormat::R8_UINT;
-  } else if (use_lut == UseLut::ENABLE_WITH_NORMALIZE) {
-    color_format = viz::ImageFormat::R8_UNORM;
+  if (use_lut == UseLut::ENABLE_WITH_NORMALIZE) {
+    GTEST_SKIP() << "LUT with normalize tests not working yet, reference image generation needs to "
+                    "be fixed.";
   }
 
-  SetupData(color_format);
+  bool use_depth = false;
+  bool convert_color = false;
 
-  viz::ImageFormat depth_format = viz::ImageFormat::D32_SFLOAT;
+  switch (image_format) {
+    case viz::ImageFormat::R8_UINT:
+    case viz::ImageFormat::R8_SINT:
+    case viz::ImageFormat::R8_UNORM:
+    case viz::ImageFormat::R16_UINT:
+    case viz::ImageFormat::R16_SINT:
+    case viz::ImageFormat::R32_UINT:
+    case viz::ImageFormat::R32_SINT:
+    case viz::ImageFormat::R8G8B8_UNORM:
+    case viz::ImageFormat::R8G8B8A8_UNORM:
+      break;
+    case viz::ImageFormat::R8_SNORM:
+    case viz::ImageFormat::R8_SRGB:
+    case viz::ImageFormat::R16_UNORM:
+    case viz::ImageFormat::R16_SNORM:
+    case viz::ImageFormat::R32_SFLOAT:
+    case viz::ImageFormat::R8G8B8_SNORM:
+    case viz::ImageFormat::R8G8B8_SRGB:
+    case viz::ImageFormat::R8G8B8A8_SNORM:
+    case viz::ImageFormat::R8G8B8A8_SRGB:
+    case viz::ImageFormat::R16G16B16A16_UNORM:
+    case viz::ImageFormat::R16G16B16A16_SNORM:
+    case viz::ImageFormat::R32G32B32A32_SFLOAT:
+      convert_color = true;
+      break;
+    case viz::ImageFormat::D16_UNORM:
+    case viz::ImageFormat::X8_D24_UNORM:
+    case viz::ImageFormat::D32_SFLOAT:
+      use_depth = true;
+      break;
+    case viz::ImageFormat::R16_SFLOAT:
+    case viz::ImageFormat::R16G16B16A16_SFLOAT:
+    default:
+      ASSERT_TRUE(false) << "Unhandled image format";
+      break;
+  }
+
+  viz::ImageFormat color_format, depth_format;
   if (use_depth) {
+    color_format = viz::ImageFormat::R8G8B8A8_UNORM;
+    depth_format = image_format;
+    SetupData(color_format);
     SetupData(depth_format);
   } else {
+    color_format = image_format;
+    depth_format = viz::ImageFormat::D32_SFLOAT;
+    SetupData(image_format);
     depth_data_ = std::vector<float>(width_ * height_ * 1 * sizeof(float), 0.f);
   }
 
   std::vector<uint32_t> lut;
-  std::vector<uint8_t> data_with_lut;
+  std::vector<uint8_t> converted_data;
 
   viz::CudaService::ScopedPush cuda_context;
   viz::UniqueCUdeviceptr color_device_ptr;
@@ -196,32 +236,180 @@ TEST_P(ImageLayer, Image) {
     }
 
     // lookup color to produce result
-    data_with_lut.resize(width_ * height_ * sizeof(uint32_t));
+    converted_data.resize(width_ * height_ * sizeof(uint32_t));
     if (use_lut == UseLut::ENABLE) {
       for (size_t index = 0; index < width_ * height_; ++index) {
-        const uint8_t src_value = color_data_[index];
-        reinterpret_cast<uint32_t*>(data_with_lut.data())[index] = lut[src_value];
+        uint32_t lut_index;
+        switch (color_format) {
+          case viz::ImageFormat::R8_UINT:
+          case viz::ImageFormat::R8_SINT:
+            lut_index = color_data_[index];
+            break;
+          case viz::ImageFormat::R16_UINT:
+            lut_index = reinterpret_cast<uint16_t*>(color_data_.data())[index];
+            break;
+          case viz::ImageFormat::R16_SINT:
+            lut_index = reinterpret_cast<int16_t*>(color_data_.data())[index];
+            break;
+          case viz::ImageFormat::R32_UINT:
+            lut_index = reinterpret_cast<uint32_t*>(color_data_.data())[index];
+            break;
+          case viz::ImageFormat::R32_SINT:
+            lut_index = reinterpret_cast<int32_t*>(color_data_.data())[index];
+            break;
+          case viz::ImageFormat::R32_SFLOAT:
+            lut_index =
+                static_cast<uint32_t>(reinterpret_cast<float*>(color_data_.data())[index] + 0.5f);
+            break;
+          default:
+            ASSERT_TRUE(false) << "Unhandled LUT image format";
+            break;
+        }
+        reinterpret_cast<uint32_t*>(converted_data.data())[index] = lut[lut_index];
       }
     } else if (use_lut == UseLut::ENABLE_WITH_NORMALIZE) {
       for (size_t index = 0; index < width_ * height_; ++index) {
-        const float offset = (float(color_data_[index]) / 255.f) * lut_size_;
-        uint32_t val0 = lut[uint32_t(offset - 0.5f)];
-        uint32_t val1 = lut[uint32_t(offset + 0.5f)];
+        float offset;
+        switch (color_format) {
+          case viz::ImageFormat::R8_UINT:
+          case viz::ImageFormat::R8_SINT:
+            offset = color_data_[index];
+            break;
+          case viz::ImageFormat::R8_UNORM:
+            offset = (static_cast<float>(color_data_[index]) / 255.f) * (lut_size_ - 1);
+            break;
+          case viz::ImageFormat::R8_SNORM:
+            offset = (static_cast<float>(color_data_[index]) / 127.f) * (lut_size_ - 1);
+            break;
+          case viz::ImageFormat::R16_UNORM:
+            offset = (static_cast<float>(reinterpret_cast<uint16_t*>(color_data_.data())[index]) /
+                      65535.f) *
+                     (lut_size_ - 1);
+            break;
+          case viz::ImageFormat::R16_SNORM:
+            offset = (static_cast<float>(reinterpret_cast<int16_t*>(color_data_.data())[index]) /
+                      32767.f) *
+                     (lut_size_ - 1);
+            break;
+          case viz::ImageFormat::R32_SFLOAT:
+            offset = reinterpret_cast<float*>(color_data_.data())[index] * (lut_size_ - 1);
+            break;
+          default:
+            ASSERT_TRUE(false) << "Unhandled LUT with normalize color format";
+            break;
+        }
+
+        const uint32_t val0 =
+            lut[std::max(0, std::min(int32_t(lut_size_) - 1, int32_t(offset * (lut_size_ - 1))))];
+        const uint32_t val1 = lut[std::max(
+            0,
+            std::min(int32_t(lut_size_) - 1,
+                     int32_t((offset + (1.0f / float(lut_size_))) * (lut_size_ - 1))))];
         float dummy;
-        float frac = std::modf(offset, &dummy);
+        const float frac = std::modf(offset, &dummy);
 
-        float r = float(val1 & 0xFF) + frac * (float(val0 & 0xFF) - float(val1 & 0xFF));
-        float g = float((val1 & 0xFF00) >> 8) +
-                  frac * (float((val0 & 0xFF00) >> 8) - float((val1 & 0xFF00) >> 8));
-        float b = float((val1 & 0xFF0000) >> 16) +
-                  frac * (float((val0 & 0xFF0000) >> 16) - float((val1 & 0xFF0000) >> 16));
-        float a = float((val1 & 0xFF000000) >> 24) +
-                  frac * (float((val0 & 0xFF000000) >> 24) - float((val1 & 0xFF000000) >> 24));
+        const float r0 = float(val0 & 0xFF);
+        const float g0 = float((val0 & 0xFF00) >> 8);
+        const float b0 = float((val0 & 0xFF0000) >> 16);
+        const float a0 = float((val0 & 0xFF000000) >> 24);
 
-        reinterpret_cast<uint32_t*>(data_with_lut.data())[index] =
+        const float r1 = float(val1 & 0xFF);
+        const float g1 = float((val1 & 0xFF00) >> 8);
+        const float b1 = float((val1 & 0xFF0000) >> 16);
+        const float a1 = float((val1 & 0xFF000000) >> 24);
+
+        const float r = r0 + frac * (r1 - r0);
+        const float g = g0 + frac * (g1 - g0);
+        const float b = b0 + frac * (b1 - b0);
+        const float a = a0 + frac * (a1 - a0);
+
+        reinterpret_cast<uint32_t*>(converted_data.data())[index] =
             uint32_t(r + 0.5f) | (uint32_t(g + 0.5f) << 8) | (uint32_t(b + 0.5f) << 16) |
             (uint32_t(a + 0.5f) << 24);
       }
+    }
+  } else if (convert_color) {
+    uint32_t components;
+    switch (color_format) {
+      case viz::ImageFormat::R8_SRGB:
+      case viz::ImageFormat::R8_SNORM:
+      case viz::ImageFormat::R16_UNORM:
+      case viz::ImageFormat::R16_SNORM:
+      case viz::ImageFormat::R32_SFLOAT:
+        components = 1;
+        break;
+      case viz::ImageFormat::R8G8B8_SNORM:
+      case viz::ImageFormat::R8G8B8_SRGB:
+        components = 3;
+        break;
+      case viz::ImageFormat::R8G8B8A8_SNORM:
+      case viz::ImageFormat::R8G8B8A8_SRGB:
+      case viz::ImageFormat::R16G16B16A16_SNORM:
+      case viz::ImageFormat::R16G16B16A16_UNORM:
+        components = 4;
+        break;
+      default:
+        ASSERT_TRUE(false) << "Unhandled color format in conversion";
+        break;
+    }
+
+    const size_t elements = width_ * height_ * components;
+    converted_data.resize(elements);
+    for (size_t index = 0; index < elements; ++index) {
+      switch (color_format) {
+        case viz::ImageFormat::R8_SNORM:
+        case viz::ImageFormat::R8G8B8_SNORM:
+        case viz::ImageFormat::R8G8B8A8_SNORM:
+          converted_data[index] = uint8_t(
+              (float(reinterpret_cast<int8_t*>(color_data_.data())[index]) / 127.f) * 255.f + 0.5f);
+          break;
+        case viz::ImageFormat::R16_UNORM:
+        case viz::ImageFormat::R16G16B16A16_UNORM:
+          converted_data[index] = uint8_t(
+              (float(reinterpret_cast<uint16_t*>(color_data_.data())[index]) / 65535.f) * 255.f +
+              0.5f);
+          break;
+        case viz::ImageFormat::R16_SNORM:
+        case viz::ImageFormat::R16G16B16A16_SNORM:
+          converted_data[index] = uint8_t(
+              (float(reinterpret_cast<int16_t*>(color_data_.data())[index]) / 32767.f) * 255.f +
+              0.5f);
+          break;
+        case viz::ImageFormat::R32_SFLOAT:
+          converted_data[index] =
+              uint8_t(reinterpret_cast<float*>(color_data_.data())[index] * 255.f + 0.5f);
+          break;
+        case viz::ImageFormat::R8_SRGB:
+        case viz::ImageFormat::R8G8B8_SRGB:
+        case viz::ImageFormat::R8G8B8A8_SRGB:
+          converted_data[index] = color_data_[index];
+          break;
+        default:
+          ASSERT_TRUE(false) << "Unhandled color format in conversion";
+          break;
+      }
+    }
+    // sRGB EOTF conversion
+    // https://registry.khronos.org/DataFormat/specs/1.3/dataformat.1.3.html
+    switch (color_format) {
+      case viz::ImageFormat::R8_SRGB:
+      case viz::ImageFormat::R8G8B8_SRGB:
+      case viz::ImageFormat::R8G8B8A8_SRGB:
+        for (size_t index = 0; index < elements; index += components) {
+          for (size_t component = 0; component < components; ++component) {
+            float value = float(converted_data[index + component]) / 255.f;
+            if (value < 0.04045f) {
+              value /= 12.92f;
+            } else {
+              value = std::pow(((value + 0.055f) / 1.055f), 2.4f);
+            }
+            converted_data[index + component] = uint8_t((value * 255.f) + 0.5f);
+          }
+        }
+        break;
+      default:
+        // non sRGB
+        break;
     }
   }
 
@@ -232,7 +420,7 @@ TEST_P(ImageLayer, Image) {
 
     if (use_lut != UseLut::DISABLE) {
       EXPECT_NO_THROW(viz::LUT(lut_size_,
-                               kLutFormat,
+                               viz::ImageFormat::R8G8B8A8_UNORM,
                                lut.size() * sizeof(uint32_t),
                                lut.data(),
                                use_lut == UseLut::ENABLE_WITH_NORMALIZE));
@@ -271,10 +459,10 @@ TEST_P(ImageLayer, Image) {
     EXPECT_NO_THROW(viz::End());
   }
 
-  if (use_lut != UseLut::DISABLE) {
-    std::swap(color_data_, data_with_lut);
+  if (converted_data.size() != 0) {
+    std::swap(color_data_, converted_data);
     CompareColorResult();
-    std::swap(data_with_lut, color_data_);
+    std::swap(converted_data, color_data_);
   } else {
     CompareColorResult();
   }
@@ -282,11 +470,63 @@ TEST_P(ImageLayer, Image) {
   CompareDepthResult();
 }
 
-INSTANTIATE_TEST_SUITE_P(ImageLayer, ImageLayer,
+// source host or device with reuse test
+INSTANTIATE_TEST_SUITE_P(ImageLayerSource, ImageLayer,
                          testing::Combine(testing::Values(Source::HOST, Source::CUDA_DEVICE),
                                           testing::Values(Reuse::DISABLE, Reuse::ENABLE),
-                                          testing::Values(UseLut::DISABLE, UseLut::ENABLE),
-                                          testing::Values(UseDepth::DISABLE, UseDepth::ENABLE)));
+                                          testing::Values(UseLut::DISABLE),
+                                          testing::Values(viz::ImageFormat::R8G8B8A8_UNORM)));
+
+// native color formats
+INSTANTIATE_TEST_SUITE_P(
+    ImageLayerFormat, ImageLayer,
+    testing::Combine(testing::Values(Source::CUDA_DEVICE), testing::Values(Reuse::DISABLE),
+                     testing::Values(UseLut::DISABLE),
+                     testing::Values(viz::ImageFormat::R8_UNORM, viz::ImageFormat::R8_SNORM,
+                                     viz::ImageFormat::R8_SRGB, viz::ImageFormat::R16_UNORM,
+                                     viz::ImageFormat::R16_SNORM, viz::ImageFormat::R32_SFLOAT,
+                                     viz::ImageFormat::R8G8B8A8_UNORM,
+                                     viz::ImageFormat::R8G8B8A8_SNORM,
+                                     viz::ImageFormat::R8G8B8A8_SRGB,
+                                     viz::ImageFormat::R16G16B16A16_SNORM,
+                                     viz::ImageFormat::R16G16B16A16_UNORM)));
+
+// LUT tests
+INSTANTIATE_TEST_SUITE_P(
+    ImageLayerLUT, ImageLayer,
+    testing::Combine(testing::Values(Source::CUDA_DEVICE), testing::Values(Reuse::DISABLE),
+                     testing::Values(UseLut::ENABLE),
+                     testing::Values(viz::ImageFormat::R8_UINT, viz::ImageFormat::R8_SINT,
+                                     viz::ImageFormat::R16_UINT, viz::ImageFormat::R16_SINT,
+                                     viz::ImageFormat::R32_UINT, viz::ImageFormat::R32_SINT)));
+
+// LUT with normalize tests
+INSTANTIATE_TEST_SUITE_P(
+    ImageLayerLUTNorm, ImageLayer,
+    testing::Combine(testing::Values(Source::CUDA_DEVICE), testing::Values(Reuse::DISABLE),
+                     testing::Values(UseLut::ENABLE_WITH_NORMALIZE),
+                     testing::Values(viz::ImageFormat::R8_UINT, viz::ImageFormat::R8_SINT,
+                                     viz::ImageFormat::R8_UNORM, viz::ImageFormat::R8_SNORM,
+                                     viz::ImageFormat::R16_UINT, viz::ImageFormat::R16_SINT,
+                                     viz::ImageFormat::R16_UNORM, viz::ImageFormat::R16_SNORM,
+                                     viz::ImageFormat::R32_UINT, viz::ImageFormat::R32_SINT,
+                                     viz::ImageFormat::R16_SFLOAT, viz::ImageFormat::R32_SFLOAT)));
+
+// RGB is non-native, converted by CUDA kernel or host code
+INSTANTIATE_TEST_SUITE_P(ImageLayerConvert, ImageLayer,
+                         testing::Combine(testing::Values(Source::HOST, Source::CUDA_DEVICE),
+                                          testing::Values(Reuse::DISABLE),
+                                          testing::Values(UseLut::DISABLE),
+                                          testing::Values(viz::ImageFormat::R8G8B8_UNORM,
+                                                          viz::ImageFormat::R8G8B8_SNORM,
+                                                          viz::ImageFormat::R8G8B8_SRGB)));
+
+// depth format tests
+INSTANTIATE_TEST_SUITE_P(ImageLayerDepth, ImageLayer,
+                         testing::Combine(testing::Values(Source::HOST, Source::CUDA_DEVICE),
+                                          testing::Values(Reuse::DISABLE, Reuse::ENABLE),
+                                          testing::Values(UseLut::DISABLE),
+                                          testing::Values(viz::ImageFormat::D32_SFLOAT)));
 
 TEST_F(ImageLayer, ImageCudaArray) {
   constexpr viz::ImageFormat kFormat = viz::ImageFormat::R8G8B8A8_UNORM;
@@ -394,6 +634,11 @@ TEST_F(ImageLayer, Errors) {
   EXPECT_THROW(viz::ImageCudaArray(kFormat, array), std::runtime_error);
   EXPECT_THROW(viz::LUT(lut_size_, kLutFormat, lut.size() * sizeof(uint32_t), lut.data()),
                std::runtime_error);
+  EXPECT_THROW(viz::ImageComponentMapping(viz::ComponentSwizzle::IDENTITY,
+                                          viz::ComponentSwizzle::IDENTITY,
+                                          viz::ComponentSwizzle::IDENTITY,
+                                          viz::ComponentSwizzle::IDENTITY),
+               std::runtime_error);
 
   // it's an error to call BeginImageLayer again without calling EndLayer
   EXPECT_NO_THROW(viz::BeginImageLayer());
@@ -408,6 +653,11 @@ TEST_F(ImageLayer, Errors) {
                std::runtime_error);
   EXPECT_THROW(viz::ImageCudaArray(kFormat, array), std::runtime_error);
   EXPECT_THROW(viz::LUT(lut_size_, kLutFormat, lut.size() * sizeof(uint32_t), lut.data()),
+               std::runtime_error);
+  EXPECT_THROW(viz::ImageComponentMapping(viz::ComponentSwizzle::IDENTITY,
+                                          viz::ComponentSwizzle::IDENTITY,
+                                          viz::ComponentSwizzle::IDENTITY,
+                                          viz::ComponentSwizzle::IDENTITY),
                std::runtime_error);
   EXPECT_NO_THROW(viz::EndLayer());
 
@@ -539,3 +789,118 @@ INSTANTIATE_TEST_SUITE_P(ImageLayer, MultiGPU,
                          testing::Combine(testing::Values(UseStream::DISABLE, UseStream::ENABLE),
                                           testing::Values(viz::ImageFormat::R8G8B8A8_UNORM,
                                                           viz::ImageFormat::R8G8B8_UNORM)));
+
+class ImageLayerSwizzle : public TestHeadless,
+                          public testing::WithParamInterface<std::array<viz::ComponentSwizzle, 4>> {
+};
+
+TEST_P(ImageLayerSwizzle, Swizzle) {
+  const std::array<viz::ComponentSwizzle, 4> mapping = GetParam();
+
+  viz::CudaService cuda_service(0);
+  const viz::CudaService::ScopedPush cuda_context = cuda_service.PushContext();
+
+  const viz::ImageFormat image_format = viz::ImageFormat::R8G8B8A8_UNORM;
+  SetupData(image_format);
+
+  viz::UniqueCUdeviceptr device_ptr;
+  device_ptr.reset([this] {
+    CUdeviceptr device_ptr;
+    EXPECT_EQ(cuMemAlloc(&device_ptr, color_data_.size()), CUDA_SUCCESS);
+    return device_ptr;
+  }());
+
+  EXPECT_EQ(cuMemcpyHtoD(device_ptr.get(), color_data_.data(), color_data_.size()), CUDA_SUCCESS);
+
+  for (uint32_t index = 0; index < width_ * height_; ++index) {
+    uint8_t pixel[4];
+    for (uint32_t component = 0; component < 4; ++component) {
+      switch (mapping[component]) {
+        case viz::ComponentSwizzle::IDENTITY:
+          pixel[component] = color_data_[index * 4 + component];
+          break;
+        case viz::ComponentSwizzle::ZERO:
+          pixel[component] = 0x00;
+          break;
+        case viz::ComponentSwizzle::ONE:
+          pixel[component] = 0xFF;
+          break;
+        case viz::ComponentSwizzle::R:
+          pixel[component] = color_data_[index * 4 + 0];
+          break;
+        case viz::ComponentSwizzle::G:
+          pixel[component] = color_data_[index * 4 + 1];
+          break;
+        case viz::ComponentSwizzle::B:
+          pixel[component] = color_data_[index * 4 + 2];
+          break;
+        case viz::ComponentSwizzle::A:
+          pixel[component] = color_data_[index * 4 + 3];
+          break;
+        default:
+          EXPECT_TRUE(false) << "Unhandled component swizzle";
+      }
+    }
+    if (pixel[3] != 0xFF) {
+      float alpha = float(pixel[3]) / 255.f;
+      color_data_[index * 4 + 0] = uint8_t(float(pixel[0]) * alpha + 0.5f);
+      color_data_[index * 4 + 1] = uint8_t(float(pixel[1]) * alpha + 0.5f);
+      color_data_[index * 4 + 2] = uint8_t(float(pixel[2]) * alpha + 0.5f);
+      color_data_[index * 4 + 3] = pixel[3];
+    } else {
+      color_data_[index * 4 + 0] = pixel[0];
+      color_data_[index * 4 + 1] = pixel[1];
+      color_data_[index * 4 + 2] = pixel[2];
+      color_data_[index * 4 + 3] = pixel[3];
+    }
+  }
+
+  EXPECT_NO_THROW(viz::Begin());
+
+  EXPECT_NO_THROW(viz::BeginImageLayer());
+
+  EXPECT_NO_THROW(viz::ImageComponentMapping(mapping[0], mapping[1], mapping[2], mapping[3]));
+
+  EXPECT_NO_THROW(viz::ImageCudaDevice(width_, height_, image_format, device_ptr.get()));
+
+  EXPECT_NO_THROW(viz::EndLayer());
+
+  EXPECT_NO_THROW(viz::End());
+
+  CompareColorResult();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ImageLayer, ImageLayerSwizzle,
+    testing::Values(std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::IDENTITY,
+                                                         viz::ComponentSwizzle::IDENTITY,
+                                                         viz::ComponentSwizzle::IDENTITY,
+                                                         viz::ComponentSwizzle::IDENTITY},
+                    std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::ZERO,
+                                                         viz::ComponentSwizzle::ZERO,
+                                                         viz::ComponentSwizzle::ZERO,
+                                                         viz::ComponentSwizzle::ZERO},
+                    std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::ONE,
+                                                         viz::ComponentSwizzle::ONE,
+                                                         viz::ComponentSwizzle::ONE,
+                                                         viz::ComponentSwizzle::ONE},
+                    std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::R,
+                                                         viz::ComponentSwizzle::R,
+                                                         viz::ComponentSwizzle::R,
+                                                         viz::ComponentSwizzle::R},
+                    std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::G,
+                                                         viz::ComponentSwizzle::G,
+                                                         viz::ComponentSwizzle::G,
+                                                         viz::ComponentSwizzle::G},
+                    std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::B,
+                                                         viz::ComponentSwizzle::B,
+                                                         viz::ComponentSwizzle::B,
+                                                         viz::ComponentSwizzle::B},
+                    std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::A,
+                                                         viz::ComponentSwizzle::A,
+                                                         viz::ComponentSwizzle::A,
+                                                         viz::ComponentSwizzle::A},
+                    std::array<viz::ComponentSwizzle, 4>{viz::ComponentSwizzle::A,
+                                                         viz::ComponentSwizzle::B,
+                                                         viz::ComponentSwizzle::G,
+                                                         viz::ComponentSwizzle::R}));

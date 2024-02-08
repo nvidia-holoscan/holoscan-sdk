@@ -316,7 +316,6 @@ class InputContext {
               holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
         }
       }
-
       try {
         // Check if the types of value and DataT are the same or not
         if constexpr (std::is_same_v<DataT, std::any>) { return value; }
@@ -335,7 +334,6 @@ class InputContext {
               holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
         } else if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
           TensorMap tensor_map;
-
           try {
             auto gxf_entity = std::any_cast<holoscan::gxf::Entity>(value);
 
@@ -345,6 +343,14 @@ class InputContext {
               const auto component = components[i];
               const auto component_name = component->name();
 
+              if (std::string(component_name).compare("message_label") == 0) {
+                // Skip checking for Tensor as it's message label for DFFT
+                continue;
+              }
+              if (std::string(component_name).compare("cuda_stream_id_") == 0) {
+                // Skip checking for Tensor as it's a stream ID from CudaStreamHandler
+                continue;
+              }
               std::shared_ptr<holoscan::Tensor> holoscan_tensor =
                   gxf_entity.get<holoscan::Tensor>(component_name);
               if (holoscan_tensor) { tensor_map.insert({component_name, holoscan_tensor}); }

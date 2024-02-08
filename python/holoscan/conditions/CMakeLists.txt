@@ -14,5 +14,10 @@
 # limitations under the License.
 
 holoscan_pybind11_module(conditions
+    boolean.cpp
     conditions.cpp
+    count.cpp
+    downstream_message_affordable.cpp
+    message_available.cpp
+    periodic.cpp
 )

@@ -26,7 +26,7 @@
 
 namespace holoscan {
 
-constexpr int32_t kDefaultUcxPort = 13337;
+constexpr uint32_t kDefaultUcxPort = 13337;
 
 /**
  * @brief UCX-based double buffer receiver class.
@@ -49,14 +49,14 @@ class UcxReceiver : public Receiver {
   std::string address();
 
   /// @brief The network port used by the receiver.
-  int32_t port();
+  uint32_t port();
 
   Parameter<uint64_t> capacity_;
   Parameter<uint64_t> policy_;
 
  private:
   Parameter<std::string> address_;
-  Parameter<int32_t> port_;  // just <int> in the GXF extension
+  Parameter<uint32_t> port_;
   Parameter<std::shared_ptr<UcxSerializationBuffer>> buffer_;
   // TODO: support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -41,11 +42,14 @@ static void glfw_error_callback(int error, const char* description) {
 struct GLFWWindow::Impl {
  public:
   Impl() {
-    glfwSetErrorCallback(glfw_error_callback);
+    std::lock_guard<std::mutex> guard(mutex_);
 
-    if (glfwInit() == GLFW_FALSE) { throw std::runtime_error("Failed to initialize glfw"); }
+    if (glfw_init_count_ == 0) {
+      glfwSetErrorCallback(glfw_error_callback);
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+      if (glfwInit() == GLFW_FALSE) { throw std::runtime_error("Failed to initialize glfw"); }
+    }
+    ++glfw_init_count_;
 
     if (!glfwVulkanSupported()) { throw std::runtime_error("Vulkan is not supported"); }
   }
@@ -59,7 +63,9 @@ struct GLFWWindow::Impl {
       glfwDestroyWindow(window_);
     }
 
-    glfwTerminate();
+    std::lock_guard<std::mutex> guard(mutex_);
+    --glfw_init_count_;
+    if (glfw_init_count_ == 0) { glfwTerminate(); }
   }
 
   static void frame_buffer_size_cb(GLFWwindow* window, int width, int height);
@@ -67,6 +73,9 @@ struct GLFWWindow::Impl {
   static void cursor_pos_cb(GLFWwindow* window, double x, double y);
   static void mouse_button_cb(GLFWwindow* window, int button, int action, int mods);
   static void scroll_cb(GLFWwindow* window, double x, double y);
+
+  std::mutex mutex_;                 ///< mutex to protect glfw init counter
+  static uint32_t glfw_init_count_;  ///< glfw init counter
 
   GLFWwindow* window_ = nullptr;
   bool intern_window_ = false;
@@ -85,6 +94,8 @@ struct GLFWWindow::Impl {
   uint32_t width_;
   uint32_t height_;
 };
+
+uint32_t GLFWWindow::Impl::glfw_init_count_ = 0;
 
 GLFWWindow::GLFWWindow(GLFWwindow* window) : impl_(new Impl) {
   impl_->window_ = window;
@@ -108,6 +119,7 @@ GLFWWindow::GLFWWindow(GLFWwindow* window) : impl_(new Impl) {
 
 GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitFlags flags)
     : impl_(new Impl) {
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   impl_->window_ = glfwCreateWindow(
       width, height, title, (flags & InitFlags::FULLSCREEN) ? glfwGetPrimaryMonitor() : NULL, NULL);
   if (!impl_->window_) { throw std::runtime_error("Failed to create glfw window"); }
@@ -234,8 +246,8 @@ uint32_t GLFWWindow::select_device(vk::Instance instance,
 }
 
 void GLFWWindow::get_framebuffer_size(uint32_t* width, uint32_t* height) {
-  glfwGetFramebufferSize(
-      impl_->window_, reinterpret_cast<int*>(width), reinterpret_cast<int*>(height));
+  *width = impl_->width_;
+  *height = impl_->height_;
 }
 
 vk::SurfaceKHR GLFWWindow::create_surface(vk::PhysicalDevice physical_device,
@@ -252,9 +264,7 @@ bool GLFWWindow::should_close() {
 }
 
 bool GLFWWindow::is_minimized() {
-  int w, h;
-  glfwGetWindowSize(impl_->window_, &w, &h);
-  bool minimized(w == 0 || h == 0);
+  bool minimized(impl_->width_ == 0 || impl_->height_ == 0);
   if (minimized) { usleep(50); }
   return minimized;
 }

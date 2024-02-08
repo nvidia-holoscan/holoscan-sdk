@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -130,6 +130,30 @@ struct codec<std::vector<typeT>> {
   }
   static expected<std::vector<typeT>, RuntimeError> deserialize(Endpoint* endpoint) {
     return deserialize_binary_blob<std::vector<typeT>>(endpoint);
+  }
+};
+
+// deserialize_array is exactly like deserialize_binary_blob, but without a call to resize()
+template <typename arrayT>
+static inline expected<arrayT, RuntimeError> deserialize_array(Endpoint* endpoint) {
+  ContiguousDataHeader header;
+  auto header_size = endpoint->read_trivial_type<ContiguousDataHeader>(&header);
+  if (!header_size) { return forward_error(header_size); }
+  arrayT data;
+  auto result = endpoint->read(data.data(), header.size * header.bytes_per_element);
+  if (!result) { return forward_error(result); }
+  return data;
+}
+
+// codec for array of trivially serializable typeT and size N
+template <typename typeT, size_t N>
+struct codec<std::array<typeT, N>> {
+  static expected<size_t, RuntimeError> serialize(const std::array<typeT, N>& value,
+                                                  Endpoint* endpoint) {
+    return serialize_binary_blob<std::array<typeT, N>>(value, endpoint);
+  }
+  static expected<std::array<typeT, N>, RuntimeError> deserialize(Endpoint* endpoint) {
+    return deserialize_array<std::array<typeT, N>>(endpoint);
   }
 };
 

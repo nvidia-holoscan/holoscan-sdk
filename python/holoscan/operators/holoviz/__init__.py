@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""  # noqa: E501
 
 from collections.abc import MutableMapping, Sequence
 
@@ -52,9 +54,9 @@ class HolovizOp(_HolovizOp):
         self,
         fragment,
         allocator=None,
-        receivers=[],
-        tensors=[],
-        color_lut=[],
+        receivers=(),
+        tensors=(),
+        color_lut=(),
         window_title="Holoviz",
         display_name="DP-0",
         width=1920,
@@ -65,6 +67,7 @@ class HolovizOp(_HolovizOp):
         headless=False,
         enable_render_buffer_input=False,
         enable_render_buffer_output=False,
+        enable_camera_pose_output=False,
         font_path="",
         cuda_stream_pool=None,
         name="holoviz_op",
@@ -77,7 +80,7 @@ class HolovizOp(_HolovizOp):
             if isinstance(receiver, str):
                 continue  # skip
                 # raise NotImpelementedError(
-                #     "TODO: need to enable access to self.spec for the OperatorSpec"
+                #     "TODO: need to enable access to self.spec for the OperatorSpec"  # noqa: FIX002
                 # )
                 # receiver = IOSpec(
                 #     op_spec=self.spec,
@@ -183,7 +186,7 @@ class HolovizOp(_HolovizOp):
             allocator=allocator,
             receivers=receiver_iospecs,
             tensors=tensor_input_specs,
-            color_lut=color_lut,
+            color_lut=list(color_lut),
             window_title=window_title,
             display_name=display_name,
             width=width,
@@ -194,6 +197,7 @@ class HolovizOp(_HolovizOp):
             headless=headless,
             enable_render_buffer_input=enable_render_buffer_input,
             enable_render_buffer_output=enable_render_buffer_output,
+            enable_camera_pose_output=enable_camera_pose_output,
             font_path=font_path,
             cuda_stream_pool=cuda_stream_pool,
             name=name,
@@ -207,6 +211,5 @@ class HolovizOp(_HolovizOp):
 # copy docstrings defined in operators_pydoc.hpp
 HolovizOp.__doc__ = _HolovizOp.__doc__
 HolovizOp.__init__.__doc__ = _HolovizOp.__init__.__doc__
-# TODO: remove from operators_pydoc.hpp and just define docstrings in this file?
 
 __all__ = ["HolovizOp"]

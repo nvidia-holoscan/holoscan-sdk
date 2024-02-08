@@ -33,8 +33,8 @@ add_library(gxf_ucx_holoscan SHARED
   ucx_holoscan_ext.cpp
 )
 target_link_libraries(gxf_ucx_holoscan
-  PUBLIC
-    gxf_ucx_holoscan_lib
+  PUBLIC  gxf_ucx_holoscan_lib
+  PRIVATE holoscan_security_flags
 )
 # Install GXF extension as a component 'holoscan-gxf_extensions'
 install_gxf_extension(gxf_ucx_holoscan)

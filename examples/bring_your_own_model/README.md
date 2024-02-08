@@ -7,7 +7,7 @@ This example shows how to run inference with Holoscan and provides a mechanism, 
 ## Data
 
 The following datasets are used by this example:
-- [📦️ (NGC) Sample App Data for AI-based Endoscopy Tool Tracking](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_endoscopy_sample_data/files?version=20230128)
+- [📦️ (NGC) Sample RacerX Video Data](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_racerx_video/files?version=20231009).
 - [(Git) Identity ONNX model](model/identity_model.onnx)
 
 ## Run instructions

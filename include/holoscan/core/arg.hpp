@@ -21,6 +21,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <any>
+#include <complex>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -34,6 +35,8 @@
 
 #include "./type_traits.hpp"
 #include "./common.hpp"
+
+// #include "gxf/std/complex.hpp"  // nvidia::gxf::complex64, complex128
 
 namespace holoscan {
 
@@ -53,6 +56,8 @@ enum class ArgElementType {
   kUnsigned64,  ///< Unsigned 64-bit integer (uint64_t)
   kFloat32,     ///< 32-bit floating point type (float)
   kFloat64,     ///< 64-bit floating point type (double)
+  kComplex64,   ///< 64-bit complex floating point type (complex<float>)
+  kComplex128,  ///< 128-bit complex floating point type (complex<double>)
   kString,      ///< String type (std::string)
   kHandle,      ///< Handle type (std::any)
   kYAMLNode,    ///< YAML node type (YAML::Node)
@@ -172,6 +177,10 @@ class ArgType {
       to_element_type_pair<uint64_t>(ArgElementType::kUnsigned64),
       to_element_type_pair<float>(ArgElementType::kFloat32),
       to_element_type_pair<double>(ArgElementType::kFloat64),
+      // to_element_type_pair<nvidia::gxf::complex64>(ArgElementType::kComplex64),
+      // to_element_type_pair<nvidia::gxf::complex128>(ArgElementType::kComplex128),
+      to_element_type_pair<std::complex<float>>(ArgElementType::kComplex64),
+      to_element_type_pair<std::complex<double>>(ArgElementType::kComplex128),
       to_element_type_pair<std::string>(ArgElementType::kString),
       to_element_type_pair<std::any>(ArgElementType::kHandle),
       to_element_type_pair<YAML::Node>(ArgElementType::kYAMLNode),
@@ -192,6 +201,10 @@ class ArgType {
       {ArgElementType::kUnsigned64, "uint64_t"},
       {ArgElementType::kFloat32, "float"},
       {ArgElementType::kFloat64, "double"},
+      {ArgElementType::kComplex64, "std::complex<float>"},
+      {ArgElementType::kComplex128, "std::complex<double>"},
+      // {ArgElementType::kComplex64, "nvidia::gxf::complex64"},
+      // {ArgElementType::kComplex128, "nvidia::gxf::complex128"},
       {ArgElementType::kString, "std::string"},
       {ArgElementType::kHandle, "std::any"},
       {ArgElementType::kYAMLNode, "YAML::Node"},

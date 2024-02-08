@@ -730,7 +730,7 @@ void GeometryLayer::render(Vulkan* vulkan) {
     if (impl_->text_draw_list_) {
       for (int i = 0; i < impl_->text_draw_list_->CmdBuffer.size(); ++i) {
         const ImDrawCmd* pcmd = &impl_->text_draw_list_->CmdBuffer[i];
-        vulkan->draw_text_indexed(
+        vulkan->draw_imgui(
             vk::DescriptorSet(reinterpret_cast<VkDescriptorSet>(ImGui::GetIO().Fonts->TexID)),
             impl_->text_vertex_buffer_,
             impl_->text_index_buffer_,

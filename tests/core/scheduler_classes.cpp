@@ -60,6 +60,7 @@ TEST_F(SchedulerClassesWithGXFContext, TestGreedySchedulerWithArgs) {
       Arg{"stop_on_deadlock_timeout", -1LL},
   };
   auto scheduler = F.make_scheduler<GreedyScheduler>(name, arglist);
+  EXPECT_TRUE(scheduler->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(SchedulerClassesWithGXFContext, TestGreedySchedulerWithManualClock) {
@@ -94,6 +95,7 @@ TEST_F(SchedulerClassesWithGXFContext, TestMultiThreadSchedulerWithArgs) {
       Arg{"stop_on_deadlock_timeout", 100LL},
   };
   auto scheduler = F.make_scheduler<MultiThreadScheduler>(name, arglist);
+  EXPECT_TRUE(scheduler->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(SchedulerClassesWithGXFContext, TestMultiThreadSchedulerWithManualClock) {

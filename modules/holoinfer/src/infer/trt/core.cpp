@@ -144,11 +144,12 @@ bool TrtInfer::initialize_parameters() {
     HOLOSCAN_LOG_ERROR("Engine is Null.");
     return false;
   }
-  const int num_bindings = engine_->getNbBindings();
+  const int num_bindings = engine_->getNbIOTensors();
 
   for (int i = 0; i < num_bindings; i++) {
-    auto dims = engine_->getBindingDimensions(i);
-    auto data_type = engine_->getBindingDataType(i);
+    auto tensor_name = engine_->getIOTensorName(i);
+    auto dims = engine_->getTensorShape(tensor_name);
+    auto data_type = engine_->getTensorDataType(tensor_name);
 
     holoinfer_datatype holoinfer_type = holoinfer_datatype::h_Float32;
     switch (data_type) {
@@ -170,36 +171,56 @@ bool TrtInfer::initialize_parameters() {
       }
     }
 
-    if (engine_->bindingIsInput(i)) {
-      switch (dims.nbDims) {
-        case 2: {
-          nvinfer1::Dims2 in_dimensions = {dims.d[0], dims.d[1]};
-          context_->setBindingDimensions(i, in_dimensions);
-        } break;
-        case 3: {
-          nvinfer1::Dims3 in_dimensions = {dims.d[0], dims.d[1], dims.d[2]};
-          context_->setBindingDimensions(i, in_dimensions);
-        } break;
-        case 4: {
-          nvinfer1::Dims4 in_dimensions = {dims.d[0], dims.d[1], dims.d[2], dims.d[3]};
-          context_->setBindingDimensions(i, in_dimensions);
-        } break;
-        default: {
-          throw std::runtime_error("Dimension size not supported: " + std::to_string(dims.nbDims));
+    switch (engine_->getTensorIOMode(tensor_name)) {
+      case nvinfer1::TensorIOMode::kINPUT: {
+        switch (dims.nbDims) {
+          case 2: {
+            nvinfer1::Dims2 in_dimensions = {dims.d[0], dims.d[1]};
+            auto set_status = context_->setInputShape(tensor_name, in_dimensions);
+            if (!set_status) {
+              HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
+              return false;
+            }
+          } break;
+          case 3: {
+            nvinfer1::Dims3 in_dimensions = {dims.d[0], dims.d[1], dims.d[2]};
+            auto set_status = context_->setInputShape(tensor_name, in_dimensions);
+            if (!set_status) {
+              HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
+              return false;
+            }
+          } break;
+          case 4: {
+            nvinfer1::Dims4 in_dimensions = {dims.d[0], dims.d[1], dims.d[2], dims.d[3]};
+            auto set_status = context_->setInputShape(tensor_name, in_dimensions);
+            if (!set_status) {
+              HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
+              return false;
+            }
+          } break;
+          default: {
+            throw std::runtime_error("Dimension size not supported: " +
+                                     std::to_string(dims.nbDims));
+          }
         }
+
+        std::vector<int64_t> indim;
+        for (size_t in = 0; in < dims.nbDims; in++) { indim.push_back(dims.d[in]); }
+        input_dims_.push_back(std::move(indim));
+
+        in_data_types_.push_back(holoinfer_type);
+      } break;
+      case nvinfer1::TensorIOMode::kOUTPUT: {
+        std::vector<int64_t> outdim;
+        for (size_t in = 0; in < dims.nbDims; in++) { outdim.push_back(dims.d[in]); }
+
+        output_dims_.push_back(outdim);
+        out_data_types_.push_back(holoinfer_type);
+      } break;
+      default: {
+        HOLOSCAN_LOG_ERROR("Input index {} is neither input nor output.", i);
+        throw std::runtime_error("Input mode not supported");
       }
-
-      std::vector<int64_t> indim;
-      for (size_t in = 0; in < dims.nbDims; in++) { indim.push_back(dims.d[in]); }
-      input_dims_.push_back(std::move(indim));
-
-      in_data_types_.push_back(holoinfer_type);
-    } else {
-      std::vector<int64_t> outdim;
-      for (size_t in = 0; in < dims.nbDims; in++) { outdim.push_back(dims.d[in]); }
-
-      output_dims_.push_back(outdim);
-      out_data_types_.push_back(holoinfer_type);
     }
   }
 
@@ -213,7 +234,7 @@ bool TrtInfer::initialize_parameters() {
 InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffers,
                                    std::vector<std::shared_ptr<DataBuffer>>& output_buffers) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
-  std::vector<void*> cuda_buffers;
+  auto io_index = 0;
 
   for (auto& input_buffer : input_buffers) {
     if (input_buffer->device_buffer == nullptr) {
@@ -255,7 +276,19 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
         return status;
       }
     }
-    cuda_buffers.push_back(input_buffer->device_buffer->data());
+    auto tensor_name = engine_->getIOTensorName(io_index++);
+    if (engine_->getTensorIOMode(tensor_name) != nvinfer1::TensorIOMode::kINPUT) {
+      HOLOSCAN_LOG_ERROR("Tensor name {} not an input binding.", tensor_name);
+      status.set_message(" TRT inference core: Incorrect input tensor name.");
+      return status;
+    }
+    auto set_flag = context_->setTensorAddress(tensor_name, input_buffer->device_buffer->data());
+
+    if (!set_flag) {
+      HOLOSCAN_LOG_ERROR("Buffer binding failed for {} in inference core.", tensor_name);
+      status.set_message(" TRT inference core: Error binding input buffer.");
+      return status;
+    }
   }
 
   for (auto& output_buffer : output_buffers) {
@@ -272,16 +305,24 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
       status.set_message(" TRT inference core: Output Device buffer size is 0.");
       return status;
     }
-    cuda_buffers.push_back(output_buffer->device_buffer->data());
+    auto tensor_name = engine_->getIOTensorName(io_index++);
+    if (engine_->getTensorIOMode(tensor_name) != nvinfer1::TensorIOMode::kOUTPUT) {
+      HOLOSCAN_LOG_ERROR("Tensor name {} not an output binding.", tensor_name);
+      status.set_message(" TRT inference core: Incorrect output tensor name.");
+      return status;
+    }
+
+    auto set_flag = context_->setTensorAddress(tensor_name, output_buffer->device_buffer->data());
+
+    if (!set_flag) {
+      HOLOSCAN_LOG_ERROR("Buffer binding failed for {} in inference core.", tensor_name);
+      status.set_message(" TRT inference core: Error binding output buffer.");
+      return status;
+    }
   }
 
-  auto inference_bindings = std::make_shared<std::vector<void*>>(cuda_buffers);
   bool infer_status = false;
-  if (!engine_->hasImplicitBatchDimension()) {
-    infer_status = context_->enqueueV2(inference_bindings->data(), cuda_stream_, nullptr);
-  } else {
-    infer_status = context_->enqueue(1, inference_bindings->data(), cuda_stream_, nullptr);
-  }
+  infer_status = context_->enqueueV3(cuda_stream_);
 
   if (!infer_status) {
     status.set_message(" TRT inference core: Inference failure.");

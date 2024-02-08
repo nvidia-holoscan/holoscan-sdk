@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,8 @@
 #ifndef HOLOINFER_INFERENCE_TESTS_HPP
 #define HOLOINFER_INFERENCE_TESTS_HPP
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -32,6 +34,10 @@ class HoloInferTests {
                         unsigned int current_test, const std::string& test_name,
                         HoloInfer::holoinfer_code assert_type);
 
+  void holoinfer_assert_with_message(const HoloInfer::InferStatus& status,
+                                     const std::string& module, unsigned int current_test,
+                                     const std::string& test_name, const std::string& message);
+
   void clear_specs();
   HoloInfer::InferStatus create_specifications();
   void setup_specifications();
@@ -44,35 +50,35 @@ class HoloInferTests {
   HoloInfer::InferStatus do_inference();
   void inference_tests();
   void print_summary();
+  int get_status();
 
  private:
   /// Default parameters for inference
   unsigned int pass_test_count = 0, fail_test_count = 0, total_test_count = 0;
 
   std::string backend = "trt";
-  std::vector<std::string> in_tensor_names = {
-      "plax_cham_pre_proc", "aortic_pre_proc", "bmode_pre_proc"};
-  std::vector<std::string> out_tensor_names = {"plax_cham_infer", "aortic_infer", "bmode_infer"};
+  std::vector<std::string> in_tensor_names = {"bmode_pre_proc", "aortic_pre_proc"};
+  std::vector<std::string> out_tensor_names = {"bmode_infer", "aortic_infer"};
 
   std::map<std::string, std::string> model_path_map = {
-      {"plax_chamber", "../data/multiai_ultrasound/models/plax_chamber.onnx"},
+      {"bmode_perspective", "../data/multiai_ultrasound/models/bmode_perspective.onnx"},
       {"aortic_stenosis", "../data/multiai_ultrasound/models/aortic_stenosis.onnx"},
-      {"bmode_perspective", "../data/multiai_ultrasound/models/bmode_perspective.onnx"}};
+  };
 
-  std::map<std::string, std::string> device_map = {
-      {"plax_chamber", "0"}, {"aortic_stenosis", "0"}, {"bmode_perspective", "0"}};
+  std::map<std::string, std::string> device_map = {{"bmode_perspective", "0"},
+                                                   {"aortic_stenosis", "0"}};
 
   std::map<std::string, std::string> backend_map;
 
   std::map<std::string, std::vector<std::string>> pre_processor_map = {
-      {"plax_chamber", {"plax_cham_pre_proc"}},
+      {"bmode_perspective", {"bmode_pre_proc"}},
       {"aortic_stenosis", {"aortic_pre_proc"}},
-      {"bmode_perspective", {"bmode_pre_proc"}}};
+  };
 
   std::map<std::string, std::vector<std::string>> inference_map = {
-      {"plax_chamber", {"plax_cham_infer"}},
+      {"bmode_perspective", {"bmode_infer"}},
       {"aortic_stenosis", {"aortic_infer"}},
-      {"bmode_perspective", {"bmode_infer"}}};
+  };
 
   bool parallel_inference = true;
   bool infer_on_cpu = false;
@@ -82,9 +88,8 @@ class HoloInferTests {
   bool is_engine_path = false;
 
   const std::map<std::string, std::vector<int>> in_tensor_dimensions = {
-      {"plax_cham_pre_proc", {320, 320, 3}},
-      {"aortic_pre_proc", {300, 300, 3}},
       {"bmode_pre_proc", {320, 240, 3}},
+      {"aortic_pre_proc", {300, 300, 3}},
   };
 
   /// Pointer to inference context.
@@ -92,6 +97,9 @@ class HoloInferTests {
 
   /// Pointer to inference specifications
   std::shared_ptr<HoloInfer::InferenceSpecs> inference_specs_;
+
+  /// map to store status of executed test cases.
+  std::map<std::string, bool> test_tracker;
 
   const std::map<unsigned int, std::string> test_identifier_params = {
       {1, "Parameters, model_path_map: dummy path test"},
@@ -117,7 +125,14 @@ class HoloInferTests {
       {21, "ONNX backend, incorrect model file format"},
       {22, "ONNX backend, Engine path true test"},
       {23, "ONNX backend, Default"},
-      {24, "TRT backend, Default check 1"}};
+      {24, "TRT backend, Default check 1"},
+      {25, "Torch backend, Model file missing"},
+      {26, "Torch backend, Config file missing"},
+      {27, "Torch backend, Inference missing in Config file"},
+      {28, "Torch backend, Input node missing in Config file"},
+      {29, "Torch backend, dtype missing in input node in Config file"},
+      {30, "Torch backend, Incorrect dtype in inference"},
+      {31, "Torch backend, Output node missing in Config file"}};
 
   const std::map<unsigned int, std::string> test_identifier_infer = {
       {1, "TRT backend, Empty input data"},

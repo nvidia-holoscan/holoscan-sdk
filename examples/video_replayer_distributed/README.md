@@ -10,7 +10,8 @@ The video frames need to have been converted to a gxf entity format, as shown [h
 ## Data
 
 The following dataset is used by this example:
-[📦️ (NGC) Sample App Data for AI-based Endoscopy Tool Tracking](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_endoscopy_sample_data/files?version=20230128).
+[📦️ (NGC) Sample RacerX Video Data](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/
+holoscan_racerx_video/files?version=20231009).
 
 ## C++ Run instructions
 

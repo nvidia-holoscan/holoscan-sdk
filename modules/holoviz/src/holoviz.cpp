@@ -41,8 +41,17 @@ void Init(const char* displayName, uint32_t width, uint32_t height, uint32_t ref
   Context::get().init(displayName, width, height, refreshRate, flags);
 }
 
-void ImGuiSetCurrentContext(ImGuiContext* context) {
-  Context::get().im_gui_set_current_context(context);
+InstanceHandle Create() {
+  Context* context = new Context();
+  return context;
+}
+
+void SetCurrent(InstanceHandle instance) {
+  Context::set(reinterpret_cast<Context*>(instance));
+}
+
+InstanceHandle GetCurrent() {
+  return Context::get_current();
 }
 
 void SetCudaStream(CUstream stream) {
@@ -61,8 +70,14 @@ bool WindowIsMinimized() {
   return Context::get().get_window()->is_minimized();
 }
 
-void Shutdown() {
-  Context::get().shutdown();
+void Shutdown(InstanceHandle instance) {
+  if (!instance) {
+    instance = GetCurrent();
+    if (!instance) {
+      throw std::runtime_error("No instance provided and none current, can't shutdown.");
+    }
+  }
+  delete reinterpret_cast<Context*>(instance);
 }
 
 void Begin() {
@@ -92,6 +107,11 @@ void ImageHost(uint32_t w, uint32_t h, ImageFormat fmt, const void* data, size_t
 
 void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data, bool normalized) {
   Context::get().get_active_image_layer()->lut(size, fmt, data_size, data, normalized);
+}
+
+void ImageComponentMapping(ComponentSwizzle r, ComponentSwizzle g, ComponentSwizzle b,
+                           ComponentSwizzle a) {
+  Context::get().get_active_image_layer()->image_component_mapping(r, g, b, a);
 }
 
 void BeginImGuiLayer() {
@@ -171,8 +191,8 @@ void EndLayer() {
 }
 
 void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                     CUdeviceptr device_ptr) {
-  Context::get().read_framebuffer(fmt, width, height, buffer_size, device_ptr);
+                     CUdeviceptr device_ptr, size_t row_pitch) {
+  Context::get().read_framebuffer(fmt, width, height, buffer_size, device_ptr, row_pitch);
 }
 
 void GetCameraPose(size_t size, float* matrix) {

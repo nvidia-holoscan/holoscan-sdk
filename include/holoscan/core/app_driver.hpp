@@ -22,7 +22,6 @@
 #include <memory>
 #include <queue>
 #include <string>
-#include <tuple>
 #include <unordered_map>
 #include <utility>  // for std::pair
 #include <vector>
@@ -170,6 +169,8 @@ class AppDriver {
 
   FragmentScheduler* fragment_scheduler();
 
+  MultipleFragmentsPortMap* all_fragment_port_map();
+
   void submit_message(DriverMessage&& message);
 
   void process_message_queue();
@@ -177,12 +178,20 @@ class AppDriver {
  private:
   friend class service::AppDriverServer;  ///< Allow AppDriverServer to access private members.
 
+  /// Check if update_port_names needs to be called
+  bool need_to_update_port_names(std::shared_ptr<holoscan::FragmentEdgeDataElementType>& port_map);
+
   /// Correct the port names of the given fragment graph edge.
-  bool update_port_names(holoscan::FragmentNodeType src_frag,
-                         holoscan::FragmentNodeType target_frag,
+  /// This takes cases where a source operator has only one port and only the operator name was
+  /// specified during add_flow. This function will append the ".<port_name>" to the operator
+  /// name. The same sort of appending of the port name is also done for any target operators
+  /// having only a single input port.
+  bool update_port_names(std::string src_frag_name, std::string target_frag_name,
                          std::shared_ptr<holoscan::FragmentEdgeDataElementType>& port_map);
 
   /// Collect fragment connections.
+  /// Port names of the fragment graph edges are corrected during this process
+  /// (via update_port_names).
   bool collect_connections(holoscan::FragmentGraph& fragment_graph);
 
   /// Correct connection map.
@@ -253,19 +262,24 @@ class AppDriver {
 
   /// The map that associates a fragment name with a list of pairs. Each pair contains an index that
   /// represents a port and a real port number that is associated with that index.
-  std::unordered_map<std::string, std::vector<std::pair<int32_t, int32_t>>> receiver_port_map_;
+  std::unordered_map<std::string, std::vector<std::pair<int32_t, uint32_t>>> receiver_port_map_;
 
   /// Maps port indices to their IP addresses (initially set to the fragment name).
   std::unordered_map<int32_t, std::string> index_to_ip_map_;
 
-  /// Maps port indices to real port numbers (initially set to -1).
-  std::unordered_map<int32_t, int32_t> index_to_port_map_;
+  /// Maps port indices to real port numbers (initially set to 0).
+  std::unordered_map<int32_t, uint32_t> index_to_port_map_;
 
   std::unique_ptr<service::AppDriverServer> driver_server_;
 
   std::unique_ptr<FragmentScheduler> fragment_scheduler_;
   std::mutex message_mutex_;                 ///< Mutex for the message queue.
   std::queue<DriverMessage> message_queue_;  ///< Queue of messages to be processed.
+
+  /// Data structure for collecting fragment port information from all workers of a distributed
+  /// application. Unused when running an application locally.
+  std::unique_ptr<MultipleFragmentsPortMap> all_fragment_port_map_ =
+      std::make_unique<MultipleFragmentsPortMap>();
 };
 
 }  // namespace holoscan

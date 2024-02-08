@@ -18,7 +18,6 @@ add_holoscan_operator(format_converter format_converter.cpp)
 target_link_libraries(op_format_converter
     PUBLIC
         holoscan::core
-    PRIVATE
         CUDA::nppidei
         CUDA::nppig
         CUDA::nppicc

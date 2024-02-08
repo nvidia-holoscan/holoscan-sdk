@@ -30,4 +30,7 @@ if [ -e ${SCRIPT_DIR}/../.python-version ] && command -v pyenv > /dev/null; then
     # Above will do `pyenv activate $(cat ${SCRIPT_DIR}/../.python-version)`.
 fi
 echo "Python: $(python3 -c "import sys;print(sys.executable)")"
-exec env python3 "$@"
+
+# Instead of using `exec env python3 "$@"`, we employ the following command to ensure the binary's
+# path is correctly set and to maintain the correct handling of arguments that include spaces.
+exec /bin/bash -c 'python3 "$@"' _ "$@"

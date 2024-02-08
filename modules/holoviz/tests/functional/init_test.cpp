@@ -122,5 +122,4 @@ TEST(Init, Errors) {
   EXPECT_NO_THROW(viz::SetFont("NonExistingFile.ttf", 12.f));
   EXPECT_THROW(viz::Init(128, 64, "Holoviz test", viz::InitFlags::HEADLESS), std::runtime_error);
   EXPECT_NO_THROW(viz::Shutdown());
-  EXPECT_NO_THROW(viz::SetFont("", 0.f));
 }

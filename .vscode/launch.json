@@ -6,6 +6,69 @@
     // https://code.visualstudio.com/docs/editor/variables-reference
     "configurations": [
         {
+            "name": "Python: Debug Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "autoReload": {
+                "enable": true
+            },
+            "cwd": "${command:cmake.buildDirectory}",
+            "env": {
+                "PYTHONPATH": "${command:cmake.buildDirectory}/python/lib",
+                "HOLOSCAN_LOG_LEVEL": "DEBUG",
+                "HOLOSCAN_EXECUTOR_LOG_LEVEL": "INFO",
+                "HOLOSCAN_TESTS_DATA_PATH": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/tests/data",
+                "HOLOSCAN_INPUT_PATH": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/data",
+            },
+        },
+        {
+            "name": "Python C++ Debug",
+            "type": "pythoncpp",
+            "request": "launch",
+            "pythonLaunchName": "Python: Debug Current File",
+            "cppConfig": "default (gdb) Attach",
+        },
+        {
+            "name": "(gdb) Python: Debug Current File",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${file}",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+                {
+                    "name": "HOLOSCAN_INPUT_PATH",
+                    "value": "${command:cmake.buildDirectory}/../data"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) examples/aja_capture/cpp",
             "type": "cppdbg",
             "request": "launch",
@@ -17,9 +80,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -51,7 +113,67 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/bring_your_own_model/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/bring_your_own_model/python/byom.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+                {
+                    "name": "HOLOSCAN_INPUT_PATH",
+                    "value": "${command:cmake.buildDirectory}/../data"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/conditions/asynchronous/cpp/ping_async",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/conditions/asynchronous/cpp/ping_async",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+            ],
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -73,9 +195,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -98,45 +219,6 @@
             "cwd": "${command:cmake.buildDirectory}",
             "environment": [
                 {
-                    "name": "LD_LIBRARY_PATH",
-                    "value": "${command:cmake.buildDirectory}/lib:${env:LD_LIBRARY_PATH}"
-                },
-                {
-                    "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "DEBUG"
-                },
-                {
-                    "name": "HOLOSCAN_LIB_PATH",
-                    "value": "${command:cmake.buildDirectory}/lib"
-                },
-                {
-                    "name": "PYTHONPATH",
-                    "value": "${command:cmake.buildDirectory}/python/lib"
-                },
-            ],
-            "console": "externalTerminal",
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "(gdb) examples/numpy_native",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "/usr/bin/bash",
-            "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/numpy_native/convolve.py",
-            ],
-            "stopAtEntry": false,
-            "cwd": "${command:cmake.buildDirectory}",
-            "environment": [
-                {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
                 },
@@ -145,7 +227,6 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -176,7 +257,59 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/flow_tracker/cpp/flow_tracker",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/flow_tracker/cpp/flow_tracker",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/flow_tracker/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/flow_tracker/python/flow_tracker.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -198,9 +331,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -231,7 +363,6 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -253,9 +384,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -286,7 +416,6 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -317,55 +446,6 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "(gdb) examples/ping_any/cpp",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${command:cmake.buildDirectory}/examples/ping_any/cpp/ping_any",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${command:cmake.buildDirectory}",
-            "environment": [
-                {
-                    "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "DEBUG"
-                }
-            ],
-            "console": "externalTerminal",
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "(gdb) examples/ping_vector/cpp",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${command:cmake.buildDirectory}/examples/ping_vector/cpp/ping_vector",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${command:cmake.buildDirectory}",
-            "environment": [
-                {
-                    "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "DEBUG"
-                }
-            ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -396,7 +476,6 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -407,38 +486,11 @@
             ]
         },
         {
-            "name": "(gdb) examples/ping_simple/cpp",
+            "name": "(gdb) examples/multithread/cpp/multithread",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.buildDirectory}/examples/ping_simple/cpp/ping_simple",
+            "program": "${command:cmake.buildDirectory}/examples/multithread/cpp/multithread",
             "args": [],
-            "stopAtEntry": false,
-            "cwd": "${command:cmake.buildDirectory}",
-            "environment": [
-                {
-                    "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "DEBUG"
-                }
-            ],
-            "console": "externalTerminal",
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "(gdb) examples/ping_simple/python",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "/usr/bin/bash",
-            "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_simple/python/ping_simple.py",
-            ],
             "stopAtEntry": false,
             "cwd": "${command:cmake.buildDirectory}",
             "environment": [
@@ -447,35 +499,10 @@
                     "value": "DEBUG"
                 },
                 {
-                    "name": "PYTHONPATH",
-                    "value": "${command:cmake.buildDirectory}/python/lib"
-                },
-            ],
-            "console": "externalTerminal",
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "(gdb) examples/conditions/asynchronous/cpp",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${command:cmake.buildDirectory}/examples/conditions/asynchronous/cpp/ping_async",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${command:cmake.buildDirectory}",
-            "environment": [
-                {
-                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
                     "value": "INFO"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -486,13 +513,47 @@
             ]
         },
         {
-            "name": "(gdb) examples/ping_simple_run_async/python",
+            "name": "(gdb) examples/multithread/python",
             "type": "cppdbg",
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_simple_run_async/python/ping_simple_run_async.py",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/multithread/python/multithread.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/numpy_native",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/numpy_native/convolve.py",
             ],
             "stopAtEntry": false,
             "cwd": "${command:cmake.buildDirectory}",
@@ -506,7 +567,52 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_any/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/ping_any/cpp/ping_any",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_conditional/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/ping_conditional/cpp/ping_conditional",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -528,9 +634,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -561,7 +666,95 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_cycle/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/ping_cycle/cpp/ping_cycle",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_distributed/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/ping_distributed/cpp/ping_distributed",
+            // "args": ["--driver", "--address=:10000"],
+            "args": [],
+            // "args": ["--worker", "--address=:10000"],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_distributed/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_distributed/python/ping_distributed.py",
+                "--driver",
+                "--worker",
+                "--fragments=all",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -583,9 +776,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -609,14 +801,13 @@
             "environment": [
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "INFO"
+                    "value": "DEBUG"
                 },
                 {
                     "name": "PYTHONPATH",
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -627,22 +818,19 @@
             ]
         },
         {
-            "name": "(gdb) examples/ping_distributed/cpp",
+            "name": "(gdb) examples/ping_simple/cpp",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.buildDirectory}/examples/ping_distributed/cpp/ping_distributed",
-            // "args": ["--driver", "--address=:10000"],
+            "program": "${command:cmake.buildDirectory}/examples/ping_simple/cpp/ping_simple",
             "args": [],
-            // "args": ["--worker", "--address=:10000"],
             "stopAtEntry": false,
             "cwd": "${command:cmake.buildDirectory}",
             "environment": [
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "INFO"
-                }
+                    "value": "DEBUG"
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -653,13 +841,13 @@
             ]
         },
         {
-            "name": "(gdb) examples/ping_distributed/python",
+            "name": "(gdb) examples/ping_simple/python",
             "type": "cppdbg",
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_distributed/python/ping_distributed.py",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_simple/python/ping_simple.py",
             ],
             "stopAtEntry": false,
             "cwd": "${command:cmake.buildDirectory}",
@@ -673,7 +861,165 @@
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
             ],
-            "console": "externalTerminal",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_simple_run_async/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/ping_simple_run_async/cpp/ping_simple_run_async",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_simple_run_async/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_simple_run_async/python/ping_simple_run_async.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_vector/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/ping_vector/cpp/ping_vector",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/ping_vector/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_vector/python/ping_vector.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/resources/clock/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/resources/clock/cpp/ping_clock",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/resources/clock/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/resources/clock/python/ping_clock.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -695,9 +1041,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -732,7 +1077,6 @@
                     "value": "${command:cmake.buildDirectory}/../data"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -757,12 +1101,13 @@
             "environment": [
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "DEBUG",
+                    "value": "DEBUG"
+                },
+                {
                     "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
-                    "value": "INFO",
-                }
+                    "value": "INFO"
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -805,7 +1150,6 @@
                     "value": "${command:cmake.buildDirectory}/../data"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -827,9 +1171,8 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -864,7 +1207,6 @@
                     "value": "${command:cmake.buildDirectory}/../data"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -886,9 +1228,12 @@
                 {
                     "name": "HOLOSCAN_LOG_LEVEL",
                     "value": "DEBUG"
-                }
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -915,6 +1260,10 @@
                     "value": "DEBUG"
                 },
                 {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
                     "name": "PYTHONPATH",
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
@@ -923,7 +1272,6 @@
                     "value": "${command:cmake.buildDirectory}/../data"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -954,7 +1302,6 @@
                     "value": "DEBUG"
                 },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {
@@ -986,6 +1333,10 @@
                     "value": "DEBUG"
                 },
                 {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
                     "name": "PYTHONPATH",
                     "value": "${command:cmake.buildDirectory}/python/lib"
                 },
@@ -1000,9 +1351,8 @@
                 {
                     "name": "UCX_TCP_CM_REUSEADDR",
                     "value": "y",
-                }
+                },
             ],
-            "console": "externalTerminal",
             "MIMode": "gdb",
             "setupCommands": [
                 {

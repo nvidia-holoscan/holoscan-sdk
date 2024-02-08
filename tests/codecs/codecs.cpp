@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -107,7 +107,6 @@ void codec_shared_data_blob_compare(std::shared_ptr<dataT> data, size_t buffer_s
   EXPECT_EQ(*result, *data);
 }
 
-// TODO: update size check here
 template <typename dataT>
 void codec_vector_compare(dataT& value, size_t buffer_size = 4096, bool omit_size_check = false,
                           bool omit_values_check = false) {
@@ -133,7 +132,6 @@ void codec_vector_compare(dataT& value, size_t buffer_size = 4096, bool omit_siz
   }
 }
 
-// TODO: update size check here
 template <typename dataT>
 void codec_shared_vector_compare(std::shared_ptr<dataT> value, size_t buffer_size = 4096,
                                  bool omit_size_check = false, bool omit_values_check = false) {
@@ -324,6 +322,14 @@ TEST(Codecs, TestComplexUInt8Shared) {
   auto value = std::make_shared<std::vector<uint8_t>>(sz);
   for (size_t i = 0; i < 10; i++) { value->at(i) = i; }
   codec_shared_vector_compare<std::vector<uint8_t>>(value);
+}
+
+TEST(Codecs, TestHolovizOpCameraPose) {
+  // Test the camera pose type used by HolovizOp (std::shared_ptr<std::array<float, 16>>)
+  auto value = std::make_shared<std::array<float, 16>>();
+  value->at(0) = 1.0;
+  value->at(5) = 2.0;
+  codec_shared_vector_compare<std::array<float, 16>>(value);
 }
 
 TEST(Codecs, TestVectorFloat) {

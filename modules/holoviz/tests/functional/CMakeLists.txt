@@ -41,7 +41,9 @@ target_sources(${PROJECT_NAME}
         im_gui_layer_test.cpp
         image_layer_test.cpp
         init_test.cpp
+        instance_test.cpp
         layer_test.cpp
+        read_framebuffer_test.cpp
 
         ../../src/cuda/cuda_service.cpp
     )

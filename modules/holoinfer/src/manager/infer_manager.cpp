@@ -245,9 +245,25 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 
-#ifdef use_onnxruntime
-          holo_infer_context_.insert(
-              {model_name, std::make_unique<OnnxInfer>(model_path, inference_specs->oncuda_)});
+#if use_onnxruntime
+          HOLOSCAN_LOG_INFO("Searching for ONNX Runtime libraries");
+          void* handle = dlopen("libholoscan_infer_onnx_runtime.so", RTLD_NOW);
+          if (handle == nullptr) {
+            HOLOSCAN_LOG_ERROR(dlerror());
+            status.set_message("ONNX Runtime context setup failure.");
+            return status;
+          }
+          HOLOSCAN_LOG_INFO("Found ONNX Runtime libraries");
+          using NewOnnxInfer = OnnxInfer* (*)(const std::string&, bool);
+          auto new_ort_infer = reinterpret_cast<NewOnnxInfer>(dlsym(handle, "NewOnnxInfer"));
+          if (!new_ort_infer) {
+            HOLOSCAN_LOG_ERROR(dlerror());
+            status.set_message("ONNX Runtime context setup failure.");
+            return status;
+          }
+          dlclose(handle);
+          auto context = new_ort_infer(model_path, inference_specs->oncuda_);
+          holo_infer_context_[model_name] = std::unique_ptr<OnnxInfer>(context);
 #else
           HOLOSCAN_LOG_ERROR("Onnxruntime backend not supported or incorrectly installed.");
           status.set_message("Onnxruntime context setup failure.");
@@ -263,7 +279,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             status.set_message("Inference manager, model path must have .pt or .pth extension.");
             return status;
           }
-#ifdef use_torch
+#if use_torch
           HOLOSCAN_LOG_INFO("Searching for libtorch libraries");
           void* handle = dlopen("libholoscan_infer_torch.so", RTLD_NOW);
           if (handle == nullptr) {

@@ -16,6 +16,8 @@
  */
 #include "core.hpp"
 
+#include <onnxruntime_cxx_api.h>
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -24,6 +26,69 @@
 
 namespace holoscan {
 namespace inference {
+
+// Pimpl
+class OnnxInferImpl {
+ public:
+  // Internal only
+  OnnxInferImpl(const std::string& model_file_path, bool cuda_flag);
+
+  std::string model_path_{""};
+  bool use_cuda_ = true;
+
+  Ort::SessionOptions session_options_;
+  OrtCUDAProviderOptions cuda_options_{};
+
+  std::unique_ptr<Ort::Env> env_ = nullptr;
+  std::unique_ptr<Ort::Session> session_ = nullptr;
+
+  Ort::AllocatorWithDefaultOptions allocator_;
+
+  size_t input_nodes_{0}, output_nodes_{0};
+
+  std::vector<std::vector<int64_t>> input_dims_{};
+  std::vector<std::vector<int64_t>> output_dims_{};
+
+  std::vector<holoinfer_datatype> input_type_, output_type_;
+
+  std::vector<const char*> input_names_;
+  std::vector<const char*> output_names_;
+
+  std::vector<Ort::AllocatedStringPtr> input_allocated_strings_;
+  std::vector<Ort::AllocatedStringPtr> output_allocated_strings_;
+
+  std::vector<Ort::Value> input_tensors_;
+  std::vector<Ort::Value> output_tensors_;
+
+  std::vector<Ort::Value> input_tensors_gpu_;
+  std::vector<Ort::Value> output_tensors_gpu_;
+
+  Ort::MemoryInfo memory_info_ = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator,
+                                                            OrtMemType::OrtMemTypeDefault);
+
+  Ort::MemoryInfo memory_info_cuda_ =
+      Ort::MemoryInfo("Cuda", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
+  std::unique_ptr<Ort::Allocator> memory_allocator_cuda_;
+
+  holoinfer_datatype get_holoinfer_datatype(ONNXTensorElementDataType datatype);
+
+  Ort::Value create_tensor(const std::shared_ptr<DataBuffer>& input_buffer,
+                           const std::vector<int64_t>& dims);
+  void transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                          const size_t& index);
+
+  // Wrapped Public APIs
+  InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
+                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer);
+  void populate_model_details();
+  void print_model_details();
+  int set_holoscan_inf_onnx_session_options();
+  std::vector<std::vector<int64_t>> get_input_dims() const;
+  std::vector<std::vector<int64_t>> get_output_dims() const;
+  std::vector<holoinfer_datatype> get_input_datatype() const;
+  std::vector<holoinfer_datatype> get_output_datatype() const;
+  void cleanup();
+};
 
 template <typename T>
 Ort::Value create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer,
@@ -46,6 +111,10 @@ void transfer_to_host(std::shared_ptr<DataBuffer>& output_buffer, Ort::Value& ou
 }
 
 void OnnxInfer::print_model_details() {
+  impl_->print_model_details();
+}
+
+void OnnxInferImpl::print_model_details() {
   HOLOSCAN_LOG_INFO("Input node count: {}", input_nodes_);
   HOLOSCAN_LOG_INFO("Output node count: {}", output_nodes_);
 
@@ -61,7 +130,7 @@ void OnnxInfer::print_model_details() {
   }
 }
 
-holoinfer_datatype OnnxInfer::get_holoinfer_datatype(ONNXTensorElementDataType data_type) {
+holoinfer_datatype OnnxInferImpl::get_holoinfer_datatype(ONNXTensorElementDataType data_type) {
   switch (data_type) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
       return holoinfer_datatype::h_Float32;
@@ -75,12 +144,17 @@ holoinfer_datatype OnnxInfer::get_holoinfer_datatype(ONNXTensorElementDataType d
 }
 
 void OnnxInfer::populate_model_details() {
+  impl_->populate_model_details();
+}
+
+void OnnxInferImpl::populate_model_details() {
   input_nodes_ = session_->GetInputCount();
   output_nodes_ = session_->GetOutputCount();
 
   for (size_t a = 0; a < input_nodes_; a++) {
-    const char* input_name = session_->GetInputName(a, allocator_);
-    input_names_.push_back(input_name);
+    auto input_name_ptr = session_->GetInputNameAllocated(a, allocator_);
+    input_allocated_strings_.push_back(std::move(input_name_ptr));
+    input_names_.push_back(input_allocated_strings_.back().get());
 
     Ort::TypeInfo input_type_info = session_->GetInputTypeInfo(a);
     auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
@@ -93,8 +167,9 @@ void OnnxInfer::populate_model_details() {
   }
 
   for (size_t a = 0; a < output_nodes_; a++) {
-    const char* output_name = session_->GetOutputName(a, allocator_);
-    output_names_.push_back(output_name);
+    auto output_name_ptr = session_->GetOutputNameAllocated(a, allocator_);
+    output_allocated_strings_.push_back(std::move(output_name_ptr));
+    output_names_.push_back(output_allocated_strings_.back().get());
 
     Ort::TypeInfo output_type_info = session_->GetOutputTypeInfo(a);
     auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
@@ -111,13 +186,32 @@ void OnnxInfer::populate_model_details() {
 }
 
 int OnnxInfer::set_holoscan_inf_onnx_session_options() {
+  return impl_->set_holoscan_inf_onnx_session_options();
+}
+
+int OnnxInferImpl::set_holoscan_inf_onnx_session_options() {
   session_options_.SetIntraOpNumThreads(1);
+  session_options_.SetInterOpNumThreads(1);
   if (use_cuda_) { session_options_.AppendExecutionProvider_CUDA(cuda_options_); }
   session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
   return 0;
 }
 
+extern "C" OnnxInfer* NewOnnxInfer(const std::string& model_file_path, bool cuda_flag) {
+  return new OnnxInfer(model_file_path, cuda_flag);
+}
+
 OnnxInfer::OnnxInfer(const std::string& model_file_path, bool cuda_flag)
+    : impl_(new OnnxInferImpl(model_file_path, cuda_flag)) {}
+
+OnnxInfer::~OnnxInfer() {
+  if (impl_) {
+    delete impl_;
+    impl_ = nullptr;
+  }
+}
+
+OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool cuda_flag)
     : model_path_(model_file_path), use_cuda_(cuda_flag) {
   try {
     set_holoscan_inf_onnx_session_options();
@@ -139,8 +233,8 @@ OnnxInfer::OnnxInfer(const std::string& model_file_path, bool cuda_flag)
   }
 }
 
-Ort::Value OnnxInfer::create_tensor(const std::shared_ptr<DataBuffer>& input_buffer,
-                                    const std::vector<int64_t>& dims) {
+Ort::Value OnnxInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& input_buffer,
+                                        const std::vector<int64_t>& dims) {
   auto data_type = input_buffer->get_datatype();
 
   switch (data_type) {
@@ -157,8 +251,8 @@ Ort::Value OnnxInfer::create_tensor(const std::shared_ptr<DataBuffer>& input_buf
   }
 }
 
-void OnnxInfer::transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
-                                   const size_t& index) {
+void OnnxInferImpl::transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                                       const size_t& index) {
   size_t output_tensor_size = accumulate(
       output_dims_[index].begin(), output_dims_[index].end(), 1, std::multiplies<size_t>());
 
@@ -181,6 +275,12 @@ void OnnxInfer::transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>& out
 
 InferStatus OnnxInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
                                     std::vector<std::shared_ptr<DataBuffer>>& output_buffer) {
+  return impl_->do_inference(input_buffer, output_buffer);
+}
+
+InferStatus OnnxInferImpl::do_inference(
+    const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
+    std::vector<std::shared_ptr<DataBuffer>>& output_buffer) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
 
   try {
@@ -245,19 +345,44 @@ InferStatus OnnxInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer
 }
 
 std::vector<std::vector<int64_t>> OnnxInfer::get_input_dims() const {
+  return impl_->get_input_dims();
+}
+
+std::vector<std::vector<int64_t>> OnnxInferImpl::get_input_dims() const {
   return input_dims_;
 }
 
 std::vector<std::vector<int64_t>> OnnxInfer::get_output_dims() const {
+  return impl_->get_output_dims();
+}
+
+std::vector<std::vector<int64_t>> OnnxInferImpl::get_output_dims() const {
   return output_dims_;
 }
 
 std::vector<holoinfer_datatype> OnnxInfer::get_input_datatype() const {
+  return impl_->get_input_datatype();
+}
+
+std::vector<holoinfer_datatype> OnnxInferImpl::get_input_datatype() const {
   return input_type_;
 }
 
 std::vector<holoinfer_datatype> OnnxInfer::get_output_datatype() const {
+  return impl_->get_output_datatype();
+}
+
+std::vector<holoinfer_datatype> OnnxInferImpl::get_output_datatype() const {
   return output_type_;
+}
+
+void OnnxInfer::cleanup() {
+  impl_->cleanup();
+}
+
+void OnnxInferImpl::cleanup() {
+  session_.reset();
+  env_.reset();
 }
 
 }  // namespace inference

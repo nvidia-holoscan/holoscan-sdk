@@ -40,11 +40,18 @@ UcxTransmitter::UcxTransmitter(const std::string& name, nvidia::gxf::Transmitter
   HOLOSCAN_GXF_CALL_FATAL(
       GxfParameterGetStr(gxf_context_, gxf_cid_, "receiver_address", &receiver_address));
   receiver_address_ = std::string(receiver_address);
-  int32_t port = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetInt32(gxf_context_, gxf_cid_, "port", &port));
+  uint32_t port = 0;
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt32(gxf_context_, gxf_cid_, "port", &port));
   port_ = port;
-  int32_t maximum_connection_retries = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetInt32(
+  const char* local_address;
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfParameterGetStr(gxf_context_, gxf_cid_, "local_address", &local_address));
+  local_address_ = std::string(receiver_address);
+  uint32_t local_port = 0;
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt32(gxf_context_, gxf_cid_, "local_port", &local_port));
+  local_port_ = local_port;
+  uint32_t maximum_connection_retries = 0;
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt32(
       gxf_context_, gxf_cid_, "maximum_connection_retries", &maximum_connection_retries));
   maximum_connection_retries_ = maximum_connection_retries;
 
@@ -69,12 +76,23 @@ void UcxTransmitter::setup(ComponentSpec& spec) {
              "Receiver address",
              "Address to connect to (IPv4). Default of 0.0.0.0 corresponds to INADDR_ANY.",
              std::string("0.0.0.0"));
+  spec.param(local_address_,
+             "local_address",
+             "Local address",
+             "Local Address to use for connection. Default of 0.0.0.0 corresponds to INADDR_ANY.",
+             std::string("0.0.0.0"));
   spec.param(maximum_connection_retries_,
              "maximum_connection_retries",
              "Maximum Connection Retries",
              "Maximum Connection Retries",
-             10);
+             static_cast<uint32_t>(10));
   spec.param(port_, "port", "Receiver Port", "Receiver Port", kDefaultUcxPort);
+  spec.param(local_port_,
+             "local_port",
+             "Local port",
+             "Local Port to use for connection",
+             static_cast<uint32_t>(0));
+
   spec.param(buffer_, "buffer", "Serialization Buffer", "");
 
   // TODO: implement OperatorSpec::resource for managing nvidia::gxf:Resource types
@@ -102,8 +120,16 @@ std::string UcxTransmitter::receiver_address() {
   return receiver_address_.get();
 }
 
-int32_t UcxTransmitter::port() {
+uint32_t UcxTransmitter::port() {
   return port_.get();
+}
+
+std::string UcxTransmitter::local_address() {
+  return local_address_.get();
+}
+
+uint32_t UcxTransmitter::local_port() {
+  return local_port_.get();
 }
 
 }  // namespace holoscan

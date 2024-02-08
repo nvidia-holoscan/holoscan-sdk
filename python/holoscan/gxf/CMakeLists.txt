@@ -14,9 +14,12 @@
 # limitations under the License.
 
 holoscan_pybind11_module(gxf
+    entity.cpp
     gxf.cpp
-    ../core/core.cpp
+    gxf_network_context.cpp
+    gxf_operator.cpp
+    gxf_scheduler.cpp
     ../core/dl_converter.cpp
-    ../core/trampolines.cpp
-    ../core/kwarg_handling.cpp
+    ../core/execution_context.cpp
+    ../core/tensor.cpp
 )

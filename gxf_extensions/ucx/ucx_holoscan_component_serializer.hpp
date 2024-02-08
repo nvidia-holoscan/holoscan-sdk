@@ -54,6 +54,10 @@ class UcxHoloscanComponentSerializer : public ComponentSerializer {
   Expected<size_t> serializeHoloscanMessage(const holoscan::Message& message, Endpoint* endpoint);
   // Deserializes a holoscan::Message
   Expected<holoscan::Message> deserializeHoloscanMessage(Endpoint* endpoint);
+  // Serializes a nvidia::gxf::Tensor
+  Expected<size_t> serializeTensor(const Tensor& tensor, Endpoint* endpoint);
+  // Deserializes a nvidia::gxf::Tensor
+  Expected<Tensor> deserializeTensor(Endpoint* endpoint);
 
   Parameter<Handle<Allocator>> allocator_;
 };

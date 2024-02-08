@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "holoscan/core/errors.hpp"
@@ -97,7 +98,14 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const 
   if (it_edgedata != succ_[node_u].end()) {
     const auto& datadict = it_edgedata->second;
     if (port_map) {
-      for (auto& [key, value] : *port_map) { datadict->insert({key, value}); }
+      for (auto& [key, value] : *port_map) {
+        if (datadict->count(key)) {
+          // merge any new connections with pre-existing ones
+          datadict->at(key).merge(value);
+        } else {
+          datadict->insert({key, value});
+        }
+      }
     }
     succ_[node_u][node_v] = datadict;
     pred_[node_v][node_u] = datadict;
@@ -135,6 +143,54 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) {
   auto it_succ = succ_.find(node);
   if (it_succ->second.empty()) { return true; }
   return false;
+}
+
+template <typename NodeT, typename EdgeDataElementT>
+std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
+FlowGraph<NodeT, EdgeDataElementT>::has_cycle() {
+  std::vector<NodeType> cyclic_roots;
+
+  // List of visited nodes across DFS from multiple roots
+  std::unordered_set<NodeType> global_visited;
+
+  // Do an iterative DFS from all the root nodes
+  auto root_nodes = get_root_nodes();
+
+  if (root_nodes.size() == 0) {
+    // There is no implicit root. Therefore, we need to start from somewhere.
+    // Start from the first added node which is user-defined root.
+    // FIXME Currently, this function is not supported for a disconnected graph.
+    root_nodes.push_back(ordered_nodes_.front());
+  }
+
+  for (const auto& node : root_nodes) {
+    std::unordered_set<NodeType> current_visited;
+    std::vector<NodeType> stack;
+    stack.push_back(node);
+
+    while (!stack.empty()) {
+      auto node = stack.back();
+      stack.pop_back();
+
+      current_visited.insert(node);
+
+      // This node has already been visited in a previous DFS traversal
+      if (global_visited.find(node) != global_visited.end()) { continue; }
+
+      global_visited.insert(node);
+
+      for (const auto& [node_next, _] : succ_[node]) {
+        if (current_visited.find(node_next) != current_visited.end()) {
+          // The currently visited set of nodes already includes the successor node
+          // Therefore, it must be a cycle
+          cyclic_roots.push_back(node_next);
+          continue;  // skip adding the node to the stack
+        }
+        stack.push_back(node_next);
+      }
+    }
+  }
+  return cyclic_roots;
 }
 
 template <typename NodeT, typename EdgeDataElementT>

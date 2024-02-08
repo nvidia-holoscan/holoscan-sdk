@@ -17,11 +17,15 @@
 {
     global:
         extern "C++" {
+            "holoscan::viz::Create()";
+            "holoscan::viz::SetCurrent(void*)";
+            "holoscan::viz::GetCurrent()";
+
             "holoscan::viz::Init(GLFWwindow*, holoscan::viz::InitFlags)";
             "holoscan::viz::Init(unsigned int, unsigned int, char const*, holoscan::viz::InitFlags)";
             "holoscan::viz::Init(char const*, unsigned int, unsigned int, unsigned int, holoscan::viz::InitFlags)";
 
-            "holoscan::viz::ImGuiSetCurrentContext(ImGuiContext*)";
+            "holoscan::viz::g_im_gui_context";
 
             "holoscan::viz::SetCudaStream(CUstream_st*)";
 
@@ -30,7 +34,7 @@
             "holoscan::viz::WindowShouldClose()";
             "holoscan::viz::WindowIsMinimized()";
 
-            "holoscan::viz::Shutdown()";
+            "holoscan::viz::Shutdown(void*)";
 
             "holoscan::viz::Begin()";
             "holoscan::viz::End()";
@@ -40,6 +44,7 @@
             "holoscan::viz::ImageCudaArray(holoscan::viz::ImageFormat, CUarray_st*)";
             "holoscan::viz::ImageHost(unsigned int, unsigned int, holoscan::viz::ImageFormat, void const*, unsigned long)";
             "holoscan::viz::LUT(unsigned int, holoscan::viz::ImageFormat, unsigned long, void const*, bool)";
+            "holoscan::viz::ImageComponentMapping(holoscan::viz::ComponentSwizzle, holoscan::viz::ComponentSwizzle, holoscan::viz::ComponentSwizzle, holoscan::viz::ComponentSwizzle)";
 
             "holoscan::viz::BeginImGuiLayer()";
 
@@ -57,7 +62,7 @@
 
             "holoscan::viz::EndLayer()";
 
-            "holoscan::viz::ReadFramebuffer(holoscan::viz::ImageFormat, unsigned int, unsigned int, unsigned long, unsigned long long)";
+            "holoscan::viz::ReadFramebuffer(holoscan::viz::ImageFormat, unsigned int, unsigned int, unsigned long, unsigned long long, unsigned long)";
 
             "holoscan::viz::GetCameraPose(unsigned long, float*)";
         };

@@ -37,8 +37,12 @@ class BlockMemoryPool : public Allocator {
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(BlockMemoryPool, Allocator)
 
   BlockMemoryPool() = default;
-  BlockMemoryPool(int32_t storage_type, uint64_t block_size, uint64_t num_blocks)
-      : storage_type_(storage_type), block_size_(block_size), num_blocks_(num_blocks) {}
+  BlockMemoryPool(int32_t storage_type, uint64_t block_size, uint64_t num_blocks,
+                  int32_t dev_id = 0)
+      : storage_type_(storage_type),
+        block_size_(block_size),
+        num_blocks_(num_blocks),
+        dev_id_(dev_id) {}
   BlockMemoryPool(const std::string& name, nvidia::gxf::BlockMemoryPool* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::BlockMemoryPool"; }
@@ -49,6 +53,7 @@ class BlockMemoryPool : public Allocator {
   Parameter<int32_t> storage_type_;
   Parameter<uint64_t> block_size_;
   Parameter<uint64_t> num_blocks_;
+  Parameter<int32_t> dev_id_;
 };
 
 }  // namespace holoscan

@@ -23,9 +23,8 @@
 #include <string>
 #include <vector>
 
-#include "../core/core.hpp"
-#include "../core/dl_converter.hpp"
-#include "gxf.hpp"
+#include "entity.hpp"
+#include "gxf_pydoc.hpp"
 
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -35,10 +34,7 @@
 #include "holoscan/core/gxf/gxf_extension_manager.hpp"
 #include "holoscan/core/gxf/gxf_extension_registrar.hpp"
 #include "holoscan/core/gxf/gxf_io_context.hpp"
-#include "holoscan/core/gxf/gxf_network_context.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_scheduler.hpp"
 #include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 
@@ -56,53 +52,11 @@ namespace py = pybind11;
 //     typedef void* gxf_context_t;
 //     gxf_result_t is a C-style enum where GXF_SUCCESS is 0
 
-namespace holoscan::ops {
-
-// define trampoline class for GXFOperator to allow overriding virtual gxf_typename
-
-class PyGXFOperator : public GXFOperator {
- public:
-  /* Inherit the constructors */
-  using GXFOperator::GXFOperator;
-
-  /* Trampolines (need one for each virtual function) */
-  const char* gxf_typename() const override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE_PURE(const char*, GXFOperator, gxf_typename);
-  }
-};
-
-}  // namespace holoscan::ops
-
 namespace holoscan {
 
-class PyGXFScheduler : public gxf::GXFScheduler {
- public:
-  /* Inherit the constructors */
-  using gxf::GXFScheduler::GXFScheduler;
-
-  /* Trampolines (need one for each virtual function) */
-  const char* gxf_typename() const override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE_PURE(const char*, gxf::GXFScheduler, gxf_typename);
-  }
-  std::shared_ptr<Clock> clock() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE_PURE(std::shared_ptr<Clock>, gxf::GXFScheduler, clock);
-  }
-};
-
-class PyGXFNetworkContext : public gxf::GXFNetworkContext {
- public:
-  /* Inherit the constructors */
-  using gxf::GXFNetworkContext::GXFNetworkContext;
-
-  /* Trampolines (need one for each virtual function) */
-  const char* gxf_typename() const override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE_PURE(const char*, gxf::GXFNetworkContext, gxf_typename);
-  }
-};
+void init_gxf_operator(py::module_&);
+void init_gxf_network_context(py::module_&);
+void init_gxf_scheduler(py::module_&);
 
 static const gxf_tid_t default_tid = {0, 0};
 
@@ -122,6 +76,8 @@ PYBIND11_MODULE(_gxf, m) {
 #else
   m.attr("__version__") = "dev";
 #endif
+
+  init_entity(m);
 
   // TODO: This method can be removed once Executor::extension_manager(),
   // ExtensionManager, GXFExtensionManager are exposed to Python.
@@ -143,16 +99,6 @@ PYBIND11_MODULE(_gxf, m) {
       "context"_a,
       "extension_filenames"_a = std::vector<std::string>{},
       "manifest_filenames"_a = std::vector<std::string>{});
-
-  py::class_<gxf::Entity, std::shared_ptr<gxf::Entity>>(m, "Entity", doc::Entity::doc_Entity)
-      .def(py::init<>(), doc::Entity::doc_Entity);
-
-  py::class_<PyEntity, gxf::Entity, std::shared_ptr<PyEntity>>(
-      m, "PyEntity", doc::Entity::doc_Entity)
-      .def(py::init(&PyEntity::py_create), doc::Entity::doc_Entity)
-      .def("__bool__", &PyEntity::operator bool)
-      .def("get", &PyEntity::py_get, "name"_a = "", doc::Entity::doc_get)
-      .def("add", &PyEntity::py_add, "obj"_a, "name"_a = "");
 
   py::class_<gxf::GXFTensor, std::shared_ptr<gxf::GXFTensor>>(
       m, "GXFTensor", doc::GXFTensor::doc_GXFTensor)
@@ -184,114 +130,34 @@ PYBIND11_MODULE(_gxf, m) {
   py::class_<gxf::GXFResource, Resource, gxf::GXFComponent, std::shared_ptr<gxf::GXFResource>>(
       m, "GXFResource", doc::GXFResource::doc_GXFResource)
       .def(py::init<>(), doc::GXFResource::doc_GXFResource)
-      .def("initialize", &gxf::GXFResource::initialize, doc::GXFResource::doc_initialize);
+      .def("initialize", &gxf::GXFResource::initialize, doc::GXFResource::doc_initialize)
+      .def(
+          "__repr__",
+          [](const py::object& obj) {
+            // use py::object and obj.cast to avoid a segfault if object has not been initialized
+            auto resource = obj.cast<std::shared_ptr<gxf::GXFResource>>();
+            if (resource) { return resource->description(); }
+            return std::string("<GXFResource: None>");
+          },
+          R"doc(Return repr(self).)doc");
 
   py::class_<gxf::GXFCondition, Condition, gxf::GXFComponent, std::shared_ptr<gxf::GXFCondition>>(
       m, "GXFCondition", doc::GXFCondition::doc_GXFCondition)
       .def(py::init<>(), doc::GXFCondition::doc_GXFCondition)
-      .def("initialize", &gxf::GXFCondition::initialize, doc::GXFCondition::doc_initialize);
-
-  py::class_<gxf::GXFScheduler,
-             PyGXFScheduler,
-             Scheduler,
-             gxf::GXFComponent,
-             std::shared_ptr<gxf::GXFScheduler>>(
-      m, "GXFScheduler", doc::GXFScheduler::doc_GXFScheduler)
-      .def("initialize", &gxf::GXFScheduler::initialize, doc::GXFScheduler::doc_initialize)
-      .def_property_readonly("clock", &gxf::GXFScheduler::clock);
-
-  py::class_<gxf::GXFNetworkContext,
-             PyGXFNetworkContext,
-             NetworkContext,
-             gxf::GXFComponent,
-             std::shared_ptr<gxf::GXFNetworkContext>>(
-      m, "GXFNetworkContext", doc::GXFNetworkContext::doc_GXFNetworkContext)
-      .def("initialize",
-           &gxf::GXFNetworkContext::initialize,
-           doc::GXFNetworkContext::doc_initialize);
-
-  py::class_<ops::GXFOperator, ops::PyGXFOperator, Operator, std::shared_ptr<ops::GXFOperator>>(
-      m, "GXFOperator", doc::GXFOperator::doc_GXFOperator)
-      .def(py::init<>(), doc::GXFOperator::doc_GXFOperator)
-      // .def("initialize", &ops::GXFOperator::initialize)
-      .def_property_readonly(
-          "gxf_context", &ops::GXFOperator::gxf_context, doc::GXFOperator::doc_gxf_context)
-      .def_property("gxf_eid",
-                    py::overload_cast<>(&ops::GXFOperator::gxf_eid, py::const_),
-                    py::overload_cast<gxf_uid_t>(&ops::GXFOperator::gxf_eid),
-                    doc::GXFOperator::doc_gxf_eid)
-      .def_property("gxf_cid",
-                    py::overload_cast<>(&ops::GXFOperator::gxf_cid, py::const_),
-                    py::overload_cast<gxf_uid_t>(&ops::GXFOperator::gxf_cid),
-                    doc::GXFOperator::doc_gxf_cid)
+      .def("initialize", &gxf::GXFCondition::initialize, doc::GXFCondition::doc_initialize)
       .def(
           "__repr__",
-          // had to remove const here to access conditions(), etc.
-          [](ops::GXFOperator& op) {
-            auto msg_buf = fmt::memory_buffer();
-            // print names of all input ports
-            fmt::format_to(std::back_inserter(msg_buf), "GXFOperator:\n\tname = {}", op.name());
-            fmt::format_to(std::back_inserter(msg_buf), "\n\tconditions = (");
-            for (auto cond : op.conditions()) {
-              fmt::format_to(std::back_inserter(msg_buf), "{}, ", cond.first);
-            }
-            fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            // print names of all output ports
-            fmt::format_to(std::back_inserter(msg_buf), "\n\tresources = (");
-            for (auto res : op.resources()) {
-              fmt::format_to(std::back_inserter(msg_buf), "{}, ", res.first);
-            }
-            fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            // print names of all args
-            fmt::format_to(std::back_inserter(msg_buf), "\n\targs = (");
-            for (auto arg : op.args()) {
-              fmt::format_to(std::back_inserter(msg_buf), "{}, ", arg.name());
-            }
-            fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            // Print attribute of the OperatorSpec corresponding to this operator
-
-            // fmt::format_to(std::back_inserter(msg_buf), "\n\tspec:\n\t\tinputs = (");
-            // for (auto name : get_names_from_map(op.spec()->inputs())) {
-            //   fmt::format_to(std::back_inserter(msg_buf), "{}, ", name);
-            // }
-            // fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            // // print names of all output ports
-            // fmt::format_to(std::back_inserter(msg_buf), "\n\t\toutputs = (");
-            // for (auto name : get_names_from_map(op.spec()->outputs())) {
-            //   fmt::format_to(std::back_inserter(msg_buf), "{}, ", name);
-            // }
-            // fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            // // print names of all conditions
-            // fmt::format_to(std::back_inserter(msg_buf), "\n\t\tconditions = (");
-            // for (auto name : get_names_from_map(op.spec()->conditions())) {
-            //   fmt::format_to(std::back_inserter(msg_buf), "{}, ", name);
-            // }
-            // fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            // // print names of all resources
-            // fmt::format_to(std::back_inserter(msg_buf), "\n\t\tresources = (");
-            // for (auto name : get_names_from_map(op.spec()->resources())) {
-            //   fmt::format_to(std::back_inserter(msg_buf), "{}, ", name);
-            // }
-            // fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            // // print names of all parameters
-            // fmt::format_to(std::back_inserter(msg_buf), "\n\t\tparams = (");
-            // for (auto& p : op.spec()->params()) {
-            //   fmt::format_to(std::back_inserter(msg_buf), "{}, ", p.first);
-            // }
-            // fmt::format_to(std::back_inserter(msg_buf), ")");
-
-            std::string repr = fmt::format("{:.{}}", msg_buf.data(), msg_buf.size());
-            return repr;
+          [](const py::object& obj) {
+            // use py::object and obj.cast to avoid a segfault if object has not been initialized
+            auto condition = obj.cast<std::shared_ptr<gxf::GXFCondition>>();
+            if (condition) { return condition->description(); }
+            return std::string("<GXFCondition: None>");
           },
-          py::call_guard<py::gil_scoped_release>(),
           R"doc(Return repr(self).)doc");
+
+  init_gxf_scheduler(m);
+  init_gxf_network_context(m);
+  init_gxf_operator(m);
 
   py::class_<gxf::GXFInputContext, InputContext, std::shared_ptr<gxf::GXFInputContext>>(
       m, "GXFInputContext", R"doc(GXF input context.)doc")
@@ -333,36 +199,5 @@ PYBIND11_MODULE(_gxf, m) {
       .def("stop", &gxf::GXFWrapper::stop, doc::GXFWrapper::doc_stop)
       .def("set_operator", &gxf::GXFWrapper::set_operator, doc::GXFWrapper::doc_set_operator);
 }  // PYBIND11_MODULE
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// PyEntity definition
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-PyEntity PyEntity::py_create(const PyExecutionContext& ctx) {
-  auto result = nvidia::gxf::Entity::New(ctx.context());
-  if (!result) { throw std::runtime_error("Failed to create entity"); }
-  return static_cast<PyEntity>(result.value());
-}
-
-py::object PyEntity::py_get(const char* name) const {
-  auto tensor = get<Tensor>(name);
-  if (!tensor) { return py::none(); }
-
-  auto py_tensor = py::cast(tensor);
-
-  // Set array interface attributes
-  set_array_interface(py_tensor, tensor->dl_ctx());
-  return py_tensor;
-}
-
-py::object PyEntity::py_add(const py::object& value, const char* name) {
-  if (py::isinstance<PyTensor>(value)) {
-    std::shared_ptr<Tensor> tensor =
-        std::static_pointer_cast<Tensor>(py::cast<std::shared_ptr<PyTensor>>(value));
-    add<Tensor>(tensor, name);
-    return value;
-  }
-  return py::none();
-}
 
 }  // namespace holoscan

@@ -18,9 +18,8 @@
 project(holoinfer VERSION ${HOLOSCAN_BUILD_VERSION} LANGUAGES CXX CUDA)
 
 find_package(CUDAToolkit REQUIRED)
-find_package(ONNXRuntime REQUIRED)
 
-if (${HOLOSCAN_BUILD_LIBTORCH})
+if(HOLOSCAN_BUILD_LIBTORCH)
     find_package(Torch REQUIRED)
     find_package(TorchVision REQUIRED)
     add_library(holoinfer_torch SHARED infer/torch/core.cpp)
@@ -39,6 +38,7 @@ if (${HOLOSCAN_BUILD_LIBTORCH})
             holoscan::logger
             GXF::core
             yaml-cpp
+            holoscan_security_flags
     )
     target_include_directories(holoinfer_torch
         PRIVATE
@@ -49,8 +49,36 @@ if (${HOLOSCAN_BUILD_LIBTORCH})
         )
 endif()
 
+if(HOLOSCAN_BUILD_ORT)
+    find_package(ONNXRuntime REQUIRED)
+    add_library(holoinfer_ort SHARED infer/onnx/core.cpp)
+    add_library(holoscan::infer::onnx_runtime ALIAS holoinfer_ort)
+    set_target_properties(holoinfer_ort PROPERTIES
+        OUTPUT_NAME holoscan_infer_onnx_runtime
+        EXPORT_NAME infer::onnx_runtime
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        VERSION ${PROJECT_VERSION}
+        INSTALL_RPATH_USE_LINK_PATH true # find onnxruntime in install tree
+    )
+    target_link_libraries(holoinfer_ort
+        PRIVATE
+            ONNXRuntime::ONNXRuntime
+            CUDA::cudart
+            holoscan::logger
+            GXF::core
+            yaml-cpp
+            holoscan_security_flags
+    )
+    target_include_directories(holoinfer_ort
+        PRIVATE
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>
+        )
+endif()
+
 set(holoinfer_src
-    infer/onnx/core.cpp
     infer/trt/core.cpp
     infer/trt/utils.cpp
     params/infer_param.cpp
@@ -66,13 +94,12 @@ add_library(${PROJECT_NAME} SHARED ${holoinfer_src})
 add_library(holoscan::infer ALIAS ${PROJECT_NAME})
 
 target_include_directories(${PROJECT_NAME}
-                        PRIVATE
-                            $<BUILD_INTERFACE:${ONNXRuntime_INCLUDE_DIR}>
-                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-                        PUBLIC
-                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-                            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>
-                        )
+    PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>
+)
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC
@@ -84,16 +111,18 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         ${CMAKE_DL_LIBS} # to dlopen holoinfer_torch
         CUDA::cudart
-        CUDA::nppidei
-        CUDA::nppig
         holoscan::logger
         TensorRT::nvonnxparser
-        ONNXRuntime::ONNXRuntime
+        holoscan_security_flags
 )
 
-if (${HOLOSCAN_BUILD_LIBTORCH})
+if(HOLOSCAN_BUILD_LIBTORCH)
     # no target_link_libraries to holoinfer_torch: we dlopen it as a plugin
-    target_compile_definitions(${PROJECT_NAME} PRIVATE use_torch)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC "use_torch=true")
+endif()
+if(HOLOSCAN_BUILD_ORT)
+    # no target_link_libraries to holoinfer_ort: we dlopen it as a plugin
+    target_compile_definitions(${PROJECT_NAME} PUBLIC "use_onnxruntime=true")
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -104,23 +133,10 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 install(TARGETS ${PROJECT_NAME}
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        )
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
-        )
-
-# install the ONNX runtime library
-get_target_property(ONNXRuntimeLibLocation ONNXRuntime::ONNXRuntime LOCATION)
-get_filename_component(ONNXRuntimeLocation ${ONNXRuntimeLibLocation} REALPATH)
-
-# export the name of the lib
-get_filename_component(ONNXRuntimeLibName ${ONNXRuntimeLocation} NAME)
-set(ONNXRUNTIME_LIBRARY_NAME ${ONNXRuntimeLibName} CACHE INTERNAL "ONNXRuntime library name")
-
-install(FILES "${ONNXRuntimeLocation}"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    COMPONENT "holoscan-dependencies"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
 )

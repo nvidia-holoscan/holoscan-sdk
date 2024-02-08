@@ -51,6 +51,12 @@ if(BUILD_TESTING)
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed --config ${CONFIG_FILE}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
+  
+  add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_DRIVER_AND_WORKER_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed --config ${CONFIG_FILE} --driver --worker --fragments=all
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
   set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )

@@ -30,7 +30,7 @@ add_custom_target(python_video_replayer_yaml
   BYPRODUCTS "video_replayer.yaml"
 )
 
-add_dependencies(python_video_replayer python_video_replayer_yaml endoscopy_data)
+add_dependencies(python_video_replayer python_video_replayer_yaml racerx_data)
 
 # Install the app
 install(FILES
@@ -42,16 +42,53 @@ install(FILES
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+
+  set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
+  set(SOURCE_VIDEO_BASENAME python_video_replayer_output)
+  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/video_replayer/)
+
+  file(MAKE_DIRECTORY ${RECORDING_DIR})
+
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING ${CONFIG_STRING})
+  string(APPEND CONFIG_STRING "  enable_render_buffer_output: true\n\nrecorder:\n  directory: \"${RECORDING_DIR}\"\n  basename: \"${SOURCE_VIDEO_BASENAME}\"")
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/python_video_replayer_config.yaml)
   file(WRITE ${CONFIG_FILE} ${CONFIG_STRING})
 
+  # Patch the current example to enable recording the rendering window
+  add_custom_command(OUTPUT video_replayer_test.py
+    PRE_LINK
+    COMMAND patch -u -o video_replayer_test.py ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.py
+        ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/video_replayer/python_video_replayer.patch
+  )
+
+  add_custom_target(python_video_replayer_test ALL
+    DEPENDS "video_replayer_test.py"
+  )
+
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_TEST
-    COMMAND python3 video_replayer.py python_video_replayer_config.yaml
+    COMMAND python3 video_replayer_test.py --config python_video_replayer_config.yaml
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
+
   set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_TEST PROPERTIES
+    DEPENDS "video_replayer_test.py"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )
+
+  # Add a test to check the validity of the frames
+  add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_RENDER_TEST
+      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      --source_video_dir ${RECORDING_DIR}
+      --source_video_basename ${SOURCE_VIDEO_BASENAME}
+      --output_dir ${RECORDING_DIR}
+      --validation_frames_dir ${VALIDATION_FRAMES_DIR}
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
+  set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_RENDER_TEST PROPERTIES
+    DEPENDS EXAMPLE_PYTHON_VIDEO_REPLAYER_TEST
+    PASS_REGULAR_EXPRESSION "Valid video output!"
+  )
+
 endif()

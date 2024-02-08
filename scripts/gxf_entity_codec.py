@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import os
 import struct
@@ -906,13 +908,13 @@ class EntityReader:
         self.open()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exception_type, exception_value, exception_traceback):
         self.close()
 
-    def open(self) -> None:
+    def open(self) -> None:  # noqa: A003
         """Open the recording."""
-        self._index_file = open(self._index_path, "rb")
-        self._entities_file = open(self._entities_path, "rb")
+        self._index_file = open(self._index_path, "rb")  # noqa: SIM115
+        self._entities_file = open(self._entities_path, "rb")  # noqa: SIM115
 
     def close(self) -> None:
         """Close the recording."""
@@ -1026,17 +1028,17 @@ class EntityWriter:
         self.open()
         return self
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, exception_type, exception_value, exception_traceback):
         self.close()
 
     def _initialize(self):
         self._index = 0
         self._start_timestemp = int(time.time() * 10**9)
 
-    def open(self):
+    def open(self):  # noqa: A003
         self.close()
-        self._index_file = open(self._index_path, "wb")
-        self._entities_file = open(self._entities_path, "wb")
+        self._index_file = open(self._index_path, "wb")  # noqa: SIM115
+        self._entities_file = open(self._entities_path, "wb")  # noqa: SIM115
         self._initialize()
 
     def close(self):

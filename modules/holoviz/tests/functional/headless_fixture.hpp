@@ -68,7 +68,6 @@ class TestHeadless : public ::testing::Test {
    * Read back color data from the Holoviz window.
    *
    * @param color_data vector to hold the color data
-   * @param depth_data vector to hold the depth data
    */
   void ReadColorData(std::vector<uint8_t>& color_data);
 

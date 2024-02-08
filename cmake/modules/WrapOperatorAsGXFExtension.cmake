@@ -85,14 +85,14 @@ function(wrap_operator_as_gxf_extension)
 
   # Remove the `ARG` prefix
   foreach(VAR IN LISTS OPTION_VARS SINGLE_VALUE_VARS MULTI_VALUE_VARS)
-    if (DEFINED ARG_${VAR})
+    if(DEFINED ARG_${VAR})
       set(${VAR} "${ARG_${VAR}}")
     endif()
   endforeach()
 
   # Check for required arguments
   foreach(VAR IN LISTS REQUIRED_SINGLE_VALUE_VARS)
-    if (NOT DEFINED ${VAR})
+    if(NOT DEFINED ${VAR})
       message(SEND_ERROR "Missing required ${VAR} argument")
     endif()
   endforeach()
@@ -104,8 +104,8 @@ function(wrap_operator_as_gxf_extension)
   # CODELET_HEADER
   # CODELET_NAME_UPPERCASE
   # CODELET_NAMESPACE_UPPERCASE
-  set(EXTENSION_CPP_SUFFIX )
-  if (CODELET_NAME STREQUAL EXTENSION_NAME)
+  set(EXTENSION_CPP_SUFFIX)
+  if(CODELET_NAME STREQUAL EXTENSION_NAME)
     set(EXTENSION_CPP_SUFFIX "_ext")
   endif()
   set(EXTENSION_CPP ${CMAKE_CURRENT_BINARY_DIR}/${EXTENSION_NAME}${EXTENSION_CPP_SUFFIX}.cpp)
@@ -122,7 +122,7 @@ function(wrap_operator_as_gxf_extension)
   configure_file(${TEMPLATE_DIR}/codelet.hpp.in ${CODELET_HEADER})
 
   # Create codelet library
-  if (NOT DEFINED CODELET_TARGET_NAME)
+  if(NOT DEFINED CODELET_TARGET_NAME)
     string(TOLOWER ${CODELET_NAME} CODELET_TARGET_NAME)
   endif()
   message(STATUS ${CODELET_TARGET_NAME})
@@ -136,7 +136,7 @@ function(wrap_operator_as_gxf_extension)
       ${OPERATOR_TARGET}
   )
 
-  if (DEFINED CODELET_TARGET_PROPERTIES)
+  if(DEFINED CODELET_TARGET_PROPERTIES)
     set_target_properties(${CODELET_TARGET_NAME}
       PROPERTIES ${CODELET_TARGET_PROPERTIES}
     )
@@ -154,7 +154,7 @@ function(wrap_operator_as_gxf_extension)
   endif()
 
   # Create extension library
-  if (NOT DEFINED EXTENSION_TARGET_NAME)
+  if(NOT DEFINED EXTENSION_TARGET_NAME)
     string(TOLOWER ${EXTENSION_NAME} EXTENSION_TARGET_NAME)
   endif()
   message(STATUS ${EXTENSION_TARGET_NAME})
@@ -164,7 +164,7 @@ function(wrap_operator_as_gxf_extension)
   target_link_libraries(${EXTENSION_TARGET_NAME}
     PUBLIC ${CODELET_TARGET_NAME}
   )
-  if (DEFINED EXTENSION_TARGET_PROPERTIES)
+  if(DEFINED EXTENSION_TARGET_PROPERTIES)
     set_target_properties(${EXTENSION_TARGET_NAME}
       PROPERTIES ${EXTENSION_TARGET_PROPERTIES}
     )

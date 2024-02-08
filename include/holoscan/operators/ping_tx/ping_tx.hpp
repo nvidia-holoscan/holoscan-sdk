@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,14 @@
 
 namespace holoscan::ops {
 
+/**
+ * @brief Simple transmitter operator.
+ *
+ * **Named outputs:**
+ *     - *out*: int
+ *         - An index value that increments by one on each call to `compute`. The starting value
+ *         is 1.
+ */
 class PingTxOp : public Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(PingTxOp)

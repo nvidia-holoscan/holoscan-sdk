@@ -18,7 +18,7 @@
 #ifndef HOLOSCAN_PYTHON_PYBIND11_CORE_KWARG_HANDLING_HPP
 #define HOLOSCAN_PYTHON_PYBIND11_CORE_KWARG_HANDLING_HPP
 
-#include <pybind11/numpy.h>  // py::dtype
+#include <pybind11/numpy.h>     // py::array, py::dtype
 #include <pybind11/pybind11.h>
 #include <yaml-cpp/yaml.h>
 
@@ -30,6 +30,8 @@
 namespace py = pybind11;
 
 namespace holoscan {
+
+void init_kwarg_handling(py::module_&);
 
 void set_scalar_arg_via_dtype(const py::object&, const py::dtype&, Arg&);
 

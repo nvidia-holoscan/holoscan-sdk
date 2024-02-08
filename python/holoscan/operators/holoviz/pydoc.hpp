@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,40 @@ PYDOC(HolovizOp_python, R"doc(
 Holoviz visualization operator using Holoviz module.
 
 This is a Vulkan-based visualizer.
+
+Named inputs:
+    receivers: multi-receiver accepting nvidia::gxf::Tensor and/or nvidia::gxf::VideoBuffer
+        Any number of upstream ports may be connected to this `receivers` port. This port can
+        accept either VideoBuffers or Tensors. These inputs can be in either host or device
+        memory. Each tensor or video buffer will result in a layer. The operator autodetects the
+        layer type for certain input types (e.g. a video buffer will result in an image layer). For
+        other input types or more complex use cases, input specifications can be provided either at
+        initialization time as a parameter or dynamically at run time (via `input_specs`). On each
+        call to `compute`, tensors corresponding to all names specified in the `tensors` parameter
+        must be found or an exception will be raised. Any extra, named tensors not present in the
+        `tensors` parameter specification (or optional, dynamic `input_specs` input) will be
+        ignored.
+    input_specs: list[holoscan.operators.HolovizOp.InputSpec] (optional)
+        A list of `InputSpec` objects. This port can be used to dynamically update the overlay
+        specification at run time. No inputs are required on this port in order for the operator
+        to `compute`.
+    render_buffer_input: nvidia::gxf::VideoBuffer (optional)
+        An empty render buffer can optionally be provided. The video buffer must have format
+        GXF_VIDEO_FORMAT_RGBA and be in device memory. This input port only exists if
+        `enable_render_buffer_input` was set to ``True``, in which case `compute` will only be
+        called when a message arrives on this input.
+
+Named outputs:
+    render_buffer_output: nvidia::gxf::VideoBuffer (optional)
+        Output for a filled render buffer. If an input render buffer is specified, it is using
+        that one, else it allocates a new buffer. The video buffer will have format
+        GXF_VIDEO_FORMAT_RGBA and will be in device memory. This output is useful for offline
+        rendering or headless mode. This output port only exists if `enable_render_buffer_output`
+        was set to ``True``.
+    camera_pose_output: std::array<float, 16> (optional)
+        The camera pose. The parameters returned represent the values of a 4x4 row major
+        projection matrix. This output port only exists if `enable_camera_pose_output` was set to
+        ``True``.
 
 Parameters
 ----------
@@ -74,10 +108,13 @@ enable_render_buffer_input : bool, optional
 enable_render_buffer_output : bool, optional
     If ``True``, an additional output port, named 'render_buffer_output' is added to the
     operator.
+enable_camera_pose_output : bool, optional.
+    If ``True``, an additional output port, named 'camera_pose_output' is added to the
+    operator.
 font_path : str, optional
     File path for the font used for rendering text.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
-    CudaStreamPool instance to allocate CUDA streams.
+    `holoscan.resources.CudaStreamPool` instance to allocate CUDA streams.
 name : str, optional
     The name of the operator.
 

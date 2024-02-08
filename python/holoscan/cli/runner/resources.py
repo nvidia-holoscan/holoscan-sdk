@@ -1,24 +1,26 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import logging
 import re
 from typing import Dict, Optional, Union
 
 from ..common.constants import Constants, DefaultValues
-from ..common.exceptions import InvalidSharedMemoryValue
+from ..common.exceptions import InvalidSharedMemoryValueError
 
 logger = logging.getLogger("runner")
 
@@ -59,7 +61,7 @@ def _read_shm_size_from_config(pkg_info: dict, worker: bool, driver: bool, fragm
     Returns:
         float: shared memory value in bytes
     """
-    resources = pkg_info.get("resources", None) if pkg_info is not None else None
+    resources = pkg_info.get("resources") if pkg_info is not None else None
 
     if resources is None:
         return DefaultValues.DEFAULT_SHM_SIZE
@@ -139,7 +141,8 @@ def _find_maximum_shared_memory_value_from_all_fragments(
 def _convert_to_bytes(raw_value: Union[str, float, int]) -> float:
     """Converts data measurements in string to float.
 
-    Supported units are Mi|MiB (mebibytes), Gi|GiB (gibibytes), MB|m (megabytes) and GB|g (gigabytes)
+    Supported units are Mi|MiB (mebibytes), Gi|GiB (gibibytes), MB|m (megabytes) and
+    GB|g (gigabytes)
 
     Args:
         raw_value (str): data measurement with a number and a supporting unit.
@@ -168,4 +171,4 @@ def _convert_to_bytes(raw_value: Union[str, float, int]) -> float:
         if result.group(2) == "g":
             return value * 1000000000
 
-    raise InvalidSharedMemoryValue(f"Invalid/unsupported shared memory value: {raw_value}. ")
+    raise InvalidSharedMemoryValueError(f"Invalid/unsupported shared memory value: {raw_value}. ")

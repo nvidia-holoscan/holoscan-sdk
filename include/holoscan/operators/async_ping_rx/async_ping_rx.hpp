@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,13 @@
 
 namespace holoscan::ops {
 
+/**
+ * @brief Simple asynchronous receiver operator
+ *
+ *    **Named inputs:**
+ *        - *in*: any
+ *            - A received value.
+ */
 class AsyncPingRxOp : public Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(AsyncPingRxOp)

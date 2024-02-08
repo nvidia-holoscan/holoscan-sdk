@@ -26,8 +26,9 @@ using mat4x4 = nvmath::mat4f;
 
 #define SAMPLE_BINDING_COLOR 0
 #define SAMPLE_BINDING_COLOR_U 1
-#define SAMPLE_BINDING_LUT 2
-#define SAMPLE_BINDING_DEPTH 3
+#define SAMPLE_BINDING_COLOR_S 2
+#define SAMPLE_BINDING_LUT 3
+#define SAMPLE_BINDING_DEPTH 4
 
 struct PushConstantVertex {
   mat4x4 matrix;
@@ -51,7 +52,8 @@ struct PushConstantFragment {
 #define PUSH_CONSTANT_FRAGMENT_FLAG_COLOR 1
 #define PUSH_CONSTANT_FRAGMENT_FLAG_LUT 2
 #define PUSH_CONSTANT_FRAGMENT_FLAG_LUT_U 4
-#define PUSH_CONSTANT_FRAGMENT_FLAG_DEPTH 8
+#define PUSH_CONSTANT_FRAGMENT_FLAG_LUT_S 8
+#define PUSH_CONSTANT_FRAGMENT_FLAG_DEPTH 16
 
 #ifdef __cplusplus
 static_assert(sizeof(PushConstantFragment) == PUSH_CONSTANT_FRAGMENT_SIZE);

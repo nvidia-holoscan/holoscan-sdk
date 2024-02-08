@@ -3,8 +3,10 @@
 This example demonstrates a distributed ping application with two operators connected using add_flow().
 
 There are two operators involved in this example:
-  1. a transmitter in Fragment 1 (`fragment1`), set to transmit a sequence of integers from 1-10 to it's 'out' port
-  2. a receiver in Fragment 2 (`fragment2`) that prints the received values to the terminal
+  1. a transmitter in Fragment 1 (`fragment1`), set to transmit a tensor map containing a single tensor named 'out' on its 'out' port. 
+  2. a receiver in Fragment 2 (`fragment2`) that prints the received names and shapes of any received tensors to the terminal
+
+The `--gpu` command line argument can be provided to indicate that the tensor should be on the GPU instead of the host (CPU). The user can also override the default tensor shape and data type. Run the application with `-h` or `--help` to see full details of the additional supported arguments.
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_distributed_app.html) to learn more about distributed applications.*
 
@@ -46,11 +48,13 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 #    and another worker in another machine.
 #    If `--fragments` is not specified, any fragment in the application will be chosen to run.
 # 1a. In the first machine (e.g. `10.2.34.56`):
+#    (add --gpu to transmit a GPU tensor instead of a host one)
 ${APP_DIR}/ping_distributed --driver --worker --address 10.2.34.56:10000
 # 1b. In the second machine:
 ${APP_DIR}/ping_distributed --worker --address 10.2.34.56:10000
 
 # 2. The following command will start the distributed app in a single process
+#    (add --gpu to transmit a GPU tensor instead of a host one)
 ${APP_DIR}/ping_distributed
 ```
 
@@ -110,10 +114,14 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 #    and another worker in another machine.
 #    If `--fragments` is not specified, any fragment in the application will be chosen to run.
 # 1a. In the first machine (e.g. `10.2.34.56`):
+#    (add --gpu to transmit a GPU tensor instead of a host one)
 python3 ${APP_DIR}/ping_distributed.py --driver --worker --address 10.2.34.56:10000
 # 1b. In the second machine:
 python3 ${APP_DIR}/ping_distributed.py --worker --address 10.2.34.56:10000
 
 # 2. The following command will start the distributed app in a single process
+#    (add --gpu to transmit a GPU tensor instead of a host one)
 python3 ${APP_DIR}/ping_distributed.py
 ```
+
+Add an additional `--gpu` to the command line to use a GPU tensor instead of a host one.

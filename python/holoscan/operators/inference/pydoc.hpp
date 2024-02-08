@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,18 @@ Inference operator.
 // PyInferenceOp_python Constructor
 PYDOC(InferenceOp_python, R"doc(
 Inference operator.
+
+Named inputs:
+    receivers: multi-receiver accepting nvidia::gxf::Tensor(s)
+        Any number of upstream ports may be connected to this `receivers` port. The operator will
+        search across all messages for tensors matching those specified in `in_tensor_names`.
+        These are the set of input tensors used by the models in `inference_map`.
+
+Named outputs:
+    transmitter: nvidia::gxf::Tensor(s)
+        A message containing tensors corresponding to the inference results from all models will
+        be emitted. The names of the tensors transmitted correspond to those in
+        `out_tensor_names`.
 
 Parameters
 ----------
@@ -70,7 +82,7 @@ enable_fp16 : bool, optional
 is_engine_path : bool, optional
     Whether the input model path mapping is for trt engine files
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
-    CudaStreamPool instance to allocate CUDA streams.
+    `holoscan.resources.CudaStreamPool` instance to allocate CUDA streams.
 name : str, optional
     The name of the operator.
 )doc")

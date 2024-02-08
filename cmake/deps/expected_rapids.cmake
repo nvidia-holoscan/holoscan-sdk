@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,14 +16,17 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(tl-expected 1.0.0
+rapids_cpm_find(tl-expected 1.1.0
     GLOBAL_TARGETS tl::expected expected
 
     CPM_ARGS
 
     GITHUB_REPOSITORY TartanLlama/expected
-    GIT_TAG v1.0.0
+    GIT_TAG v1.1.0
     GIT_SHALLOW TRUE
+
+    OPTIONS
+    "EXPECTED_BUILD_TESTS OFF"
     EXCLUDE_FROM_ALL
 )
 

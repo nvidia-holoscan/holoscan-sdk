@@ -25,9 +25,7 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/arg.hpp"
 #include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/io_spec.hpp"
 
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
@@ -36,112 +34,18 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-static const std::unordered_map<ArgElementType, const char*> element_type_namemap{
-    {ArgElementType::kCustom, "CUSTOM"},
-    {ArgElementType::kBoolean, "BOOLEAN"},
-    {ArgElementType::kInt8, "INT8"},
-    {ArgElementType::kUnsigned8, "UNSIGNED8"},
-    {ArgElementType::kInt16, "INT16"},
-    {ArgElementType::kUnsigned16, "UNSIGNED16"},
-    {ArgElementType::kInt32, "INT32"},
-    {ArgElementType::kUnsigned32, "UNSIGNED32"},
-    {ArgElementType::kInt64, "INT64"},
-    {ArgElementType::kUnsigned64, "UNSIGNED64"},
-    {ArgElementType::kFloat32, "FLOAT32"},
-    {ArgElementType::kFloat64, "FLOAT64"},
-    {ArgElementType::kString, "STRING"},
-    {ArgElementType::kHandle, "HANDLE"},
-    {ArgElementType::kYAMLNode, "YAML_NODE"},
-    {ArgElementType::kIOSpec, "IO_SPEC"},
-    {ArgElementType::kCondition, "CONDITION"},
-    {ArgElementType::kResource, "RESOURCE"},
-};
+void init_component(py::module_&);
+void init_condition(py::module_&);
+void init_network_context(py::module_&);
+void init_resource(py::module_&);
+void init_scheduler(py::module_&);
+void init_executor(py::module_&);
+void init_fragment(py::module_&);
+void init_application(py::module_&);
+void init_data_flow_tracker(py::module_&);
+void init_cli(py::module_&);
 
-static const std::unordered_map<ArgContainerType, const char*> container_type_namemap{
-    {ArgContainerType::kNative, "NATIVE"},
-    {ArgContainerType::kVector, "VECTOR"},
-    {ArgContainerType::kArray, "ARRAY"},
-};
-
-static const std::unordered_map<IOSpec::IOType, const char*> io_type_namemap{
-    {IOSpec::IOType::kInput, "INPUT"},
-    {IOSpec::IOType::kOutput, "OUTPUT"},
-};
-
-static const std::unordered_map<IOSpec::ConnectorType, const char*> connector_type_namemap{
-    {IOSpec::ConnectorType::kDefault, "DEFAULT"},
-    {IOSpec::ConnectorType::kDoubleBuffer, "DOUBLE_BUFFER"},
-    {IOSpec::ConnectorType::kUCX, "UCX"},
-};
-
-static const std::unordered_map<DLDataTypeCode, const char*> dldatatypecode_namemap{
-    {kDLInt, "DLINT"},
-    {kDLUInt, "DLUINT"},
-    {kDLFloat, "DLFLOAT"},
-    {kDLOpaqueHandle, "DLOPAQUEHANDLE"},
-    {kDLBfloat, "DLBFLOAT"},
-    {kDLComplex, "DLCOMPLEX"},
-};
-
-/**
- * @brief Class to wrap the deleter of a DLManagedTensor in Python.
- *
- * This class is used with DLManagedTensorCtx class to wrap the DLManagedTensor.
- *
- * A shared pointer to this class in DLManagedTensorCtx class is used as the deleter of the
- * DLManagedTensorCtx::memory_ref
- *
- * When the last reference to the DLManagedTensorCtx object is released,
- * DLManagedTensorCtx::memory_ref will also be destroyed, which will call the deleter function
- * of the DLManagedTensor object.
- *
- * Compared to the C++ version (DLManagedMemoryBuffer), this class is used to acquire the GIL
- * before calling the deleter function.
- *
- */
-class PyDLManagedMemoryBuffer {
- public:
-  explicit PyDLManagedMemoryBuffer(DLManagedTensor* self);
-  ~PyDLManagedMemoryBuffer();
-
- private:
-  DLManagedTensor* self_ = nullptr;
-};
-
-class PyTensor : public Tensor {
- public:
-  /**
-   * @brief Construct a new Tensor from an existing DLManagedTensorCtx.
-   *
-   * @param ctx A shared pointer to the DLManagedTensorCtx to be used in Tensor construction.
-   */
-  explicit PyTensor(std::shared_ptr<DLManagedTensorCtx>& ctx);
-
-  /**
-   * @brief Construct a new Tensor from an existing DLManagedTensor pointer.
-   *
-   * @param ctx A pointer to the DLManagedTensor to be used in Tensor construction.
-   */
-  explicit PyTensor(DLManagedTensor* dl_managed_tensor_ptr);
-
-  PyTensor() = default;
-
-  /**
-   * @brief Create a new Tensor object from a py::object
-   *
-   * The given py::object must support the array interface protocol or dlpack protocol.
-   *
-   * @param obj A py::object that can be converted to a Tensor
-   * @return A new Tensor object
-   */
-  static py::object as_tensor(const py::object& obj);
-  static std::shared_ptr<PyTensor> from_array_interface(const py::object& obj);
-  static std::shared_ptr<PyTensor> from_cuda_array_interface(const py::object& obj);
-  static std::shared_ptr<PyTensor> from_dlpack(const py::object& obj);
-  static py::capsule dlpack(const py::object& obj, py::object stream);
-  static py::tuple dlpack_device(const py::object& obj);
-};
-
+// TODO: remove this unused function
 template <typename ObjT>
 std::vector<std::string> get_names_from_map(ObjT& map_obj) {
   std::vector<std::string> names;

@@ -37,6 +37,21 @@
  * application.
  * This makes it easy to quickly build and change an Holoviz app.
  *
+ * \section Instance
+ *
+ * The Holoviz module uses a thread-local instance object to store its internal state. The instance
+ * object is created when calling the Holoviz module is first called from a thread. All Holoviz
+ * module functions called from that thread use this instance.
+ *
+ * When calling into the Holoviz module from other threads other than the thread from which the
+ * Holoviz module functions were first called, make sure to call {func}`viz::GetCurrent()` and
+ * {func}`viz::SetCurrent()` in the respective threads.
+ *
+ * There are usage cases where multiple instances are needed, for example, to open multiple windows.
+ * Instances can be created by calling {func}`viz::Create()`. Call {func}`viz::SetCurrent()` to make
+ * the instance current before calling the Holoviz module function to be executed for the window the
+ * instance belongs to.
+ *
  * \section Usage
  *
  * The code below creates a window and displays an image.
@@ -65,7 +80,6 @@ while (!viz::WindowShouldClose()) {
 
 viz::Shutdown();
  * ~~~
- *
  */
 
 #include <cuda.h>
@@ -82,6 +96,30 @@ typedef struct GLFWwindow GLFWwindow;
 struct ImGuiContext;
 
 namespace holoscan::viz {
+
+// forward declaration of internal types
+typedef void* InstanceHandle;
+
+/**
+ * Create a new instance.
+ *
+ * Note: this does not make the instance current for the active thread.
+ *
+ * @return created instance
+ */
+InstanceHandle Create();
+
+/**
+ * Set the current instance for the active thread.
+ *
+ * @param instance instance to set
+ */
+void SetCurrent(InstanceHandle instance);
+
+/**
+ * @returns the current instance for the active thread.
+ */
+InstanceHandle GetCurrent();
 
 /**
  * Initialize Holoviz using an existing GLFW window.
@@ -127,21 +165,6 @@ void Init(const char* displayName, uint32_t width = 0, uint32_t height = 0,
           uint32_t refreshRate = 0, InitFlags flags = InitFlags::NONE);
 
 /**
- * If using ImGui, create a context and pass it to Holoviz, do this before calling viz::Init().
- *
- * Background: The ImGui context is a global variable and global variables are not shared across
- * so/DLLboundaries. Therefore the app needs to create the ImGui context first and then provides
- * the pointer to Holoviz like this:
- * @code{.cpp}
- * ImGui::CreateContext();
- * holoscan::viz::ImGuiSetCurrentContext(ImGui::GetCurrentContext());
- * @endcode
- *
- * @param context  ImGui context
- */
-void ImGuiSetCurrentContext(ImGuiContext* context);
-
-/**
  * Set the font used to render text, do this before calling viz::Init().
  *
  * The font is converted to bitmaps, these bitmaps are scaled to the final size when rendering.
@@ -178,8 +201,10 @@ bool WindowIsMinimized();
 
 /**
  * Shutdown Holoviz. All resources are destroyed.
+ *
+ * @param instance optional instance to shutdown, else shutdown active instance
  */
-void Shutdown();
+void Shutdown(InstanceHandle instance = nullptr);
 
 /**
  * Start recording layer definitions.
@@ -206,7 +231,7 @@ void BeginImageLayer();
  * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
  * to the depth buffer when rendering the color image from a separate invocation of Image*() for
  * the same layer. This enables depth-compositing image layers with other Holoviz layers.
- * Supported depth formats are: D32_SFLOAT.
+ * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
  *
  * @param width         width of the image
  * @param height        height of the image
@@ -226,7 +251,7 @@ void ImageCudaDevice(uint32_t width, uint32_t height, ImageFormat fmt, CUdevicep
  * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
  * to the depth buffer when rendering the color image from a separate invocation of Image*() for
  * the same layer. This enables depth-compositing image layers with other Holoviz layers.
- * Supported depth formats are: D32_SFLOAT.
+ * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
  *
  * @param fmt       image format
  * @param array     CUDA array
@@ -241,7 +266,7 @@ void ImageCudaArray(ImageFormat fmt, CUarray array);
  * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
  * to the depth buffer when rendering the color image from a separate invocation of Image*() for
  * the same layer. This enables depth-compositing image layers with other Holoviz layers.
- * Supported depth formats are: D32_SFLOAT.
+ * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
  *
  * @param width     width of the image
  * @param height    height of the image
@@ -281,6 +306,33 @@ void ImageHost(uint32_t width, uint32_t height, ImageFormat fmt, const void* dat
  */
 void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data,
          bool normalized = false);
+
+/**
+ * Specifies how the color components of an image are mapped to the color components of the output.
+ * Output components can be set to the R, G, B or A component of the input or fixed to zero or one
+ * or just identical to the input.
+ *
+ * Default: all output components are identical to the input components
+ * (ComponentSwizzle::IDENTITY).
+ *
+ * This can be used display an image in color formats which are not natively supported by Holoviz.
+ * For example to display a BGRA image:
+ * @code{.cpp}
+ *  ImageComponentMapping(ComponentSwizzle::B, ComponentSwizzle::G, ComponentSwizzle::R,
+ *    ComponentSwizzle::A);
+ *  ImageHost(width, height, ImageFormat::R8G8B8A8_UNORM, bgra_data);
+ * @endcode
+ * or to display a single component image in gray scale:
+ * @code{.cpp}
+ *  ImageComponentMapping(ComponentSwizzle::R, ComponentSwizzle::R, ComponentSwizzle::R,
+ *    ComponentSwizzle::ONE);
+ *  ImageHost(width, height, ImageFormat::R8_UNORM, single_component_data);
+ * @endcode
+ *
+ * @param r, g, b, a    sets how the component values are placed in each component of the output
+ */
+void ImageComponentMapping(ComponentSwizzle r, ComponentSwizzle g, ComponentSwizzle b,
+                           ComponentSwizzle a);
 
 /**
  * Start a ImGUI layer.
@@ -421,9 +473,11 @@ void EndLayer();
  *                      framebuffer size if the framebuffer is smaller than that
  * @param buffer_size   size of the storage buffer in bytes
  * @param device_ptr    pointer to CUDA device memory to store the framebuffer into
+ * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
+ * contiguous in memory
  */
 void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                     CUdeviceptr device_ptr);
+                     CUdeviceptr device_ptr, size_t row_pitch = 0);
 
 /**
  * Get the camera pose.

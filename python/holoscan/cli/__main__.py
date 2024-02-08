@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import argparse
 import json
@@ -43,8 +45,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     argv = list(argv)  # copy argv for manipulation to avoid side-effects
 
     # We have intentionally not set the default using `default="INFO"` here so that the default
-    # value from here doesn't override the value in `LOG_CONFIG_FILENAME` unless the user indends to do
-    # so. If the user doesn't use this flag to set log level, this argument is set to "None"
+    # value from here doesn't override the value in `LOG_CONFIG_FILENAME` unless the user indends
+    # to do so. If the user doesn't use this flag to set log level, this argument is set to "None"
     # and the logging level specified in `LOG_CONFIG_FILENAME` is used.
 
     command_name = os.path.basename(argv[0])
@@ -79,6 +81,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     subparser.add_parser(
         "version", formatter_class=argparse.HelpFormatter, parents=[parent_parser], add_help=False
     )
+
+    # Parser for `nics` command
+    subparser.add_parser(
+        "nics", formatter_class=argparse.HelpFormatter, parents=[parent_parser], add_help=False
+    )
     args = parser.parse_args(argv[1:])
     args.argv = argv  # save argv for later use in runpy
 
@@ -91,7 +98,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         if args.platform[0] == Platform.X64Workstation:
             args.platform_config = PlatformConfiguration.dGPU
         elif args.platform_config is None:
-            parser.error(f"--platform-config is required for '{args.platform[0].value}'")
+            parser.error(f"'--platform-config' is required for '{args.platform[0].value}'")
 
     return args
 
@@ -141,6 +148,11 @@ def main(argv: Optional[List[str]] = None):
 
         artifact_sources = ArtifactSources()
         execute_version_command(args, artifact_sources)
+
+    elif args.command == "nics":
+        from .nics.nics import execute_nics_command
+
+        execute_nics_command(args)
 
 
 if __name__ == "__main__":

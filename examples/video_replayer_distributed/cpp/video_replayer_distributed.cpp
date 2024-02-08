@@ -33,7 +33,7 @@ class Fragment1 : public holoscan::Fragment {
     auto data_directory = std::getenv("HOLOSCAN_INPUT_PATH");
     if (data_directory != nullptr && data_directory[0] != '\0') {
       auto video_directory = std::filesystem::path(data_directory);
-      video_directory /= "endoscopy/video";
+      video_directory /= "racerx";
       args.add(Arg("directory", video_directory.string()));
       HOLOSCAN_LOG_INFO("Using video from {}", video_directory.string());
     }

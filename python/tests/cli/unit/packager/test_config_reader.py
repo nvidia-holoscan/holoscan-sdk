@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import pathlib
 import tempfile
@@ -22,7 +24,7 @@ import yaml
 
 from holoscan.cli.common.constants import DefaultValues, EnvironmentVariables
 from holoscan.cli.common.enum_types import SdkType
-from holoscan.cli.common.exceptions import InvalidApplicationConfiguration
+from holoscan.cli.common.exceptions import InvalidApplicationConfigurationError
 from holoscan.cli.packager.config_reader import ApplicationConfiguration
 from holoscan.cli.packager.parameters import PackageBuildParameters
 
@@ -48,7 +50,7 @@ class TestApplicationConfiguration:
         monkeypatch.setattr(pathlib.Path, "is_file", lambda x: True)
         config = ApplicationConfiguration()
 
-        with pytest.raises(InvalidApplicationConfiguration):
+        with pytest.raises(InvalidApplicationConfigurationError):
             config.read(pathlib.Path("/path/to/config/file.json"))
 
     def test_config_file_open_exception(self, monkeypatch):
@@ -60,7 +62,7 @@ class TestApplicationConfiguration:
         monkeypatch.setattr(pathlib.Path, "open", raise_error)
         config = ApplicationConfiguration()
 
-        with pytest.raises(InvalidApplicationConfiguration):
+        with pytest.raises(InvalidApplicationConfigurationError):
             config.read(pathlib.Path("/path/to/config/file.yaml"))
 
     def test_config_yaml_load_exception(self, monkeypatch):
@@ -73,7 +75,7 @@ class TestApplicationConfiguration:
         monkeypatch.setattr(yaml, "load", raise_error)
         config = ApplicationConfiguration()
 
-        with pytest.raises(InvalidApplicationConfiguration):
+        with pytest.raises(InvalidApplicationConfigurationError):
             config.read(pathlib.Path(yaml_file))
 
     def test_config_yaml_validate_ok(self, monkeypatch):
@@ -112,7 +114,7 @@ class TestApplicationConfiguration:
 
         config = ApplicationConfiguration()
 
-        with pytest.raises(InvalidApplicationConfiguration):
+        with pytest.raises(InvalidApplicationConfigurationError):
             config.read(pathlib.Path(yaml_file))
 
     def test_config_yaml_validate_missing_application(self, monkeypatch):
@@ -122,7 +124,7 @@ class TestApplicationConfiguration:
 
         config = ApplicationConfiguration()
 
-        with pytest.raises(InvalidApplicationConfiguration) as e:
+        with pytest.raises(InvalidApplicationConfigurationError) as e:
             config.read(pathlib.Path(yaml_file))
 
         assert str(e).find("Application ('application') configuration cannot be found in ") != -1
@@ -134,7 +136,7 @@ class TestApplicationConfiguration:
 
         config = ApplicationConfiguration()
 
-        with pytest.raises(InvalidApplicationConfiguration) as e:
+        with pytest.raises(InvalidApplicationConfigurationError) as e:
             config.read(pathlib.Path(yaml_file))
 
         assert str(e).find("Resources ('resources') configuration cannot be found in ") != -1
@@ -146,7 +148,7 @@ class TestApplicationConfiguration:
 
         config = ApplicationConfiguration()
 
-        with pytest.raises(InvalidApplicationConfiguration) as e:
+        with pytest.raises(InvalidApplicationConfigurationError) as e:
             config.read(pathlib.Path(yaml_file))
 
         assert str(e).find("Application configuration key/value ('application>title')") != -1
@@ -221,7 +223,7 @@ class TestApplicationConfiguration:
         config = ApplicationConfiguration()
         config.read(pathlib.Path(yaml_file))
 
-        with pytest.raises(InvalidApplicationConfiguration) as e:
+        with pytest.raises(InvalidApplicationConfigurationError) as e:
             config.populate_app_manifest(build_parameters)
         assert str(e).find("Application configuration key/value ('application>version')") != -1
 
@@ -239,7 +241,7 @@ class TestApplicationConfiguration:
         assert result.api_version == DefaultValues.API_VERSION
         assert result.application_root == str(build_parameters.app_dir)
         assert result.model_root == str(build_parameters.models_dir)
-        assert result.models["model-a"] == str(build_parameters.models_dir)
+        assert result.models["model-a"] == str(build_parameters.models_dir / "model-a")
         assert result.resources == data["resources"]
         assert result.version == data["application"]["version"]
 

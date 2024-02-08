@@ -36,7 +36,7 @@ add_dependencies(aja_capture aja_capture_yaml)
 
 # Set the install RPATH based on the location of the Holoscan SDK libraries
 # The GXF extensions are loaded by the GXF libraries - no need to include here
-file(RELATIVE_PATH install_lib_relative_path ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR} )
+file(RELATIVE_PATH install_lib_relative_path ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR})
 set_target_properties(aja_capture PROPERTIES INSTALL_RPATH "\$ORIGIN/${install_lib_relative_path}")
 
 # Get relative folder path for the app

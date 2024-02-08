@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -462,6 +462,9 @@ class CodecRegistry {
         "std::shared_ptr<std::vector<std::vector<std::complex<double>>>>>"s);
     add_codec<std::shared_ptr<std::vector<std::vector<std::string>>>>(
         "std::shared_ptr<std::vector<std::vector<std::string>>>>"s);
+
+    // add code for the camera pose array used by HolovizOp
+    add_codec<std::shared_ptr<std::array<float, 16>>>("std::shared_ptr<std::array<float, 16>>"s);
   }
 
   // define maps to and from type_index and string (since type_index may vary across platforms)

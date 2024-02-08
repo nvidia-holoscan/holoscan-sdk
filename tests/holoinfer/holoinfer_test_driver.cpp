@@ -21,6 +21,7 @@
 #include "processing/test_core.hpp"
 
 int main() {
+  int status = 0;
   try {
     std::unique_ptr<HoloInferTests> holoinfer_tests = std::make_unique<HoloInferTests>();
     holoinfer_tests->parameter_test_inference();
@@ -34,10 +35,13 @@ int main() {
 
     holoinfer_tests->print_summary();
     processor_tests->print_summary();
+
+    status = holoinfer_tests->get_status();
+    status += processor_tests->get_status();
   } catch (...) {
     std::cout << "Exception in executing tests.\n";
     std::exit(1);
   }
   // summary of tests
-  return 0;
+  return status;
 }

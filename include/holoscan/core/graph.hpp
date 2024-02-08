@@ -107,12 +107,29 @@ class Graph {
   virtual bool is_root(const NodeType& node) = 0;
 
   /**
+   * @brief Check if the node is a user-defined root node. A user-defined root is the first node
+   * that is added to the graph.
+   *
+   * @param node A node in the graph.
+   * @return true if the node is a user-defined root node.
+   */
+  virtual bool is_user_defined_root(const NodeType& node) = 0;
+
+  /**
    * @brief Check if the node is a leaf node.
    *
    * @param node A node in the graph.
    * @return true if the node is a leaf node.
    */
   virtual bool is_leaf(const NodeType& node) = 0;
+
+  /**
+   * @brief Returns a vector of root nodes of the cycles if the graph has cycle(s). Otherwise, an
+   * empty vector is returned.
+   *
+   * @return Returns a vector of root nodes of cycles.
+   */
+  virtual std::vector<NodeType> has_cycle() = 0;
 
   /**
    * @brief Get all root nodes.

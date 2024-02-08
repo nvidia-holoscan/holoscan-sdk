@@ -1,0 +1,50 @@
+diff --git a/public/examples/holoviz/python/holoviz_geometry.py b/public/examples/holoviz/python/holoviz_geometry.py
+index 04726bc1f..2ba16ed0d 100644
+--- a/public/examples/holoviz/python/holoviz_geometry.py
++++ b/public/examples/holoviz/python/holoviz_geometry.py
+@@ -22,7 +22,10 @@ from argparse import ArgumentParser
+ import numpy as np
+ 
+ from holoscan.core import Application, Operator, OperatorSpec
+-from holoscan.operators import HolovizOp, VideoStreamReplayerOp
++from holoscan.operators import (
++    FormatConverterOp, HolovizOp, VideoStreamRecorderOp, VideoStreamReplayerOp
++)
++from holoscan.resources import UnboundedAllocator
+ 
+ sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
+ 
+@@ -331,6 +333,7 @@ class MyVideoProcessingApp(Application):
+                     text=["label_1", "label_2"],
+                 ),
+             ],
++            enable_render_buffer_output=True,
+         )
+         # Since we specified `enable_camera_pose_output=True` for the visualizer, we can connect
+         # this output port to a receiver to print the camera pose. This receiver will just print
+@@ -342,6 +345,25 @@ class MyVideoProcessingApp(Application):
+         self.add_flow(image_processing, visualizer, {("output_specs", "input_specs")})
+         self.add_flow(visualizer, rx, {("camera_pose_output", "in")})
+ 
++        recorder_format_converter = FormatConverterOp(
++            self,
++            name="recorder_format_converter",
++            in_dtype="rgba8888",
++            out_dtype="rgb888",
++            pool=UnboundedAllocator(self, name="pool")
++        )
++        recorder = VideoStreamRecorderOp(
++            self,
++            name="recorder",
++            directory="RECORDING_DIR",
++            basename="SOURCE_VIDEO_BASENAME"
++        )
++
++        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
++
++        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(recorder_format_converter, recorder)
++
+ 
+ def main(config_count):
+     app = MyVideoProcessingApp(config_count=config_count)

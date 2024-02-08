@@ -22,7 +22,7 @@ add_custom_target(python_byom ALL
   BYPRODUCTS "byom.py"
 )
 
-add_dependencies(python_byom endoscopy_data)
+add_dependencies(python_byom racerx_data)
 
 # Copy configuration file into the build tree
 add_custom_target(python_byom_yaml ALL

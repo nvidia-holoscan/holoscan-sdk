@@ -1,21 +1,25 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import gc
 import sys
+import time
 
+import numpy as np
 import pytest
 
 import holoscan as hs
@@ -52,6 +56,10 @@ class PingTxOp(Operator):
         print(f"# TX {self.index} cp_array (refcount: {sys.getrefcount(cp_array)})")
         REF_COUNT_RECORD.append(sys.getrefcount(cp_array))
         del value
+        # Due to the fix for issue 4293741, the deletion of DLManagedTensor pointers is delayed
+        # by LazyDLManagedTensorDeleter. So, we have to wait for a while before checking the
+        # refcount of cp_array, by sleeping for 0.01 seconds (MR 1712).
+        time.sleep(0.01)
         value = hs.as_tensor(cp_array)
         print(f"# TX {self.index} value after recreate (refcount: {sys.getrefcount(value)})")
         REF_COUNT_RECORD.append(sys.getrefcount(value))
@@ -130,12 +138,14 @@ def test_receivers_pyentity_refcount():
     # Or, you can copy this script to examples/ping_simple/python/ping_simple.py and run
     # the ping_simple example with the debugger.
 
-    # fmt: off
-    assert REF_COUNT_RECORD == [
-        1, 2, 2, 3, 2, 3, 2, 3, 1, 2, 3, 2, 1, 2, 3, 2, 1, 2, 3, 2, 2, 2, 2, 3, 2, 3, 2, 3, 2, 2,
-        3, 2, 2, 2, 3, 2, 2, 2, 3, 2, 3, 2, 2, 3, 2, 3, 2, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2,
-    ]
-    # fmt: on
+    np.testing.assert_array_equal(
+        REF_COUNT_RECORD,
+        [
+            1, 2, 2, 3, 2, 3, 2, 3, 1, 2, 3, 2, 1, 2, 3, 2, 1, 2, 3, 2, 2, 2, 2, 3, 2, 3, 2, 3, 2,
+            2, 3, 2, 2, 2, 3, 2, 2, 2, 3, 2, 3, 2, 2, 3, 2, 3, 2, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2,
+            3, 2,
+        ]
+    )  # fmt:skip
 
 
 if __name__ == "__main__":

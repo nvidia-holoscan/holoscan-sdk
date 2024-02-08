@@ -14,5 +14,13 @@
 # limitations under the License.
 
 holoscan_pybind11_module(resources
+    allocators.cpp
+    clocks.cpp
+    component_serializers.cpp
+    entity_serializers.cpp
+    receivers.cpp
     resources.cpp
+    serialization_buffers.cpp
+    transmitters.cpp
+    video_stream_serializer.cpp
 )

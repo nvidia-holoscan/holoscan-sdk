@@ -64,6 +64,7 @@ ConfigureTest(
   core/application.cpp
   core/arg.cpp
   core/argument_setter.cpp
+  core/cli_options.cpp
   core/component.cpp
   core/component_spec.cpp
   core/condition.cpp
@@ -80,6 +81,7 @@ ConfigureTest(
   core/resource.cpp
   core/resource_classes.cpp
   core/scheduler_classes.cpp
+  core/system_resource_manager.cpp
  )
 
 # ##################################################################################################
@@ -109,52 +111,71 @@ target_link_libraries(OPERATORS_CLASSES_TEST
   holoscan::ops::video_stream_replayer
 )
 
-add_dependencies(OPERATORS_CLASSES_TEST endoscopy_data)
+add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 
 # ##################################################################################################
 # * system tests ----------------------------------------------------------------------------------
 ConfigureTest(
   SYSTEM_TEST
   system/cycle.cpp
-  system/distributed_app.cpp
+  system/env_wrapper.cpp
   system/exception_handling.cpp
+  system/demosaic_op_app.cpp
+  system/holoviz_op_apps.cpp
+  system/multithreaded_app.cpp
   system/native_async_operator_ping_app.cpp
   system/native_operator_minimal_app.cpp
   system/native_operator_multibroadcasts_app.cpp
   system/native_operator_ping_app.cpp
   system/native_resource_minimal_app.cpp
-  system/ping_message_rx_op.cpp
-  system/ping_message_rx_op.hpp
-  system/ping_message_tx_op.cpp
-  system/ping_message_tx_op.hpp
   system/ping_rx_op.cpp
-  system/ping_rx_op.hpp
+  system/ping_tensor_rx_op.cpp
+  system/ping_tensor_tx_op.cpp
   system/ping_tx_op.cpp
-  system/ping_tx_op.hpp
-  system/system_resource_manager.cpp
-  system/ucx_message_serialization_ping_app.cpp
+  system/tensor_compare_op.cpp
 )
 target_link_libraries(SYSTEM_TEST
   PRIVATE
+  holoscan::ops::bayer_demosaic
   holoscan::ops::async_ping_rx
   holoscan::ops::async_ping_tx
   holoscan::ops::ping_rx
   holoscan::ops::ping_tx
+  holoscan::ops::holoviz
+  holoscan::ops::format_converter
 )
+
+ConfigureTest(
+  SYSTEM_DISTRIBUTED_TEST
+  system/distributed/distributed_app.cpp
+  system/distributed/distributed_demosaic_op_app.cpp
+  system/distributed/holoscan_ucx_ports_env.cpp
+  system/distributed/ping_message_rx_op.cpp
+  system/distributed/ping_message_tx_op.cpp
+  system/distributed/ucx_message_serialization_ping_app.cpp
+  system/env_wrapper.cpp
+  system/ping_tensor_rx_op.cpp
+  system/ping_tensor_tx_op.cpp
+)
+target_link_libraries(SYSTEM_DISTRIBUTED_TEST
+  PRIVATE
+  holoscan::ops::bayer_demosaic
+  holoscan::ops::holoviz
+)
+
 # set environment variables used by distributed applications in the tests
-# - UCX_TCP_CM_REUSEADDR=y : Reuse port for UCX
-#   (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
 # - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500    : Set deadlock timeout for distributed app
 # - HOLOSCAN_MAX_DURATION_MS=2500             : Set max duration for distributed app
-  set(CMAKE_SYSTEM_TEST_FLAGS
+  set(CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
 "\
-UCX_TCP_CM_REUSEADDR=y;\
-UCX_PROTO_ENABLE=y;\
 HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500;\
 HOLOSCAN_MAX_DURATION_MS=2500\
 "
   )
-set_tests_properties(SYSTEM_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_TEST_FLAGS}")
+set_tests_properties(
+  SYSTEM_DISTRIBUTED_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS}"
+)
+
 
 # ##################################################################################################
 # * stress tests ----------------------------------------------------------------------------------
@@ -193,9 +214,17 @@ target_link_libraries(HOLOINFER_TEST
   PRIVATE
     holoinfer
 )
-if (${HOLOSCAN_BUILD_LIBTORCH})
-    target_compile_definitions(HOLOINFER_TEST PRIVATE use_torch=1)
-else()
-    target_compile_definitions(HOLOINFER_TEST PRIVATE use_torch=0)
-endif()
+
 add_dependencies(HOLOINFER_TEST multiai_ultrasound_data)
+
+# ##################################################################################################
+# * Flow Tracking tests ----------------------------------------------------------------------------------
+ConfigureTest(
+  FLOW_TRACKING_TEST
+  flow_tracking/flow_tracking_cycle.cpp
+)
+target_link_libraries(FLOW_TRACKING_TEST
+  PRIVATE
+  holoscan::ops::ping_rx
+  holoscan::ops::ping_tx
+)

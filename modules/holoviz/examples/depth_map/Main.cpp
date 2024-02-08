@@ -403,9 +403,6 @@ int main(int argc, char** argv) {
   }
 
   initCuda();
-  // If using ImGui, create a context and pass it to Holoviz, do this before calling viz::Init().
-  ImGui::CreateContext();
-  viz::ImGuiSetCurrentContext(ImGui::GetCurrentContext());
 
   viz::Init(1024, 768, "Holoviz Depth Render Example");
 

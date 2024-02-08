@@ -15,9 +15,24 @@
 
 holoscan_pybind11_module(
     core
+    application.cpp
+    arg.cpp
+    cli.cpp
+    component.cpp
+    condition.cpp
     core.cpp
+    dataflow_tracker.cpp
     dl_converter.cpp
-    trampolines.cpp
+    execution_context.cpp
+    executor.cpp
+    fragment.cpp
+    io_context.cpp
+    io_spec.cpp
     kwarg_handling.cpp
-    ../gxf/gxf.cpp
+    network_context.cpp
+    operator.cpp
+    resource.cpp
+    scheduler.cpp
+    tensor.cpp
+    ../gxf/entity.cpp
 )

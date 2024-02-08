@@ -17,6 +17,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "gxf/std/clock.hpp"
@@ -52,6 +53,12 @@ bool Operator::is_root() {
   return fragment()->graph().is_root(op_shared_ptr);
 }
 
+bool Operator::is_user_defined_root() {
+  std::shared_ptr<holoscan::Operator> op_shared_ptr(this, [](Operator*) {});
+
+  return fragment()->graph().is_user_defined_root(op_shared_ptr);
+}
+
 bool Operator::is_leaf() {
   std::shared_ptr<holoscan::Operator> op_shared_ptr(this, [](Operator*) {});
 
@@ -85,36 +92,36 @@ holoscan::MessageLabel Operator::get_consolidated_input_label() {
       for (auto p : everyinput.paths()) { m.add_new_path(p); }
     }
   } else {  // Root operator
-    if (!this->is_root()) {
-      HOLOSCAN_LOG_WARN("Not a root operator but still input input_message_labels is 0. Op: {}",
-                        name());
-    } else {
-      // Just return the current operator timestamp label because
-      // there is no input label
-      if (op_backend_ptr) {
-        auto scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(fragment()->scheduler());
-        nvidia::gxf::Clock* scheduler_clock = scheduler->gxf_clock();
+    if (!this->is_root() && !this->is_user_defined_root()) {
+      HOLOSCAN_LOG_DEBUG(
+          "[get_consolidated_input_label] Not a root operator but still there is no message label "
+          "stored in Op: {}",
+          name());
+    }
+    // Just return the current operator timestamp label because
+    // there is no input label
+    if (op_backend_ptr) {
+      auto scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(fragment()->scheduler());
+      nvidia::gxf::Clock* scheduler_clock = scheduler->gxf_clock();
 
-        // Calculate the current execution according to the scheduler clock and
-        // convert nanoseconds to microseconds as GXF scheduler uses nanoseconds
-        // and DFFT uses microseconds
-        if (!op_backend_ptr) {
-          throw std::runtime_error("op_backend_ptr is null. Cannot calculate root execution time.");
-        } else if (!scheduler_clock) {
-          throw std::runtime_error(
-              "scheduler_clock is null. Cannot calculate root execution time.");
-        }
-        int64_t cur_exec_time = (scheduler_clock->timestamp() -
-                                 ((nvidia::gxf::Codelet*)op_backend_ptr)->getExecutionTimestamp()) /
-                                1000;
-
-        // Set the receive timestamp for the root operator
-        OperatorTimestampLabel new_op_label(this, get_current_time_us() - cur_exec_time, -1);
-
-        m.add_new_op_timestamp(new_op_label);
-      } else {
-        HOLOSCAN_LOG_WARN("Codelet pointer is not set. Data Flow Tracking will not work.");
+      // Calculate the current execution according to the scheduler clock and
+      // convert nanoseconds to microseconds as GXF scheduler uses nanoseconds
+      // and DFFT uses microseconds
+      if (!op_backend_ptr) {
+        throw std::runtime_error("op_backend_ptr is null. Cannot calculate root execution time.");
+      } else if (!scheduler_clock) {
+        throw std::runtime_error("scheduler_clock is null. Cannot calculate root execution time.");
       }
+      int64_t cur_exec_time = (scheduler_clock->timestamp() -
+                               ((nvidia::gxf::Codelet*)op_backend_ptr)->getExecutionTimestamp()) /
+                              1000;
+
+      // Set the receive timestamp for the root operator
+      OperatorTimestampLabel new_op_label(this, get_current_time_us() - cur_exec_time, -1);
+
+      m.add_new_op_timestamp(new_op_label);
+    } else {
+      HOLOSCAN_LOG_WARN("Codelet pointer is not set. Data Flow Tracking will not work.");
     }
   }
   return m;
@@ -150,8 +157,14 @@ void Operator::set_op_backend() {
 }
 
 YAML::Node Operator::to_yaml_node() const {
+  std::unordered_map<OperatorType, std::string> operatortype_namemap{
+      {OperatorType::kGXF, "kGXF"s},
+      {OperatorType::kNative, "kNative"s},
+      {OperatorType::kVirtual, "kVirtual"s},
+  };
+
   YAML::Node node = Component::to_yaml_node();
-  node["type"] = (operator_type_ == OperatorType::kGXF) ? "GXF" : "native";
+  node["type"] = operatortype_namemap[operator_type_];
   node["conditions"] = YAML::Node(YAML::NodeType::Sequence);
   for (const auto& c : conditions_) { node["conditions"].push_back(c.second->to_yaml_node()); }
   node["resources"] = YAML::Node(YAML::NodeType::Sequence);

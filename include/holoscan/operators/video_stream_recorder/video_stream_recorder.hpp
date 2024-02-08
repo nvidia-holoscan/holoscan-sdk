@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,10 @@ namespace holoscan::ops {
 
 /**
  * @brief Operator class to record the video stream to a file.
+ *
+ * **Named input:**
+ *     - *input*: `nvidia::gxf::Tensor`
+ *         - A message containing a video frame to serialize to disk.
  */
 class VideoStreamRecorderOp : public holoscan::Operator {
  public:
@@ -46,6 +50,7 @@ class VideoStreamRecorderOp : public holoscan::Operator {
   // void deinitialize() override;
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override;
+  void stop() override;
 
  private:
   Parameter<holoscan::IOSpec*> receiver_;

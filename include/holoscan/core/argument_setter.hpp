@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_ARGUMENT_SETTER_HPP
 
 #include <any>
+#include <complex>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -225,6 +226,8 @@ class ArgumentSetter {
                   case ArgElementType::kUnsigned32:
                   case ArgElementType::kUnsigned64:
                   case ArgElementType::kFloat32:
+                  case ArgElementType::kComplex64:
+                  case ArgElementType::kComplex128:
                   case ArgElementType::kString:
                   case ArgElementType::kIOSpec: {
                     if constexpr (holoscan::is_one_of_v<typeT,
@@ -239,6 +242,8 @@ class ArgumentSetter {
                                                         uint64_t,
                                                         float,
                                                         double,
+                                                        std::complex<float>,
+                                                        std::complex<double>,
                                                         std::string,
                                                         IOSpec*>) {
                       auto& arg_value = std::any_cast<typeT&>(any_arg);
@@ -321,34 +326,41 @@ class ArgumentSetter {
                   case ArgElementType::kUnsigned64:
                   case ArgElementType::kFloat32:
                   case ArgElementType::kFloat64:
+                  case ArgElementType::kComplex64:
+                  case ArgElementType::kComplex128:
                   case ArgElementType::kString:
                   case ArgElementType::kIOSpec: {
-                    if constexpr (holoscan::is_one_of_v<typeT,
-                                                        std::vector<bool>,
-                                                        std::vector<int8_t>,
-                                                        std::vector<int16_t>,
-                                                        std::vector<int32_t>,
-                                                        std::vector<int64_t>,
-                                                        std::vector<uint8_t>,
-                                                        std::vector<uint16_t>,
-                                                        std::vector<uint32_t>,
-                                                        std::vector<uint64_t>,
-                                                        std::vector<float>,
-                                                        std::vector<double>,
-                                                        std::vector<std::string>,
-                                                        std::vector<std::vector<bool>>,
-                                                        std::vector<std::vector<int8_t>>,
-                                                        std::vector<std::vector<int16_t>>,
-                                                        std::vector<std::vector<int32_t>>,
-                                                        std::vector<std::vector<int64_t>>,
-                                                        std::vector<std::vector<uint8_t>>,
-                                                        std::vector<std::vector<uint16_t>>,
-                                                        std::vector<std::vector<uint32_t>>,
-                                                        std::vector<std::vector<uint64_t>>,
-                                                        std::vector<std::vector<float>>,
-                                                        std::vector<std::vector<double>>,
-                                                        std::vector<std::vector<std::string>>,
-                                                        std::vector<IOSpec*>>) {
+                    if constexpr (holoscan::is_one_of_v<
+                                      typeT,
+                                      std::vector<bool>,
+                                      std::vector<int8_t>,
+                                      std::vector<int16_t>,
+                                      std::vector<int32_t>,
+                                      std::vector<int64_t>,
+                                      std::vector<uint8_t>,
+                                      std::vector<uint16_t>,
+                                      std::vector<uint32_t>,
+                                      std::vector<uint64_t>,
+                                      std::vector<float>,
+                                      std::vector<double>,
+                                      std::vector<std::complex<float>>,
+                                      std::vector<std::complex<double>>,
+                                      std::vector<std::string>,
+                                      std::vector<std::vector<bool>>,
+                                      std::vector<std::vector<int8_t>>,
+                                      std::vector<std::vector<int16_t>>,
+                                      std::vector<std::vector<int32_t>>,
+                                      std::vector<std::vector<int64_t>>,
+                                      std::vector<std::vector<uint8_t>>,
+                                      std::vector<std::vector<uint16_t>>,
+                                      std::vector<std::vector<uint32_t>>,
+                                      std::vector<std::vector<uint64_t>>,
+                                      std::vector<std::vector<float>>,
+                                      std::vector<std::vector<double>>,
+                                      std::vector<std::vector<std::complex<float>>>,
+                                      std::vector<std::vector<std::complex<double>>>,
+                                      std::vector<std::vector<std::string>>,
+                                      std::vector<IOSpec*>>) {
                       auto& arg_value = std::any_cast<typeT&>(any_arg);
                       param = arg_value;
                     } else {
@@ -444,6 +456,8 @@ class ArgumentSetter {
     add_argument_setter<uint64_t>();
     add_argument_setter<float>();
     add_argument_setter<double>();
+    add_argument_setter<std::complex<float>>();
+    add_argument_setter<std::complex<double>>();
     add_argument_setter<std::string>();
     add_argument_setter<std::vector<bool>>();
     add_argument_setter<std::vector<int8_t>>();
@@ -456,6 +470,8 @@ class ArgumentSetter {
     add_argument_setter<std::vector<uint64_t>>();
     add_argument_setter<std::vector<float>>();
     add_argument_setter<std::vector<double>>();
+    add_argument_setter<std::vector<std::complex<float>>>();
+    add_argument_setter<std::vector<std::complex<double>>>();
     add_argument_setter<std::vector<std::string>>();
     add_argument_setter<std::vector<std::vector<bool>>>();
     add_argument_setter<std::vector<std::vector<int8_t>>>();
@@ -468,6 +484,8 @@ class ArgumentSetter {
     add_argument_setter<std::vector<std::vector<uint64_t>>>();
     add_argument_setter<std::vector<std::vector<float>>>();
     add_argument_setter<std::vector<std::vector<double>>>();
+    add_argument_setter<std::vector<std::vector<std::complex<float>>>>();
+    add_argument_setter<std::vector<std::vector<std::complex<double>>>>();
     add_argument_setter<std::vector<std::vector<std::string>>>();
 
     add_argument_setter<YAML::Node>();

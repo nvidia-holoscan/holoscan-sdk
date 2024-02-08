@@ -185,15 +185,32 @@ void Application::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
   fragment_graph().add_flow(upstream_frag, downstream_frag, port_map);
 }
 
+void Application::set_ucx_env() {
+  // If UCX_PROTO_ENABLE is not already set, set it to enable UCX Protocols v2
+  setenv("UCX_PROTO_ENABLE", "y", 0);
+  // Reuse address
+  // (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
+  setenv("UCX_TCP_CM_REUSEADDR", "y", 0);
+  // Disable UCX memory type cache
+  // (see https://ucx-py.readthedocs.io/en/latest/configuration.html#ucx-memtype-cache and
+  //  https://openucx.readthedocs.io/en/master/faq.html#i-m-running-ucx-with-gpu-memory-and-geting-a-segfault-why)
+  setenv("UCX_MEMTYPE_CACHE", "n", 0);
+  // Disable UCX CM to use all devices
+  // (see issue 4233845)
+  setenv("UCX_CM_USE_ALL_DEVICES", "n", 0);
+}
+
 void Application::run() {
   if (cli_parser_.has_error()) { return; }
 
+  set_ucx_env();
   driver().run();
 }
 
 std::future<void> Application::run_async() {
   if (cli_parser_.has_error()) { return {}; }
 
+  set_ucx_env();
   return driver().run_async();
 }
 
@@ -299,6 +316,15 @@ expected<double, ErrorCode> Application::get_check_recession_period_ms_env() {
   }
 }
 
+void Application::compose_graph() {
+  if (is_composed_) {
+    HOLOSCAN_LOG_DEBUG("The application({}) has already been composed. Skipping...", name());
+    return;
+  }
+  is_composed_ = true;
+  compose();
+}
+
 void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& target_fragments) {
   constexpr bool kDefaultStopOnDeadlock = true;
   constexpr int64_t kDefaultStopOnDeadlockTimeout = 5000L;
@@ -359,6 +385,7 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
         scheduler =
             fragment->make_scheduler<holoscan::MultiThreadScheduler>("multithread-scheduler");
         unsigned int num_processors = std::thread::hardware_concurrency();
+        // Currently, we use the number of operators in the fragment as the number of worker threads
         int64_t worker_thread_number =
             std::min(fragment->graph().get_nodes().size(), static_cast<size_t>(num_processors));
         scheduler->add_arg(holoscan::Arg("stop_on_deadlock", stop_on_deadlock));

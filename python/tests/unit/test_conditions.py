@@ -1,17 +1,20 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
+
 import datetime
 
 import pytest
@@ -29,10 +32,23 @@ from holoscan.gxf import Entity, GXFCondition
 
 class TestBooleanCondition:
     def test_kwarg_based_initialization(self, app, capfd):
-        cond = BooleanCondition(fragment=app, name="boolean", enable_tick=True)
+        name = "boolean"
+        cond = BooleanCondition(fragment=app, name=name, enable_tick=True)
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::BooleanSchedulingTerm"
+
+        assert (
+            f"""
+name: {name}
+fragment: ""
+args:
+  - name: enable_tick
+    type: bool
+    value: true
+"""
+            in repr(cond)
+        )
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -56,10 +72,23 @@ class TestBooleanCondition:
 
 class TestCountCondition:
     def test_kwarg_based_initialization(self, app, capfd):
-        cond = CountCondition(fragment=app, name="count", count=100)
+        name = "count"
+        cond = CountCondition(fragment=app, name=name, count=100)
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::CountSchedulingTerm"
+
+        assert (
+            f"""
+name: {name}
+fragment: ""
+args:
+  - name: count
+    type: int64_t
+    value: 100
+"""
+            in repr(cond)
+        )
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -80,9 +109,8 @@ class TestCountCondition:
 
 class TestDownstreamMessageAffordableCondition:
     def test_kwarg_based_initialization(self, app, capfd):
-        cond = DownstreamMessageAffordableCondition(
-            fragment=app, name="downstream_affordable", min_size=10
-        )
+        name = "downstream_affordable"
+        cond = DownstreamMessageAffordableCondition(fragment=app, name=name, min_size=10)
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::DownstreamReceptiveSchedulingTerm"
@@ -91,6 +119,18 @@ class TestDownstreamMessageAffordableCondition:
         captured = capfd.readouterr()
         assert "error" not in captured.err
         assert "warning" not in captured.err
+
+        assert (
+            f"""
+name: {name}
+fragment: ""
+args:
+  - name: min_size
+    type: uint64_t
+    value: 10
+"""
+            in repr(cond)
+        )
 
     def test_default_initialization(self, app):
         DownstreamMessageAffordableCondition(app)
@@ -101,12 +141,28 @@ class TestDownstreamMessageAffordableCondition:
 
 class TestMessageAvailableCondition:
     def test_kwarg_based_initialization(self, app, capfd):
+        name = "message_available"
         cond = MessageAvailableCondition(
-            fragment=app, name="message_available", min_size=1, front_stage_max_size=10
+            fragment=app, name=name, min_size=1, front_stage_max_size=10
         )
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::MessageAvailableSchedulingTerm"
+
+        assert (
+            f"""
+name: {name}
+fragment: ""
+args:
+  - name: min_size
+    type: uint64_t
+    value: 1
+  - name: front_stage_max_size
+    type: uint64_t
+    value: 10
+"""
+            in repr(cond)
+        )
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -122,10 +178,22 @@ class TestMessageAvailableCondition:
 
 class TestPeriodicCondition:
     def test_kwarg_based_initialization(self, app, capfd):
-        cond = PeriodicCondition(fragment=app, name="periodic", recess_period=100)
+        name = "periodic"
+        cond = PeriodicCondition(fragment=app, name=name, recess_period=100)
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::PeriodicSchedulingTerm"
+
+        # args empty here because recess_period is passed to the constructor directly, not as Arg
+        assert (
+            f"""
+name: {name}
+fragment: ""
+args:
+  []
+"""
+            in repr(cond)
+        )
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -144,11 +212,9 @@ class TestPeriodicCondition:
     )
     def test_periodic_constructors(self, app, capfd, period):
         cond = PeriodicCondition(fragment=app, name="periodic", recess_period=period)
-        if isinstance(period, int):
-            expected_ns = period
-        else:
-            expected_ns = int(period.total_seconds() * 1_000_000_000)
-
+        expected_ns = (
+            period if isinstance(period, int) else int(period.total_seconds() * 1_000_000_000)
+        )
         assert cond.recess_period_ns() == expected_ns
 
     @pytest.mark.parametrize(
@@ -164,11 +230,9 @@ class TestPeriodicCondition:
     def test_recess_period_method(self, app, capfd, period):
         cond = PeriodicCondition(fragment=app, name="periodic", recess_period=1)
         cond.recess_period(period)
-        if isinstance(period, int):
-            expected_ns = period
-        else:
-            expected_ns = int(period.total_seconds() * 1_000_000_000)
-
+        expected_ns = (
+            period if isinstance(period, int) else int(period.total_seconds() * 1_000_000_000)
+        )
         assert cond.recess_period_ns() == expected_ns
 
     def test_positional_initialization(self, app):

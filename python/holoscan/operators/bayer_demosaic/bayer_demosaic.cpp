@@ -23,7 +23,7 @@
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
+#include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
@@ -56,18 +56,18 @@ class PyBayerDemosaicOp : public BayerDemosaicOp {
 
   // Define a constructor that fully initializes the object.
   PyBayerDemosaicOp(Fragment* fragment, std::shared_ptr<holoscan::Allocator> pool,
-                    std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool,
+                    std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                     const std::string& in_tensor_name = "", const std::string& out_tensor_name = "",
                     int interpolation_mode = 0, int bayer_grid_pos = 2, bool generate_alpha = false,
                     int alpha_value = 255, const std::string& name = "bayer_demosaic")
       : BayerDemosaicOp(ArgList{Arg{"pool", pool},
-                                Arg{"cuda_stream_pool", cuda_stream_pool},
                                 Arg{"in_tensor_name", in_tensor_name},
                                 Arg{"out_tensor_name", out_tensor_name},
                                 Arg{"interpolation_mode", interpolation_mode},
                                 Arg{"bayer_grid_pos", bayer_grid_pos},
                                 Arg{"generate_alpha", generate_alpha},
                                 Arg{"alpha_value", alpha_value}}) {
+    if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -94,7 +94,7 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
   m.attr("__version__") = "dev";
 #endif
 
-  py::class_<BayerDemosaicOp, PyBayerDemosaicOp, GXFOperator, std::shared_ptr<BayerDemosaicOp>>(
+  py::class_<BayerDemosaicOp, PyBayerDemosaicOp, Operator, std::shared_ptr<BayerDemosaicOp>>(
       m, "BayerDemosaicOp", doc::BayerDemosaicOp::doc_BayerDemosaicOp)
       .def(py::init<>(), doc::BayerDemosaicOp::doc_BayerDemosaicOp)
       .def(py::init<Fragment*,
@@ -109,7 +109,7 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
                     const std::string&>(),
            "fragment"_a,
            "pool"_a,
-           "cuda_stream_pool"_a,
+           "cuda_stream_pool"_a = py::none(),
            "in_tensor_name"_a = ""s,
            "out_tensor_name"_a = ""s,
            "interpolation_mode"_a = 0,
@@ -118,8 +118,6 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
            "alpha_value"_a = 255,
            "name"_a = "format_converter"s,
            doc::BayerDemosaicOp::doc_BayerDemosaicOp_python)
-      .def_property_readonly(
-          "gxf_typename", &BayerDemosaicOp::gxf_typename, doc::BayerDemosaicOp::doc_gxf_typename)
       .def("initialize", &BayerDemosaicOp::initialize, doc::BayerDemosaicOp::doc_initialize)
       .def("setup", &BayerDemosaicOp::setup, "spec"_a, doc::BayerDemosaicOp::doc_setup);
 }  // PYBIND11_MODULE NOLINT

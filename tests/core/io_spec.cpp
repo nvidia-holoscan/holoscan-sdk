@@ -15,11 +15,14 @@
  * limitations under the License.
  */
 
+#include <fmt/format.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/arg.hpp"
@@ -36,6 +39,9 @@
 #include "../utils.hpp"
 
 namespace holoscan {
+
+using IOSpecWithGXFContext = TestWithGXFContext;
+
 TEST(IOSpec, TestIOSpecInitialize) {
   OperatorSpec op_spec = OperatorSpec();
 
@@ -104,9 +110,8 @@ TEST(IOSpec, TestIOSpecConditionCount) {
   // kCount with one param
   spec.condition(ConditionType::kCount, Arg("a", static_cast<int64_t>(5)));
   auto condition_pairs = spec.conditions();
-  EXPECT_EQ(condition_pairs.size(), 2);
-  EXPECT_EQ(condition_pairs[0].second->args().size(), 0);
-  EXPECT_EQ(condition_pairs[1].second->args().size(), 1);
+  // count condition will log an error and not actually be added to conditions
+  EXPECT_EQ(condition_pairs.size(), 0);
 }
 
 TEST(IOSpec, TestIOSpecConditionBoolean) {
@@ -120,9 +125,8 @@ TEST(IOSpec, TestIOSpecConditionBoolean) {
   // kBoolean with one param
   spec.condition(ConditionType::kBoolean, Arg("a", static_cast<bool>(true)));
   auto condition_pairs = spec.conditions();
-  EXPECT_EQ(condition_pairs.size(), 2);
-  EXPECT_EQ(condition_pairs[0].second->args().size(), 0);
-  EXPECT_EQ(condition_pairs[1].second->args().size(), 1);
+  // boolean condition will log an error and not actually be added to conditions
+  EXPECT_EQ(condition_pairs.size(), 0);
 }
 
 TEST(IOSpec, TestIOSpecConditionNone) {
@@ -284,11 +288,88 @@ TEST(IOSpec, TestIOSpecConnectorUcxTransmitter) {
   spec.connector(IOSpec::ConnectorType::kUCX,
                  ArgList{Arg("capacity", 2),
                          Arg("policy", 1),
-                         Arg("receiver_address", "0.0.0.0"),
-                         Arg("port", static_cast<uint32_t>(13337))});
+                         Arg("receiver_address", "10.0.0.20"),
+                         Arg("port", static_cast<uint32_t>(13337)),
+                         Arg("local_address", "0.0.0.0"),
+                         Arg("local_port", static_cast<uint32_t>(0))});
   EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kUCX);
   transmitter = std::dynamic_pointer_cast<UcxTransmitter>(spec.connector());
   EXPECT_EQ(std::string(transmitter->gxf_typename()), std::string("nvidia::gxf::UcxTransmitter"));
 }
 
+TEST_F(IOSpecWithGXFContext, TestIOSpecDescription) {
+  F.name("fragment1");
+  OperatorSpec op_spec = OperatorSpec(&F);
+  IOSpec spec = IOSpec(
+      &op_spec, std::string("output1"), IOSpec::IOType::kOutput, &typeid(holoscan::gxf::Entity));
+  std::string entity_typename = typeid(holoscan::gxf::Entity).name();
+
+  // Condition added in this way will not yet have had a fragment or component spec assigned
+  spec.condition(ConditionType::kMessageAvailable, Arg("min_size", static_cast<size_t>(5)));
+  auto cond = spec.conditions()[0].second;
+  // manually set name and fragment for the condition
+  cond->name("message_available");
+  cond->fragment(&F);
+  // intentionally not connecting a component spec in this case
+
+  // Connector added in this way will not yet have had a fragment or component spec assigned
+  spec.connector(IOSpec::ConnectorType::kDoubleBuffer, Arg("capacity", 2));
+  // manually populate attributes here (as would normally be done in gxf_executor.cpp)
+  auto conn = spec.connector();
+  conn->name("receiver");
+  conn->fragment(&F);
+  auto connector_spec = std::make_shared<ComponentSpec>(&F);
+  conn->setup(*connector_spec);
+  conn->spec(std::move(connector_spec));
+
+  std::string description = fmt::format(R"(name: output1
+io_type: kOutput
+typeinfo_name: {}
+connector_type: kDoubleBuffer
+connector:
+  id: -1
+  name: receiver
+  fragment: fragment1
+  args:
+    - name: capacity
+      type: int32_t
+      value: 2
+  type: native
+  spec:
+    fragment: fragment1
+    params:
+      - name: policy
+        type: uint64_t
+        description: "0: pop, 1: reject, 2: fault"
+        flag: kNone
+      - name: capacity
+        type: uint64_t
+        description: ""
+        flag: kNone
+conditions:
+  - id: -1
+    name: message_available
+    fragment: fragment1
+    args:
+      - name: min_size
+        type: uint64_t
+        value: 5
+    spec: ~)",
+                                        entity_typename);
+  EXPECT_EQ(spec.description(), description);
+}
+
+TEST(IOSpec, TestIOSpecInvalidPortName) {
+  // "." character is not allowed in IOSPec names
+  OperatorSpec op_spec = OperatorSpec();
+  EXPECT_THROW({ IOSpec spec = IOSpec(&op_spec, std::string("a.b"), IOSpec::IOType::kInput); },
+               std::invalid_argument);
+
+  EXPECT_THROW(
+      {
+        IOSpec spec = IOSpec(
+            &op_spec, std::string("a.b"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+      },
+      std::invalid_argument);
+}
 }  // namespace holoscan

@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import logging
 import os
@@ -90,8 +92,8 @@ def create_run_parser(
         "--worker-address",
         dest="worker_address",
         help="address (`[<IP or hostname>][:<port>]`) of the App Worker. If not specified, the App "
-        "Worker uses the default host address ('0.0.0.0') with the default port number "
-        "randomly chosen from unused ports (between 10000 and 32767).",
+        "Worker uses the default host address ('0.0.0.0') with a randomly chosen port number "
+        "between 10000 and 32767 that is not currently in use.",
     )
 
     advanced_group = parser.add_argument_group(title="advanced run options")
@@ -123,6 +125,15 @@ def create_run_parser(
         "This option sets UCX_NET_DEVICES environment variable with the value specified.",
     )
     advanced_group.add_argument(
+        "--use-all-nics",
+        dest="use_all_nics",
+        action="store_true",
+        default=False,
+        help="allow UCX to control the selection of network interface cards for data "
+        "transfer. Otherwise, the network interface card specified with '--nic' is used. "
+        "This option sets UCX_CM_USE_ALL_DEVICES to 'y'. (default: False)",
+    )
+    advanced_group.add_argument(
         "-r",
         "--render",
         dest="render",
@@ -142,9 +153,10 @@ def create_run_parser(
     advanced_group.add_argument(
         "--shm-size",
         dest="shm_size",
-        help="sets the size of /dev/shm. The format is <number(int,float)>[MB|m|GB|g|Mi|MiB|Gi|GiB]."
-        " Use 'config' to read the shared memory value defined in the app.json manifest."
-        " If not specified, the container is launched using '--ipc=host' with host system's "
+        help="sets the size of /dev/shm. The format is "
+        "<number(int,float)>[MB|m|GB|g|Mi|MiB|Gi|GiB]. "
+        "Use 'config' to read the shared memory value defined in the app.json manifest. "
+        "If not specified, the container is launched using '--ipc=host' with host system's "
         "/dev/shm mounted.",
     )
     advanced_group.add_argument(
@@ -154,6 +166,17 @@ def create_run_parser(
         default=False,
         help="enters terminal with all configured volume mappings and environment variables. "
         "(default: False)",
+    )
+    advanced_group.add_argument(
+        "--device",
+        dest="device",
+        nargs="+",
+        action="extend",
+        help="""Mount additional devices.
+        For example:
+        --device ajantv* to mount all AJA capture cards.
+        --device ajantv0 ajantv1 to mount AJA capture card 0 and 1.
+        --device video1 to mount V4L2 video device 1. """,
     )
 
     user_group = parser.add_argument_group(title="security options")

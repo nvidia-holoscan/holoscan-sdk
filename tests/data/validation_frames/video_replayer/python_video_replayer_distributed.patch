@@ -1,0 +1,37 @@
+--- examples/video_replayer_distributed/python/video_replayer_distributed.py	2023-11-05 20:17:40.332085351 -0800
++++ examples/video_replayer_distributed/python/video_replayer_distributed_test.py	2023-11-19 19:33:30.441474583 -0800
+@@ -19,7 +19,8 @@
+ import os
+ 
+ from holoscan.core import Application, Fragment
+-from holoscan.operators import HolovizOp, VideoStreamReplayerOp
++from holoscan.operators import HolovizOp, VideoStreamReplayerOp, VideoStreamRecorderOp, FormatConverterOp
++from holoscan.resources import UnboundedAllocator
+ 
+ 
+ class Fragment1(Fragment):
+@@ -51,6 +52,24 @@
+ 
+         self.add_operator(visualizer)
+ 
++        recorder_format_converter = FormatConverterOp(
++            self,
++            name="recorder_format_converter",
++            in_dtype="rgba8888",
++            out_dtype="rgb888",
++            pool=UnboundedAllocator(self, name="pool")
++        )
++        recorder = VideoStreamRecorderOp(
++            self,
++            name="recorder",
++            **self.kwargs("recorder")
++        )
++
++        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
++
++        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(recorder_format_converter, recorder)
++
+ 
+ class DistributedVideoReplayerApp(Application):
+     """Example of a distributed application that uses the fragments and operators defined above.

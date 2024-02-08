@@ -129,11 +129,12 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
           // break out if the expected tensor name was found in this message
           in_tensor = maybe_tensor;
           //   get the CUDA stream from the input message
-          gxf_result_t stream_handler_result = cuda_stream_handler.fromMessage(context, in_message);
+          gxf_result_t stream_handler_result =
+              cuda_stream_handler.from_message(context, in_message);
           if (stream_handler_result != GXF_SUCCESS) {
             throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
           }
-          cstream = cuda_stream_handler.getCudaStream(context);
+          cstream = cuda_stream_handler.get_cuda_stream(context);
           break;
         }
       }
@@ -480,7 +481,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
                                       input_data_map,
                                       allocator_,
                                       module,
-                                      cuda_stream_handler.getCudaStream(cont));
+                                      cuda_stream_handler.get_cuda_stream(cont));
           break;
         }
         case HoloInfer::holoinfer_datatype::h_Int32: {
@@ -493,7 +494,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
                                         input_data_map,
                                         allocator_,
                                         module,
-                                        cuda_stream_handler.getCudaStream(cont));
+                                        cuda_stream_handler.get_cuda_stream(cont));
           break;
         }
         case HoloInfer::holoinfer_datatype::h_Int8: {
@@ -506,7 +507,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
                                        input_data_map,
                                        allocator_,
                                        module,
-                                       cuda_stream_handler.getCudaStream(cont));
+                                       cuda_stream_handler.get_cuda_stream(cont));
           break;
         }
         case HoloInfer::holoinfer_datatype::h_UInt8: {
@@ -519,7 +520,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
                                         input_data_map,
                                         allocator_,
                                         module,
-                                        cuda_stream_handler.getCudaStream(cont));
+                                        cuda_stream_handler.get_cuda_stream(cont));
           break;
         }
         case HoloInfer::holoinfer_datatype::h_Int64: {
@@ -532,7 +533,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
                                         input_data_map,
                                         allocator_,
                                         module,
-                                        cuda_stream_handler.getCudaStream(cont));
+                                        cuda_stream_handler.get_cuda_stream(cont));
           break;
         }
         default: {
@@ -548,7 +549,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
     if (cuda_buffer_out) {
       // pass the CUDA stream to the output message
-      gxf_result_t stream_handler_result = cuda_stream_handler.toMessage(out_message);
+      gxf_result_t stream_handler_result = cuda_stream_handler.to_message(out_message);
       if (stream_handler_result != GXF_SUCCESS) {
         throw std::runtime_error("Failed to add the CUDA stream to the outgoing messages");
       }

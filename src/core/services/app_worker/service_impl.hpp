@@ -39,12 +39,16 @@ class AppWorkerServiceImpl final : public AppWorkerService::Service {
   explicit AppWorkerServiceImpl(holoscan::AppWorker* app_worker);
 
   grpc::Status GetAvailablePorts(grpc::ServerContext* context,
-                              const holoscan::service::AvailablePortsRequest* request,
-                              holoscan::service::AvailablePortsResponse* response) override;
+                                 const holoscan::service::AvailablePortsRequest* request,
+                                 holoscan::service::AvailablePortsResponse* response) override;
+
+  grpc::Status GetFragmentInfo(grpc::ServerContext* context,
+                               const holoscan::service::FragmentInfoRequest* request,
+                               holoscan::service::FragmentInfoResponse* response) override;
 
   grpc::Status ExecuteFragments(grpc::ServerContext* context,
-                                 const holoscan::service::FragmentExecutionRequest* request,
-                                 holoscan::service::FragmentExecutionResponse* response) override;
+                                const holoscan::service::FragmentExecutionRequest* request,
+                                holoscan::service::FragmentExecutionResponse* response) override;
 
   grpc::Status TerminateWorker(grpc::ServerContext* context,
                                const holoscan::service::TerminateWorkerRequest* request,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,7 +70,7 @@ class PyHolovizOp : public HolovizOp {
       uint32_t width = 1920, uint32_t height = 1080, float framerate = 60.f,
       bool use_exclusive_display = false, bool fullscreen = false, bool headless = false,
       bool enable_render_buffer_input = false, bool enable_render_buffer_output = false,
-      const std::string& font_path = "",
+      bool enable_camera_pose_output = false, const std::string& font_path = "",
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
       const std::string& name = "holoviz_op")
       : HolovizOp(ArgList{Arg{"allocator", allocator},
@@ -85,6 +85,7 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"headless", headless},
                           Arg{"enable_render_buffer_input", enable_render_buffer_input},
                           Arg{"enable_render_buffer_output", enable_render_buffer_output},
+                          Arg{"enable_camera_pose_output", enable_camera_pose_output},
                           Arg{"font_path", font_path}}) {
     // only append tensors argument if it is not empty
     //     avoids [holoscan] [error] [gxf_operator.hpp:126] Unable to handle parameter 'tensors'
@@ -135,6 +136,7 @@ PYBIND11_MODULE(_holoviz, m) {
                     bool,
                     bool,
                     bool,
+                    bool,
                     const std::string&,
                     std::shared_ptr<holoscan::CudaStreamPool>,
                     const std::string&>(),
@@ -153,6 +155,7 @@ PYBIND11_MODULE(_holoviz, m) {
            "headless"_a = false,
            "enable_render_buffer_input"_a = false,
            "enable_render_buffer_output"_a = false,
+           "enable_camera_pose_output"_a = false,
            "font_path"_a = "",
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "holoviz_op"s,

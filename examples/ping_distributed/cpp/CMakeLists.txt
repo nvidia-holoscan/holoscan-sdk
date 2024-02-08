@@ -16,6 +16,7 @@
 # Create examples
 add_executable(ping_distributed
   ping_distributed.cpp
+  ping_distributed_ops.cpp
 )
 target_link_libraries(ping_distributed
   PUBLIC
@@ -36,7 +37,11 @@ file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SO
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
 # Install the source
-install(FILES ping_distributed.cpp
+install(
+  FILES
+    ping_distributed.cpp
+    ping_distributed_ops.cpp
+    ping_distributed_ops.hpp
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )
@@ -54,3 +59,30 @@ install(TARGETS ping_distributed
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )
+
+# Testing
+if(HOLOSCAN_BUILD_TESTS)
+  add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+  )
+
+  add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_GPU_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed --gpu
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_GPU_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+  )
+
+  add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_HELP_STRING_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed --help
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_HELP_STRING_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Usage: ping_distributed \\[OPTIONS\\]"
+  )
+endif()

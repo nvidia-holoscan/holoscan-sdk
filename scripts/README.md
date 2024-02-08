@@ -52,16 +52,16 @@ python scripts/convert_gxf_entities_to_video.py --base_name my_video | ffmpeg -f
 Above command will read the `my_video.gxf_entities` and `my_video.gxf_index` files and convert them to a video file `converted_video.mp4`.
 
 
-With the existing endoscopy dataset under `data/endoscopy/video` (which is a 854x480 video with framerate 25fps and 3 channels), we can run the following command to convert the gxf entities to a video file:
+With the existing racerx dataset under `data/racerx` (which is a 854x480 video with framerate 25fps and 3 channels), we can run the following command to convert the gxf entities to a video file:
 
 ```sh
-python scripts/convert_gxf_entities_to_video.py --directory data/endoscopy/video --basename surgical_video | ffmpeg -f rawvideo -pix_fmt rgb24 -s 854x480 -r 25 -i - -f mp4 -vcodec libx264 -pix_fmt yuv420p -r 25 -y surgical_video.mp4
+python scripts/convert_gxf_entities_to_video.py --directory data/racerx --basename racerx | ffmpeg -f rawvideo -pix_fmt rgb24 -s 854x480 -r 25 -i - -f mp4 -vcodec libx264 -pix_fmt yuv420p -r 25 -y racerx-medium.mp4
 ```
 
-The output video (`surgical_video.mp4`) can be encoded again into gxf entities with the following command:
+The output video (`racerx-medium.mp4`) can be encoded again into gxf entities with the following command:
 
 ```sh
-ffmpeg -i surgical_video.mp4 -pix_fmt rgb24 -f rawvideo pipe:1 | python scripts/convert_video_to_gxf_entities.py --width 854 --height 480 --channels 3 --framerate 25
+ffmpeg -i racerx-medium.mp4 -pix_fmt rgb24 -f rawvideo pipe:1 | python scripts/convert_video_to_gxf_entities.py --width 854 --height 480 --channels 3 --framerate 25
 
 # tensor.gxf_entities and tensor.gxf_index will be created ('tensor' is the default basename)
 ls tensor*

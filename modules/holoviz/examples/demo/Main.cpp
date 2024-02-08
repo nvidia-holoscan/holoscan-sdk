@@ -502,10 +502,6 @@ int main(int argc, char** argv) {
   initCuda();
   loadImage();
 
-  // If using ImGui, create a context and pass it to Holoviz, do this before calling viz::Init().
-  ImGui::CreateContext();
-  viz::ImGuiSetCurrentContext(ImGui::GetCurrentContext());
-
   // set the Cuda stream to be used by Holoviz
   viz::SetCudaStream(CU_STREAM_PER_THREAD);
 

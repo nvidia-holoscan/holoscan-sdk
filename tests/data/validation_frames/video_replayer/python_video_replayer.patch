@@ -1,0 +1,37 @@
+--- ../examples/video_replayer/python/video_replayer.py	2023-11-16 01:35:53.593301380 +0000
++++ examples/video_replayer/python/video_replayer_test.py	2023-11-20 03:25:57.853150634 +0000
+@@ -19,7 +19,8 @@
+ import sys
+ 
+ from holoscan.core import Application
+-from holoscan.operators import HolovizOp, VideoStreamReplayerOp
++from holoscan.operators import HolovizOp, VideoStreamReplayerOp, VideoStreamRecorderOp, FormatConverterOp
++from holoscan.resources import UnboundedAllocator
+ 
+ sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
+ 
+@@ -50,6 +51,24 @@
+         # Define the workflow
+         self.add_flow(replayer, visualizer, {("output", "receivers")})
+ 
++        recorder_format_converter = FormatConverterOp(
++            self, 
++            name="recorder_format_converter", 
++            in_dtype="rgba8888",
++            out_dtype="rgb888",
++            pool=UnboundedAllocator(self, name="pool")
++        )
++        recorder = VideoStreamRecorderOp(
++            self, 
++            name="recorder",
++            **self.kwargs("recorder")
++        )
++
++        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
++
++        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(recorder_format_converter, recorder)
++
+ 
+ if __name__ == "__main__":
+     config_file = os.path.join(os.path.dirname(__file__), "video_replayer.yaml")

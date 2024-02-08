@@ -1,25 +1,26 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
 
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import pytest
 from packaging.version import Version
 
 from holoscan.cli.common.artifact_sources import ArtifactSources
 from holoscan.cli.common.enum_types import SdkType
-from holoscan.cli.common.exceptions import FailedToDetectSDKVersion, InvalidSdk
+from holoscan.cli.common.exceptions import FailedToDetectSDKVersionError, InvalidSdkError
 from holoscan.cli.common.sdk_utils import (
     detect_holoscan_version,
     detect_monaideploy_version,
@@ -43,7 +44,7 @@ class TestDetectSdk:
 
     def test_sdk_as_unknown(self, monkeypatch):
         monkeypatch.setattr("sys.argv", ["/path/to/bla", "package"])
-        with pytest.raises(InvalidSdk):
+        with pytest.raises(InvalidSdkError):
             detect_sdk()
 
 
@@ -61,23 +62,32 @@ class TestDetectSdkVersion:
             "holoscan.cli.common.sdk_utils.detect_monaideploy_version",
             lambda x, y: SdkType.MonaiDeploy.name,
         )
-        assert detect_sdk_version(SdkType.Holoscan, self._artifact_source) == SdkType.Holoscan.name
-        assert (
-            detect_sdk_version(SdkType.MonaiDeploy, self._artifact_source)
-            == SdkType.MonaiDeploy.name
-        )
+        assert detect_sdk_version(SdkType.Holoscan, self._artifact_source) == [
+            SdkType.Holoscan.name,
+            None,
+        ]
+        assert detect_sdk_version(SdkType.MonaiDeploy, self._artifact_source) == [
+            SdkType.Holoscan.name,
+            SdkType.MonaiDeploy.name,
+        ]
 
 
 class TestDetectHoloscanVersion:
     @pytest.fixture(autouse=True)
     def _setup(self) -> None:
         self._artifact_source = ArtifactSources()
+        self._artifact_source._data[SdkType.Holoscan.value][ArtifactSources.SectionVersion].append(
+            "0.6.0"
+        )
+        self._artifact_source._data[SdkType.Holoscan.value][ArtifactSources.SectionVersion].append(
+            "1.0.0"
+        )
 
     def test_sdk_version_from_valid_user_input(self, monkeypatch):
         assert detect_holoscan_version(self._artifact_source, Version("0.6.0")) == "0.6.0"
 
     def test_sdk_version_from_invalid_user_input(self, monkeypatch):
-        with pytest.raises(InvalidSdk):
+        with pytest.raises(InvalidSdkError):
             detect_holoscan_version(self._artifact_source, Version("0.1.0"))
 
     def test_detect_sdk_version(self, monkeypatch):
@@ -101,7 +111,7 @@ class TestDetectHoloscanVersion:
 
         monkeypatch.setattr("importlib.metadata.version", lambda x: version)
 
-        with pytest.raises(FailedToDetectSDKVersion):
+        with pytest.raises(FailedToDetectSDKVersionError):
             detect_holoscan_version(self._artifact_source)
 
     def test_detect_sdk_version_with_no_match(self, monkeypatch):
@@ -109,8 +119,18 @@ class TestDetectHoloscanVersion:
 
         monkeypatch.setattr("importlib.metadata.version", lambda x: version)
 
-        with pytest.raises(FailedToDetectSDKVersion):
+        with pytest.raises(FailedToDetectSDKVersionError):
             detect_holoscan_version(self._artifact_source)
+
+    @pytest.mark.parametrize(
+        "version,expected",
+        [("1.0a2+4.gcaa3b3fe", "1.0.0"), ("1", "1.0.0"), ("1.0", "1.0.0"), ("1.0.0.1", "1.0.0")],
+    )
+    def test_detect_sdk_version_with_non_semver_string(self, monkeypatch, version, expected):
+        monkeypatch.setattr("importlib.metadata.version", lambda x: version)
+
+        result = detect_holoscan_version(self._artifact_source)
+        assert result == expected
 
 
 class TestDetectMonaiDeployVersion:
@@ -120,10 +140,6 @@ class TestDetectMonaiDeployVersion:
 
     def test_sdk_version_from_valid_user_input(self, monkeypatch):
         assert detect_monaideploy_version(self._artifact_source, Version("0.6.0")) == "0.6.0"
-
-    def test_sdk_version_from_invalid_user_input(self, monkeypatch):
-        with pytest.raises(InvalidSdk):
-            detect_monaideploy_version(self._artifact_source, Version("0.1.0"))
 
     def test_detect_sdk_version(self, monkeypatch):
         version = "0.6.0"
@@ -142,11 +158,11 @@ class TestDetectMonaiDeployVersion:
         assert result == "0.6.0"
 
     def test_detect_sdk_version_with_unsupported_version(self, monkeypatch):
-        version = "0.1.2"
+        version = Version("0.1.2")
 
         monkeypatch.setattr("importlib.metadata.version", lambda x: version)
 
-        with pytest.raises(FailedToDetectSDKVersion):
+        with pytest.raises(FailedToDetectSDKVersionError):
             detect_monaideploy_version(self._artifact_source)
 
     def test_detect_sdk_version_with_no_match(self, monkeypatch):
@@ -154,5 +170,5 @@ class TestDetectMonaiDeployVersion:
 
         monkeypatch.setattr("importlib.metadata.version", lambda x: version)
 
-        with pytest.raises(FailedToDetectSDKVersion):
+        with pytest.raises(FailedToDetectSDKVersionError):
             detect_monaideploy_version(self._artifact_source)

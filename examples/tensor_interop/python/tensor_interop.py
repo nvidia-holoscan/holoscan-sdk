@@ -1,22 +1,21 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+ http://www.apache.org/licenses/LICENSE-2.0
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-"""  # no qa
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import os
-import sys
 
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
@@ -28,7 +27,7 @@ except ImportError:
     raise ImportError(
         "CuPy must be installed to run this example. See "
         "https://docs.cupy.dev/en/stable/install.html"
-    )
+    ) from None
 
 sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
@@ -63,6 +62,9 @@ class ImageProcessingOp(Operator):
         # in_message is of dict
         in_message = op_input.receive("input_tensor")
 
+        # smooth along first two axes, but not the color channels
+        sigma = (self.sigma, self.sigma, 0)
+
         # out_message is of dict
         out_message = dict()
 
@@ -71,9 +73,6 @@ class ImageProcessingOp(Operator):
             self.count += 1
 
             cp_array = cp.asarray(value)
-
-            # smooth along first two axes, but not the color channels
-            sigma = (self.sigma, self.sigma, 0)
 
             # process cp_array
             cp_array = ndi.gaussian_filter(cp_array, sigma)
@@ -101,7 +100,7 @@ class MyVideoProcessingApp(Application):
     def compose(self):
         width = 854
         height = 480
-        video_dir = os.path.join(sample_data_path, "endoscopy", "video")
+        video_dir = os.path.join(sample_data_path, "racerx")
         if not os.path.exists(video_dir):
             raise ValueError(f"Could not find video data: {video_dir=}")
         source = VideoStreamReplayerOp(
@@ -127,12 +126,14 @@ class MyVideoProcessingApp(Application):
         self.add_flow(image_processing, visualizer, {("", "receivers")})
 
 
+def main(config_file):
+    app = MyVideoProcessingApp()
+    # if the --config command line argument was provided, it will override this config_file
+    app.config(config_file)
+    app.run()
+
+
 if __name__ == "__main__":
     config_file = os.path.join(os.path.dirname(__file__), "tensor_interop.yaml")
 
-    if len(sys.argv) >= 2:
-        config_file = sys.argv[1]
-
-    app = MyVideoProcessingApp()
-    app.config(config_file)
-    app.run()
+    main(config_file=config_file)

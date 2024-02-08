@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,120 +14,1331 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Error out if a command fails
-set -e
+# Error out if a command fails or a variable is not defined
+set -eu
 
 #===============================================================================
 # Default values for environment variables.
 #===============================================================================
 
 init_globals() {
-    if [ "$0" != "/bin/bash" ] && [ "$0" != "bash" ]; then
-        SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-        export RUN_SCRIPT_FILE="$(readlink -f "$0")"
-    else
-        export RUN_SCRIPT_FILE="$(readlink -f "${BASH_SOURCE[0]}")"
+    # Paths
+    if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+        CALLER=$(readlink -f "$0")
     fi
-
+    export RUN_SCRIPT_FILE="$(readlink -f "${BASH_SOURCE[0]}")"
     export TOP=$(dirname "${RUN_SCRIPT_FILE}")
 
-    HOLOSCAN_PY_EXE=${HOLOSCAN_PY_EXE:-"python3"}
-    export HOLOSCAN_PY_EXE
-    HOLOSCAN_DOCKER_EXE=${HOLOSCAN_DOCKER_EXE:-"docker"}
-    export HOLOSCAN_DOCKER_EXE
+    # Executables
+    export HOLOSCAN_PY_EXE=${HOLOSCAN_PY_EXE:-"python3"}
+    export HOLOSCAN_DOCKER_EXE=${HOLOSCAN_DOCKER_EXE:-"docker"}
 
-    DO_DRY_RUN="false"  # print commands but do not execute them. Used by run_command
+    # Options
+    export DO_DRY_RUN="false"  # print commands but do not execute them. Used by run_command
+    export DO_STANDALONE="false"  # do not run prerequisite functions
+
+    # Define default img and dir names
+    export SDK_BUILD_IMG="holoscan-sdk-build"
+    export SDK_RUN_IMG="holoscan-sdk-run"
+    export SDK_BUILD_DIR="build"
+    export SDK_INSTALL_DIR="install"
+
+    # Define constants for docs
+    export DOCS_BASE_IMG="holoscan-docs-deps"
+    export DOCS_HTML_IMG="holoscan-docs-html-builder"
+    export DOCS_PDF_IMG="holoscan-docs-pdf-builder"
+    export DOCS_SRC_DIR="docs"
+    export LIVE_HTML_IP="0.0.0.0"
+    export LIVE_HTML_PORT="8888"
+
+    # Use buildkit for docker build
+    export DOCKER_BUILDKIT=1
+
+    # Only enabled TTY if supported
+    [ -t 1 ] && export USE_TTY="--tty" || export USE_TTY=""
 }
 
-################################################################################
+#===============================================================================
 # Utility functions
-################################################################################
+#===============================================================================
 
+# Build Type ===================================================================
 
-#######################################
-# Check if current architecture is x86_64.
-#
-# Returns:
-#   Exit code:
-#     0 if $(uname -m) == "x86_64".
-#     1 otherwise.
-#######################################
+get_buildtype_str() {
+    local build_type="${1:-}"
+    local build_type_str
+
+    case "${build_type}" in
+        debug|Debug)
+            build_type_str="Debug"
+            ;;
+        release|Release)
+            build_type_str="Release"
+            ;;
+        rel-debug|RelWithDebInfo)
+            build_type_str="RelWithDebInfo"
+            ;;
+        *)
+            build_type_str="${CMAKE_BUILD_TYPE:-Release}"
+            ;;
+    esac
+
+    echo -n "${build_type_str}"
+}
+
+# Boolean ======================================================================
+
+get_boolean() {
+    local bool_in="${1:-}"
+    local bool_out
+
+    case "${bool_in}" in
+        true|yes|1)
+            bool_out=true
+            ;;
+        false|no|0)
+            bool_out=false
+            ;;
+        *)
+            return 1
+    esac
+
+    echo -n "${bool_out}"
+}
+
+# Archs & GPUs =================================================================
+
 checkif_x86_64() {
-    if [ $(uname -m) == "x86_64" ]; then
+    if [ $(get_host_arch) == "x86_64" ]; then
         return 0
     else
         return 1
     fi
 }
 
-#######################################
-# Check if current architecture is aarch64.
-#
-# Returns:
-#   Exit code:
-#     0 if $(uname -m) == "aarch64".
-#     1 otherwise.
-#######################################
 checkif_aarch64() {
-    if [ $(uname -m) == "aarch64" ]; then
+    if [ $(get_host_arch) == "aarch64" ]; then
         return 0
     else
         return 1
     fi
 }
 
-#######################################
-# Get list of available commands from a given input file.
-#
-# Available commands and command summary are extracted by checking a pattern
-# "_desc() { c_echo '".
-# Section title is extracted by checking a pattern "# Section: ".
-# This command is used for listing available commands in CLI.
-#
-# e.g.)
-#   "# Section: String/IO functions"
-#     => "# String/IO functions"
-#   "to_lower_desc() { c_echo 'Convert to lower case"
-#     => "to_lower ----------------- Convert to lower case"
-#
-# Arguments:
-#   $1 - input file that defines commands
-# Returns:
-#   Print list of available commands from $1
-#######################################
-get_list_of_available_commands() {
-    local mode="color"
-    if [ "${1:-}" = "color" ]; then
-        mode="color"
-        shift
-    elif [ "${1:-}" = "nocolor" ]; then
-        mode="nocolor"
-        shift
-    fi
-
-    local file_name="$1"
-    if [ ! -e "$1" ]; then
-        echo "$1 doesn't exist!"
-    fi
-
-    local line_str='--------------------------------'
-    local IFS= cmd_lines="$(IFS= cat "$1" | grep -E -e "^(([[:alpha:]_[:digit:]]+)_desc\(\)|# Section: )" | sed "s/_desc() *{ *c_echo '/ : /")"
-    local line
-    while IFS= read -r line; do
-        local cmd=$(echo "$line" | cut -d":" -f1)
-        local desc=$(echo "$line" | cut -d":" -f2-)
-        if [ "$cmd" = "# Section" ]; then
-            c_echo ${mode} B "${desc}"
-        else
-            # there is no substring operation in 'sh' so use 'cut'
-            local dash_line="$(echo "${line_str}" | cut -c ${#cmd}-)"  #  = "${line_str:${#cmd}}"
-             c_echo ${mode} Y "   ${cmd}" w " ${dash_line} ${desc}"
-        fi
-        # use <<EOF, not '<<<"$cmd_lines"' to be executable in sh
-    done <<EOF
-$cmd_lines
-EOF
+get_host_arch() {
+    echo -n "$(uname -m)"
 }
+
+is_cross_compiling() {
+    [ "$ARCH" != $(get_host_arch) ]
+}
+
+get_gnu_arch_str() {
+    local arch="${1:-}"
+    local arch_str
+
+    case "${arch}" in
+        amd64|x86_64|x86|linux/amd64)
+            arch_str="x86_64"
+            ;;
+        arm64|aarch64|arm|linux/arm64)
+            arch_str="aarch64"
+            ;;
+        *)
+            return 1
+    esac
+
+    echo -n "${arch_str}"
+}
+
+get_docker_arch_str() {
+    local arch="${1:-}"
+    local arch_str
+
+    case "${arch}" in
+        amd64|x86_64|x86|linux/amd64)
+            arch_str="amd64"
+            ;;
+        arm64|aarch64|arm|linux/arm64)
+            arch_str="arm64"
+            ;;
+        *)
+            return 1
+    esac
+
+    echo -n "${arch_str}"
+}
+
+get_platform_str() {
+    echo -n "linux/$(get_docker_arch_str $ARCH)"
+}
+
+get_gpu_str() {
+    local gpu="${1:-}"
+    local gpu_str=$gpu
+
+    case "${gpu}" in
+        igpu|iGPU|integrated|Jetson)
+            gpu_str="igpu"
+            ;;
+        dgpu|dGPU|discrete|RTX)
+            gpu_str="dgpu"
+            ;;
+    esac
+
+    echo -n "${gpu_str}"
+}
+
+get_host_gpu() {
+    if ! command -v nvidia-smi >/dev/null; then
+        c_echo_err Y "Could not find any GPU drivers on host. Defaulting build to target dGPU/CPU stack."
+        echo -n "dgpu"
+    elif nvidia-smi  2>/dev/null | grep nvgpu -q; then
+        echo -n "igpu"
+    else
+        echo -n "dgpu"
+    fi
+}
+
+get_arch+gpu_str() {
+    local suffix=""
+    if [ "$ARCH" = "aarch64" ]; then
+        suffix="$ARCH-$GPU"
+    else
+        suffix="$ARCH"
+    fi
+    echo -n "$suffix"
+}
+
+get_build_img_name() {
+    echo -n "${SDK_BUILD_IMG}-$(get_arch+gpu_str)"
+}
+
+get_run_img_name() {
+    echo -n "${SDK_RUN_IMG}-$(get_arch+gpu_str)"
+}
+
+get_build_dir() {
+    echo -n "${SDK_BUILD_DIR}-$(get_arch+gpu_str)"
+}
+
+get_install_dir() {
+    echo -n "${SDK_INSTALL_DIR}-$(get_arch+gpu_str)"
+}
+
+# CUDA =========================================================================
+
+get_cuda_archs() {
+    local cuda_archs="${1:-}"
+
+    # match https://cmake.org/cmake/help/latest/prop_tgt/CUDA_ARCHITECTURES.html
+    case "${cuda_archs}" in
+        native|NATIVE)
+            cuda_archs_str="native"
+            ;;
+        all|ALL)
+            cuda_archs_str="all"
+            ;;
+        all-major|ALL-MAJOR|major|MAJOR)
+            cuda_archs_str="all-major"
+            ;;
+        *)
+            cuda_archs_str="${1:-}"
+            ;;
+    esac
+
+    echo -n "${cuda_archs_str}"
+}
+
+# ID ===========================================================================
+
+get_group_id() {
+    local group=$1
+    cat /etc/group | grep $group | cut -d: -f3
+}
+
+# Version ======================================================================
+
+get_git_sha() {
+    echo -n "$(git rev-parse --short=9 HEAD)"
+}
+
+get_git_branch() {
+    # Can't use "/" in tag, convert to "-"
+    echo -n "$(git branch --show-current | sed 's|/|_|g')"
+}
+
+get_git_tag() {
+    echo -n "$(git tag --points-at HEAD)"
+}
+
+get_version() {
+    echo -n "$(cat $TOP/VERSION)"
+}
+
+get_image_tag_flags() {
+    local img_name=$1
+    local tags=("latest" $(get_version) $(get_git_branch) $(get_git_tag) $(get_git_sha))
+    local flags=""
+    for tag in "${tags[@]}"; do
+        flags+="-t ${img_name}:${tag} "
+    done
+    echo -n "$flags"
+}
+
+#===============================================================================
+# Section: CLI
+#===============================================================================
+
+install_python_dev_deps() {
+    if [ -n "${VIRTUAL_ENV-}" ] || [ -n "${CONDA_PREFIX-}" ]; then
+        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.txt
+        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.dev.txt
+    else
+        c_echo_err R "You must be in a virtual environment to install dependencies."
+        if [ ! -e "$TOP/.venv/dev/bin/python3" ]; then
+            c_echo_err W "Installing a virtual environment at " G "$TOP/.venv/dev" W " ..."
+            run_command ${HOLOSCAN_PY_EXE} -m venv "$TOP/.venv/dev"
+        fi
+
+        c_echo_err W "Please activate the virtual environment at " G "$TOP/.venv/dev" W " and execute this command again."
+        c_echo_err
+        c_echo_err G "  source $TOP/.venv/dev/bin/activate"
+        c_echo_err G "  $0 $@"
+        exit 1
+    fi
+}
+
+setup_cli_dev_desc() { c_echo 'Setup development environment for Holoscan CLI
+'
+}
+setup_cli_dev() {
+    c_echo W "Setup Holoscan CLI development environment..."
+
+    if [ -f "/.dockerenv" ]; then
+        c_echo_err "WARNING: devcontainer is not supported for CLI development"
+        exit
+    fi
+
+    install_python_dev_deps
+
+    local build_path=$TOP/$(get_build_dir)/python/lib/holoscan
+    if [ -d "${build_path}" ]; then
+        c_echo "Found build directory: $build_path"
+    else
+        c_echo_err "Build directory ${build_path} not found, please run ./run build first"
+        exit
+    fi
+
+    DEST=$TOP/python/holoscan
+    c_echo "Removing existing symlinks from $DEST/**/*.so"
+    find $DEST -name *.so -delete
+    c_echo "Creating symlinks from $build_path/* to $DEST"
+    cp -as $build_path/* $DEST &> /dev/null
+}
+
+#===============================================================================
+# Section: Build
+#===============================================================================
+
+clear_cache_desc() { c_echo 'Clear cache folders (including build/install folders)
+'
+}
+clear_cache() {
+    c_echo W "Clearing cache..."
+    run_command rm -rf ${TOP}/build
+    run_command rm -rf ${TOP}/install
+    run_command rm -rf ${TOP}/build-*
+    run_command rm -rf ${TOP}/install-*
+
+    run_command rm -rf ${TOP}/src/core/services/generated/*
+
+    run_command rm -rf ${TOP}/.cache/ccache
+    run_command rm -rf ${TOP}/.cache/cpm
+    run_command rm -rf ${TOP}/.cache/gxf
+}
+
+check_system_deps_desc() { c_echo 'Check system dependencies
+
+Ensure that the system has all adequate prerequisites to be
+able to build the Holoscan SDK.
+'
+}
+check_system_deps() {
+    c_echo W "Setup development environment..."
+
+    if ! command -v ${HOLOSCAN_DOCKER_EXE} > /dev/null; then
+        fatal G "${HOLOSCAN_DOCKER_EXE}" W " doesn't exists. Please install Docker:
+
+        https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository"
+    fi
+
+    if ! $(${HOLOSCAN_DOCKER_EXE} buildx version &> /dev/null) ; then
+        fatal G "${HOLOSCAN_DOCKER_EXE} buildx plugin" W " is missing. Please install " G "docker-buildx-plugin" W ":
+
+        https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository"
+    fi
+
+    if ! groups | grep -e docker -e root -q; then
+        c_echo_err G "groups" W " doesn't contain 'docker' group. Please add 'docker' group to your user."
+        fatal G "groups" W " doesn't contain 'docker' group. Please add 'docker' group to your user." B '
+    # Create the docker group.
+    sudo groupadd docker
+    # Add your user to the docker group.
+    sudo usermod -aG docker $USER
+    newgrp docker
+    docker run hello-world'
+    fi
+
+    if checkif_x86_64 && is_cross_compiling && [ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+        fatal G "qemu-aarch64" W " doesn't exists. Please install qemu with binfmt-support to run Docker container with aarch64 platform" B '
+    # Install the qemu packages
+    sudo apt-get install qemu binfmt-support qemu-user-static
+    # Execute the registering scripts
+    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes'
+    fi
+
+    # Check NVIDIA CTK version
+    min_ctk_version="1.12.0"
+    recommended_ctk_version="1.14.1"
+    if ! command -v nvidia-ctk > /dev/null; then
+        fatal G "nvidia-ctk" W " not found. Please install the NVIDIA Container Toolkit."
+    fi
+    ctk_version_output=$(nvidia-ctk --version | grep version)
+    ctk_version_pattern="([0-9]+\.[0-9]+\.[0-9]+)"
+    if [[ "$ctk_version_output" =~ $ctk_version_pattern ]]; then
+        ctk_version="${BASH_REMATCH[1]}"
+        if [[ "$(echo -e "$ctk_version\n$min_ctk_version" | sort -V | head -n1)" == "$ctk_version" ]]; then
+            fatal "Found nvidia-ctk Version $ctk_version. Version $min_ctk_version+ is required ($recommended_ctk_version+ recommended)."
+        fi
+    else
+        c_echo_err R "Could not extract nvidia-ctk version number."
+        c_echo_err "  Version $min_ctk_version+ required."
+        c_echo_err "  Version $recommended_ctk_version+ recommended."
+    fi
+}
+
+build_image_desc() { c_echo 'Build the image where we can build the SDK
+
+This will generate an image will the following tags:
+- `latest`
+- from VERSION file
+- from git branch name
+- from git tag, if any
+- from git commit sha - used in the build and launch methods
+'
+}
+build_image() {
+    # Prerequisite steps
+    if [ "$DO_STANDALONE" != "true" ]; then
+        check_system_deps
+    fi
+
+    # Error if requesting iGPU and x86_64 when cross-compiling
+    if [ "$ARCH" = "x86_64" ] && [ "$GPU" = "igpu" ]; then
+        fatal R "Can't combine 'x86_64' arch with 'igpu' GPU type"
+    fi
+
+    # Docker tags (-t name:versions)
+    local docker_tags=$(get_image_tag_flags $(get_build_img_name))
+
+    # Docker build
+    local extra_args="$@"
+    run_command $HOLOSCAN_DOCKER_EXE build \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --build-arg GPU_TYPE=${GPU} \
+        --platform $(get_platform_str) \
+        --network=host \
+        ${docker_tags} \
+        ${extra_args} \
+        ${TOP}
+}
+
+build_desc() { c_echo 'Build the SDK with CMake
+
+This command will build the SDK with optional configuration arguments.
+
+Arguments:
+  --build_libtorch [true | false] : Build the SDK with libtorch support
+        Default: true
+        Associated environment variable: HOLOSCAN_BUILD_LIBTORCH
+  --cudaarchs [native | all | <custom_arch_list>]
+        Default: "native" when building for host architecture, "all" otherwise
+        Associated environment variable: CMAKE_CUDA_ARCHITECTURES
+  --type [debug | release | rel-debug] : Specify the type of build
+        Default: release
+        Associated environment variable: CMAKE_BUILD_TYPE
+  --parallel, -j <njobs> : Specify the maximum number of concurrent processes to be used when building
+        Default: maximum
+        Associated environment variable: CMAKE_BUILD_PARALLEL_LEVEL
+  --buildpath, -d <build_directory> : Change the build path.
+        Default: build-<arch>[-<gpu>]
+        Associated environment variable: CMAKE_BUILD_PATH
+  --installprefix, -i <install_directory> : Specify the install directory
+        Default: install-<arch>[-<gpu>]
+        Associated environment variable: CMAKE_INSTALL_PREFIX
+  --reconfigure, -f: Force reconfiguration of the CMake project. By default CMake is only run if
+        a CMakeCache.txt does not exist in the build directory or if CMake detects a reconfigure
+        is needed.
+        Default: false
+'
+}
+build() {
+    # Prerequisite steps
+    if [ "$DO_STANDALONE" != "true" ]; then
+        build_image
+    fi
+
+    # Default cuda architecture
+    local default_cuda_archs="native"
+    if is_cross_compiling; then
+        default_cuda_archs="all"
+    fi
+
+    # Parse env variables first or set default values
+    local cuda_archs=$(get_cuda_archs "${CMAKE_CUDA_ARCHITECTURES:-$default_cuda_archs}")
+    local build_type=$(get_buildtype_str "${CMAKE_BUILD_TYPE:-release}")
+    local build_njobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
+    local build_path="${CMAKE_BUILD_PATH:-$(get_build_dir)}"
+    local install_prefix="${CMAKE_INSTALL_PREFIX:-$(get_install_dir)}"
+    local reconfigure=false
+    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-'ON'}"
+
+    # Parse args
+    local extra_args=""
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        --build_libtorch)
+            build_libtorch='OFF'
+            reconfigure=true
+            shift
+        ;;
+        --cudaarchs)
+            cuda_archs=$(get_cuda_archs "$2")
+            reconfigure=true
+            shift
+            shift
+        ;;
+        --type)
+            build_type=$(get_buildtype_str "$2")
+            reconfigure=true
+            shift
+            shift
+        ;;
+        --parallel|-j)
+            build_njobs="$2"
+            shift
+            shift
+        ;;
+        --buildpath|-d)
+            build_path="$2"
+            shift
+            shift
+        ;;
+        --installprefix|-i)
+            install_prefix="$2"
+            shift
+            shift
+        ;;
+        --reconfigure|-f)
+            reconfigure=true
+            shift
+        ;;
+        *)
+            extra_args+=("$1")
+            shift
+        ;;
+    esac
+    done
+
+    # Error if requesting native cuda arch explicitly when cross-compiling
+    if [ "$cuda_archs" = "native" ] && is_cross_compiling; then
+        fatal Y "Cross-compiling " W "(host: $(get_host_arch), target: $ARCH)" R " does not support 'native' cuda architecture."
+    fi
+
+    # - Tegra (iGPU) limitation requires to mount the /usr/lib/aarch64-linux-gnu/tegra folder
+    # in the container for buildtime, which is handled by the NVIDIA runtime from the container
+    # toolkit. This is not ideal as it needs these drivers libraries at buildtime, which prevents
+    # cross-compilation to aarch64-igpu mode from aarch64-dgpu or x86_64 at this time.
+    # - native means we need the container to access the GPU for CMake to choose the architecture
+    # to use for nvcc.
+    if [ "$GPU" = "igpu" ] || [ "$cuda_archs" = "native" ]; then
+        runtime=nvidia
+    else
+        runtime=runc
+    fi
+
+    # DOCKER PARAMETERS
+    #
+    # --rm
+    #   Deletes the container after the command runs
+    #
+    # --net=host
+    #   Provide access to the host network
+    #
+    # --interactive (-i)
+    #   Making the container interactive allows cancelling the build
+    #
+    # ${USE_TTY}
+    #   Set --tty (-t) when TTY is possible only
+    #
+    # --entrypoint=bash
+    #   Override the default entrypoint to hide the regular message from the base image
+    #
+    # --runtime ${runtime}
+    #   Docker runtime. Should ideally be runc for build (no need for drivers) but tegra/igpu needs
+    #   nvidia runtime due to limitation described above.
+    #
+    # --platform $(get_platform_str)
+    #   Platform to build
+    #
+    # -u $(id -u):$(id -g)
+    #   Ensures the generated files (build, install...) are owned by $USER and not root
+    #
+    # -v ${TOP}:/workspace/holoscan-sdk
+    #   Mount the source directory
+    #
+    # -w /workspace/holoscan-sdk
+    #   Start in the source directory
+    #
+    #
+    # CMAKE PARAMETERS
+    #
+    # -S . -B ${build_path}
+    #   Generic configuration
+    #
+    # -D CMAKE_BUILD_TYPE=${build_type}
+    #   Define the build type (release, debug...). Can be passed as env to docker also.
+    #
+    # -D CMAKE_CUDA_ARCHITECTURES=${cuda_archs}
+    #   Define the cuda architectures to build for (native, all, all-major, custom). Apart from
+    #   native, the last arch will be used for real and virtual architectures (PTX, forward
+    #   compatible) while the previous archs will be real only.
+    #
+    # CMAKE BUILD COMMAND
+    #
+    # cmake --build ${build_path} -j ${build_njobs}
+    #   Builds the SDK using the build path at ${build_path} with number of concurrent
+    #   jobs given by -j ${build_njobs}
+    #
+    img="$(get_build_img_name):$(get_git_sha)"
+    run_command $HOLOSCAN_DOCKER_EXE run \
+        --rm \
+        --net=host \
+        --interactive \
+        ${USE_TTY} \
+        --entrypoint=bash \
+        --runtime=${runtime} \
+        --platform $(get_platform_str) \
+        -u $(id -u):$(id -g) \
+        -v ${TOP}:/workspace/holoscan-sdk \
+        -w /workspace/holoscan-sdk \
+        ${extra_args[@]} \
+        $img \
+        -c "set -e
+            if [ ! -f '${build_path}/build.ninja' ] || ${reconfigure} ; then
+                cmake -S . -B ${build_path} -G Ninja \
+                    -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
+                    -D CMAKE_CUDA_ARCHITECTURES='${cuda_archs}' \
+                    -D CMAKE_BUILD_TYPE=${build_type}
+            fi
+            cmake --build ${build_path} -j ${build_njobs}
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_extensions
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-examples
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_libs
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_bins
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-modules
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-dependencies
+            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-python_libs
+        "
+}
+
+build_run_image_desc() { c_echo 'Build the runtime image
+
+Build a lightweight docker image meant for running applications only.
+
+Arguments:
+  --cpp : Only build with C++ dependencies
+  --cpp-no-mkl : (x86_64 only) Only build with C++ dependencies apart from MKL (torch dependency)
+'
+}
+
+build_run_image() {
+    # Prerequisite steps
+    if [ "$DO_STANDALONE" != "true" ]; then
+        build $@
+    fi
+
+    # Parse args
+    local stage="runtime_cpp_py"
+    local extra_args=""
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        --cpp)
+            stage="runtime_cpp"
+            shift
+        ;;
+        --cpp-no-mkl)
+            stage="runtime_cpp_no_mkl"
+            shift
+        ;;
+        *)
+            extra_args+=("$1")
+            shift
+        ;;
+    esac
+    done
+
+    # Current build image to copy from some stages
+    local current_build_img="$(get_build_img_name):$(get_git_sha)"
+
+    # Run image tags (-t name:versions)
+    local docker_tags=$(get_image_tag_flags $(get_run_img_name))
+
+    # Build the runtime image
+    run_command $HOLOSCAN_DOCKER_EXE build \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --build-arg BUILD_IMAGE=${current_build_img} \
+        --build-arg HOST_INSTALL_DIR=$(get_install_dir) \
+        --build-arg GPU_TYPE=${GPU} \
+        --platform $(get_platform_str) \
+        --network=host \
+        --target ${stage} \
+        ${docker_tags} \
+        ${extra_args[@]} \
+        -f ${TOP}/runtime_docker/Dockerfile \
+        ${TOP}
+}
+
+#===============================================================================
+# Section: Test
+#===============================================================================
+
+install_lint_deps_desc() { c_echo 'Install lint dependencies
+
+This command will install the dependencies required to run the linting tools:
+'
+cat ${TOP}/python/requirements.lint.txt
+echo
+}
+install_lint_deps() {
+    c_echo W "Install Lint Dependencies"
+    run_command ${HOLOSCAN_PY_EXE} -m pip install -r ${TOP}/python/requirements.lint.txt
+}
+
+lint_desc() { c_echo 'Lint the repository
+
+Python linting: ruff
+C++ linting: cpplint
+CMake linting: cmakelint
+Spelling: codespell
+
+Arguments:
+  $@ - directories to lint (default: .)
+'
+}
+lint() {
+    local DIR_TO_RUN=${@:-"."}
+
+    # We use $(command) || exit_code=1 to run all linting tools, and exit
+    # with failure after all commands were executed if any of them failed
+    local exit_code=0
+
+    pushd ${TOP} > /dev/null
+
+    c_echo W "Linting Python"
+    run_command ruff $DIR_TO_RUN || exit_code=1
+    # Set --diff so formatting suggestions are not automatically applied, but the suggestions
+    # will be printed to screen.
+    run_command ruff format --diff $DIR_TO_RUN || exit_code=1
+
+    c_echo W "Linting C++"
+    # We use `grep -v` to hide verbose output that drowns actual errors
+    # Since we care about the success/failure of cpplint and not of grep, we:
+    #  1. use `set -o pipefail` to fail if `cpplint` fails
+    #  2. use `grep -v ... || true` to ignore whether grep hid any output
+    run_command set -o pipefail; ${HOLOSCAN_PY_EXE} -m cpplint \
+            --exclude .cache \
+            --exclude build \
+            --exclude install \
+            --exclude build-\* \
+            --exclude install-\* \
+            --exclude src/core/services/generated \
+            --exclude modules/holoviz/thirdparty/nvpro_core \
+            --recursive $DIR_TO_RUN \
+        | { grep -v "Ignoring\|Done processing" || true; } || exit_code=1
+
+
+    c_echo W "Code spelling"
+    # Supports inline comment to ignore code spell check for a line, add `// codespell-ignore` or
+    # `# codespell-ignore` at the end of the line
+    run_command codespell --version
+    run_command codespell $DIR_TO_RUN --skip="*.onnx,NOTICE.txt,*.toml,./docs/vale/styles/write-good" \
+        --ignore-regex=".*codespell-ignore$" || exit_code=1
+
+    c_echo W "Linting CMake"
+    run_command cmakelint --filter=-whitespace/indent,-linelength,-readability/wonkycase,-convention/filename,-package/stdargs \
+              $(find $DIR_TO_RUN '(' -name CMakeLists.txt -o -name *.cmake ')' -not -path "*build-*/*" -not -path "*build/*" \
+                -not -path "*./.*" -not -path "*install/*" -not -path "*install-*/*") || exit_code=1
+
+    popd > /dev/null
+
+    exit $exit_code
+}
+
+test_desc() { c_echo 'Execute test cases with CTest
+
+This command will run the tests using CTest. It will run headless
+if no DISPLAY is found.
+
+Arguments:
+
+  --name, -n <regex>        Name of test(s) to execute (regular expression)
+                            Default: all tests
+  --verbose, -v             Print the test outputs
+  --timeout, -t <seconds>   CTest timeout in seconds
+                            Default: 480
+  --options, -o <opts>      Extra flags to pass to CTest
+                            Default: None
+'
+}
+test() {
+    local test_regex_flag=""
+    local verbose=""
+    local timeout=480
+    local options=""
+
+    # Parse CLI arguments next
+    local extra_args=""
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        --name|-n)
+            local test_regex="$2"
+            local test_regex_uppercase="${test_regex^^}"
+            test_regex_flag="-R '$test_regex|$test_regex_uppercase'"
+            shift
+            shift
+        ;;
+        --verbose|-v)
+            verbose="--verbose"
+            shift
+        ;;
+        --timeout|-t)
+            timeout="$2"
+            shift
+            shift
+        ;;
+        --options|-o)
+            options="$2"
+            shift
+            shift
+        ;;
+        *)
+            extra_args+=("$1")
+            shift
+        ;;
+    esac
+    done
+
+	# --init
+	#   Use tini as entrypoint to forward proper signals to xvfb (below)
+	#
+	# --cap-drop=NET_BIND_SERVICE
+	#   needed for SYSTEM_TEST that depends on privileged ports being unbindable
+	#
+	# $run_headless (xvfb-run -a)
+	#   creates a display buffer for Holoviz use, the `-a` flag automatically finds
+	#   an open display port, and sets the DISPLAY env var. This is installed inside
+	#   the container at runtime so it isn't installed in the public container.
+	#   Additionally, `xvfb-run -a docker run ...` is not used, as no solution was found
+	#   that could reliably set the `-e DISPLAY` parameter using this approach.
+	#
+    local run_headless=$([ -z ${DISPLAY-} ] && echo "xvfb-run -a")
+    launch $(get_build_dir) \
+        ${extra_args[@]} \
+        --init \
+        --cap-drop=NET_BIND_SERVICE \
+        --run-cmd "$run_headless ctest . $test_regex_flag --timeout $timeout --output-on-failure $verbose $options"
+}
+
+#===============================================================================
+# Section: Launch
+#===============================================================================
+
+launch_desc() { c_echo 'Launch the Holoscan build container
+
+Note: any extraneous arguments not listed below will be added to `docker run`
+
+Arguments:
+    $1 - Working directory (e.g, "install" => "/workspace/holoscan-sdk/install")
+         Default: build-<arch>[-<gpu>]
+    --mount-point - Specifies the mount point (default is the directory of this script)
+    --run-cmd - Specifies a command to run in the container instead of running interactively.
+                This is the equivalent of what you would put after `bash -c` with `docker run`.
+'
+}
+launch() {
+    # Prerequisite steps
+    if [ "$DO_STANDALONE" != "true" ]; then
+        build_image
+    fi
+
+    local container_mount="/workspace/holoscan-sdk"
+    local mount_point="${TOP}"
+    local mount_device_opt=""
+    local extra_args=""
+    local run_cmd="bash"
+
+    # Skip the first argument to pass the remaining arguments to the docker command.
+    local working_dir=${1:-$(get_build_dir)}
+    if [ -n "${1-}" ]; then
+        shift
+    fi
+
+    # Parse CLI arguments next
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        --mount-point)
+            mount_point="$2"
+            shift
+            shift
+        ;;
+        --run-cmd)
+            run_cmd="$2"
+            shift
+            shift
+        ;;
+        *)
+            extra_args+=("$1")
+            shift
+        ;;
+    esac
+    done
+
+    local host_mount_to_top=$(realpath --relative-to="$mount_point" "$TOP")
+    local container_top="${container_mount}/${host_mount_to_top}"
+
+    # Allow the docker group to access X11.
+    # Note: not necessary for WSL2 (`SI:localuser:wslg` is added by default)
+    if [ -v DISPLAY ] && command -v xhost >/dev/null; then
+        run_command xhost +local:docker
+    fi
+
+    # Mount V4L2 device nodes
+    for video_dev in $(find /dev -regex '/dev/video[0-9]+'); do
+        mount_device_opt+=" --device $video_dev"
+    done
+
+    # Mount AJA device nodes
+    for aja_dev in $(find /dev -regex '/dev/ajantv2[0-9]+'); do
+        mount_device_opt+=" --device $aja_dev"
+    done
+
+    # Mount ConnectX device nodes
+    if [ -e /dev/infiniband/rdma_cm ]; then
+        mount_device_opt+=" --device /dev/infiniband/rdma_cm"
+    fi
+    for uverbs_dev in $(find /dev -regex '/dev/infiniband/uverbs[0-9]+'); do
+        mount_device_opt+=" --device $uverbs_dev"
+    done
+
+    # The device nodes under /dev/dri are owned by the root user and video and render groups,
+    # so using a non-root user in the container requires to access these groups. Adding the group
+    # names to `docker run --group-add` might not work as the group ids in the container and on the
+    # host device might not match. Mounting `/etc/group` doesn't address it since the mount occurs
+    # after the user and its groups are setup. Instead, we pass the group ids which we compute on
+    # the host before starting the container.
+    groups=""
+    video_id=$(get_group_id video)
+    if [ -n "$video_id" ]; then
+        groups+=" --group-add $video_id"
+    fi
+    render_id=$(get_group_id rnder)
+    if [ -n "$render_id" ]; then
+        groups+=" --group-add $render_id"
+    fi
+
+    # DOCKER PARAMETERS
+    #
+    # --rm
+    #   Deletes the container after the command runs
+    #
+    # --net=host
+    #   Provide access to the host network
+    #
+    # --interactive (-i)
+    #   The container needs to be interactive to be able to interact with the X11 windows
+    #
+    # ${USE_TTY}
+    #   Set --tty when TTY is possible only
+    #
+    # --entrypoint=bash
+    #   Override the default entrypoint to hide the regular message from the base image
+    #
+    # -u $(id -u):$(id -g)
+    # -v /etc/group:/etc/group:ro
+    # -v /etc/passwd:/etc/passwd:ro
+    # ${groups} (--group-add render; --group-add video)
+    #   Run the container as a non-root user. See details above for `groups` variable.
+    #
+    # -v ${TOP}:/workspace/holoscan-sdk
+    #   Mount the source directory
+    #
+    # -w /workspace/holoscan-sdk/${working_dir}
+    #   Start in the build or install directory
+    #
+    # --runtime=nvidia \
+    # -e NVIDIA_DRIVER_CAPABILITIES=all
+    #   Enable GPU acceleration
+    #
+    # -v /tmp/.X11-unix:/tmp/.X11-unix
+    # -e DISPLAY
+    #   Enable graphical applications
+    #
+    # ${mount_device_opt}
+    #   --device /dev/video${i}
+    #     Mount video capture devices for V4L2
+    #
+    #   --device /dev/ajantv2${i}
+    #     Mount AJA capture cards for NTV2
+    #
+    #   --device /dev/infiniband/...
+    #     Mount ConnectX SmartNIC for MOFED
+    #
+    # -e PYTHONPATH
+    # -e HOLOSCAN_LIB_PATH
+    # -e HOLOSCAN_INPUT_PATH
+    #   Define paths needed by the python applications
+    #
+    # -e CUPY_CACHE_DIR
+    #   Define path for cupy' kernel cache, needed since $HOME does
+    #   not exist when running with `-u id:group`
+
+    img="$(get_build_img_name):$(get_git_sha)"
+    run_command $HOLOSCAN_DOCKER_EXE run \
+        --rm \
+        --net=host \
+        --interactive \
+        ${USE_TTY} \
+        --entrypoint=bash \
+        -u $(id -u):$(id -g) \
+        -v /etc/group:/etc/group:ro \
+        -v /etc/passwd:/etc/passwd:ro \
+        ${groups} \
+        -v ${mount_point}:${container_mount} \
+        ${extra_args[@]} \
+        -w ${container_top}/${working_dir} \
+        --runtime=nvidia \
+        -e NVIDIA_DRIVER_CAPABILITIES=all \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        -e DISPLAY \
+        ${mount_device_opt} \
+        -e PYTHONPATH=${container_top}/${working_dir}/python/lib \
+        -e HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib \
+        -e HOLOSCAN_INPUT_PATH=${container_top}/data \
+        -e HOLOSCAN_TESTS_DATA_PATH=${container_top}/tests/data \
+        -e CUPY_CACHE_DIR=${container_top}/.cupy/kernel_cache \
+        --ipc=host \
+        --cap-add=CAP_SYS_PTRACE \
+        --ulimit memlock=-1 \
+        --ulimit stack=67108864 \
+        $img -c "$run_cmd"
+}
+
+vscode_desc() { c_echo 'Launch VSCode in DevContainer
+
+Launch a VSCode instance in a Docker container with the development environment.
+
+Arguments:
+  --parallel <njobs> : Specify the maximum number of concurrent processes to be used when building
+        Default: maximum
+        Associated environment variable: CMAKE_BUILD_PARALLEL_LEVEL
+'
+}
+vscode() {
+    local build_njobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
+
+    if ! command -v code > /dev/null; then
+        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
+    fi
+
+    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
+    local workspace_path_hex
+
+    if [ "${workspace_path}" != "${TOP}" ]; then
+        # Set the environment variable 'HOLOSCAN_PUBLIC_FOLDER' to the resolved path relative to the
+        # workspace path if the workspace path is different than the TOP folder so that
+        # the DevContainer can build files under the Holoscan source root folder while mounting the
+        # workspace folder.
+        run_command export HOLOSCAN_PUBLIC_FOLDER=$(realpath --relative-to=${workspace_path} ${TOP})
+    fi
+
+    # Parse CLI arguments next
+    local args=("$@")
+    local i
+    local arg
+    for i in "${!args[@]}"; do
+        if [ "$arg" = "--parallel" ]; then
+           build_njobs="${args[i+1]}"
+        fi
+    done
+
+    # These environment variables will be passed to the container via `devcontainer.json`
+    # during the creation of the VSCode Docker dev container.
+    # - CMAKE_BUILD_PARALLEL_LEVEL: without this setting, `make` will not limit the number of jobs
+    # running concurrently, which could lead to memory exhaustion.
+    # - HOLOSCAN_BUILD_IMAGE: name of the base image of the docker dev container
+    export CMAKE_BUILD_PARALLEL_LEVEL=${build_njobs}
+    export HOLOSCAN_BUILD_IMAGE="$(get_build_img_name):$(get_git_sha)"
+
+    # Allow connecting from docker. This is not needed for WSL2 (`SI:localuser:wslg` is added by default)
+    run_command xhost +local:docker
+
+    # Install the VSCode Remote Development extension.
+    # Checking if the extension is already installed is slow, so we always install it so that
+    # the installation can be skipped if the extension is already installed.
+    run_command code --force --install-extension ms-vscode-remote.vscode-remote-extensionpack
+
+    # For now, there is no easy way to launch DevContainer directly from the command line.
+    # ('devcontainer' CLI is only available after manually executing 'Remote-Containers: Install devcontainer CLI' command)
+    # Here, we launch VSCode with .devcontainer/devcontainer.json with '--folder-uri' option to open the current folder in the container.
+    # See https://github.com/microsoft/vscode-remote-release/issues/2133
+    workspace_path_hex=$(echo -n ${workspace_path} | xxd -p)
+    workspace_path_hex="${workspace_path_hex//[[:space:]]/}"
+    c_echo B "Local workspace path: " W "${workspace_path} (${workspace_path_hex})"
+    run_command code --folder-uri "vscode-remote://dev-container+${workspace_path_hex}/workspace/holoscan-sdk"
+}
+
+vscode_remote_desc() { c_echo 'Attach to the existing VSCode DevContainer
+
+This command is useful when you want to attach to the existing VSCode DevContainer from the remote machine.
+
+1) Launch VSCode DevContainer on the local machine with "./run vscode" command.
+2) In the remote machine, launch VSCode Remote-SSH extension to connect to the local machine.
+3) Launch this command on the remote machine to attach to the existing VSCode DevContainer in the local machine.
+'
+}
+vscode_remote() {
+    if ! command -v code > /dev/null; then
+        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
+    fi
+
+    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
+
+    local container_name=$(run_command $HOLOSCAN_DOCKER_EXE ps --filter "label=devcontainer.local_folder=${workspace_path}" --format "{{.Names}}" | head -1)
+    if [ -z "${container_name}" ]; then
+        fatal R "No DevContainer (with the label 'devcontainer.local_folder=${workspace_path}') is found in the local machine. Please launch VSCode DevContainer with " W "./run vscode" R " command first."
+    fi
+    c_echo W "Container name: " y "${container_name}"
+
+    # The following command is based on the information of the following issue:
+    #   https://github.com/microsoft/vscode-remote-release/issues/2133#issuecomment-618328138
+    python - > /tmp/holoscan_remote_uri.txt << EOF
+import json
+from urllib.parse import urlunparse
+from subprocess import check_output
+hostname = check_output("hostname" , shell=True).decode('utf-8').strip()
+remote_description = json.dumps({"containerName": f"/${container_name}", "settings":{"host": f"ssh://{hostname}"}})
+remote_uri = urlunparse(('vscode-remote', f'attached-container+{remote_description.encode("utf8").hex()}', '/workspace/holoscan-sdk', '', '', ''))
+print(remote_uri)
+EOF
+    local remote_uri=$(cat /tmp/holoscan_remote_uri.txt)
+    c_echo W "Remote URI: " y "${remote_uri}"
+
+    # VSCode's attached-container mode does not support forwarding SSH keys to the container well.
+    # For the reason, we need to copy SSH keys to the container so that the container can access
+    # the local machine's SSH keys.
+    c_echo W "Copying SSH keys to the container..."
+    for i in identity id_rsa id_ed25519 id_ed25519_sk id_dsa id_cdsa id_ecdsa_sk; do
+        if [ -e ~/.ssh/${i} ]; then
+            run_command $HOLOSCAN_DOCKER_EXE cp ~/.ssh/${i} ${container_name}:/home/holoscan-sdk/.ssh/
+        fi
+    done;
+
+    run_command code --folder-uri ${remote_uri}
+}
+
+#===============================================================================
+# Section: Docs
+#===============================================================================
+
+clear_docs_desc() { c_echo 'Delete user guide build artifacts
+'
+}
+clear_docs() {
+    run_command make -C "${TOP}/${DOCS_SRC_DIR}" clean
+}
+
+build_docs_builder_desc() { c_echo 'Build the docker image to build the user guide
+
+Pulls in all the dependencies needed to generate the user guide in HTML or PDF,
+such as sphinx, doxygen, exhale, latex, etc...
+'
+}
+build_docs_builder() {
+    local extra_args="$@"
+
+    # The docs-base stage does not depend on the holoscan build image and can be cached
+    # and reused easily
+    run_command $HOLOSCAN_DOCKER_EXE build \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --network=host \
+        --target "docs-base" \
+        -t ${DOCS_BASE_IMG} \
+        ${extra_args} \
+        ${TOP}/${DOCS_SRC_DIR}
+}
+
+run_html_builder() {
+    local cmd="$1"
+
+    # Prerequisite steps
+    if [ "$DO_STANDALONE" != "true" ]; then
+        build
+    fi
+
+    # Current build image to base on
+    local current_build_img="$(get_build_img_name):$(get_git_sha)"
+
+    # We need to run `import holoscan` to be able to generate pydoc, so we need the holoscan
+    # dependencies there, which come from the holoscan build image. By depending on the holoscan
+    # build image the `docs-html` stage below can't be cached easily (unlike `docs-base` above)
+    # but it should be lean and quick since we copy all build dependencies from `docs-base`.
+    run_command $HOLOSCAN_DOCKER_EXE build \
+        --network=host \
+        --target "docs-html" \
+        --build-arg BASE_IMAGE=${current_build_img} \
+        -t ${DOCS_HTML_IMG} \
+        ${TOP}/${DOCS_SRC_DIR}
+
+    # Run HTML generation with sphynx. We need nvidia runtime and the SDK mounted and pythonpath
+    # to be able to import it for pydoc generation.
+    # --net=host is only for allowing sphinx-autobuild to serve the HTML pages for live editing.
+    run_command $HOLOSCAN_DOCKER_EXE run \
+        --rm \
+        --net=host \
+        --interactive \
+        ${USE_TTY} \
+        --entrypoint=bash \
+        -u $(id -u):$(id -g) \
+        --runtime=nvidia \
+        -e NVIDIA_DRIVER_CAPABILITIES=all \
+        -v ${TOP}:/workspace/holoscan-sdk \
+        -w /workspace/holoscan-sdk/${DOCS_SRC_DIR} \
+        -e PYTHONPATH=/workspace/holoscan-sdk/$(get_install_dir)/python/lib \
+        ${DOCS_HTML_IMG} \
+        -c "$cmd"
+}
+
+build_html_desc() { c_echo 'Generate HTML pages of the user guide
+'
+}
+build_html() {
+    run_html_builder "make -j html"
+}
+
+live_html_desc() { c_echo "Generate and serve HTML pages of the user guide
+
+Auto-reload on updates
+
+Arguments:
+    -i|--ip   - Specifics IP address to serve the HTML guide (default: $LIVE_HTML_IP)
+    -p|--port - Specifics address port to serve the HTML guide (default: $LIVE_HTML_PORT)
+"
+}
+live_html() {
+    local ip=$LIVE_HTML_IP
+    local port=$LIVE_HTML_PORT
+
+    # Parse CLI arguments
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        -i|--ip)
+            ip="$2"
+            shift
+            shift
+        ;;
+        -p|--port)
+            port="$2"
+            shift
+            shift
+        ;;
+        *)
+            shift
+        ;;
+    esac
+    done
+
+    run_html_builder "make -j livehtml SPHINXOPTS='-t=noexhale --host ${ip} --port ${port}'"
+}
+
+build_pdf_desc() { c_echo 'Generate PDF of the user guide
+'
+}
+build_pdf() {
+    local extra_args="$@"
+
+    # Build PDF builder docker image
+    run_command $HOLOSCAN_DOCKER_EXE build \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        --network=host \
+        --target "docs-pdf" \
+        -t ${DOCS_PDF_IMG} \
+        ${extra_args} \
+        ${TOP}/${DOCS_SRC_DIR}
+
+    # Generate the PDF without the exhale/doxygen API documentation
+    run_command $HOLOSCAN_DOCKER_EXE run \
+        --rm \
+        --interactive \
+        ${USE_TTY} \
+        -u $(id -u):$(id -g) \
+        -v ${TOP}:/workspace/holoscan-sdk \
+        -w /workspace/holoscan-sdk/${DOCS_SRC_DIR} \
+        ${DOCS_PDF_IMG} \
+        sh -c 'make latexpdf SPHINXOPTS=-t=noapi'
+}
+
+docs_linkcheck_desc() { c_echo 'Check if links in the user guide are valid
+
+Uses ghcr.io/linkchecker
+'
+}
+docs_linkcheck() {
+    local html_dir=$(find "${DOCS_SRC_DIR}" -name "html" -type d)
+    run_command $HOLOSCAN_DOCKER_EXE run \
+        --rm \
+        --net=host \
+        --interactive \
+        ${USE_TTY} \
+        -u $(id -u):$(id -g) \
+        -v ${TOP}/${html_dir}:/html \
+        ghcr.io/linkchecker/linkchecker \
+        --check-extern /html/index.html
+}
+
+docs_spellcheck_desc() { c_echo 'Check for spelling and grammar in the user guide
+
+Uses jdkato/vale.
+'
+}
+docs_spellcheck() {
+    run_command $HOLOSCAN_DOCKER_EXE run \
+        --rm \
+        --interactive \
+        ${USE_TTY} \
+        -u $(id -u):$(id -g) \
+        -v ${TOP}/${DOCS_SRC_DIR}:/${DOCS_SRC_DIR} \
+        -w /${DOCS_SRC_DIR} \
+        --entrypoint=sh \
+        jdkato/vale -c \
+        "find . -name '*.md' -o -name '*.rst' | grep -v 'api' | xargs vale"
+}
+
+#===============================================================================
+# Logging utils
+#===============================================================================
 
 my_cat_prefix() {
     local IFS
@@ -272,12 +1483,16 @@ fatal() {
         c_echo_err R "$(date -u '+%Y-%m-%d %H:%M:%S') [FATAL] " Z "$@"
         echo_err
     fi
-    if [ -n "${SCRIPT_DIR}" ]; then
-        exit 1
+    if [ -z "${CALLER-}" ]; then
+        return 1
     else
         kill -INT $$  # kill the current process instead of exit in shell environment.
     fi
 }
+
+#===============================================================================
+# Driver functions
+#===============================================================================
 
 run_command() {
     local status=0
@@ -299,929 +1514,178 @@ run_command() {
     return $status
 }
 
-run_docker() {
-    $(./run docker_cmd "-u $(id -u):$(id -g)") "$@"
-}
-
-#===============================================================================
-# Section: Build
-#===============================================================================
-
-get_buildtype_str() {
-    local build_type="${1:-}"
-    local build_type_str
-
-    case "${build_type}" in
-        debug|Debug)
-            build_type_str="Debug"
-            ;;
-        release|Release)
-            build_type_str="Release"
-            ;;
-        rel-debug|RelWithDebInfo)
-            build_type_str="RelWithDebInfo"
-            ;;
-        *)
-            build_type_str="${CMAKE_BUILD_TYPE:-Release}"
-            ;;
-    esac
-
-    echo -n "${build_type_str}"
-}
-
-get_platform_str() {
-    local platform="${1:-}"
-    local platform_str
-
-    case "${platform}" in
-        amd64|x86_64|x86|linux/amd64)
-            platform_str="linux/amd64"
-            ;;
-        arm64|aarch64|arm|linux/arm64)
-            platform_str="linux/arm64"
-            ;;
-    esac
-
-    echo -n "${platform_str}"
-}
-
-get_build_libtorch_str() {
-    local build_libtorch="${1:-}"
-    local build_libtorch_str
-
-    case "${build_libtorch}" in
-        true|yes|1)
-            build_libtorch_str=true
-            ;;
-        false|no|0)
-            build_libtorch_str=false
-            ;;
-    esac
-
-    echo -n "${build_libtorch_str}"
-}
-
-get_gpu_str() {
-    local gpu="${1:-}"
-    local gpu_str=$gpu
-
-    case "${gpu}" in
-        igpu|iGPU|integrated|Jetson)
-            gpu_str="igpu"
-            ;;
-        dgpu|dGPU|discrete|RTX)
-            gpu_str="dgpu"
-            ;;
-    esac
-
-    echo -n "${gpu_str}"
-}
-
-get_host_gpu() {
-    if lsmod | grep -q nvidia_drm && command -v nvidia-smi > /dev/null; then
-        echo -n "dgpu"
-    elif lsmod | grep -q nvgpu ; then
-        echo -n "igpu"
-    else
-        c_echo_err Y "Could not find any GPU drivers on host. Defaulting build to target dGPU/CPU stack."
-        echo -n "dgpu"
-    fi
-}
-
-get_cuda_archs() {
-    local cuda_archs="${1:-}"
-
-    case "${cuda_archs}" in
-        native|NATIVE)
-            cuda_archs_str="NATIVE"
-            ;;
-        all|ALL)
-            cuda_archs_str="ALL"
-            ;;
-        *)
-            cuda_archs_str="${1:-}"
-            ;;
-    esac
-
-    echo -n "${cuda_archs_str}"
-}
-
-clear_cache_desc() { c_echo 'Clear cache folders (including build/install folders)
-'
-}
-clear_cache() {
-    c_echo W "Clearing cache..."
-    run_command rm -rf ${TOP}/build
-    run_command rm -rf ${TOP}/install
-    run_command rm -rf ${TOP}/build-*
-    run_command rm -rf ${TOP}/install-*
-
-    run_command rm -rf ${TOP}/.cache/ccache
-    run_command rm -rf ${TOP}/.cache/cpm
-    run_command rm -rf ${TOP}/.cache/gxf
-}
-
-install_python_dev_deps() {
-    if [ -n "${VIRTUAL_ENV}" ] || [ -n "${CONDA_PREFIX}" ]; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.txt
-        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.dev.txt
-    else
-        c_echo_err R "You must be in a virtual environment to install dependencies."
-        if [ ! -e "$TOP/.venv/dev/bin/python3" ]; then
-            c_echo_err W "Installing a virtual environment at " G "$TOP/.venv/dev" W " ..."
-            run_command ${HOLOSCAN_PY_EXE} -m venv "$TOP/.venv/dev"
-        fi
-
-        c_echo_err W "Please activate the virtual environment at " G "$TOP/.venv/dev" W " and execute the setup command again."
-        c_echo_err
-        c_echo_err G "  source $TOP/.venv/dev/bin/activate"
-        c_echo_err G "  $0 $CMD $ARGS"
-        exit 1
-    fi
-}
-
-setup_cli_dev_desc() { c_echo 'Setup development environment for Holoscan CLI
-'
-}
-
-setup_cli_dev() {
-    c_echo W "Setup Holoscan CLI development environment..."
-
-    if [ -f "/.dockerenv" ]; then
-        c_echo_err "WARNING: devcontainer is not supported for CLI development"
-        exit
-    fi
-
-    install_python_dev_deps
-
-    local gpu_type=$(lsmod | grep -q nvgpu && echo "igpu" || echo "dgpu")
-    local arch_type="amd64"
-    [ "$(uname -m)" = "aarch64" ] && arch_type=arm64
-    local build_path =$SCRIPT_DIR/build-${arch_type}-${gpu_type}/python/lib/holoscan
-    if [ -d "${build_path}" ]; then
-        c_echo "Found build directory: $SOURCE"
-    else
-        c_echo_err "Build directory ${build_path} not found, please run ./run build first"
-        exit
-    fi
-
-    DEST=$SCRIPT_DIR/python/holoscan
-    c_echo "Removing existing symlinks from $DEST/**/*.so"
-    find $DEST -name *.so -delete
-    c_echo "Creating symlinks from $SOURCE/* to $DEST"
-    cp -as $SOURCE/* $DEST &> /dev/null
-}
-
-setup_desc() { c_echo 'Setup development environment
-'
-}
-setup() {
-    c_echo W "Setup development environment..."
-
-    if ! command -v ${HOLOSCAN_DOCKER_EXE} > /dev/null; then
-        fatal G "${HOLOSCAN_DOCKER_EXE}" W " doesn't exists. Please install NVIDIA Docker!"
-    fi
-
-    if ! groups | grep -q docker; then
-        c_echo_err G "groups" W " doesn't contain 'docker' group. Please add 'docker' group to your user."
-        fatal G "groups" W " doesn't contain 'docker' group. Please add 'docker' group to your user." B '
-    # Create the docker group.
-    sudo groupadd docker
-    # Add your user to the docker group.
-    sudo usermod -aG docker $USER
-    newgrp docker
-    docker run hello-world'
-    fi
-
-    if checkif_x86_64 && [ -n "${HOLOSCAN_BUILD_PLATFORM}" ] && [ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
-        fatal G "qemu-aarch64" W " doesn't exists. Please install qemu with binfmt-support to run Docker container with aarch64 platform" B '
-    # Install the qemu packages
-    sudo apt-get install qemu binfmt-support qemu-user-static
-    # Execute the registering scripts
-    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes'
-    fi
-}
-
-build_image_desc() { c_echo 'Build dev image
-  --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
-        Default: current host platform
-        Associated environment variable: HOLOSCAN_BUILD_PLATFORM
-  --build_libtorch [true | false] : Build libtorch in the dev container
-        Default: true
-        Associated environment variable: BUILD_LIBTORCH
-  --gpu [igpu | dgpu] : Specify the GPU stack (integrated vs discrete)
-        Default: current host platform
-        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
-'
-}
-build_image() {
-    # Parse env variables first or set default values
-    local platform="${HOLOSCAN_BUILD_PLATFORM:-$(get_platform_str $(uname -p))}"
-    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-true}"
-    local gpu=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
-
-    # Parse CLI arguments next
-    ARGS=("$@")
-    local i
-    local arg
-    for i in "${!ARGS[@]}"; do
-        arg="${ARGS[i]}"
-        if [ "$arg" = "--platform" ]; then
-           platform=$(get_platform_str "${ARGS[i+1]}")
-        fi
-        if [ "$arg" = "--build_libtorch" ]; then
-           build_libtorch=$(get_build_libtorch_str "${ARGS[i+1]}")
-        fi
-        if [ "$arg" = "--gpu" ]; then
-           gpu=$(get_gpu_str "${ARGS[i+1]}")
-        fi
-    done
-
-    # Docker build
-    run_command export DOCKER_BUILDKIT=1
-    run_command docker build \
-        --build-arg BUILDKIT_INLINE_CACHE=1 \
-        --build-arg BUILD_LIBTORCH=${build_libtorch} \
-        --build-arg GPU_TYPE=${gpu} \
-        --platform ${platform} \
-        --network=host \
-        -t holoscan-sdk-dev \
-        ${TOP}
-}
-
-build_desc() { c_echo 'Build the project
-
-This command will build the project with optional configuration arguments.
-
-Arguments:
-  --platform [linux/amd64 | linux/arm64] : Specify the platform (for cross-compilation)
-        Default: current host platform
-        Associated environment variable: HOLOSCAN_BUILD_PLATFORM
-  --build_libtorch [true | false] : Build the SDK with libtorch support
-        Default: true
-        Associated environment variable: HOLOSCAN_BUILD_LIBTORCH
-  --gpu [igpu | dgpu] : Specify the GPU stack (integrated vs discrete)
-        Default: current host GPU
-        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
-  --cudaarchs [native | all | <custom_arch_list>]
-        Default: native
-        Associated environment variable: CMAKE_CUDA_ARCHITECTURES
-  --type [debug | release | rel-debug] : Specify the type of build
-        Default: release
-        Associated environment variable: CMAKE_BUILD_TYPE
-  --buildpath <build_directory> : Change the build path.
-        Default: build
-        Associated environment variable: CMAKE_BUILD_PATH
-  --installprefix <install_directory> : Specify the install directory
-        Default: install
-        Associated environment variable: CMAKE_INSTALL_PREFIX
-  --reconfigure: Force reconfiguration of the CMake project. By default CMake is only run if
-        a CMakeCache.txt does not exist in the build directory or if CMake detects a reconfigure
-        is needed.
-        Default: false
-'
-}
-build() {
-    # Parse env variables first or set default values
-    local platform="${HOLOSCAN_BUILD_PLATFORM:-$(get_platform_str $(uname -p))}"
-    local gpu=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
-    local cuda_archs="${CMAKE_CUDA_ARCHITECTURES:-NATIVE}"
-    local build_type="${CMAKE_BUILD_TYPE:-release}"
-    local build_path="${CMAKE_BUILD_PATH:-build}"
-    local install_prefix="${CMAKE_INSTALL_PREFIX:-install}"
-    local reconfigure=false
-    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-true}"
-
-    # Parse CLI arguments next
-    ARGS=("$@")
-    local i
-    local arg
-    for i in "${!ARGS[@]}"; do
-        arg="${ARGS[i]}"
-        if [ "$arg" = "--platform" ]; then
-           platform=$(get_platform_str "${ARGS[i+1]}")
-        fi
-        if [ "$arg" = "--build_libtorch" ]; then
-           build_libtorch=$(get_build_libtorch_str "${ARGS[i+1]}")
-        fi
-        if [ "$arg" = "--gpu" ]; then
-           gpu=$(get_gpu_str "${ARGS[i+1]}")
-        fi
-        if [ "$arg" = "--cudaarchs" ]; then
-           cuda_archs=$(get_cuda_archs "${ARGS[i+1]}")
-           reconfigure=true
-        fi
-        if [ "$arg" = "--type" ]; then
-           build_type=$(get_buildtype_str "${ARGS[i+1]}")
-           reconfigure=true
-        fi
-        if [ "$arg" = "--buildpath" ]; then
-           build_path="${ARGS[i+1]}"
-        fi
-        if [ "$arg" = "--installprefix" ]; then
-           install_prefix="${ARGS[i+1]}"
-        fi
-        if [ "$arg" = "--reconfigure" ]; then
-           reconfigure=true
-        fi
-    done
-
-    setup
-    build_image --platform ${platform} --build_libtorch ${build_libtorch} --gpu ${gpu}
-
-    # Tegra (iGPU) limitation requires to mount the /usr/lib/aarch64-linux-gnu/tegra folder
-    # in the container for buildtime, which is handled by the NVIDIA runtime from the container
-    # toolkit. This is not ideal as it needs these drivers libraries at buildtime, which prevents
-    # cross-compilation to aarch64-igpu mode from aarch64-dgpu or x86_64 at this time.
-    if [ "$gpu" = "igpu" ]; then
-        runtime=nvidia
-    else
-        runtime=runc
-    fi
-
-    # DOCKER PARAMETERS
-    #
-    # -it
-    #   Making the container interactive allows cancelling the build
-    #
-    # --rm
-    #   Deletes the container after the command runs
-    #
-    # --runtime ${runtime}
-    #   Docker runtime. Should ideally be runc for build (no need for drivers) but tegra/igpu needs
-    #   nvidia runtime due to limitation described above.
-    #
-    # --platform ${platform}
-    #   Platform to build
-    #
-    # -u $(id -u):$(id -g)
-    #   Ensures the generated files (build, install...) are owned by $USER and not root
-    #
-    # -v ${TOP}:/workspace/holoscan-sdk
-    #   Mount the source directory
-    #
-    # -w /workspace/holoscan-sdk
-    #   Start in the source directory
-    #
-    # -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
-    #   Optimize the number of concurrent processes when building
-    #
-    #
-    # CMAKE PARAMETERS
-    #
-    # -S . -B ${build_path}
-    #   Generic configuration
-    #
-    # -D CMAKE_BUILD_TYPE=${build_type}
-    #   Define the build type (release, debug...). Can be passed as env to docker also.
-    #
-    # -D CMAKE_CUDA_ARCHITECTURES=${cuda_archs}
-    #   Define the cuda architectures to build for (NATIVE, ALL, custom). If custom or ALL, the
-    #   last arch will be used for real and virtual architectures (PTX, forward compatible) while
-    #   the previous archs will be real only.
-    #
-    run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host -it \
-        --runtime=${runtime} \
-        --platform ${platform} \
-        -u $(id -u):$(id -g) \
-        -v ${TOP}:/workspace/holoscan-sdk \
-        -w /workspace/holoscan-sdk \
-        -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
-        holoscan-sdk-dev \
-        bash -c "
-            if [ ! -f '${build_path}/build.ninja' ] || ${reconfigure} ; then \
-                cmake -S . -B ${build_path} -G Ninja \
-                  -D CMAKE_CUDA_ARCHITECTURES=\"${cuda_archs}\" \
-                  -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
-                  -D CMAKE_BUILD_TYPE=${build_type}; \
-            fi \
-            && cmake --build ${build_path} -j \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_extensions \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-examples \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_libs \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_bins \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-modules \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-dependencies \
-            && cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-python_libs
-        "
-}
-
-#===============================================================================
-# Section: Test
-#===============================================================================
-
-install_lint_deps_desc() { c_echo 'Install lint dependencies
-
-This command will install the dependencies required to run the linting tools.
-
-- Python linting: ruff, isort, black, mypy
-- C++ linting: cpplint
-- Spelling: codespell
-'
-}
-install_lint_deps() {
-    # We use $(command) || exit_code=1 to run all linting tools, and exit
-    # with failure after all commands were executed if any of them failed
-    local exit_code=0
-
-    pushd ${TOP} > /dev/null
-
-    c_echo W "Install Lint Dependencies for Python"
-    if ! command -v ruff &> /dev/null; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install ruff || exit_code=1
-    fi
-    if ! command -v isort &> /dev/null; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install isort || exit_code=1
-    fi
-    if ! command -v black &> /dev/null; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install black || exit_code=1
-    fi
-    if ! command -v mypy &> /dev/null; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install mypy || exit_code=1
-    fi
-
-    c_echo W "Install Lint Dependencies for C++"
-    if ! command -v cpplint &> /dev/null; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install cpplint || exit_code=1
-    fi
-
-    c_echo W "Install Lint Dependencies for Code Spelling"
-    if ! command -v codespell &> /dev/null; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install codespell || exit_code=1
-    fi
-
-    popd > /dev/null
-
-    exit $exit_code
-}
-
-lint_desc() { c_echo 'Lint the repository
-
-Python linting: black, isort, ruff
-C++ linting: cpplint
-Spelling: codespell
-
-Arguments:
-  $@ - directories to lint (default: .)
-'
-}
-
-lint() {
-    local DIR_TO_RUN=${@:-"."}
-
-    # We use $(command) || exit_code=1 to run all linting tools, and exit
-    # with failure after all commands were executed if any of them failed
-    local exit_code=0
-
-    pushd ${TOP} > /dev/null
-
-    c_echo W "Linting Python"
-    run_command ruff $DIR_TO_RUN || exit_code=1
-    run_command ${HOLOSCAN_PY_EXE} -m isort -c $DIR_TO_RUN || exit_code=1
-    run_command ${HOLOSCAN_PY_EXE} -m black --check $DIR_TO_RUN || exit_code=1
-
-    c_echo W "Linting C++"
-    # We use `grep -v` to hide verbose output that drowns actual errors
-    # Since we care about the success/failure of cpplitn and not of grep, we:
-    #  1. use `set -o pipefail` to fail if `cpplint` fails
-    #  2. use `grep -v ... || true` to ignore whether grep hid any output
-    run_command set -o pipefail; ${HOLOSCAN_PY_EXE} -m cpplint \
-            --exclude .cache \
-            --exclude build \
-            --exclude install \
-            --exclude build-\* \
-            --exclude install-\* \
-            --exclude src/core/services/generated \
-            --recursive $DIR_TO_RUN \
-        | { grep -v "Ignoring\|Done processing" || true; } || exit_code=1
-
-
-    c_echo W "Code spelling"
-    run_command codespell $DIR_TO_RUN --skip="*.onnx" || exit_code=1
-
-    popd > /dev/null
-
-    exit $exit_code
-}
-
-coverage_desc() { c_echo 'Execute code coverage
-  --type [debug | release | rel-debug] : Specify the type of build
-        Default: release
-        Associated environment variable: CMAKE_BUILD_TYPE
-  --buildpath <build_directory> : Change the build path.
-        Default: build
-        Associated environment variable: CMAKE_BUILD_PATH
-'
-}
-coverage() {
-    # Parse env variables first or set default values
-    local build_type="${CMAKE_BUILD_TYPE:-release}"
-    local build_path="${CMAKE_BUILD_PATH:-build}"
-
-    # Parse CLI arguments next
-    ARGS=("$@")
-    local i
-    local arg
-    for i in "${!ARGS[@]}"; do
-        arg="${ARGS[i]}"
-        if [ "$arg" = "--type" ]; then
-           build_type=$(get_buildtype_str "${ARGS[i+1]}")
-        fi
-        if [ "$arg" = "--buildpath" ]; then
-           build_path="${ARGS[i+1]}"
-        fi
-    done
-    local working_dir=${1:-${build_path}}
-
-    # Find the nvidia_icd.json file which could reside at different paths
-    # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f,l -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
-
-    run_command ${HOLOSCAN_DOCKER_EXE} run --rm --net host \
-        -u $(id -u):$(id -g) \
-        -v ${TOP}:/workspace/holoscan-sdk \
-        -w /workspace/holoscan-sdk \
-        --runtime=nvidia \
-        -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -e DISPLAY=$DISPLAY \
-        -v $nvidia_icd_json:$nvidia_icd_json:ro \
-        -e HOLOSCAN_LIB_PATH=/workspace/holoscan-sdk/${working_dir}/lib \
-        -e HOLOSCAN_INPUT_PATH=/workspace/holoscan-sdk/data \
-        -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
-        -e HOLOSCAN_LOG_LEVEL=INFO \
-        -e PYTHONPATH=/workspace/holoscan-sdk/${working_dir}/python/lib \
-        -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
-        holoscan-sdk-dev \
-        bash -c "
-            cmake -S . -B ${build_path} -G Ninja \
-                -D HOLOSCAN_BUILD_COVERAGE=ON \
-                -D CMAKE_BUILD_TYPE=${build_type} \
-            && cmake --build ${build_path} \
-            && cmake --build ${build_path} --target coverage
-        "
-}
-
-# test_desc() { c_echo 'Execute test cases
-
+#######################################
+# Get list of available commands from a given input file.
+#
+# Available commands and command summary are extracted by checking a pattern
+# "_desc() { c_echo '".
+# Section title is extracted by checking a pattern "# Section: ".
+# This command is used for listing available commands in CLI.
+#
+# e.g.)
+#   "# Section: String/IO functions"
+#     => "# String/IO functions"
+#   "to_lower_desc() { c_echo 'Convert to lower case"
+#     => "to_lower ----------------- Convert to lower case"
+#
 # Arguments:
-#   $1 - subcommand [all] (default: all)
-#   $2 - test_type [all|unit|integration|system|performance] (default: all)
-#   $3 - test_component [all] (default: all)
-# '
-# }
-# test() {
-#     local subcommand="${1:-all}"
-#     local test_type="${2:-all}"
-#     shift;
-
-# }
-
-#===============================================================================
-# Section: Launch
-#===============================================================================
-
-launch_desc() { c_echo 'Launch Docker container
-
-Export CMAKE_BUILD_PATH (default: "build") to change the build path.
-  e.g.,
-
-    export CMAKE_BUILD_PATH=build-arm64
-
-Arguments:
-    $1 - Working directory (e.g, "install" => "/workspace/holoscan-sdk/install")
-         Default: "build"
-'
-}
-launch() {
-    local build_path="${CMAKE_BUILD_PATH:-build}"
-    local working_dir=${1:-${build_path}}
-    local mount_device_opt=""
-
-    # Skip the first argument to pass the remaining arguments to the docker command.
-    if [ -n "$1" ]; then
+#   $1 - input file that defines commands
+# Returns:
+#   Print list of available commands from $1
+#######################################
+get_list_of_available_commands() {
+    local mode="color"
+    if [ "${1:-}" = "color" ]; then
+        mode="color"
+        shift
+    elif [ "${1:-}" = "nocolor" ]; then
+        mode="nocolor"
         shift
     fi
 
-    setup
+    local file_name="$1"
+    if [ ! -e "$1" ]; then
+        echo "$1 doesn't exist!"
+    fi
 
-    # Allow connecting from docker. This is not needed for WSL2 (`SI:localuser:wslg` is added by default)
-    run_command xhost +local:docker
-
-    for i in 0 1 2 3; do
-        if [ -e /dev/video${i} ]; then
-            mount_device_opt+=" --device /dev/video${i}:/dev/video${i}"
+    local line_str='--------------------------------'
+    local IFS= cmd_lines="$(IFS= cat "$1" | grep -E -e "^(([[:alpha:]_[:digit:]]+)_desc\(\)|# Section: )" | sed "s/_desc() *{ *c_echo [\"']/ : /")"
+    local line
+    while IFS= read -r line; do
+        local cmd=$(echo "$line" | cut -d":" -f1)
+        local desc=$(echo "$line" | cut -d":" -f2-)
+        if [ "$cmd" = "# Section" ]; then
+            c_echo ${mode} B "${desc}"
+        else
+            # there is no substring operation in 'sh' so use 'cut'
+            local dash_line="$(echo "${line_str}" | cut -c ${#cmd}-)"  #  = "${line_str:${#cmd}}"
+             c_echo ${mode} Y "   ${cmd}" w " ${dash_line} ${desc}"
         fi
-        if [ -e /dev/ajantv2${i} ]; then
-            mount_device_opt+=" --device /dev/ajantv2${i}:/dev/ajantv2${i}"
-        fi
-    done
-
-    # Issue #4101714: latest Holopack/Jetpack (Tegra) are missing device nodes for the iGPU in
-    # /etc/nvidia-container-runtime/host-files-for-container.d/l4t.csv for the NVIDIA container
-    # toolkit to mount. This list might become obsolete or out-of-date. Another option is to just
-    # run with --privileged to expose all device nodes from the host.
-    if [ "$(get_host_gpu)" = "igpu" ]; then
-        mount_device_opt+=" --device /dev/nvgpu/igpu0/nvsched"
-        mount_device_opt+=" --device /dev/nvgpu/igpu0/sched"
-        mount_device_opt+=" --device /dev/nvhost-ctrl-isp"
-        mount_device_opt+=" --device /dev/nvhost-ctrl-nvdec"
-        mount_device_opt+=" --device /dev/nvhost-ctxsw-gpu"
-        mount_device_opt+=" --device /dev/nvhost-isp"
-        mount_device_opt+=" --device /dev/nvhost-isp-thi"
-        mount_device_opt+=" --device /dev/nvhost-nvcsi"
-        mount_device_opt+=" --device /dev/nvhost-nvsched-gpu"
-        mount_device_opt+=" --device /dev/nvhost-power-gpu"
-        mount_device_opt+=" --device /dev/nvhost-prof-ctx-gpu"
-        mount_device_opt+=" --device /dev/nvhost-prof-dev-gpu"
-        mount_device_opt+=" --device /dev/nvhost-sched-gpu"
-        mount_device_opt+=" --device /dev/nvhost-tsec"
-        mount_device_opt+=" --device /dev/nvhost-tsg-gpu"
-        mount_device_opt+=" --device /dev/nvhost-vi0"
-        mount_device_opt+=" --device /dev/nvhost-vi0-thi"
-        mount_device_opt+=" --device /dev/nvhost-vi1"
-        mount_device_opt+=" --device /dev/nvhost-vi1-thi"
-        mount_device_opt+=" --device /dev/nvidia0"
-        mount_device_opt+=" --device /dev/nvidia-modeset"
-    fi
-
-    # Find the nvidia_icd.json file which could reside at different paths
-    # Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-    nvidia_icd_json=$(find /usr/share /etc -path '*/vulkan/icd.d/nvidia_icd.json' -type f,l -print -quit 2>/dev/null | grep .) || (echo "nvidia_icd.json not found" >&2 && false)
-
-    # DOCKER PARAMETERS
-    #
-    # -it
-    #   The container needs to be interactive to be able to interact with the X11 windows
-    #
-    # --rm
-    #   Deletes the container after the command runs
-    #
-    # -u $(id -u):$(id -g)
-    # -v /etc/group:/etc/group:ro
-    # -v /etc/passwd:/etc/passwd:ro
-    #   Ensures the generated files (build, install...) are owned by $USER and not root,
-    #   and provide the configuration files to avoid warning for user and group names
-    #
-    # -v ${TOP}:/workspace/holoscan-sdk
-    #   Mount the source directory
-    #
-    # -w /workspace/holoscan-sdk/${working_dir}
-    #   Start in the build or install directory
-    #
-    # --runtime=nvidia \
-    # -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display
-    #   Enable GPU acceleration
-    #
-    # -v /tmp/.X11-unix:/tmp/.X11-unix
-    # -e DISPLAY
-    #   Enable graphical applications
-    #
-    # -v $nvidia_icd_json:$nvidia_icd_json:ro
-    #   Bind NVIDIA's Vulkan installable client driver to run Vulkan
-    #   Needed due to https://github.com/NVIDIA/nvidia-container-toolkit/issues/16
-    #   The configurations files are installed to different locations when installing
-    #   with deb packages or with run files, so we look at both places
-    #
-    # --device /dev/video${i}:/dev/video${i}
-    #   Bind video capture devices for V4L2
-    #
-    # --device /dev/ajantv2${i}:/dev/ajantv2${i}
-    #   Bind AJA capture cards for NTV2
-    #
-    # --device /dev/[nvgpu|nvhost|nvidia]
-    #   Bind midding iGPU device nodes (see issue description above)
-    #
-    # -e PYTHONPATH
-    # -e HOLOSCAN_LIB_PATH
-    # -e HOLOSCAN_INPUT_PATH
-    #   Define paths needed by the python applications
-    #
-    # -e CUPY_CACHE_DIR
-    #   Define path for cupy' kernel cache, needed since $HOME does
-    #   not exist when running with `-u id:group`
-
-    run_command ${HOLOSCAN_DOCKER_EXE} run -it --rm --net host \
-        -u $(id -u):$(id -g) \
-        -v /etc/group:/etc/group:ro \
-        -v /etc/passwd:/etc/passwd:ro \
-        -v ${TOP}:/workspace/holoscan-sdk \
-        -w /workspace/holoscan-sdk/${working_dir} \
-        --runtime=nvidia \
-        -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -e DISPLAY \
-        ${mount_device_opt} \
-        --group-add video \
-        -v $nvidia_icd_json:$nvidia_icd_json:ro \
-        -e PYTHONPATH=/workspace/holoscan-sdk/${working_dir}/python/lib \
-        -e HOLOSCAN_LIB_PATH=/workspace/holoscan-sdk/${working_dir}/lib \
-        -e HOLOSCAN_INPUT_PATH=/workspace/holoscan-sdk/data \
-        -e HOLOSCAN_TESTS_DATA_PATH=/workspace/holoscan-sdk/tests/data \
-        -e CUPY_CACHE_DIR=/workspace/holoscan-sdk/.cupy/kernel_cache \
-        --ipc=host \
-        --cap-add=CAP_SYS_PTRACE \
-        --ulimit memlock=-1 \
-        --ulimit stack=67108864 \
-        holoscan-sdk-dev "$@"
-}
-
-vscode_desc() { c_echo 'Launch VSCode in DevContainer
-
-Launch a VSCode instance in a Docker container with the development environment.
-'
-}
-vscode() {
-    if ! command -v code > /dev/null; then
-        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
-    fi
-
-    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
-    local workspace_path_hex
-
-    if [ "${workspace_path}" != "${TOP}" ]; then
-        # Set the environment variable 'HOLOSCAN_PUBLIC_FOLDER' to the resolved path relative to the
-        # workspace path if the workspace path is different than the TOP folder so that
-        # the DevContainer can build files under the Holoscan source root folder while mounting the
-        # workspace folder.
-        run_command export HOLOSCAN_PUBLIC_FOLDER=$(realpath --relative-to=${workspace_path} ${TOP})
-    fi
-
-    # Allow connecting from docker. This is not needed for WSL2 (`SI:localuser:wslg` is added by default)
-    run_command xhost +local:docker
-
-    # Install the VSCode Remote Development extension.
-    # Checking if the extension is already installed is slow, so we always install it so that
-    # the installation can be skipped if the extension is already installed.
-    run_command code --force --install-extension ms-vscode-remote.vscode-remote-extensionpack
-
-    # For now, there is no easy way to launch DevContainer directly from the command line.
-    # ('devcontainer' CLI is only available after manually executing 'Remote-Containers: Install devcontainer CLI' command)
-    # Here, we launch VSCode with .devcontainer/devcontainer.json with '--folder-uri' option to open the current folder in the container.
-    # See https://github.com/microsoft/vscode-remote-release/issues/2133
-    workspace_path_hex=$(echo -n ${workspace_path} | xxd -p)
-    workspace_path_hex="${workspace_path_hex//[[:space:]]/}"
-    c_echo B "Local workspace path: " W "${workspace_path} (${workspace_path_hex})"
-    run_command code --folder-uri "vscode-remote://dev-container+${workspace_path_hex}/workspace/holoscan-sdk"
-}
-
-vscode_remote_desc() { c_echo 'Attach to the existing VSCode DevContainer
-
-This command is useful when you want to attach to the existing VSCode DevContainer from the remote machine.
-
-1) Launch VSCode DevContainer on the local machine with "./run vscode" command.
-2) In the remote machine, launch VSCode Remote-SSH extension to connect to the local machine.
-3) Launch this command on the remote machine to attach to the existing VSCode DevContainer in the local machine.
-'
-}
-vscode_remote() {
-    if ! command -v code > /dev/null; then
-        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
-    fi
-
-    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
-
-    local container_name=$(run_command docker ps --filter "label=devcontainer.local_folder=${workspace_path}" --format "{{.Names}}" | head -1)
-    if [ -z "${container_name}" ]; then
-        fatal R "No DevContainer (with the label 'devcontainer.local_folder=${workspace_path}') is found in the local machine. Please launch VSCode DevContainer with " W "./run vscode" R " command first."
-    fi
-    c_echo W "Container name: " y "${container_name}"
-
-    # The following command is based on the information of the following issue:
-    #   https://github.com/microsoft/vscode-remote-release/issues/2133#issuecomment-618328138
-    python - > /tmp/holoscan_remote_uri.txt << EOF
-import json
-from urllib.parse import urlunparse
-from subprocess import check_output
-hostname = check_output("hostname" , shell=True).decode('utf-8').strip()
-remote_description = json.dumps({"containerName": f"/${container_name}", "settings":{"host": f"ssh://{hostname}"}})
-remote_uri = urlunparse(('vscode-remote', f'attached-container+{remote_description.encode("utf8").hex()}', '/workspace/holoscan-sdk', '', '', ''))
-print(remote_uri)
+        # use <<EOF, not '<<<"$cmd_lines"' to be executable in sh
+    done <<EOF
+$cmd_lines
 EOF
-    local remote_uri=$(cat /tmp/holoscan_remote_uri.txt)
-    c_echo W "Remote URI: " y "${remote_uri}"
-
-    # VSCode's attached-container mode does not support forwarding SSH keys to the container well.
-    # For the reason, we need to copy SSH keys to the container so that the container can access
-    # the local machine's SSH keys.
-    c_echo W "Copying SSH keys to the container..."
-    for i in identity id_rsa id_ed25519 id_ed25519_sk id_dsa id_cdsa id_ecdsa_sk; do
-        if [ -e ~/.ssh/${i} ]; then
-            run_command docker cp ~/.ssh/${i} ${container_name}:/home/holoscan-sdk/.ssh/
-        fi
-    done;
-
-    run_command code --folder-uri ${remote_uri}
 }
 
-#===============================================================================
-
-parse_args() {
-    local OPTIND
-    while getopts 'yh' option;
-    do
-        case "${option}" in
-            y)
-                ALWAYS_YES="true"
-                ;;
-            h)
-                print_usage
-                if [ -n "${SCRIPT_DIR}" ]; then
-                    exit 1
-                fi
-                ;;
-            *)
-                ;;
-        esac
-    done
-    shift $((OPTIND-1))
-
-    CMD="$1"
-    shift || true  # ignore error if no arguments are left
-
-    ARGS=("$@")
-    # Check if the command has `--help`, `-h`, or `--dryrun`, and override the CMD
-    local i
-    local arg
-    local unset_pos
-    for i in "${!ARGS[@]}"; do
-        arg="${ARGS[i]}"
-        if [ "$arg" = "--help" ] || [ "$arg" = "-h" ]; then
-            ARGS=("$CMD")
-            CMD="help"
-            break
-        fi
-        if [ "$arg" = "--dryrun" ]; then
-            unset_pos=$i
-            DO_DRY_RUN="true"  # set to true to print commands to screen without running
-        fi
-    done
-    if [ "${unset_pos}" ]; then
-        unset 'ARGS[unset_pos]'
-    fi
+get_list_of_global_flags() {
+    echo_err
+    c_echo_err W "Global Arguments"
+    echo_err "
+    --help, -h                  : Print help messages for [command]
+    --dryrun                    : Print commands to screen without running
+    --standalone, -s            : Do not run prerequisite steps for build-related commands
+    --arch, -a [amd64 | arm64]  : Specify the platform (for cross-compilation)
+        Default: current host architecture ($(get_host_arch))
+        Associated environment variable: HOLOSCAN_BUILD_ARCH
+    --gpu, -g [igpu | dgpu]     : Specify the GPU stack (integrated vs discrete) for arm64
+        Default: current host GPU ($(get_host_gpu))
+        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE"
 }
 
 print_usage() {
     set +x
     echo_err
     echo_err "USAGE: $0 [command] [arguments]..."
-    echo_err ""
-    c_echo_err W "Global Arguments"
-    c_echo_err "  --help, -h      : Print help messages for [command]"
-    c_echo_err "  --dryrun        : Print commands to screen without running"
     echo_err
     c_echo_err W "Command List"
-    c_echo_err Y "    help  " w "----------------------------  Print detailed description for a given argument (command name)"
     echo_err "$(get_list_of_available_commands color "${RUN_SCRIPT_FILE}" | my_cat_prefix " ")"
     echo_err
+    echo_err "$(get_list_of_global_flags)"
 }
 
 print_cmd_help_messages() {
-    local cmd="$1"
+    local cmd="${1-}"
     if [ -n "${cmd}" ]; then
         if type ${cmd}_desc > /dev/null 2>&1; then
             ${cmd}_desc
-            exit 0
+            get_list_of_global_flags
+            return 0
         else
             c_echo_err R "Command '${cmd}' doesn't exist!"
-            exit 1
+            print_usage
+            return 1
         fi
     fi
     print_usage
-    return 0
 }
 
 main() {
     local ret=0
-    parse_args "$@"
 
-    case "$CMD" in
-        help)
-            print_cmd_help_messages "${ARGS[@]}"
-            exit 0
-            ;;
-        ''|main)
+    # Parse command
+    if [ -z "${1-}" ]; then
+        print_usage
+        return 0
+    fi
+    local cmd=$1
+    shift
+
+    # Parse args
+    local args=()
+    unset ARCH GPU
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            print_cmd_help_messages $cmd
+            return 0
+        ;;
+        --dryrun|--dry-run)
+            DO_DRY_RUN="true"
+            shift
+        ;;
+        -s|--standalone)
+            DO_STANDALONE="true"
+            shift
+        ;;
+        -a|--arch)
+            ARCH=$(get_gnu_arch_str $2)
+            shift
+            shift
+        ;;
+        -g|--gpu)
+            GPU=$(get_gpu_str $2)
+            shift
+            shift
+        ;;
+        *)
+            args+=("$1")
+            shift
+        ;;
+    esac
+    done
+
+    # Ensure arch and gpu are defined with defaults if not passed explicitly
+    if [ -z "${ARCH-}" ]; then
+        ARCH=$(get_gnu_arch_str ${HOLOSCAN_BUILD_ARCH:-$(get_host_arch)})
+    fi
+    if [ -z "${GPU-}" ]; then
+        GPU=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
+    fi
+
+    # Run command
+    case "$cmd" in
+        ''|main|help)
             print_usage
             ;;
         *)
-            if type ${CMD} > /dev/null 2>&1; then
-                "$CMD" "${ARGS[@]}"
+            if type ${cmd} > /dev/null 2>&1; then
+                "$cmd" "${args[@]}"
             else
+                c_echo_err R "Command '${cmd}' doesn't exist!"
                 print_usage
-                exit 1
+                return 1
             fi
             ;;
     esac
     ret=$?
-    if [ -n "${SCRIPT_DIR}" ]; then
-        exit $ret
+    if [ -z "${CALLER-}" ]; then
+        return $ret
     fi
 }
 
 init_globals
 
-if [ -n "${SCRIPT_DIR}" ]; then
+if [ -z "${CALLER-}" ]; then
     main "$@"
 fi
 

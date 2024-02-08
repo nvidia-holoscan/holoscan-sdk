@@ -27,11 +27,21 @@
 
 namespace holoscan::viz {
 
+namespace {
+
+/// @returns true if fmt is a depth format
+bool is_depth_format(ImageFormat fmt) {
+  return ((fmt == ImageFormat::D16_UNORM) || (fmt == ImageFormat::X8_D24_UNORM) ||
+          (fmt == ImageFormat::D32_SFLOAT));
+}
+}  // namespace
+
 struct ImageLayer::Impl {
   bool can_be_reused(Impl& other) const {
-    // we can reuse if the format/size and LUT match and
+    // we can reuse if the format/component mapping/size and LUT match and
     //  if we did not switch from host to device memory and vice versa
-    if ((format_ == other.format_) && (width_ == other.width_) && (height_ == other.height_) &&
+    if ((format_ == other.format_) && (component_mapping_ == other.component_mapping_) &&
+        (width_ == other.width_) && (height_ == other.height_) &&
         ((host_ptr_ != nullptr) == (other.device_ptr_ == 0)) &&
         ((device_ptr_ != 0) == (other.host_ptr_ == nullptr)) &&
         (depth_format_ == other.depth_format_) && (depth_width_ == other.depth_width_) &&
@@ -62,6 +72,7 @@ struct ImageLayer::Impl {
 
   // user provided state
   ImageFormat format_ = ImageFormat(-1);
+  vk::ComponentMapping component_mapping_;
   uint32_t width_ = 0;
   uint32_t height_ = 0;
   CUdeviceptr device_ptr_ = 0;
@@ -102,7 +113,7 @@ ImageLayer::~ImageLayer() {
 void ImageLayer::image_cuda_device(uint32_t width, uint32_t height, ImageFormat fmt,
                                    CUdeviceptr device_ptr, size_t row_pitch) {
   // If a depth format is specified, use this image to write depth for the color image.
-  if (fmt == ImageFormat::D32_SFLOAT) {
+  if (is_depth_format(fmt)) {
     if (impl_->depth_host_ptr_) {
       throw std::runtime_error("Can't simultaneously specify device and host image for a layer.");
     }
@@ -135,7 +146,7 @@ void ImageLayer::image_cuda_array(ImageFormat fmt, CUarray array) {
 void ImageLayer::image_host(uint32_t width, uint32_t height, ImageFormat fmt, const void* data,
                             size_t row_pitch) {
   // If a depth format is specified, use this image to write depth for the color image.
-  if (fmt == ImageFormat::D32_SFLOAT) {
+  if (is_depth_format(fmt)) {
     if (impl_->depth_device_ptr_) {
       throw std::runtime_error("Can't simultaneously specify device and host image for a layer.");
     }
@@ -169,6 +180,34 @@ void ImageLayer::lut(uint32_t size, ImageFormat fmt, size_t data_size, const voi
   impl_->lut_normalized_ = normalized;
 }
 
+void ImageLayer::image_component_mapping(ComponentSwizzle r, ComponentSwizzle g, ComponentSwizzle b,
+                                         ComponentSwizzle a) {
+  auto to_vk_swizzle = [](ComponentSwizzle in) -> vk::ComponentSwizzle {
+    switch (in) {
+      case ComponentSwizzle::IDENTITY:
+        return vk::ComponentSwizzle::eIdentity;
+      case ComponentSwizzle::ZERO:
+        return vk::ComponentSwizzle::eZero;
+      case ComponentSwizzle::ONE:
+        return vk::ComponentSwizzle::eOne;
+      case ComponentSwizzle::R:
+        return vk::ComponentSwizzle::eR;
+      case ComponentSwizzle::G:
+        return vk::ComponentSwizzle::eG;
+      case ComponentSwizzle::B:
+        return vk::ComponentSwizzle::eB;
+      case ComponentSwizzle::A:
+        return vk::ComponentSwizzle::eA;
+      default:
+        throw std::runtime_error("Unhandled component swizzle.");
+    }
+  };
+  impl_->component_mapping_.r = to_vk_swizzle(r);
+  impl_->component_mapping_.g = to_vk_swizzle(g);
+  impl_->component_mapping_.b = to_vk_swizzle(b);
+  impl_->component_mapping_.a = to_vk_swizzle(a);
+}
+
 bool ImageLayer::can_be_reused(Layer& other) const {
   return Layer::can_be_reused(other) &&
          impl_->can_be_reused(*static_cast<const ImageLayer&>(other).impl_.get());
@@ -192,6 +231,7 @@ void ImageLayer::end(Vulkan* vulkan) {
           impl_->width_,
           impl_->height_,
           impl_->format_,
+          impl_->component_mapping_,
           has_lut ? vk::Filter::eNearest : vk::Filter::eLinear);
     }
     vulkan->upload_to_texture(
@@ -211,6 +251,7 @@ void ImageLayer::end(Vulkan* vulkan) {
                                  impl_->format_,
                                  0,
                                  nullptr,
+                                 impl_->component_mapping_,
                                  has_lut ? vk::Filter::eNearest : vk::Filter::eLinear);
     }
     vulkan->upload_to_texture(impl_->host_ptr_, impl_->row_pitch_, impl_->texture_);
@@ -221,8 +262,11 @@ void ImageLayer::end(Vulkan* vulkan) {
     //  we just have to upload the data to the texture
     if (!impl_->depth_texture_) {
       // create a texture to which we can upload from CUDA
-      impl_->depth_texture_ = vulkan->create_texture_for_cuda_interop(
-          impl_->depth_width_, impl_->depth_height_, impl_->depth_format_, vk::Filter::eLinear);
+      impl_->depth_texture_ = vulkan->create_texture_for_cuda_interop(impl_->depth_width_,
+                                                                      impl_->depth_height_,
+                                                                      impl_->depth_format_,
+                                                                      vk::ComponentMapping(),
+                                                                      vk::Filter::eLinear);
     }
     vulkan->upload_to_texture(impl_->depth_device_ptr_,
                               impl_->depth_row_pitch_,
@@ -238,6 +282,7 @@ void ImageLayer::end(Vulkan* vulkan) {
                                                      impl_->depth_format_,
                                                      0,
                                                      nullptr,
+                                                     vk::ComponentMapping(),
                                                      vk::Filter::eLinear);
     }
     vulkan->upload_to_texture(
@@ -252,6 +297,7 @@ void ImageLayer::end(Vulkan* vulkan) {
                                impl_->lut_format_,
                                impl_->lut_data_.size(),
                                impl_->lut_data_.data(),
+                               vk::ComponentMapping(),
                                impl_->lut_normalized_ ? vk::Filter::eLinear : vk::Filter::eNearest,
                                impl_->lut_normalized_);
   }

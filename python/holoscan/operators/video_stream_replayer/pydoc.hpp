@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,10 @@ Operator class to replay a video stream from a file.
 // PyVideoStreamReplayerOp Constructor
 PYDOC(VideoStreamReplayerOp_python, R"doc(
 Operator class to replay a video stream from a file.
+
+Named output:
+    output: nvidia::gxf::Tensor
+        A message containing a video frame deserialized from disk.
 
 Parameters
 ----------

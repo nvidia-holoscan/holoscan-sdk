@@ -97,23 +97,6 @@ PYBIND11_MODULE(_network_contexts, m) {
            "name"_a = "ucx_context"s,
            doc::UcxContext::doc_UcxContext_python)
       .def_property_readonly(
-          "gxf_typename", &UcxContext::gxf_typename, doc::UcxContext::doc_gxf_typename)
-      .def(
-          "__repr__",
-          [](UcxContext& context) {
-            try {
-              auto entity_serializer = context.entity_serializer();
-              return fmt::format(
-                  "<holoscan.network_contexts.UcxContext: name={}, entity_serializer name={}>",
-                  context.name(),
-                  entity_serializer == nullptr ? "<uninitialized>" : entity_serializer->name());
-            } catch (const std::runtime_error& e) {
-              return fmt::format(
-                  "<holoscan.network_contexts.UcxContext: name={}, entity_serializer "
-                  "name=<uninitialized>>",
-                  context.name());
-            }
-          },
-          R"doc(Return repr(self).)doc");
+          "gxf_typename", &UcxContext::gxf_typename, doc::UcxContext::doc_gxf_typename);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

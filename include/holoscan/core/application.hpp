@@ -66,6 +66,43 @@ class Application : public Fragment {
    * The arguments after processing arguments are stored in the `argv_` member variable and
    * the reference to the vector of arguments can be accessed through the `argv()` method.
    *
+   * Example:
+   *
+   * ```cpp
+   * #include <holoscan/holoscan.hpp>
+   *
+   * class MyPingApp : public holoscan::Application {
+   * // ...
+   * };
+   *
+   * int main(int argc, char** argv) {
+   *   auto my_argv =
+   *       holoscan::Application({"myapp", "--driver", "my_arg1", "--address=10.0.0.1"}).argv();
+   *   HOLOSCAN_LOG_INFO(" my_argv: {}", fmt::join(my_argv, " "));
+   *
+   *   HOLOSCAN_LOG_INFO(
+   *       "    argv: {} (argc: {}) ",
+   *       fmt::join(std::vector<std::string>(argv, argv + argc), " "),
+   *       argc);
+   *
+   *   auto app_argv = holoscan::Application().argv();  // do not use reference ('auto&') here
+   *   HOLOSCAN_LOG_INFO("app_argv: {} (size: {})", fmt::join(app_argv, " "), app_argv.size());
+   *
+   *   auto app = holoscan::make_application<MyPingApp>();
+   *   HOLOSCAN_LOG_INFO("app->argv() == app_argv: {}", app->argv() == app_argv);
+   *
+   *   app->run();
+   *   return 0;
+   * }
+   *
+   * // $ ./myapp --driver --input image.dat --address 10.0.0.20
+   *
+   * //  my_argv: myapp my_arg1
+   * //     argv: ./myapp --driver --input image.dat --address 10.0.0.20 (argc: 6)
+   * // app_argv: ./myapp --input image.dat (size: 3)
+   * // app->argv() == app_argv: true
+   * ```
+   *
    * @param argv The command line arguments.
    */
   explicit Application(const std::vector<std::string>& argv = {});
@@ -238,6 +275,11 @@ class Application : public Fragment {
                         const std::shared_ptr<Fragment>& downstream_frag,
                         std::set<std::pair<std::string, std::string>> port_pairs);
 
+  /**
+   * @brief Calls compose() if the fragment graph is not composed yet.
+   */
+  void compose_graph() override;
+
   void run() override;
 
   std::future<void> run_async() override;
@@ -305,6 +347,12 @@ class Application : public Fragment {
 
   std::shared_ptr<AppDriver> app_driver_;  ///< The application driver.
   std::shared_ptr<AppWorker> app_worker_;  ///< The application worker.
+
+ private:
+  /**
+   * @brief Configure UCX environment variables
+   */
+  void set_ucx_env();
 };
 
 }  // namespace holoscan

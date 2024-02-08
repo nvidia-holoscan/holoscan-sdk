@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import multiprocessing
 import time
@@ -62,8 +64,8 @@ class DelayOp(Operator):
         print(f"{self.name}: now waiting {self.delay:0.3f} s")
         time.sleep(self.delay)
         print(f"{self.name}: finished waiting")
-        op_output.emit(self.name, "out_name")
         new_value = op_input.receive("in") + self.increment
+        op_output.emit(self.name, "out_name")
         print(f"{self.name}: sending new value ({new_value})")
         op_output.emit(new_value, "out_val")
 
@@ -115,6 +117,26 @@ class ParallelPingApp(Application):
         for d in delay_ops:
             self.add_flow(tx, d)
             self.add_flow(d, rx, {("out_val", "values"), ("out_name", "names")})
+
+
+def main(threads, num_delays, delay, delay_step):
+    app = ParallelPingApp(num_delays=num_delays, delay=delay, delay_step=delay_step)
+    if threads == 0:
+        # Explicitly setting GreedyScheduler is not strictly required as it is the default.
+        scheduler = GreedyScheduler(app, name="greedy_scheduler")
+    else:
+        scheduler = MultiThreadScheduler(
+            app,
+            worker_thread_number=threads,
+            stop_on_deadlock=True,
+            stop_on_deadlock_timeout=500,
+            name="multithread_scheduler",
+        )
+    app.scheduler(scheduler)
+    tstart = time.time()
+    app.run()
+    duration = time.time() - tstart
+    print(f"Total app runtime = {duration:0.3f} s")
 
 
 if __name__ == "__main__":
@@ -172,26 +194,9 @@ if __name__ == "__main__":
         # use up to maximum number of available threads
         args.threads = min(args.num_delay_ops, multiprocessing.cpu_count())
 
-    app = ParallelPingApp(
+    main(
+        threads=args.threads,
         num_delays=args.num_delay_ops,
         delay=args.delay,
         delay_step=args.delay_step,
     )
-    app.config("")
-
-    if args.threads == 0:
-        # Explicitly setting GreedyScheduler is not strictly required as it is the default.
-        scheduler = GreedyScheduler(app, name="greedy_scheduler")
-    else:
-        scheduler = MultiThreadScheduler(
-            app,
-            worker_thread_number=args.threads,
-            stop_on_deadlock=True,
-            stop_on_deadlock_timeout=500,
-            name="multithread_scheduler",
-        )
-    app.scheduler(scheduler)
-    tstart = time.time()
-    app.run()
-    duration = time.time() - tstart
-    print(f"Total app runtime = {duration:0.3f} s")

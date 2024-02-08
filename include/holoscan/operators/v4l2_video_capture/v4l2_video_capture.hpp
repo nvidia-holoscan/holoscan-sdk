@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,13 +33,18 @@ namespace holoscan::ops {
  *
  * Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
  * - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
- * pixel format will be automatically selected. However, only `AR24` and `YUYV` are then supported.
+ * pixel format will be automatically selected. However, only `AB24` and `YUYV` are then supported.
  * If a pixel format is specified in the yaml file, then this format will be used. However, note
  * that the operator then expects that this format can be encoded as RGBA32. If not, the behaviour
  * is undefined.
  * - Output stream is on host. Always RGBA32 at this time.
  *
  * Use `holoscan::ops::FormatConverterOp` to move data from the host to a GPU device.
+ *
+ * **Named outputs:**
+ *     - *signal*: `nvidia::gxf::VideoBuffer`
+ *         - Emits a message containing a video buffer on the host with format
+ *         GXF_VIDEO_FORMAT_RGBA.
  */
 class V4L2VideoCaptureOp : public Operator {
  public:

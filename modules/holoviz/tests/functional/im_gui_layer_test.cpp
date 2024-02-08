@@ -26,33 +26,10 @@
 
 namespace viz = holoscan::viz;
 
-using UniqueImGuiContext =
-    viz::UniqueValue<ImGuiContext*, decltype(&ImGui::DestroyContext), &ImGui::DestroyContext>;
-
 // Fixture that initializes Holoviz
 class ImGuiLayer : public TestHeadless {
  protected:
   ImGuiLayer() : TestHeadless(256, 256) {}
-
-  void SetUp() override {
-    if (!ImGui::GetCurrentContext()) {
-      im_gui_context_.reset(ImGui::CreateContext());
-      ASSERT_TRUE(im_gui_context_);
-    }
-    ASSERT_NO_THROW(viz::ImGuiSetCurrentContext(ImGui::GetCurrentContext()));
-
-    // call base class
-    ::TestHeadless::SetUp();
-  }
-
-  void TearDown() override {
-    // call base class
-    ::TestHeadless::TearDown();
-
-    ASSERT_NO_THROW(viz::ImGuiSetCurrentContext(nullptr));
-  }
-
-  UniqueImGuiContext im_gui_context_;
 };
 
 TEST_F(ImGuiLayer, Window) {
@@ -79,10 +56,11 @@ TEST_F(ImGuiLayer, Errors) {
 
   EXPECT_NO_THROW(viz::Begin());
 
-  // it's an error to call call BeginImGuiLayer no valid ImGui context is set
-  EXPECT_NO_THROW(viz::ImGuiSetCurrentContext(nullptr));
+  // it's an error to call BeginImGuiLayer if no valid ImGui context is set
+  ImGuiContext *prev_context = ImGui::GetCurrentContext();
+  ImGui::SetCurrentContext(nullptr);
   EXPECT_THROW(viz::BeginImGuiLayer(), std::runtime_error);
-  EXPECT_NO_THROW(viz::ImGuiSetCurrentContext(im_gui_context_.get()));
+  ImGui::SetCurrentContext(prev_context);
 
   // it's an error to call BeginImGuiLayer again without calling EndLayer
   EXPECT_NO_THROW(viz::BeginImGuiLayer());

@@ -1,0 +1,45 @@
+--- examples/holoviz/python/holoviz_views.py	2023-11-19 20:00:02.773338018 -0800
++++ examples/holoviz/python/holoviz_views_test.py	2023-11-19 20:14:26.597111630 -0800
+@@ -22,8 +22,8 @@
+ import numpy as np
+ 
+ from holoscan.core import Application, Operator, OperatorSpec
+-from holoscan.operators import HolovizOp, VideoStreamReplayerOp
+-from holoscan.resources import CudaStreamPool
++from holoscan.operators import HolovizOp, VideoStreamReplayerOp, VideoStreamRecorderOp, FormatConverterOp
++from holoscan.resources import CudaStreamPool, UnboundedAllocator
+ 
+ sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
+ 
+@@ -323,11 +323,31 @@
+                 reserved_size=1,
+                 max_size=5,
+             ),
++            enable_render_buffer_output=True
+         )
+         self.add_flow(source, image_views)
+         self.add_flow(image_views, visualizer, {("outputs", "receivers")})
+         self.add_flow(image_views, visualizer, {("output_specs", "input_specs")})
+ 
++        recorder_format_converter = FormatConverterOp(
++            self,
++            name="recorder_format_converter",
++            in_dtype="rgba8888",
++            out_dtype="rgb888",
++            pool=UnboundedAllocator(self, name="pool")
++        )
++        recorder = VideoStreamRecorderOp(
++            self,
++            name="recorder",
++            directory="RECORDING_DIR",
++            basename="SOURCE_VIDEO_BASENAME"
++        )
++
++        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
++
++        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(recorder_format_converter, recorder)
++
+ 
+ if __name__ == "__main__":
+     # Parse args

@@ -74,12 +74,21 @@ void nvprint_callback(int level, const char* fmt) {
 
 namespace holoscan::viz {
 
+/// thread local context
+static thread_local Context* g_context = nullptr;
+
+/// thread local ImGui context
+thread_local ImGuiContext* g_im_gui_context = nullptr;
+
 class Context::Impl {
  public:
   void setup() {
+    im_gui_context_ = ImGui::CreateContext();
     vulkan_.reset(new Vulkan);
     vulkan_->setup(window_.get(), font_path_, font_size_in_pixels_);
   }
+
+  ImGuiContext* im_gui_context_ = nullptr;
 
   InitFlags flags_ = InitFlags::NONE;
   CUstream cuda_stream_ = 0;
@@ -104,18 +113,61 @@ class Context::Impl {
                                                    ///    most likely they can be reused
 };
 
-Context& Context::get() {
-  // since C++11 static variables a thread-safe
-  static Context instance;
-
-  return instance;
-}
-
 Context::Context() : impl_(new Impl) {
   // disable nvpro_core file logging
   nvprintSetFileLogging(false);
   // and use the callback to use our logging functions
   nvprintSetCallback(nvprint_callback);
+}
+
+Context::~Context() {
+  ImGuiContext* prev_context = nullptr;
+  if ((g_context != this) && (impl_->im_gui_context_)) {
+    // make ImGui context current while shutting down
+    prev_context = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(impl_->im_gui_context_);
+  }
+
+  // explicitly destroy objects which can have references to vulkan or use ImGui while the ImGui
+  // context is current
+  impl_->active_layer_.reset();
+  impl_->layers_.clear();
+  impl_->layer_cache_.clear();
+  impl_->vulkan_.reset();
+  impl_->window_.reset();
+
+  if (impl_->im_gui_context_) { ImGui::DestroyContext(impl_->im_gui_context_); }
+
+  if (prev_context) {
+    // make the previous ImGui context current
+    ImGui::SetCurrentContext(prev_context);
+  }
+
+  // if the context is current make it not current
+  if (g_context == this) { set(nullptr); }
+}
+
+void Context::set(Context* context) {
+  g_context = context;
+  if (context) {
+    // also make the ImGui context current
+    ImGui::SetCurrentContext(context->impl_->im_gui_context_);
+  } else {
+    ImGui::SetCurrentContext(nullptr);
+  }
+}
+
+Context* Context::get_current() {
+  return g_context;
+}
+
+Context& Context::get() {
+  if (!g_context) {
+    // if no context is current, create one and make it current
+    Context* context = new Context();
+    set(context);
+  }
+  return *g_context;
 }
 
 void Context::init(GLFWwindow* window, InitFlags flags) {
@@ -141,26 +193,10 @@ void Context::init(const char* display_name, uint32_t width, uint32_t height, ui
   impl_->setup();
 }
 
-void Context::shutdown() {
-  // this should rather destroy the Context instance instead of resetting all members
-  impl_->active_layer_.reset();
-  impl_->layers_.clear();
-  impl_->layer_cache_.clear();
-  impl_->vulkan_.reset();
-  impl_->window_.reset();
-  impl_->font_size_in_pixels_ = 0.f;
-  impl_->font_path_.clear();
-  impl_->cuda_stream_ = 0;
-}
-
 Window* Context::get_window() const {
   if (!impl_->window_) { throw std::runtime_error("There is no window set."); }
 
   return impl_->window_.get();
-}
-
-void Context::im_gui_set_current_context(ImGuiContext* context) {
-  ImGui::SetCurrentContext(context);
 }
 
 void Context::set_cuda_stream(CUstream stream) {
@@ -228,8 +264,7 @@ void Context::begin_geometry_layer() {
 
 void Context::begin_im_gui_layer() {
   if (!ImGui::GetCurrentContext()) {
-    throw std::runtime_error(
-        "ImGui had not been setup, please call ImGuiSetCurrentContext() before calling Init().");
+    throw std::runtime_error("ImGui had not been setup, please call holoscan::viz::Init().");
   }
 
   if (impl_->active_layer_) { throw std::runtime_error("There already is an active layer."); }
@@ -273,9 +308,9 @@ void Context::end_layer() {
 }
 
 void Context::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                               CUdeviceptr device_ptr) {
+                               CUdeviceptr device_ptr, size_t row_pitch) {
   impl_->vulkan_->read_framebuffer(
-      fmt, width, height, buffer_size, device_ptr, impl_->cuda_stream_);
+      fmt, width, height, buffer_size, device_ptr, impl_->cuda_stream_, row_pitch);
 }
 
 Layer* Context::get_active_layer() const {

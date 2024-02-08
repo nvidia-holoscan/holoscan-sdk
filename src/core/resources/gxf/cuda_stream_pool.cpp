@@ -34,9 +34,8 @@ constexpr int32_t kDefaultDeviceId = 0;
 
 CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component)
     : Allocator(name, component) {
-  int32_t dev_id = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetInt32(gxf_context_, gxf_cid_, "dev_id", &dev_id));
-  dev_id_ = dev_id;
+  // TODO: how to get the device ID now that it is a GPUDevice Resource and not a parameter?
+  dev_id_ = 0;
   uint32_t stream_flags = 0;
   HOLOSCAN_GXF_CALL_FATAL(
       GxfParameterGetUInt32(gxf_context_, gxf_cid_, "stream_flags", &stream_flags));
@@ -55,6 +54,9 @@ CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamP
 }
 
 void CudaStreamPool::setup(ComponentSpec& spec) {
+  // TODO: The dev_id parameter was removed in GXF 3.0 and replaced with a GPUDevice Resource
+  // Note: We are currently working around this with special handling of the "dev_id" parameter
+  // in GXFResource::initialize().
   spec.param(
       dev_id_, "dev_id", "Device Id", "Create CUDA Stream on which device.", kDefaultDeviceId);
   spec.param(stream_flags_,

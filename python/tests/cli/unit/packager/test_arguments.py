@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import pathlib
 import platform
@@ -19,7 +21,7 @@ from argparse import Namespace
 
 import pytest
 
-from holoscan.cli.common.enum_types import ApplicationType, SdkType
+from holoscan.cli.common.enum_types import ApplicationType, Platform, PlatformConfiguration, SdkType
 from holoscan.cli.packager.arguments import PackagingArguments
 from holoscan.cli.packager.manifest_files import ApplicationManifest, PackageManifest
 from holoscan.cli.packager.parameters import DefaultValues
@@ -34,7 +36,7 @@ class TestPackagingArguments:
         self.input_args.gid = 1000
         self.input_args.config = pathlib.Path("/path/to/config/file")
         self.input_args.timeout = 100
-        self.input_args.version = "1.2.3"
+        self.input_args.version = "HoloscanVersionNum"
         self.input_args.docs = pathlib.Path("/path/to/docs")
         self.input_args.application = pathlib.Path("/path/to/my/app")
         self.input_args.no_cache = False
@@ -43,6 +45,8 @@ class TestPackagingArguments:
         self.input_args.build_cache = pathlib.Path("/path/to/build_cache")
         self.input_args.cmake_args = "-DARG1=A -DARG2=B"
         self.input_args.source = pathlib.Path("/path/to/source.json")
+        self.input_args.platform = Platform.X64Workstation
+        self.input_args.platform_config = PlatformConfiguration.dGPU
 
         self.source_load_called = False
 
@@ -52,7 +56,12 @@ class TestPackagingArguments:
         )
         monkeypatch.setattr(
             "holoscan.cli.packager.platforms.Platform.configure_platforms",
-            lambda a, b, c, d, e: (SdkType.Holoscan, "1.2.3", []),
+            lambda a, b, c, d, e: (
+                SdkType.Holoscan,
+                "HoloscanVersionNum",
+                "MonaiDeployVersionNum",
+                [],
+            ),
         )
         monkeypatch.setattr(
             "holoscan.cli.packager.config_reader.ApplicationConfiguration.read",
@@ -135,9 +144,9 @@ class TestPackagingArguments:
         assert args.build_parameters.no_cache is False
         assert args.build_parameters.pip_packages is None
         assert args.build_parameters.requirements_file_path is None
-        assert args.build_parameters.sdk_version == self.input_args.version
+        assert args.build_parameters.holoscan_sdk_version == self.input_args.version
         assert args.build_parameters.title == "Title"
-        assert args.build_parameters.version == "1.2.3"
+        assert args.build_parameters.version == "HoloscanVersionNum"
         assert args.build_parameters.command_filename == "app"
         assert args.build_parameters.sdk == SdkType.Holoscan
         assert args.application_manifest is not None
@@ -203,7 +212,12 @@ class TestPackagingArguments:
         self._setup_mocks(monkeypatch)
         monkeypatch.setattr(
             "holoscan.cli.packager.platforms.Platform.configure_platforms",
-            lambda a, b, c, d, e: (SdkType.MonaiDeploy, "1.2.3", []),
+            lambda a, b, c, d, e: (
+                SdkType.MonaiDeploy,
+                "HoloscanVersionNum",
+                "MonaiDeployVersionNum",
+                [],
+            ),
         )
         args = PackagingArguments(self.input_args, pathlib.Path("/temp"))
 

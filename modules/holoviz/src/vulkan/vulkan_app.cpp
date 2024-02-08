@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,10 +22,13 @@
 #include <vulkan/spv/geometry_color_shader.glsl.vert.h>
 #include <vulkan/spv/geometry_shader.glsl.frag.h>
 #include <vulkan/spv/geometry_shader.glsl.vert.h>
-#include <vulkan/spv/geometry_text_shader.glsl.frag.h>
-#include <vulkan/spv/geometry_text_shader.glsl.vert.h>
 #include <vulkan/spv/image_shader.glsl.frag.h>
 #include <vulkan/spv/image_shader.glsl.vert.h>
+#include <vulkan/spv/imgui_shader.glsl.frag.h>
+#include <vulkan/spv/imgui_shader.glsl.vert.h>
+
+#include <backends/imgui_impl_vulkan.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -47,7 +50,10 @@
 #include <fonts/roboto_bold_ttf.hpp>
 #include <holoscan/logger/logger.hpp>
 #include <nvh/fileoperations.hpp>
-#include <nvvk/appbase_vk.hpp>
+
+// nvvk is including glfw, add this define to prevent the GLFW header from including the OpenGL
+// header
+#define GLFW_INCLUDE_NONE 1
 #include <nvvk/commands_vk.hpp>
 #include <nvvk/context_vk.hpp>
 #include <nvvk/descriptorsets_vk.hpp>
@@ -68,17 +74,23 @@ static void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* ds
                         uint32_t* component_size) {
   switch (format) {
     case ImageFormat::R8_UINT:
+    case ImageFormat::R8_SINT:
     case ImageFormat::R8_UNORM:
+    case ImageFormat::R8_SNORM:
+    case ImageFormat::R8_SRGB:
       *src_channels = *dst_channels = 1u;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R16_UINT:
+    case ImageFormat::R16_SINT:
     case ImageFormat::R16_UNORM:
+    case ImageFormat::R16_SNORM:
     case ImageFormat::R16_SFLOAT:
       *src_channels = *dst_channels = 1u;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::R32_UINT:
+    case ImageFormat::R32_SINT:
       *src_channels = *dst_channels = 1u;
       *component_size = sizeof(uint32_t);
       break;
@@ -87,27 +99,34 @@ static void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* ds
       *component_size = sizeof(float);
       break;
     case ImageFormat::R8G8B8_UNORM:
-      *src_channels = 3u;
-      *dst_channels = 4u;
-      *component_size = sizeof(uint8_t);
-      break;
-    case ImageFormat::B8G8R8_UNORM:
+    case ImageFormat::R8G8B8_SNORM:
+    case ImageFormat::R8G8B8_SRGB:
       *src_channels = 3u;
       *dst_channels = 4u;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R8G8B8A8_UNORM:
-    case ImageFormat::B8G8R8A8_UNORM:
+    case ImageFormat::R8G8B8A8_SNORM:
+    case ImageFormat::R8G8B8A8_SRGB:
       *src_channels = *dst_channels = 4u;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R16G16B16A16_UNORM:
+    case ImageFormat::R16G16B16A16_SNORM:
     case ImageFormat::R16G16B16A16_SFLOAT:
       *src_channels = *dst_channels = 4u;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::R32G32B32A32_SFLOAT:
       *src_channels = *dst_channels = 4u;
+      *component_size = sizeof(float);
+      break;
+    case ImageFormat::D16_UNORM:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(uint16_t);
+      break;
+    case ImageFormat::X8_D24_UNORM:
+      *src_channels = *dst_channels = 1u;
       *component_size = sizeof(uint32_t);
       break;
     case ImageFormat::D32_SFLOAT:
@@ -126,14 +145,29 @@ static vk::Format to_vulkan_format(ImageFormat format) {
     case ImageFormat::R8_UINT:
       vk_format = vk::Format::eR8Uint;
       break;
+    case ImageFormat::R8_SINT:
+      vk_format = vk::Format::eR8Sint;
+      break;
     case ImageFormat::R8_UNORM:
       vk_format = vk::Format::eR8Unorm;
+      break;
+    case ImageFormat::R8_SNORM:
+      vk_format = vk::Format::eR8Snorm;
+      break;
+    case ImageFormat::R8_SRGB:
+      vk_format = vk::Format::eR8Srgb;
       break;
     case ImageFormat::R16_UINT:
       vk_format = vk::Format::eR16Uint;
       break;
+    case ImageFormat::R16_SINT:
+      vk_format = vk::Format::eR16Sint;
+      break;
     case ImageFormat::R16_UNORM:
       vk_format = vk::Format::eR16Unorm;
+      break;
+    case ImageFormat::R16_SNORM:
+      vk_format = vk::Format::eR16Snorm;
       break;
     case ImageFormat::R16_SFLOAT:
       vk_format = vk::Format::eR16Sfloat;
@@ -141,29 +175,47 @@ static vk::Format to_vulkan_format(ImageFormat format) {
     case ImageFormat::R32_UINT:
       vk_format = vk::Format::eR32Uint;
       break;
+    case ImageFormat::R32_SINT:
+      vk_format = vk::Format::eR32Sint;
+      break;
     case ImageFormat::R32_SFLOAT:
       vk_format = vk::Format::eR32Sfloat;
       break;
     case ImageFormat::R8G8B8_UNORM:
       vk_format = vk::Format::eR8G8B8A8Unorm;
       break;
-    case ImageFormat::B8G8R8_UNORM:
-      vk_format = vk::Format::eB8G8R8A8Unorm;
+    case ImageFormat::R8G8B8_SNORM:
+      vk_format = vk::Format::eR8G8B8A8Snorm;
+      break;
+    case ImageFormat::R8G8B8_SRGB:
+      vk_format = vk::Format::eR8G8B8A8Srgb;
       break;
     case ImageFormat::R8G8B8A8_UNORM:
       vk_format = vk::Format::eR8G8B8A8Unorm;
       break;
-    case ImageFormat::B8G8R8A8_UNORM:
-      vk_format = vk::Format::eB8G8R8A8Unorm;
+    case ImageFormat::R8G8B8A8_SNORM:
+      vk_format = vk::Format::eR8G8B8A8Snorm;
+      break;
+    case ImageFormat::R8G8B8A8_SRGB:
+      vk_format = vk::Format::eR8G8B8A8Srgb;
       break;
     case ImageFormat::R16G16B16A16_UNORM:
       vk_format = vk::Format::eR16G16B16A16Unorm;
+      break;
+    case ImageFormat::R16G16B16A16_SNORM:
+      vk_format = vk::Format::eR16G16B16A16Snorm;
       break;
     case ImageFormat::R16G16B16A16_SFLOAT:
       vk_format = vk::Format::eR16G16B16A16Sfloat;
       break;
     case ImageFormat::R32G32B32A32_SFLOAT:
       vk_format = vk::Format::eR32G32B32A32Sfloat;
+      break;
+    case ImageFormat::D16_UNORM:
+      vk_format = vk::Format::eD16Unorm;
+      break;
+    case ImageFormat::X8_D24_UNORM:
+      vk_format = vk::Format::eX8D24UnormPack32;
       break;
     case ImageFormat::D32_SFLOAT:
       vk_format = vk::Format::eD32Sfloat;
@@ -486,10 +538,11 @@ class Vulkan::Impl {
   void set_viewport(float x, float y, float width, float height);
 
   Texture* create_texture_for_cuda_interop(uint32_t width, uint32_t height, ImageFormat format,
+                                           const vk::ComponentMapping& component_mapping,
                                            vk::Filter filter, bool normalized);
   Texture* create_texture(uint32_t width, uint32_t height, ImageFormat format, size_t data_size,
-                          const void* data, vk::Filter filter, bool normalized,
-                          bool export_allocation);
+                          const void* data, const vk::ComponentMapping& component_mapping,
+                          vk::Filter filter, bool normalized, bool export_allocation);
 
   void upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, Texture* texture,
                          CUstream stream);
@@ -510,9 +563,9 @@ class Vulkan::Impl {
             const std::array<float, 4>& color, float point_size, float line_width,
             const nvmath::mat4f& view_matrix);
 
-  void draw_text_indexed(vk::DescriptorSet desc_set, Buffer* vertex_buffer, Buffer* index_buffer,
-                         vk::IndexType index_type, uint32_t index_count, uint32_t first_index,
-                         uint32_t vertex_offset, float opacity, const nvmath::mat4f& view_matrix);
+  void draw_imgui(vk::DescriptorSet desc_set, Buffer* vertex_buffer, Buffer* index_buffer,
+                  vk::IndexType index_type, uint32_t index_count, uint32_t first_index,
+                  uint32_t vertex_offset, float opacity, const nvmath::mat4f& view_matrix);
 
   void draw_indexed(vk::Pipeline pipeline, vk::PipelineLayout pipeline_layout,
                     vk::DescriptorSet desc_set, const std::vector<Buffer*>& vertex_buffers,
@@ -528,7 +581,7 @@ class Vulkan::Impl {
                     const nvmath::mat4f& view_matrix);
 
   void read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                        CUdeviceptr device_ptr, CUstream stream);
+                        CUdeviceptr device_ptr, CUstream stream, size_t row_pitch);
 
  private:
   void init_im_gui(const std::string& font_path, float font_size_in_pixels);
@@ -557,7 +610,8 @@ class Vulkan::Impl {
       const uint32_t* fragment_shader, size_t fragment_shader_size, vk::PrimitiveTopology topology,
       const std::vector<vk::DynamicState>& dynamic_states,
       const std::vector<vk::VertexInputBindingDescription>& binding_descriptions,
-      const std::vector<vk::VertexInputAttributeDescription>& attribute_descriptions);
+      const std::vector<vk::VertexInputAttributeDescription>& attribute_descriptions,
+      bool depth_write_enable = true);
 
   CUstream select_cuda_stream(CUstream stream);
   void sync_with_selected_stream(CUstream ext_stream, CUstream selected_stream);
@@ -641,9 +695,26 @@ class Vulkan::Impl {
     vk::CommandBuffer cmd_buffer_ = nullptr;
     vk::UniqueSemaphore semaphore_;
     vk::UniqueFence fence_;
+    bool fence_triggered_ = false;
     vk::Fence frame_fence_ = nullptr;
+
+    /**
+     * Reset the job so it can be re-used
+     *
+     * @param device Vulkan device
+     */
+    void reset(vk::Device& device) {
+      if (fence_) {
+        // reset the fence to be re-used
+        device.resetFences(fence_.get());
+      }
+      fence_triggered_ = false;
+      frame_fence_ = nullptr;
+    }
   };
   std::list<TransferJob> transfer_jobs_;
+  // a list of finished transfer jobs which can be re-used
+  std::list<TransferJob> finished_transfer_jobs_;
 
   enum ReadTransferType { COLOR, DEPTH, COUNT };
   std::array<TransferJob, ReadTransferType::COUNT> read_transfer_jobs_{};
@@ -651,16 +722,16 @@ class Vulkan::Impl {
 
   vk::UniquePipelineLayout image_pipeline_layout_;
   vk::UniquePipelineLayout geometry_pipeline_layout_;
-  vk::UniquePipelineLayout geometry_text_pipeline_layout_;
+  vk::UniquePipelineLayout imgui_pipeline_layout_;
 
   nvvk::DescriptorSetBindings desc_set_layout_bind_;
   vk::UniqueDescriptorSetLayout desc_set_layout_;
 
-  nvvk::DescriptorSetBindings desc_set_layout_bind_text_;
-  vk::UniqueDescriptorSetLayout desc_set_layout_text_;
-  vk::UniqueDescriptorPool desc_pool_text_;
-  vk::DescriptorSet desc_set_text_;
-  vk::Sampler sampler_text_;
+  nvvk::DescriptorSetBindings desc_set_layout_bind_imgui_;
+  vk::UniqueDescriptorSetLayout desc_set_layout_imgui_;
+  vk::UniqueDescriptorPool desc_pool_imgui_;
+  vk::DescriptorSet desc_set_imgui_;
+  vk::Sampler sampler_imgui_;
 
   vk::UniquePipeline image_pipeline_;
 
@@ -674,9 +745,7 @@ class Vulkan::Impl {
   vk::UniquePipeline geometry_line_strip_color_pipeline_;
   vk::UniquePipeline geometry_triangle_color_pipeline_;
 
-  vk::UniquePipeline geometry_text_pipeline_;
-
-  ImGuiContext* im_gui_context_ = nullptr;
+  vk::UniquePipeline imgui_pipeline_;
 };
 
 Vulkan::Impl::~Impl() {
@@ -686,12 +755,9 @@ Vulkan::Impl::~Impl() {
 
       cleanup_transfer_jobs();
 
-      nvvk_.alloc_.releaseSampler(sampler_text_);
+      nvvk_.alloc_.releaseSampler(sampler_imgui_);
 
-      if (ImGui::GetCurrentContext() != nullptr) {
-        ImGui_ImplVulkan_Shutdown();
-        if (im_gui_context_) { ImGui::DestroyContext(im_gui_context_); }
-      }
+      ImGui_ImplVulkan_Shutdown();
     }
   } catch (const std::exception& e) {
     HOLOSCAN_LOG_ERROR("Vulkan::Impl destructor failed with {}", e.what());
@@ -855,6 +921,10 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                    1,
                                    VK_SHADER_STAGE_FRAGMENT_BIT);
+  desc_set_layout_bind_.addBinding(SAMPLE_BINDING_COLOR_S,
+                                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   1,
+                                   VK_SHADER_STAGE_FRAGMENT_BIT);
   desc_set_layout_bind_.addBinding(SAMPLE_BINDING_LUT,
                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                    1,
@@ -863,6 +933,19 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
                                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                    1,
                                    VK_SHADER_STAGE_FRAGMENT_BIT);
+  // since we have one fragment shader for all the different texture types and dynamically
+  // fetch from the right texture allow partially bound descriptor bindings (for example, when
+  // color_u is used, color and colors_s are not bound)
+  desc_set_layout_bind_.setBindingFlags(SAMPLE_BINDING_COLOR,
+                                        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+  desc_set_layout_bind_.setBindingFlags(SAMPLE_BINDING_COLOR_U,
+                                        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+  desc_set_layout_bind_.setBindingFlags(SAMPLE_BINDING_COLOR_S,
+                                        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+  desc_set_layout_bind_.setBindingFlags(SAMPLE_BINDING_LUT,
+                                        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+  desc_set_layout_bind_.setBindingFlags(SAMPLE_BINDING_DEPTH,
+                                        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
   desc_set_layout_ = vk::UniqueDescriptorSetLayout(
       desc_set_layout_bind_.createLayout(device_,
                                          VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR),
@@ -879,19 +962,19 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     info.minLod = -1000;
     info.maxLod = 1000;
     info.maxAnisotropy = 1.0f;
-    sampler_text_ = nvvk_.alloc_.acquireSampler(info);
+    sampler_imgui_ = nvvk_.alloc_.acquireSampler(info);
   }
-  desc_set_layout_bind_text_.addBinding(SAMPLE_BINDING_COLOR,
-                                        vk::DescriptorType::eCombinedImageSampler,
-                                        1,
-                                        vk::ShaderStageFlagBits::eFragment,
-                                        &sampler_text_);
-  desc_set_layout_text_ =
-      vk::UniqueDescriptorSetLayout(desc_set_layout_bind_text_.createLayout(device_), device_);
-  desc_pool_text_ =
-      vk::UniqueDescriptorPool(desc_set_layout_bind_text_.createPool(device_), device_);
-  desc_set_text_ =
-      nvvk::allocateDescriptorSet(device_, desc_pool_text_.get(), desc_set_layout_text_.get());
+  desc_set_layout_bind_imgui_.addBinding(SAMPLE_BINDING_COLOR,
+                                         vk::DescriptorType::eCombinedImageSampler,
+                                         1,
+                                         vk::ShaderStageFlagBits::eFragment,
+                                         &sampler_imgui_);
+  desc_set_layout_imgui_ =
+      vk::UniqueDescriptorSetLayout(desc_set_layout_bind_imgui_.createLayout(device_), device_);
+  desc_pool_imgui_ =
+      vk::UniqueDescriptorPool(desc_set_layout_bind_imgui_.createPool(device_), device_);
+  desc_set_imgui_ =
+      nvvk::allocateDescriptorSet(device_, desc_pool_imgui_.get(), desc_set_layout_imgui_.get());
 
   // Push constants
   vk::PushConstantRange push_constant_ranges[2];
@@ -1026,14 +1109,14 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
       binding_description_float_3_uint8_4,
       attribute_description_float_3_uint8_4);
 
-  // create the pipeline layout for text geometry
+  // create the pipeline layout for imgui
   {
     vk::PipelineLayoutCreateInfo create_info;
     create_info.setLayoutCount = 1;
-    create_info.pSetLayouts = &desc_set_layout_text_.get();
+    create_info.pSetLayouts = &desc_set_layout_imgui_.get();
     create_info.pushConstantRangeCount = 2;
     create_info.pPushConstantRanges = push_constant_ranges;
-    geometry_text_pipeline_layout_ = device_.createPipelineLayoutUnique(create_info);
+    imgui_pipeline_layout_ = device_.createPipelineLayoutUnique(create_info);
   }
 
   const std::vector<vk::VertexInputBindingDescription> binding_description_imgui{
@@ -1043,16 +1126,20 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
       {1, 0, vk::Format::eR32G32Sfloat, IM_OFFSETOF(ImDrawVert, uv)},
       {2, 0, vk::Format::eR8G8B8A8Unorm, IM_OFFSETOF(ImDrawVert, col)}};
 
-  geometry_text_pipeline_ = create_pipeline(
-      geometry_text_pipeline_layout_.get(),
-      geometry_text_shader_glsl_vert,
-      sizeof(geometry_text_shader_glsl_vert) / sizeof(geometry_text_shader_glsl_vert[0]),
-      geometry_text_shader_glsl_frag,
-      sizeof(geometry_text_shader_glsl_frag) / sizeof(geometry_text_shader_glsl_frag[0]),
-      vk::PrimitiveTopology::eTriangleList,
-      {},
-      binding_description_imgui,
-      attribute_description_imgui);
+  imgui_pipeline_ =
+      create_pipeline(imgui_pipeline_layout_.get(),
+                      imgui_shader_glsl_vert,
+                      sizeof(imgui_shader_glsl_vert) / sizeof(imgui_shader_glsl_vert[0]),
+                      imgui_shader_glsl_frag,
+                      sizeof(imgui_shader_glsl_frag) / sizeof(imgui_shader_glsl_frag[0]),
+                      vk::PrimitiveTopology::eTriangleList,
+                      {},
+                      binding_description_imgui,
+                      attribute_description_imgui,
+                      // There is depth buffer fighting when enabling depth writes for imgui
+                      // probably because things are just drawn on top of each other. Therefore
+                      // disable depth writes.
+                      false /*depth_write_enable*/);
 
   // ImGui initialization
   init_im_gui(font_path, font_size_in_pixels);
@@ -1066,9 +1153,6 @@ Window* Vulkan::Impl::get_window() const {
 }
 
 void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_pixels) {
-  // if the app did not specify a context, create our own
-  if (!ImGui::GetCurrentContext()) { im_gui_context_ = ImGui::CreateContext(); }
-
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;  // Avoiding the INI file
   io.LogFilename = nullptr;
@@ -1144,15 +1228,24 @@ void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_
 }
 
 void Vulkan::Impl::begin_transfer_pass() {
-  // create a new transfer job and a command buffer
-  transfer_jobs_.emplace_back();
+  if (finished_transfer_jobs_.empty()) {
+    // create a new transfer job and a command buffer
+    transfer_jobs_.emplace_back();
+    // create the fence and semaphore needed for submission
+    transfer_jobs_.back().semaphore_ = device_.createSemaphoreUnique({});
+    transfer_jobs_.back().fence_ = device_.createFenceUnique({});
+  } else {
+    // reuse an existing transfer job
+    transfer_jobs_.splice(
+        transfer_jobs_.end(), finished_transfer_jobs_, finished_transfer_jobs_.begin());
+  }
   TransferJob& transfer_job = transfer_jobs_.back();
 
   transfer_job.cmd_buffer_ = nvvk_.transfer_cmd_pool_.createCommandBuffer();
 }
 
 void Vulkan::Impl::end_transfer_pass() {
-  if (transfer_jobs_.empty() || (transfer_jobs_.back().fence_)) {
+  if (transfer_jobs_.empty()) {
     throw std::runtime_error("Not in transfer pass.");
   }
 
@@ -1160,10 +1253,6 @@ void Vulkan::Impl::end_transfer_pass() {
 
   // end the command buffer for this job
   transfer_job.cmd_buffer_.end();
-
-  // create the fence and semaphore needed for submission
-  transfer_job.semaphore_ = device_.createSemaphoreUnique({});
-  transfer_job.fence_ = device_.createFenceUnique({});
 
   // finalize the staging job for later cleanup of resources
   // associates all current staging resources with the transfer fence
@@ -1231,7 +1320,7 @@ void Vulkan::Impl::end_render_pass() {
 
 void Vulkan::Impl::cleanup_transfer_jobs() {
   for (auto it = transfer_jobs_.begin(); it != transfer_jobs_.end();) {
-    if (it->fence_) {
+    if (it->fence_ && !it->fence_triggered_) {
       // check if the upload fence was triggered, that means the copy has completed and cmd
       // buffer can be destroyed
       const vk::Result result = device_.getFenceStatus(it->fence_.get());
@@ -1242,21 +1331,24 @@ void Vulkan::Impl::cleanup_transfer_jobs() {
         // before destroying the fence release all staging buffers using that fence
         nvvk_.alloc_.releaseStaging();
 
-        it->fence_.reset();
+        it->fence_triggered_ = true;
       } else if (result != vk::Result::eNotReady) {
         vk::resultCheck(result, "Failed to get upload fence status");
       }
     }
 
-    if (!it->fence_) {
+    if (!it->fence_ || it->fence_triggered_) {
       if (it->frame_fence_) {
         // check if the frame fence was triggered, that means the job can be destroyed
         const vk::Result result = device_.getFenceStatus(it->frame_fence_);
         if (result == vk::Result::eSuccess) {
-          it->semaphore_.reset();
-          /// @todo instead of allocating and destroying semaphore and fences, move to
-          /// unused list and reuse (call 'device_.resetFences(1, &it->fence_);' to reuse)
-          it = transfer_jobs_.erase(it);
+          // reset the transfer job so it can be reused
+          it->reset(device_);
+          // move to the list of finished transfer job, the next transfer will look into that
+          // list and reuse a job
+          auto next = std::next(it);
+          finished_transfer_jobs_.splice(finished_transfer_jobs_.end(), transfer_jobs_, it);
+          it = next;
           continue;
         } else if (result != vk::Result::eNotReady) {
           vk::resultCheck(result, "Failed to get frame fence status");
@@ -1534,11 +1626,12 @@ vk::UniquePipeline Vulkan::Impl::create_pipeline(
     const uint32_t* fragment_shader, size_t fragment_shader_size, vk::PrimitiveTopology topology,
     const std::vector<vk::DynamicState>& dynamic_states,
     const std::vector<vk::VertexInputBindingDescription>& binding_descriptions,
-    const std::vector<vk::VertexInputAttributeDescription>& attribute_descriptions) {
+    const std::vector<vk::VertexInputAttributeDescription>& attribute_descriptions,
+    bool depth_write_enable) {
   nvvk::GraphicsPipelineState state;
 
   state.depthStencilState.depthTestEnable = true;
-  state.depthStencilState.depthWriteEnable = true;
+  state.depthStencilState.depthWriteEnable = depth_write_enable;
   state.depthStencilState.depthCompareOp = vk::CompareOp::eLessOrEqual;
   state.depthStencilState.depthBoundsTestEnable = false;
   state.depthStencilState.stencilTestEnable = false;
@@ -1568,7 +1661,7 @@ vk::UniquePipeline Vulkan::Impl::create_pipeline(
   color_blend_attachment_state.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
   color_blend_attachment_state.colorBlendOp = vk::BlendOp::eAdd;
   color_blend_attachment_state.srcAlphaBlendFactor = vk::BlendFactor::eOne;
-  color_blend_attachment_state.dstAlphaBlendFactor = vk::BlendFactor::eZero;
+  color_blend_attachment_state.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
   color_blend_attachment_state.alphaBlendOp = vk::BlendOp::eAdd;
   // remove the default blend attachment state
   state.clearBlendAttachmentStates();
@@ -1648,9 +1741,11 @@ void Vulkan::Impl::sync_with_selected_stream(CUstream ext_stream, CUstream selec
 }
 
 Vulkan::Texture* Vulkan::Impl::create_texture(uint32_t width, uint32_t height, ImageFormat format,
-                                              size_t data_size, const void* data, vk::Filter filter,
-                                              bool normalized, bool export_allocation) {
-  if (transfer_jobs_.empty() || (transfer_jobs_.back().fence_)) {
+                                              size_t data_size, const void* data,
+                                              const vk::ComponentMapping& component_mapping,
+                                              vk::Filter filter, bool normalized,
+                                              bool export_allocation) {
+  if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to create_texture() need to be enclosed by "
         "begin_transfer_pass() and end_transfer_pass()");
@@ -1695,8 +1790,9 @@ Vulkan::Texture* Vulkan::Impl::create_texture(uint32_t width, uint32_t height, I
   sampler_create_info.maxLod = normalized ? FLT_MAX : 0;
   sampler_create_info.unnormalizedCoordinates = normalized ? false : true;
 
-  const vk::ImageViewCreateInfo image_view_info =
+  vk::ImageViewCreateInfo image_view_info =
       nvvk::makeImageViewCreateInfo(image.image, image_create_info);
+  image_view_info.components = component_mapping;
   texture->texture_ = allocator->createTexture(image, image_view_info, sampler_create_info);
 
   // transition to shader layout
@@ -1732,10 +1828,10 @@ void Vulkan::Impl::set_viewport(float x, float y, float width, float height) {
   cmd_buf.setScissor(0, scissor);
 }
 
-Vulkan::Texture* Vulkan::Impl::create_texture_for_cuda_interop(uint32_t width, uint32_t height,
-                                                               ImageFormat format,
-                                                               vk::Filter filter, bool normalized) {
-  if (transfer_jobs_.empty() || (transfer_jobs_.back().fence_)) {
+Vulkan::Texture* Vulkan::Impl::create_texture_for_cuda_interop(
+    uint32_t width, uint32_t height, ImageFormat format,
+    const vk::ComponentMapping& component_mapping, vk::Filter filter, bool normalized) {
+  if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to create_texture_for_cuda_interop() "
         "need to be enclosed by "
@@ -1744,8 +1840,15 @@ Vulkan::Texture* Vulkan::Impl::create_texture_for_cuda_interop(uint32_t width, u
   }
 
   std::unique_ptr<Texture> texture;
-  texture.reset(create_texture(
-      width, height, format, 0, nullptr, filter, normalized, true /*export_allocation*/));
+  texture.reset(create_texture(width,
+                               height,
+                               format,
+                               0,
+                               nullptr,
+                               component_mapping,
+                               filter,
+                               normalized,
+                               true /*export_allocation*/));
 
   texture->import_to_cuda(cuda_service_);
 
@@ -1809,8 +1912,21 @@ void Vulkan::Impl::upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, T
       src_pitch = tmp_pitch;
     }
 
+    uint8_t alpha;
+    switch (texture->format_) {
+      case ImageFormat::R8G8B8_UNORM:
+      case ImageFormat::R8G8B8_SRGB:
+        alpha = 0xFf;
+        break;
+      case ImageFormat::R8G8B8_SNORM:
+        alpha = 0x7f;
+        break;
+      default:
+        throw std::runtime_error("Unhandled format.");
+    }
+
     ConvertR8G8B8ToR8G8B8A8(
-        texture->width_, texture->height_, device_ptr, src_pitch, array, stream);
+        texture->width_, texture->height_, device_ptr, src_pitch, array, stream, alpha);
   } else {
     // else just copy
     CUDA_MEMCPY2D memcpy_2d{};
@@ -1831,7 +1947,7 @@ void Vulkan::Impl::upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, T
 }
 
 void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture) {
-  if (transfer_jobs_.empty() || (transfer_jobs_.back().fence_)) {
+  if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to upload_to_texture() need to be enclosed by "
         "begin_transfer_pass() and end_transfer_pass()");
@@ -1888,9 +2004,21 @@ void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Tex
     }
     const uint8_t* src = reinterpret_cast<const uint8_t*>(host_ptr);
     uint32_t* dst = reinterpret_cast<uint32_t*>(mapping);
+    uint8_t alpha;
+    switch (texture->format_) {
+      case ImageFormat::R8G8B8_UNORM:
+      case ImageFormat::R8G8B8_SRGB:
+        alpha = 0xFf;
+        break;
+      case ImageFormat::R8G8B8_SNORM:
+        alpha = 0x7f;
+        break;
+      default:
+        throw std::runtime_error("Unhandled format.");
+    }
     for (uint32_t y = 0; y < texture->height_; ++y) {
       for (uint32_t x = 0; x < texture->width_; ++x) {
-        const uint8_t data[4]{src[0], src[1], src[2], 0xFF};
+        const uint8_t data[4]{src[0], src[1], src[2], alpha};
         *dst = *reinterpret_cast<const uint32_t*>(&data);
         src += 3;
         ++dst;
@@ -1927,7 +2055,7 @@ Vulkan::Buffer* Vulkan::Impl::create_buffer(size_t data_size, vk::BufferUsageFla
                                             const void* data) {
   std::unique_ptr<Buffer> buffer(new Buffer(&device_, &nvvk_.alloc_, data_size));
   if (data) {
-    if (transfer_jobs_.empty() || (transfer_jobs_.back().fence_)) {
+    if (transfer_jobs_.empty()) {
       throw std::runtime_error(
           "Transfer command buffer not set. Calls to create_buffer() with data need to be "
           "enclosed by begin_transfer_pass() and end_transfer_pass()");
@@ -1956,7 +2084,7 @@ Vulkan::Buffer* Vulkan::Impl::create_buffer_for_cuda_interop(size_t data_size,
 
 void Vulkan::Impl::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer,
                                     size_t dst_offset, CUstream stream) {
-  if (transfer_jobs_.empty() || (transfer_jobs_.back().fence_)) {
+  if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to upload_to_buffer() need to be enclosed by "
         "begin_transfer_pass() and end_transfer_pass()");
@@ -2009,7 +2137,7 @@ void Vulkan::Impl::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Bu
 }
 
 void Vulkan::Impl::upload_to_buffer(size_t data_size, const void* data, const Buffer* buffer) {
-  if (transfer_jobs_.empty() || (transfer_jobs_.back().fence_)) {
+  if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to upload_to_buffer() need to be enclosed by "
         "begin_transfer_pass() and end_transfer_pass()");
@@ -2038,6 +2166,11 @@ void Vulkan::Impl::draw_texture(Texture* texture, Texture* depth_texture, Textur
         (texture->format_ == ImageFormat::R32_UINT)) {
       color_sample_binding = SAMPLE_BINDING_COLOR_U;
       push_constants.flags |= PUSH_CONSTANT_FRAGMENT_FLAG_LUT_U;
+    } else if ((texture->format_ == ImageFormat::R8_SINT) ||
+               (texture->format_ == ImageFormat::R16_SINT) ||
+               (texture->format_ == ImageFormat::R32_SINT)) {
+      color_sample_binding = SAMPLE_BINDING_COLOR_S;
+      push_constants.flags |= PUSH_CONSTANT_FRAGMENT_FLAG_LUT_S;
     } else {
       push_constants.flags |= PUSH_CONSTANT_FRAGMENT_FLAG_LUT;
     }
@@ -2180,13 +2313,12 @@ void Vulkan::Impl::draw(vk::PrimitiveTopology topology, uint32_t count, uint32_t
   }
 }
 
-void Vulkan::Impl::draw_text_indexed(vk::DescriptorSet desc_set, Buffer* vertex_buffer,
-                                     Buffer* index_buffer, vk::IndexType index_type,
-                                     uint32_t index_count, uint32_t first_index,
-                                     uint32_t vertex_offset, float opacity,
-                                     const nvmath::mat4f& view_matrix) {
-  draw_indexed(geometry_text_pipeline_.get(),
-               geometry_text_pipeline_layout_.get(),
+void Vulkan::Impl::draw_imgui(vk::DescriptorSet desc_set, Buffer* vertex_buffer,
+                              Buffer* index_buffer, vk::IndexType index_type, uint32_t index_count,
+                              uint32_t first_index, uint32_t vertex_offset, float opacity,
+                              const nvmath::mat4f& view_matrix) {
+  draw_indexed(imgui_pipeline_.get(),
+               imgui_pipeline_layout_.get(),
                desc_set,
                {vertex_buffer},
                index_buffer,
@@ -2319,30 +2451,33 @@ void Vulkan::Impl::draw_indexed(vk::PrimitiveTopology topology,
 }
 
 void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height,
-                                    size_t buffer_size, CUdeviceptr device_ptr,
-                                    CUstream ext_stream) {
+                                    size_t buffer_size, CUdeviceptr device_ptr, CUstream ext_stream,
+                                    size_t row_pitch) {
   ReadTransferType transfer_type;
   vk::Image image;
   vk::Format image_format;
   vk::ImageAspectFlags image_aspect;
   vk::ImageLayout image_layout;
 
-  if (fmt == ImageFormat::R8G8B8A8_UNORM) {
-    transfer_type = ReadTransferType::COLOR;
-    image = fb_sequence_.get_active_color_image();
-    image_format = fb_sequence_.get_color_format();
-    image_aspect = vk::ImageAspectFlagBits::eColor;
-    image_layout =
-        surface_ ? vk::ImageLayout::ePresentSrcKHR : vk::ImageLayout::eColorAttachmentOptimal;
-  } else if (fmt == ImageFormat::D32_SFLOAT) {
-    transfer_type = ReadTransferType::DEPTH;
-    image = fb_sequence_.get_active_depth_image();
-    image_format = fb_sequence_.get_depth_format();
-    image_aspect = vk::ImageAspectFlagBits::eDepth;
-    image_layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
-  } else {
-    throw std::runtime_error(
-        "Unsupported image format, supported formats: R8G8B8A8_UNORM, D32_SFLOAT.");
+  switch (fmt) {
+    case ImageFormat::R8G8B8A8_UNORM:
+      transfer_type = ReadTransferType::COLOR;
+      image = fb_sequence_.get_active_color_image();
+      image_format = fb_sequence_.get_color_format();
+      image_aspect = vk::ImageAspectFlagBits::eColor;
+      image_layout =
+          surface_ ? vk::ImageLayout::ePresentSrcKHR : vk::ImageLayout::eColorAttachmentOptimal;
+      break;
+    case ImageFormat::D32_SFLOAT:
+      transfer_type = ReadTransferType::DEPTH;
+      image = fb_sequence_.get_active_depth_image();
+      image_format = fb_sequence_.get_depth_format();
+      image_aspect = vk::ImageAspectFlagBits::eDepth;
+      image_layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+      break;
+    default:
+      throw std::runtime_error(
+          "Unsupported image format, supported formats: R8G8B8A8_UNORM, D32_SFLOAT.");
   }
 
   TransferJob& read_job = read_transfer_jobs_[transfer_type];
@@ -2442,6 +2577,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
 
     // select the stream to be used by CUDA operations
     const CUstream stream = select_cuda_stream(ext_stream);
+    const size_t dst_pitch = row_pitch ? row_pitch : width * dst_channels * component_size;
 
     // synchronize with the Vulkan copy
     read_transfer_buffer->begin_access_with_cuda(stream);
@@ -2453,11 +2589,9 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
       // to destination memory
       UniqueAsyncCUdeviceptr tmp_device_ptr;
       CUdeviceptr dst_device_ptr;
-      size_t dst_pitch;
       if (!cuda_service_->IsMemOnDevice(device_ptr)) {
         // allocate temporary memory, note this is using the stream ordered memory allocator which
         // is not syncing globally like the normal `cuMemAlloc`
-        dst_pitch = width * dst_channels * component_size;
         tmp_device_ptr.reset([dst_pitch, read_height, stream] {
           CUdeviceptr device_ptr;
           CudaCheck(cuMemAllocAsync(&device_ptr, dst_pitch * read_height, stream));
@@ -2465,7 +2599,6 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
         }());
         dst_device_ptr = tmp_device_ptr.get().first;
       } else {
-        dst_pitch = width * dst_channels * component_size;
         dst_device_ptr = device_ptr;
       }
 
@@ -2485,8 +2618,8 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
         memcpy_2d.srcPitch = dst_pitch;
         memcpy_2d.dstMemoryType = CU_MEMORYTYPE_DEVICE;
         memcpy_2d.dstDevice = device_ptr;
-        memcpy_2d.dstPitch = width * dst_channels * component_size;
-        memcpy_2d.WidthInBytes = width * dst_channels * component_size;
+        memcpy_2d.dstPitch = dst_pitch;
+        memcpy_2d.WidthInBytes = dst_pitch;
         memcpy_2d.Height = read_height;
         CudaCheck(cuMemcpy2DAsync(&memcpy_2d, stream));
       }
@@ -2497,7 +2630,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
       memcpy2d.srcPitch = read_width * src_channels * component_size;
       memcpy2d.dstMemoryType = CU_MEMORYTYPE_DEVICE;
       memcpy2d.dstDevice = device_ptr;
-      memcpy2d.dstPitch = width * dst_channels * component_size;
+      memcpy2d.dstPitch = dst_pitch;
       memcpy2d.WidthInBytes = memcpy2d.srcPitch;
       memcpy2d.Height = read_height;
       CudaCheck(cuMemcpy2DAsync(&memcpy2d, stream));
@@ -2547,17 +2680,26 @@ void Vulkan::set_viewport(float x, float y, float width, float height) {
   impl_->set_viewport(x, y, width, height);
 }
 
-Vulkan::Texture* Vulkan::create_texture_for_cuda_interop(uint32_t width, uint32_t height,
-                                                         ImageFormat format, vk::Filter filter,
-                                                         bool normalized) {
-  return impl_->create_texture_for_cuda_interop(width, height, format, filter, normalized);
+Vulkan::Texture* Vulkan::create_texture_for_cuda_interop(
+    uint32_t width, uint32_t height, ImageFormat format,
+    const vk::ComponentMapping& component_mapping, vk::Filter filter, bool normalized) {
+  return impl_->create_texture_for_cuda_interop(
+      width, height, format, component_mapping, filter, normalized);
 }
 
 Vulkan::Texture* Vulkan::create_texture(uint32_t width, uint32_t height, ImageFormat format,
-                                        size_t data_size, const void* data, vk::Filter filter,
-                                        bool normalized) {
-  return impl_->create_texture(
-      width, height, format, data_size, data, filter, normalized, false /*export_allocation*/);
+                                        size_t data_size, const void* data,
+                                        const vk::ComponentMapping& component_mapping,
+                                        vk::Filter filter, bool normalized) {
+  return impl_->create_texture(width,
+                               height,
+                               format,
+                               data_size,
+                               data,
+                               component_mapping,
+                               filter,
+                               normalized,
+                               false /*export_allocation*/);
 }
 
 void Vulkan::destroy_texture(Texture* texture) {
@@ -2609,19 +2751,18 @@ void Vulkan::draw(vk::PrimitiveTopology topology, uint32_t count, uint32_t first
       topology, count, first, vertex_buffers, opacity, color, point_size, line_width, view_matrix);
 }
 
-void Vulkan::draw_text_indexed(vk::DescriptorSet desc_set, Buffer* vertex_buffer,
-                               Buffer* index_buffer, vk::IndexType index_type, uint32_t index_count,
-                               uint32_t first_index, uint32_t vertex_offset, float opacity,
-                               const nvmath::mat4f& view_matrix) {
-  impl_->draw_text_indexed(desc_set,
-                           vertex_buffer,
-                           index_buffer,
-                           index_type,
-                           index_count,
-                           first_index,
-                           vertex_offset,
-                           opacity,
-                           view_matrix);
+void Vulkan::draw_imgui(vk::DescriptorSet desc_set, Buffer* vertex_buffer, Buffer* index_buffer,
+                        vk::IndexType index_type, uint32_t index_count, uint32_t first_index,
+                        uint32_t vertex_offset, float opacity, const nvmath::mat4f& view_matrix) {
+  impl_->draw_imgui(desc_set,
+                    vertex_buffer,
+                    index_buffer,
+                    index_type,
+                    index_count,
+                    first_index,
+                    vertex_offset,
+                    opacity,
+                    view_matrix);
 }
 
 void Vulkan::draw_indexed(vk::PrimitiveTopology topology,
@@ -2644,8 +2785,8 @@ void Vulkan::draw_indexed(vk::PrimitiveTopology topology,
 }
 
 void Vulkan::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                              CUdeviceptr buffer, CUstream stream) {
-  impl_->read_framebuffer(fmt, width, height, buffer_size, buffer, stream);
+                              CUdeviceptr buffer, CUstream stream, size_t row_pitch) {
+  impl_->read_framebuffer(fmt, width, height, buffer_size, buffer, stream, row_pitch);
 }
 
 }  // namespace holoscan::viz

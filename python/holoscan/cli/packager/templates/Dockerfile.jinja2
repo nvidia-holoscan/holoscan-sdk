@@ -58,7 +58,11 @@ LABEL base="{{ base_image }}"
 LABEL tag="{{ tag }}"
 LABEL org.opencontainers.image.title="{{ title }}"
 LABEL org.opencontainers.image.version="{{ version }}"
-LABEL org.nvidia.holoscan="{{ sdk_version }}"
+LABEL org.nvidia.holoscan="{{ holoscan_sdk_version }}"
+{% if sdk_type == 'monai-deploy' %}
+LABEL org.monai.deploy.app-sdk="{{ monai_deploy_app_sdk_version }}"
+{% endif %}
+
 
 ENV HOLOSCAN_ENABLE_HEALTH_CHECK=true
 ENV HOLOSCAN_INPUT_PATH={{ full_input_path }}
@@ -100,7 +104,7 @@ RUN apt-get update \
 
 {% endif %}
 
-RUN groupadd -g $GID $UNAME
+RUN groupadd -f -g $GID $UNAME
 RUN useradd -rm -d /home/$UNAME -s /bin/bash -g $GID -G sudo -u $UID $UNAME
 RUN chown -R holoscan {{ working_dir }} 
 RUN chown -R holoscan {{ full_input_path }} 
@@ -133,19 +137,20 @@ COPY ./pip/requirements.txt /tmp/requirements.txt
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir --user -r /tmp/requirements.txt
 
-{% if holoscan_sdk_filename == 'pypi.org' %}
+# Install Holoscan from PyPI only when sdk_type is Holoscan. 
+# For MONAI Deploy, the APP SDK will install it unless user specifies the Holoscan SDK file.
+{% if holoscan_sdk_filename == 'pypi.org' and sdk_type == 'holoscan' %}
 # Install Holoscan from PyPI org
-RUN pip install holoscan=={{ sdk_version }}
-{% else %}
+RUN pip install holoscan=={{ holoscan_sdk_version }}
+{% elif sdk_type == 'holoscan' %}
 # Copy user-specified Holoscan SDK file
 COPY ./{{ holoscan_sdk_filename }} /tmp/{{ holoscan_sdk_filename }}
 RUN pip install /tmp/{{ holoscan_sdk_filename }}
 {% endif %}
 
-
 {% if monai_deploy_sdk_filename == 'pypi.org' %}
 # Install MONAI Deploy from PyPI org
-RUN pip install monai-deploy-app-sdk=={{ sdk_version }}
+RUN pip install monai-deploy-app-sdk=={{ monai_deploy_app_sdk_version }}
 {% elif sdk_type == 'monai-deploy' %}
 # Copy user-specified MONAI Deploy SDK file
 COPY ./{{ monai_deploy_sdk_filename }} /tmp/{{ monai_deploy_sdk_filename }}

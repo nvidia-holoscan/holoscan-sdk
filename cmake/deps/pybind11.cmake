@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,19 +17,19 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(pybind11 2.10.1
+rapids_cpm_find(pybind11 2.11.1
     GLOBAL_TARGETS pybind11
 
     CPM_ARGS
 
     GITHUB_REPOSITORY pybind/pybind11
-    GIT_TAG v2.10.1
+    GIT_TAG v2.11.1
     GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
 )
 
 # https://pybind11.readthedocs.io/en/stable/compiling.html#configuration-variables
 #    set(PYBIND11_PYTHON_VERSION 3.6) # It doesn't find python in manylinux2014 image
-if (NOT PYTHON_EXECUTABLE)
+if(NOT PYTHON_EXECUTABLE)
     set(PYTHON_EXECUTABLE /usr/bin/python3 PARENT_SCOPE)
-endif ()
+endif()

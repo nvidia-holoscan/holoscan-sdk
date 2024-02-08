@@ -43,7 +43,6 @@ class ExecutionContext;
 class ExtensionManager;
 class Executor;
 class Fragment;
-enum class FlowType;
 template <typename NodeT, typename EdgeDataElementT>
 class Graph;
 class GXFParameterAdaptor;

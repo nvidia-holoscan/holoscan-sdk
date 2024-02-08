@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +45,6 @@ nvidia::gxf::Handle<nvidia::gxf::VideoBuffer> get_videobuffer(Entity entity, con
   // We should use nullptr as a default name because In GXF, 'nullptr' should be used with
   // GxfComponentFind() if we want to get the first component of the given type.
 
-  // We first try to get holoscan::gxf::GXFTensor from GXF Entity.
   gxf_tid_t tid;
   auto tid_result = GxfComponentTypeId(
       entity.context(), nvidia::TypenameAsString<nvidia::gxf::VideoBuffer>(), &tid);

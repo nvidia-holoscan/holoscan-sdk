@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,22 @@ Operator to get a video stream from an AJA capture card.
 // PyAJASourceOp Constructor
 PYDOC(AJASourceOp_python, R"doc(
 Operator to get a video stream from an AJA capture card.
+
+Named inputs:
+    overlay_buffer_input: nvidia::gxf::VideoBuffer (optional)
+        The operator does not require a message on this input port in order for ``compute`` to be
+        called. If a message is found, and ``enable_overlay`` is ``True``, the image will be mixed
+        with the image captured by the AJA card. If `enable_overlay` is ``False``, any message on
+        this port will be ignored.
+
+Named outputs:
+    video_buffer_output: nvidia::gxf::VideoBuffer
+        The output video frame from the AJA capture card. If ``overlay_rdma`` is ``True``, this
+        video buffer will be on the device, otherwise it will be in pinned host memory.
+    overlay_buffer_output: nvidia::gxf::VideoBuffer (optional)
+        This output port will only emit a video buffer when ``enable_overlay`` is ``True``. If
+        ``overlay_rdma`` is ``True``, this video buffer will be on the device, otherwise it will be
+        in pinned host memory.
 
 Parameters
 ----------

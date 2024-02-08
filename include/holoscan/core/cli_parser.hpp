@@ -41,9 +41,9 @@ namespace holoscan {
  * - `--address`: The address (`[<IPv4 address or hostname>][:<port>]`) of the App Driver. If not
  * specified, the App Driver uses the default host address (0.0.0.0) with the default port number
  * (8765).
- * - `--worker-address`: The address (`[<IPv4 address or hostname>][:<port>]`) of the App Worker. If
- * not specified, the App Worker uses the default host address (0.0.0.0) with the default port
- * number randomly chosen from unused ports (between 10000 and 32767).
+ * - `--worker-address`: The address (`[<IP or hostname>][:<port>]`) of the App Worker. If
+ * not specified, the App Worker uses the default host address (0.0.0.0) with a randomly chosen port
+ * number between 10000 and 32767 that is not currently in use.
  * - `--fragments`: The comma-separated names of the fragments to be executed by the App Worker. If
  * not specified, only one fragment (selected by the App Driver) will be executed. `all` can be used
  * to run all the fragments.

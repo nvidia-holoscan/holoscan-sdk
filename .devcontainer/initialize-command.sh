@@ -35,31 +35,7 @@ if [ "${localWorkspaceFolder}" != "${TOP}" ]; then
       ${localWorkspaceFolder}/.devcontainer/library-scripts/common-debian.sh
 fi
 
-# We need to mount Vulkan icd.d JSON file into the container due to this issue
-# (https://github.com/NVIDIA/nvidia-container-toolkit/issues/16).
-# However, the location of the file is different depending on the driver installation method:
-#   - deb packages: /usr/share/vulkan/icd.d/nvidia_icd.json
-#   - .run files: /etc/vulkan/icd.d/nvidia_icd.json
-# So we need to check which one exists and mount it.
-
-# Here, we copy the existing icd.d JSON file to the temporary directory (/tmp) and mount it to the
-# location (/usr/share/vulkan/icd.d/nvidia_icd.json) that the container expects.
-# It is because VSCode DevContainer doesn't support conditional mount points.
-# (see https://github.com/microsoft/vscode-remote-release/issues/3972)
-if [ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]; then
-  icd_file=/usr/share/vulkan/icd.d/nvidia_icd.json
-elif [ -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
-  icd_file=/etc/vulkan/icd.d/nvidia_icd.json
-else
-  >&2 echo "ERROR: Cannot find the Vulkan ICD file from /usr/share/vulkan/icd.d/nvidia_icd.json or /etc/vulkan/icd.d/nvidia_icd.json"
-  exit 1
-fi
-
-# Copy the file to the temporary directory with the name 'holoscan_nvidia_icd.json'.
-cp ${icd_file} /tmp/holoscan_nvidia_icd.json
-echo "Mounting ${icd_file} to /usr/share/vulkan/icd.d/nvidia_icd.json through /tmp/holoscan_nvidia_icd.json"
-
-# Dockerfile in this VSCode DevContainer uses a cache image named `holoscan-sdk-dev` to
+# Dockerfile in this VSCode DevContainer uses a cache image named `holoscan-sdk-build` to
 # speed up the build process. To rebuild the cache image before container creation, it runs:
 #
 #   docker buildx use default  # use the default builder to access all the cache images
@@ -67,4 +43,4 @@ echo "Mounting ${icd_file} to /usr/share/vulkan/icd.d/nvidia_icd.json through /t
 #
 # as an initialization command.
 docker buildx use default
-${TOP}/run build_image --build_libtorch true
+${TOP}/run build_image

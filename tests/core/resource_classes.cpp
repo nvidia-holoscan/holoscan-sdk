@@ -66,6 +66,7 @@ TEST_F(ResourceClassesWithGXFContext, TestBlockMemoryPool) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<BlockMemoryPool>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::BlockMemoryPool"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestBlockMemoryPoolDefaultConstructor) {
@@ -85,6 +86,7 @@ TEST_F(ResourceClassesWithGXFContext, TestCudaStreamPool) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<CudaStreamPool>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CudaStreamPool"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestCudaStreamPoolDefaultConstructor) {
@@ -101,6 +103,7 @@ TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferReceiver) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<DoubleBufferReceiver>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::DoubleBufferReceiver"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferReceiverDefaultConstructor) {
@@ -117,6 +120,7 @@ TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferTransmitter) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<DoubleBufferTransmitter>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::DoubleBufferTransmitter"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferTransmitterDefaultConstructor) {
@@ -129,6 +133,7 @@ TEST_F(ResourceClassesWithGXFContext, TestStdComponentSerializer) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<StdComponentSerializer>()));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::StdComponentSerializer"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestStdComponentSerializerDefaultConstructor) {
@@ -141,6 +146,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUnboundedAllocator) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UnboundedAllocator>()));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UnboundedAllocator"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUnboundedAllocatorGXFComponentMethods) {
@@ -180,6 +186,7 @@ TEST_F(ResourceClassesWithGXFContext, TestVideoStreamSerializer) {
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<VideoStreamSerializer>()));
   EXPECT_EQ(std::string(resource->gxf_typename()),
             "nvidia::holoscan::stream_playback::VideoStreamSerializer"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestVideoStreamSerializerDefaultConstructor) {
@@ -192,6 +199,7 @@ TEST_F(ResourceClassesWithGXFContext, TestReceiver) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<Receiver>()));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::Receiver"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestReceiverDefaultConstructor) {
@@ -204,6 +212,7 @@ TEST_F(ResourceClassesWithGXFContext, TestTransmitter) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<Transmitter>()));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::Transmitter"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestTransmitterDefaultConstructor) {
@@ -216,6 +225,7 @@ TEST_F(ResourceClassesWithGXFContext, TestAllocator) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<Allocator>()));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::Allocator"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 
   // For the base Allocator, this always returns false
   EXPECT_EQ(resource->is_available(1024), false);
@@ -240,6 +250,7 @@ TEST_F(ResourceClassesWithGXFContext, TestRealtimeClock) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<RealtimeClock>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::RealtimeClock"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestRealtimeClockDefaultConstructor) {
@@ -255,6 +266,7 @@ TEST_F(ResourceClassesWithGXFContext, TestManualClock) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<ManualClock>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::ManualClock"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestManualClockDefaultConstructor) {
@@ -271,6 +283,7 @@ TEST_F(ResourceClassesWithGXFContext, TestSerializationBuffer) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<SerializationBuffer>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::SerializationBuffer"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestSerializationBufferDefaultConstructor) {
@@ -287,6 +300,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxSerializationBuffer) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxSerializationBuffer>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxSerializationBuffer"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUcxSerializationBufferDefaultConstructor) {
@@ -302,6 +316,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxComponentSerializer) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxComponentSerializer>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxComponentSerializer"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUcxComponentSerializerDefaultConstructor) {
@@ -317,6 +332,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxHoloscanComponentSerializer) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxHoloscanComponentSerializer>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxHoloscanComponentSerializer"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUcxHoloscanComponentSerializerDefaultConstructor) {
@@ -339,6 +355,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxEntitySerializer) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxEntitySerializer>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxEntitySerializer"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUcxEntitySerializerDefaultConstructor) {
@@ -365,6 +382,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxReceiver) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxReceiver>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxReceiver"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUcxReceiverDefaultConstructor) {
@@ -384,13 +402,16 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitter) {
       Arg{"buffer", buffer},
       Arg{"capacity", static_cast<uint64_t>(1)},
       Arg{"policy", static_cast<uint64_t>(2)},
-      Arg{"address", std::string("0.0.0.0")},
-      Arg{"port", static_cast<int32_t>(13337)},
+      Arg{"address", std::string("10.0.0.20")},
+      Arg{"port", static_cast<uint32_t>(13337)},
+      Arg{"local_address", std::string("0.0.0.0")},
+      Arg{"local_port", static_cast<uint32_t>(0)},
   };
   auto resource = F.make_resource<UcxTransmitter>(name, arglist);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxTransmitter>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxTransmitter"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitterDefaultConstructor) {

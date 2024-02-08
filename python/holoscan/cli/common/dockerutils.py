@@ -1,31 +1,35 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import json
 import logging
 import os
 import posixpath
 import re
+import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from python_on_whales import docker
 
+from ..common.utils import run_cmd_output
 from .constants import DefaultValues, EnvironmentVariables
-from .enum_types import SdkType
-from .exceptions import InvalidManifest, RunContainerError
+from .enum_types import PlatformConfiguration, SdkType
+from .exceptions import InvalidManifestError, RunContainerError
 from .utils import get_requested_gpus
 
 logger = logging.getLogger("common")
@@ -79,12 +83,12 @@ def create_or_use_network(network: Optional[str], image_name: Optional[str]) -> 
         if len(networks) > 0:
             return networks[0].name
     except Exception as ex:
-        raise RunContainerError(f"error retrieving network information: {ex}")
+        raise RunContainerError(f"error retrieving network information: {ex}") from ex
 
     try:
         return docker.network.create(network, driver="bridge").name
     except Exception as ex:
-        raise RunContainerError(f"error creating Docker network: {ex}")
+        raise RunContainerError(f"error creating Docker network: {ex}") from ex
 
 
 def image_exists(image_name: str) -> bool:
@@ -156,11 +160,15 @@ def docker_run(
     commands: List[str],
     network: str,
     network_interface: Optional[str],
+    use_all_nics: bool,
     config: Optional[Path],
     render: bool,
     user: str,
     terminal: bool,
+    devices: List[str],
+    platform_config: str,
     shared_memory_size: str = "1GB",
+    is_root: bool = False,
 ):
     """Creates and runs a Docker container
 
@@ -176,17 +184,23 @@ def docker_run(
         quiet (bool): prints only stderr when True, otherwise, prints all logs
         commands (List[str]): list of arguments to provide to the container
         network (str): Docker network to associate the container with
-        network_interface (Optional[str]): Name of the network interface for setting UCX_NET_DEVICES
+        network_interface (Optional[str]): Name of the network interface for setting
+            UCX_NET_DEVICES
+        use_all_nics (bool): Sets UCX_CM_USE_ALL_DEVICES to 'y' if True
         config (Optional[Path]): optional configuration file for overriding the embedded one
         render (bool): whether or not to enable graphic rendering
-        user: UID and GID to associate with the container
-        terminal: whether or not to enter bash terminal
-        shared_memory_size: size of /dev/shm
+        user (str): UID and GID to associate with the container
+        terminal (bool): whether or not to enter bash terminal
+        devices (List[str]): list of devices to be mapped into the container
+        platformConfig (str): platform configuration value used when packaging the application,
+        shared_memory_size (str): size of /dev/shm,
+        is_root (bool): whether the user is root (UID = 0) or not
     """
     volumes = []
     environment_variables = {
         "NVIDIA_DRIVER_CAPABILITIES": "graphics,video,compute,utility,display",
         "HOLOSCAN_HOSTING_SERVICE": "HOLOSCAN_RUN",
+        "UCX_CM_USE_ALL_DEVICES": "y" if use_all_nics else "n",
     }
 
     if network_interface is not None:
@@ -194,29 +208,31 @@ def docker_run(
 
     if logger.root.level == logging.DEBUG:
         environment_variables["UCX_LOG_LEVEL"] = "DEBUG"
+        environment_variables["VK_LOADER_DEBUG"] = "all"
 
     if render:
         volumes.append(("/tmp/.X11-unix", "/tmp/.X11-unix"))
-        if os.path.exists("/usr/share/vulkan/icd.d/nvidia_icd.json"):
-            volumes.append(
-                (
-                    "/usr/share/vulkan/icd.d/nvidia_icd.json",
-                    "/usr/share/vulkan/icd.d/nvidia_icd.json",
-                )
-            )
-        elif os.path.exists("/etc/vulkan/icd.d/nvidia_icd.json"):
-            volumes.append(
-                ("/etc/vulkan/icd.d/nvidia_icd.json", "/etc/vulkan/icd.d/nvidia_icd.json")
-            )
-
         display = os.environ.get("DISPLAY", None)
         if display is not None:
             environment_variables["DISPLAY"] = display
 
     gpu = None
-    requested_gpus = get_requested_gpus(pkg_info)
-    if requested_gpus > 0:
-        gpu = "all"
+
+    # If the image was built for iGPU but the system is configured for dGPU, attempt
+    # targeting the system's iGPU using the CDI spec
+    if platform_config == PlatformConfiguration.iGPU.value and not _host_is_native_igpu():
+        environment_variables["NVIDIA_VISIBLE_DEVICES"] = "nvidia.com/igpu=0"
+        logger.info(
+            "Attempting to run an image for iGPU (integrated GPU) on a system configured "
+            "with a dGPU (discrete GPU). If this is correct (ex: IGX Orin developer kit), "
+            "make sure to enable iGPU on dGPU support as described in your developer kit "
+            "user guide. If not, either rebuild the image for dGPU or run this image on a "
+            "system configured for iGPU only (ex: Jetson AGX, Nano...)."
+        )
+    else:
+        requested_gpus = get_requested_gpus(pkg_info)
+        if requested_gpus > 0:
+            gpu = "all"
 
     if "path" in app_info["input"]:
         mapped_input = Path(app_info["input"]["path"]).as_posix()
@@ -257,12 +273,15 @@ def docker_run(
 
     if config is not None:
         if EnvironmentVariables.HOLOSCAN_CONFIG_PATH not in app_info["environment"]:
-            raise InvalidManifest(
+            raise InvalidManifestError(
                 "The application manifest does not contain a required "
                 f"environment variable: '{EnvironmentVariables.HOLOSCAN_CONFIG_PATH}'"
             )
         volumes.append(
-            (str(config), app_info["environment"][EnvironmentVariables.HOLOSCAN_CONFIG_PATH])
+            (
+                str(config),
+                app_info["environment"][EnvironmentVariables.HOLOSCAN_CONFIG_PATH],
+            )
         )
         logger.info(f"Using user provided configuration file: {config}")
 
@@ -277,7 +296,12 @@ def docker_run(
         "memlock=-1",
         "stack=67108864",
     ]
-    devices = _additional_devices_to_mount()
+    additional_devices, group_adds = _additional_devices_to_mount(is_root)
+    devices.extend(additional_devices)
+
+    video_group = run_cmd_output('/usr/bin/cat /etc/group | grep "video" | cut -d: -f3').strip()
+    if not is_root and video_group not in group_adds:
+        group_adds.append(video_group)
 
     if terminal:
         _enter_terminal(
@@ -293,6 +317,7 @@ def docker_run(
             ipc_mode,
             ulimits,
             devices,
+            group_adds,
         )
     else:
         _start_container(
@@ -310,6 +335,7 @@ def docker_run(
             ipc_mode,
             ulimits,
             devices,
+            group_adds,
         )
 
 
@@ -328,6 +354,7 @@ def _start_container(
     ipc_mode,
     ulimits,
     devices,
+    group_adds,
 ):
     container = docker.container.create(
         image_name,
@@ -346,6 +373,8 @@ def _start_container(
         cap_add=["CAP_SYS_PTRACE"],
         ulimit=ulimits,
         devices=devices,
+        groups_add=group_adds,
+        runtime="nvidia",
     )
     container_name = container.name
     container_id = container.id[:12]
@@ -364,6 +393,7 @@ def _start_container(
         f"\n    ipc mode:            {container.host_config.ipc_mode}"
         f"\n    shared memory size:  {container.host_config.shm_size}"
         f"\n    devices:             {', '.join(devices)}"
+        f"\n    group_add:           {', '.join(group_adds)}"
     )
     logs = container.start(
         attach=True,
@@ -393,11 +423,12 @@ def _enter_terminal(
     ipc_mode,
     ulimits,
     devices,
+    group_adds,
 ):
     print("\n\nEntering terminal...")
     print(
         "\n".join(
-            "\t{:25s}\t{}".format(k, v)
+            f"\t{k:25s}\t{v}"
             for k, v in sorted(environment_variables.items(), key=lambda t: str(t[0]))
         )
     )
@@ -422,33 +453,36 @@ def _enter_terminal(
         cap_add=["CAP_SYS_PTRACE"],
         ulimit=ulimits,
         devices=devices,
+        groups_add=group_adds,
+        runtime="nvidia",
     )
     logger.info("Container exited.")
 
 
-def _additional_devices_to_mount():
+def _additional_devices_to_mount(is_root: bool):
     """Mounts additional devices"""
     devices = []
-    if os.path.exists("/sys/devices/platform/gpu.0/load") and os.path.exists("/usr/bin/tegrastats"):
-        devices.append("/dev/nvgpu/igpu0/nvsched")
-        devices.append("/dev/nvgpu/igpu0/sched")
-        devices.append("/dev/nvhost-ctrl-isp")
-        devices.append("/dev/nvhost-ctrl-nvdec")
-        devices.append("/dev/nvhost-ctxsw-gpu")
-        devices.append("/dev/nvhost-isp")
-        devices.append("/dev/nvhost-isp-thi")
-        devices.append("/dev/nvhost-nvcsi")
-        devices.append("/dev/nvhost-nvsched-gpu")
-        devices.append("/dev/nvhost-power-gpu")
-        devices.append("/dev/nvhost-prof-ctx-gpu")
-        devices.append("/dev/nvhost-prof-dev-gpu")
-        devices.append("/dev/nvhost-sched-gpu")
-        devices.append("/dev/nvhost-tsec")
-        devices.append("/dev/nvhost-tsg-gpu")
-        devices.append("/dev/nvhost-vi0")
-        devices.append("/dev/nvhost-vi0-thi")
-        devices.append("/dev/nvhost-vi1")
-        devices.append("/dev/nvhost-vi1-thi")
-        devices.append("/dev/nvidia0")
-        devices.append("/dev/nvidia-modeset")
-    return devices
+    group_adds = []
+
+    # On iGPU, the /dev/dri/* devices (mounted by the NV container runtime) permissions require root
+    # privilege or to be part of the `video` and `render` groups. The ID for these group names might
+    # differ on the host system and in the container, so we need to pass the group ID instead of the
+    # group name when running docker.
+    if (
+        os.path.exists("/sys/devices/platform/gpu.0/load")
+        and os.path.exists("/usr/bin/tegrastats")
+        and not is_root
+    ):
+        group = run_cmd_output('/usr/bin/cat /etc/group | grep "video" | cut -d: -f3').strip()
+        group_adds.append(group)
+        group = run_cmd_output('/usr/bin/cat /etc/group | grep "render" | cut -d: -f3').strip()
+        group_adds.append(group)
+    return (devices, group_adds)
+
+
+def _host_is_native_igpu() -> bool:
+    proc = subprocess.run(
+        ["nvidia-smi --query-gpu name --format=csv,noheader | grep nvgpu -q"], shell=True
+    )
+    result = proc.returncode
+    return result == 0

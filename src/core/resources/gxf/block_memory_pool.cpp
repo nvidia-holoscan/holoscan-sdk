@@ -24,6 +24,10 @@
 
 namespace holoscan {
 
+namespace {
+constexpr int32_t kDefaultDeviceId = 0;
+}  // namespace
+
 BlockMemoryPool::BlockMemoryPool(const std::string& name, nvidia::gxf::BlockMemoryPool* component)
     : Allocator(name, component) {
   int32_t storage_type = 0;
@@ -36,6 +40,8 @@ BlockMemoryPool::BlockMemoryPool(const std::string& name, nvidia::gxf::BlockMemo
   uint64_t num_blocks = 0;
   HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "num_blocks", &num_blocks));
   num_blocks_ = num_blocks;
+  // TODO: how to get the device ID now that it is a GPUDevice Resource and not a parameter?
+  dev_id_ = 0;
 }
 
 void BlockMemoryPool::setup(ComponentSpec& spec) {
@@ -57,6 +63,11 @@ void BlockMemoryPool::setup(ComponentSpec& spec) {
       "Number of blocks",
       "The total number of blocks which are allocated by the pool. If more blocks are requested "
       "allocation requests will fail.");
+  spec.param(dev_id_,
+             "dev_id",
+             "Device Id",
+             "Device on which to create the memory pool.",
+             kDefaultDeviceId);
 }
 
 }  // namespace holoscan

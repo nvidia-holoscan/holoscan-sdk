@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG HOLOSCAN_BASE_IMAGE="holoscan-sdk-dev"
-FROM ${HOLOSCAN_BASE_IMAGE} as holoscan-vscode
+ARG HOLOSCAN_BUILD_IMAGE
+FROM ${HOLOSCAN_BUILD_IMAGE} as holoscan-vscode
 
 ############################################################
 # VSCode devcontainer-compatible Dockerfile

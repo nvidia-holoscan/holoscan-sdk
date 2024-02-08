@@ -193,9 +193,20 @@ class GXFParameterAdaptor {
                 break;
               }
               case ArgElementType::kFloat32: {
-                // GXF Doesn't support float parameter so use a workaround with
-                // GxfParameterSetFromYamlNode.
                 if constexpr (std::is_same_v<typeT, float>) {
+                  return GxfParameterSetFloat32(context, uid, key, value);
+                }
+                break;
+              }
+              case ArgElementType::kFloat64: {
+                if constexpr (std::is_same_v<typeT, double>) {
+                  return GxfParameterSetFloat64(context, uid, key, value);
+                }
+                break;
+              }
+              case ArgElementType::kComplex64: {
+                // GXF Doesn't have parameter setter for complex<float> or complex<double>
+                if constexpr (std::is_same_v<typeT, std::complex<float>>) {
                   YAML::Node yaml_node;
                   yaml_node.push_back(value);
                   YAML::Node value_node = yaml_node[0];
@@ -203,9 +214,13 @@ class GXFParameterAdaptor {
                 }
                 break;
               }
-              case ArgElementType::kFloat64: {
-                if constexpr (std::is_same_v<typeT, double>) {
-                  return GxfParameterSetFloat64(context, uid, key, value);
+              case ArgElementType::kComplex128: {
+                // GXF Doesn't have parameter setter for complex<float> or complex<double>
+                if constexpr (std::is_same_v<typeT, std::complex<double>>) {
+                  YAML::Node yaml_node;
+                  yaml_node.push_back(value);
+                  YAML::Node value_node = yaml_node[0];
+                  return GxfParameterSetFromYamlNode(context, uid, key, &value_node, "");
                 }
                 break;
               }
@@ -332,6 +347,8 @@ class GXFParameterAdaptor {
               case ArgElementType::kUnsigned64:
               case ArgElementType::kFloat32:
               case ArgElementType::kFloat64:
+              case ArgElementType::kComplex64:
+              case ArgElementType::kComplex128:
               case ArgElementType::kString: {
                 // GXF Doesn't support std::vector<bool> parameter so use a workaround with
                 // GxfParameterSetFromYamlNode.
@@ -346,6 +363,8 @@ class GXFParameterAdaptor {
                                   uint64_t,
                                   float,
                                   double,
+                                  std::complex<float>,
+                                  std::complex<double>,
                                   std::string>) {
                   if constexpr (holoscan::dimension_of_v<typeT> == 1) {
                     // Create vector of Handles

@@ -23,10 +23,11 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
 
+#include <common/assert.hpp>
 #include <common/backtrace.hpp>
 #include <common/type_name.hpp>
-
 #include "holoscan/logger/logger.hpp"
 
 // macro like GXF_ASSERT_SUCCESS, but uses HOLOSCAN_LOG_ERROR and includes line/filename info
@@ -292,6 +293,73 @@ inline gxf_uid_t find_component_handle(gxf_context_t context, gxf_uid_t componen
   }
 
   return cid;
+}
+
+/**
+ * @brief Determines if an entity has a specific component.
+ *
+ * Searches for components within an entity based on certain criteria: component type, component
+ * name, and offset. Each of these criteria is optional. If no criteria are provided,
+ * the method returns the first component found.
+ * The "offset" primarily aids repeated searches, allowing continuation from the index
+ * returned by a prior search.
+ *
+ * If no component matching the criteria is found, the function returns `false`.
+ *
+ * @param context The valid GXF context.
+ * @param eid The unique object ID (UID) of the entity being searched.
+ * @param tid The component type ID (TID) of the desired component (optional).
+ * @param name The name of the component to find (optional). Ownership is not transferred.
+ * @param offset The pointer to the index to start searching from. It will also store the index
+ * of the found component if one is discovered. nullptr is allowed.
+ * @param cid The pointer to store the UID of the found component, if applicable.
+ * @return `true` if a component matching the criteria is found, `false` otherwise.
+ * @see GxfComponentFind
+ */
+inline bool has_component(gxf_context_t context, gxf_uid_t eid, gxf_tid_t tid = GxfTidNull(),
+                          const char* name = nullptr, int32_t* offset = nullptr,
+                          gxf_uid_t* cid = nullptr) {
+  gxf_uid_t temp_cid = 0;
+  auto result = GxfComponentFind(context, eid, tid, name, offset, cid ? cid : &temp_cid);
+  if (result == GXF_SUCCESS) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+inline gxf_uid_t add_entity_group(void* context, std::string name) {
+  gxf_uid_t entity_group_gid = kNullUid;
+  HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntityGroup(context, name.c_str(), &entity_group_gid));
+  return entity_group_gid;
+}
+
+inline std::pair<gxf_tid_t, gxf_uid_t> create_gpu_device_entity(void* context,
+                                                                std::string entity_name) {
+  // Get GPU device type id
+  gxf_tid_t device_tid = GxfTidNull();
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(context, "nvidia::gxf::GPUDevice", &device_tid));
+
+  // Create a GPUDevice entity
+  gxf_uid_t device_eid = kNullUid;
+  GxfEntityCreateInfo entity_create_info = {entity_name.c_str(), GXF_ENTITY_CREATE_PROGRAM_BIT};
+  HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntity(context, &entity_create_info, &device_eid));
+  GXF_ASSERT_NE(device_eid, kNullUid);
+  return std::make_pair(device_tid, device_eid);
+}
+
+inline gxf_uid_t create_gpu_device_component(void* context, gxf_tid_t device_tid,
+                                             gxf_uid_t device_eid, std::string component_name,
+                                             int32_t dev_id = 0) {
+  // Create the GPU device component
+  gxf_uid_t device_cid = kNullUid;
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfComponentAdd(context, device_eid, device_tid, component_name.c_str(), &device_cid));
+  GXF_ASSERT_NE(device_cid, kNullUid);
+
+  // set the device ID parameter
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterSetInt32(context, device_cid, "dev_id", dev_id));
+  return device_cid;
 }
 
 }  // namespace holoscan::gxf

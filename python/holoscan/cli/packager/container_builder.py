@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import logging
 import os
@@ -96,11 +98,12 @@ class BuilderBase:
             cache_from.append({"type": "registry", "ref": platform_parameters.base_image})
         if platform_parameters.build_image is not None:
             cache_from.append({"type": "registry", "ref": platform_parameters.build_image})
+
         builds = {
             "builder": builder,
             "cache": not self._build_parameters.no_cache,
-            "cache_from": cache_from,
-            "cache_to": cache_to,
+            "cache_from": None if self._build_parameters.no_cache else cache_from,
+            "cache_to": None if self._build_parameters.no_cache else cache_to,
             "context_path": self._temp_dir,
             "file": dockerfile,
             "platforms": [platform_parameters.docker_arch],
@@ -177,13 +180,13 @@ class BuilderBase:
 Building image for:                 {platform_parameters.platform.value}
     Architecture:                   {platform_parameters.platform_arch.value}
     Base Image:                     {platform_parameters.base_image}
-    Build Image:                    {platform_parameters.build_image if platform_parameters.build_image is not None else "N/A"}  
+    Build Image:                    {platform_parameters.build_image if platform_parameters.build_image is not None else "N/A"}
     Cache:                          {'Disabled' if self._build_parameters.no_cache else 'Enabled'}
     Configuration:                  {platform_parameters.platform_config.value}
-    Holoiscan SDK Package:          {platform_parameters.holoscan_sdk_file if platform_parameters.holoscan_sdk_file is not None else "N/A"}
+    Holoscan SDK Package:           {platform_parameters.holoscan_sdk_file if platform_parameters.holoscan_sdk_file is not None else "N/A"}
     MONAI Deploy App SDK Package:   {platform_parameters.monai_deploy_sdk_file if platform_parameters.monai_deploy_sdk_file is not None else "N/A"}
     gRPC Health Probe:              {platform_parameters.health_probe if platform_parameters.health_probe is not None else "N/A"}
-    SDK Version:                    {self._build_parameters.sdk_version}
+    SDK Version:                    {self._build_parameters.holoscan_sdk_version}
     SDK:                            {self._build_parameters.sdk.value}
     Tag:                            {platform_parameters.tag}
     """  # noqa: E501
@@ -248,11 +251,15 @@ Building image for:                 {platform_parameters.platform.value}
             target_models_root_path = os.path.join(self._temp_dir, "models")
             os.makedirs(target_models_root_path, exist_ok=True)
 
-            for model in self._build_parameters.models.keys():
+            for model in self._build_parameters.models:
                 target_model_path = os.path.join(target_models_root_path, model)
                 if self._build_parameters.models[model].is_dir():
                     shutil.copytree(self._build_parameters.models[model], target_model_path)
                 elif self._build_parameters.models[model].is_file():
+                    os.makedirs(target_model_path, exist_ok=True)
+                    target_model_path = os.path.join(
+                        target_model_path, self._build_parameters.models[model].name
+                    )
                     shutil.copy(self._build_parameters.models[model], target_model_path)
 
     def _copy_health_probe(self, platform_parameters: PlatformParameters):
@@ -277,7 +284,10 @@ Building image for:                 {platform_parameters.platform.value}
 
         jinja_template = jinja_env.get_template("Dockerfile.jinja2")
         return jinja_template.render(
-            {**self._build_parameters.to_jina, **platform_parameters.to_jina}
+            {
+                **self._build_parameters.to_jina,
+                **platform_parameters.to_jina,
+            }
         )
 
     def _copy_supporting_files(self, platform_parameters: PlatformParameters):
@@ -313,7 +323,7 @@ class PythonAppBuilder(BuilderBase):
         with open(pip_requirements_path, "w") as requirements_file:
             # Use local requirements.txt packages if provided, otherwise use sdk provided packages
             if self._build_parameters.requirements_file_path is not None:
-                with open(self._build_parameters.requirements_file_path, "r") as lr:
+                with open(self._build_parameters.requirements_file_path) as lr:
                     for line in lr:
                         requirements_file.write(line)
                 requirements_file.writelines("\n")

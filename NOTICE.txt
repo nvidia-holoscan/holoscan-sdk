@@ -5,9 +5,9 @@ This product includes software developed at NVIDIA CORPORATION (https://www.nvid
 
 Holoscan uses the following open source software:
 
-automake (https://www.gnu.org/software/automake/)
-Copyright (C) 1994-2021 Free Software Foundation, Inc.
-Licensed under GPLv2 (https://github.com/autotools-mirror/automake/blob/v1.16.1/COPYING)
+automake (https://packages.ubuntu.com/jammy/automake)
+1995-2013, Free Software Foundation, Inc
+Licensed under GPLv2 (http://changelogs.ubuntu.com/changelogs/pool/main/a/automake-1.16/automake-1.16_1.16.5-1.3/copyright)
 
 CLI11   (https://github.com/CLIUtils/CLI11)
 Copyright (c) 2017-2023 University of Cincinnati, developed by Henry Schreiner under NSF AWARD 1414736. All rights reserved.
@@ -19,13 +19,9 @@ Copyright (c) 2012, Regents of the University of California.
 Copyright (c) 2009 PiCloud, Inc. Copyright
 Licensed under BSD-3-clause (https://github.com/cloudpipe/cloudpickle/blob/master/LICENSE)
 
-cmake-modules (https://github.com/bilke/cmake-modules)
-Copyright (c) 2012 - 2017, Lars Bilke. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/bilke/cmake-modules/blob/master/CodeCoverage.cmake)
-
 CMake (https://gitlab.kitware.com/cmake/cmake)
-Copyright 2000-2022 Kitware, Inc. and Contributors. All rights reserved.
-Licensed under BSD-3 (https://gitlab.kitware.com/cmake/cmake/raw/master/Copyright.txt)
+Copyright 2000-2023 Kitware, Inc. and Contributors. All rights reserved.
+Licensed under BSD-3-clause (https://gitlab.kitware.com/cmake/cmake/raw/master/Copyright.txt)
 
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
@@ -35,15 +31,11 @@ DLPack (https://github.com/dmlc/dlpack)
 Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v0.7/LICENSE)
 
 expected (https://github.com/TartanLlama/expected)
-Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.0.0/COPYING)
+Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPYING)
 
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich
 Licensed under MIT (https://github.com/fmtlib/fmt/blob/8.1.1/LICENSE.rst)
-
-glad (https://github.com/Dav1dde/glad)
-Copyright (c) 2013-2021 David Herberth
-Licensed under MIT (https://github.com/Dav1dde/glad/blob/v0.1.36/LICENSE)
 
 GLFW (https://www.glfw.org/)
 Copyright (c) 2002-2006 Marcus Geelnard
@@ -56,7 +48,7 @@ Licensed under Apache-2.0 (https://github.com/grpc/grpc/blob/v1.54.2/LICENSE)
 
 GoogleTest (https://github.com/google/googletest)
 Copyright 2008, Google Inc. All rights reserved.
-Licensed under BSD-3-Clause (https://github.com/google/googletest/blob/release-1.12.1/LICENSE)
+Licensed under BSD-3-clause (https://github.com/google/googletest/blob/release-1.12.1/LICENSE)
 
 GXF
 Copyright 2021-2022, NVIDIA CORPORATION
@@ -81,28 +73,72 @@ Copyright © 2015      Research Organization for Information Science and Technol
 Copyright © 2015-2016 Intel, Inc.  All rights reserved.
 Licensed under BSD-3-clause (https://github.com/open-mpi/hwloc/blob/hwloc-2.9.0/COPYING)
 
-libegl1 (https://packages.ubuntu.com/focal/libegl1)
-2013-2017 NVIDIA Corporation; 2007-2013 VMware, Inc; 2010 Intel Corporation; 2010 Francisco Jerez; 2007-2012 The Khronos Group Inc; 1999-2006 Brian Paul; 2010 LunarG Inc; 2009 Dave Gamble
-Licensed under MIT (http://changelogs.ubuntu.com/changelogs/pool/main/libg/libglvnd/libglvnd_1.3.2-1~ubuntu0.20.04.2/copyright)
+libegl1 (https://packages.ubuntu.com/jammy/libegl1)
+2013-2017 NVIDIA Corporation
+2007-2013 VMware, Inc
+2010      Intel Corporation
+2010      Francisco Jerez
+2007-2012 The Khronos Group Inc
+1999-2006 Brian Paul
+2010      LunarG Inc
+2009      Dave Gamble
+Licensed under MIT (http://changelogs.ubuntu.com/changelogs/pool/main/libg/libglvnd/libglvnd_1.4.0-1/copyright)
+
+libjpeg-turbo (https://packages.ubuntu.com/jammy/libjpeg-turbo8-dev)
+Copyright (c) 1999-2006 MIYASAKA Masaru
+Copyright (c) 2004      Landmark Graphics Corporation
+Copyright (c) 2005-2007 Sun Microsystems, Inc.
+Copyright (c) 2009      Pierre Ossman for Cendio AB
+Copyright (c) 2009-2023 D. R. Commander. All Rights Reserved.
+Copyright (c) 2015      Viktor Szathmáry. All Rights Reserved.
+Copyright (c) 1991-2020 Thomas G. Lane. All Rights Reserved.
+Copyright (c) 1991-2020 Guido Vollbeding. All Rights Reserved.
+Copyright (c) 2010 Nokia Corporation
+Licensed under JPEG (https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md)
+
+libpng (https://packages.ubuntu.com/jammy/libpng-dev)
+Copyright (c) 1995-2023 The PNG Reference Library Authors.
+Copyright (c) 2018-2023 Cosmin Truta.
+Copyright (c) 2000-2002, 2004, 2006-2018 Glenn Randers-Pehrson.
+Copyright (c) 1996-1997 Andreas Dilger.
+Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+Licensed under libpng (http://www.libpng.org/pub/png/src/libpng-LICENSE.txt)
 
 libtool (https://www.gnu.org/software/libtool/)
 Copyright (C) 1996-2009 Free Software Foundation, Inc.
 Licensed under GPLv2 (http://changelogs.ubuntu.com/changelogs/pool/main/libt/libtool/libtool_2.4.6-14/copyright)
 
 Libtorch (https://github.com/pytorch/pytorch)
-Copyright (c) 2016-present, Facebook Inc.
-Licensed under BSD (https://github.com/pytorch/pytorch/blob/master/LICENSE)
+Copyright (c) 2016-present Facebook, Inc (Adam Paszke)
+Copyright (c) 2014-present Facebook, Inc (Soumith Chintala)
+Copyright (c) 2011-2014 Idiap Research Institute (Ronan Collobert)
+Copyright (c) 2012-2014 Deepmind Technologies (Koray Kavukcuoglu)
+Copyright (c) 2011-2012 NEC Laboratories America (Koray Kavukcuoglu)
+Copyright (c) 2011-2013 NYU (Clement Farabet)
+Copyright (c) 2006-2010 NEC Laboratories America (Ronan Collobert, Leon Bottou, Iain Melvin, Jason Weston)
+Copyright (c) 2006 Idiap Research Institute (Samy Bengio)
+Copyright (c) 2001-2004 Idiap Research Institute (Ronan Collobert, Samy Bengio, Johnny Mariethoz)
+Licensed under BSD-3-clause (https://github.com/pytorch/pytorch/blob/master/LICENSE)
 
-libv4l (https://packages.ubuntu.com/focal/libv4l-0)
+libv4l (https://packages.ubuntu.com/jammy/libv4l-0)
 Copyright: 2008, 2009, 2010, 2011 Hans de Goede <hdegoede@redhat.com>
 Licensed under LGPLv2.1 (https://github.com/gjasny/v4l-utils/blob/master/COPYING.libv4l)
 
-libvulkan1 (https://packages.ubuntu.com/focal/libvulkan1)
-2014-2018 Valve Corporation; 2015-2018 Google, Inc; 2015-2018 The Khronos Group Inc; 2015-2018 LunarG, Inc; 2015-2017 The Android Open Source Project; 2000-2018 Kitware, Inc. and Contributors; 2017 The Glslang Authors; 2007 Matthias Kretz; 2008 Helio Chissini de Castro; 2013 Martin GrÃ¤ÃŸlin
-Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/main/v/vulkan-loader/vulkan-loader_1.2.131.2-1/copyright)
+libvulkan1 (https://packages.ubuntu.com/jammy/libvulkan1)
+2015-2016 Valve Corporation
+2015-2016 Google, Inc
+2015-2016 The Khronos Group Inc
+2005-2014 G-Truc Creation
+2015-2016 LunarG, Inc
+Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/main/v/vulkan-loader/vulkan-loader_1.3.204.1-2/copyright)
 
-Ninja (https://github.com/ninja-build/ninja)
-Licensed under Apache 2 License (https://github.com/ninja-build/ninja/blob/master/COPYING)
+Intel® oneAPI Math Kernel Library (https://pypi.org/project/mkl/2021.1.1/)
+Copyright (c) Intel Corporation
+Licensed under ISSL (https://www.intel.com/content/www/us/en/developer/articles/license/end-user-license-agreement.html#intel-simplified-software-license)
+
+Ninja (https://packages.ubuntu.com/jammy/ninja-build)
+2011-2014 Google
+Licensed under Apache 2 License (http://changelogs.ubuntu.com/changelogs/pool/universe/n/ninja-build/ninja-build_1.10.1-1/copyright)
 
 AJA NTV2 SDK (https://github.com/ibstewart/ntv2)
 Copyright (c) 2021 AJA Video Systems
@@ -114,15 +150,18 @@ Licensed under Apache 2.0 (https://github.com/nvpro-samples/nvpro_core/blob/mast
 
 ONNX Runtime (https://github.com/microsoft/onnxruntime)
 Copyright (c) Microsoft Corporation
-Licensed under MIT (https://github.com/microsoft/onnxruntime/blob/main/LICENSE)
+Licensed under MIT (https://github.com/microsoft/onnxruntime/blob/v1.15.1/LICENSE)
 
-openblas (https://github.com/xianyi/OpenBLAS/tree/develop)
-Copyright (c) 2011-2014, The OpenBLAS Project
-Licensed under BSD (https://github.com/xianyi/OpenBLAS/blob/develop/LICENSE)
+openblas (https://packages.ubuntu.com/jammy/libopenblas0)
+2011-2021 The OpenBLAS Project
+2009-2010 The University of Texas at Austin
+2013      Martin Koehler, grisuthedragon@users.github.com
+2020      IBM Corporation
+Licensed under BSD (http://changelogs.ubuntu.com/changelogs/pool/universe/o/openblas/openblas_0.3.20+ds-1/copyright)
 
 pybind11 (https://github.com/pybind/pybind11)
 Copyright (c) 2016 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
-Licensed under BSD-3-clause (https://github.com/pybind/pybind11/blob/v2.6.2/LICENSE)
+Licensed under BSD-3-clause (https://github.com/pybind/pybind11/blob/v2.11.1/LICENSE)
 
 pytest-cov (https://github.com/pytest-dev/pytest-cov)
 Copyright (c) 2010 Meme Dough
@@ -142,7 +181,7 @@ Licensed under MIT (https://github.com/gabrieldemarmiesse/python-on-whales/raw/m
 
 RAPIDS rapids-cmake (https://github.com/rapidsai/rapids-cmake)
 Copyright (c) 2020-2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-Licensed under Apache-2.0 (https://github.com/rapidsai/rapids-cmake/blob/branch-22.08/LICENSE)
+Licensed under Apache-2.0 (https://github.com/rapidsai/rapids-cmake/blob/branch-23.06/LICENSE)
 
 Google Fonts Roboto (https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-android.zip)
 Licensed under Apache-2.0 (https://github.com/googlefonts/roboto/blob/v2.138/LICENSE)
@@ -151,17 +190,21 @@ spdlog (https://github.com/gabime/spdlog)
 Copyright (c) 2016 Gabi Melman.
 Licensed under MIT (https://github.com/gabime/spdlog/blob/v1.10.0/LICENSE)
 
-spirv-tools (https://packages.ubuntu.com/focal/spirv-tools)
-2016-2017 Google Inc.; 2015-2017 The Khronos Group Inc.; 2017 LunarG Inc.; 2016-2018 Valve Corporation; 2017-2018 Pierre Moreau
-Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/universe/s/spirv-tools/spirv-tools_2020.1-2/copyright)
+spirv-tools (https://packages.ubuntu.com/jammy/spirv-tools)
+2016-2017 Google Inc.
+2015-2017 The Khronos Group Inc.
+2017      LunarG Inc.
+2016-2018 Valve Corporation
+2017-2018 Pierre Moreau
+Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/universe/s/spirv-tools/spirv-tools_2022.1+1.3.204.0-2/copyright)
 
 stb (https://github.com/nothings/stb)
 Copyright (c) 2017 Sean Barrett
 Licensed under MIT (https://github.com/nothings/stb/blob/master/LICENSE)
 
-Torchvision (https://github.com/UiPath/torchvision)
+Torchvision (https://github.com/pytorch/vision)
 Copyright (c) Soumith Chintala 2016
-Licensed under BSD 3 (https://github.com/UiPath/torchvision/blob/master/LICENSE)
+Licensed under BSD-3-clause (https://github.com/pytorch/vision/blob/main/LICENSE)
 
 UCX (https://openucx.org/)
 Copyright (c) 2014-2015      UT-Battelle, LLC. All rights reserved.
@@ -175,23 +218,122 @@ Copyright (C) 2016-2020      Advanced Micro Devices, Inc.  All rights reserved.
 Copyright (C) 2019           UChicago Argonne, LLC.  All rights reserved.
 Copyright (C) 2020           Huawei Technologies Co., Ltd. All rights reserved.
 Copyright (C) 2016-2020      Stony Brook University. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.14.0/LICENSE)
+Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.15.0-rc2/LICENSE)
 
-v4l-utils (https://packages.ubuntu.com/focal/v4l-utils)
-2006-2010 Mauro Carvalho Chehab <mchehab@redhat.com>; 2006 Nathan Laredo <laredo@gnu.org>; 2004, 2006, 2007, 2010 Hans Verkuil <hverkuil@xs4all.nl>; 2003-2004  Kevin Thayer <nufan_wfk@yahoo.com>; 2011 Red Hat, Inc.; 2007 Michel Ludwig <michel.ludwig@gmail.com>
+v4l-utils (https://packages.ubuntu.com/jammy/v4l-utils)
+2006-2010 Mauro Carvalho Chehab <mchehab@redhat.com>
+2006      Nathan Laredo <laredo@gnu.org>
+2004, 2006, 2007, 2008, 2010 Hans Verkuil <hverkuil@xs4all.nl>
+2003-2004 Kevin Thayer <nufan_wfk@yahoo.com>
+2011      Red Hat, Inc.
+2007      Michel Ludwig <michel.ludwig@gmail.com>
 Licensed under GPLv2 (https://github.com/gjasny/v4l-utils/blob/master/COPYING)
 
 vscode-dev-containers (https://github.com/microsoft/vscode-dev-containers)
 Copyright (c) Microsoft Corporation. All rights reserved.
 Licensed under MIT (https://github.com/microsoft/vscode-dev-containers/blob/v0.241.1/LICENSE)
 
-vulkan-validationlayers (https://packages.ubuntu.com/focal/vulkan-validationlayers)
-2014-2018 Valve Corporation; 2015-2018 Google, Inc; 2015-2018 The Khronos Group Inc; 2015-2018 LunarG, Inc; 2015-2017 The Android Open Source Project; 2000-2018 Kitware, Inc. and Contributors; 2017 The Glslang Authors; 2007 Matthias Kretz; 2008 Helio Chissini de Castro; 2013 Martin Gräßlin
-Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/universe/v/vulkan-validationlayers/vulkan-validationlayers_1.2.131.2-1/copyright)
+vulkan-validationlayers (https://packages.ubuntu.com/jammy/vulkan-validationlayers)
+2014-2018 Valve Corporation
+2015-2018 Google, Inc
+2015-2018 The Khronos Group Inc
+2015-2018 LunarG, Inc
+2015-2017 The Android Open Source Project
+2000-2018 Kitware, Inc. and Contributors
+2017      The Glslang Authors
+2007      Matthias Kretz
+2008      Helio Chissini de Castro
+2013      Martin Gräßlin
+Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/universe/v/vulkan-validationlayers/vulkan-validationlayers_1.3.204.1-1/copyright)
 
 vulkansdk (https://vulkan.lunarg.com/)
-Copyright 2006, Google Inc., Copyright (c) 2014-2016 The Khronos Group Inc., Copyright (c) 2014-2018 The Khronos Group Inc., Copyright (c) 2014-2020 The Khronos Group Inc., Copyright (c) 2014-2020 The Khronos Group Inc., Copyright (c) 2017 The Khronos Group Inc., Copyright (c) 2018 The Khronos Group Inc., Copyright (c) 2015-2017, 2019 Google Inc., Copyright (c) 2015-2017, 2019 LunarG, Inc., Copyright (c) 2015-2017, 2019 The Khronos Group Inc., Copyright (c) 2015-2017, 2019 Valve Corporation, Copyright (c) 2015-2017, 2019-2021 Google Inc., Copyright (c) 2015-2017, 2019-2021 LunarG, Inc., Copyright (c) 2015-2017, 2019-2021 The Khronos Group Inc., Copyright (c) 2015-2017, 2019-2021 Valve Corporation, Copyright (c) 2015-2018 The Khronos Group Inc., Copyright (c) 2015-2019 The Khronos Group Inc., Copyright (c) 2015-2020 The Khronos Group Inc., Copyright (c) 2018-2021 LunarG, Inc., , Copyright 2015-2022 The Khronos Group Inc., Copyright (c) 2018-2021 Valve Corporation, Copyright (c) 2014-2020 The Khronos Group Inc., Copyright (c) 2014-2018 The Khronos Group Inc., Copyright (c) 2014-2020 The Khronos Group Inc., Copyright (c) 2007-2010 by Baptiste Lepilleur, Copyright (C) 2019 Google, Inc., Copyright (c) 2018 Google LLC., Copyright (c) 2019 Google LLC., Copyright (C) 2016 Valve Corporation, Copyright (C) Microsoft Corporation. All rights reserved., Copyright (c) 2015-2016 LunarG, Inc., Copyright (c) 2015-2016 The Khronos Group Inc., Copyright (c) 2015-2016 Valve Corporation, Copyright (c) 2015-2017 Google Inc., Copyright (c) 2015-2017 LunarG, Inc., Copyright (c) 2015-2017 The Khronos Group Inc., Copyright (c) 2015-2017 Valve Corporation, Copyright (c) 2015-2019 LunarG, Inc., Copyright (c) 2015-2019 The Khronos Group Inc., Copyright (c) 2015-2019 Valve Corporation, Copyright (c) 2015-2019, 2021 LunarG, Inc., Copyright (c) 2015-2019, 2021 The Khronos Group Inc., Copyright (c) 2015-2019, 2021 Valve Corporation, Copyright (c) 2015-2021 LunarG, Inc., Copyright (c) 2015-2021 The Khronos Group Inc., Copyright (c) 2015-2021 Valve Corporation, Copyright (c) 2015-2022 LunarG, Inc., Copyright (c) 2015-2022 Valve Corporation, Copyright (c) 2017 LunarG, Inc., Copyright (c) 2017 Valve Corporation, Copyright (c) 2017-2021 LunarG, Inc., Copyright (c) 2017-2021 The Khronos Group Inc., Copyright (c) 2017-2021 Valve Corporation, Copyright (c) 2020      Intel Corporation, Copyright (c) 2016 LunarG Inc., Copyright 2013 The Android Open Source Project, Copyright 2015-2019 LunarG, Inc., Copyright 2015-2019,2022 LunarG, Inc., Copyright 2015-2021 LunarG, Inc., Copyright 2015-2022 LunarG, Inc., Copyright 2016 The Android Open Source Project, Copyright 2020 LunarG, Inc., Copyright 2020-2022 LunarG, Inc., Copyright 2021-2022 LunarG, Inc., Copyright (c) 2017-2022 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2021-2022 LunarG, Inc., Copyright (c) 2018 The Khronos Group Inc. LunarG Inc. All rights reserved., Copyright (c) 2020-2022 LunarG, Inc., Copyright (c) 2019 Google Inc., Copyright (C) 2010, 2011 NVIDIA CORPORATION. ALL RIGHTS RESERVED., Copyright (C) 1984, 1989-1990, 2000-2015, 2018-2020 Free Software Foundation, Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, Copyright (C) 1995-2016 Jean-loup Gailly, Mark Adler, Copyright (C) 1995-2017 Jean-loup Gailly and Mark Adler, Copyright (C) 1997-2020 by Dimitri van Heesch, Copyright (C) 2002-2004  3Dlabs Inc. Ltd., Copyright (C) 2002-2005  3Dlabs Inc. Ltd., Copyright (C) 2004 eXtensible Systems, Inc., Copyright (C) 2005 Free Software Foundation, Inc., Copyright (C) 2007 Free Software Foundation, Inc., Copyright (C) 2007 Free Software Foundation, Inc., Copyright (C) 2009 Free Software Foundation, Inc., Copyright (C) 2009 The Android Open Source Project, Copyright (C) 2011 - 2012 Andrzej Krzemienski., Copyright (C) 2011 Thiago Macieira <thiago@kde.org>, Copyright (C) 2011-present, Yann Collet., Copyright (C) 2012 Giuseppe DAngelo <dangelog@gmail.com>., Copyright (C) 2012 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Giuseppe DAngelo <giuseppe.dangelo@kdab.com>, Copyright (C) 2012 LunarG, Inc., Copyright (C) 2012-2013 LunarG, Inc., Copyright (C) 2012-2015 LunarG, Inc., Copyright (C) 2012-2016 LunarG, Inc., Copyright (C) 2012-2016, Yann Collet, Copyright (C) 2012-2016, Yann Collet., Copyright (C) 2013 LunarG, Inc., Copyright (C) 2013 Olivier Goffart <ogoffart@woboq.com>, Copyright (C) 2013-2016 LunarG, Inc., Copyright (C) 2014 LunarG, Inc., Copyright (C) 2014 Olivier Goffart <ogoffart@woboq.com>, Copyright (C) 2014 by Southwest Research Institute (R), Copyright (C) 2014-2015 LunarG, Inc., Copyright (C) 2014-2016 LunarG, Inc., Copyright (C) 2015 Google Inc., Copyright (C) 2015 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Marc Mutz <marc.mutz@kdab.com>, Copyright (C) 2015 LunarG, Inc., Copyright (C) 2015 Valve Corporation, Copyright (C) 2015-2016 Google Inc., Copyright (C) 2015-2016 Google, Inc., Copyright (C) 2015-2016 LunarG, Inc., Copyright (C) 2015-2016 Valve Corporation, Copyright (C) 2015-2018 Google, Inc., Copyright (C) 2015-2019 Google, Inc., Copyright (C) 2015-2019 LunarG, Inc., Copyright (C) 2015-2019 Valve Corporation, Copyright (C) 2015-2020 Google Inc., Copyright (C) 2015-2020 Google, Inc., Copyright (C) 2015-2021 Google Inc., Copyright (C) 2015-2021 LunarG, Inc., Copyright (C) 2015-2021 Valve Corporation, Copyright (C) 2015-2022 Google Inc., Copyright (C) 2015-2022 LunarG, Inc., Copyright (C) 2015-2022 Valve Corporation, Copyright (C) 2016 Google Inc., Copyright (C) 2016 Google, Inc., Copyright (C) 2016 InfoTeCS JSC. All rights reserved., Copyright (C) 2016 Intel Corporation., Copyright (C) 2016 LunarG, Inc., Copyright (C) 2016 The ANGLE Project Authors., Copyright (C) 2016 The Qt Company Ltd., Copyright (C) 2016 Valve Corporation, Copyright (C) 2016-2017 Google, Inc., Copyright (C) 2016-2017 LunarG, Inc., Copyright (C) 2016-2018 Google, Inc., Copyright (C) 2016-2020 Google, Inc., Copyright (C) 2017 ARM Limited., Copyright (C) 2017 Google, Inc., Copyright (C) 2017 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Marc Mutz <marc.mutz@kdab.com>, Copyright (C) 2017 LunarG, Inc., Copyright (C) 2017 The Qt Company Ltd., Copyright (C) 2017, 2019 ARM Limited., Copyright (C) 2017-2018 Google, Inc., Copyright (C) 2018 Google, Inc., Copyright (C) 2018 Intel Corporation., Copyright (C) 2018 The ANGLE Project Authors., Copyright (C) 2018 The Khronos Group Inc., Copyright (C) 2018 The Qt Company Ltd., Copyright (C) 2018-2019 The ANGLE Project Authors., Copyright (C) 2018-2019, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com), Copyright (C) 2018-2020 Google Inc., Copyright (C) 2018-2020 Google, Inc., Copyright (C) 2018-2021 Google Inc., Copyright (C) 2018-2021 The ANGLE Project Authors., Copyright (C) 2019 ARM Limited., Copyright (C) 2019 Google Inc., Copyright (C) 2019 Google, Inc., Copyright (C) 2019 LunarG, Inc., Copyright (C) 2019 The ANGLE Project Authors., Copyright (C) 2019-2021 Google Inc., Copyright (C) 2019-2022 Google Inc., Copyright (C) 2019-2022 LunarG, Inc., Copyright (C) 2020 Google, Inc., Copyright (C) 2020 The Khronos Group Inc., Copyright (C) 2020-2021 Google Inc., Copyright (C) 2021 Google Inc., Copyright (C) 2021-2022 Google Inc., Copyright (C) 2021-2022 LunarG, Inc., Copyright (C) 2021-2022 Valve Corporation, Copyright (C) <various other dates and companies>, Copyright (C) Microsoft Corporation. All rights reserved., Copyright (C) Microsoft. All rights reserved., Copyright (C) Nvidia Corporation. All rights reserved., Copyright (c) 1992 Henry Spencer., Copyright (c) 1992, 1993, Copyright (c) 1992, 1993, 1994, Copyright (c) 1992, 1993, 1994 Henry Spencer., Copyright (c) 1994, Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>, Copyright (c) 2001 Alexander Peslyak and it is hereby released to the, Copyright (c) 2002 by Lucent Technologies., Copyright (c) 2002, NVIDIA Corporation., Copyright (c) 2002-2010 The ANGLE Project Authors., Copyright (c) 2003-2015 University of Illinois at Urbana-Champaign., Copyright (c) 2006 Kirill Simonov, Copyright (c) 2007 Ariel Flesler - aflesler ○ gmail • com | https:github.comflesler, Copyright (c) 2007 Matthias Kretz, <kretz@kde.org>, Copyright (c) 2007-2010 Baptiste Lepilleur, Copyright (c) 2007-2010 Baptiste Lepilleur and The JsonCpp Authors, Copyright (c) 2007-2015 University of Illinois at Urbana-Champaign., Copyright (c) 2008 Eli Friedman, Copyright (c) 2008 Helio Chissini de Castro, <helio@kde.org>, Copyright (c) 2009 Chris Lattner, Copyright (c) 2009 Dave Gamble, Copyright (c) 2009 Howard Hinnant, Copyright (c) 2009 The RE2 Authors. All rights reserved., Copyright (c) 2011 Fredrik Höglund <fredrik@kde.org>, Copyright (c) 2011-2016, Yann Collet, Copyright (c) 2013 Martin Gräßlin <mgraesslin@kde.org>, Copyright (c) 2013 The Khronos Group Inc., Copyright (c) 2013-2016 The Khronos Group Inc., Copyright (c) 2013-2018 The Khronos Group Inc., Copyright (c) 2013-2019 The Khronos Group Inc., Copyright (c) 2014 Chandler Carruth, Copyright (c) 2014 joseph werle <joseph.werle@gmail.com>, Copyright (c) 2014-2016 The Khronos Group Inc., Copyright (c) 2014-2017 The Khronos Group Inc., Copyright (c) 2014-2018 LunarG, Inc., Copyright (c) 2014-2018 The Brenwill Workshop Ltd. (http:www.brenwill.com), Copyright (c) 2014-2018 The Khronos Group Inc., Copyright (c) 2014-2018 Valve Corporation, Copyright (c) 2014-2019 The Khronos Group Inc., Copyright (c) 2014-2020 The Khronos Group Inc., Copyright (c) 2014-2021 LunarG, Inc., Copyright (c) 2014-2021 The Khronos Group Inc., Copyright (c) 2014-2021 Valve Corporation, Copyright (c) 2014-2022 LunarG, Inc., Copyright (c) 2014-2022 The Khronos Group Inc., Copyright (c) 2014-2022 Valve Corporation, Copyright (c) 2015 LunarG, Inc., Copyright (c) 2015 Microsoft Corporation. All rights reserved, Copyright (c) 2015 The Khronos Group Inc., Copyright (c) 2015 Valve Corporation, Copyright (c) 2015-2016 Google Inc., Copyright (c) 2015-2016 LunarG, Inc., Copyright (c) 2015-2016 The Khronos Group Inc., Copyright (c) 2015-2016 Valve Corporation, Copyright (c) 2015-2016, 2019 Google Inc., Copyright (c) 2015-2016, 2019 LunarG, Inc., Copyright (c) 2015-2016, 2019 Valve Corporation, Copyright (c) 2015-2016, 2019, 2021 Google Inc., Copyright (c) 2015-2016, 2019, 2021 LunarG, Inc., Copyright (c) 2015-2016, 2019, 2021 Valve Corporation, Copyright (c) 2015-2016, 2020-2021 LunarG, Inc., Copyright (c) 2015-2016, 2020-2021 The Khronos Group Inc., Copyright (c) 2015-2016, 2020-2021 Valve Corporation, Copyright (c) 2015-2016, 2020-2022 LunarG, Inc., Copyright (c) 2015-2016, 2020-2022 The Khronos Group Inc., Copyright (c) 2015-2016, 2020-2022 Valve Corporation, Copyright (c) 2015-2016, 2021 Google Inc., Copyright (c) 2015-2016, 2021 LunarG, Inc., Copyright (c) 2015-2016, 2021 Valve Corporation, Copyright (c) 2015-2017 Google Inc., Copyright (c) 2015-2017 LunarG, Inc., Copyright (c) 2015-2017 The Khronos Group Inc., Copyright (c) 2015-2017 Valve Corporation, Copyright (c) 2015-2017, 2019 Google Inc., Copyright (c) 2015-2017, 2019 LunarG, Inc., Copyright (c) 2015-2017, 2019 The Khronos Group Inc., Copyright (c) 2015-2017, 2019 Valve Corporation, Copyright (c) 2015-2017, 2019-2020 LunarG, Inc., Copyright (c) 2015-2017, 2019-2020 The Khronos Group Inc., Copyright (c) 2015-2017, 2019-2020 Valve Corporation, Copyright (c) 2015-2017, 2019-2021 LunarG, Inc., Copyright (c) 2015-2017, 2019-2021 The Khronos Group Inc., Copyright (c) 2015-2017, 2019-2021 Valve Corporation, Copyright (c) 2015-2017, 2019-2022 LunarG, Inc., Copyright (c) 2015-2017, 2019-2022 The Khronos Group Inc., Copyright (c) 2015-2017, 2019-2022 Valve Corporation, Copyright (c) 2015-2018 The Khronos Group Inc., Copyright (c) 2015-2019 LunarG, Inc., Copyright (c) 2015-2019 The Khronos Group Inc., Copyright (c) 2015-2019 Valve Corporation, Copyright (c) 2015-2019, 2019 LunarG, Inc., Copyright (c) 2015-2019, 2019 Valve Corporation, Copyright (c) 2015-2020 Google Inc., Copyright (c) 2015-2020 LunarG, Inc., Copyright (c) 2015-2020 The Khronos Group Inc., Copyright (c) 2015-2020 Valve Corporation, Copyright (c) 2015-2021 Google Inc., Copyright (c) 2015-2021 Google, Inc., Copyright (c) 2015-2021 LunarG, Inc., Copyright (c) 2015-2021 The Khronos Group Inc., Copyright (c) 2015-2021 Valve Corporation, Copyright (c) 2015-2022 Google Inc., Copyright (c) 2015-2022 Google, Inc., Copyright (c) 2015-2022 LunarG, Inc., Copyright (c) 2015-2022 The Khronos Group Inc., Copyright (c) 2015-2022 Valve Corporation, Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2016 Google Inc., Copyright (c) 2016 Google, Inc., Copyright (c) 2016 LunarG Inc., Copyright (c) 2016 LunarG, Inc., Copyright (c) 2016 The Khronos Group Inc., Copyright (c) 2016 Valve Corporation, Copyright (c) 2016, Akamai Technolgies, Inc., Copyright (c) 2016, Tristan Penman, Copyright (c) 2016-2017 LunarG, Inc., Copyright (c) 2016-2017 Valve Corporation, Copyright (c) 2016-2019 Google Inc., Copyright (c) 2016-2019 LunarG, Inc., Copyright (c) 2016-2019 The Khronos Group Inc., Copyright (c) 2016-2019 Valve Corporation, Copyright (c) 2016-2019 Viktor Kirilov, Copyright (c) 2016-2020 LunarG, Inc., Copyright (c) 2016-2020 The Khronos Group Inc., Copyright (c) 2016-2020 Valve Corporation, Copyright (c) 2016-2021 Google Inc., Copyright (c) 2016-2021 LunarG, Inc., Copyright (c) 2016-2021 The Khronos Group Inc., Copyright (c) 2016-2021 Valve Corporation, Copyright (c) 2016-2021 Viktor Kirilov, Copyright (c) 2016-2022 Google Inc., Copyright (c) 2016-2022 LunarG Inc., Copyright (c) 2016-2022 LunarG, Inc., Copyright (c) 2016-present, Facebook, Inc. All rights reserved., Copyright (c) 2017 Google Inc., Copyright (c) 2017 LunarG Inc., Copyright (c) 2017 Pierre Moreau, Copyright (c) 2017 The Khronos Group Inc., Copyright (c) 2017 Valve Corporation, Copyright (c) 2017-2018 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2017-2018 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2017-2019 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2017-2019 Google LLC, Copyright (c) 2017-2020 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2017-2020 Google LLC, Copyright (c) 2017-2021 LunarG, Inc., Copyright (c) 2017-2021 The Khronos Group Inc., Copyright (c) 2017-2021 Valve Corporation, Copyright (c) 2017-2022 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2017-2022 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2018 Google Inc., Copyright (c) 2018 Google LLC, Copyright (c) 2018 Google LLC., Copyright (c) 2018 LunarG Inc., Copyright (c) 2018 LunarG, Inc., Copyright (c) 2018 Pierre Moreau, Copyright (c) 2018 Steven Benner (http:stevenbenner.com)., Copyright (c) 2018 The Khronos Group Inc., Copyright (c) 2018 Valve Corporation, Copyright (c) 2018,2020 LunarG, Inc., Copyright (c) 2018,2020 Valve Corporation, Copyright (c) 2018-2019 Arseny Kapoulkine, Copyright (c) 2018-2019 LunarG, Inc., Copyright (c) 2018-2019 The Khronos Group Inc., Copyright (c) 2018-2019 Valve Corporation, Copyright (c) 2018-2020 LunarG, Inc., Copyright (c) 2018-2020 The Khronos Group Inc., Copyright (c) 2018-2020 Valve Corporation, Copyright (c) 2018-2021 Google LLC, Copyright (c) 2018-2021 LunarG, Inc., Copyright (c) 2018-2021 Martin Ankerl, Copyright (c) 2018-2021 Martin Ankerl <http:martin.ankerl.com>, Copyright (c) 2018-2021 The Khronos Group Inc., Copyright (c) 2018-2021 Valve Corporation, Copyright (c) 2018-2022 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2018-2022 LunarG, Inc., Copyright (c) 2018-2022 The Khronos Group Inc., Copyright (c) 2018-2022 Valve Corporation, Copyright (c) 2019      Intel Corporation, Copyright (c) 2019      Intel Corporation., Copyright (c) 2019 Advanced Micro Devices, Inc. All rights reserved, Copyright (c) 2019 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2019 Google Inc., Copyright (c) 2019 Google LLC, Copyright (c) 2019 Google LLC., Copyright (c) 2019 LunarG Inc., Copyright (c) 2019 LunarG, Inc., Copyright (c) 2019 NVIDIA Corporation, Copyright (c) 2019 Samsung Inc, Copyright (c) 2019 The Khronos Group Inc., Copyright (c) 2019 Valve Corporation, Copyright (c) 2019, 2021 LunarG, Inc., Copyright (c) 2019, 2021 The Khronos Group Inc., Copyright (c) 2019, 2021 Valve Corporation, Copyright (c) 2019, Viktor Latypov, Copyright (c) 2019,2021 LunarG, Inc., Copyright (c) 2019-2020 Advanced Micro Devices, Inc., Copyright (c) 2019-2020 LunarG, Inc., Copyright (c) 2019-2020 Martin Ankerl <martin.ankerl@gmail.com>, Copyright (c) 2019-2020 The Khronos Group Inc., Copyright (c) 2019-2020 Valve Corporation, Copyright (c) 2019-2021 Advanced Micro Devices, Inc., Copyright (c) 2019-2021 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2019-2021 LunarG, Inc., Copyright (c) 2019-2021 The Khronos Group Inc., Copyright (c) 2019-2021 Valve Corporation, Copyright (c) 2019-2022 Google Inc., Copyright (c) 2019-2022 LunarG, Inc., Copyright (c) 2019-2022 The Khronos Group Inc., Copyright (c) 2019-2022 Valve Corporation, Copyright (c) 2020 Advanced Micro Devices, Inc., Copyright (c) 2020 Advanced Micro Devices, Inc. All rights reserved, Copyright (c) 2020 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2020 André Perez Maselco, Copyright (c) 2020 Google Inc., Copyright (c) 2020 Google LLC, Copyright (c) 2020 LunarG Inc., Copyright (c) 2020 LunarG, Inc., Copyright (c) 2020 Stefano Milizia, Copyright (c) 2020 The Khronos Group Inc., Copyright (c) 2020 Valve Corporation, Copyright (c) 2020 Vasyl Teliman, Copyright (c) 2020, Travis Fort, Copyright (c) 2020-2021 Advanced Micro Devices, Inc., Copyright (c) 2020-2021 Google Inc., Copyright (c) 2020-2021 LunarG, Inc., Copyright (c) 2020-2021 The Khronos Group Inc., Copyright (c) 2020-2021 Valve Corporation, Copyright (c) 2020-2022 Google, Inc., Copyright (c) 2020-2022 LunarG, Inc., Copyright (c) 2020-2022 The Khronos Group Inc., Copyright (c) 2020-2022 Valve Corporation, Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved., Copyright (c) 2021 Advanced Micro Devices, Inc.All rights reserved., Copyright (c) 2021 Alastair F. Donaldson, Copyright (c) 2021 Arm Ltd., Copyright (c) 2021 Broadcom, Inc., Copyright (c) 2021 Google Inc., Copyright (c) 2021 Google LLC, Copyright (c) 2021 Google LLC., Copyright (c) 2021 LunarG Inc., Copyright (c) 2021 LunarG, Inc., Copyright (c) 2021 Mostafa Ashraf, Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved., Copyright (c) 2021 NVIDIA Corporation, Copyright (c) 2021 Shiyu Liu, Copyright (c) 2021 The Khronos Group Inc., Copyright (c) 2021 Valve Corporation, Copyright (c) 2021 ZHOU He, Copyright (c) 2021, Arm Limited., Copyright (c) 2021-2021 LunarG, Inc., Copyright (c) 2021-2021 Valve Corporation, Copyright (c) 2021-2022 LunarG, Inc., Copyright (c) 2021-2022 The Khronos Group Inc., Copyright (c) 2021-2022 Valve Corporation, Copyright (c) 2021Valve Corporation, Copyright (c) 2022 Advanced Micro Devices, Inc., Copyright (c) 2022 Google LLC, Copyright (c) 2022 Google LLC., Copyright (c) 2022 Google, Inc., Copyright (c) 2022 LunarG Inc., Copyright (c) 2022 LunarG, Inc., Copyright (c) 2022 The Khronos Group Inc., Copyright (c) 2022 Two Blue Cubes Ltd. All rights reserved., Copyright (c) 2022 Valve Corporation, Copyright (c) <year> <owner>, Copyright (c) Microsoft Corporation. All rights reserved., Copyright (c) Microsoft. All rights reserved., Copyright 1992, 1993, 1994 Henry Spencer.  All rights reserved., Copyright 1999-2005 The RE2 Authors.  All Rights Reserved., Copyright 2000 Free Software Foundation, Inc., Copyright 2000-2009 Kitware, Inc., Insight Software Consortium, Copyright 2000-2018 Kitware, Inc. and Contributors, Copyright 2001-2004 Unicode, Inc., Copyright 2001-2010 The RE2 Authors.  All Rights Reserved., Copyright 2002-2009 The RE2 Authors.  All Rights Reserved., Copyright 2003 Google Inc., Copyright 2003-2009 Google Inc.  All rights reserved., Copyright 2003-2009 The RE2 Authors.  All Rights Reserved., Copyright 2003-2010 Google Inc.  All Rights Reserved., Copyright 2004 The RE2 Authors.  All Rights Reserved., Copyright 2005 Google Inc. All Rights Reserved., Copyright 2005 The RE2 Authors.  All Rights Reserved., Copyright 2005, Google Inc., Copyright 2006 The RE2 Authors.  All Rights Reserved., Copyright 2006, Google Inc., Copyright 2006-2007 The RE2 Authors.  All Rights Reserved., Copyright 2006-2008 The RE2 Authors.  All Rights Reserved., Copyright 2007 Baptiste Lepilleur, Copyright 2007 Neal Norwitz, Copyright 2007 The RE2 Authors.  All Rights Reserved., Copyright 2007, Google Inc., Copyright 2007-2010 Baptiste Lepilleur, Copyright 2007-2010 Baptiste Lepilleur and The JsonCpp Authors, Copyright 2007-2011 Baptiste Lepilleur, Copyright 2007-2011 Baptiste Lepilleur and The JsonCpp Authors, Copyright 2008 Google Inc., Copyright 2008 Google Inc.  All Rights Reserved., Copyright 2008 Google Inc. All Rights Reserved., Copyright 2008 The RE2 Authors.  All Rights Reserved., Copyright 2008, Google Inc., Copyright 2008-2010 Apple, Inc., Copyright 2009 Baptiste Lepilleur, Copyright 2009 Google Inc., Copyright 2009 Google Inc.  All rights reserved., Copyright 2009 Google Inc. All Rights Reserved., Copyright 2009 Google Inc. All rights reserved., Copyright 2009 Neal Norwitz All Rights Reserved., Copyright 2009 The RE2 Authors.  All Rights Reserved., Copyright 2009, Google Inc., Copyright 2010 Baptiste Lepilleur, Copyright 2010 Google Inc.  All Rights Reserved., Copyright 2010 Google Inc. All Rights Reserved., Copyright 2010 The RE2 Authors.  All Rights Reserved., Copyright 2010, Google Inc., Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC, Copyright 2011 Baptiste Lepilleur, Copyright 2011 Baptiste Lepilleur and The JsonCpp Authors, Copyright 2011–2014, Dave Furfero, Copyright 2012 The Go Authors.  All rights reserved., Copyright 2013 Google Inc. All Rights Reserved., Copyright 2013, Google Inc., Copyright 2013-2014 RAD Game Tools and Valve Software, Copyright 2013-2022 The Khronos Group Inc., Copyright 2014 Google Inc., Copyright 2014, 2017 The Android Open Source Project, Copyright 2014-2016,2021 The Khronos Group, Inc., Copyright 2014-2020 Valve Software, Copyright 2014-2021 The Khronos Group Inc., Copyright 2014-2021 Valve Software, Copyright 2014-2022 The Khronos Group Inc., Copyright 2014-2022 Valve Software, Copyright 2015 Google Inc. All rights reserved., Copyright 2015 The Android Open Source Project, Copyright 2015 The RE2 Authors.  All Rights Reserved., Copyright 2015 The Shaderc Authors. All rights reserved., Copyright 2015 Valve Corporation, Copyright 2015, Google Inc., Copyright 2015-2017 ARM Limited, Copyright 2015-2019 The Android Open Source Project, Copyright 2015-2020 Google Inc., Copyright 2015-2021 Arm Limited, Copyright 2015-2021 Google Inc., Copyright 2015-2021 LunarG, Inc., Copyright 2015-2021 The Khronos Group Inc., Copyright 2015-2022 Google Inc., Copyright 2015-2022 The Khronos Group Inc., Copyright 2016 Martin Raiber, Copyright 2016 The Android Open Source Project, Copyright 2016 The RE2 Authors.  All Rights Reserved., Copyright 2016 The Shaderc Authors. All rights reserved., Copyright 2016-2021 Arm Limited, Copyright 2016-2021 Google Inc., Copyright 2016-2021 Robert Konrad, Copyright 2016-2021 The Brenwill Workshop Ltd., Copyright 2016-2021 The Khronos Group Inc., Copyright 2016-2022 LunarG Inc., Copyright 2017 Google Inc., Copyright 2017 The Android Open Source Project, Copyright 2017 The Effcee Authors., Copyright 2017 The Glslang Authors. All rights reserved., Copyright 2017 Two Blue Cubes Ltd. All rights reserved., Copyright 2017-2018 Google Inc., Copyright 2017-2022 Google Inc., Copyright 2018 Google Inc., Copyright 2018 Google Inc. All rights reserved., Copyright 2018 Google LLC., Copyright 2018 Google LLC. All rights reserved., Copyright 2018 The Android Open Source Project, Copyright 2018 The Effcee Authors., Copyright 2018 The Go Authors., Copyright 2018 The RE2 Authors.  All Rights Reserved., Copyright 2018 The Shaderc Authors. All rights reserved., Copyright 2018, Google Inc., Copyright 2018, Google LLC., Copyright 2018-2019 Collabora, Ltd., Copyright 2018-2021 Arm Limited, Copyright 2018-2021 Bradley Austin Davis, Copyright 2019 Google LLC, Copyright 2019 Google LLC.  All Rights Reserved., Copyright 2019 The Effcee Authors., Copyright 2019 The Go Authors., Copyright 2019 The Shaderc Authors. All rights reserved., Copyright 2019, Google Inc., Copyright 2019, Google LLC., Copyright 2019-2020 LunarG, Inc., Copyright 2019-2021 Hans-Kristian Arntzen, Copyright 2019-2021 LunarG, Inc., Copyright 2019-2022 LunarG, Inc., Copyright 2020 Google Inc. All Rights Reserved., Copyright 2020 The Khronos Group Inc, Copyright 2020, Google Inc., Copyright 2020-2021 Hans-Kristian Arntzen, Copyright 2020-2021 The Khronos Group, Inc., Copyright 2021 Google Inc. All Rights Reserved., Copyright 2021-2022 The Khronos Group Inc., Copyright(C) 2021 Advanced Micro Devices, Inc., Copyright(c) 2019 Advanced Micro Devices, Inc.All rights reserved, Copyright (c) 2020 The Khronos Group Inc., Copyright (c) 2022 Google LLC., MIT License Copyright (c) <year> <copyright holders>, Modifications Copyright (C) 2020 Advanced Micro Devices, Inc. All rights, Modifications Copyright (C) 2020 Advanced Micro Devices, Inc. All rights reserved., Modifications Copyright (C) 2020-2021 Advanced Micro Devices, Inc. All rights reserved., Modifications Copyright (C) 2020-2022 Advanced Micro Devices, Inc. All rights reserved., Modifications Copyright (C) 2021 ARM, Inc. All rights reserved., Modifications Copyright (C) 2021-2022 ARM, Inc. All rights reserved., Modifications Copyright (C) 2022 Advanced Micro Devices, Inc. All rights reserved., Modifications Copyright(C) 2021 Advanced Micro Devices, Inc.All rights reserved., Portions Copyright 2007 Google Inc., Portions Copyright 2009 Google Inc. All Rights Reserved., Copyright (C) 2015-2019 LunarG, Inc., Copyright (C) 2015-2019 Valve Corporation, Copyright 2015-2019 The Android Open Source Project, Copyright (C) 2015 Valve Corporation, Copyright (C) 2015-2019 LunarG, Inc., Copyright (C) 2015-2019 Valve Corporation, Copyright 2016 The Android Open Source Project, Copyright 2016-2019 The Android Open Source Project, Copyright 2018 LunarG, Inc., LegalCopyright, Copyright (C) 2015-2021, LegalCopyright, Copyright (C) 2015-2022, Copyright (C) 2015-2022 Google Inc., Copyright (c) 2015-2017 Google Inc., Copyright (c) 2015-2017 LunarG, Inc., Copyright (c) 2015-2017 The Khronos Group Inc., Copyright (c) 2015-2017 Valve Corporation, Copyright (c) 2015-2020 Google Inc., Copyright (c) 2015-2020 LunarG, Inc., Copyright (c) 2015-2020 The Khronos Group Inc., Copyright (c) 2015-2020 Valve Corporation, Copyright (c) 2015-2021 LunarG, Inc., Copyright (c) 2015-2021 The Khronos Group Inc., Copyright (c) 2015-2021 Valve Corporation, Copyright (c) 2015-2022 Google Inc., Copyright (c) 2015-2022 LunarG, Inc., Copyright (c) 2015-2022 The Khronos Group Inc., Copyright (c) 2015-2022 Valve Corporation, Copyright (c) 2020-2022 The Khronos Group Inc., Copyright (c) 2021 The Khronos Group Inc., Copyright (c) 2021-2022 The Khronos Group Inc., Copyright 2018 The Android Open Source Project, Copyright (c) 2015-2021 Google Inc., Copyright (c) 2015-2021 LunarG, Inc., Copyright (c) 2015-2021 The Khronos Group Inc., Copyright (c) 2015-2021 Valve Corporation, Copyright (c) 2021 Advanced Micro Devices, Inc.All rights reserved., Copyright (c) 2020-2022 LunarG, Inc., Copyright (C) Microsoft Corporation. All rights reserved., Copyright (C) Microsoft Corporation. All rights reserved., Copyright (c) 2017 Google Inc.
-Licensed under Apache-2.0, Apache-2.0+MIT, BSD-2-Clause, BSD-3-Clause, DXCMD5, Khronos, LGPL-3.0, LLVM, LZ4, MIT, OpenBSDlibcregex, Qt2, Unlicensed, Zlib, glslangPreprocessor, glslangPreprocesssor, glslangProper (http://changelogs.ubuntu.com/changelogs/pool/universe/v/vulkan-validationlayers/vulkan-validationlayers_1.2.131.2-1/copyright)
+Copyright (c) 2014-2022 The Khronos Group Inc.
+Copyright (c) 2015-2022 Google LLC.
+Copyright (c) 2015-2022 LunarG, Inc.
+Copyright (c) 2015-2022 Valve Corporation.
+Copyright (c) 2007-2011 Baptiste Lepilleur and The JsonCpp Authors.
+Copyright (c) Microsoft Corporation.
+Copyright (c) 2016, 2018-2020 Intel Corporation.
+Copyright (c) 2009, 2013-2019 The Android Open Source Project.
+Copyright (c) 2017-2022 Advanced Micro Devices, Inc.
+Copyright (c) 2022, 2010-2011, 2019, 2021 NVIDIA Corporation.
+Copyright (c) 1984, 1989-1990, 2000-2015, 2018-2020 Free Software Foundation.
+Copyright (c) 1995-2017 Jean-loup Gailly and Mark Adler.
+Copyright (c) 1997-2020 by Dimitri van Heesch.
+Copyright (c) 2002-2005  3Dlabs Inc. Ltd.
+Copyright (c) 2004      eXtensible Systems, Inc.
+Copyright (c) 2011-2012 Andrzej Krzemienski.
+Copyright (c) 2011      Thiago Macieira <thiago@kde.org>.
+Copyright (c) 2011-present Yann Collet.
+Copyright (c) 2012      Giuseppe DAngelo <dangelog@gmail.com>.
+Copyright (c) 2012      Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Giuseppe DAngelo <giuseppe.dangelo@kdab.com>.
+Copyright (c) 2015, 2017 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Marc Mutz <marc.mutz@kdab.com>.
+Copyright (c) 2013-2014 Olivier Goffart <ogoffart@woboq.com>.
+Copyright (c) 2014      by Southwest Research Institute (R).
+Copyright (c) 2016      InfoTeCS JSC.
+Copyright (c) 2002-2010, 2016, 2018-2019 The ANGLE Project Authors.
+Copyright (c) 2016-2018 The Qt Company Ltd.
+Copyright (c) 2015-2022 ARM Limited.
+Copyright (c) 2018-2019 Arseny Kapoulkine.
+Copyright (c) 1992-1994 Henry Spencer.
+Copyright (c) 1998      Todd C. Miller <Todd.Miller@courtesan.com>.
+Copyright (c) 2001      Alexander Peslyak.
+Copyright (c) 2002      Lucent Technologies.
+Copyright (c) 2003-2015 University of Illinois at Urbana-Champaign.
+Copyright (c) 2006      Kirill Simonov.
+Copyright (c) 2007      Ariel Flesler - aflesler ○ gmail • com | https:github.comflesler.
+Copyright (c) 2007      Matthias Kretz, <kretz@kde.org>.
+Copyright (c) 2008      Eli Friedman.
+Copyright (c) 2008      Helio Chissini de Castro, <helio@kde.org>.
+Copyright (c) 2009      Chris Lattner.
+Copyright (c) 2009      Dave Gamble.
+Copyright (c) 2009      Howard Hinnant.
+Copyright (c) 1999-2010, 2015, 2016, 2018 The RE2 Authors.
+Copyright (c) 2011      Fredrik Höglund <fredrik@kde.org>.
+Copyright (c) 2013      Martin Gräßlin <mgraesslin@kde.org>.
+Copyright (c) 2014      Chandler Carruth.
+Copyright (c) 2014      joseph werle <joseph.werle@gmail.com>.
+Copyright (c) 2014-2021 The Brenwill Workshop Ltd.
+Copyright (c) 2016      Akamai Technologies, Inc.
+Copyright (c) 2016      Tristan Penman.
+Copyright (c) 2016-2021 Viktor Kirilov.
+Copyright (c) 2016-present Facebook, Inc.
+Copyright (c) 2017, 2018 Pierre Moreau.
+Copyright (c) 2018      Steven Benner (http:stevenbenner.com).
+Copyright (c) 2018-2021 Martin Ankerl <http:martin.ankerl.com>.
+Copyright (c) 2019      Samsung Inc.
+Copyright (c) 2019      Viktor Latypov.
+Copyright (c) 2020      André Perez Maselco.
+Copyright (c) 2020      Stefano Milizia.
+Copyright (c) 2020      Vasyl Teliman.
+Copyright (c) 2020      Travis Fort.
+Copyright (c) 2021      Alastair F. Donaldson.
+Copyright (c) 2021      Broadcom, Inc.
+Copyright (c) 2021      Mostafa Ashraf.
+Copyright (c) 2021      Shiyu Liu.
+Copyright (c) 2021      ZHOU He.
+Copyright (c) 2017, 2022 Two Blue Cubes Ltd.
+Copyright (c) 2000-2018 Kitware, Inc. and Contributors.
+Copyright (c) 2001-2004 Unicode, Inc.
+Copyright (c) 2007, 2009 Neal Norwitz.
+Copyright (c) 2008-2010 Apple, Inc.
+Copyright (c) 2010-2014 Rich Geldreich and Tenacious Software LLC.
+Copyright (c) 2011–2014 Dave Furfero.
+Copyright (c) 2012, 2018-2019 The Go Authors.
+Copyright (c) 2013-2014 RAD Game Tools and Valve Software.
+Copyright (c) 2014-2022 Valve Software.
+Copyright (c) 2015-2016, 2018-2019 The Shaderc Authors.
+Copyright (c) 2016      Martin Raiber.
+Copyright (c) 2016-2021 Robert Konrad.
+Copyright (c) 2017-2019 The Effcee Authors.
+Copyright (c) 2017      The Glslang Authors.
+Copyright (c) 2018-2019 Collabora, Ltd.
+Copyright (c) 2018-2021 Bradley Austin Davis.
+Copyright (c) 2019-2021 Hans-Kristian Arntzen.
+Licensed under Apache-2.0, Apache-2.0+MIT, BSD-2-clause, BSD-3-clause, DXCMD5, Khronos, LGPL-3.0, LLVM, LZ4, MIT, OpenBSDlibcregex, Qt2, Unlicensed, Zlib, glslangPreprocessor, glslangPreprocesssor, glslangProper (https://vulkan.lunarg.com/software/license/vulkan-1.3.216.0-ubuntu-license-summary.txt)
+
+xvfb (https://www.x.org/releases/X11R7.6/doc/man/man1/Xvfb.1.xhtml)
+Licensed under MIT (https://www.x.org/releases/X11R7.7/doc/xorg-docs/License.txt)
 
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.

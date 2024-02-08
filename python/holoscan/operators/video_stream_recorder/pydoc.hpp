@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,10 @@ Operator class to record the video stream to a file.
 // PyVideoStreamRecorderOp Constructor
 PYDOC(VideoStreamRecorderOp_python, R"doc(
 Operator class to record the video stream to a file.
+
+Named inputs:
+    input: nvidia::gxf::Tensor
+        A message containing a video frame to serialize to disk.
 
 Parameters
 ----------

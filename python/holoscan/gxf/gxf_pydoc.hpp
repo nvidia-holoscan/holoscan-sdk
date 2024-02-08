@@ -24,29 +24,6 @@
 
 namespace holoscan::doc {
 
-namespace Entity {
-
-// Constructor
-PYDOC(Entity, R"doc(
-Base class representing a GXF entity.
-)doc")
-
-PYDOC(get, R"doc(
-Get a resource by name.
-
-Parameters
-----------
-name : str
-    Name of the resource to get.
-
-Returns
--------
-resource : GXFTensor
-    The resource with the given name.
-)doc")
-
-}  // namespace Entity
-
 namespace GXFTensor {
 
 // Constructor
@@ -150,19 +127,6 @@ Initialize the scheduler.
 )doc")
 
 }  // namespace GXFScheduler
-
-namespace GXFNetworkContext {
-
-// Constructor
-PYDOC(GXFNetworkContext, R"doc(
-Base GXF-based network context class.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the network context.
-)doc")
-
-}  // namespace GXFNetworkContext
 
 namespace GXFOperator {
 

@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import os
 from pathlib import Path
@@ -20,7 +22,7 @@ from typing import Any
 import yaml
 
 from ..common.constants import DefaultValues, EnvironmentVariables
-from ..common.exceptions import InvalidApplicationConfiguration
+from ..common.exceptions import InvalidApplicationConfigurationError
 from .manifest_files import ApplicationManifest, PackageManifest
 from .parameters import PackageBuildParameters
 
@@ -37,7 +39,7 @@ class ApplicationConfiguration:
 
         Raises:
             FileNotFoundError: when file does not exists or is not a file
-            InvalidApplicationConfiguration: error reading file
+            InvalidApplicationConfigurationError: error reading file
         """
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(
@@ -48,28 +50,28 @@ class ApplicationConfiguration:
             with open(path) as app_manifest_file:
                 self._config = yaml.load(app_manifest_file, yaml.SafeLoader)
         except Exception as ex:
-            raise InvalidApplicationConfiguration(
+            raise InvalidApplicationConfigurationError(
                 f"Error reading application configuration file from '{path}'. Please check that "
                 "the file is accessible and is a valid YAML file.",
                 ex,
-            )
+            ) from ex
 
         self._config_file_path = path
         self._validate()
 
     def _validate(self):
         if self._config is None:
-            raise InvalidApplicationConfiguration(
+            raise InvalidApplicationConfigurationError(
                 f"Error reading application configuration: {self._config_file_path}"
             )
 
         if "application" not in self._config:
-            raise InvalidApplicationConfiguration(
+            raise InvalidApplicationConfigurationError(
                 "Application ('application') configuration cannot be found in "
                 f"{self._config_file_path}"
             )
         if "resources" not in self._config:
-            raise InvalidApplicationConfiguration(
+            raise InvalidApplicationConfigurationError(
                 "Resources ('resources') configuration cannot be found in "
                 f"{self._config_file_path}"
             )
@@ -77,7 +79,7 @@ class ApplicationConfiguration:
             "title" not in self._config["application"]
             or len(self._config["application"]["title"]) <= 0
         ):
-            raise InvalidApplicationConfiguration(
+            raise InvalidApplicationConfigurationError(
                 "Application configuration key/value ('application>title') "
                 f"cannot be found or is empty in {self._config_file_path}"
             )
@@ -133,16 +135,12 @@ class ApplicationConfiguration:
 
         application_manifest.input = {
             "path": build_parameters.input_dir,
-            "formats": self._application_object["input-formats"]
-            if "input-formats" in self._application_object
-            else None,
+            "formats": self._application_object.get("input-formats", None),
         }
 
         application_manifest.output = {
             "path": build_parameters.output_dir,
-            "formats": self._application_object["output-formats"]
-            if "output-formats" in self._application_object
-            else None,
+            "formats": self._application_object.get("output-formats", None),
         }
 
         application_manifest.readiness = None
@@ -163,15 +161,8 @@ class ApplicationConfiguration:
 
         package_manifest.models = {}
         if build_parameters.models is not None:
-            if len(build_parameters.models) == 1:
-                package_manifest.models[
-                    next(iter(build_parameters.models))
-                ] = package_manifest.model_root
-            else:
-                for model in build_parameters.models:
-                    package_manifest.models[model] = os.path.join(
-                        package_manifest.model_root, model
-                    )
+            for model in build_parameters.models:
+                package_manifest.models[model] = os.path.join(package_manifest.model_root, model)
         package_manifest.resources = self._resource_object
         package_manifest.version = self._get_version(build_parameters)
 
@@ -180,7 +171,7 @@ class ApplicationConfiguration:
     def _get_version(self, build_parameters: PackageBuildParameters) -> str:
         if build_parameters.version is None:
             if "version" not in self._application_object:
-                raise InvalidApplicationConfiguration(
+                raise InvalidApplicationConfigurationError(
                     "Application configuration key/value ('application>version') "
                     f"cannot be found or is empty in {self._config_file_path}"
                 )

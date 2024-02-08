@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
+#include <holoscan/operators/ping_rx/ping_rx.hpp>
 
 namespace holoscan {
 
@@ -30,6 +31,25 @@ namespace {
 ///////////////////////////////////////////////////////////////////////////////
 // Utility Operators
 ///////////////////////////////////////////////////////////////////////////////
+
+class OneInOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(OneInOp)
+
+  OneInOp() = default;
+
+  void setup(OperatorSpec& spec) override { spec.input<gxf::Entity>("in"); }
+
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
+    auto in_message = op_input.receive<gxf::Entity>("in");
+
+    HOLOSCAN_LOG_INFO("OneInOp count {}", count_++);
+  }
+
+ private:
+  int count_ = 1;
+};
 
 class OneOutOp : public Operator {
  public:
@@ -124,6 +144,114 @@ class CycleWithSourceApp : public holoscan::Application {
   }
 };
 
+class CycleWithSourceAndBroadcastApp : public holoscan::Application {
+ public:
+  using Application::Application;
+
+  void compose() override {
+    using namespace holoscan;
+    auto one_out =
+        make_operator<OneOutOp>("OneOut", make_condition<CountCondition>("count-condition", 1));
+    auto two_in_one_out1 =
+        make_operator<TwoInOneOutOp>("TwoInOneOut1", make_condition<CountCondition>(10));
+    auto two_in_one_out2 =
+        make_operator<TwoInOneOutOp>("TwoInOneOut2", make_condition<CountCondition>(10));
+    auto one_in_one_out = make_operator<OneInOneOutOp>("OneInOneOut");
+
+    add_flow(one_out, two_in_one_out1, {{"out", "in0"}});
+    add_flow(two_in_one_out1, two_in_one_out2, {{"out", "in0"}});
+    add_flow(two_in_one_out2, one_in_one_out, {{"out", "in"}});
+    add_flow(one_in_one_out, two_in_one_out1, {{"out", "in1"}});
+    add_flow(one_in_one_out, two_in_one_out2, {{"out", "in1"}});
+  }
+};
+
+class CycleWithSourceAndBroadcastAndRxApp : public holoscan::Application {
+ public:
+  using Application::Application;
+
+  void compose() override {
+    using namespace holoscan;
+    auto one_out =
+        make_operator<OneOutOp>("OneOut", make_condition<CountCondition>("count-condition", 1));
+    auto two_in_one_out1 =
+        make_operator<TwoInOneOutOp>("TwoInOneOut1", make_condition<CountCondition>(10));
+    auto two_in_one_out2 =
+        make_operator<TwoInOneOutOp>("TwoInOneOut2", make_condition<CountCondition>(10));
+    auto one_in_one_out = make_operator<OneInOneOutOp>("OneInOneOut");
+    auto rx = make_operator<OneInOp>("PingRx");
+
+    add_flow(one_out, two_in_one_out1, {{"out", "in0"}});
+    add_flow(two_in_one_out1, two_in_one_out2, {{"out", "in0"}});
+    add_flow(two_in_one_out2, one_in_one_out, {{"out", "in"}});
+    add_flow(one_in_one_out, two_in_one_out1, {{"out", "in1"}});
+    add_flow(one_in_one_out, two_in_one_out2, {{"out", "in1"}});
+    add_flow(one_in_one_out, rx, {{"out", "in"}});
+  }
+};
+
+/* NoCyleMultiPathApp
+ *
+ * src1--->mid1--->join--->rx
+ *                   ^
+ *                   |
+ * src2--->mid2------+
+ *
+ */
+class NoCyleMultiPathApp : public holoscan::Application {
+ public:
+  using Application::Application;
+
+  void compose() override {
+    using namespace holoscan;
+    auto one_out1 =
+        make_operator<OneOutOp>("OneOut1", make_condition<CountCondition>("count-condition", 1));
+    auto one_out2 =
+        make_operator<OneOutOp>("OneOut2", make_condition<CountCondition>("count-condition", 1));
+    auto two_in_one_out =
+        make_operator<TwoInOneOutOp>("TwoInOneOut", make_condition<CountCondition>(10));
+    auto one_in_one_out1 = make_operator<OneInOneOutOp>("OneInOneOut1");
+    auto one_in_one_out2 = make_operator<OneInOneOutOp>("OneInOneOut2");
+    auto rx = make_operator<OneInOp>("PingRx");
+
+    add_flow(one_out1, one_in_one_out1);
+    add_flow(one_in_one_out1, two_in_one_out, {{"out", "in0"}});
+    add_flow(two_in_one_out, rx);
+
+    add_flow(one_out2, one_in_one_out2);
+    add_flow(one_in_one_out2, two_in_one_out, {{"out", "in1"}});
+  }
+};
+
+/* MiddleCycleApp
+ *
+ * src--->two_in_one_out--->one_in_one_out--->rx
+ *              ^                  |
+ *              |                  |
+ *              +------------------+
+ *
+ * Here, one_in_one_out has only one output port.
+ */
+class MiddleCycleApp : public holoscan::Application {
+ public:
+  using Application::Application;
+
+  void compose() override {
+    using namespace holoscan;
+    auto one_out =
+        make_operator<OneOutOp>("OneOut", make_condition<CountCondition>("count-condition", 1));
+    auto two_in_one_out =
+        make_operator<TwoInOneOutOp>("TwoInOneOut", make_condition<CountCondition>(10));
+    auto one_in_one_out = make_operator<OneInOneOutOp>("OneInOneOut");
+    auto rx = make_operator<OneInOp>("PingRx");
+
+    add_flow(one_out, two_in_one_out, {{"out", "in0"}});
+    add_flow(two_in_one_out, one_in_one_out, {{"out", "in"}});
+    add_flow(one_in_one_out, two_in_one_out, {{"out", "in1"}});
+    add_flow(one_in_one_out, rx);
+  }
+};
+
 }  // namespace
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -139,8 +267,53 @@ TEST(Graphs, CycleWithSource) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  // EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Failed to initialize fragment") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos);
+}
+
+TEST(Graphs, BroadcastInCycle) {
+  auto app = make_application<CycleWithSourceAndBroadcastApp>();
+
+  // capture output so that we can check that the expected value is present
+  testing::internal::CaptureStderr();
+
+  app->run();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos);
+}
+
+TEST(Graphs, BroadcastAndRxInCycle) {
+  auto app = make_application<CycleWithSourceAndBroadcastAndRxApp>();
+
+  // capture output so that we can check that the expected value is present
+  testing::internal::CaptureStderr();
+
+  app->run();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneInOp count 10") != std::string::npos);
+}
+
+TEST(Graphs, TestHasCycleForCycleWithSource) {
+  auto app = make_application<CycleWithSourceApp>();
+  app->compose();
+
+  EXPECT_EQ(app->graph().has_cycle().size(), 1);
+}
+
+TEST(Graphs, TestHasCycleForNoCycle) {
+  auto app = make_application<NoCyleMultiPathApp>();
+  app->compose();
+
+  EXPECT_EQ(app->graph().has_cycle().size(), 0);
+}
+
+TEST(Graphs, TestHasCycleForMiddleCycle) {
+  auto app = make_application<MiddleCycleApp>();
+  app->compose();
+
+  EXPECT_EQ(app->graph().has_cycle().size(), 1);
 }
 
 }  // namespace holoscan

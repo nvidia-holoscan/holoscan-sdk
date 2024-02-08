@@ -1,20 +1,25 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import datetime
+import sys
 import time
+
+import pytest
 
 from holoscan.conditions import CountCondition, PeriodicCondition
 from holoscan.core import Application, Operator, OperatorSpec, Tracker
@@ -37,10 +42,10 @@ class ValueData:
 
 
 class PingTxOp(Operator):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, fragment, *args, **kwargs):
         self.index = 0
         # Need to call the base class constructor last
-        super().__init__(*args, **kwargs)
+        super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
         spec.output("out1")
@@ -57,7 +62,7 @@ class PingTxOp(Operator):
 
 
 class PingMiddleOp(Operator):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, fragment, *args, **kwargs):
         # If `self.multiplier` is set here (e.g., `self.multiplier = 4`), then
         # the default value by `param()` in `setup()` will be ignored.
         # (you can just call `spec.param("multiplier")` in `setup()` to use the
@@ -67,7 +72,7 @@ class PingMiddleOp(Operator):
         self.count = 1
 
         # Need to call the base class constructor last
-        super().__init__(*args, **kwargs)
+        super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
         spec.input("in1")
@@ -90,10 +95,10 @@ class PingMiddleOp(Operator):
 
 
 class PingRxOp(Operator):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, fragment, *args, **kwargs):
         self.count = 1
         # Need to call the base class constructor last
-        super().__init__(*args, **kwargs)
+        super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
         spec.param("receivers", kind="receivers")
@@ -101,21 +106,28 @@ class PingRxOp(Operator):
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")
         assert values is not None
+        print(f"received message {self.count}")
         self.count += 1
 
 
 class MyPingApp(Application):
-    def __init__(self, *args, count=10, period=None, **kwargs):
+    def __init__(self, *args, count=10, period=None, explicitly_set_connectors=False, **kwargs):
         self.count = count
         self.period = period
+        self.explicitly_set_connectors = explicitly_set_connectors
         super().__init__(*args, **kwargs)
 
     def compose(self):
+        tx_args = ()
         if self.period:
-            tx_args = (PeriodicCondition(self, recess_period=self.period),)
-        else:
-            tx_args = tuple()
-        tx = PingTxOp(self, CountCondition(self, self.count), *tx_args, name="tx")
+            tx_args += (PeriodicCondition(self, recess_period=self.period),)
+        tx = PingTxOp(
+            self,
+            CountCondition(self, self.count),
+            *tx_args,
+            explicitly_set_connectors=self.explicitly_set_connectors,
+            name="tx",
+        )
         mx = PingMiddleOp(self, self.from_config("mx"), name="mx")
         rx = PingRxOp(self, name="rx")
         self.add_flow(tx, mx, {("out1", "in1"), ("out2", "in2")})
@@ -124,21 +136,29 @@ class MyPingApp(Application):
 
 def file_contains_string(filename, string):
     try:
-        with open(filename, "r") as f:
+        with open(filename) as f:
             return string in f.read()
 
     except FileNotFoundError:
         return False
 
 
-def test_my_ping_app(ping_config_file):
-    app = MyPingApp()
+def test_my_ping_app(ping_config_file, capfd):
+    count = 10
+    app = MyPingApp(count=count)
     app.config(ping_config_file)
     app.run()
 
+    # assert that the expected number of messages were received
+    captured = capfd.readouterr()
 
-def test_my_ping_app_periodic_manual_clock(ping_config_file):
-    app = MyPingApp(count=10, period=datetime.timedelta(seconds=1))
+    assert f"received message {count}" in captured.out
+    assert f"received message {count + 1}" not in captured.out
+
+
+def test_my_ping_app_periodic_manual_clock(ping_config_file, capfd):
+    count = 10
+    app = MyPingApp(count=count, period=datetime.timedelta(seconds=1))
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=ManualClock(app)))
@@ -148,9 +168,16 @@ def test_my_ping_app_periodic_manual_clock(ping_config_file):
     # period is not respected.
     assert duration < 9
 
+    # assert that the expected number of messages were received
+    captured = capfd.readouterr()
 
-def test_my_ping_app_periodic_realtime_clock(ping_config_file):
-    app = MyPingApp(count=10, period=datetime.timedelta(milliseconds=100))
+    assert f"received message {count}" in captured.out
+    assert f"received message {count + 1}" not in captured.out
+
+
+def test_my_ping_app_periodic_realtime_clock(ping_config_file, capfd):
+    count = 10
+    app = MyPingApp(count=count, period=datetime.timedelta(milliseconds=100))
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=RealtimeClock(app)))
@@ -159,9 +186,16 @@ def test_my_ping_app_periodic_realtime_clock(ping_config_file):
     # If realtime clock, duration will be > ((count - 1) * period)
     assert duration > 0.9
 
+    # assert that the expected number of messages were received
+    captured = capfd.readouterr()
 
-def test_my_ping_app_periodic_scaled_realtime_clock(ping_config_file):
-    app = MyPingApp(count=10, period=datetime.timedelta(milliseconds=100))
+    assert f"received message {count}" in captured.out
+    assert f"received message {count + 1}" not in captured.out
+
+
+def test_my_ping_app_periodic_scaled_realtime_clock(ping_config_file, capfd):
+    count = 10
+    app = MyPingApp(count=count, period=datetime.timedelta(milliseconds=100))
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=RealtimeClock(app, initial_time_scale=5.0)))
@@ -170,9 +204,16 @@ def test_my_ping_app_periodic_scaled_realtime_clock(ping_config_file):
     # If realtime clock initial_time_scale>1, duration will be less than ((count - 1) * period)
     assert duration < 0.9
 
+    # assert that the expected number of messages were received
+    captured = capfd.readouterr()
 
-def test_my_ping_app_periodic_scaled_realtime_clock2(ping_config_file):
-    app = MyPingApp(count=10, period=datetime.timedelta(milliseconds=100))
+    assert f"received message {count}" in captured.out
+    assert f"received message {count + 1}" not in captured.out
+
+
+def test_my_ping_app_periodic_scaled_realtime_clock2(ping_config_file, capfd):
+    count = 10
+    app = MyPingApp(count=count, period=datetime.timedelta(milliseconds=100))
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=RealtimeClock(app, initial_time_scale=0.5)))
@@ -180,6 +221,12 @@ def test_my_ping_app_periodic_scaled_realtime_clock2(ping_config_file):
     duration = time.time() - tstart
     # If realtime clock initial_time_scale>1, duration will be less than ((count - 1) * period)
     assert duration > 1.8
+
+    # assert that the expected number of messages were received
+    captured = capfd.readouterr()
+
+    assert f"received message {count}" in captured.out
+    assert f"received message {count + 1}" not in captured.out
 
 
 def test_my_ping_app_graph_get_operators(ping_config_file):
@@ -250,18 +297,26 @@ def test_my_ping_app_graph_is_root_is_leaf(ping_config_file):
     assert app.graph.is_leaf(operator_dict["rx"])
 
 
-def test_my_tracker_app(ping_config_file):
-    app = MyPingApp()
+def test_my_tracker_app(ping_config_file, capfd):
+    count = 10
+    app = MyPingApp(count=count)
     app.config(ping_config_file)
     tracker = app.track()
     app.run()
     tracker.print()
 
+    # assert that the expected number of messages were received
+    captured = capfd.readouterr()
 
-def test_my_tracker_logging_app(ping_config_file):
+    assert f"received message {count}" in captured.out
+    assert f"received message {count + 1}" not in captured.out
+
+
+def test_my_tracker_logging_app(ping_config_file, capfd):
+    count = 10
     filename = "logfile1.log"
 
-    app = MyPingApp()
+    app = MyPingApp(count=count)
     app.config(ping_config_file)
     tracker = app.track()
     tracker.enable_logging(filename)
@@ -271,12 +326,21 @@ def test_my_tracker_logging_app(ping_config_file):
 
     assert file_contains_string(filename, "10:")
 
+    # Assert that flow tracking output was printed and number of recorded
+    # messages was as expected.
+    captured = capfd.readouterr()
+
+    assert "Data Flow Tracking Results" in captured.out
+    assert f"Number of messages: {2 * count}" in captured.out
+    assert f"tx->out1: {count}" in captured.out
+    assert f"tx->out2: {count}" in captured.out
+
 
 # This test is intentionally not marked as slow to ensure every
 # run of python-api test will loop an app a few times to try and catch
 # intermittent seg faults
-def test_my_tracker_context_manager_app(ping_config_file):
-    for i in range(1000):
+def test_my_tracker_context_manager_app(ping_config_file, capfd):
+    for _ in range(1000):
         app = MyPingApp()
         app.config(ping_config_file)
 
@@ -284,11 +348,17 @@ def test_my_tracker_context_manager_app(ping_config_file):
             app.run()
             tracker.print()
 
+            # Capturing stdout/stderr to suppress extremely verbose output if the test suite is
+            # run with the `-s` flag. Calling readouterr() here to flush the captured messages
+            # after each run.
+            capfd.readouterr()
 
-def test_my_tracker_context_manager_logging_app(ping_config_file):
+
+def test_my_tracker_context_manager_logging_app(ping_config_file, capfd):
+    count = 10
     filename = "logfile2.log"
 
-    app = MyPingApp()
+    app = MyPingApp(count=count)
     app.config(ping_config_file)
 
     with Tracker(app, filename=filename) as tracker:
@@ -296,3 +366,76 @@ def test_my_tracker_context_manager_logging_app(ping_config_file):
         tracker.print()
 
     assert file_contains_string(filename, "10:")
+
+    # Assert that flow tracking output was printed and number of recorded
+    # messages was as expected.
+    captured = capfd.readouterr()
+
+    assert "Data Flow Tracking Results" in captured.out
+    assert f"Number of messages: {2 * count}" in captured.out
+    assert f"tx->out1: {count}" in captured.out
+    assert f"tx->out2: {count}" in captured.out
+
+
+class ThreeRxOp(Operator):
+    """Receiver with three inputs."""
+
+    def __init__(self, *args, **kwargs):
+        self.index = 0
+        # Need to call the base class constructor last
+        super().__init__(*args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        spec.input("in1")
+        spec.input("in2")
+        spec.input("in3")
+
+    def compute(self, op_input, op_output, context):
+        value1 = op_input.receive("in1")
+        value2 = op_input.receive("in2")
+        value3 = op_input.receive("in3")
+
+        # Assertions below are specific to connections made from PingTxOp as in MyPingApp2
+        assert value1 != value2
+        assert value2 == value3
+
+        self.index += 1
+        print(f"received: {self.index}", file=sys.stdout)
+
+
+class MyPingApp2(Application):
+    """App created to replicate a reported bug in add_flow behavior.
+
+    The `multiple_add_flow_calls=True` case corresponds to the case reported in NVBUG 4260969.
+    """
+
+    def __init__(self, *args, count=10, muliple_add_flow_calls=False, use_add_arg=False, **kwargs):
+        self.count = count
+        self.muliple_add_flow_calls = muliple_add_flow_calls
+        self.use_add_arg = use_add_arg
+        super().__init__(*args, **kwargs)
+
+    def compose(self):
+        if self.use_add_arg:
+            tx = PingTxOp(self, name="tx")
+            tx.add_arg(CountCondition(self, self.count))
+        else:
+            tx = PingTxOp(self, CountCondition(self, self.count), name="tx")
+        rx = ThreeRxOp(self, name="rx")
+        # the following ways of calling add_flow should be equivalent
+        if self.muliple_add_flow_calls:
+            self.add_flow(tx, rx, {("out1", "in1"), ("out2", "in2")})
+            self.add_flow(tx, rx, {("out2", "in3")})
+        else:
+            self.add_flow(tx, rx, {("out1", "in1"), ("out2", "in2"), ("out2", "in3")})
+
+
+@pytest.mark.parametrize("muliple_add_flow_calls", [False, True])
+@pytest.mark.parametrize("use_add_arg", [False, True])
+def test_my_ping_app2(muliple_add_flow_calls, use_add_arg, capfd):
+    app = MyPingApp2(muliple_add_flow_calls=muliple_add_flow_calls, use_add_arg=use_add_arg)
+    app.run()
+
+    captured = capfd.readouterr()
+    assert captured.out.count("received: 10") == 1
+    assert captured.out.count("received: 11") == 0

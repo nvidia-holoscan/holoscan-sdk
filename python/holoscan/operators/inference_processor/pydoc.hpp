@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,19 @@ Holoinfer Processing operator.
 PYDOC(InferenceProcessorOp_python, R"doc(
 Holoinfer Processing operator.
 
+Named inputs:
+    receivers: multi-receiver accepting nvidia::gxf::Tensor(s)
+        Any number of upstream ports may be connected to this `receivers` port. The operator will
+        search across all messages for tensors matching those specified in `in_tensor_names`.
+        These are the set of input tensors used by the processing operations specified in
+        `process_map`.
+
+Named outputs:
+    transmitter: nvidia::gxf::Tensor(s)
+        A message containing tensors corresponding to the processed results from operations will
+        be emitted. The names of the tensors transmitted correspond to those in
+        `out_tensor_names`.
+
 Parameters
 ----------
 fragment : holoscan.core.Fragment
@@ -53,7 +66,7 @@ output_on_cuda : bool, optional
 transmit_on_cuda : bool, optional
     Whether to transmit the message on the GPU.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
-    CudaStreamPool instance to allocate CUDA streams.
+    `holoscan.resources.CudaStreamPool` instance to allocate CUDA streams.
 config_path : str, optional
     File path to the config file.
 disable_transmitter : bool, optional

@@ -60,7 +60,13 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
 
   bool is_root(const NodeType& node) override;
 
+  bool is_user_defined_root(const NodeType& node) {
+    return get_nodes().empty() ? false : get_nodes()[0] == node;
+  }
+
   bool is_leaf(const NodeType& node) override;
+
+  std::vector<NodeType> has_cycle() override;
 
   std::vector<NodeType> get_root_nodes() override;
 

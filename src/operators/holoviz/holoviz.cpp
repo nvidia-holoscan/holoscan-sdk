@@ -35,9 +35,10 @@
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/operators/holoviz/codecs.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/operators/holoviz/buffer_info.hpp"
+#include "holoscan/operators/holoviz/codecs.hpp"
 
 #include "gxf/multimedia/video.hpp"
 #include "gxf/std/scheduling_terms.hpp"
@@ -60,138 +61,7 @@
 
 namespace viz = holoscan::viz;
 
-/// Buffer information, can be initialized either with a tensor or a video buffer
-struct BufferInfo {
-  /**
-   * Initialize with tensor
-   *
-   * @returns error code
-   */
-  gxf_result_t init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor) {
-    rank = tensor->rank();
-    shape = tensor->shape();
-    element_type = tensor->element_type();
-    name = tensor.name();
-    buffer_ptr = tensor->pointer();
-    storage_type = tensor->storage_type();
-    bytes_size = tensor->bytes_size();
-    for (uint32_t i = 0; i < rank; ++i) { stride[i] = tensor->stride(i); }
-
-    return GXF_SUCCESS;
-  }
-
-  /**
-   * Initialize with video buffer
-   *
-   * @returns error code
-   */
-  gxf_result_t init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video) {
-    // NOTE: VideoBuffer::moveToTensor() converts VideoBuffer instance to the Tensor instance
-    // with an unexpected shape:  [width, height] or [width, height, num_planes].
-    // And, if we use moveToTensor() to convert VideoBuffer to Tensor, we may lose the original
-    // video buffer when the VideoBuffer instance is used in other places. For that reason, we
-    // directly access internal data of VideoBuffer instance to access Tensor data.
-    const auto& buffer_info = video->video_frame_info();
-
-    int32_t channels;
-    switch (buffer_info.color_format) {
-      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY:
-        element_type = nvidia::gxf::PrimitiveType::kUnsigned8;
-        channels = 1;
-        break;
-      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY16:
-        element_type = nvidia::gxf::PrimitiveType::kUnsigned16;
-        channels = 1;
-        break;
-      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY32:
-        element_type = nvidia::gxf::PrimitiveType::kUnsigned32;
-        channels = 1;
-        break;
-      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB:
-        element_type = nvidia::gxf::PrimitiveType::kUnsigned8;
-        channels = 3;
-        break;
-      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA:
-        element_type = nvidia::gxf::PrimitiveType::kUnsigned8;
-        channels = 4;
-        break;
-      default:
-        HOLOSCAN_LOG_ERROR("Unsupported input format: {}\n",
-                           static_cast<int64_t>(buffer_info.color_format));
-        return GXF_FAILURE;
-    }
-
-    rank = 3;
-    shape = nvidia::gxf::Shape{static_cast<int32_t>(buffer_info.height),
-                               static_cast<int32_t>(buffer_info.width),
-                               channels};
-    name = video.name();
-    buffer_ptr = video->pointer();
-    storage_type = video->storage_type();
-    bytes_size = video->size();
-    stride[0] = buffer_info.color_planes[0].stride;
-    stride[1] = channels;
-    stride[2] = PrimitiveTypeSize(element_type);
-
-    return GXF_SUCCESS;
-  }
-
-  uint32_t rank;
-  nvidia::gxf::Shape shape;
-  nvidia::gxf::PrimitiveType element_type;
-  std::string name;
-  const nvidia::byte* buffer_ptr;
-  nvidia::gxf::MemoryStorageType storage_type;
-  uint64_t bytes_size;
-  nvidia::gxf::Tensor::stride_array_t stride;
-};
-
 namespace {
-
-/**
- * Get the Holoviz image format for a given buffer.
- *
- * @param buffer_info buffer info
- * @return Holoviz image format
- */
-nvidia::gxf::Expected<viz::ImageFormat> getImageFormatFromTensor(const BufferInfo& buffer_info) {
-  if (buffer_info.rank != 3) {
-    HOLOSCAN_LOG_ERROR("Invalid tensor rank count, expected 3, got {}", buffer_info.rank);
-    return nvidia::gxf::Unexpected{GXF_INVALID_DATA_FORMAT};
-  }
-
-  struct Format {
-    nvidia::gxf::PrimitiveType type_;
-    int32_t channels_;
-    viz::ImageFormat format_;
-  };
-  constexpr Format kGFXToHolovizFormats[] = {
-      {nvidia::gxf::PrimitiveType::kUnsigned8, 1, viz::ImageFormat::R8_UINT},
-      {nvidia::gxf::PrimitiveType::kUnsigned16, 1, viz::ImageFormat::R16_UINT},
-      {nvidia::gxf::PrimitiveType::kUnsigned32, 1, viz::ImageFormat::R32_UINT},
-      {nvidia::gxf::PrimitiveType::kFloat32, 1, viz::ImageFormat::R32_SFLOAT},
-      {nvidia::gxf::PrimitiveType::kUnsigned8, 3, viz::ImageFormat::R8G8B8_UNORM},
-      {nvidia::gxf::PrimitiveType::kUnsigned8, 4, viz::ImageFormat::R8G8B8A8_UNORM},
-      {nvidia::gxf::PrimitiveType::kUnsigned16, 4, viz::ImageFormat::R16G16B16A16_UNORM},
-      {nvidia::gxf::PrimitiveType::kFloat32, 4, viz::ImageFormat::R32G32B32A32_SFLOAT}};
-
-  viz::ImageFormat image_format = static_cast<viz::ImageFormat>(-1);
-  for (auto&& format : kGFXToHolovizFormats) {
-    if ((format.type_ == buffer_info.element_type) &&
-        (format.channels_ == buffer_info.shape.dimension(2))) {
-      image_format = format.format_;
-      break;
-    }
-  }
-  if (image_format == static_cast<viz::ImageFormat>(-1)) {
-    HOLOSCAN_LOG_ERROR("Element type {} and channel count {} not supported",
-                       static_cast<int>(buffer_info.element_type),
-                       buffer_info.shape.dimension(3));
-    return nvidia::gxf::Unexpected{GXF_INVALID_DATA_FORMAT};
-  }
-
-  return image_format;
-}
 
 /// table to convert input type to string
 static const std::array<std::pair<holoscan::ops::HolovizOp::InputType, std::string>, 17>
@@ -295,25 +165,53 @@ static std::string depthMapRenderModeToString(
  *  @return input type enum
  */
 nvidia::gxf::Expected<holoscan::ops::HolovizOp::InputType> detectInputType(
-    const BufferInfo& buffer_info, bool has_lut) {
+    const holoscan::ops::BufferInfo& buffer_info, bool has_lut) {
   // auto detect type
-  if (buffer_info.rank == 3) {
-    if ((buffer_info.shape.dimension(2) == 2) && (buffer_info.shape.dimension(0) == 1) &&
-        (buffer_info.element_type == nvidia::gxf::PrimitiveType::kFloat32)) {
-      // array of 2D coordinates, draw crosses
-      return holoscan::ops::HolovizOp::InputType::CROSSES;
-    } else if ((buffer_info.shape.dimension(2) == 1) && has_lut) {
-      // color image with lookup table
-      return holoscan::ops::HolovizOp::InputType::COLOR_LUT;
-    } else if ((buffer_info.shape.dimension(2) == 3) || (buffer_info.shape.dimension(2) == 4)) {
-      // color image (RGB or RGBA)
-      return holoscan::ops::HolovizOp::InputType::COLOR;
-    } else {
-      HOLOSCAN_LOG_ERROR("Can't auto detect type of input '{}'", buffer_info.name);
-    }
+  if ((buffer_info.components == 1) && has_lut) {
+    // color image with lookup table
+    return holoscan::ops::HolovizOp::InputType::COLOR_LUT;
+  } else if ((buffer_info.width == 2) && (buffer_info.components == 1) &&
+             (buffer_info.element_type == nvidia::gxf::PrimitiveType::kFloat32)) {
+    // array of 2D coordinates, draw crosses
+    return holoscan::ops::HolovizOp::InputType::CROSSES;
+  } else if ((buffer_info.components == 3) || (buffer_info.components == 4)) {
+    // color image (RGB or RGBA)
+    return holoscan::ops::HolovizOp::InputType::COLOR;
+  } else {
+    HOLOSCAN_LOG_ERROR("Can't auto detect type of input '{}'", buffer_info.name);
   }
   return nvidia::gxf::Unexpected{GXF_FAILURE};
 }
+
+/**
+ * RAII type class to push a Holoviz instance. Previous instance will be restored when class
+ * instance goes out of scope.
+ */
+class ScopedPushInstance {
+ public:
+  /**
+   * Push a Holoviz instance
+   *
+   * @param instance instance to push
+   */
+  explicit ScopedPushInstance(holoscan::viz::InstanceHandle instance)
+      : prev_instance_(viz::GetCurrent()) {
+    viz::SetCurrent(instance);
+  }
+
+  /**
+   * Destructor, restore the previous instance.
+   */
+  ~ScopedPushInstance() { viz::SetCurrent(prev_instance_); }
+
+ private:
+  // hide default and copy constructors, copy assignment
+  ScopedPushInstance() = delete;
+  ScopedPushInstance(const ScopedPushInstance&) = delete;
+  ScopedPushInstance& operator=(const ScopedPushInstance&) = delete;
+
+  const holoscan::viz::InstanceHandle prev_instance_;
+};
 
 }  // namespace
 
@@ -489,8 +387,7 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "RenderBufferInput",
              "Input for an empty render buffer.",
              &render_buffer_input);
-  auto& render_buffer_output =
-      spec.output<gxf::Entity>("render_buffer_output").condition(ConditionType::kNone);
+  auto& render_buffer_output = spec.output<gxf::Entity>("render_buffer_output");
   spec.param(render_buffer_output_,
              "render_buffer_output",
              "RenderBufferOutput",
@@ -498,8 +395,7 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "using that one, else it allocates a new buffer.",
              &render_buffer_output);
 
-  auto& camera_pose_output =
-      spec.output<std::array<float, 16>>("camera_pose_output").condition(ConditionType::kNone);
+  auto& camera_pose_output = spec.output<std::array<float, 16>>("camera_pose_output");
   spec.param(camera_pose_output_,
              "camera_pose_output",
              "CameraPoseOutput",
@@ -577,43 +473,59 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "File path for the font used for rendering text",
              std::string());
 
-  cuda_stream_handler_.defineParams(spec);
+  cuda_stream_handler_.define_params(spec);
 }
 
-bool HolovizOp::check_port_enabled(const std::string& port_name) {
-  const std::string enable_port_name = std::string("enable_") + port_name;
+bool HolovizOp::enable_conditional_port(const std::string& port_name,
+                                        bool set_none_condition_on_disabled) {
+  bool enable_port = false;
 
   // Check if the boolean argument with the name "enable_(port_name)" is present.
-  auto enable_port =
-      std::find_if(args().begin(), args().end(), [&enable_port_name](const auto& arg) {
-        return (arg.name() == enable_port_name);
-      });
-  const bool disable_port =
-      (enable_port == args().end()) ||
-      (enable_port->has_value() && (std::any_cast<bool>(enable_port->value()) == false));
-  return !disable_port;
-}
-
-void HolovizOp::enable_conditional_port(const std::string& port_name) {
   const std::string enable_port_name = std::string("enable_") + port_name;
-
-  // Check if the boolean argument with the name "enable_(port_name)" is present.
-  auto enable_port =
+  auto enable_port_arg =
       std::find_if(args().begin(), args().end(), [&enable_port_name](const auto& arg) {
         return (arg.name() == enable_port_name);
       });
 
-  // If the argument is not present or it is set to false, we unset(nullify) the port parameter.
-  const bool disable_port =
-      (enable_port == args().end()) ||
-      (enable_port->has_value() && (std::any_cast<bool>(enable_port->value()) == false));
-
-  if (enable_port != args().end()) {
-    // If the argument is present, we just remove it from the arguments.
-    args().erase(enable_port);
+  // If present ...
+  if (enable_port_arg != args().end()) {
+    // ... and with a value ...
+    if (enable_port_arg->has_value()) {
+      // ...try extracting a boolean value through YAML::Node or generic bool cast
+      std::any& any_arg = enable_port_arg->value();
+      if (enable_port_arg->arg_type().element_type() == ArgElementType::kYAMLNode) {
+        auto& arg_value = std::any_cast<YAML::Node&>(any_arg);
+        bool parse_ok = YAML::convert<bool>::decode(arg_value, enable_port);
+        if (!parse_ok) {
+          HOLOSCAN_LOG_ERROR("Could not parse YAML parameter '{}' as a 'bool' type",
+                             enable_port_name);
+          enable_port = false;
+        }
+      } else {
+        try {
+          enable_port = std::any_cast<bool>(any_arg);
+        } catch (const std::bad_any_cast& e) {
+          HOLOSCAN_LOG_ERROR(
+              "Could not cast parameter '{}' as 'bool': {}", enable_port_name, e.what());
+        }
+      }
+    }
+    // If the "enable_(port_name)" argument is present, we remove it so that it won't
+    // be passed on further, since we only care about "(port_name)" afterwards.
+    args().erase(enable_port_arg);
   }
 
-  if (disable_port) { add_arg(Arg(port_name) = static_cast<holoscan::IOSpec*>(nullptr)); }
+  // Disable the '(port_name)' argument based on the value of "enable_(port_name)"
+  if (!enable_port) { add_arg(Arg(port_name) = static_cast<holoscan::IOSpec*>(nullptr)); }
+
+  // If 'set_none_condition_on_disabled' is true and the port (named by 'port_name') is disabled,
+  // insert ConditionType::kNone condition so that its default condition
+  // (DownstreamMessageAffordableCondition) is not added during Operator::initialize().
+  if (!enable_port && set_none_condition_on_disabled) {
+    spec()->outputs()[port_name]->condition(ConditionType::kNone);
+  }
+
+  return enable_port;
 }
 
 void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_output,
@@ -628,6 +540,7 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
     throw std::runtime_error("Failed to allocate the video buffer for the render buffer output.");
   }
 
+  nvidia::gxf::VideoBufferInfo info;
   if (render_buffer_input_enabled_) {
     // check if there is a input buffer given to copy the output into
     auto render_buffer_input = op_input.receive<gxf::Entity>("render_buffer_input").value();
@@ -642,7 +555,7 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
       throw std::runtime_error("No video buffer attached to message on 'render_buffer_input'.");
     }
 
-    const nvidia::gxf::VideoBufferInfo info = video_buffer_in.value()->video_frame_info();
+    info = video_buffer_in.value()->video_frame_info();
 
     if ((info.color_format != nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA)) {
       throw std::runtime_error("Invalid render buffer input, expected an RGBA buffer.");
@@ -666,12 +579,14 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
     video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
         width_,
         height_,
-        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_BLOCK_LINEAR,
+        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
         nvidia::gxf::MemoryStorageType::kDevice,
         allocator.value());
     if (!video_buffer.value()->pointer()) {
       throw std::runtime_error("Failed to allocate render output buffer.");
     }
+
+    info = video_buffer.value()->video_frame_info();
   }
 
   // read the framebuffer
@@ -679,7 +594,8 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
                        width_,
                        height_,
                        video_buffer.value()->size(),
-                       reinterpret_cast<CUdeviceptr>(video_buffer.value()->pointer()));
+                       reinterpret_cast<CUdeviceptr>(video_buffer.value()->pointer()),
+                       size_t(info.color_planes[0].stride));
 
   // Output the filled render buffer object
   auto result = gxf::Entity(std::move(entity.value()));
@@ -714,37 +630,29 @@ void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
                                  const BufferInfo& buffer_info_depth_map,
                                  InputSpec* const input_spec_depth_map_color,
                                  const BufferInfo& buffer_info_depth_map_color) {
-  /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
-  /// configurable
-  const auto height = buffer_info_depth_map.shape.dimension(0);
-  const auto width = buffer_info_depth_map.shape.dimension(1);
-
   viz::ImageFormat depth_map_color_fmt = viz::ImageFormat::R8G8B8A8_UNORM;
   CUdeviceptr depth_map_color_device_ptr = 0;
   if (input_spec_depth_map_color) {
     // if there is a color buffer, the size has to match
-
-    /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
-    /// configurable
-    const auto color_height = buffer_info_depth_map_color.shape.dimension(0);
-    const auto color_width = buffer_info_depth_map_color.shape.dimension(1);
-    if ((width != color_width) || (height != color_height)) {
+    if ((buffer_info_depth_map.width != buffer_info_depth_map_color.width) ||
+        (buffer_info_depth_map.height != buffer_info_depth_map_color.height)) {
       throw std::runtime_error(
           fmt::format("The buffer dimensions {}x{} of the depth map color buffer '{}' need to "
                       "match the depth map '{}' dimensions {}x{}",
-                      color_width,
-                      color_height,
+                      buffer_info_depth_map_color.width,
+                      buffer_info_depth_map_color.height,
                       buffer_info_depth_map_color.name,
                       buffer_info_depth_map.name,
-                      width,
-                      height));
+                      buffer_info_depth_map.width,
+                      buffer_info_depth_map.height));
     }
-    auto maybe_image_format = getImageFormatFromTensor(buffer_info_depth_map_color);
-    if (!maybe_image_format) {
-      auto code = nvidia::gxf::ToResultCode(maybe_image_format);
-      throw std::runtime_error(fmt::format("failed setting input format with code {}", code));
+    if (buffer_info_depth_map_color.image_format == static_cast<viz::ImageFormat>(-1)) {
+      std::runtime_error(
+          fmt::format("Depth map color: element type {} and channel count {} not supported",
+                      static_cast<int>(buffer_info_depth_map_color.element_type),
+                      buffer_info_depth_map_color.components));
     }
-    depth_map_color_fmt = maybe_image_format.value();
+    depth_map_color_fmt = buffer_info_depth_map_color.image_format;
 
     depth_map_color_device_ptr =
         reinterpret_cast<CUdeviceptr>(buffer_info_depth_map_color.buffer_ptr);
@@ -773,8 +681,8 @@ void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
 
   const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info_depth_map.buffer_ptr);
   viz::DepthMap(depth_map_render_mode,
-                width,
-                height,
+                buffer_info_depth_map.width,
+                buffer_info_depth_map.height,
                 viz::ImageFormat::R8_UNORM,
                 cu_buffer_ptr,
                 depth_map_color_fmt,
@@ -801,15 +709,10 @@ void HolovizOp::initialize() {
     add_arg(window_close_scheduling_term_.get());
   }
 
-  // TODO: avoid duplicate computations between check_port_enabled and enable_conditional_port
-  render_buffer_input_enabled_ = check_port_enabled("render_buffer_input");
-  render_buffer_output_enabled_ = check_port_enabled("render_buffer_output");
-  camera_pose_output_enabled_ = check_port_enabled("camera_pose_output");
-
   // Conditional inputs and outputs are enabled using a boolean argument
-  enable_conditional_port("render_buffer_input");
-  enable_conditional_port("render_buffer_output");
-  enable_conditional_port("camera_pose_output");
+  render_buffer_input_enabled_ = enable_conditional_port("render_buffer_input");
+  render_buffer_output_enabled_ = enable_conditional_port("render_buffer_output", true);
+  camera_pose_output_enabled_ = enable_conditional_port("camera_pose_output", true);
 
   // parent class initialize() call must be after the argument additions above
   Operator::initialize();
@@ -818,6 +721,11 @@ void HolovizOp::initialize() {
 void HolovizOp::start() {
   // set the font to be used
   if (!font_path_.get().empty()) { viz::SetFont(font_path_.get().c_str(), 25.f); }
+
+  // create Holoviz instance
+  instance_ = viz::Create();
+  // make the instance current
+  ScopedPushInstance scoped_instance(instance_);
 
   // initialize Holoviz
   viz::InitFlags init_flags = viz::InitFlags::NONE;
@@ -859,7 +767,7 @@ void HolovizOp::start() {
 }
 
 void HolovizOp::stop() {
-  viz::Shutdown();
+  if (instance_) { viz::Shutdown(instance_); }
 }
 
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
@@ -875,6 +783,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
     nvidia::gxf::Entity message = static_cast<nvidia::gxf::Entity>(message_h);
     messages.push_back(message);
   }
+
+  // make instance current
+  ScopedPushInstance scoped_instance(instance_);
 
   // cast Condition to BooleanCondition
   if (viz::WindowShouldClose()) {
@@ -944,11 +855,11 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   }
 
   // get the CUDA stream from the input message
-  const gxf_result_t result = cuda_stream_handler_.fromMessages(context.context(), messages);
+  const gxf_result_t result = cuda_stream_handler_.from_messages(context.context(), messages);
   if (result != GXF_SUCCESS) {
     throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
   }
-  viz::SetCudaStream(cuda_stream_handler_.getCudaStream(context.context()));
+  viz::SetCudaStream(cuda_stream_handler_.get_cuda_stream(context.context()));
 
   // Depth maps have two tensors, the depth map itself and the depth map color values. Therefore
   // collect the information in the first pass through the input specs and then render the depth
@@ -1025,19 +936,20 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                           inputTypeToString(input_spec.type_),
                           buffer_info.rank));
         }
+        if (buffer_info.image_format == static_cast<viz::ImageFormat>(-1)) {
+          std::runtime_error(
+              fmt::format("Color image: element type {} and channel count {} not supported",
+                          static_cast<int>(buffer_info.element_type),
+                          buffer_info.components));
+        }
 
-        /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
-        /// configurable
-        const auto height = buffer_info.shape.dimension(0);
-        const auto width = buffer_info.shape.dimension(1);
-        const auto channels = buffer_info.shape.dimension(2);
-
+        viz::ImageFormat image_format;
         if (input_spec.type_ == InputType::COLOR_LUT) {
-          if (channels != 1) {
+          if (buffer_info.components != 1) {
             throw std::runtime_error(fmt::format(
                 "Expected one channel for tensor '{}' when using lookup table, but got {}",
                 buffer_info.name,
-                channels));
+                buffer_info.components));
           }
           if (lut_.empty()) {
             throw std::runtime_error(fmt::format(
@@ -1045,14 +957,28 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                 buffer_info.name,
                 inputTypeToString(input_spec.type_)));
           }
-        }
 
-        auto maybe_image_format = getImageFormatFromTensor(buffer_info);
-        if (!maybe_image_format) {
-          auto code = nvidia::gxf::ToResultCode(maybe_image_format);
-          throw std::runtime_error(fmt::format("failed setting input format with code {}", code));
+          // when using a LUT, the unorm formats are handled as single channel int formats
+          switch (buffer_info.image_format) {
+            case viz::ImageFormat::R8_UNORM:
+              image_format = viz::ImageFormat::R8_UINT;
+              break;
+            case viz::ImageFormat::R8_SNORM:
+              image_format = viz::ImageFormat::R8_SINT;
+              break;
+            case viz::ImageFormat::R16_UNORM:
+              image_format = viz::ImageFormat::R16_UINT;
+              break;
+            case viz::ImageFormat::R16_SNORM:
+              image_format = viz::ImageFormat::R16_SINT;
+              break;
+            default:
+              image_format = buffer_info.image_format;
+              break;
+          }
+        } else {
+          image_format = buffer_info.image_format;
         }
-        const viz::ImageFormat image_format = maybe_image_format.value();
 
         // start an image layer
         viz::BeginImageLayer();
@@ -1065,14 +991,26 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                    lut_.data());
         }
 
+        viz::ImageComponentMapping(buffer_info.component_swizzle[0],
+                                   buffer_info.component_swizzle[1],
+                                   buffer_info.component_swizzle[2],
+                                   buffer_info.component_swizzle[3]);
         if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
           // if it's the device convert to `CUDeviceptr`
           const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
-          viz::ImageCudaDevice(width, height, image_format, cu_buffer_ptr, buffer_info.stride[0]);
+          viz::ImageCudaDevice(buffer_info.width,
+                               buffer_info.height,
+                               image_format,
+                               cu_buffer_ptr,
+                               buffer_info.stride[0]);
         } else {
           // convert to void * if using the system/host
           const auto host_buffer_ptr = reinterpret_cast<const void*>(buffer_info.buffer_ptr);
-          viz::ImageHost(width, height, image_format, host_buffer_ptr, buffer_info.stride[0]);
+          viz::ImageHost(buffer_info.width,
+                         buffer_info.height,
+                         image_format,
+                         host_buffer_ptr,
+                         buffer_info.stride[0]);
         }
         viz::EndLayer();
       } break;
@@ -1090,11 +1028,12 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       case InputType::LINE_STRIP_3D:
       case InputType::TRIANGLES_3D: {
         // geometry layer
-        if (buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat32) {
-          throw std::runtime_error(fmt::format(
-              "Expected gxf::PrimitiveType::kFloat32 element type for coordinates, but got "
-              "element type {}",
-              static_cast<int>(buffer_info.element_type)));
+        if ((buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat32) &&
+            (buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat64)) {
+          throw std::runtime_error(
+              fmt::format("Expected gxf::PrimitiveType::kFloat32 or gxf::PrimitiveType::kFloat64 "
+                          "element type for coordinates, but got element type {}",
+                          static_cast<int>(buffer_info.element_type)));
         }
 
         // get pointer to tensor buffer
@@ -1107,9 +1046,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                                    static_cast<const void*>(buffer_info.buffer_ptr),
                                    buffer_info.bytes_size,
                                    cudaMemcpyDeviceToHost,
-                                   cuda_stream_handler_.getCudaStream(context.context())));
+                                   cuda_stream_handler_.get_cuda_stream(context.context())));
           // wait for the CUDA memory copy to finish
-          CUDA_TRY(cudaStreamSynchronize(cuda_stream_handler_.getCudaStream(context.context())));
+          CUDA_TRY(cudaStreamSynchronize(cuda_stream_handler_.get_cuda_stream(context.context())));
 
           buffer_info.buffer_ptr = host_buffer.data();
         }
@@ -1118,31 +1057,48 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         viz::BeginGeometryLayer();
         set_input_spec_geometry(input_spec);
 
-        /// @todo this is assuming NHW, should either auto-detect (if possible) or make user
-        /// configurable
-        const auto coordinates = buffer_info.shape.dimension(1);
-        const auto components = buffer_info.shape.dimension(2);
+        const auto coordinates = buffer_info.width;
 
         if (input_spec.type_ == InputType::TEXT) {
           // text is defined by the top left coordinate and the size (x, y, s) per string, text
           // strings are define by InputSpec::text_
-          if ((components < 2) || (components > 3)) {
-            throw std::runtime_error(
-                fmt::format("Expected two or three values per text, but got '{}'", components));
+          if ((buffer_info.components < 2) || (buffer_info.components > 3)) {
+            throw std::runtime_error(fmt::format(
+                "Expected two or three values per text, but got '{}'", buffer_info.components));
           }
           if (input_spec.text_.empty()) {
             throw std::runtime_error(fmt::format("No text has been specified by input spec '{}'.",
                                                  input_spec.tensor_name_));
           }
-          const float* src_coord = reinterpret_cast<const float*>(buffer_info.buffer_ptr);
-          for (int32_t index = 0; index < coordinates; ++index) {
+          uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
+          constexpr uint32_t values_per_coordinate = 3;
+          float coords[values_per_coordinate]{0.f, 0.f, 0.05f};
+          for (uint32_t index = 0; index < coordinates; ++index) {
+            uint32_t component_index = 0;
+            // copy from source array
+            while (component_index < buffer_info.components) {
+              switch (buffer_info.element_type) {
+                case nvidia::gxf::PrimitiveType::kFloat32:
+                  coords[component_index] =
+                      reinterpret_cast<const float*>(src_coord)[component_index];
+                  break;
+                case nvidia::gxf::PrimitiveType::kFloat64:
+                  coords[component_index] =
+                      reinterpret_cast<const double*>(src_coord)[component_index];
+                  break;
+                default:
+                  throw std::runtime_error("Unhandled element type");
+              }
+              ++component_index;
+            }
+            src_coord += buffer_info.stride[1];
             viz::Text(
-                src_coord[0],
-                src_coord[1],
-                (components == 3) ? src_coord[2] : 0.05f,
-                input_spec.text_[std::min(index, static_cast<int32_t>(input_spec.text_.size()) - 1)]
+                coords[0],
+                coords[1],
+                coords[2],
+                input_spec
+                    .text_[std::min(index, static_cast<uint32_t>(input_spec.text_.size()) - 1)]
                     .c_str());
-            src_coord += components;
           }
         } else {
           std::vector<float> coords;
@@ -1154,9 +1110,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
           switch (input_spec.type_) {
             case InputType::POINTS:
               // point primitives, one coordinate (x, y) per primitive
-              if (components != 2) {
-                throw std::runtime_error(
-                    fmt::format("Expected two values per point, but got '{}'", components));
+              if (buffer_info.components != 2) {
+                throw std::runtime_error(fmt::format("Expected two values per point, but got '{}'",
+                                                     buffer_info.components));
               }
               topology = viz::PrimitiveTopology::POINT_LIST;
               primitive_count = coordinates;
@@ -1166,9 +1122,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
               break;
             case InputType::LINES:
               // line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
-              if (components != 2) {
-                throw std::runtime_error(
-                    fmt::format("Expected two values per line vertex, but got '{}'", components));
+              if (buffer_info.components != 2) {
+                throw std::runtime_error(fmt::format(
+                    "Expected two values per line vertex, but got '{}'", buffer_info.components));
               }
               topology = viz::PrimitiveTopology::LINE_LIST;
               primitive_count = coordinates / 2;
@@ -1179,9 +1135,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
             case InputType::LINE_STRIP:
               // line strip primitive, a line primitive i is defined by each coordinate (xi, yi) and
               // the following (xi+1, yi+1)
-              if (components != 2) {
-                throw std::runtime_error(fmt::format(
-                    "Expected two values per line strip vertex, but got '{}'", components));
+              if (buffer_info.components != 2) {
+                throw std::runtime_error(
+                    fmt::format("Expected two values per line strip vertex, but got '{}'",
+                                buffer_info.components));
               }
               topology = viz::PrimitiveTopology::LINE_STRIP;
               primitive_count = coordinates - 1;
@@ -1191,9 +1148,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
               break;
             case InputType::TRIANGLES:
               // triangle primitive, three coordinates (x0, y0), (x1, y1) and (x2, y2) per primitive
-              if (components != 2) {
-                throw std::runtime_error(fmt::format(
-                    "Expected two values per triangle vertex, but got '{}'", components));
+              if (buffer_info.components != 2) {
+                throw std::runtime_error(
+                    fmt::format("Expected two values per triangle vertex, but got '{}'",
+                                buffer_info.components));
               }
               topology = viz::PrimitiveTopology::TRIANGLE_LIST;
               primitive_count = coordinates / 3;
@@ -1204,9 +1162,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
             case InputType::CROSSES:
               // cross primitive, a cross is defined by the center coordinate and the size (xi, yi,
               // si)
-              if ((components < 2) || (components > 3)) {
-                throw std::runtime_error(fmt::format(
-                    "Expected two or three values per cross, but got '{}'", components));
+              if ((buffer_info.components < 2) || (buffer_info.components > 3)) {
+                throw std::runtime_error(
+                    fmt::format("Expected two or three values per cross, but got '{}'",
+                                buffer_info.components));
               }
 
               topology = viz::PrimitiveTopology::CROSS_LIST;
@@ -1218,9 +1177,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
             case InputType::RECTANGLES:
               // axis aligned rectangle primitive, each rectangle is defined by two coordinates (xi,
               // yi) and (xi+1, yi+1)
-              if (components != 2) {
-                throw std::runtime_error(fmt::format(
-                    "Expected two values per rectangle vertex, but got '{}'", components));
+              if (buffer_info.components != 2) {
+                throw std::runtime_error(
+                    fmt::format("Expected two values per rectangle vertex, but got '{}'",
+                                buffer_info.components));
               }
               topology = viz::PrimitiveTopology::RECTANGLE_LIST;
               primitive_count = coordinates / 2;
@@ -1231,9 +1191,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
             case InputType::OVALS:
               // oval primitive, an oval primitive is defined by the center coordinate and the axis
               // sizes (xi, yi, sxi, syi)
-              if ((components < 2) || (components > 4)) {
-                throw std::runtime_error(fmt::format(
-                    "Expected two, three or four values per oval, but got '{}'", components));
+              if ((buffer_info.components < 2) || (buffer_info.components > 4)) {
+                throw std::runtime_error(
+                    fmt::format("Expected two, three or four values per oval, but got '{}'",
+                                buffer_info.components));
               }
               topology = viz::PrimitiveTopology::OVAL_LIST;
               primitive_count = coordinates;
@@ -1243,9 +1204,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
               break;
             case InputType::POINTS_3D:
               // point primitives, one coordinate (x, y, z) per primitive
-              if (components != 3) {
-                throw std::runtime_error(
-                    fmt::format("Expected three values per 3D point, but got '{}'", components));
+              if (buffer_info.components != 3) {
+                throw std::runtime_error(fmt::format(
+                    "Expected three values per 3D point, but got '{}'", buffer_info.components));
               }
               topology = viz::PrimitiveTopology::POINT_LIST_3D;
               primitive_count = coordinates;
@@ -1255,9 +1216,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
               break;
             case InputType::LINES_3D:
               // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
-              if (components != 3) {
-                throw std::runtime_error(fmt::format(
-                    "Expected three values per 3D line vertex, but got '{}'", components));
+              if (buffer_info.components != 3) {
+                throw std::runtime_error(
+                    fmt::format("Expected three values per 3D line vertex, but got '{}'",
+                                buffer_info.components));
               }
               topology = viz::PrimitiveTopology::LINE_LIST_3D;
               primitive_count = coordinates / 2;
@@ -1267,9 +1229,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
               break;
             case InputType::LINE_STRIP_3D:
               // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
-              if (components != 3) {
-                throw std::runtime_error(fmt::format(
-                    "Expected three values per 3D line strip vertex, but got '{}'", components));
+              if (buffer_info.components != 3) {
+                throw std::runtime_error(
+                    fmt::format("Expected three values per 3D line strip vertex, but got '{}'",
+                                buffer_info.components));
               }
               topology = viz::PrimitiveTopology::LINE_STRIP_3D;
               primitive_count = coordinates - 1;
@@ -1280,9 +1243,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
             case InputType::TRIANGLES_3D:
               // triangle primitive, three coordinates (x0, y0, z0), (x1, y1, z1) and (x2, y2, z2)
               // per primitive
-              if (components != 3) {
-                throw std::runtime_error(fmt::format(
-                    "Expected three values per 3D triangle vertex, but got '{}'", components));
+              if (buffer_info.components != 3) {
+                throw std::runtime_error(
+                    fmt::format("Expected three values per 3D triangle vertex, but got '{}'",
+                                buffer_info.components));
               }
               topology = viz::PrimitiveTopology::TRIANGLE_LIST_3D;
               primitive_count = coordinates / 3;
@@ -1296,21 +1260,31 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
           }
 
           // copy coordinates
-          const float* src_coord = reinterpret_cast<const float*>(buffer_info.buffer_ptr);
+          uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
           coords.reserve(coordinate_count * values_per_coordinate);
-          for (int32_t index = 0; index < static_cast<int32_t>(coordinate_count); ++index) {
-            int32_t component_index = 0;
+
+          for (uint32_t index = 0; index < coordinate_count; ++index) {
+            uint32_t component_index = 0;
             // copy from source array
-            while (component_index < std::min(components, int32_t(values_per_coordinate))) {
-              coords.push_back(src_coord[component_index]);
+            while (component_index < std::min(buffer_info.components, values_per_coordinate)) {
+              switch (buffer_info.element_type) {
+                case nvidia::gxf::PrimitiveType::kFloat32:
+                  coords.push_back(reinterpret_cast<const float*>(src_coord)[component_index]);
+                  break;
+                case nvidia::gxf::PrimitiveType::kFloat64:
+                  coords.push_back(reinterpret_cast<const double*>(src_coord)[component_index]);
+                  break;
+                default:
+                  throw std::runtime_error("Unhandled element type");
+              }
               ++component_index;
             }
             // fill from default array
-            while (component_index < static_cast<int32_t>(values_per_coordinate)) {
+            while (component_index < values_per_coordinate) {
               coords.push_back(default_coord[component_index]);
               ++component_index;
             }
-            src_coord += buffer_info.stride[1] / sizeof(float);
+            src_coord += buffer_info.stride[1];
           }
 
           if (primitive_count) {
@@ -1322,15 +1296,6 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       } break;
       case InputType::DEPTH_MAP: {
         // 2D depth map
-
-        // sanity checks
-        if (buffer_info.rank != 3) {
-          throw std::runtime_error(
-              fmt::format("Expected rank 3 for tensor '{}', type '{}', but got {}",
-                          buffer_info.name,
-                          inputTypeToString(input_spec.type_),
-                          buffer_info.rank));
-        }
         if (buffer_info.element_type != nvidia::gxf::PrimitiveType::kUnsigned8) {
           throw std::runtime_error(fmt::format(
               "Expected gxf::PrimitiveType::kUnsigned8 element type for tensor '{}', but got "
@@ -1342,12 +1307,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
           throw std::runtime_error(
               fmt::format("Only device storage is supported for tensor '{}'", buffer_info.name));
         }
-        /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
-        /// configurable
-        const auto channels = buffer_info.shape.dimension(2);
-        if (buffer_info.shape.dimension(2) != 1) {
-          throw std::runtime_error(fmt::format(
-              "Expected one channel for tensor '{}', but got {}", buffer_info.name, channels));
+        if (buffer_info.components != 1) {
+          throw std::runtime_error(fmt::format("Expected one channel for tensor '{}', but got {}",
+                                               buffer_info.name,
+                                               buffer_info.components));
         }
 
         // Store the depth map information, we render after the end of the input spec loop when
@@ -1357,15 +1320,6 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       } break;
       case InputType::DEPTH_MAP_COLOR: {
         // 2D depth map color
-
-        // sanity checks
-        if (buffer_info.rank != 3) {
-          throw std::runtime_error(
-              fmt::format("Expected rank 3 for tensor '{}', type '{}', but got {}",
-                          buffer_info.name,
-                          inputTypeToString(input_spec.type_),
-                          buffer_info.rank));
-        }
         if (buffer_info.element_type != nvidia::gxf::PrimitiveType::kUnsigned8) {
           throw std::runtime_error(fmt::format(
               "Expected gxf::PrimitiveType::kUnsigned8 element type for tensor '{}', but got "
@@ -1377,12 +1331,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
           throw std::runtime_error(
               fmt::format("Only device storage is supported for tensor '{}'", buffer_info.name));
         }
-        /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
-        /// configurable
-        const auto channels = buffer_info.shape.dimension(2);
-        if (buffer_info.shape.dimension(2) != 4) {
-          throw std::runtime_error(fmt::format(
-              "Expected four channels for tensor '{}', but got {}", buffer_info.name, channels));
+        if (buffer_info.components != 4) {
+          throw std::runtime_error(fmt::format("Expected four channels for tensor '{}', but got {}",
+                                               buffer_info.name,
+                                               buffer_info.components));
         }
 
         // Store the depth map color information, we render after the end of the input spec loop

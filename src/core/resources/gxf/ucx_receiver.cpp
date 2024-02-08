@@ -38,8 +38,8 @@ UcxReceiver::UcxReceiver(const std::string& name, nvidia::gxf::Receiver* compone
   const char* address;
   HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetStr(gxf_context_, gxf_cid_, "address", &address));
   address_ = std::string(address);
-  int32_t port = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetInt32(gxf_context_, gxf_cid_, "port", &port));
+  uint32_t port = 0;
+  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt32(gxf_context_, gxf_cid_, "port", &port));
   port_ = port;
 
   // get the serialization buffer object
@@ -87,7 +87,7 @@ std::string UcxReceiver::address() {
   return address_.get();
 }
 
-int32_t UcxReceiver::port() {
+uint32_t UcxReceiver::port() {
   return port_.get();
 }
 

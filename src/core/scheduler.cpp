@@ -33,4 +33,16 @@ void Scheduler::initialize() {
   }
 }
 
+YAML::Node Scheduler::to_yaml_node() const {
+  YAML::Node node = Component::to_yaml_node();
+  if (spec_) {
+    node["spec"] = spec_->to_yaml_node();
+  } else {
+    node["spec"] = YAML::Null;
+  }
+  node["resources"] = YAML::Node(YAML::NodeType::Sequence);
+  for (const auto& r : resources_) { node["resources"].push_back(r.second->to_yaml_node()); }
+  return node;
+}
+
 }  // namespace holoscan

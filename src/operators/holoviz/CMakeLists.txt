@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_holoscan_operator(holoviz holoviz.cpp)
+add_holoscan_operator(holoviz
+    buffer_info.cpp
+    holoviz.cpp)
 
 target_link_libraries(op_holoviz
     PUBLIC

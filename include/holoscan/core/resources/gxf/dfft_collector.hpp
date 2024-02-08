@@ -66,6 +66,20 @@ class DFFTCollector : public nvidia::gxf::Monitor {
    */
   void data_flow_tracker(holoscan::DataFlowTracker* d);
 
+  /**
+   * @brief Get the number of root operators.
+   *
+   * @return The number of root operators.
+   */
+  int num_root_ops() { return root_ops_.size(); }
+
+  /**
+   * @brief Get the number of leaf operators.
+   *
+   * @return The number of leaf operators.
+   */
+  int num_leaf_ops() { return leaf_ops_.size(); }
+
  private:
   /// Pointer to the DataFlowTracker object to update the DataFlowTracker object with the final
   /// results at the end of the execution of a tick of a leaf operator.
@@ -73,6 +87,9 @@ class DFFTCollector : public nvidia::gxf::Monitor {
 
   /// A map of codelet id and the operator pointers for the leaf operators.
   std::map<int64_t, holoscan::Operator*> leaf_ops_;
+
+  /// A map of codelet id and the last execution count number from the nvidia::gxf::Codelet
+  std::map<int64_t, int64_t> leaf_last_execution_count_;
 
   /// A map of codelet id and the operator pointers for the root operators.
   std::map<int64_t, holoscan::Operator*> root_ops_;

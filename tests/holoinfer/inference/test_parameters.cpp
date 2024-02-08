@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,7 @@ void HoloInferTests::parameter_test_inference() {
       status, test_module, 1, test_identifier_params.at(1), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: Parameters, model_path_map: key mismatch with pre_processor_map
-  model_path_map.at("test-dummy") = model_path_map.at("plax_chamber");
+  model_path_map.at("test-dummy") = model_path_map.at("bmode_perspective");
   status = call_parameter_check_inference();
   holoinfer_assert(
       status, test_module, 2, test_identifier_params.at(2), HoloInfer::holoinfer_code::H_ERROR);
@@ -49,26 +49,26 @@ void HoloInferTests::parameter_test_inference() {
 
   // Test: Parameters, pre_processor_map empty value vector check
   pre_processor_map.erase("test-dummy");
-  auto str_value = pre_processor_map.at("plax_chamber")[0];
-  pre_processor_map.at("plax_chamber").pop_back();
+  auto str_value = pre_processor_map.at("bmode_perspective")[0];
+  pre_processor_map.at("bmode_perspective").pop_back();
   status = call_parameter_check_inference();
   holoinfer_assert(
       status, test_module, 4, test_identifier_params.at(4), HoloInfer::holoinfer_code::H_ERROR);
-  pre_processor_map.at("plax_chamber").push_back(str_value);
+  pre_processor_map.at("bmode_perspective").push_back(str_value);
 
   // Test: Parameters, pre_processor_map empty tensor name check
-  pre_processor_map.at("plax_chamber").push_back("");
+  pre_processor_map.at("bmode_perspective").push_back("");
   status = call_parameter_check_inference();
   holoinfer_assert(
       status, test_module, 5, test_identifier_params.at(5), HoloInfer::holoinfer_code::H_ERROR);
-  pre_processor_map.at("plax_chamber").pop_back();
+  pre_processor_map.at("bmode_perspective").pop_back();
 
   // Test: Parameters, pre_processor_map duplicate tensor name check
-  pre_processor_map.at("plax_chamber").push_back(str_value);
+  pre_processor_map.at("bmode_perspective").push_back(str_value);
   status = call_parameter_check_inference();
   holoinfer_assert(
       status, test_module, 6, test_identifier_params.at(6), HoloInfer::holoinfer_code::H_ERROR);
-  pre_processor_map.at("plax_chamber").pop_back();
+  pre_processor_map.at("bmode_perspective").pop_back();
 
   // input tensor names test
   // Test: Parameters, input_tensor exist in pre_processor_map
@@ -94,12 +94,12 @@ void HoloInferTests::parameter_test_inference() {
   inference_map.erase("test-dummy");
 
   // Test: Parameters, inference_map duplicate entry check
-  str_value = inference_map.at("plax_chamber")[0];
-  inference_map.at("plax_chamber").push_back(str_value);
+  str_value = inference_map.at("bmode_perspective")[0];
+  inference_map.at("bmode_perspective").push_back(str_value);
   status = call_parameter_check_inference();
   holoinfer_assert(
       status, test_module, 10, test_identifier_params.at(10), HoloInfer::holoinfer_code::H_ERROR);
-  inference_map.at("plax_chamber").pop_back();
+  inference_map.at("bmode_perspective").pop_back();
 
   // output tensor names test
   // Test: Parameters, output_tensor exist in inference_map
@@ -136,7 +136,7 @@ void HoloInferTests::parameter_setup_test() {
       status, test_module, 14, test_identifier_params.at(14), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: TRT backend, Inference map key mismatch with model path map
-  model_path_map["test-dummy"] = model_path_map.at("plax_chamber");
+  model_path_map["test-dummy"] = model_path_map.at("bmode_perspective");
   status = create_specifications();
   clear_specs();
   model_path_map.erase("test-dummy");
@@ -168,14 +168,100 @@ void HoloInferTests::parameter_setup_test() {
   holoinfer_assert(
       status, test_module, 18, test_identifier_params.at(18), HoloInfer::holoinfer_code::H_ERROR);
 
-  if (use_torch) {
-    // Test: Torch backend, incorrect model file format
-    backend = "torch";
-    status = create_specifications();
-    clear_specs();
-    holoinfer_assert(
-        status, test_module, 19, test_identifier_params.at(19), HoloInfer::holoinfer_code::H_ERROR);
-  }
+#if use_torch
+  // Test: Torch backend, incorrect model file format
+  backend = "torch";
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 19, test_identifier_params.at(19), HoloInfer::holoinfer_code::H_ERROR);
+
+  auto backup_path_map = std::move(model_path_map);
+  auto backup_pre_map = std::move(pre_processor_map);
+  auto backup_infer_map = std::move(inference_map);
+  auto backup_device_map = std::move(device_map);
+
+  model_path_map = {{"test_model", "../data/multiai_ultrasound/models/bmode_perspective.pt"}};
+  pre_processor_map = {{"test_model", {"input_"}}};
+  inference_map = {{"test_model", {"output_"}}};
+  device_map = {};
+
+  // Test: Torch backend, Model file missing
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 25, test_identifier_params.at(25), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Test: Torch backend, Config file missing
+  std::filesystem::rename("../data/multiai_ultrasound/models/bmode_perspective.onnx",
+                          "../data/multiai_ultrasound/models/bmode_perspective.pt");
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 26, test_identifier_params.at(26), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Test: Torch backend, Inference node missing in Config file
+  std::ofstream torch_config_file("../data/multiai_ultrasound/models/bmode_perspective.yaml");
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 27, test_identifier_params.at(27), HoloInfer::holoinfer_code::H_ERROR);
+
+  YAML::Node torch_inference;
+
+  // Test: Torch backend, Input node missing in Config file
+  torch_inference["inference"]["test_node"] = "test";
+  torch_config_file << torch_inference;
+  std::cout << torch_inference << std::endl;
+  torch_config_file.close();
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 28, test_identifier_params.at(28), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Test: Torch backend, dtype missing in input node in Config file
+  torch_config_file.open("../data/multiai_ultrasound/models/bmode_perspective.yaml",
+                         std::ofstream::trunc);
+  torch_inference["inference"]["input_nodes"]["input"]["id"] = "1";
+  std::cout << torch_inference << std::endl;
+  torch_config_file << torch_inference;
+  torch_config_file.close();
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 29, test_identifier_params.at(29), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Test: Torch backend, Incorrect dtype in config file
+  torch_config_file.open("../data/multiai_ultrasound/models/bmode_perspective.yaml",
+                         std::ofstream::trunc);
+  torch_inference["inference"]["input_nodes"]["input"]["dtype"] = "float";
+  torch_config_file << torch_inference;
+  torch_config_file.close();
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 30, test_identifier_params.at(30), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Test: Torch backend, Output node missing in config file correct
+  torch_config_file.open("../data/multiai_ultrasound/models/bmode_perspective.yaml",
+                         std::ofstream::trunc);
+  torch_inference["inference"]["input_nodes"]["input"]["dtype"] = "kFloat32";
+  torch_config_file << torch_inference;
+  torch_config_file.close();
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 31, test_identifier_params.at(31), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Restore all changes to previous state
+  std::filesystem::remove("../data/multiai_ultrasound/models/bmode_perspective.yaml");
+  std::filesystem::rename("../data/multiai_ultrasound/models/bmode_perspective.pt",
+                          "../data/multiai_ultrasound/models/bmode_perspective.onnx");
+  model_path_map = std::move(backup_path_map);
+  pre_processor_map = std::move(backup_pre_map);
+  inference_map = std::move(backup_infer_map);
+  device_map = std::move(backup_device_map);
+#endif
 
   if (use_onnxruntime) {
     // Test: ONNX backend, Input/Output cuda buffer test
@@ -187,13 +273,13 @@ void HoloInferTests::parameter_setup_test() {
 
     // Test: ONNX backend, incorrect model file format
     backend = "onnxrt";
-    auto pc_path = model_path_map.at("plax_chamber");
-    model_path_map.at("plax_chamber") = "model.engine";
+    auto pc_path = model_path_map.at("bmode_perspective");
+    model_path_map.at("bmode_perspective") = "model.engine";
     input_on_cuda = false;
     output_on_cuda = false;
     status = create_specifications();
     clear_specs();
-    model_path_map.at("plax_chamber") = pc_path;
+    model_path_map.at("bmode_perspective") = pc_path;
     holoinfer_assert(
         status, test_module, 21, test_identifier_params.at(21), HoloInfer::holoinfer_code::H_ERROR);
 

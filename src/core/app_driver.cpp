@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,11 +94,14 @@ void AppDriver::set_ucx_to_exclude_cuda_ipc() {
     // If this is not the case, warn.
     if (!((is_deny_list && cuda_ipc_found) || (!is_deny_list && !cuda_ipc_found))) {
       HOLOSCAN_LOG_WARN(
-          "UCX_TLS already defined. To use UCX for GPU transport on iGPU systems, cuda_ipc "
-          "transport should be disabled (e.g. UCX_TLS=^cuda_ipc)");
+          "UCX_TLS is set to '{}' which does not disable CUDA IPC. You might need to disable the "
+          "cuda_ipc transport (e.g. UCX_TLS=^cuda_ipc) if you run into issues running this "
+          "distributed application.",
+          tls_str);
     }
   } else {
     // set cuda_ipc as disallowed
+    HOLOSCAN_LOG_INFO("Disabling CUDA IPC with UCX_TLS=^cuda_ipc");
     setenv("UCX_TLS", "^cuda_ipc", 0);
   }
 }
@@ -330,6 +333,11 @@ FragmentScheduler* AppDriver::fragment_scheduler() {
   return nullptr;
 }
 
+MultipleFragmentsPortMap* AppDriver::all_fragment_port_map() {
+  if (all_fragment_port_map_) { return all_fragment_port_map_.get(); }
+  return nullptr;
+}
+
 void AppDriver::submit_message(DriverMessage&& message) {
   std::lock_guard<std::mutex> lock(message_mutex_);
   message_queue_.push(std::move(message));
@@ -377,60 +385,131 @@ void AppDriver::process_message_queue() {
   }
 }
 
-bool AppDriver::update_port_names(
-    holoscan::FragmentNodeType src_frag, holoscan::FragmentNodeType target_frag,
+bool AppDriver::need_to_update_port_names(
     std::shared_ptr<holoscan::FragmentEdgeDataElementType>& port_map) {
-  auto& src_frag_graph = src_frag->graph();
-  auto& target_frag_graph = target_frag->graph();
+  // Check for any port name without "." character that separates the operator and port name
+  for (auto& [source_op_port, target_op_ports] : *port_map) {
+    auto [src_operator_name, _] = Operator::parse_port_name(source_op_port);
 
-  std::vector<std::pair<std::string, std::string>> corrected_name_pair;
+    if (src_operator_name.find(".") == std::string::npos) { return true; }
+
+    for (const auto& target_op_port : target_op_ports) {
+      auto [target_operator_name, _] = Operator::parse_port_name(target_op_port);
+
+      if (target_operator_name.find(".") == std::string::npos) { return true; }
+    }
+  }
+  return false;
+}
+
+bool AppDriver::update_port_names(
+    std::string src_frag_name, std::string target_frag_name,
+    std::shared_ptr<holoscan::FragmentEdgeDataElementType>& port_map) {
+  if (all_fragment_port_map_->count(src_frag_name) == 0) {
+    auto msg_buf = fmt::memory_buffer();
+    for (const auto& kv : *all_fragment_port_map_) {
+      if (&kv == &(*all_fragment_port_map_->begin())) {
+        fmt::format_to(std::back_inserter(msg_buf), "{}", kv.first);
+      } else {
+        fmt::format_to(std::back_inserter(msg_buf), ", {}", kv.first);
+      }
+    }
+    HOLOSCAN_LOG_ERROR(
+        "Cannot find source fragment '{}' in all_fragment_port_map_. "
+        "Contained fragments are ({:.{}})",
+        src_frag_name,
+        msg_buf.data(),
+        msg_buf.size());
+    return false;
+  }
+  if (all_fragment_port_map_->count(target_frag_name) == 0) {
+    auto msg_buf = fmt::memory_buffer();
+    for (const auto& kv : *all_fragment_port_map_) {
+      if (&kv == &(*all_fragment_port_map_->begin())) {
+        fmt::format_to(std::back_inserter(msg_buf), "{}", kv.first);
+      } else {
+        fmt::format_to(std::back_inserter(msg_buf), ", {}", kv.first);
+      }
+    }
+    HOLOSCAN_LOG_ERROR(
+        "Cannot find target fragment '{}' in all_fragment_port_map_. "
+        "Contained fragments are ({:.{}})",
+        target_frag_name,
+        msg_buf.data(),
+        msg_buf.size());
+    return false;
+  }
+
   // Collect corrected port names
+  std::vector<std::pair<std::string, std::string>> corrected_name_pair;
+  const FragmentPortMap& src_frag_port_map = all_fragment_port_map_->at(src_frag_name);
   for (auto& [source_op_port, target_op_ports] : *port_map) {
     auto [src_operator_name, src_port_name] = Operator::parse_port_name(source_op_port);
     auto& src_op_name = src_operator_name;
 
-    auto src_op = src_frag_graph.find_node(src_op_name);
-    if (src_op == nullptr) {
+    if (src_frag_port_map.count(src_op_name) == 0) {
+      auto msg_buf = fmt::memory_buffer();
+      for (const auto& port_info : src_frag_port_map) {
+        if (&port_info == &(*src_frag_port_map.begin())) {
+          fmt::format_to(std::back_inserter(msg_buf), "{}", port_info.first);
+        } else {
+          fmt::format_to(std::back_inserter(msg_buf), ", {}", port_info.first);
+        }
+      }
       HOLOSCAN_LOG_ERROR(
-          "Cannot find operator '{}' from fragment '{}'", src_op_name, src_frag->name());
+          "Cannot find source operator '{}' in fragment '{}'. "
+          "Operator should be one of ({:.{}})",
+          src_op_name,
+          src_frag_name,
+          msg_buf.data(),
+          msg_buf.size());
       return false;
     }
-    OperatorSpec* src_op_spec = src_op->spec();
+    const auto& [in_port_names, out_port_names, receiver_names] = src_frag_port_map.at(src_op_name);
 
-    auto& src_op_io_spec_outputs = src_op_spec->outputs();
-
-    if (src_op_io_spec_outputs.find(src_port_name) == src_op_io_spec_outputs.end()) {
-      if (src_op_io_spec_outputs.size() == 1 && (src_port_name.empty() || src_port_name == "")) {
-        src_port_name = src_op_io_spec_outputs.begin()->first;
+    if (out_port_names.find(src_port_name) == out_port_names.end()) {
+      if (out_port_names.size() == 1 && src_port_name.empty()) {
+        src_port_name = *out_port_names.begin();
         // Correct source port name
         corrected_name_pair.push_back(
             std::make_pair(source_op_port, fmt::format("{}.{}", source_op_port, src_port_name)));
         continue;
       }
-      if (src_op_io_spec_outputs.empty()) {
+      if (out_port_names.empty()) {
         HOLOSCAN_LOG_ERROR("Source operator '{}' has no output ports in fragment '{}'",
                            src_op_name,
-                           src_frag->name());
+                           src_frag_name);
         return false;
       }
 
-      auto msg_buf = fmt::memory_buffer();
-      for (const auto& [label, _] : src_op_io_spec_outputs) {
-        if (&label == &(src_op_io_spec_outputs.begin()->first)) {
-          fmt::format_to(std::back_inserter(msg_buf), "{}", label);
-        } else {
-          fmt::format_to(std::back_inserter(msg_buf), ", {}", label);
+      if (out_port_names.size() == 1) {
+        HOLOSCAN_LOG_ERROR(
+            "Source operator '{}' in fragment '{}' does not have a port named '{}'. It should be "
+            "'{}'.",
+            src_op_name,
+            src_frag_name,
+            src_port_name,
+            *(out_port_names.begin()));
+        return false;
+      } else {
+        auto msg_buf = fmt::memory_buffer();
+        for (const auto& port_name : out_port_names) {
+          if (&port_name == &(*out_port_names.begin())) {
+            fmt::format_to(std::back_inserter(msg_buf), "{}", port_name);
+          } else {
+            fmt::format_to(std::back_inserter(msg_buf), ", {}", port_name);
+          }
         }
+        HOLOSCAN_LOG_ERROR(
+            "Source operator '{}' in fragment '{}' does not have a port named '{}'. It should be "
+            "one of ({:.{}})",
+            src_op_name,
+            src_frag_name,
+            src_port_name,
+            msg_buf.data(),
+            msg_buf.size());
+        return false;
       }
-
-      HOLOSCAN_LOG_ERROR(
-          "Source operator {} has multiple ports, but no port name is specified in fragment "
-          "'{}'. It should be one of ({:.{}})",
-          src_op_name,
-          src_frag->name(),
-          msg_buf.data(),
-          msg_buf.size());
-      return false;
     }
   }
 
@@ -441,6 +520,7 @@ bool AppDriver::update_port_names(
   }
 
   // Correct target port names
+  const FragmentPortMap& target_frag_port_map = all_fragment_port_map_->at(target_frag_name);
   for (auto& [source_op_port, target_op_ports] : *port_map) {
     // Reuse corrected_name_pair to avoid creating a new vector
     corrected_name_pair.clear();
@@ -448,59 +528,77 @@ bool AppDriver::update_port_names(
       auto [target_operator_name, target_port_name] = Operator::parse_port_name(target_op_port);
       auto& target_op_name = target_operator_name;
 
-      auto target_op = target_frag_graph.find_node(target_op_name);
-      OperatorSpec* target_op_spec = target_op->spec();
+      if (target_frag_port_map.count(target_op_name) == 0) {
+        auto msg_buf = fmt::memory_buffer();
+        for (const auto& port_info : target_frag_port_map) {
+          if (&port_info == &(*target_frag_port_map.begin())) {
+            fmt::format_to(std::back_inserter(msg_buf), "{}", port_info.first);
+          } else {
+            fmt::format_to(std::back_inserter(msg_buf), ", {}", port_info.first);
+          }
+        }
+        HOLOSCAN_LOG_ERROR(
+            "Cannot find target operator '{}' in fragment '{}'. "
+            "Operator should be one of ({:.{}})",
+            target_op_name,
+            target_frag_name,
+            msg_buf.data(),
+            msg_buf.size());
+        return false;
+      }
+      const auto& [in_port_names, out_port_names, receiver_names] =
+          target_frag_port_map.at(target_op_name);
 
-      auto& target_op_io_spec_inputs = target_op_spec->inputs();
-
-      if (target_op_io_spec_inputs.find(target_port_name) == target_op_io_spec_inputs.end()) {
-        if (target_op_io_spec_inputs.size() == 1 &&
-            (target_port_name.empty() || target_port_name == "")) {
-          target_port_name = target_op_io_spec_inputs.begin()->first;
+      if (in_port_names.find(target_port_name) == in_port_names.end()) {
+        if (in_port_names.size() == 1 && target_port_name.empty()) {
+          target_port_name = *in_port_names.begin();
           // Correct target port name
           corrected_name_pair.push_back(std::make_pair(
               target_op_port, fmt::format("{}.{}", target_op_name, target_port_name)));
           continue;
         }
 
-        bool is_receivers = false;
         // Support for the case where the destination input port label points to the
         // parameter name of the downstream operator, and the parameter type is
         // 'std::vector<holoscan::IOSpec*>'.
-        auto& target_op_params = target_op_spec->params();
-        if (target_op_params.find(target_port_name) != target_op_params.end()) {
-          auto& target_op_param = target_op_params.at(target_port_name);
-          if (std::type_index(target_op_param.type()) ==
-              std::type_index(typeid(std::vector<holoscan::IOSpec*>))) {
-            is_receivers = true;
-          }
-        }
+        bool is_receivers = (receiver_names.find(target_port_name) != receiver_names.end());
         if (!is_receivers) {
-          if (target_op_io_spec_inputs.empty()) {
+          if (in_port_names.empty()) {
             HOLOSCAN_LOG_ERROR("Target operator '{}' has no input ports in fragment '{}'",
                                target_op_name,
-                               target_frag->name());
+                               target_frag_name);
             return false;
           }
 
-          auto msg_buf = fmt::memory_buffer();
-          for (const auto& [label, _] : target_op_io_spec_inputs) {
-            if (&label == &(target_op_io_spec_inputs.begin()->first)) {
-              fmt::format_to(std::back_inserter(msg_buf), "{}", label);
-            } else {
-              fmt::format_to(std::back_inserter(msg_buf), ", {}", label);
+          if (in_port_names.size() == 1) {
+            HOLOSCAN_LOG_ERROR(
+                "Target operator '{}' in fragment '{}' does not have a port named '{}'. It should "
+                "be '{}'.",
+                target_op_name,
+                target_frag_name,
+                target_port_name,
+                *(in_port_names.begin()));
+            return false;
+          } else {
+            auto msg_buf = fmt::memory_buffer();
+            for (const auto& port_name : in_port_names) {
+              if (&port_name == &(*in_port_names.begin())) {
+                fmt::format_to(std::back_inserter(msg_buf), "{}", port_name);
+              } else {
+                fmt::format_to(std::back_inserter(msg_buf), ", {}", port_name);
+              }
             }
-          }
 
-          HOLOSCAN_LOG_ERROR(
-              "Target operator {} has multiple ports, but no port name is specified in "
-              "fragment "
-              "'{}'. It should be one of ({:.{}})",
-              target_op_name,
-              target_frag->name(),
-              msg_buf.data(),
-              msg_buf.size());
-          return false;
+            HOLOSCAN_LOG_ERROR(
+                "Target operator '{}' in fragment '{}' does not have a port named '{}'. It should "
+                "be one of ({:.{}})",
+                target_op_name,
+                target_frag_name,
+                target_port_name,
+                msg_buf.data(),
+                msg_buf.size());
+            return false;
+          }
         }
       }
     }
@@ -599,12 +697,17 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
       }
       auto& input_op_port_map_val = input_op_port_map.value();
 
-      // Correct port names for each connection item
-      if (!update_port_names(prev_frag, frag, input_op_port_map_val)) {
-        HOLOSCAN_LOG_ERROR("Could not update operator/port names for fragment {} -> {}",
-                           prev_frag_name,
-                           frag_name);
-        return false;
+      bool need_port_name_update = need_to_update_port_names(input_op_port_map_val);
+      if (need_port_name_update) {
+        HOLOSCAN_LOG_DEBUG("updating port names for fragment {} -> {}", prev_frag_name, frag_name);
+
+        // Correct port names for each connection item
+        if (!update_port_names(prev_frag_name, frag_name, input_op_port_map_val)) {
+          HOLOSCAN_LOG_ERROR("Could not update operator/port names for fragment {} -> {}",
+                             prev_frag_name,
+                             frag_name);
+          return false;
+        }
       }
 
       for (const auto& [source_op_port, target_op_ports] : *input_op_port_map_val) {
@@ -615,25 +718,29 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
               source_op_port,
               IOSpec::IOType::kOutput,
               IOSpec::ConnectorType::kUCX,
+              // Note: We don't need to consider 'local_address' and 'local_port' here because
+              //       the 'local_address' of UCXTransmitter (we don't care 'local_port') would be
+              //       set by create_virtual_operators_and_connections() in the GXFExecutor during
+              //       the fragment initialization (GXFExecutor::initialize_fragment()).
               ArgList({Arg("receiver_address", ucx_rx_ip),
-                       Arg("port", static_cast<int32_t>(port_index))}));
+                       Arg("port", static_cast<uint32_t>(port_index))}));
 
           auto target_connection_item = std::make_shared<ConnectionItem>(
               target_op_port,
               IOSpec::IOType::kInput,
               IOSpec::ConnectorType::kUCX,
-              ArgList({Arg("address", ucx_rx_ip), Arg("port", static_cast<int32_t>(port_index))}));
+              ArgList({Arg("address", "0.0.0.0"), Arg("port", static_cast<uint32_t>(port_index))}));
 
           // Initialize map for the port index
           if (receiver_port_map_.find(frag_name) == receiver_port_map_.end()) {
             receiver_port_map_[frag_name] =
-                std::vector<std::pair<int32_t, int32_t>>{{port_index, -1}};
+                std::vector<std::pair<int32_t, uint32_t>>{{port_index, 0}};
           } else {
-            std::vector<std::pair<int32_t, int32_t>>& receiver_port_vector =
+            std::vector<std::pair<int32_t, uint32_t>>& receiver_port_vector =
                 receiver_port_map_[frag_name];
-            receiver_port_vector.push_back({port_index, -1});
+            receiver_port_vector.push_back({port_index, 0});
           }
-          index_to_port_map_[port_index] = -1;
+          index_to_port_map_[port_index] = 0;
           index_to_ip_map_[port_index] = frag_name;
 
           // Add the connection item to the connection map
@@ -658,12 +765,12 @@ void AppDriver::correct_connection_map() {
       for (auto& arg : connection->args) {
         if (arg.name() == "port") {
           try {
-            auto arg_port_index = std::any_cast<int32_t>(arg.value());
+            auto arg_port_index = std::any_cast<uint32_t>(arg.value());
             port_index = arg_port_index;
             auto port_number = index_to_port_map_[arg_port_index];
             arg = port_number;
           } catch (const std::bad_any_cast& e) {
-            HOLOSCAN_LOG_ERROR("Cannot cast the port number from fragment '{}' to int32_t",
+            HOLOSCAN_LOG_ERROR("Cannot cast the port number from fragment '{}' to uint32_t",
                                fragment->name());
             return;
           }
@@ -672,8 +779,14 @@ void AppDriver::correct_connection_map() {
       // Update IP address
       for (auto& arg : connection->args) {
         if (arg.name() == "address" || arg.name() == "receiver_address") {
-          auto ip_address = index_to_ip_map_[port_index];
-          arg = ip_address;
+          if (connection->io_type == IOSpec::IOType::kInput) {
+            // For UCXReceiver, it always uses "0.0.0.0" as the IP address.
+            arg = std::string("0.0.0.0");
+          } else {
+            // UCXTransmitter requires the IP address of the receiver.
+            auto ip_address = index_to_ip_map_[port_index];
+            arg = ip_address;
+          }
         }
       }
     }
@@ -716,22 +829,18 @@ bool AppDriver::check_configuration() {
   // If there are no driver or worker, we need to run the application graph directly.
   if (!need_driver_ && !need_worker_) { is_local_ = true; }
 
-  // Set the default driver server address if not specified
+  // Set the default driver server address if not specified.
   auto& server_address = options()->driver_address;
 
-  if (server_address.empty() || server_address == "") {
-    server_address.assign(fmt::format("0.0.0.0:{}", service::kDefaultAppDriverPort));
-  }
-  // Set default IP address and port if not specified
-  auto split = server_address.find(':');
-  if (split == std::string::npos) {
-    std::string ip = server_address;
-    if (server_address.empty() || server_address == "") { ip = "0.0.0.0"; }
-    server_address.assign(fmt::format("{}:{}", ip, service::kDefaultAppDriverPort));
-  } else if (split == 0) {
-    std::string port = server_address.substr(1);
-    server_address.assign(fmt::format("0.0.0.0:{}", port));
-  }
+  // Parse the server address using the parse_address method.
+  auto [server_ip, server_port] = CLIOptions::parse_address(
+      server_address,
+      "0.0.0.0",                                       // default IP address
+      std::to_string(service::kDefaultAppDriverPort),  // default port, converted to string
+      true);  // enclose IPv6 address in square brackets if port is not empty
+
+  server_address = server_ip + (server_port.empty() ? "" : ":" + server_port);
+
   return true;
 }
 
@@ -858,10 +967,36 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
     auto& fragment_graph = app_->fragment_graph();
     auto target_fragments = fragment_graph.get_nodes();
 
-    // Compose fragment graphs
-    for (auto& fragment : target_fragments) { fragment->compose_graph(); }
+    // determine the set of fragment names associated with each worker id
+    std::unordered_map<std::string, std::vector<std::string>> id_to_fragment_names_vector;
+    for (const auto& [fragment_name, worker_id] : schedule) {
+      if (id_to_fragment_names_vector.count(worker_id) == 0) {
+        id_to_fragment_names_vector[worker_id] = std::vector<std::string>{fragment_name};
+      } else {
+        id_to_fragment_names_vector[worker_id].push_back(fragment_name);
+      }
+    }
 
-    // Collect connections
+    // collect port information from each worker (must be before the collect_connections call)
+    for (const auto& [worker_id, fragment_names] : id_to_fragment_names_vector) {
+      auto& worker_client = driver_server_->connect_to_worker(worker_id);
+
+      // Retrieve information for all operator ports in the scheduled fragments from the workers
+      // so we don't have to compose the target fragments on the driver to get this information.
+      auto scheduled_fragments_port_info = worker_client->fragment_port_info(fragment_names);
+      for (auto& name : fragment_names) {
+        if (scheduled_fragments_port_info.find(name) == scheduled_fragments_port_info.end()) {
+          HOLOSCAN_LOG_ERROR(
+              "Failed to retrieve port info for all fragments scheduled on worker with id '{}'",
+              worker_id);
+          break;
+        }
+      }
+      // Merge the collected port info into the app driver's port information map
+      all_fragment_port_map_->merge(scheduled_fragments_port_info);
+    }
+
+    // (populates index_to_port_map_, index_to_ip_map_, connection_map_, receiver_port_map_)
     if (!collect_connections(fragment_graph)) { HOLOSCAN_LOG_ERROR("Cannot collect connections"); }
 
     // Collect # of connectors for each fragment
@@ -943,6 +1078,7 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
       }
 
       auto& worker_client = driver_server_->connect_to_worker(worker_id);
+
       bool result = worker_client->fragment_execution(fragment_vector, connection_map_);
       if (!result) {
         HOLOSCAN_LOG_ERROR("Cannot launch fragments on worker {}", worker_id);
@@ -1053,11 +1189,16 @@ std::future<void> AppDriver::launch_fragments_async(
     std::vector<FragmentNodeType>& target_fragments) {
   auto& fragment_graph = app_->fragment_graph();
 
+  HOLOSCAN_LOG_DEBUG("running AppDriver::launch_fragments_async on {} fragments",
+                     target_fragments.size());
   // Create GXFExecutor for Application
   app_->executor();
 
   // Compose each operator graph first before collecting connections
-  for (auto& fragment : target_fragments) { fragment->compose_graph(); }
+  for (auto& fragment : target_fragments) {
+    fragment->compose_graph();
+    all_fragment_port_map_->try_emplace(fragment->name(), fragment->port_info());
+  }
 
   if (!collect_connections(fragment_graph)) {
     HOLOSCAN_LOG_ERROR("Cannot collect connections");
@@ -1065,8 +1206,17 @@ std::future<void> AppDriver::launch_fragments_async(
   }
   // Correct connection_map_ with the real address and port numbers
   int32_t required_port_count = index_to_ip_map_.size();
+  // Get preferred network ports from environment variable
+  auto prefer_ports = get_preferred_network_ports("HOLOSCAN_UCX_PORTS");
   auto unused_ports = get_unused_network_ports(
-      required_port_count, service::kMinNetworkPort, service::kMaxNetworkPort);
+      required_port_count, service::kMinNetworkPort, service::kMaxNetworkPort, {}, prefer_ports);
+
+  if (unused_ports.size() != static_cast<size_t>(required_port_count)) {
+    HOLOSCAN_LOG_ERROR("System does not have enough ports (required: {}, available: {})",
+                       required_port_count,
+                       unused_ports.size());
+    return std::async(std::launch::async, []() {});
+  }
 
   for (int port_index = 0; port_index < required_port_count; ++port_index) {
     index_to_ip_map_[port_index] = "0.0.0.0";
@@ -1074,14 +1224,10 @@ std::future<void> AppDriver::launch_fragments_async(
   }
   correct_connection_map();
 
-  // If UCX_PROTO_ENABLE is not already set, set it to enable UCX Protocols v2
-  setenv("UCX_PROTO_ENABLE", "y", 0);
-  // Reuse address
-  // (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
-  setenv("UCX_TCP_CM_REUSEADDR", "y", 0);
-
-  // exclude CUDA Interprocess Communication if we are on iGPU
-  exclude_cuda_ipc_transport_on_igpu();
+  // // exclude CUDA Interprocess Communication if we are on iGPU
+  // exclude_cuda_ipc_transport_on_igpu();
+  // Disable CUDA Interprocess Communication (issue 4318442)
+  set_ucx_to_exclude_cuda_ipc();
 
   // Add the UCX network context
   for (auto& fragment : target_fragments) {

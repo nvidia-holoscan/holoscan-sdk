@@ -24,7 +24,10 @@
 #include <set>          // for std::set
 #include <string>       // for std::string
 #include <type_traits>  // for std::enable_if_t, std::is_constructible
-#include <utility>      // for std::pair
+#include <unordered_map>
+#include <unordered_set>
+#include <tuple>
+#include <utility>  // for std::pair
 
 #include "common.hpp"
 #include "config.hpp"
@@ -36,10 +39,21 @@
 
 namespace holoscan {
 
+// key = operator name,  value = (input port names, output port names, multi-receiver names)
+using FragmentPortMap =
+    std::unordered_map<std::string,
+                       std::tuple<std::unordered_set<std::string>, std::unordered_set<std::string>,
+                                  std::unordered_set<std::string>>>;
+
+// Data structure containing port information for multiple fragments. Fragments are composed by
+// the workers and port information is sent back to the driver for addition to this map.
+// The keys are the fragment names.
+using MultipleFragmentsPortMap = std::unordered_map<std::string, FragmentPortMap>;
+
 /**
  * @brief The fragment of the application.
  *
- * A fragment is a building block of the Application. It is a Directed Acyclic Graph (DAG) of
+ * A fragment is a building block of the Application. It is a directed graph of
  * operators. A fragment can be assigned to a physical node of a Holoscan cluster during execution.
  * The run-time execution manages communication across fragments. In a Fragment, Operators (Graph
  * Nodes) are connected to each other by flows (Graph Edges).
@@ -126,8 +140,8 @@ class Fragment {
    *   - libmy_recorder.so
    *
    * replayer:
-   *   directory: "../data/endoscopy/video"
-   *   basename: "surgical_video"
+   *   directory: "../data/racerx"
+   *   basename: "racerx"
    *   frame_rate: 0   # as specified in timestamps
    *   repeat: false   # default: false
    *   realtime: true  # default: true
@@ -249,6 +263,13 @@ class Fragment {
    * @return The argument list of the configuration for the key.
    */
   ArgList from_config(const std::string& key);
+
+  /**
+   * @brief Determine the set of keys present in a Fragment's config.
+   *
+   * @return The set of valid keys.
+   */
+  std::unordered_set<std::string> config_keys();
 
   /**
    * @brief Create a new operator.
@@ -604,7 +625,20 @@ class Fragment {
   /**
    * @brief Calls compose() if the graph is not composed yet.
    */
-  void compose_graph();
+  virtual void compose_graph();
+
+  /**
+   * @brief Get an easily serializable summary of port information.
+   *
+   * The FragmentPortMap class is used by distributed applications to send port information
+   * between application workers and the driver.
+   *
+   * @return An unordered_map of the fragment's port information where the keys are operator names
+   * and the values are a 3-tuple. The first two elements of the tuple are the set of input and
+   * output port names, respectively. The third element of the tuple is the set of "receiver"
+   * parameters (those with type std::vector<IOSpec*>).
+   */
+  FragmentPortMap port_info() const;
 
  protected:
   friend class Application;  // to access 'scheduler_' in Application

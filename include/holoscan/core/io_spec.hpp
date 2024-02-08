@@ -18,8 +18,11 @@
 #ifndef HOLOSCAN_CORE_IO_SPEC_HPP
 #define HOLOSCAN_CORE_IO_SPEC_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <typeinfo>
 #include <utility>
@@ -48,7 +51,7 @@ namespace holoscan {
  * An interaction point between two operators. Operators ingest data at Input ports and publish data
  * at Output ports. Receiver, Transmitter, and MessageRouter in GXF would be replaced with the
  * concept of Input/Output Port of the Operator and the Flow (Edge) of the Application Workflow
- * (DAG) in the Framework.
+ * in the Framework.
  */
 class IOSpec {
  public:
@@ -74,7 +77,15 @@ class IOSpec {
       : op_spec_(op_spec),
         name_(name),
         io_type_(io_type),
-        typeinfo_(&typeid(holoscan::gxf::Entity)) {}
+        typeinfo_(&typeid(holoscan::gxf::Entity)) {
+    // Operator::parse_port_name requires that "." is not allowed in the IOSPec name
+    if (name.find(".") != std::string::npos) {
+      throw std::invalid_argument(fmt::format(
+          "The . character is reserved and cannot be used in the port (IOSpec) name ('{}').",
+          name));
+    }
+    name_ = name;
+  }
 
   /**
    * @brief Construct a new IOSpec object.
@@ -86,7 +97,15 @@ class IOSpec {
    */
   IOSpec(OperatorSpec* op_spec, const std::string& name, IOType io_type,
          const std::type_info* typeinfo)
-      : op_spec_(op_spec), name_(name), io_type_(io_type), typeinfo_(typeinfo) {}
+      : op_spec_(op_spec), io_type_(io_type), typeinfo_(typeinfo) {
+    // Operator::parse_port_name requires that "." is not allowed in the IOSPec name
+    if (name.find(".") != std::string::npos) {
+      throw std::invalid_argument(fmt::format(
+          "The . character is reserved and cannot be used in the port (IOSpec) name ('{}').",
+          name));
+    }
+    name_ = name;
+  }
 
   /**
    * @brief Get the operator specification that contains this input/output.
@@ -139,10 +158,6 @@ class IOSpec {
    *
    * - ConditionType::kMessageAvailable
    * - ConditionType::kDownstreamAffordable
-   * - ConditionType::kCount
-   * - ConditionType::kBoolean
-   * - ConditionType::kPeriodic
-   * - ConditionType::kAsynchronous
    * - ConditionType::kNone
    *
    * @param type The type of the condition.
@@ -162,24 +177,11 @@ class IOSpec {
             type,
             std::make_shared<DownstreamMessageAffordableCondition>(std::forward<ArgsT>(args)...));
         break;
-      case ConditionType::kCount:
-        conditions_.emplace_back(type,
-                                 std::make_shared<CountCondition>(std::forward<ArgsT>(args)...));
-        break;
-      case ConditionType::kBoolean:
-        conditions_.emplace_back(type,
-                                 std::make_shared<BooleanCondition>(std::forward<ArgsT>(args)...));
-        break;
-      case ConditionType::kPeriodic:
-        conditions_.emplace_back(type,
-                                 std::make_shared<PeriodicCondition>(std::forward<ArgsT>(args)...));
-        break;
-      case ConditionType::kAsynchronous:
-        conditions_.emplace_back(
-            type, std::make_shared<AsynchronousCondition>(std::forward<ArgsT>(args)...));
-        break;
       case ConditionType::kNone:
         conditions_.emplace_back(type, nullptr);
+        break;
+      default:
+        HOLOSCAN_LOG_ERROR("Unsupported condition type for IOSpec: {}", static_cast<int>(type));
         break;
     }
     return *this;
@@ -240,6 +242,21 @@ class IOSpec {
     }
     return *this;
   }
+
+  /**
+   * @brief Get a YAML representation of the IOSpec.
+   *
+   * @return YAML node including the parameters of this component.
+   */
+  virtual YAML::Node to_yaml_node() const;
+
+  /**
+   * @brief Get a description of the IOSpec.
+   *
+   * @see to_yaml_node()
+   * @return YAML string.
+   */
+  std::string description() const;
 
  private:
   OperatorSpec* op_spec_ = nullptr;

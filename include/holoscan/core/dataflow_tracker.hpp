@@ -196,6 +196,10 @@ class DataFlowTracker {
   // update_source_messages_number, and write_to_logfile.
   friend class DFFTCollector;
 
+  // Making AnnotatedDoubleBufferReceiver friend class to access update_latency and write_to_logfile
+  // because the cyclic paths are updated from there, instead of DFFTCollector
+  friend class AnnotatedDoubleBufferReceiver;
+
   /**
    * @brief Update the tracker with the current latency for a given path.
    *

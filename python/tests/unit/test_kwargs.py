@@ -1,17 +1,19 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+ SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import decimal
 from collections.abc import Generator, Sequence
@@ -238,10 +240,7 @@ def test_py_object_to_arg_2d(value, container_type, element_type):
     assert arg.arg_type.container_type == container_type
     assert arg.arg_type.element_type == element_type
 
-    if isinstance(value, np.ndarray):
-        val_list = value.tolist()
-    else:
-        val_list = [list(v) for v in value]
+    val_list = value.tolist() if isinstance(value, np.ndarray) else [list(v) for v in value]
     v0 = val_list[0][0]
     value_dtype = getattr(v0, "dtype", None)
     numpy_scalar = value_dtype is not None
@@ -385,11 +384,11 @@ def test_arglist_to_kwargs():
         if isinstance(v, np.ndarray):
             assert round_trip_v == v.tolist()
         elif isinstance(v, str):
-            round_trip_v == v
+            assert round_trip_v == v
         elif isinstance(v, Sequence):
-            round_trip_v == list(v)
+            assert round_trip_v == list(v)
         else:
-            round_trip_v == v
+            assert round_trip_v == v
 
 
 def test_arglist_from_kwargs():

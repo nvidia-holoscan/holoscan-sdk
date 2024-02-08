@@ -5,7 +5,7 @@ This app captures video streams using [Video4Linux](https://www.kernel.org/doc/h
 #### Notes on the V4L2 operator
 
 * The V4L2 operator can read a range of pixel formats, though it will always output RGBA32 at this time.
-* If pixel format is not specified in the yaml configuration file, it will be automatically selected if `AR24` or `YUYV` is supported by the device.  For other formats, you will need to specify the `pixel_format` parameter in the yaml file which will then be used.  However, note that the operator expects that this format can be encoded as RGA32.  If not, the behavior is undefined.
+* If pixel format is not specified in the yaml configuration file, it will be automatically selected if `AB24` or `YUYV` is supported by the device. For other formats, you will need to specify the `pixel_format` parameter in the yaml file which will then be used. However, note that the operator expects that this format can be encoded as RGBA32. If not, the behavior is undefined.
 * The V4L2 operator outputs data on host. In order to move data from host to GPU device, use `holoscan::ops::FormatConverterOp`.
 
 ## Requirements
@@ -26,9 +26,9 @@ If you do not have permissions to open the video device, run:
  sudo usermod -aG video $USER
 ```
 
-### HDMI IN
+### Updating HDMI IN Firmware
 
-The HDMI IN on the dev kit will have to be activated in order for capturing to work via HDMI IN. Please look at the relevant dev kit user guide for instructions.
+Before using the HDMI IN device, please ensure that it has the latest firmware by following instructions from the [devkit guide](https://docs.nvidia.com/igx-orin/user-guide/latest/post-installation.html#updating-hdmi-in-input-firmware).
 
 ## Parameters
 

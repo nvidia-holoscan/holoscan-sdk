@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,8 +42,7 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   auto& video_buffer_output = spec.output<gxf::Entity>("video_buffer_output");
   auto& overlay_buffer_input =
       spec.input<gxf::Entity>("overlay_buffer_input").condition(ConditionType::kNone);
-  auto& overlay_buffer_output =
-      spec.output<gxf::Entity>("overlay_buffer_output").condition(ConditionType::kNone);
+  auto& overlay_buffer_output = spec.output<gxf::Entity>("overlay_buffer_output");
 
   constexpr char kDefaultDevice[] = "0";
   constexpr NTV2Channel kDefaultChannel = NTV2_CHANNEL1;
@@ -358,6 +357,22 @@ AJAStatus AJASourceOp::SetupBuffers() {
 void AJASourceOp::initialize() {
   register_converter<NTV2Channel>();
 
+  // Pre-initialize the 'enable_overlay' parameter.
+  auto enable_overlay_arg = std::find_if(args().rbegin(), args().rend(), [](const auto& arg) {
+    return (arg.name() == "enable_overlay");
+  });
+  if (enable_overlay_arg != args().rend()) {
+    auto& param_wrap = spec()->params()["enable_overlay"];
+    ArgumentSetter::set_param(param_wrap, (*enable_overlay_arg));
+  }
+  if (!enable_overlay_.has_value()) { enable_overlay_.set_default_value(); }
+  // If overlay is disabled, insert ConditionType::kNone
+  // condition so that its default condition (DownstreamMessageAffordableCondition) is not added
+  // during Operator::initialize().
+  if (!enable_overlay_.get()) {
+    spec()->outputs()["overlay_buffer_output"]->condition(ConditionType::kNone);
+  }
+
   Operator::initialize();
 }
 
@@ -449,8 +464,8 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
                                     color_planes,
                                     nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR};
 
-  // Pass an empty overlay buffer downstream.
   if (enable_overlay_) {
+    // Pass an overlay buffer downstream.
     auto overlay_output = nvidia::gxf::Entity::New(context.context());
     if (!overlay_output) {
       HOLOSCAN_LOG_ERROR("Failed to allocate overlay output; terminating.");

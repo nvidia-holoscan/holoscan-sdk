@@ -11,6 +11,9 @@ The following examples demonstrate the basics of the Holoscan core API, and are 
    1. [**ping_simple**](ping_simple): connecting existing operators
    2. [**ping_custom_op**](ping_custom_op): creating and connecting your own operator
    3. [**ping_multi_port**](ping_multi_port): connecting operators with multiple IO ports
+   4. [**ping_distributed**](ping_distributed): transmit tensors from one fragment to another in a
+      distributed application
+   5. [**ping_cycle**](ping_cycle): connecting operators in a cyclic path
 3. [**Video Replayer**](video_replayer): switch the source/sink from Tx/Rx to loading a video from disk and displaying its frames
 4. [**Distributed Video Replayer**](video_replayer_distributed): switch the source/sink from Tx/Rx
    to loading a video from disk and displaying its frames, with a distributed application

@@ -31,6 +31,7 @@ add_library(gxf_holoscan_wrapper SHARED
 )
 target_link_libraries(gxf_holoscan_wrapper
   PUBLIC gxf_holoscan_wrapper_lib
+  PRIVATE holoscan_security_flags
 )
 
 # Add include directories

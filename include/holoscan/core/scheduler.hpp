@@ -231,6 +231,13 @@ class Scheduler : public Component {
    */
   void initialize() override;
 
+  /**
+   * @brief Get a YAML representation of the scheduler.
+   *
+   * @return YAML node including the base component properties, component spec and resources.
+   */
+  YAML::Node to_yaml_node() const override;
+
  protected:
   std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
 

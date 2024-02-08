@@ -47,9 +47,9 @@ include(CMakeParseArguments)
 #     if specified the generated header file and the include path is added to the target
 
 function(gen_header_from_binary_file)
-    set(_options )
+    set(_options)
     set(_singleargs FILE_PATH TARGET)
-    set(_multiargs )
+    set(_multiargs)
 
     cmake_parse_arguments(gen_header "${_options}" "${_singleargs}" "${_multiargs}" "${ARGN}")
 

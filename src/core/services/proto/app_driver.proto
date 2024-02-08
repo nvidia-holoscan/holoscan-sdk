@@ -23,9 +23,10 @@ import "system_resource.proto";
 import "result.proto";
 
 message FragmentAllocationRequest {
-  string worker_port = 1;
-  repeated string fragment_names = 2;
-  AvailableSystemResource available_system_resource = 3;
+  string worker_ip = 1;
+  string worker_port = 2;
+  repeated string fragment_names = 3;
+  AvailableSystemResource available_system_resource = 4;
 }
 
 message FragmentAllocationResponse {
@@ -33,8 +34,9 @@ message FragmentAllocationResponse {
 }
 
 message WorkerExecutionFinishedRequest {
-  string worker_port = 1;
-  Result status = 2;
+  string worker_ip = 1;
+  string worker_port = 2;
+  Result status = 3;
 }
 
 message WorkerExecutionFinishedResponse {

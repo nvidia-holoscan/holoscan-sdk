@@ -112,12 +112,14 @@ class Vulkan {
    *
    * @param width, height     size
    * @param format            texture format
+   * @param component_mapping component mapping
    * @param filter            texture filter
    * @param normalized        if true, then texture coordinates are normalize (0...1),
    *                             else (0...width, 0...height)
    * @return created texture object
    */
   Texture* create_texture_for_cuda_interop(uint32_t width, uint32_t height, ImageFormat format,
+                                           const vk::ComponentMapping& component_mapping,
                                            vk::Filter filter = vk::Filter::eLinear,
                                            bool normalized = true);
 
@@ -128,14 +130,15 @@ class Vulkan {
    * @param format            texture format
    * @param data_size         data size in bytes
    * @param data              texture data
+   * @param component_mapping component mapping
    * @param filter            texture filter
    * @param normalized        if true, then texture coordinates are normalize (0...1),
    *                             else (0...width, 0...height)
    * @return created texture object
    */
   Texture* create_texture(uint32_t width, uint32_t height, ImageFormat format, size_t data_size,
-                          const void* data, vk::Filter filter = vk::Filter::eLinear,
-                          bool normalized = true);
+                          const void* data, const vk::ComponentMapping& component_mapping,
+                          vk::Filter filter = vk::Filter::eLinear, bool normalized = true);
 
   /**
    * Destroy a texture created with ::create_texture_for_cuda_interop or ::create_texture.
@@ -245,7 +248,7 @@ class Vulkan {
             const nvmath::mat4f& view_matrix = nvmath::mat4f(1));
 
   /**
-   * Draw indexed triangle list geometry. Used to draw ImGui draw list for text drawing.
+   * Draw indexed triangle list geometry. Used to draw ImGui draw lists.
    *
    * @param desc_set          descriptor set for texture atlas
    * @param vertex_buffer     vertex buffer
@@ -257,10 +260,10 @@ class Vulkan {
    * @param opacity           opacity, 0.0 is transparent, 1.0 is opaque
    * @param view_matrix       view matrix
    */
-  void draw_text_indexed(vk::DescriptorSet desc_set, Buffer* vertex_buffer, Buffer* index_buffer,
-                         vk::IndexType index_type, uint32_t index_count, uint32_t first_index,
-                         uint32_t vertex_offset, float opacity,
-                         const nvmath::mat4f& view_matrix = nvmath::mat4f(1));
+  void draw_imgui(vk::DescriptorSet desc_set, Buffer* vertex_buffer, Buffer* index_buffer,
+                  vk::IndexType index_type, uint32_t index_count, uint32_t first_index,
+                  uint32_t vertex_offset, float opacity,
+                  const nvmath::mat4f& view_matrix = nvmath::mat4f(1));
 
   /**
    * Draw indexed geometry.
@@ -295,9 +298,11 @@ class Vulkan {
    * @param buffer_size   size of the storage buffer in bytes
    * @param buffer        pointer to CUDA device memory to store the framebuffer into
    * @param ext_stream    CUDA stream to use for operations
+   * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
+   * contiguous in memory
    */
   void read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                        CUdeviceptr buffer, CUstream ext_stream);
+                        CUdeviceptr buffer, CUstream ext_stream, size_t row_pitch);
 
  private:
   struct Impl;

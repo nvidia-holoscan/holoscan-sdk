@@ -1,19 +1,19 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
+ SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-License-Identifier: Apache-2.0
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+ http://www.apache.org/licenses/LICENSE-2.0
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-"""  # no qa
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+"""  # noqa: E501
 
 import math
 import os
@@ -163,9 +163,7 @@ class ImageViewsOp(Operator):
             [
                 (0.0, 0.0, 0.2),
             ],
-            dtype=np.float32,
         )
-        dynamic_text = dynamic_text[np.newaxis, :, :]
         out_message = {
             "video": input_tensor,
             "dynamic_text": dynamic_text,
@@ -269,14 +267,14 @@ class MyVideoViewsApp(Application):
         width = 800
         height = 800
         aspect_ratio = float(width) / float(height)
-        video_dir = os.path.join(sample_data_path, "endoscopy", "video")
+        video_dir = os.path.join(sample_data_path, "racerx")
         if not os.path.exists(video_dir):
             raise ValueError(f"Could not find video data: {video_dir=}")
         source = VideoStreamReplayerOp(
             self,
             name="replayer",
             directory=video_dir,
-            basename="surgical_video",
+            basename="racerx",
             frame_rate=0,  # as specified in timestamps
             repeat=True,  # default: false
             realtime=True,  # default: true
@@ -331,6 +329,11 @@ class MyVideoViewsApp(Application):
         self.add_flow(image_views, visualizer, {("output_specs", "input_specs")})
 
 
+def main(config_count):
+    app = MyVideoViewsApp(config_count=config_count)
+    app.run()
+
+
 if __name__ == "__main__":
     # Parse args
     parser = ArgumentParser(description="Example video processing application")
@@ -342,5 +345,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    app = MyVideoViewsApp(config_count=args.count)
-    app.run()
+    main(config_count=args.count)

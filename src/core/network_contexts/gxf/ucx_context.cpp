@@ -52,6 +52,23 @@ void UcxContext::initialize() {
     // fragments.
     auto entity_serializer = frag->make_resource<holoscan::UcxEntitySerializer>(
         "ucx_entity_serializer", Arg("verbose_warning") = false);
+
+    // Note: Activation sequence of entities in GXF:
+    // 1. System entities
+    // 2. Router entities
+    // 3. Connection entities
+    // 4. Network entities
+    // 5. Graph entities
+    //
+    // Holoscan Resources, a GXF component created using Fragment::make_resource, are not part of
+    // any entity by default. A new entity is created unless the resource's entity id is explicitly
+    // set (using gxf_eid()). Network entities like UcxContext might access serializer resources
+    // before the activation of graph entities. Therefore, it's essential to assign the same entity
+    // id to the serializer resource as the network entity (UcxContext) to ensure simultaneous
+    // activation and initialization.
+    // (issue 4398018)
+    if (gxf_eid_ != 0) { entity_serializer->gxf_eid(gxf_eid_); }
+
     add_arg(Arg("serializer") = entity_serializer);
   }
   GXFNetworkContext::initialize();

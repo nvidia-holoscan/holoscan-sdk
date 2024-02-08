@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# CUDA_STANDARD 17 is supported from CMAKE 3.18
-# : https://cmake.org/cmake/help/v3.18/prop_tgt/CUDA_STANDARD.html
-cmake_minimum_required(VERSION 3.20.1) # rapids-cmake-src requires >= 3.20.1
+# CMAKE_CUDA_ARCHITECTURES=native requires >= 3.24
+cmake_minimum_required(VERSION 3.24)
 
 set(HOLOSCAN_PACKAGE_NAME holoscan)
 
@@ -23,14 +22,13 @@ set(HOLOSCAN_PACKAGE_NAME holoscan)
 # # Options
 # ##############################################################################
 option(BUILD_SHARED_LIBS "Build Shared Libraries" ON)
-option(HOLOSCAN_BUILD_MODULES "Build Holoscan SDK Modules" ON)
 option(HOLOSCAN_BUILD_LIBTORCH "Build support for the LibTorch backend" ON)
+option(HOLOSCAN_BUILD_ORT "Build support for the ONNX Runtime backend" ON)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
 option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
 option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
 option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Datasets" ON)
 option(HOLOSCAN_BUILD_TESTS "Build Holoscan SDK Tests" ON)
-option(HOLOSCAN_BUILD_DOCS "Build Holoscan SDK Documents" OFF)
 option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan SDK" OFF)
 option(HOLOSCAN_INSTALL_EXAMPLE_SOURCE "Install the example source code" ON)
 
@@ -47,13 +45,8 @@ list(APPEND CMAKE_MODULE_PATH "${HOLOSCAN_TOP}/cmake/modules")
 # Append local cmake dependency path CMAKE_PREFIX_PATH
 list(APPEND CMAKE_PREFIX_PATH "${HOLOSCAN_TOP}/cmake/deps")
 
-# Include build utilities (rapids)
-include(SuperBuildUtils) # set local dependent modules and fetch RAPIDS-cmake
-include(rapids-cmake)
-include(rapids-cpm)
-include(rapids-cuda)
-include(rapids-export)
-include(rapids-find)
+# Setup rapids-cmake
+include(SetupRapidsCMake)
 
 # ##############################################################################
 # # Project definition
@@ -68,8 +61,7 @@ project(${HOLOSCAN_PACKAGE_NAME}
     DESCRIPTION "Holoscan SDK"
     LANGUAGES C CXX
 )
-include(SetupCUDA)
-
+include(SetupCUDA) # CUDA Language enabled there after additional setup
 
 # ##############################################################################
 # # Global properties (CMAKE_*)
@@ -129,6 +121,16 @@ set(HOLOSCAN_USE_CCACHE_SKIPPED FALSE)
 include(SetupCache)
 
 # ##############################################################################
+# # Setup hardening security build flags
+# ##############################################################################
+include(BuildSecurityFlags)
+
+# ##############################################################################
+# # Print project settings
+# ##############################################################################
+include(PrintProjectSettings)
+
+# ##############################################################################
 # # Define dependencies
 # ##############################################################################
 
@@ -143,15 +145,12 @@ include(cmake/setup_dependencies.cmake)
 # ##############################################################################
 # # Build sub modules (holoviz, holoinfer)
 # ##############################################################################
-if(HOLOSCAN_BUILD_MODULES)
-    add_subdirectory(modules)
-endif()
+add_subdirectory(modules)
 
 # ##############################################################################
 # # Build core and operators
 # ##############################################################################
 add_subdirectory(src)
-
 
 # ##############################################################################
 # # Build GXF Extensions and apps
@@ -173,12 +172,12 @@ endif()
 
 # List targets to export/install
 list(APPEND HOLOSCAN_INSTALL_TARGETS
-    logger
     core
     holoviz
     holoviz_imgui
     holoinfer
     infer_utils
+    logger
     op_aja
     op_async_ping_rx
     op_async_ping_tx
@@ -194,8 +193,12 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_video_stream_replayer
     op_v4l2
 )
-if (${HOLOSCAN_BUILD_LIBTORCH})
+
+if(HOLOSCAN_BUILD_LIBTORCH)
     list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_torch)
+endif()
+if(HOLOSCAN_BUILD_ORT)
+    list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_ort)
 endif()
 
 # Add PUBLIC dependencies to our install target
@@ -309,13 +312,6 @@ set(holoscan_install_hook_code_string
 
 [=[
 
-if(NOT TARGET ONNXRuntime::ONNXRuntime)
-  add_library(ONNXRuntime::ONNXRuntime SHARED IMPORTED)
-  set_target_properties(ONNXRuntime::ONNXRuntime PROPERTIES
-    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/${ONNXRUNTIME_LIBRARY_NAME}"
-  )
-endif()
-
 if(NOT TARGET fmt::fmt-header-only)
   add_library(fmt::fmt-header-only INTERFACE IMPORTED)
 endif()
@@ -347,15 +343,9 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 
 ]=])
 
-string(PREPEND holoscan_install_hook_code_string "set(ONNXRUNTIME_LIBRARY_NAME ${ONNXRUNTIME_LIBRARY_NAME})\n")
-
 set(holoscan_build_hook_code_string [=[
 ]=])
 
-# Override CMAKE_INSTALL_DEFAULT_COMPONENT_NAME to holoscan-core
-# until rapids-cmake's rapids_export include the concept of optional COMPONENTS
-# (https://github.com/rapidsai/rapids-cmake/pull/154)
-set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME holoscan-core)
 
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_export.html#rapids-export
 # (rapids_export() always installs to lib and doesn’t use GNUInstallDirs)
@@ -363,6 +353,7 @@ rapids_export(
     INSTALL ${HOLOSCAN_PACKAGE_NAME}
     EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
     NAMESPACE ${HOLOSCAN_PACKAGE_NAME}::
+    VERSION OFF # Forces to not generate the config version file
     DOCUMENTATION holoscan_doc_string
     FINAL_CODE_BLOCK holoscan_install_hook_code_string
 )
@@ -372,12 +363,13 @@ rapids_export(
     LANGUAGES C CXX CUDA
     NAMESPACE ${HOLOSCAN_PACKAGE_NAME}::
     DOCUMENTATION holoscan_doc_string
+    VERSION OFF # Forces to not generate the config version file
     FINAL_CODE_BLOCK holoscan_build_hook_code_string
 )
 
-# Overwrite config version from rapids_export since it is not correct
-# Need AnyNewerVersion
-file(REMOVE "${CMAKE_BINARY_DIR}/rapids-cmake/holoscan/export/${HOLOSCAN_PACKAGE_NAME}-config-version.cmake")
+# Create config version compatible with any newer version of the SDK
+# Note: this is to replace the version file from rapids_expert which does not support
+#       `AnyNewerVesion`
 write_basic_package_version_file(
         "${CMAKE_BINARY_DIR}/${HOLOSCAN_PACKAGE_NAME}-config-version.cmake"
         COMPATIBILITY AnyNewerVersion)
@@ -386,27 +378,6 @@ install(FILES "${CMAKE_BINARY_DIR}/${HOLOSCAN_PACKAGE_NAME}-config-version.cmake
         RENAME "${HOLOSCAN_PACKAGE_NAME}-config-version.cmake"
         DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
         COMPONENT holoscan-core)
-
-# ##############################################################################
-# # Build Coverage
-# ##############################################################################
-if(HOLOSCAN_BUILD_COVERAGE)
-    include(cmake/modules/CodeCoverage.cmake)
-    append_coverage_compiler_flags()
-    setup_target_for_coverage_lcov(
-        NAME coverage
-	BASE_DIRECTORY "${CMAKE_SOURCE_DIR}"
-	CTEST_EXECUTABLE ctest --test-dir ${CMAKE_BINARY_DIR} || true
-	CTEST_EXTRACT "${CMAKE_SOURCE_DIR}/gxf_extensions/*"
-        "${CMAKE_SOURCE_DIR}/include/holoscan/*"
-        "${CMAKE_SOURCE_DIR}/modules/holoviz/src/*"
-        "${CMAKE_SOURCE_DIR}/modules/holoinfer/src/*"
-        "${CMAKE_SOURCE_DIR}/src/*"
-        "${CMAKE_SOURCE_DIR}/python/holoscan/*"
-	PYTEST_EXECUTABLE pytest --pyargs "${CMAKE_BINARY_DIR}/python/lib/tests" || true
-	PYTEST_EXTRACT "*holoscan*"
-	)
-endif()
 
 # ##############################################################################
 # # Download datasets
@@ -437,9 +408,9 @@ if(HOLOSCAN_BUILD_TESTS)
     add_test(NAME HOLOVIZ_FUNCTIONAL_TEST COMMAND holoscan::viz::functionaltests)
 
     # Set Environment variable to resolve memory allocation failure by loading TLS library
-    if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
         execute_process(COMMAND nvidia-smi --query-gpu=driver_version --format=csv,noheader OUTPUT_VARIABLE driver_version)
-        if (NOT ${driver_version} STREQUAL "")
+        if(NOT ${driver_version} STREQUAL "")
             string(STRIP ${driver_version} driver_version)
             set(ldpath "LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libnvidia-tls.so.${driver_version}")
             set_property(TEST HOLOVIZ_FUNCTIONAL_TEST PROPERTY ENVIRONMENT ${ldpath})
@@ -452,8 +423,6 @@ if(HOLOSCAN_BUILD_TESTS)
 endif()
 
 if(HOLOSCAN_BUILD_PYTHON)
-    find_package(Python3  REQUIRED COMPONENTS Interpreter Development)
-    superbuild_depend(pybind11)
     add_subdirectory(python)
 endif()
 

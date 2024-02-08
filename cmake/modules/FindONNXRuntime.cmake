@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,8 +28,13 @@
 # [2] https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html#find-module-packages
 
 # Find headers
-find_path(ONNXRuntime_INCLUDE_DIR NAMES onnxruntime_c_api.h)
+find_path(ONNXRuntime_INCLUDE_DIR
+  NAMES onnxruntime/core/session/onnxruntime_c_api.h
+)
+list(APPEND ONNXRuntime_INCLUDE_DIRS "${ONNXRuntime_INCLUDE_DIR}")
+list(APPEND ONNXRuntime_INCLUDE_DIRS "${ONNXRuntime_INCLUDE_DIR}/onnxruntime/core/session")
 mark_as_advanced(ONNXRuntime_INCLUDE_DIR)
+mark_as_advanced(ONNXRuntime_INCLUDE_DIRS)
 
 # Find version
 if(ONNXRuntime_INCLUDE_DIR)
@@ -42,7 +47,7 @@ mark_as_advanced(ONNXRuntime_LIBRARY)
 add_library(ONNXRuntime::ONNXRuntime SHARED IMPORTED)
 set_target_properties(ONNXRuntime::ONNXRuntime PROPERTIES
    IMPORTED_LOCATION "${ONNXRuntime_LIBRARY}"
-   INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${ONNXRuntime_INCLUDE_DIR}"
+   INTERFACE_INCLUDE_DIRECTORIES "${ONNXRuntime_INCLUDE_DIRS}"
 )
 
 # Generate ONNXRuntime_FOUND

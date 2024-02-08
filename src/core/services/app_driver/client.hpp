@@ -40,11 +40,12 @@ class AppDriverClient {
  public:
   AppDriverClient(const std::string& driver_address, std::shared_ptr<grpc::Channel> channel);
 
-  bool fragment_allocation(const std::string& worker_port,
+  bool fragment_allocation(const std::string& worker_ip, const std::string& worker_port,
                            const std::vector<FragmentNodeType>& target_fragments,
                            const CPUInfo& cpuinfo, const std::vector<GPUInfo>& gpuinfo);
 
-  bool worker_execution_finished(const std::string& worker_port, AppWorkerTerminationCode code);
+  bool worker_execution_finished(const std::string& worker_ip, const std::string& worker_port,
+                                 AppWorkerTerminationCode code);
 
  private:
   std::string driver_address_;

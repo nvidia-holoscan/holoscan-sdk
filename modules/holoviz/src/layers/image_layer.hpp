@@ -52,7 +52,7 @@ class ImageLayer : public Layer {
    * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
    * to the depth buffer when rendering the color image from a separate invocation of image_*() for
    * the same layer. This enables depth-compositing image layers with other Holoviz layers.
-   * Supported depth formats are: D32_SFLOAT.
+   * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
    *
    * @param width         width of the image
    * @param height        height of the image
@@ -72,7 +72,7 @@ class ImageLayer : public Layer {
    * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
    * to the depth buffer when rendering the color image from a separate invocation of image_*() for
    * the same layer. This enables depth-compositing image layers with other Holoviz layers.
-   * Supported depth formats are: D32_SFLOAT.
+   * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
    *
    * @param fmt       image format
    * @param array     Cuda array
@@ -87,7 +87,7 @@ class ImageLayer : public Layer {
    * If fmt is a depth format, the image will be interpreted as a depth image, and will be written
    * to the depth buffer when rendering the color image from a separate invocation of image_*() for
    * the same layer. This enables depth-compositing image layers with other Holoviz layers.
-   * Supported depth formats are: D32_SFLOAT.
+   * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
    *
    * @param width     width of the image
    * @param height    height of the image
@@ -126,6 +126,33 @@ class ImageLayer : public Layer {
    * `[0.0, size[`
    */
   void lut(uint32_t size, ImageFormat fmt, size_t data_size, const void* data, bool normalized);
+
+  /**
+   * Specifies how the color components of an image are mapped to the color components of the
+   * output. Output components can be set to the R, G, B or A component of the input or fixed to
+   * zero or one or just identical to the input.
+   *
+   * Default: all output components are identical to the input components
+   * (ComponentSwizzle::IDENTITY).
+   *
+   * This can be used display an image in color formats which are not natively supported by Holoviz.
+   * For example to display a BGRA image:
+   * @code{.cpp}
+   *  image_component_mapping(ComponentSwizzle::B, ComponentSwizzle::G, ComponentSwizzle::R,
+   *    ComponentSwizzle::A);
+   *  ImageHost(width, height, ImageFormat::R8G8B8A8_UNORM, bgra_data);
+   * @endcode
+   * or to display a single component image in gray scale:
+   * @code{.cpp}
+   *  image_component_mapping(ComponentSwizzle::R, ComponentSwizzle::R, ComponentSwizzle::R,
+   *    ComponentSwizzle::IDENTITY);
+   *  ImageHost(width, height, ImageFormat::R8_UNORM, single_component_data);
+   * @endcode
+   *
+   * @param r, g, b, a    sets how the component values are placed in each component of the output
+   */
+  void image_component_mapping(ComponentSwizzle r, ComponentSwizzle g, ComponentSwizzle b,
+                               ComponentSwizzle a);
 
   /// holoscan::viz::Layer virtual members
   ///@{

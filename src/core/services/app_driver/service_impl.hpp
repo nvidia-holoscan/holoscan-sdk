@@ -49,11 +49,17 @@ class AppDriverServiceImpl final : public AppDriverService::Service {
       holoscan::service::WorkerExecutionFinishedResponse* response) override;
 
  private:
-  /// Parse the IP address from a peer address ("[protocol]:[ip]:[port]").
-  static std::string parse_ip(const std::string& peer);
+  /// Decode URI-encoded characters from the source string.
+  static std::string uri_decode(const std::string& src);
 
-  /// Parse the port number from a peer address ("[protocol]:[ip]:[port]").
-  static std::string parse_port(const std::string& peer);
+  /// Parse the IP address from a peer address ("[protocol]:[ip]:[port]"). Enclose the IP address
+  /// with square brackets if it is an IPv6 address. Decode URI-encoded characters from the peer
+  /// string.
+  static std::string parse_ip_from_peer(const std::string& peer);
+
+  /// Parse the port number from a peer address ("[protocol]:[ip]:[port]"). Decode URI-encoded
+  /// characters from the peer string.
+  static std::string parse_port_from_peer(const std::string& peer);
 
   void store_worker_info(const std::string& client_address,
                          const google::protobuf::RepeatedPtrField<std::string>& fragment_names,

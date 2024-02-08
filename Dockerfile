@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,52 +18,40 @@
 ############################################################
 # Versions
 ############################################################
-ARG ONNX_RUNTIME_VERSION=1.12.1
-ARG BUILD_LIBTORCH=true
-ARG LIBTORCH_VERSION=1.12.0
-ARG TORCHVISION_VERSION=0.14.1
+ARG ONNX_RUNTIME_VERSION=1.15.1
+ARG LIBTORCH_VERSION=2.1.0_23.08
+ARG TORCHVISION_VERSION=0.16.0_23.08
 ARG VULKAN_SDK_VERSION=1.3.216.0
 ARG GRPC_VERSION=1.54.2
-ARG UCX_VERSION=1.14.0
-ARG GXF_VERSION=23.05_20230717_d105fa1c
+ARG UCX_VERSION=1.15.0
+ARG GXF_VERSION=3.1_20240103_6bf4fcd2
+ARG MOFED_VERSION=23.07-0.5.1.2
 
 ############################################################
 # Base image
 ############################################################
 ARG GPU_TYPE=dgpu
-FROM nvcr.io/nvidia/tensorrt:22.03-py3 AS dgpu_base
-FROM nvcr.io/nvidia/l4t-tensorrt:r8.5.2.2-devel AS igpu_base
+FROM nvcr.io/nvidia/tensorrt:23.08-py3 AS dgpu_base
+FROM nvcr.io/nvidia/tensorrt:23.12-py3-igpu AS igpu_base
 FROM ${GPU_TYPE}_base AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Remove any cuda list which could be invalid and prevent successful apt update
-RUN rm -f /etc/apt/sources.list.d/cuda.list
+############################################################
+# Variables
+############################################################
+ARG MAX_PROC=32
 
 ############################################################
 # Build tools
 ############################################################
 FROM base as build-tools
 
-# Install build tools, including newer CMake (https://apt.kitware.com/)
-RUN rm -r \
-    /usr/local/bin/cmake \
-    /usr/local/bin/cpack \
-    /usr/local/bin/ctest \
-    /usr/local/share/cmake-3.14
-RUN curl -s -L https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-        | gpg --dearmor - \
-        | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
-    && echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' \
-        | tee /etc/apt/sources.list.d/kitware.list >/dev/null \
-    && apt update \
-    && rm /usr/share/keyrings/kitware-archive-keyring.gpg \
-    && apt install --no-install-recommends -y \
-        kitware-archive-keyring \
-        cmake-data="3.22.2-*" \
-        cmake="3.22.2-*" \
+# Install build tools
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
         patchelf \
-        ninja-build="1.10.0-*" \
+        ninja-build="1.10.1-*" \
     && rm -rf /var/lib/apt/lists/*
 
 # - This variable is consumed by all dependencies below as an environment variable (CMake 3.22+)
@@ -88,108 +76,48 @@ RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=linux; fi \
 # ONNX Runtime
 ############################################################
 FROM base as onnxruntime-downloader
-ARG ONNX_RUNTIME_VERSION=1.12.1
+ARG ONNX_RUNTIME_VERSION
 
+# Download ORT binaries from artifactory
+# note: built with CUDA and TensorRT providers
 WORKDIR /opt/onnxruntime
-
-RUN if [ $(uname -m) = "aarch64" ]; then ARCH=aarch64; else ARCH=x64-gpu; fi \
-    && ONNX_RUNTIME_NAME="onnxruntime-linux-${ARCH}-${ONNX_RUNTIME_VERSION}" \
-    && curl -S -# -O -L https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_RUNTIME_VERSION}/${ONNX_RUNTIME_NAME}.tgz \
-    && mkdir -p ${ONNX_RUNTIME_VERSION} \
-    && tar -xzf ${ONNX_RUNTIME_NAME}.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 1
-
-############################################################
-# Libtorch (x86_64)
-############################################################
-FROM build-tools as torch-downloader-amd64
-ARG BUILD_LIBTORCH
-ARG LIBTORCH_VERSION
-
-# x86_64: Download libtorch binaries and remove packaged cuda dependencies
-WORKDIR /opt/libtorch/${LIBTORCH_VERSION}
-RUN if [ ${BUILD_LIBTORCH} = true ]; then \
-        curl -S -# -o libtorch.zip -L \
-            https://download.pytorch.org/libtorch/cu116/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2Bcu116.zip \
-        && unzip -q libtorch.zip \
-        && rm libtorch.zip && mv libtorch/* . && rm -r libtorch \
-        && rm lib/lib{cu,nv}*.so* \
-        && regex_in="lib(cu|nv)(.*?)-[0-9a-f]{8}(.so[\.0-9]*)" \
-        && regex_out="lib\\1\\2\\3" \
-        && torch_libs=$(find $(pwd)/lib -type f -name "*.so") \
-        && for torch_lib in $torch_libs; do \
-            cuda_libs=$(ldd "$torch_lib" | grep -Eo "$regex_in" | sort -u) \
-            && for cuda_lib in $cuda_libs; do \
-                new_name=$(echo "$cuda_lib" | sed -E "s/$regex_in/$regex_out/") \
-                && patchelf --replace-needed "$cuda_lib" "$new_name" "$torch_lib" \
-                && echo "Updated $torch_lib: $cuda_lib -> $new_name"; \
-            done; \
-        done; \
-    fi
-
-############################################################
-# Libtorch (aarch64)
-############################################################
-FROM base as torch-downloader-arm64
-ARG BUILD_LIBTORCH
-ARG LIBTORCH_VERSION
-
-# aarch64: Download libtorch binaries from artifactory
-WORKDIR /opt/libtorch/${LIBTORCH_VERSION}
-RUN if [ ${BUILD_LIBTORCH} = true ]; then \
-        curl -S -# -o libtorch.zip -L \
-            https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/libtorch/libtorch-${LIBTORCH_VERSION}-cuda-11.6-aarch64.zip \
-        && unzip -q libtorch.zip \
-        && rm libtorch.zip && mv libtorch/* . && rm -r libtorch; \
-    fi
+RUN curl -S -L -# -o ort.tgz \
+    https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-12.1-$(uname -m).tar.gz
+RUN tar -xf ort.tgz --strip-components 1
 
 ############################################################
 # Libtorch
 ############################################################
-FROM torch-downloader-${TARGETARCH} as torch-downloader
-
-############################################################
-# TorchVision (x86_64)
-############################################################
-FROM torch-downloader-amd64 as torchvision-builder-amd64
-ARG BUILD_LIBTORCH
-ARG TORCHVISION_VERSION
+FROM base as torch-downloader
 ARG LIBTORCH_VERSION
+ARG GPU_TYPE
 
-# x86_64: Build & install torchvision from source
-WORKDIR /opt/torchvision/${TORCHVISION_VERSION}
-RUN if [ ${BUILD_LIBTORCH} = true ]; then \
-        curl -S -# -o torchvision.zip -L \
-            https://github.com/pytorch/vision/archive/refs/tags/v${TORCHVISION_VERSION}.zip \
-        && unzip -q torchvision.zip \
-        && rm torchvision.zip && mv vision-${TORCHVISION_VERSION} src \
-        && cmake -S src -B build -G Ninja \
-            -DWITH_CUDA=on -DWITH_PNG=off -DWITH_JPEG=off \
-            -DTorch_ROOT=/opt/libtorch/${LIBTORCH_VERSION} \
-        && cmake --build build -j $(nproc) \
-        && cmake --install build --prefix $(pwd) \
-        && rm -r src build; \
-    fi
-
-############################################################
-# TorchVision (aarch64)
-############################################################
-FROM base as torchvision-builder-arm64
-ARG BUILD_LIBTORCH
-ARG TORCHVISION_VERSION
-
-# aarch64: Download torchvision binaries from artifactory
-WORKDIR /opt/torchvision/${TORCHVISION_VERSION}
-RUN if [ ${BUILD_LIBTORCH} = true ]; then \
-        curl -S -# -o torchvision.zip -L \
-            https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/torchvision/torchvision-${TORCHVISION_VERSION}-cuda-11.6-aarch64.zip \
-        && unzip -q torchvision.zip \
-        && rm torchvision.zip && mv torchvision/* . && rm -r torchvision; \
-    fi
+# Download libtorch binaries from artifactory
+# note: extracted from nvcr.io/nvidia/pytorch:23.07-py3
+WORKDIR /opt/libtorch/
+RUN ARCH=$(uname -m) && if [ "$ARCH" = "aarch64" ]; then ARCH="${ARCH}-${GPU_TYPE}"; fi && \
+    curl -S -# -o libtorch.tgz -L \
+        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/libtorch/libtorch-${LIBTORCH_VERSION}-${ARCH}.tar.gz
+RUN mkdir -p ${LIBTORCH_VERSION}
+RUN tar -xf libtorch.tgz -C ${LIBTORCH_VERSION} --strip-components 1
+# Remove kineto from config to remove warning, not needed by holoscan
+RUN find . -type f -name "*Config.cmake" -exec sed -i '/kineto/d' {} +
 
 ############################################################
 # TorchVision
 ############################################################
-FROM torchvision-builder-${TARGETARCH} as torchvision-builder
+FROM base as torchvision-downloader
+ARG TORCHVISION_VERSION
+ARG GPU_TYPE
+
+# Download torchvision binaries from artifactory
+# note: extracted from nvcr.io/nvidia/pytorch:23.07-py3
+WORKDIR /opt/torchvision/
+RUN ARCH=$(uname -m) && if [ "$ARCH" = "aarch64" ]; then ARCH="${ARCH}-${GPU_TYPE}"; fi && \
+    curl -S -# -o torchvision.tgz -L \
+        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/torchvision/torchvision-${TORCHVISION_VERSION}-${ARCH}.tar.gz
+RUN mkdir -p ${TORCHVISION_VERSION}
+RUN tar -xf torchvision.tgz -C ${TORCHVISION_VERSION} --strip-components 1
 
 ############################################################
 # Vulkan SDK
@@ -228,37 +156,64 @@ RUN cmake -S src -B build -G Ninja \
          -D CMAKE_BUILD_TYPE=Release \
          -D gRPC_INSTALL=ON \
          -D gRPC_BUILD_TESTS=OFF
-RUN cmake --build build -j $(nproc)
+RUN cmake --build build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
 RUN cmake --install build --prefix /opt/grpc/${GRPC_VERSION}
+
+############################################################
+# MOFED
+############################################################
+FROM build-tools AS mofed-installer
+ARG MOFED_VERSION
+
+# In a container, we only need to install the user space libraries, though the drivers are still
+# needed on the host.
+# Note: MOFED's installation is not easily portable, so we can't copy the output of this stage
+# to our final stage, but must inherit from it. For that reason, we keep track of the build/install
+# only dependencies in the `MOFED_DEPS` variable (parsing the output of `--check-deps-only`) to
+# remove them in that same layer, to ensure they are not propagated in the final image.
+WORKDIR /opt/nvidia/mofed
+ARG MOFED_INSTALL_FLAGS="--upstream-libs --dpdk --with-mft --user-space-only --force --without-fw-update"
+RUN UBUNTU_VERSION=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d= -f2) \
+    && OFED_PACKAGE="MLNX_OFED_LINUX-${MOFED_VERSION}-ubuntu${UBUNTU_VERSION}-$(uname -m)" \
+    && curl -S -# -o ${OFED_PACKAGE}.tgz -L \
+        https://www.mellanox.com/downloads/ofed/MLNX_OFED-${MOFED_VERSION}/${OFED_PACKAGE}.tgz \
+    && tar xf ${OFED_PACKAGE}.tgz \
+    && MOFED_INSTALLER=$(find . -name mlnxofedinstall -type f -executable -print) \
+    && MOFED_DEPS=$(${MOFED_INSTALLER} ${MOFED_INSTALL_FLAGS} --check-deps-only 2>/dev/null | tail -n1 |  cut -d' ' -f3-) \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y ${MOFED_DEPS} \
+    && ${MOFED_INSTALLER} ${MOFED_INSTALL_FLAGS} \
+    && rm -r * \
+    && apt-get remove -y ${MOFED_DEPS} && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 ############################################################
 # UCX
 ############################################################
-FROM build-tools as ucx-builder
+FROM mofed-installer as ucx-builder
 ARG UCX_VERSION
 
 # Clone
 WORKDIR /opt/ucx/
 RUN git clone --depth 1 --branch v${UCX_VERSION} https://github.com/openucx/ucx.git src
 
-# Apply patches for iGPU compatibility
+# Patch
 WORKDIR /opt/ucx/src
-COPY patches/ucx_*.patch ..
-RUN git apply ../ucx*.patch
+RUN curl -L https://github.com/openucx/ucx/pull/9341.patch | git apply
 
 # Prerequisites to build
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         libtool="2.4.6-*" \
-        automake="1:1.16.1-*" \
+        automake="1:1.16.5-*" \
     && rm -rf /var/lib/apt/lists/*
 
 # Build and install
 RUN ./autogen.sh
 WORKDIR /opt/ucx/build
-RUN ../src/contrib/configure-release --enable-mt --with-cuda=/usr/local/cuda-11 \
+RUN ../src/contrib/configure-release-mt --with-cuda=/usr/local/cuda-12 \
     --prefix=/opt/ucx/${UCX_VERSION}
-RUN make -j install
+RUN make -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` )) install
 
 # Apply patches for import and run
 WORKDIR /opt/ucx/${UCX_VERSION}
@@ -278,94 +233,14 @@ ARG GXF_VERSION
 WORKDIR /opt/nvidia/gxf
 RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=x86_64; fi \
     && curl -S -# -L -o gxf.tgz \
-        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
+        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
 RUN mkdir -p ${GXF_VERSION}
 RUN tar -xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1
 
-# Patch GXF to remove its support for complex cuda primitives,
-# due to limitation in the CUDA Toolkit 11.6 with C++17
-# Support will be added when upgrading to CUDA Toolkit 11.7+
-# with libcu++ 1.8.0+: https://github.com/NVIDIA/libcudacxx/pull/234
-COPY patches/gxf_remove_complex_primitives_support.patch .
-RUN patch -suNb ${GXF_VERSION}/gxf/std/tensor.hpp gxf_remove_complex_primitives_support.patch
-RUN mv ${GXF_VERSION}/gxf/std/complex.hpp ${GXF_VERSION}/gxf/std/complex.hpp.orig
-
 ############################################################
-# dev image
-# Dev (final)
+# Build image (final)
 ############################################################
-FROM build-tools as dev
-
-## INSTALLS
-
-# Install apt & pip tools
-RUN apt update \
-    && apt install --no-install-recommends -y \
-        lcov="1.14-*" \
-        valgrind="1:3.15.0-*" \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY python/requirements.dev.txt /tmp
-RUN python3 -m pip install -r /tmp/requirements.dev.txt
-
-# Install apt & pip build dependencies
-#  libvulkan1 - for Vulkan apps (Holoviz)
-#  vulkan-validationlayers, spirv-tools - for Vulkan validation layer (enabled for Holoviz in debug mode)
-#  libegl1 - to run headless Vulkan apps
-#  libopenblas0 - libtorch dependency
-#  libv4l-dev - V4L2 operator dependency
-#  v4l-utils - V4L2 operator utility
-RUN apt update \
-    && apt install --no-install-recommends -y \
-        libgl-dev="1.3.2-*" \
-        libx11-dev="2:1.6.9-*" \
-        libxcursor-dev="1:1.2.0-*" \
-        libxext-dev="2:1.3.4-*" \
-        libxi-dev="2:1.7.10-*" \
-        libxinerama-dev="2:1.1.4-*" \
-        libxrandr-dev="2:1.5.2-*" \
-        libxxf86vm-dev="1:1.1.4-*" \
-        libvulkan1="1.2.131.2-*" \
-        vulkan-validationlayers="1.2.131.2-*" \
-        spirv-tools="2020.1-*" \
-        libegl1="1.3.2-*" \
-        libopenblas0="0.3.8+ds-*" \
-        libv4l-dev="1.18.0-*" \
-        v4l-utils="1.18.0-*" \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install pip run dependencies
-RUN if [ $(uname -m) = "aarch64" ]; then \
-        python3 -m pip install cupy-cuda11x~=11.3 -f https://pip.cupy.dev/aarch64; \
-    else \
-        python3 -m pip install cupy-cuda11x~=11.3; \
-    fi
-
-# Install pip dependencies for CLI
-COPY python/requirements.txt /tmp/requirements.txt
-RUN python3 -m pip install -r /tmp/requirements.txt
-
-# Install ffmpeg
-RUN ARCH=$(uname -m) \
-    && curl -S -# -o /usr/bin/ffmpeg \
-             -L https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/ffmpeg/6.0/bin/${ARCH}/ffmpeg \
-    && chmod +x /usr/bin/ffmpeg
-
-## PATCHES
-
-# Setup EGL for running headless Vulkan apps
-RUN mkdir -p /usr/share/glvnd/egl_vendor.d \
-    && echo -e "{\n\
-    \"file_format_version\" : \"1.0.0\",\n\
-    \"ICD\" : {\n\
-        \"library_path\" : \"libEGL_nvidia.so.0\"\n\
-    }\n\
-}\n" > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
-
-# Install symlink missing from the container for H264 encode examples
-RUN if [ $(uname -m) = "x86_64" ]; then \
-        ln -sf /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-encode.so; \
-    fi
+FROM mofed-installer as build
 
 ## COPY
 # Note: avoid LD_LIBRARY_PATH - https://www.hpc.dtu.dk/?page_id=1180
@@ -393,7 +268,7 @@ ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${LIBTORCH}"
 # Copy TorchVision
 ARG TORCHVISION_VERSION
 ENV TORCHVISION=/opt/torchvision/${TORCHVISION_VERSION}
-COPY --from=torchvision-builder ${TORCHVISION} ${TORCHVISION}
+COPY --from=torchvision-downloader ${TORCHVISION} ${TORCHVISION}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${TORCHVISION}"
 
 # Copy Vulkan SDK
@@ -431,3 +306,62 @@ ARG GXF_VERSION
 ENV GXF=/opt/nvidia/gxf/${GXF_VERSION}
 COPY --from=gxf-downloader ${GXF} ${GXF}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
+
+# APT INSTALLS
+#  valgrind - static analysis
+#  xvfb - testing on headless systems
+#  libx* - X packages
+#  libvulkan1 - for Vulkan apps (Holoviz)
+#  vulkan-validationlayers, spirv-tools - for Vulkan validation layer (enabled for Holoviz in debug mode)
+#  libegl1 - to run headless Vulkan apps
+#  libopenblas0 - libtorch dependency
+#  libv4l-dev - V4L2 operator dependency
+#  v4l-utils - V4L2 operator utility
+#  libpng-dev - torchvision dependency
+#  libjpeg-dev - torchvision dependency
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        valgrind="1:3.18.1-*" \
+        xvfb="2:21.1.4-*" \
+        libx11-dev="2:1.7.5-*" \
+        libxcb-glx0="1.14-*" \
+        libxcursor-dev="1:1.2.0-*" \
+        libxi-dev="2:1.8-*" \
+        libxinerama-dev="2:1.1.4-*" \
+        libxrandr-dev="2:1.5.2-*" \
+        libvulkan1="1.3.204.1-*" \
+        vulkan-validationlayers="1.3.204.1-*" \
+        spirv-tools="2022.1+1.3.204.0-*" \
+        libegl1="1.4.0-*" \
+        libopenblas0="0.3.20+ds-*" \
+        libv4l-dev="1.22.1-*" \
+        v4l-utils="1.22.1-*" \
+        libpng-dev="1.6.37-*" \
+        libjpeg-turbo8-dev="2.1.2-*" \
+    && rm -rf /var/lib/apt/lists/*
+
+# PIP INSTALLS
+#  mkl - dependency for libtorch plugin on x86_64 (match pytorch container version)
+#  requirements.dev.txt
+#    coverage - test coverage of python tests
+#    pytest*  - testing
+#  requirements.txt
+#    cloudpickle - dependency for distributed apps
+#    python-on-whales - dependency for holoscan CLI
+#    Jinja2 - dependency for holoscan CLI
+#    packaging - dependency for holoscan CLI
+#    pyyaml - dependency for holoscan CLI
+#    requests - dependency for holoscan CLI
+#    cupy-cuda - dependency for holoscan python + examples
+RUN if [ $(uname -m) = "x86_64" ]; then \
+        python3 -m pip install --no-cache-dir \
+            mkl==2021.1.1 \
+        && \
+        # Clean up duplicate libraries from mkl/tbb python wheel install which makes copies for symlinks.
+        # Only keep the *.so.X libs, remove the *.so and *.so.X.Y libs
+        # This can be removed once upgrading to an MKL pip wheel that fixes the symlinks
+        find /usr/local/lib -maxdepth 1 -type f -regex '.*\/lib\(tbb\|mkl\).*\.so\(\.[0-9]+\.[0-9]+\)?' -exec rm -v {} +; \
+    fi
+COPY python/requirements.dev.txt /tmp
+COPY python/requirements.txt /tmp
+RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.dev.txt -r /tmp/requirements.txt

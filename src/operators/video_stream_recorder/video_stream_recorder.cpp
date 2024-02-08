@@ -115,6 +115,26 @@ VideoStreamRecorderOp::~VideoStreamRecorderOp() {
   }
 }
 
+void VideoStreamRecorderOp::stop() {
+  // Currently, Python distributed apps don't always end up calling the destructor.
+  // To guarantee that all results get written even in that case, we can flush the file
+  // stream here.
+
+  // Close binary file stream
+  nvidia::gxf::Expected<void> result = binary_file_stream_.flush();
+  if (!result) {
+    auto code = nvidia::gxf::ToResultCode(result);
+    HOLOSCAN_LOG_ERROR("Failed to flush the binary_file_stream_ with code: {}", code);
+  }
+
+  // Close index file stream
+  result = index_file_stream_.flush();
+  if (!result) {
+    auto code = nvidia::gxf::ToResultCode(result);
+    HOLOSCAN_LOG_ERROR("Failed to flush the index_file_stream_ with code: {}", code);
+  }
+}
+
 void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_output,
                                     ExecutionContext& context) {
   // avoid warning about unused variable

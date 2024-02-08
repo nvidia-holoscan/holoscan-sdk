@@ -228,6 +228,12 @@ class GPUResourceMonitor {
   bool bind_nvml_methods();
   bool bind_cuda_runtime_methods();
 
+  bool init_nvml();
+  bool init_cuda_runtime();
+
+  void shutdown_nvml();
+  void shutdown_cuda_runtime();
+
   void* handle_ = nullptr;       ///< The handle of the GPU resource monitor
   void* cuda_handle_ = nullptr;  ///< The handle of the CUDA Runtime library
 

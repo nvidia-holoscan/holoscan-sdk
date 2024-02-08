@@ -66,10 +66,16 @@ function(holoscan_pybind11_module pybind11_module_name)
     )
     add_dependencies(${module_target} ${module_init_target})
 
-    # Note: OUTPUT_NAME filename (ex: _core) must match the module name in the PYBIND11_MODULE macro
+    # Notes:
+    #   - OUTPUT_NAME filename (ex: _core) must match the module name in the PYBIND11_MODULE macro
+    #   - fvisibility=hidden is recommended: https://pybind11.readthedocs.io/en/stable/faq.html
+    #   - other options as in: https://pybind11.readthedocs.io/en/stable/cmake/index.html
     set_target_properties(${module_target} PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${module_binary_dir}
         OUTPUT_NAME _${pybind11_module_name}
+        INTERPROCEDURAL_OPTIMIZATION ON
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
     )
 endfunction()
 

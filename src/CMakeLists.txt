@@ -37,6 +37,7 @@ function(add_holoscan_library target)
         PRIVATE
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     )
+    target_link_libraries(${target} PRIVATE holoscan_security_flags)
 endfunction()
 
 function(add_holoscan_operator operator)
@@ -52,6 +53,7 @@ function(add_holoscan_operator operator)
     target_link_libraries(${target}
         PUBLIC ${HOLOSCAN_PACKAGE_NAME}::core
     )
+    target_link_libraries(${target} PRIVATE holoscan_security_flags)
 endfunction()
 
 # ##############################################################################
@@ -85,8 +87,9 @@ set(CORE_PROTO_FILES
     core/services/proto/connection_item.proto
     core/services/proto/error_code.proto
     core/services/proto/health_checking.proto
-    core/services/proto/system_resource.proto
+    core/services/proto/multi_fragment_port_info.proto
     core/services/proto/result.proto
+    core/services/proto/system_resource.proto
 )
 
 grpc_generate_cpp(CORE_GRPC_SRCS CORE_GRPC_HDRS ${CORE_PROTO_FILES})
@@ -169,6 +172,7 @@ add_holoscan_library(core
     core/services/app_worker/client.cpp
     core/services/app_worker/service_impl.cpp
     core/services/app_worker/server.cpp
+    core/services/common/forward_op.cpp
     core/services/common/virtual_operator.cpp
     core/services/health_checking/service_impl.cpp
     core/signal_handler.cpp

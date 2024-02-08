@@ -44,6 +44,11 @@ void ProcessingTests::print_summary() {
   std::cout << "Tests failed     :\t" << fail_test_count << "\n\n";
 }
 
+int ProcessingTests::get_status() {
+  if (fail_test_count > 0) return 1;
+  return 0;
+}
+
 void ProcessingTests::clear_processor() {
   holoscan_processor_context_.reset();
 }

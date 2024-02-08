@@ -16,22 +16,21 @@
 
 # This script downloads sample datasets for the examples.
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-HAVE_FFMPEG=false
-HAVE_PYTHON=false
-
-# Check if we have ffmpeg
-if command -v ffmpeg > /dev/null; then
-  HAVE_FFMPEG=true
-fi
-
-# Check if we have python3
-if command -v python3 > /dev/null; then
-  HAVE_PYTHON=true
-fi
 
 # Creates the data directory
 DATA_DIR=${SCRIPT_DIR}/../data
 mkdir ${DATA_DIR}
+
+# Download the racerx sample data
+racerx_version="20231009"
+racerx_md5="86cd7e5477bb9eaa0cfc0547912d77b2"
+
+${SCRIPT_DIR}/../lib/cmake/holoscan/download_ngc_data \
+    --url https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_racerx_video/versions/${racerx_version}/zip \
+    --download_dir ${DATA_DIR} \
+    --download_name racerx \
+    --md5 ${racerx_md5}
+
 
 # Download the endoscopy sample data
 endoscopy_version="20230128"

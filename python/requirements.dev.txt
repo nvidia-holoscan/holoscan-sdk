@@ -1,5 +1,4 @@
-pip~=23.0
-coverage~=6.5
-pytest~=7.1
-pytest-cov~=4.1
-pytest-mock~=3.11
+coverage==6.5
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0

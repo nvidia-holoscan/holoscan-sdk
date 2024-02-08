@@ -53,6 +53,7 @@ TEST(ConditionClasses, TestAsynchronousCondition) {
   EXPECT_EQ(condition->name(), name);
   EXPECT_EQ(typeid(condition), typeid(std::make_shared<AsynchronousCondition>()));
   EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::AsynchronousSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
 TEST(ConditionClasses, TestAsynchronousConditionEventState) {
@@ -72,6 +73,7 @@ TEST(ConditionClasses, TestBooleanCondition) {
   EXPECT_EQ(condition->name(), name);
   EXPECT_EQ(typeid(condition), typeid(std::make_shared<BooleanCondition>(true)));
   EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::BooleanSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
 TEST(ConditionClasses, TestBooleanConditionEnabledMethods) {
@@ -123,6 +125,7 @@ TEST(ConditionClasses, TestCountConditionMethods) {
 
   // can access methods of GXFComponent
   EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::CountSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
 TEST(ConditionClasses, TestCountConditionGXFComponentMethods) {
@@ -174,6 +177,7 @@ TEST(ConditionClasses, TestDownstreamMessageAffordableCondition) {
             typeid(std::make_shared<DownstreamMessageAffordableCondition>(arglist)));
   EXPECT_EQ(std::string(condition->gxf_typename()),
             "nvidia::gxf::DownstreamReceptiveSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
 TEST(ConditionClasses, TestDownstreamMessageAffordableConditionDefaultConstructor) {
@@ -200,6 +204,7 @@ TEST(ConditionClasses, TestMessageAvailableCondition) {
   EXPECT_EQ(condition->name(), name);
   EXPECT_EQ(typeid(condition), typeid(std::make_shared<MessageAvailableCondition>(arglist)));
   EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::MessageAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
 TEST(ConditionClasses, TestMessageAvailableConditionDefaultConstructor) {
@@ -227,6 +232,8 @@ TEST(ConditionClasses, TestPeriodicCondition) {
       F.make_condition<PeriodicCondition>(name, Arg{"recess_period", std::string("1000000")});
   EXPECT_EQ(condition->name(), name);
   EXPECT_EQ(typeid(condition), typeid(std::make_shared<PeriodicCondition>(1000000)));
+  EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::PeriodicSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
 TEST(ConditionClasses, TestPeriodicConditionDefaultConstructor) {
