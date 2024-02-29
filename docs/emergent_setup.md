@@ -43,10 +43,7 @@ refer to the Software Installation section of EVT [Camera User's Manual](https:/
 able to download Camera User's Manual.
 
 :::{note}
-The Emergent SDK depends on Rivermax SDK and Mellanox OFED Network Drivers
-which are pre-installed by the SDK Manager on the Holoscan Developer Kits. To
-avoid duplicate installation of the Rivermax SDK and the Mellanox OFED Network
-Drivers, use the following command when installing the Emergent SDK:
+The Emergent SDK depends on Rivermax SDK and the Mellanox OFED Network Drivers. If they're already installed on your system, use the following command when installing the Emergent SDK to avoid duplicate installation:
 
 >```bash
 >sudo ./install_eSdk.sh no_mellanox

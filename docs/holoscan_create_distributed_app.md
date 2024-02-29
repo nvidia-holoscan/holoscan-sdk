@@ -204,17 +204,17 @@ ip -o -4 addr show | awk '{print $2, $4}' # to show interface name and IP
 
 The following are known limitations of the distributed application support in the SDK, which will be addressed in future updates:
 
-#### 1. The driver calls the compose() method of the fragments.
-
-Although the driver doesn't execute fragments, it still invokes the `compose()` method of the fragments to determine the number of connections between them.
-
-#### 2. A connection error message is displayed even when the distributed application is running correctly.
+#### 1. A connection error message is displayed even when the distributed application is running correctly.
 
 The message `Connection dropped with status -25 (Connection reset by remote peer)` appears in the console even when the application is functioning properly. This is a known issue and will be addressed in future updates, ensuring that this message will only be displayed in the event of an actual connection error.
 
-#### 3. GPU tensors can only currently be sent/received by UCX from a single device on a given node.
+#### 2. GPU tensors can only currently be sent/received by UCX from a single device on a given node.
 
 By default, device ID 0 is used by the UCX extensions to send/receive data between fragments. To override this default, the user can set environment variable `HOLOSCAN_UCX_DEVICE_ID`.
+
+#### 3. "Address already in use" errors in distributed applications due to the health check service.
+
+In scenarios where distributed applications have both the driver and workers running on the same host, either within a Docker container or directly on the host, there's a possibility of encountering "Address already in use" errors. A potential solution is to assign a different port number to the `HOLOSCAN_HEALTH_CHECK_PORT` environment variable (default: `8777`), for example, by using `export HOLOSCAN_HEALTH_CHECK_PORT=8780`.
 `````
 
 `````{note}

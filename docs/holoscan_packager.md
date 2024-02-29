@@ -12,7 +12,7 @@ Ensure the following are installed in the environment where you want to run the 
 
 - [**PIP dependencies**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/requirements.txt) (automatically installed with the holoscan python wheel)
 - [**NVIDIA Container Toolkit with Docker**](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#docker)
-  - Developer Kits (aarch64): already included in HoloPack and JetPack
+  - Developer Kits (aarch64): already included in IGX Software and JetPack
   - x86_64: tested with NVIDIA Container Toolkit 1.13.3 w/Docker v24.0.1
 - **Docker BuildX plugin**
   1. Check if it is installed:

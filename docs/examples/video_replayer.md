@@ -207,6 +207,6 @@ flexibility for the user to run the script from any directory by setting the `HO
 
 ## Running the Application
 
-Running the application should bring up video playback of the surgical video referenced in the YAML file.
+Running the application should bring up video playback of the video referenced in the YAML file.
 
 ![](../images/video_replayer.png)

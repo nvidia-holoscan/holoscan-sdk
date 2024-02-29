@@ -15,13 +15,9 @@ _Skip to the next section if you do not plan to leverage a ConnectX SmartNIC._
 
 The NVIDIA IGX Orin developer kit comes with an embedded [ConnectX Ethernet adapter](https://www.nvidia.com/en-us/networking/ethernet-adapters/) to offer advanced hardware offloads and accelerations. You can also purchase an individual ConnectX adapter and install it on other systems such as x86_64 workstations.
 
-The following steps are required to ensure your ConnectX can be used for RDMA:
+The following steps are required to ensure your ConnectX can be used for RDMA over Converged Ethernet ([RoCE](https://docs.nvidia.com/networking/display/mlnxofedv23070512/rdma+over+converged+ethernet+(roce))):
 
 ### 1. Install MOFED drivers
-
-:::{tip}
-On NVIDIA developer kits, the Mellanox OFED drivers can be installed by selecting the **Rivermax** option in the [SDK Manager](https://developer.nvidia.com/sdk-manager) after having joined the [Rivermax SDK program](https://developer.nvidia.com/nvidia-rivermax-sdk).
-:::
 
 Ensure the Mellanox OFED drivers version 23.07 or above are installed:
 
@@ -108,7 +104,7 @@ CA 'mlx5_1'
 ```
 If no results appear after `ibstat` and `sudo lsmod | grep ib_core` returns a result like this:
 ```sh
-ib_core               425984  1 ib_uverbs 
+ib_core               425984  1 ib_uverbs
 ```
 Consider running the following command or rebooting:
 
@@ -218,12 +214,14 @@ For example, to communicate with `192.168.1.1/24` above (`/24` -> `255.255.255.0
 Only supported on NVIDIA's Quadro/workstation GPUs (not GeForce).
 :::
 
+Follow the instructions below to enable [GPUDirect RDMA](https://developer.nvidia.com/gpudirect):
+
 `````{tab-set}
 ````{tab-item} dGPU
 On dGPU, the GPUDirect RDMA drivers are named `nvidia-peermem`, and are installed with the rest of the NVIDIA dGPU drivers.
 
 :::{attention}
-To enable the use of GPUDirect RDMA with a ConnectX SmartNIC (section above), the following steps are required if the MOFED drivers were installed after the peermem driver, which is currently the case with SDKManager on IGX Orin:
+To enable the use of GPUDirect RDMA with a ConnectX SmartNIC (section above), the following steps are required if the MOFED drivers were installed after the peermem drivers:
 
    ```bash
    nv_driver_version=$(modinfo nvidia | awk '/^version:/ {print $2}' | cut -d. -f1)
@@ -247,7 +245,7 @@ Run the following to load it automatically during boot:
 ````{tab-item} iGPU
 
 :::{warning}
-At this time the HoloPack 2.1 and JetPack 6.0 support for GPU Direct RDMA with `nvidia-p2p` is missing. The instructions below are for HoloPack 2.0 and Jetpack 5.1.2, but they're not compatible with Holoscan SDK 1.0, only 0.6.
+At this time the IGX SW 1.0 DP and JetPack 6.0 DP are missing the `nvidia-p2p` kernel for support for GPU Direct RDMA support. They're planned in the respective GA releases. The instructions below are to load the kernel module once it is packaged in the GA releases.
 :::
 
 On iGPU, the GPUDirect RDMA drivers are named `nvidia-p2p`. Run the following to load the kernel module manually:
@@ -274,8 +272,6 @@ then be used as samples in order to develop custom applications that use the
 Rivermax SDK to optimize data transfers.
 
 :::{note}
-The Rivermax SDK can be installed onto the Developer Kit via SDK Manager by selecting it as an additional SDK during the HoloPack installation. Access to the Rivermax SDK Developer Program as well as a valid Rivermax software license is required to use the Rivermax SDK.
-
 The Linux default path where Rivermax expects to find the license file is `/opt/mellanox/rivermax/rivermax.lic`, or you can specify the full path and file name for the environment variable `RIVERMAX_LICENSE_PATH`.
 :::
 
@@ -392,7 +388,7 @@ rivermax_sdk=$DOWNLOAD_PATH/1.31.10
 
    b. Build the `generic_receiver` app with GPUDirect support from the [Rivermax GitHub Repo](https://github.com/NVIDIA/Rivermax). Before following the instructions to [build with CUDA-Toolkit support](https://github.com/NVIDIA/Rivermax/blob/master/generic_receiver/README.md#how-to-build), apply the changes to file `generic_receiver/generic_receiver.cpp` in [this PR](https://github.com/NVIDIA/Rivermax/pull/3/files), this was tested on the IGX Orin Developer Kit with Rivermax 1.31.10.
 
-   c. Launch the `generic_receiver` application from the `build` directory: 
+   c. Launch the `generic_receiver` application from the `build` directory:
 
       ```bash
          $ sudo ./generic_receiver -i 10.0.0.2 -m 10.0.0.2 -s 10.0.0.1 -p 5001 -g 0

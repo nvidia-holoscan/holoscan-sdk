@@ -39,11 +39,7 @@ As highlighted in the relevant technologies section, the soul of the Holoscan pr
 - a {ref}`Video Pipeline Latency Measurement Tool <latency_tool>` to measure and estimate the total end-to-end latency of a video streaming application including the video capture, processing, and output using various hardware and software components that are supported by the Holoscan Developer Kits.
 - the [Data Flow Tracking](./flow_tracking.md) feature to profile your application and analyze the data flow between operators in its graph.
 
-8. **Container to leverage both iGPU and dGPU on Holoscan devkits**
-
-The Holoscan developer kits can - at this time - only be flashed to leverage the integrated GPU (Tegra SoC) or the added discrete GPU. The [L4T Compute Assist container](./use_igpu_with_dgpu.md) on NGC is a mechanism to leverage both concurrently.
-
-9. **Documentation**
+8. **Documentation**
 
 The Holoscan SDK documentation is composed of:
 

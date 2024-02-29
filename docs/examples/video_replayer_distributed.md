@@ -197,7 +197,7 @@ This particular distributed application only has one operator per fragment, so t
 
 ## Running the Application
 
-Running the application should bring up video playback of the surgical video referenced in the YAML file.
+Running the application should bring up video playback of the video referenced in the YAML file.
 
 ![](../images/video_replayer.png)
 

@@ -82,7 +82,7 @@ ARG ONNX_RUNTIME_VERSION
 # note: built with CUDA and TensorRT providers
 WORKDIR /opt/onnxruntime
 RUN curl -S -L -# -o ort.tgz \
-    https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-12.1-$(uname -m).tar.gz
+    https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-12.1-$(uname -m).tar.gz
 RUN tar -xf ort.tgz --strip-components 1
 
 ############################################################
@@ -97,7 +97,7 @@ ARG GPU_TYPE
 WORKDIR /opt/libtorch/
 RUN ARCH=$(uname -m) && if [ "$ARCH" = "aarch64" ]; then ARCH="${ARCH}-${GPU_TYPE}"; fi && \
     curl -S -# -o libtorch.tgz -L \
-        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/libtorch/libtorch-${LIBTORCH_VERSION}-${ARCH}.tar.gz
+        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/libtorch/libtorch-${LIBTORCH_VERSION}-${ARCH}.tar.gz
 RUN mkdir -p ${LIBTORCH_VERSION}
 RUN tar -xf libtorch.tgz -C ${LIBTORCH_VERSION} --strip-components 1
 # Remove kineto from config to remove warning, not needed by holoscan
@@ -115,7 +115,7 @@ ARG GPU_TYPE
 WORKDIR /opt/torchvision/
 RUN ARCH=$(uname -m) && if [ "$ARCH" = "aarch64" ]; then ARCH="${ARCH}-${GPU_TYPE}"; fi && \
     curl -S -# -o torchvision.tgz -L \
-        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/torchvision/torchvision-${TORCHVISION_VERSION}-${ARCH}.tar.gz
+        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/torchvision/torchvision-${TORCHVISION_VERSION}-${ARCH}.tar.gz
 RUN mkdir -p ${TORCHVISION_VERSION}
 RUN tar -xf torchvision.tgz -C ${TORCHVISION_VERSION} --strip-components 1
 
@@ -233,7 +233,7 @@ ARG GXF_VERSION
 WORKDIR /opt/nvidia/gxf
 RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=x86_64; fi \
     && curl -S -# -L -o gxf.tgz \
-        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
+        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
 RUN mkdir -p ${GXF_VERSION}
 RUN tar -xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1
 

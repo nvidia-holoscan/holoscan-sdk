@@ -930,6 +930,11 @@ launch() {
         mount_device_opt+=" --device $video_dev"
     done
 
+    # Mount Tegra's Video Input unit (capture data from CSI) device nodes
+    for capture_dev in $(find /dev -regex '/dev/capture-vi-channel[0-9]+'); do
+        mount_device_opt+=" --device $capture_dev"
+    done
+
     # Mount AJA device nodes
     for aja_dev in $(find /dev -regex '/dev/ajantv2[0-9]+'); do
         mount_device_opt+=" --device $aja_dev"
@@ -999,6 +1004,9 @@ launch() {
     # ${mount_device_opt}
     #   --device /dev/video${i}
     #     Mount video capture devices for V4L2
+    #
+    #   --device /dev/capture-vi-channel${i}
+    #     Mount Tegra's Video Input unit to capture from CSI
     #
     #   --device /dev/ajantv2${i}
     #     Mount AJA capture cards for NTV2
