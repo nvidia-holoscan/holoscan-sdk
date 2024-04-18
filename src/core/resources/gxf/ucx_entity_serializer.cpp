@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,7 +37,11 @@ void UcxEntitySerializer::setup(ComponentSpec& spec) {
              "verbose_warning",
              "Verbose Warning",
              "Whether or not to print verbose warning",
-             true);
+             false);
+}
+
+nvidia::gxf::UcxEntitySerializer* UcxEntitySerializer::get() const {
+  return static_cast<nvidia::gxf::UcxEntitySerializer*>(gxf_cptr_);
 }
 
 void UcxEntitySerializer::initialize() {
@@ -53,14 +57,16 @@ void UcxEntitySerializer::initialize() {
   if (has_component_serializers == args().end()) {
     std::vector<std::shared_ptr<Resource>> component_serializers;
     component_serializers.reserve(2);
-    // UcxHoloscanComponentSerializer handles Holoscan SDK types such as holoscan::gxf::GXFTensor
+    // UcxHoloscanComponentSerializer handles Holoscan SDK types such as holoscan::Message
     auto ucx_holoscan_component_serializer =
         frag->make_resource<holoscan::UcxHoloscanComponentSerializer>(
             "ucx_holoscan_component_serializer");
+    ucx_holoscan_component_serializer->gxf_cname(ucx_holoscan_component_serializer->name().c_str());
     component_serializers.push_back(ucx_holoscan_component_serializer);
     // UcxComponentSerializer handles nvidia::gxf::Tensor, nvidia::gxf::VideoBuffer, etc.
     auto ucx_component_serializer =
         frag->make_resource<holoscan::UcxComponentSerializer>("ucx_component_serializer");
+    ucx_component_serializer->gxf_cname(ucx_component_serializer->name().c_str());
     component_serializers.push_back(ucx_component_serializer);
 
     // Note: Activation sequence of entities in GXF:

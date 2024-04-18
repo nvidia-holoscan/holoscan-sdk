@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +42,6 @@ int main(int argc, char** argv) {
   auto app = holoscan::make_application<App>();
   auto future = app->run_async();
   HOLOSCAN_LOG_INFO("Application is running asynchronously.");
-  // Executing `future.wait();` here would block the main thread until the application finishes
 
   auto print_status = std::thread([&app, &future]() {
     // Wait for the application to finish
@@ -65,7 +64,9 @@ int main(int argc, char** argv) {
   });
   print_status.join();  // print status while application is running
 
-  future.wait();
+  // Block until application is done and throw any exceptions
+  future.get();
+
   HOLOSCAN_LOG_INFO("Application has finished running.");
   return 0;
 }

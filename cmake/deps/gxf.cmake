@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,106 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-find_package(GXF 2.4 MODULE REQUIRED
-    COMPONENTS
+set(HOLOSCAN_GXF_COMPONENTS
+    # For Holoscan to use and distribute
+    app
     core
     cuda
     gxe
+    logger
     multimedia
+    sample # dependency of GXF::app
     serialization
     std
     ucx
 )
+
+find_package(GXF 4.0 CONFIG REQUIRED
+    COMPONENTS ${HOLOSCAN_GXF_COMPONENTS}
+)
+message(STATUS "Found GXF: ${GXF_DIR}")
+
+# Workaround: If the GXF distribution implicitly includes an HTTP target dependency
+# for other libraries, add it to the list of imports.
+# https://jirasw.nvidia.com/browse/NVG-3245
+if(TARGET GXF::http)
+    list(APPEND HOLOSCAN_GXF_COMPONENTS http)
+endif()
+
+# Copy shared libraries and their headers to the GXF build folder
+# to be found alongside Holoscan GXF extensions.
+
+if(NOT HOLOSCAN_INSTALL_LIB_DIR)
+    if(DEFINED HOLOSCAN_SDK_PATH)
+        # Find library directory from HOLOSCAN_SDK_PATH
+        find_path(HOLOSCAN_INSTALL_LIB_DIR
+            NAMES libholoscan.so
+            PATHS ${HOLOSCAN_SDK_PATH}/lib ${HOLOSCAN_SDK_PATH}/lib64
+            NO_DEFAULT_PATH
+            REQUIRED
+        )
+
+        # Take only file name from path
+        get_filename_component(HOLOSCAN_INSTALL_LIB_DIR "${HOLOSCAN_INSTALL_LIB_DIR}" NAME)
+    else()
+        message(FATAL_ERROR "Unable to guess HOLOSCAN_INSTALL_LIB_DIR from HOLOSCAN_SDK_PATH")
+    endif()
+endif()
+
+set(HOLOSCAN_GXF_LIB_DIR "${CMAKE_BINARY_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}")
+set(HOLOSCAN_GXF_BIN_DIR "${CMAKE_BINARY_DIR}/bin")
+foreach(component ${HOLOSCAN_GXF_COMPONENTS})
+    # Copy the GXF library to the build folder so that executables can find shared libraries
+    get_target_property(GXF_${component}_LOCATION GXF::${component} IMPORTED_LOCATION)
+    if(NOT GXF_${component}_LOCATION)
+        string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type)
+        get_target_property(GXF_${component}_LOCATION GXF::${component} IMPORTED_LOCATION_${_build_type})
+    endif()
+    if(GXF_${component}_LOCATION)
+        if(NOT "${component}" STREQUAL "gxe")
+            file(COPY "${GXF_${component}_LOCATION}"
+                DESTINATION "${HOLOSCAN_GXF_LIB_DIR}"
+                FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+            )
+            get_filename_component(${component}_filename ${GXF_${component}_LOCATION} NAME)
+            set(HOLOSCAN_GXF_${component}_LOCATION "${HOLOSCAN_GXF_LIB_DIR}/${${component}_filename}")
+            set_target_properties(GXF::${component} PROPERTIES
+                IMPORTED_LOCATION_${_build_type} ${HOLOSCAN_GXF_${component}_LOCATION}
+                IMPORTED_LOCATION ${HOLOSCAN_GXF_${component}_LOCATION}
+            )
+        else()
+            file(COPY "${GXF_${component}_LOCATION}"
+                DESTINATION "${HOLOSCAN_GXF_BIN_DIR}"
+                FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+            )
+            set(HOLOSCAN_GXE_LOCATION "${HOLOSCAN_GXF_BIN_DIR}/gxe")
+            set_target_properties(GXF::gxe PROPERTIES
+                IMPORTED_LOCATION_${_build_type} {HOLOSCAN_GXE_LOCATION}
+                IMPORTED_LOCATION ${HOLOSCAN_GXE_LOCATION}
+            )
+
+            # Patch `gxe` executable RUNPATH to find required GXF libraries in the self-contained HSDK installation.
+            # GXF 4.0 libraries are entirely self-contained and do not require RPATH updates.
+            find_program(PATCHELF_EXECUTABLE patchelf)
+            if(PATCHELF_EXECUTABLE)
+                execute_process(
+                    COMMAND "${PATCHELF_EXECUTABLE}"
+                        "--set-rpath"
+                        "\$ORIGIN:\$ORIGIN/../${HOLOSCAN_INSTALL_LIB_DIR}"
+                        "${HOLOSCAN_GXE_LOCATION}"
+                )
+            else()
+                message(WARNING "Failed to patch the GXE executable RUNPATH. Must set LD_LIBRARY_PATH to use the executable.")
+            endif()
+        endif()
+    else()
+        message(FATAL_ERROR "No imported location found for GXF::${component}")
+    endif()
+endforeach()
+
+# Set variables in parent scope for use throughout the Holoscan project
+set(GXF_INCLUDE_DIR ${GXF_INCLUDE_DIR} PARENT_SCOPE)
+set(HOLOSCAN_GXF_LIB_DIR ${HOLOSCAN_GXF_LIB_DIR} PARENT_SCOPE)
+set(HOLOSCAN_GXF_BIN_DIR ${HOLOSCAN_GXF_BIN_DIR} PARENT_SCOPE)
+set(HOLOSCAN_GXE_LOCATION ${HOLOSCAN_GXE_LOCATION} PARENT_SCOPE)
+set(HOLOSCAN_GXF_COMPONENTS ${HOLOSCAN_GXF_COMPONENTS} PARENT_SCOPE)

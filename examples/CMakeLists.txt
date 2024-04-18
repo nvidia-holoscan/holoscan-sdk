@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,13 +50,38 @@ endforeach()
 configure_file(CMakeLists.min.txt.in CMakeLists.min.txt @ONLY)
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/CMakeLists.min.txt"
-          RENAME "CMakeLists.txt"
-          DESTINATION examples
-  COMPONENT holoscan-examples
+        RENAME "CMakeLists.txt"
+        DESTINATION examples
+        COMPONENT holoscan-examples
 )
 
 install(FILES README.md
-  DESTINATION examples
-  COMPONENT holoscan-examples
+        DESTINATION examples
+        COMPONENT holoscan-examples
 )
+
+# Install CMake script to download example data from NGC
+install(FILES ${CMAKE_SOURCE_DIR}/scripts/download_example_data
+        DESTINATION examples
+        PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+        COMPONENT holoscan-examples
+)
+
+# Files for testing
+install(FILES testing/run_example_tests
+        DESTINATION examples/testing
+        COMPONENT holoscan-examples
+        PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+)
+
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/tests/data/validation_frames
+        DESTINATION examples/testing
+        COMPONENT holoscan-examples
+)
+
+install(FILES ${CMAKE_SOURCE_DIR}/tests/recorder.hpp
+        DESTINATION examples/testing
+        COMPONENT holoscan-examples
+)
+
 endif()

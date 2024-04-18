@@ -118,7 +118,10 @@
         "charconv": "cpp",
         "cuchar": "cpp",
         "propagate_const": "cpp",
-        "ranges": "cpp"
+        "ranges": "cpp",
+        "barrier": "cpp",
+        "latch": "cpp",
+        "syncstream": "cpp"
     },
     "git.alwaysSignOff": true,
     "git.untrackedChanges": "separate",

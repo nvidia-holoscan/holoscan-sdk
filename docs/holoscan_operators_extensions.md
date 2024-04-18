@@ -47,9 +47,7 @@ ___
 ## Extensions
 
 The Holoscan SDK also includes some GXF extensions with GXF codelets, which are typically wrapped as operators, or present for legacy reasons. In addition to the core GXF extensions (std, cuda, serialization, multimedia) listed [here](gxf/doc/index.md), the Holoscan SDK includes the following GXF extensions:
-- [bayer_demosaic](#bayer-demosaic)
 - [gxf_holoscan_wrapper](#gxf-holoscan-wrapper)
-- [stream_playback](#stream-playback)
 - [ucx_holoscan](#ucx-holoscan)
 
 ### GXF Holoscan Wrapper
@@ -57,16 +55,6 @@ The Holoscan SDK also includes some GXF extensions with GXF codelets, which are 
 The `gxf_holoscan_wrapper` extension includes the `holoscan::gxf::OperatorWrapper` codelet. It is used as a utility base class to wrap a holoscan operator to interface with the GXF framework.
 
 Learn more about it in the [Using Holoscan Operators in GXF Applications](gxf/gxf_wrap_holoscan_op.md) section.
-
-### Stream Playback
-
-The `stream_playback` extension includes the `nvidia::holoscan::stream_playback::VideoStreamSerializer` entity serializer to/from a Tensor Object.
-This extension does not include any codelets: reading and writing video stream (gxf entity files) from the disk was implemented as native operators with `VideoStreamRecorderOp` and `VideoStreamReplayerOp`, though they leverage the `VideoStreamSerializer` from this extension.
-
-:::{note}
-The `VideoStreamSerializer` codelet is based on the `nvidia::gxf::StdEntitySerializer` with the addition of a `repeat` feature.
-(If the `repeat` parameter is `true` and the frame count is out of the maximum frame index, unnecessary warning messages are printed with `nvidia::gxf::StdEntitySerializer`.)
-:::
 
 (ucx-holoscan)=
 ### UCX (Holoscan)
@@ -81,4 +69,4 @@ ___
 
 ### HoloHub
 
-Visit the HoloHub repository to find a collection of additional Holoscan operators and extensions.
+Visit the [HoloHub repository](https://github.com/nvidia-holoscan/holohub) to find a collection of additional Holoscan operators and extensions.

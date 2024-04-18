@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,7 +96,7 @@ PYBIND11_MODULE(_video_stream_recorder, m) {
            "basename"_a,
            "flush_on_tick"_a = false,
            "name"_a = "recorder"s,
-           doc::VideoStreamRecorderOp::doc_VideoStreamRecorderOp_python)
+           doc::VideoStreamRecorderOp::doc_VideoStreamRecorderOp)
       .def("initialize",
            &VideoStreamRecorderOp::initialize,
            doc::VideoStreamRecorderOp::doc_initialize)

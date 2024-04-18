@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -133,8 +133,8 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
   nvidia::gxf::Shape output_shape{shape.height, shape.width, 1};
 
   // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
-  auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
-                                                                       allocator_->gxf_cid());
+  auto allocator =
+      nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(), allocator_->gxf_cid());
   out_tensor.value()->reshape<uint8_t>(
       output_shape, nvidia::gxf::MemoryStorageType::kDevice, allocator.value());
   if (!out_tensor.value()->pointer()) {

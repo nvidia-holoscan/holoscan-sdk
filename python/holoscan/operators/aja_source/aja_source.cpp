@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,7 +131,7 @@ PYBIND11_MODULE(_aja_source, m) {
            "overlay_channel"_a = NTV2Channel::NTV2_CHANNEL2,
            "overlay_rdma"_a = true,
            "name"_a = "aja_source"s,
-           doc::AJASourceOp::doc_AJASourceOp_python)
+           doc::AJASourceOp::doc_AJASourceOp)
       .def("initialize", &AJASourceOp::initialize, doc::AJASourceOp::doc_initialize)
       .def("setup", &AJASourceOp::setup, "spec"_a, doc::AJASourceOp::doc_setup);
 }  // PYBIND11_MODULE NOLINT

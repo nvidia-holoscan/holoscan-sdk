@@ -149,6 +149,7 @@
 - {ref}`exhale_class_classholoscan_1_1Receiver`
 - {ref}`exhale_class_classholoscan_1_1SerializationBuffer`
 - {ref}`exhale_class_classholoscan_1_1StdComponentSerializer`
+- {ref}`exhale_class_classholoscan_1_1StdEntitySerializer`
 - {ref}`exhale_class_classholoscan_1_1Transmitter`
 - {ref}`exhale_class_classholoscan_1_1UcxComponentSerializer`
 - {ref}`exhale_class_classholoscan_1_1UcxEntitySerializer`
@@ -156,10 +157,10 @@
 - {ref}`exhale_class_classholoscan_1_1UcxSerializationBuffer`
 - {ref}`exhale_class_classholoscan_1_1UcxTransmitter`
 - {ref}`exhale_class_classholoscan_1_1UnboundedAllocator`
-- {ref}`exhale_class_classholoscan_1_1VideoStreamSerializer`
 
 #### Schedulers
 
+- {ref}`exhale_class_classholoscan_1_1EventBasedScheduler`
 - {ref}`exhale_class_classholoscan_1_1GreedyScheduler`
 - {ref}`exhale_class_classholoscan_1_1MultiThreadScheduler`
 

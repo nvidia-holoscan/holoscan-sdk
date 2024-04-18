@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,11 @@
 #include "scheduler.hpp"
 
 namespace holoscan {
+
+namespace gxf {
+// Forward declarations
+class GXFExecutor;
+}  // namespace gxf
 
 // key = operator name,  value = (input port names, output port names, multi-receiver names)
 using FragmentPortMap =
@@ -281,7 +286,7 @@ class Fragment {
    */
   template <typename OperatorT, typename StringT, typename... ArgsT,
             typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  std::shared_ptr<OperatorT> make_operator(const StringT& name, ArgsT&&... args) {
+  std::shared_ptr<OperatorT> make_operator(StringT name, ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating operator '{}'", name);
     auto op = std::make_shared<OperatorT>(std::forward<ArgsT>(args)...);
     op->name(name);
@@ -319,7 +324,7 @@ class Fragment {
    */
   template <typename ResourceT, typename StringT, typename... ArgsT,
             typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  std::shared_ptr<ResourceT> make_resource(const StringT& name, ArgsT&&... args) {
+  std::shared_ptr<ResourceT> make_resource(StringT name, ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating resource '{}'", name);
     auto resource = std::make_shared<ResourceT>(std::forward<ArgsT>(args)...);
     resource->name(name);
@@ -356,7 +361,7 @@ class Fragment {
    */
   template <typename ConditionT, typename StringT, typename... ArgsT,
             typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  std::shared_ptr<ConditionT> make_condition(const StringT& name, ArgsT&&... args) {
+  std::shared_ptr<ConditionT> make_condition(StringT name, ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating condition '{}'", name);
     auto condition = std::make_shared<ConditionT>(std::forward<ArgsT>(args)...);
     condition->name(name);
@@ -394,7 +399,7 @@ class Fragment {
    */
   template <typename SchedulerT, typename StringT, typename... ArgsT,
             typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  std::shared_ptr<SchedulerT> make_scheduler(const StringT& name, ArgsT&&... args) {
+  std::shared_ptr<SchedulerT> make_scheduler(StringT name, ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating scheduler '{}'", name);
     auto scheduler = std::make_shared<SchedulerT>(std::forward<ArgsT>(args)...);
     scheduler->name(name);
@@ -432,7 +437,7 @@ class Fragment {
    */
   template <typename NetworkContextT, typename StringT, typename... ArgsT,
             typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  std::shared_ptr<NetworkContextT> make_network_context(const StringT& name, ArgsT&&... args) {
+  std::shared_ptr<NetworkContextT> make_network_context(StringT name, ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating network context '{}'", name);
     auto network_context = std::make_shared<NetworkContextT>(std::forward<ArgsT>(args)...);
     network_context->name(name);
@@ -643,6 +648,7 @@ class Fragment {
  protected:
   friend class Application;  // to access 'scheduler_' in Application
   friend class AppDriver;
+  friend class gxf::GXFExecutor;
 
   template <typename ConfigT, typename... ArgsT>
   std::shared_ptr<Config> make_config(ArgsT&&... args) {
@@ -664,11 +670,16 @@ class Fragment {
     return std::make_unique<ExecutorT>(std::forward<ArgsT>(args)...);
   }
 
+  /// Cleanup helper that will by called by GXFExecutor prior to GxfContextDestroy.
+  void reset_graph_entities();
+
+  // Note: Maintain the order of declarations (executor_ and graph_) to ensure proper destruction
+  //       of the executor's context.
   std::string name_;                      ///< The name of the fragment.
   Application* app_ = nullptr;            ///< The application that this fragment belongs to.
   std::shared_ptr<Config> config_;        ///< The configuration of the fragment.
-  std::unique_ptr<OperatorGraph> graph_;  ///< The graph of the fragment.
   std::shared_ptr<Executor> executor_;    ///< The executor for the fragment.
+  std::unique_ptr<OperatorGraph> graph_;  ///< The graph of the fragment.
   std::shared_ptr<Scheduler> scheduler_;  ///< The scheduler used by the executor
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
   std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment

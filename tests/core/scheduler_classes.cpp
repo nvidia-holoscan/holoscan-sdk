@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,7 @@
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
+#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 #include "../utils.hpp"
@@ -108,6 +109,40 @@ TEST_F(SchedulerClassesWithGXFContext, TestMultiThreadSchedulerWithRealtimeClock
   const std::string name{"multithread-scheduler"};
   ArgList arglist{Arg{"clock", F.make_resource<RealtimeClock>()}};
   auto scheduler = F.make_scheduler<MultiThreadScheduler>(name, arglist);
+}
+
+TEST(SchedulerClasses, TestEventBasedScheduler) {
+  Fragment F;
+  const std::string name{"event-based-scheduler"};
+  auto scheduler = F.make_scheduler<EventBasedScheduler>(name);
+  EXPECT_EQ(scheduler->name(), name);
+  EXPECT_EQ(typeid(scheduler), typeid(std::make_shared<EventBasedScheduler>()));
+  EXPECT_EQ(std::string(scheduler->gxf_typename()), "nvidia::gxf::EventBasedScheduler"s);
+}
+
+TEST_F(SchedulerClassesWithGXFContext, TestEventBasedSchedulerWithArgs) {
+  const std::string name{"event-based-scheduler"};
+  ArgList arglist{
+      Arg{"name", name},
+      Arg{"worker_thread_number", 4L},
+      Arg{"stop_on_deadlock", false},
+      Arg{"max_duration_ms", 10000L},
+      Arg{"stop_on_deadlock_timeout", 100LL},
+  };
+  auto scheduler = F.make_scheduler<EventBasedScheduler>(name, arglist);
+  EXPECT_TRUE(scheduler->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(SchedulerClassesWithGXFContext, TestEventBasedSchedulerWithManualClock) {
+  const std::string name{"event-based-scheduler"};
+  ArgList arglist{Arg{"clock", F.make_resource<ManualClock>()}};
+  auto scheduler = F.make_scheduler<EventBasedScheduler>(name, arglist);
+}
+
+TEST_F(SchedulerClassesWithGXFContext, TestEventBasedSchedulerWithRealtimeClock) {
+  const std::string name{"event-based-scheduler"};
+  ArgList arglist{Arg{"clock", F.make_resource<RealtimeClock>()}};
+  auto scheduler = F.make_scheduler<EventBasedScheduler>(name, arglist);
 }
 
 }  // namespace holoscan

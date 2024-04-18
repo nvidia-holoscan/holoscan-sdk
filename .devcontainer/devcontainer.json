@@ -34,10 +34,10 @@
         "NVIDIA_DRIVER_CAPABILITIES": "graphics,video,compute,utility,display",
         // Set the following environment variables to use the same folder name as the host machine.
         // This is needed to launch container from the workspace folder that is not same as the SDK source root folder.
-        "HOLOSCAN_PUBLIC_FOLDER": "${env:HOLOSCAN_PUBLIC_FOLDER}",
+        "HOLOSCAN_PUBLIC_FOLDER": "${localEnv:HOLOSCAN_PUBLIC_FOLDER}",
         // This is necessary to prevent memory overuse during the SDK build process.
         // The `CMAKE_BUILD_PARALLEL_LEVEL` environment variable is set by the `run vscode` command.
-        "CMAKE_BUILD_PARALLEL_LEVEL": "${env:CMAKE_BUILD_PARALLEL_LEVEL}",
+        "CMAKE_BUILD_PARALLEL_LEVEL": "${localEnv:CMAKE_BUILD_PARALLEL_LEVEL}",
     },
     "mounts": [
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
@@ -64,7 +64,7 @@
                 "shd101wyy.markdown-preview-enhanced",
                 "cschlosser.doxdocgen",
                 "mine.cpplint",
-                "benjamin-simmonds.pythoncpp-debug" , // Python/C++ debugging
+                "benjamin-simmonds.pythoncpp-debug", // Python/C++ debugging
             ]
         }
     },

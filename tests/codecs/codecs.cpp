@@ -301,10 +301,25 @@ TEST(Codecs, TestComplexDoubleShared) {
 }
 
 TEST(Codecs, TestVectorBool) {
-  std::vector<bool> value{0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0};
-  bool omit_size_check = true;     // due to ContiguousDataHeader, size won't match assumptions
-  bool omit_values_check = false;  // make sure values match
-  codec_vector_compare<std::vector<bool>>(value, 4096, omit_size_check, omit_values_check);
+  // choose a length here that is not a multiple of 8
+  std::vector<bool> value{0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1};
+
+  // serialize
+  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
+      128, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto maybe_size = codec<std::vector<bool>>::serialize(value, endpoint.get());
+
+  // Check that serialization used bit packing as expected.
+  // Stores a size_t for number of unit8_t elements after bit packing in addition to the packed bits
+  size_t expected_size = sizeof(size_t) + (value.size() + 7) / 8;
+  EXPECT_EQ(maybe_size.value(), expected_size);
+
+  // deserialize and verify roundtrip result
+  auto maybe_deserialized = codec<std::vector<bool>>::deserialize(endpoint.get());
+  auto result = maybe_deserialized.value();
+  EXPECT_EQ(typeid(result), typeid(value));
+  EXPECT_EQ(result.size(), value.size());
+  for (size_t i = 0; i < value.size(); i++) { EXPECT_EQ(result[i], value[i]); }
 }
 
 TEST(Codecs, TestVectorInt32) {
@@ -361,6 +376,40 @@ TEST(Codecs, TestSharedVectorVectorFloat) {
 TEST(Codecs, TestVectorVectorString) {
   std::vector<std::vector<std::string>> value{{"ab"s, "cd"s, "ef"s}, {"g"s, "hijkl"s}, {"mno"s}};
   codec_vector_vector_compare<std::vector<std::vector<std::string>>>(value, 4096);
+}
+
+TEST(Codecs, TestVectorVectorBool) {
+  std::vector<std::vector<bool>> bvecs;
+
+  std::vector<bool> v1{0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1};
+  std::vector<bool> v2{1, 1, 0, 1, 1, 0, 1};
+  std::vector<bool> v3(1001, true);
+  bvecs.push_back(v1);
+  bvecs.push_back(v2);
+  bvecs.push_back(v3);
+
+  size_t expected_size = sizeof(size_t);  // number of vectors
+  // add bit-packed serialization size of each vector
+  for (auto& v : bvecs) { expected_size += sizeof(size_t) + (v.size() + 7) / 8; }
+
+  // serialize to buffer of exactly expected_size (exception thrown if expected_size is too small)
+  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
+      expected_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto maybe_size = codec<std::vector<std::vector<bool>>>::serialize(bvecs, endpoint.get());
+  EXPECT_EQ(maybe_size.value(), expected_size);
+
+  // deserialize and verify roundtrip result
+  auto maybe_deserialized = codec<std::vector<std::vector<bool>>>::deserialize(endpoint.get());
+  auto result = maybe_deserialized.value();
+  EXPECT_EQ(typeid(result), typeid(bvecs));
+  EXPECT_EQ(result.size(), bvecs.size());
+  for (size_t j = 0; j < bvecs.size(); j++) {
+    auto vec = bvecs[j];
+    auto res = result[j];
+    EXPECT_EQ(typeid(vec), typeid(res));
+    EXPECT_EQ(vec.size(), res.size());
+    for (size_t i = 0; i < vec.size(); i++) { EXPECT_EQ(res[i], vec[i]); }
+  }
 }
 
 TEST(Codecs, TestCustomTrivialSerializer) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -238,7 +238,8 @@ class NetworkContext : public Component {
   YAML::Node to_yaml_node() const override;
 
  protected:
-  std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
+  /// Reset the GXF GraphEntity of any components associated with the scheduler
+  void reset_graph_entities() override;
 
   std::unordered_map<std::string, std::shared_ptr<Resource>>
       resources_;  ///< The resources used by the network context.

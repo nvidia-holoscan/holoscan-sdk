@@ -5,7 +5,7 @@
  #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
  
 +#ifdef RECORD_OUTPUT
-+  #include <../tests/recorder.hpp>
++  #include <recorder.hpp>
 +  #include <holoscan/operators/format_converter/format_converter.hpp>
 +  #include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
 +#endif

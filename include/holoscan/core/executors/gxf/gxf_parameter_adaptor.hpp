@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -135,30 +135,20 @@ class GXFParameterAdaptor {
                 break;
               }
               case ArgElementType::kInt8: {
-                HOLOSCAN_LOG_ERROR("GXF does not support int8_t parameter for key '{}'", key);
-                return GXF_FAILURE;
+                if constexpr (std::is_same_v<typeT, int8_t>) {
+                  return GxfParameterSetInt8(context, uid, key, value);
+                }
+                break;
               }
               case ArgElementType::kUnsigned8: {
-                // GXF Doesn't support uint8_t parameter so use a workaround with
-                // GxfParameterSetFromYamlNode.
                 if constexpr (std::is_same_v<typeT, uint8_t>) {
-                  YAML::Node yaml_node;
-                  // uint8_t is not supported natively by yaml-cpp so push it as a uint32_t
-                  // so that GXF can handle it.
-                  yaml_node.push_back(static_cast<uint32_t>(value));
-                  YAML::Node value_node = yaml_node[0];
-                  return GxfParameterSetFromYamlNode(context, uid, key, &value_node, "");
+                  return GxfParameterSetUInt8(context, uid, key, value);
                 }
                 break;
               }
               case ArgElementType::kInt16: {
-                // GXF Doesn't support int16_t parameter so use a workaround with
-                // GxfParameterSetFromYamlNode.
                 if constexpr (std::is_same_v<typeT, int16_t>) {
-                  YAML::Node yaml_node;
-                  yaml_node.push_back(value);
-                  YAML::Node value_node = yaml_node[0];
-                  return GxfParameterSetFromYamlNode(context, uid, key, &value_node, "");
+                  return GxfParameterSetInt16(context, uid, key, value);
                 }
                 break;
               }
@@ -310,35 +300,9 @@ class GXFParameterAdaptor {
           }
           case ArgContainerType::kVector: {
             switch (arg_type.element_type()) {
-              case ArgElementType::kInt8: {
-                HOLOSCAN_LOG_ERROR(
-                    "GXF does not support std::vector<int8_t> parameter "
-                    "for key '{}'",
-                    key);
-                return GXF_FAILURE;
-              }
-              case ArgElementType::kUnsigned8: {
-                // GXF Doesn't support std::vector<uint8_t> parameter so use a workaround with
-                // GxfParameterSetFromYamlNode.
-                if constexpr (std::is_same_v<typeT, std::vector<uint8_t>>) {
-                  // Create vector of Handles
-                  YAML::Node yaml_node;
-                  for (auto& item : value) {
-                    // uint8_t is not supported natively by yaml-cpp so push it as a uint32_t
-                    // so that GXF can handle it.
-                    yaml_node.push_back(static_cast<uint32_t>(item));
-                  }
-                  return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
-                } else if constexpr (std::is_same_v<typeT, std::vector<std::vector<uint32_t>>>) {
-                  YAML::Node yaml_node;
-                  for (const std::vector<uint32_t>& vec : value) {
-                    for (uint32_t item : vec) { yaml_node.push_back(item); }
-                  }
-                  return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
-                }
-                break;
-              }
               case ArgElementType::kBoolean:
+              case ArgElementType::kInt8:
+              case ArgElementType::kUnsigned8:
               case ArgElementType::kInt16:
               case ArgElementType::kUnsigned16:
               case ArgElementType::kInt32:
@@ -350,11 +314,13 @@ class GXFParameterAdaptor {
               case ArgElementType::kComplex64:
               case ArgElementType::kComplex128:
               case ArgElementType::kString: {
-                // GXF Doesn't support std::vector<bool> parameter so use a workaround with
-                // GxfParameterSetFromYamlNode.
+                // GXF Doesn't support std::vector<T> or std::vector<std::vector<T>> parameter
+                // types so use a workaround with GxfParameterSetFromYamlNode.
                 if constexpr (holoscan::is_one_of_v<
                                   typename holoscan::type_info<typeT>::element_type,
                                   bool,
+                                  int8_t,
+                                  uint8_t,
                                   int16_t,
                                   uint16_t,
                                   int32_t,

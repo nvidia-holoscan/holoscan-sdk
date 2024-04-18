@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,9 +29,9 @@ namespace holoscan {
 /**
  * @brief UCX-based Holoscan component serializer.
  *
- * Used by UcxEntitySerializer to serialize and deserialize Holoscan SDK classes
- * holoscan::Message and holoscan::Tensor (via holoscan::gxf::GXFTensor). See the
- * CodecRegistry class for adding serialization codecs for additional holoscan::Message types.
+ * Used by UcxEntitySerializer to serialize and deserialize Holoscan SDK class holoscan::Message.
+ * See the CodecRegistry class for adding serialization codecs for additional holoscan::Message
+ * types.
  */
 class UcxHoloscanComponentSerializer : public gxf::GXFResource {
  public:

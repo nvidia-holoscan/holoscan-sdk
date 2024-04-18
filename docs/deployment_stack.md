@@ -3,14 +3,14 @@
 NVIDIA Holoscan accelerates deployment of production-quality applications
 by providing a set of **OpenEmbedded** build recipes and reference configurations
 that can be leveraged to customize and build Holoscan-compatible Linux4Tegra (L4T)
-embedded board support packages (BSP) on Holoscan Developer Kits.
+embedded board support packages (BSP) on the NVIDIA IGX Developer Kits.
 
 [Holoscan OpenEmbedded/Yocto recipes](https://github.com/nvidia-holoscan/meta-tegra-holoscan) add
-OpenEmbedded recipes and sample build configurations to build BSPs for NVIDIA Holoscan Developer Kits
+OpenEmbedded recipes and sample build configurations to build BSPs for the NVIDIA IGX Developer Kit
 that feature support for discrete GPUs (dGPU), AJA Video Systems I/O boards, and the Holoscan
 SDK.
-These BSPs are built on a developer's host machine and are then flashed onto a Holoscan Developer Kit
-using provided scripts.
+These BSPs are built on a developer's host machine and are then flashed onto the NVIDIA IGX
+Developer Kit using provided scripts.
 
 There are two options available to set up a build environment and start
 building Holoscan BSP images using OpenEmbedded.

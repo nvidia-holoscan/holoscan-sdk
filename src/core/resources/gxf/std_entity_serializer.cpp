@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/video_stream_serializer.hpp"
+#include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 
 #include <memory>
 #include <vector>
@@ -26,19 +26,29 @@
 
 namespace holoscan {
 
-void VideoStreamSerializer::setup(ComponentSpec& spec) {
+void StdEntitySerializer::setup(ComponentSpec& spec) {
   spec.param(component_serializers_,
              "component_serializers",
              "Component serializers",
              "List of serializers for serializing and deserializing components");
+  spec.param(verbose_warning_,
+             "verbose_warning",
+             "Verbose Warning",
+             "Whether or not to print verbose warning",
+             false);
 }
 
-void VideoStreamSerializer::initialize() {
+nvidia::gxf::StdEntitySerializer* StdEntitySerializer::get() const {
+  return static_cast<nvidia::gxf::StdEntitySerializer*>(gxf_cptr_);
+}
+
+void StdEntitySerializer::initialize() {
   // Set up prerequisite parameters before calling GXFOperator::initialize()
   auto frag = fragment();
   auto component_serializer =
-      frag->make_resource<holoscan::StdComponentSerializer>("component_serializer");
-
+      frag->make_resource<holoscan::StdComponentSerializer>("std_component_serializer");
+  component_serializer->gxf_cname(component_serializer->name().c_str());
+  if (gxf_eid_ != 0) { component_serializer->gxf_eid(gxf_eid_); }
   add_arg(Arg("component_serializers") =
               std::vector<std::shared_ptr<Resource>>{component_serializer});
 

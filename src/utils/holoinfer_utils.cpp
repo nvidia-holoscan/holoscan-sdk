@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "gxf/std/tensor.hpp"
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
 #include <holoinfer_utils.hpp>
@@ -142,9 +143,9 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
         return HoloInfer::report_error(module,
                                        "Data extraction, Tensor " + in_tensors[i] + " not found");
 
-      // convert from Tensor to GXFTensor so code below can be re-used as-is.
+      // convert from Tensor to nvidia::gxf::Tensor so code below can be re-used as-is.
       // (otherwise cannot easily get element_type, storage_type)
-      holoscan::gxf::GXFTensor in_tensor_gxf{in_tensor->dl_ctx()};
+      nvidia::gxf::Tensor in_tensor_gxf{in_tensor->dl_ctx()};
       void* in_tensor_data = in_tensor_gxf.pointer();
 
       auto element_type = in_tensor_gxf.element_type();

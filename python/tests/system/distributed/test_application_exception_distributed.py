@@ -60,7 +60,7 @@ class BadDistributedApplication(Application):
         self.add_flow(tx_fragment, rx_fragment, {("tx.out", "rx.in")})
 
 
-def test_exception_handling_distributed(capfd):
+def test_exception_handling_distributed():
     app = BadDistributedApplication()
 
     # Global timeouts set for CTest Python distributed test runs are currently 2500, but this case
@@ -70,16 +70,12 @@ def test_exception_handling_distributed(capfd):
         # set the stop on deadlock timeout to 5s to have enough time to run the test
         ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "5000"),
     }
+
+    exception_occurred = False
     with env_var_context(env_var_settings):
-        app.run()
+        try:
+            app.run()
+        except ZeroDivisionError:
+            exception_occurred = True
 
-    # assert that the exception was logged
-    captured = capfd.readouterr()
-
-    # temporarily print full stderr/stdout on failure to help debug on CI
-    if captured.err.count("ZeroDivisionError") != NUM_EXCEPTIONS:
-        print(f"\ncaptured stderr: {captured.err}")
-        print(f"captured stdout: {captured.out}")
-
-    assert captured.err.count("ZeroDivisionError") == NUM_EXCEPTIONS
-    assert captured.err.count("Traceback") == NUM_EXCEPTIONS
+    assert exception_occurred

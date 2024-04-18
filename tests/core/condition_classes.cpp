@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -162,7 +162,7 @@ TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithUnrecogni
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("warning") != std::string::npos);
-  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec.params") != std::string::npos);
+  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec_.params") != std::string::npos);
 }
 
 TEST(ConditionClasses, TestDownstreamMessageAffordableCondition) {
@@ -382,9 +382,8 @@ TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithArg) {
 }
 
 TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithUnrecognizedArg) {
-  auto condition =
-    F.make_condition<PeriodicCondition>(Arg{"recess_period", std::string("1000000")},
-                                        Arg("undefined_arg", 5.0));
+  auto condition = F.make_condition<PeriodicCondition>(Arg{"recess_period", std::string("1000000")},
+                                                       Arg("undefined_arg", 5.0));
 
   // test that an warning is logged if an unknown argument is provided
   testing::internal::CaptureStderr();
@@ -392,7 +391,7 @@ TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithUnreco
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("warning") != std::string::npos);
-  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec.params") != std::string::npos);
+  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec_.params") != std::string::npos);
 }
 
 }  // namespace holoscan

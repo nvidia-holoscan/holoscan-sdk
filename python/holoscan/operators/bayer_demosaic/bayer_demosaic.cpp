@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -117,7 +117,7 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
            "generate_alpha"_a = false,
            "alpha_value"_a = 255,
            "name"_a = "format_converter"s,
-           doc::BayerDemosaicOp::doc_BayerDemosaicOp_python)
+           doc::BayerDemosaicOp::doc_BayerDemosaicOp)
       .def("initialize", &BayerDemosaicOp::initialize, doc::BayerDemosaicOp::doc_initialize)
       .def("setup", &BayerDemosaicOp::setup, "spec"_a, doc::BayerDemosaicOp::doc_setup);
 }  // PYBIND11_MODULE NOLINT

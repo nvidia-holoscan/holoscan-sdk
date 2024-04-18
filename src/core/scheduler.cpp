@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,6 +43,18 @@ YAML::Node Scheduler::to_yaml_node() const {
   node["resources"] = YAML::Node(YAML::NodeType::Sequence);
   for (const auto& r : resources_) { node["resources"].push_back(r.second->to_yaml_node()); }
   return node;
+}
+
+void Scheduler::reset_graph_entities() {
+  HOLOSCAN_LOG_TRACE("Scheduler '{}'::reset_graph_entities", name_);
+  for (auto& [_, resource] : resources_) {
+    if (resource) {
+      auto gxf_resource = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(resource);
+      if (gxf_resource) { gxf_resource->reset_gxf_graph_entity(); }
+      resource->reset_graph_entities();
+    }
+  }
+  Component::reset_graph_entities();
 }
 
 }  // namespace holoscan

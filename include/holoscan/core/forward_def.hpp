@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,7 @@ class CodecRegistry;
 class Condition;
 enum class ConditionType;
 class Config;
+class ComponentBase;
 class Component;
 class ComponentSpec;
 class Endpoint;
@@ -98,6 +99,7 @@ class UcxContext;
 
 // Schedulers
 enum class SchedulerType;
+class EventBasedScheduler;
 class GreedyScheduler;
 class MultiThreadScheduler;
 
@@ -128,6 +130,7 @@ class Receiver;
 class RealtimeClock;
 class SerializationBuffer;
 class StdComponentSerializer;
+class StdEntitySerializer;
 class Transmitter;
 class UcxComponentSerializer;
 class UcxEntitySerializer;
@@ -136,7 +139,6 @@ class UcxReceiver;
 class UcxSerializationBuffer;
 class UcxTransmitter;
 class UnboundedAllocator;
-class VideoStreamSerializer;
 
 // Domain objects
 class Tensor;

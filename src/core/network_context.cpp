@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,18 @@ void NetworkContext::initialize() {
   } else {
     HOLOSCAN_LOG_WARN("NetworkContext::initialize() - Fragment is not set");
   }
+}
+
+void NetworkContext::reset_graph_entities() {
+  HOLOSCAN_LOG_TRACE("NetworkContext '{}'::reset_graph_entities", name_);
+  for (auto& [_, resource] : resources_) {
+    if (resource) {
+      auto gxf_resource = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(resource);
+      if (gxf_resource) { gxf_resource->reset_gxf_graph_entity(); }
+      resource->reset_graph_entities();
+    }
+  }
+  Component::reset_graph_entities();
 }
 
 YAML::Node NetworkContext::to_yaml_node() const {

@@ -30,6 +30,7 @@
 
 #include "ping_message_rx_op.hpp"
 #include "ping_message_tx_op.hpp"
+#include "utils.hpp"
 
 using namespace std::string_literals;
 
@@ -164,6 +165,8 @@ TEST_P(UcxMessageTypeParmeterizedTestFixture, TestUcxMessageSerializationApp) {
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Found expected value in deserialized message.") !=
               std::string::npos);
+
+  EXPECT_TRUE(remove_ignored_errors(log_output).find("error") == std::string::npos);
 
   // restore the original log level
   if (message_type == MessageType::VEC_DOUBLE_LARGE) {

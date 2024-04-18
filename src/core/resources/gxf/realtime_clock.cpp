@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,39 +26,38 @@ namespace holoscan {
 
 RealtimeClock::RealtimeClock(const std::string& name, nvidia::gxf::RealtimeClock* component)
     : Clock(name, component) {
-  double initial_time_offset = 0.0;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfParameterGetFloat64(gxf_context_, gxf_cid_, "initial_time_offset", &initial_time_offset));
-  initial_time_offset_ = initial_time_offset;
-  double initial_time_scale = 1.0;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfParameterGetFloat64(gxf_context_, gxf_cid_, "initial_time_scale", &initial_time_scale));
-  initial_time_scale_ = initial_time_scale;
-  bool use_time_since_epoch = false;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfParameterGetBool(gxf_context_, gxf_cid_, "use_time_since_epoch", &use_time_since_epoch));
-  use_time_since_epoch_ = use_time_since_epoch;
+  auto maybe_offset = component->getParameter<double>("offset");
+  if (!maybe_offset) { throw std::runtime_error("Failed to get initial_time_offset"); }
+  initial_time_offset_ = maybe_offset.value();
+
+  auto maybe_scale = component->getParameter<double>("scale");
+  if (!maybe_scale) { throw std::runtime_error("Failed to get initial_time_scale"); }
+  initial_time_scale_ = maybe_scale.value();
+
+  auto maybe_use_epoch = component->getParameter<bool>("use_epoch");
+  if (!maybe_use_epoch) { throw std::runtime_error("Failed to get use_time_since_epoch"); }
+  use_time_since_epoch_ = maybe_use_epoch.value();
+}
+
+nvidia::gxf::RealtimeClock* RealtimeClock::get() const {
+  return static_cast<nvidia::gxf::RealtimeClock*>(gxf_cptr_);
 }
 
 double RealtimeClock::time() const {
-  if (gxf_cptr_) {
-    nvidia::gxf::RealtimeClock* clock = static_cast<nvidia::gxf::RealtimeClock*>(gxf_cptr_);
-    return clock->time();
-  }
+  auto clock = get();
+  if (clock) { return clock->time(); }
   return 0.0;
 }
 
 int64_t RealtimeClock::timestamp() const {
-  if (gxf_cptr_) {
-    nvidia::gxf::RealtimeClock* clock = static_cast<nvidia::gxf::RealtimeClock*>(gxf_cptr_);
-    return clock->timestamp();
-  }
+  auto clock = get();
+  if (clock) { return clock->timestamp(); }
   return 0;
 }
 
 void RealtimeClock::sleep_for(int64_t duration_ns) {
-  if (gxf_cptr_) {
-    nvidia::gxf::RealtimeClock* clock = static_cast<nvidia::gxf::RealtimeClock*>(gxf_cptr_);
+  auto clock = get();
+  if (clock) {
     clock->sleepFor(duration_ns);
   } else {
     HOLOSCAN_LOG_ERROR("RealtimeClock component not yet registered with GXF");
@@ -66,8 +65,8 @@ void RealtimeClock::sleep_for(int64_t duration_ns) {
 }
 
 void RealtimeClock::sleep_until(int64_t target_time_ns) {
-  if (gxf_cptr_) {
-    nvidia::gxf::RealtimeClock* clock = static_cast<nvidia::gxf::RealtimeClock*>(gxf_cptr_);
+  auto clock = get();
+  if (clock) {
     clock->sleepUntil(target_time_ns);
   } else {
     HOLOSCAN_LOG_ERROR("RealtimeClock component not yet registered with GXF");
@@ -75,8 +74,8 @@ void RealtimeClock::sleep_until(int64_t target_time_ns) {
 }
 
 void RealtimeClock::set_time_scale(double time_scale) {
-  if (gxf_cptr_) {
-    nvidia::gxf::RealtimeClock* clock = static_cast<nvidia::gxf::RealtimeClock*>(gxf_cptr_);
+  auto clock = get();
+  if (clock) {
     clock->setTimeScale(time_scale);
   } else {
     HOLOSCAN_LOG_ERROR("RealtimeClock component not yet registered with GXF");

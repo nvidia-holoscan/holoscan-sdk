@@ -14,7 +14,7 @@
 # limitations under the License.
 
 cmake_minimum_required(VERSION 3.20)
-project(holoscan_hello_world CXX)
+project(holoviz_examples_cpp CXX)
 
 # Finds the package holoscan
 find_package(holoscan REQUIRED CONFIG
@@ -33,12 +33,63 @@ target_link_libraries(holoviz_geometry
 
 # Testing
 if(BUILD_TESTING)
+  set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
+  set(SOURCE_VIDEO_BASENAME holoviz_geometry_output)
+  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/testing/validation_frames/holoviz_geometry/)
+
+  file(MAKE_DIRECTORY ${RECORDING_DIR})
+
+  # Patch the current example to enable recording the rendering window
+  add_custom_command(OUTPUT holoviz_geometry_test.cpp
+    PRE_LINK
+    COMMAND patch -u -o holoviz_geometry_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.cpp
+            ${CMAKE_SOURCE_DIR}/testing/validation_frames/holoviz_geometry/cpp_holoviz_geometry.patch
+  )
+
+  # Create the test executable
+  add_executable(holoviz_geometry_test
+                 holoviz_geometry_test.cpp
+  )
+
+  target_include_directories(holoviz_geometry_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/testing)
+
+  target_compile_definitions(holoviz_geometry_test
+    PRIVATE RECORD_OUTPUT RECORDING_DIR="${RECORDING_DIR}"
+    PRIVATE SOURCE_VIDEO_BASENAME="${SOURCE_VIDEO_BASENAME}"
+  )
+
+  target_link_libraries(holoviz_geometry_test
+    PRIVATE
+    holoscan::core
+    holoscan::ops::holoviz
+    holoscan::ops::video_stream_replayer
+    holoscan::ops::video_stream_recorder
+    holoscan::ops::format_converter
+  )
+
+  # Add the test and make sure it runs
   add_test(NAME EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry --count 10
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry_test --count 10
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Received camera pose:"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+  )
+
+  # Add a test to check the validity of the frames
+  add_test(NAME EXAMPLE_CPP_HOLOVIZ_GEOMETRY_RENDER_TEST
+      COMMAND python3 ${CMAKE_SOURCE_DIR}/../bin/video_validation.py
+      --source_video_dir ${RECORDING_DIR}
+      --source_video_basename ${SOURCE_VIDEO_BASENAME}
+      --output_dir ${RECORDING_DIR}
+      --validation_frames_dir ${VALIDATION_FRAMES_DIR}
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
+  set_tests_properties(EXAMPLE_CPP_HOLOVIZ_GEOMETRY_RENDER_TEST PROPERTIES
+    DEPENDS EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST
+    PASS_REGULAR_EXPRESSION "Valid video output!"
   )
 endif()

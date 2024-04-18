@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +70,8 @@ class AsynchronousCondition : public gxf::GXFCondition {
    * @return The current state of the condition.
    */
   AsynchronousEventState event_state() const;
+
+  nvidia::gxf::AsynchronousSchedulingTerm* get() const;
 
  private:
   AsynchronousEventState event_state_{AsynchronousEventState::READY};

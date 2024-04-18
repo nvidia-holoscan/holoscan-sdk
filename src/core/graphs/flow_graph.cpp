@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,41 +59,9 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_node(const NodeT& node) {
 template <typename NodeT, typename EdgeDataElementT>
 void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const NodeType& node_v,
                                                   const EdgeDataType& port_map) {
-  if (succ_.find(node_u) == succ_.end()) {
-    if (!node_u) {
-      HOLOSCAN_LOG_ERROR("Calling add_flow() with nullptr (node_u is nullptr)");
-      return;
-    }
-    // If there is already a node with the same name, it will raise an error.
-    if (name_map_.find(node_u->name()) != name_map_.end()) {
-      HOLOSCAN_LOG_ERROR("Calling add_flow() with a node ('{}') that has a duplicate name",
-                         node_u->name());
-      throw RuntimeError(ErrorCode::kDuplicateName);
-    }
-
-    succ_[node_u] = std::unordered_map<NodeType, EdgeDataType>();
-    pred_[node_u] = std::unordered_map<NodeType, EdgeDataType>();
-    ordered_nodes_.push_back(node_u);
-    name_map_[node_u->name()] = node_u;
-  }
-  if (succ_.find(node_v) == succ_.end()) {
-    if (!node_v) {
-      HOLOSCAN_LOG_ERROR("Calling add_flow() with nullptr (node_v is nullptr)");
-      return;
-    }
-    // If there is already a node with the same name, it will raise an error.
-    if (name_map_.find(node_v->name()) != name_map_.end()) {
-      HOLOSCAN_LOG_ERROR("Calling add_flow() with a node ('{}') that has a duplicate name",
-                         node_v->name());
-      throw RuntimeError(ErrorCode::kDuplicateName);
-    }
-
-    succ_[node_v] = std::unordered_map<NodeType, EdgeDataType>();
-    pred_[node_v] = std::unordered_map<NodeType, EdgeDataType>();
-    ordered_nodes_.push_back(node_v);
-    name_map_[node_v->name()] = node_v;
-  }
-
+  // Note: add_node does nothing if the node was already added
+  add_node(node_u);
+  add_node(node_v);
   auto it_edgedata = succ_[node_u].find(node_v);
   if (it_edgedata != succ_[node_u].end()) {
     const auto& datadict = it_edgedata->second;

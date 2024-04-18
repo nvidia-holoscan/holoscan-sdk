@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,6 @@ struct Coordinate {
 };
 
 // note: don't have to explicitly define codec<Coordinate> for this POD type
-
 
 // Intentionally place members of different size in non-optimal order to result in a struct
 // that is not tightly packed. On my system this struct occupies 24 bytes.

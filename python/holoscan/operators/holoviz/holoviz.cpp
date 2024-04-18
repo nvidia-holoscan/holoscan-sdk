@@ -159,7 +159,7 @@ PYBIND11_MODULE(_holoviz, m) {
            "font_path"_a = "",
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "holoviz_op"s,
-           doc::HolovizOp::doc_HolovizOp_python)
+           doc::HolovizOp::doc_HolovizOp)
       .def("initialize", &HolovizOp::initialize, doc::HolovizOp::doc_initialize)
       .def("setup", &HolovizOp::setup, "spec"_a, doc::HolovizOp::doc_setup);
 

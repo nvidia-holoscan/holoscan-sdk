@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,14 +40,14 @@ class ExecutionContext {
    *
    * @return The pointer to the input context.
    */
-  InputContext* input() const { return input_context_;}
+  InputContext* input() const { return input_context_; }
 
   /**
    * @brief Get the output context.
    *
    * @return The pointer to the output context.
    */
-  OutputContext* output() const { return output_context_;}
+  OutputContext* output() const { return output_context_; }
 
   /**
    * @brief Get the context.

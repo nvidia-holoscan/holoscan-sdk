@@ -19,7 +19,7 @@ import sys
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.schedulers import MultiThreadScheduler
+from holoscan.schedulers import EventBasedScheduler, MultiThreadScheduler
 
 # The following example is extracted from the ping_vector example in the public/examples
 # directory (public/examples/ping_vector/python/ping_vector.py), adding some methods
@@ -154,19 +154,25 @@ class MyPingApp(Application):
 
 def main(scheduler_type="greedy"):
     app = MyPingApp()
-    if scheduler_type == "multithread":
-        # If the multithread scheduler is used, the cProfile or profile module may not work
+    if scheduler_type in ["multithread", "event_based"]:
+        # If a multithread scheduler is used, the cProfile or profile module may not work
         # properly and show some error messages.
         # For multithread scheduler, please use multithread-aware profilers such as
         # [pyinstrument](https://github.com/joerick/pyinstrument),
         # [pprofile](https://github.com/vpelletier/pprofile), or
         # [yappi](https://github.com/sumerc/yappi).
-        scheduler = MultiThreadScheduler(
+        if scheduler_type == "multithread":
+            scheduler_class = MultiThreadScheduler
+            name = ("multithread_scheduler",)
+        else:
+            scheduler_class = EventBasedScheduler
+            name = ("event_based_scheduler",)
+        scheduler = scheduler_class(
             app,
             worker_thread_number=3,
             stop_on_deadlock=True,
             stop_on_deadlock_timeout=500,
-            name="multithread_scheduler",
+            name=name,
         )
         app.scheduler(scheduler)
 
@@ -372,7 +378,7 @@ if __name__ == "__main__":
         "-s",
         "--scheduler",
         type=str,
-        choices=("greedy", "multithread"),
+        choices=("greedy", "multithread", "event_based"),
         default="greedy",
         help="The scheduler to use",
     )

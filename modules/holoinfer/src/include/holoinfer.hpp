@@ -61,6 +61,9 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
    * @returns Map of model as key mapped to the output dimension (of inferred data)
    */
   DimType get_output_dimensions() const;
+
+ private:
+  std::string unique_id_;
 };
 
 /**

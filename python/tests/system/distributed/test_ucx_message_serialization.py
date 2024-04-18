@@ -19,6 +19,7 @@ import contextlib
 import sys
 
 import pytest
+from utils import remove_ignored_errors
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, Operator, OperatorSpec
@@ -210,7 +211,7 @@ def test_ucx_object_serialization_app(ping_config_file, value, capfd):
     # : "error handling callback was invoked with status -25 (Connection reset by remote peer)"
     captured_error = captured.err.replace("error handling callback", "ucx handling callback")
     assert "received expected value" in captured_error
-    assert "error" not in captured_error
+    assert "error" not in remove_ignored_errors(captured_error)
     assert "Exception occurred" not in captured_error
 
 
@@ -301,5 +302,5 @@ def test_ucx_object_receivers_serialization_app(ping_config_file, value, capfd):
     # : "error handling callback was invoked with status -25 (Connection reset by remote peer)"
     captured_error = captured.err.replace("error handling callback", "ucx handling callback")
     assert "received expected value" in captured_error
-    assert "error" not in captured_error
+    assert "error" not in remove_ignored_errors(captured_error)
     assert "Exception occurred" not in captured_error

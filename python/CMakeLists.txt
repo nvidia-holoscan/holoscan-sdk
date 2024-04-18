@@ -48,18 +48,18 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_test(NAME python-api-system-distributed-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0 -k "not test_exception_handling_distributed"
+    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0
     # either have to run from this working directory or set PYTHONPATH
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
 
-  # case with additional logging/verbosity for debugging failures on CI
-  add_test(NAME python-api-system-distributed-verbose-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0 -s -k test_exception_handling_distributed
+  # rerun distributed tests but with the event-based scheduler
+  # (omit serialization tests on this second run to keep overall time down)
+  add_test(NAME python-api-system-distributed-ebs-tests
+    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0 -k "not test_ucx_object_serialization"
     # either have to run from this working directory or set PYTHONPATH
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
-
   # Tracking any fatal error reported by the application tests
   set_tests_properties(python-api-system-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
@@ -67,7 +67,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(python-api-system-distributed-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
 
-  set_tests_properties(python-api-system-distributed-verbose-tests PROPERTIES
+  set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
 
   # set environment variables used by distributed applications in the tests
@@ -84,10 +84,10 @@ HOLOSCAN_MAX_DURATION_MS=2500\
 "
   )
   set_tests_properties(python-api-system-distributed-tests PROPERTIES ENVIRONMENT
-    "${CMAKE_DISTRIBUTED_TEST_FLAGS}"
+    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread"
   )
-  set_tests_properties(python-api-system-distributed-verbose-tests PROPERTIES ENVIRONMENT
-    "${CMAKE_DISTRIBUTED_TEST_FLAGS}"
+  set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES ENVIRONMENT
+    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based"
   )
 
   # tracing tests

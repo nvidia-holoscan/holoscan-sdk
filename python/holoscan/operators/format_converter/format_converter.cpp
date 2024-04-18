@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -138,7 +138,7 @@ PYBIND11_MODULE(_format_converter, m) {
            "out_channel_order"_a = std::vector<int>{},
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "format_converter"s,
-           doc::FormatConverterOp::doc_FormatConverterOp_python)
+           doc::FormatConverterOp::doc_FormatConverterOp)
       .def("initialize", &FormatConverterOp::initialize, doc::FormatConverterOp::doc_initialize)
       .def("setup", &FormatConverterOp::setup, "spec"_a, doc::FormatConverterOp::doc_setup);
 }  // PYBIND11_MODULE NOLINT

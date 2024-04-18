@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,6 @@
 #include <gxf/std/tensor.hpp>
 #include <holoscan/core/domain/tensor_map.hpp>
 #include <holoscan/core/gxf/gxf_extension_registrar.hpp>
-#include <holoscan/core/gxf/gxf_tensor.hpp>
 #include <holoscan/holoscan.hpp>
 
 #include "./receive_tensor_gxf.hpp"

@@ -27,7 +27,7 @@ from ..common.enum_types import ApplicationType, SdkType
 from ..common.exceptions import IncompatiblePlatformConfigurationError, InvalidSdkError
 from ..common.sdk_utils import detect_sdk, detect_sdk_version
 from .parameters import PlatformParameters
-from .sdk_downloader import download_health_probe_file, download_sdk_debian_file
+from .sdk_downloader import download_sdk_debian_file
 
 
 class Platform:
@@ -79,8 +79,23 @@ class Platform:
             platform_parameters = PlatformParameters(platform, platform_config, args.tag, version)
 
             (
-                platform_parameters.holoscan_sdk_file,
-                platform_parameters.monai_deploy_sdk_file,
+                platform_parameters.custom_base_image,
+                platform_parameters.base_image,
+            ) = self._find_base_image(platform_parameters, holoscan_sdk_version, args.base_image)
+
+            platform_parameters.build_image = self._find_build_image(
+                platform_parameters, holoscan_sdk_version, application_type, args.build_image
+            )
+
+            (
+                (
+                    platform_parameters.custom_holoscan_sdk,
+                    platform_parameters.holoscan_sdk_file,
+                ),
+                (
+                    platform_parameters.custom_monai_deploy_sdk,
+                    platform_parameters.monai_deploy_sdk_file,
+                ),
             ) = self._select_sdk_file(
                 platform_parameters,
                 temp_dir,
@@ -91,21 +106,11 @@ class Platform:
                 args.holoscan_sdk_file,
                 args.monai_deploy_sdk_file,
             )
-            platform_parameters.base_image = self._find_base_image(
-                platform_parameters, holoscan_sdk_version, args.base_image
-            )
-            platform_parameters.build_image = self._find_build_image(
-                platform_parameters, holoscan_sdk_version, application_type, args.build_image
-            )
 
             if sdk is SdkType.Holoscan:
-                platform_parameters.health_probe = download_health_probe_file(
-                    holoscan_sdk_version,
-                    platform_parameters.platform_arch,
-                    temp_dir,
-                    self._logger,
-                    self._artifact_sources,
-                )
+                platform_parameters.health_probe = self._artifact_sources.health_probe(
+                    holoscan_sdk_version
+                )[platform_parameters.platform_arch.value]
 
             platforms.append(platform_parameters)
 
@@ -142,7 +147,7 @@ class Platform:
         platform_parameters: PlatformParameters,
         sdk_version: str,
         base_image: Optional[str] = None,
-    ) -> str:
+    ) -> Tuple[bool, str]:
         """
         Ensure user provided base image exists in Docker or locate the base image to use based on
         request platform.
@@ -153,18 +158,23 @@ class Platform:
             base_image (Optional[str]): user provided base image
 
         Returns:
-            (str): base image for building the image based on the given platform and SDK version.
+            (Tuple(bool, str)): bool: True if using user provided image.
+                                str: base image for building the image based on the given
+                                     platform and SDK version.
         """
         if base_image is not None:
             if image_exists(base_image):
-                return base_image
+                return (True, base_image)
             else:
                 raise InvalidSdkError(f"Specified base image cannot be found: {base_image}")
 
         try:
-            return self._artifact_sources.base_images[platform_parameters.platform_config.value][
-                platform_parameters.platform.value
-            ][sdk_version]
+            return (
+                False,
+                self._artifact_sources.base_images(sdk_version)[
+                    platform_parameters.platform_config.value
+                ][platform_parameters.platform.value],
+            )
         except Exception as ex:
             raise IncompatiblePlatformConfigurationError(
                 f"""No base image found for the selected configuration:
@@ -201,9 +211,9 @@ class Platform:
 
         if application_type == ApplicationType.CppCMake:
             try:
-                return self._artifact_sources.build_images[
+                return self._artifact_sources.build_images(sdk_version)[
                     platform_parameters.platform_config.value
-                ][platform_parameters.platform.value][sdk_version]
+                ][platform_parameters.platform.value]
             except Exception as ex:
                 raise IncompatiblePlatformConfigurationError(
                     f"No build image found for the selected configuration:"
@@ -224,7 +234,7 @@ class Platform:
         application_type: ApplicationType,
         holoscan_sdk_file: Optional[Path] = None,
         monai_deploy_sdk_file: Optional[Path] = None,
-    ) -> Tuple[Union[Path, str], Union[Path, str, None]]:
+    ) -> Tuple[Tuple[bool, Union[Path, str]], Tuple[Union[Path, str, None]]]:
         """
         Detects the SDK distributable to use based on internal mapping or user input.
 
@@ -259,7 +269,7 @@ class Platform:
                     application_type,
                     holoscan_sdk_file,
                 ),
-                None,
+                (None, None),
             )
         elif sdk == SdkType.MonaiDeploy:
             if monai_deploy_app_sdk_version is None:
@@ -285,7 +295,7 @@ class Platform:
         sdk_version: str,
         application_type: ApplicationType,
         sdk_file: Optional[Path] = None,
-    ) -> Union[Path, str]:
+    ) -> Tuple[bool, Union[Path, str]]:
         """
         Validates Holoscan SDK redistributable file if specified.
         Otherwise, attempt to download the SDK file from internet.
@@ -303,7 +313,9 @@ class Platform:
                              file.
 
         Returns:
-            Union[Path, str]: Path to the SDK redistributable file.
+            Tuple[bool, Union[Path, str]]:
+                bool: True when user provides SDk file. Otherwise, False.
+                Union[Path, str]: Path to the SDK redistributable file.
         """
         assert sdk is SdkType.Holoscan
 
@@ -317,7 +329,7 @@ class Platform:
                         "Invalid SDK file format, must be a PyPI wheel file with .whl file "
                         "extension."
                     )
-                return sdk_file
+                return (True, sdk_file)
             elif application_type in [
                 ApplicationType.CppCMake,
                 ApplicationType.Binary,
@@ -327,7 +339,7 @@ class Platform:
                         "Invalid SDK file format, must be a Debian package file with .deb "
                         "file extension."
                     )
-                return sdk_file
+                return (True, sdk_file)
 
             raise InvalidSdkError(f"Unknown application type: {application_type.value}")
         else:
@@ -335,7 +347,7 @@ class Platform:
                 ApplicationType.PythonModule,
                 ApplicationType.PythonFile,
             ]:
-                return Constants.PYPI_INSTALL_SOURCE
+                return (False, Constants.PYPI_INSTALL_SOURCE)
             elif application_type in [
                 ApplicationType.CppCMake,
                 ApplicationType.Binary,
@@ -346,13 +358,16 @@ class Platform:
                     platform_parameters.platform_config,
                 )
                 if debian_package_source is not None:
-                    return download_sdk_debian_file(
-                        debian_package_source,
-                        sdk_version,
-                        platform_parameters.platform_arch,
-                        temp_dir,
-                        self._logger,
-                        self._artifact_sources,
+                    return (
+                        False,
+                        download_sdk_debian_file(
+                            debian_package_source,
+                            sdk_version,
+                            platform_parameters.platform_arch,
+                            temp_dir,
+                            self._logger,
+                            self._artifact_sources,
+                        ),
                     )
                 else:
                     raise InvalidSdkError(
@@ -364,7 +379,7 @@ class Platform:
 
     def _get_monai_deploy_sdk(
         self, monai_deploy_app_sdk_version: Optional[str], sdk_file: Optional[Path] = None
-    ) -> Union[Path, str]:
+    ) -> Tuple[Union[Path, str]]:
         """
         Validates MONAI Deploy SDK redistributable file if specified.
         Otherwise, Docker build stage will install the SDK from PyPI.
@@ -385,6 +400,6 @@ class Platform:
                 raise InvalidSdkError(
                     "Invalid SDK file format, must be a PyPI wheel file with .whl file extension."
                 )
-            return sdk_file
+            return (True, sdk_file)
 
-        return Constants.PYPI_INSTALL_SOURCE
+        return (False, None)

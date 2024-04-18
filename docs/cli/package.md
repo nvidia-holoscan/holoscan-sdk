@@ -6,7 +6,7 @@
 
 ## Synopsis
 
-`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-platform-config) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-sdk-version) [](#cli-package-holoscan-sdk-file) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application)
+`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-platform-config) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-source) [](#cli-package-sdk-version) [](#cli-package-holoscan-sdk-file) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application) [](#cli-package-source)
 
 ## Examples
 
@@ -120,7 +120,6 @@ A comma-separated list of platform types to generate. Each platform value specif
 
 `PLATFORM` must be one of: `clara-agx-devkit`, `igx-orin-devkit`, `jetson-agx-orin-devkit`, `x64-workstation`.
 
-- `clara-agx-devkit`: Clara AGX DevKit
 - `igx-orin-devkit`: IGX Orin DevKit
 - `jetson-agx-orin-devkit`: Orin AGX DevKit
 - `x64-workstation`: systems with a [x86-64](https://en.wikipedia.org/wiki/X86-64) processor(s)
@@ -168,7 +167,7 @@ Optionally specifies the build container image for building C++ applications. It
 
 ### `[--build-cache BUILD_CACHE]`
 
-Specifies a directory path for storing Docker cache. Defaults to `~/.holoscan_build_cache`.
+Specifies a directory path for storing Docker cache. Defaults to `~/.holoscan_build_cache`. If the `$HOME` directory is inaccessible, the CLI uses the `/tmp` directory.
 
 (#cli-package-cmake-args)=
 
@@ -193,6 +192,14 @@ Do not use cache when building image.
 ### `[--sdk SDK]`
 
 SDK for building the application: Holoscan or MONAI-Deploy. `SDK` must be one of: holoscan, monai-deploy.
+
+(#cli-package-source)=
+
+### `[--source URL|FILE]`
+
+Override the artifact manifest source with a securely hosted file or from the local file system.
+
+E.g. https://my.domain.com/my-file.json
 
 (#cli-package-sdk-version)=
 
@@ -259,3 +266,9 @@ It is recommended to use the default value of `1000` when packaging an applicati
 ### `[--gid GID]`
 
 Optional *group ID* to be associated with the user created with `--username` with default of `1000`.
+
+(#cli-package-source)=
+
+### `[--source PATH|URL]`
+
+Overrides the default manifest file source. This value can be a local file path or a HTTPS url.

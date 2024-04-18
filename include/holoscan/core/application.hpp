@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,7 +119,7 @@ class Application : public Fragment {
    */
   template <typename FragmentT = Fragment, typename StringT, typename... ArgsT,
             typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
-  std::shared_ptr<Fragment> make_fragment(const StringT& name, ArgsT&&... args) {
+  std::shared_ptr<Fragment> make_fragment(StringT name, ArgsT&&... args) {
     auto fragment = std::make_shared<FragmentT>(std::forward<ArgsT>(args)...);
     fragment->name(name);
     fragment->application(this);

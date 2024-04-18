@@ -62,6 +62,8 @@ class PackagingArguments:
 
         if args.source is not None:
             self._artifact_sources.load(args.source)
+        else:
+            self._artifact_sources.download_manifest()
 
         self.build_parameters.username = args.username
         self.build_parameters.uid = args.uid

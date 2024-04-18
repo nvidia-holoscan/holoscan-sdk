@@ -116,4 +116,88 @@ void init_application(py::module_& m) {
           R"doc(Return repr(self).)doc");
 }
 
+py::list PyApplication::py_argv() {
+  py::list argv;
+  // In Python, `sys.argv` returns `['']` if there are no arguments (i.e., when just `python` is
+  // called). We'll do the same here.
+  if (argv_.empty()) {
+    argv.append(py::cast("", py::return_value_policy::reference));
+    return argv;
+  }
+
+  for (auto iter = std::next(argv_.begin()); iter != argv_.end(); ++iter) {
+    argv.append(py::cast(*iter, py::return_value_policy::reference));
+  }
+
+  if (argv.empty()) { argv.append(py::cast("", py::return_value_policy::reference)); }
+  return argv;
+}
+
+void PyApplication::add_operator(const std::shared_ptr<Operator>& op) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Application, add_operator, op);
+}
+
+void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                             const std::shared_ptr<Operator>& downstream_op) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op);
+}
+
+void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                             const std::shared_ptr<Operator>& downstream_op,
+                             std::set<std::pair<std::string, std::string>> io_map) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op, io_map);
+}
+
+void PyApplication::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
+                             const std::shared_ptr<Fragment>& downstream_frag,
+                             std::set<std::pair<std::string, std::string>> port_pairs) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Application, add_flow, upstream_frag, downstream_frag, port_pairs);
+}
+
+void PyApplication::compose() {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Application, compose);
+}
+
+void PyApplication::run() {
+  // Create a deleter for DLManagedTensor objects so that they can be deleted in a separate thread
+  // to avoid blocking the GXF runtime mutex.
+  LazyDLManagedTensorDeleter deleter;
+
+  // Get the trace and profile functions from sys
+  {
+    pybind11::gil_scoped_acquire gil;
+
+    auto sys_module = py::module::import("sys");
+
+    // Note that when cProfile is used, the profile_func_ is a cProfile.Profile object, not a
+    // function. If the return value of getprofile() is not a function, we need to use the
+    // existing c_profilefunc_ and c_profileobj_ instead of calling sys.setprofile() with
+    // profile_func_.
+    py_profile_func_ = sys_module.attr("getprofile")();
+    py_trace_func_ = sys_module.attr("gettrace")();
+
+    auto py_thread_state = _PyThreadState_UncheckedGet();
+    c_profilefunc_ = py_thread_state->c_profilefunc;
+    c_profileobj_ = py_thread_state->c_profileobj;
+    c_tracefunc_ = py_thread_state->c_tracefunc;
+    c_traceobj_ = py_thread_state->c_traceobj;
+
+#if PY_VERSION_HEX >= 0x030b0000  // >= Python 3.11.0
+    // _PyInterpreterFrame*
+    py_last_frame_ = py_thread_state->cframe->current_frame;
+#else
+    // PyFrameObject*
+    py_last_frame_ = py_thread_state->frame;  // = PyEval_GetFrame();
+#endif
+  }
+
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Application, run);
+}
+
 }  // namespace holoscan

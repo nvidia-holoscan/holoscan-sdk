@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,10 @@ function(_get_lib_file_path location target)
 
     if(imported)
         get_target_property(lib ${target} IMPORTED_LOCATION)
+        if(NOT lib)
+            string(TOUPPER "${CMAKE_BUILD_TYPE}" _BUILD_TYPE)
+            get_target_property(lib ${target} IMPORTED_LOCATION_${_BUILD_TYPE})
+        endif()
     else()
         set(lib $<TARGET_FILE:${target}>)
     endif()
@@ -170,6 +174,10 @@ function(create_gxe_application)
         COMPONENT "${GXE_APP_COMPONENT}"
     )
 
+    # GXE apps are expected to be run from the top of the build/install directory
+    # to find `gxe_executable`.
+    file(RELATIVE_PATH gxe_executable ${CMAKE_BINARY_DIR} ${HOLOSCAN_GXE_LOCATION})
+
     # Create bash script
     set(GXE_APP_EXECUTABLE "${CMAKE_CURRENT_BINARY_DIR}/${GXE_APP_NAME}")
     file(GENERATE
@@ -177,7 +185,7 @@ function(create_gxe_application)
         CONTENT
         "#!/usr/bin/env bash
 export LD_LIBRARY_PATH=$(pwd):$(pwd)/${HOLOSCAN_INSTALL_LIB_DIR}:\${LD_LIBRARY_PATH}
-./bin/gxe --app ${GXE_APP_YAML_RELATIVE_PATH} --manifest ${GXE_APP_MANIFEST_RELATIVE_PATH} $@
+${gxe_executable} --app ${GXE_APP_YAML_RELATIVE_PATH} --manifest ${GXE_APP_MANIFEST_RELATIVE_PATH} $@
 "
         FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
     )

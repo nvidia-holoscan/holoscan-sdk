@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,5 +23,9 @@ namespace holoscan {
 
 Clock::Clock(const std::string& name, nvidia::gxf::Clock* component)
     : GXFResource(name, component) {}
+
+nvidia::gxf::Clock* Clock::get() const {
+  return static_cast<nvidia::gxf::Clock*>(gxf_cptr_);
+}
 
 }  // namespace holoscan

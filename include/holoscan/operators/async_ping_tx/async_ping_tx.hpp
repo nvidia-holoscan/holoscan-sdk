@@ -30,10 +30,18 @@ namespace holoscan::ops {
 /**
  * @brief Simple asynchronous transmitter operator.
  *
- * **Named outputs:**
- *     - *out*: int
- *         - An index value that increments by one on each call to `compute`. The starting value
- *         is 1.
+ * ==Named Outputs==
+ *
+ * - **out** : int
+ *   - An index value that increments by one on each call to `compute`. The starting value
+ *     is 1.
+ *
+ * ==Parameters==
+ *
+ * - **delay**: Ping delay in ms. Optional (default: `10L`)
+ * - **count**: Ping count. Optional (default: `0UL`)
+ * - **async_condition**: AsynchronousCondition adding async support to the operator.
+ *   Optional (default: `nullptr`)
  */
 class AsyncPingTxOp : public Operator {
  public:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+
+#include <gxf/ucx/ucx_serialization_buffer.hpp>
 
 #include "../../gxf/gxf_resource.hpp"
 #include "./serialization_buffer.hpp"
@@ -45,17 +47,19 @@ constexpr size_t kDefaultUcxSerializationBufferSize = 7168;  // 7 kB
  * All non-tensor entities get serialized to this buffer, which will be transmitted in an
  * active message header by UcxTransmitter.
  */
-class UcxSerializationBuffer : public SerializationBuffer {
+class UcxSerializationBuffer : public gxf::GXFResource {
  public:
-  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(UcxSerializationBuffer, SerializationBuffer)
+  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(UcxSerializationBuffer, GXFResource)
   UcxSerializationBuffer() = default;
-  UcxSerializationBuffer(const std::string& name, nvidia::gxf::SerializationBuffer* component);
+  UcxSerializationBuffer(const std::string& name, nvidia::gxf::UcxSerializationBuffer* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::UcxSerializationBuffer"; }
 
   void setup(ComponentSpec& spec) override;
 
   void initialize() override;
+
+  nvidia::gxf::UcxSerializationBuffer* get() const;
 
  private:
   Parameter<std::shared_ptr<holoscan::Allocator>> allocator_;

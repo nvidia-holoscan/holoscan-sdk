@@ -41,6 +41,7 @@
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 #include "holoscan/core/schedulers/greedy_fragment_allocation.hpp"
+#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 #include "holoscan/core/services/app_driver/server.hpp"
@@ -48,7 +49,7 @@
 #include "holoscan/core/services/common/network_constants.hpp"
 #include "holoscan/core/signal_handler.hpp"
 #include "holoscan/core/system/network_utils.hpp"
-#include <holoscan/core/system/system_resource_manager.hpp>
+#include "holoscan/core/system/system_resource_manager.hpp"
 #include "services/app_worker/client.hpp"
 
 #include "holoscan/logger/logger.hpp"
@@ -191,7 +192,7 @@ void AppDriver::run() {
   if (is_local_) {
     auto target_fragments = fragment_graph.get_nodes();
     auto future = launch_fragments_async(target_fragments);
-    future.wait();
+    future.get();
     return;
   } else {
     if (need_worker_) {
@@ -294,17 +295,16 @@ std::future<void> AppDriver::run_async() {
     // If there are no separate fragments to run, we run the entire graph.
     if (fragment_graph.is_empty()) {
       if (driver_server_) {
-        auto executor_future = app_->executor().run_async(app_->graph());
         auto future =
-            std::async(std::launch::async,
-                       [future = std::move(executor_future), &driver_server = driver_server_]() {
-                         future.wait();
-                         if (driver_server) {
-                           driver_server->stop();
-                           driver_server->wait();
-                           driver_server = nullptr;
-                         }
-                       });
+            std::async(std::launch::async, [app = app_, &driver_server = driver_server_]() {
+              auto executor_future = app->executor().run_async(app->graph());
+              executor_future.get();
+              if (driver_server) {
+                driver_server->stop();
+                driver_server->wait();
+                driver_server = nullptr;
+              }
+            });
         return future;
       }
       // Application's graph is already composed in check_configuration() so we can run it directly.
@@ -1261,28 +1261,35 @@ std::future<void> AppDriver::launch_fragments_async(
     futures.push_back(std::make_pair(fragment, fragment->executor().run_async(fragment->graph())));
   }
 
-  auto future = std::async(std::launch::async,
-                           [futures = std::move(futures), &driver_server = driver_server_]() {
-                             bool any_fragment_finished = false;
-                             while (!any_fragment_finished) {
-                               // Check every 500 ms
-                               std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                               for (auto& [fragment, future_obj] : futures) {
-                                 const auto status = future_obj.wait_for(std::chrono::seconds(0));
-                                 if (status == std::future_status::ready) {
-                                   any_fragment_finished = true;
-                                   break;
-                                 }
-                               }
-                             }
+  auto future =
+      std::async(std::launch::async,
+                 [futures = std::move(futures), app = app_, &driver_server = driver_server_]() {
+                   // Wait until all fragments have finished
+                   for (auto& [fragment, future_obj] : futures) { future_obj.wait(); }
 
-                             // Stop driver server
-                             if (driver_server) {
-                               driver_server->stop();
-                               driver_server->wait();
-                               driver_server = nullptr;
-                             }
-                           });
+                   // Stop driver server
+                   if (driver_server) {
+                     driver_server->stop();
+                     driver_server->wait();
+                     driver_server = nullptr;
+                   }
+
+                   // Set the exception if any of the fragments raises an exception
+                   for (auto& [fragment, future_obj] : futures) {
+                     try {
+                       // FIXME: how can I call get() without const_cast?
+                       const_cast<std::future<void>&>(future_obj).get();
+                     } catch (const std::exception&) {
+                       // Store the current exception
+                       app->executor().exception(std::current_exception());
+                       break;
+                     }
+                   }
+
+                   // Rethrow the exception if any
+                   auto& stored_exception = app->executor().exception();
+                   if (stored_exception) { std::rethrow_exception(stored_exception); }
+                 });
   return future;
 }
 

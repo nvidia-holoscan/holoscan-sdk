@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,7 +75,7 @@ bool valid_file_path(const std::string& filepath);
  * @brief Build the (trt engine) network
  */
 bool generate_engine_path(const NetworkOptions& options, const std::string& model_path,
-                               std::string& engine_name);
+                          std::string& engine_name);
 
 /**
  * @brief Build the (trt engine) network

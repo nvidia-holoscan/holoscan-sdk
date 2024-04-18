@@ -21,12 +21,13 @@ from holoscan.core import Operator, OperatorSpec
 class PingTxOp(Operator):
     """Simple transmitter operator.
 
-    Named outputs:
-        out: int
+    On each tick, it transmits an integer to the "out" port.
+
+    **==Named Outputs==**
+
+        out : int
             An index value that increments by one on each call to `compute`. The starting value is
             1.
-
-    On each tick, it transmits an integer to the "out" port.
     """
 
     def __init__(self, fragment, *args, **kwargs):

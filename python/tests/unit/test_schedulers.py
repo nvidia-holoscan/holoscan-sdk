@@ -20,7 +20,7 @@ import pytest
 from holoscan.core import ComponentSpec, Scheduler
 from holoscan.gxf import GXFScheduler
 from holoscan.resources import ManualClock, RealtimeClock
-from holoscan.schedulers import GreedyScheduler, MultiThreadScheduler
+from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 
 class TestGreedyScheduler:
@@ -132,6 +132,60 @@ class TestMultiThreadScheduler:
 
     def test_stop_on_deadlock_timeout(self, app):
         scheduler = MultiThreadScheduler(app)
+        with pytest.raises(RuntimeError):
+            # value will only be initialized by executor once app.run() is called
+            scheduler.stop_on_deadlock_timeout  # noqa: B018
+
+
+class TestEventBasedScheduler:
+    def test_default_init(self, app):
+        scheduler = EventBasedScheduler(app)
+        assert isinstance(scheduler, GXFScheduler)
+        assert isinstance(scheduler, Scheduler)
+        assert isinstance(scheduler.spec, ComponentSpec)
+
+    @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
+    def test_init_kwargs(self, app, ClockClass):  # noqa: N803
+        name = "event-based-scheduler"
+        scheduler = EventBasedScheduler(
+            app,
+            clock=ClockClass(app),
+            worker_thread_number=4,
+            stop_on_deadlock=True,
+            max_duration_ms=10000,
+            stop_on_deadlock_timeout=10,
+            name=name,
+        )
+        assert isinstance(scheduler, GXFScheduler)
+        assert f"name: {name}" in repr(scheduler)
+
+    def test_clock(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError) as err:
+            # value will only be initialized by executor once app.run() is called
+            scheduler.clock  # noqa: B018
+        assert "'clock' is not set" in str(err.value)
+
+    def test_worker_thread_number(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            # value will only be initialized by executor once app.run() is called
+            scheduler.worker_thread_number  # noqa: B018
+
+    def test_max_duration_ms(self, app):
+        scheduler = EventBasedScheduler(app)
+
+        # max_duration_ms is optional and will report -1 if not set
+        assert scheduler.max_duration_ms == -1
+
+    def test_stop_on_deadlock(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            # value will only be initialized by executor once app.run() is called
+            scheduler.stop_on_deadlock  # noqa: B018
+
+    def test_stop_on_deadlock_timeout(self, app):
+        scheduler = EventBasedScheduler(app)
         with pytest.raises(RuntimeError):
             # value will only be initialized by executor once app.run() is called
             scheduler.stop_on_deadlock_timeout  # noqa: B018

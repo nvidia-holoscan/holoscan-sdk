@@ -36,7 +36,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${file}",
             ],
             "stopAtEntry": false,
@@ -98,7 +98,7 @@
             "program": "/usr/bin/bash",
             // https://github.com/catchorg/Catch2/blob/devel/docs/command-line.md#specifying-which-tests-to-run
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${command:cmake.buildDirectory}/examples/aja_capture/python/aja_capture.py",
             ],
             "stopAtEntry": false,
@@ -128,7 +128,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/bring_your_own_model/python/byom.py",
             ],
             "stopAtEntry": false,
@@ -212,7 +212,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/conditions/periodic/python/ping_periodic.py",
             ],
             "stopAtEntry": false,
@@ -242,7 +242,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/cupy_native/matmul.py",
             ],
             "stopAtEntry": false,
@@ -295,7 +295,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/flow_tracker/python/flow_tracker.py",
             ],
             "stopAtEntry": false,
@@ -348,7 +348,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/hello_world/python/hello_world.py",
             ],
             "stopAtEntry": false,
@@ -401,7 +401,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/holoviz/python/holoviz_geometry.py",
             ],
             "stopAtEntry": false,
@@ -431,7 +431,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/holoviz/python/holoviz_geometry_3d.py",
             ],
             "stopAtEntry": false,
@@ -461,7 +461,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/holoviz/python/holoviz_views.py",
             ],
             "stopAtEntry": false,
@@ -518,7 +518,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/multithread/python/multithread.py",
             ],
             "stopAtEntry": false,
@@ -552,7 +552,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/numpy_native/convolve.py",
             ],
             "stopAtEntry": false,
@@ -651,7 +651,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_custom_op/python/ping_custom_op.py",
             ],
             "stopAtEntry": false,
@@ -733,7 +733,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_distributed/python/ping_distributed.py",
                 "--driver",
                 "--worker",
@@ -793,7 +793,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_multi_port/python/ping_multi_port.py",
             ],
             "stopAtEntry": false,
@@ -846,7 +846,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_simple/python/ping_simple.py",
             ],
             "stopAtEntry": false,
@@ -899,7 +899,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_simple_run_async/python/ping_simple_run_async.py",
             ],
             "stopAtEntry": false,
@@ -952,7 +952,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/ping_vector/python/ping_vector.py",
             ],
             "stopAtEntry": false,
@@ -1005,7 +1005,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/resources/clock/python/ping_clock.py",
             ],
             "stopAtEntry": false,
@@ -1058,7 +1058,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/tensor_interop/python/tensor_interop.py",
             ],
             "stopAtEntry": false,
@@ -1127,7 +1127,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/v4l2_camera/python/v4l2_camera.py",
             ],
             "stopAtEntry": false,
@@ -1188,7 +1188,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/video_replayer/python/video_replayer.py",
             ],
             "stopAtEntry": false,
@@ -1249,7 +1249,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/video_replayer_distributed/python/video_replayer_distributed.py",
             ],
             "stopAtEntry": false,
@@ -1317,7 +1317,7 @@
             "request": "launch",
             "program": "/usr/bin/bash",
             "args": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/scripts/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
                 "-m",
                 "pytest",
                 "-v",

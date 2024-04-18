@@ -30,6 +30,14 @@ Licensed under MIT (https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
 DLPack (https://github.com/dmlc/dlpack)
 Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v0.7/LICENSE)
 
+docker-buildx-plugin (https://github.com/docker/buildx)
+Copyright 2013-2017 Docker, Inc.
+Licensed under Apache-2.0 (https://github.com/docker/buildx/blob/master/LICENSE)
+
+docker-ce-cli (https://github.com/docker/cli/)
+Copyright 2013-2017 Docker, Inc.
+Licensed under Apache-2.0 (https://github.com/docker/cli/blob/master/LICENSE)
+
 expected (https://github.com/TartanLlama/expected)
 Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPYING)
 
@@ -96,6 +104,10 @@ Copyright (c) 1991-2020 Guido Vollbeding. All Rights Reserved.
 Copyright (c) 2010 Nokia Corporation
 Licensed under JPEG (https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md)
 
+libnuma (https://github.com/numactl/numactl)
+Copyright (C) 1991, 1999 Free Software Foundation, Inc.
+Licensed under LGPLv2.1 (https://github.com/numactl/numactl/blob/master/LICENSE.LGPL2.1)
+
 libpng (https://packages.ubuntu.com/jammy/libpng-dev)
 Copyright (c) 1995-2023 The PNG Reference Library Authors.
 Copyright (c) 2018-2023 Cosmin Truta.
@@ -131,6 +143,10 @@ libvulkan1 (https://packages.ubuntu.com/jammy/libvulkan1)
 2005-2014 G-Truc Creation
 2015-2016 LunarG, Inc
 Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/main/v/vulkan-loader/vulkan-loader_1.3.204.1-2/copyright)
+
+magic_enum (https://github.com/Neargye/magic_enum)
+Copyright (c) 2019 - 2023 Daniil Goncharov
+Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 
 Intel® oneAPI Math Kernel Library (https://pypi.org/project/mkl/2021.1.1/)
 Copyright (c) Intel Corporation

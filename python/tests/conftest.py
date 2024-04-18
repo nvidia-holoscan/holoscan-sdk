@@ -50,6 +50,13 @@ def ping_config_file():
     return config_file
 
 
+@pytest.fixture()
+def deprecated_extension_config_file():
+    yaml_file_dir = os.path.dirname(__file__)
+    config_file = os.path.join(yaml_file_dir, "deprecated_stream_playback.yaml")
+    return config_file
+
+
 def pytest_configure(config):
     os.environ["HOLOSCAN_DISABLE_BACKTRACE"] = "1"
     config.addinivalue_line("markers", "slow: mark test as slow to run")

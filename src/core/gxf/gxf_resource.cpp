@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +67,12 @@ void GXFResource::initialize() {
   // operator, the following code wouldn't be executed unless user explicitly calls
   // Resource::initialize() in Fragment::compose() method.
   if (gxf_eid_ == 0) {
+    HOLOSCAN_LOG_WARN(
+        "Resource '{}' of type '{}' initialized independent of a parent entity. This typically "
+        "occurs if initialize() was called directly rather than allowing GXFExecutor to "
+        "automatically initialize the resource.",
+        gxf_cname_,
+        gxf_typename());
     const GxfEntityCreateInfo entity_create_info = {nullptr, GXF_ENTITY_CREATE_PROGRAM_BIT};
     HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntity(gxf_context_, &entity_create_info, &gxf_eid_));
   }
@@ -85,45 +91,45 @@ void GXFResource::initialize() {
     return;
   }
 
-  // Set arguments
-  auto& params = spec_->params();
-
-  for (auto& arg : args()) {
-    // Find if arg.name() is in spec_->params()
-    if (params.find(arg.name()) == params.end()) {
-      HOLOSCAN_LOG_WARN("Argument '{}' is not defined in spec", arg.name());
-      continue;
-    }
-
-    // Set arg.value() to spec_->params()[arg.name()]
-    auto& param_wrap = params[arg.name()];
-
-    HOLOSCAN_LOG_TRACE("GXFResource '{}':: setting argument '{}'", name(), arg.name());
-
-    ArgumentSetter::set_param(param_wrap, arg);
-  }
+  update_params_from_args();
 
   static gxf_tid_t allocator_tid = GxfTidNull();  // issue 4336947
 
   // Set Handler parameters
-  for (auto& [key, param_wrap] : params) {
+  for (auto& [key, param_wrap] : spec_->params()) {
     // Issue 4336947: dev_id parameter for allocator needs to be handled manually
     bool dev_id_handled = false;
     if (key.compare(std::string("dev_id")) == 0) {
+      if (!gxf_graph_entity_) {
+        HOLOSCAN_LOG_ERROR(
+            "`dev_id` parameter found, but gxf_graph_entity_ was not initialized so it could not "
+            "be added to the entity group. This parameter will be ignored and default GPU device 0 "
+            "will be used");
+        continue;
+      }
+      gxf_tid_t derived_tid = GxfTidNull();
+      bool is_derived = false;
+      gxf_result_t tid_result;
+      tid_result = GxfComponentTypeId(gxf_context_, gxf_typename(), &derived_tid);
+      if (tid_result != GXF_SUCCESS) {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get component type id of '{}': {}", gxf_typename(), tid_result);
+      }
       if (GxfTidIsNull(allocator_tid)) {
-        gxf_result_t tid_result =
-            GxfComponentTypeId(gxf_context_, "nvidia::gxf::Allocator", &allocator_tid);
+        tid_result = GxfComponentTypeId(gxf_context_, "nvidia::gxf::Allocator", &allocator_tid);
         if (tid_result != GXF_SUCCESS) {
-          HOLOSCAN_LOG_ERROR("Unable to get component type id of 'nvidia::gxf::Allocator' : {}",
+          HOLOSCAN_LOG_ERROR("Unable to get component type id of 'nvidia::gxf::Allocator': {}",
                              tid_result);
         }
       }
-
-      gxf_uid_t allocator_cid;
-      // Check if this resource (component) is subclass of nvidia::gxf::Allocator
-      auto cid_result = GxfComponentFind(
-          gxf_context_, gxf_eid_, allocator_tid, gxf_cname_.c_str(), nullptr, &allocator_cid);
-      if (cid_result == GXF_SUCCESS) {
+      tid_result = GxfComponentIsBase(gxf_context_, derived_tid, allocator_tid, &is_derived);
+      if (tid_result != GXF_SUCCESS) {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get determine if '{}' is derived from 'nvidia::gxf::Allocator': {}",
+            gxf_typename(),
+            tid_result);
+      }
+      if (is_derived) {
         HOLOSCAN_LOG_DEBUG(
             "The dev_id parameter is deprecated by GXF and will be removed from "
             "Holoscan SDK in the future.");
@@ -131,42 +137,62 @@ void GXFResource::initialize() {
         auto dev_id_param = *std::any_cast<Parameter<int32_t>*>(param_wrap.value());
         if (dev_id_param.has_value()) {
           int32_t device_id = dev_id_param.get();
-          // TODO: is this name guaranteed unique for creating the entity group?
+
+          auto devices = gxf_graph_entity_->findAll<nvidia::gxf::GPUDevice>();
+          if (devices.size() > 0) {
+            HOLOSCAN_LOG_WARN("Existing entity already has a GPUDevice resource");
+          }
+
+          // Create an EntityGroup to associate the GPUDevice with this resource
           std::string entity_group_name =
               fmt::format("{}_eid{}_dev_id{}_group", name(), gxf_eid_, device_id);
           auto entity_group_gid =
               ::holoscan::gxf::add_entity_group(gxf_context_, entity_group_name);
 
-          std::string device_entity_name =
-              fmt::format("{}_eid{}_gpu_device_id{}_entity", name(), gxf_eid_, device_id);
+          // Add GPUDevice component to the same entity as this resource
+          // TODO (GXF4): requested an addResource method to handle nvidia::gxf::ResourceBase types
           std::string device_component_name =
               fmt::format("{}_eid{}_gpu_device_id{}_component", name(), gxf_eid_, device_id);
-          auto [gpu_device_tid, gpu_device_eid] =
-              ::holoscan::gxf::create_gpu_device_entity(gxf_context_, device_entity_name);
-          HOLOSCAN_LOG_DEBUG("{} eid = {}", device_entity_name, gpu_device_eid);
+          auto dev_handle =
+              gxf_graph_entity_->addComponent("nvidia::gxf::GPUDevice",
+                                              device_component_name.c_str(),
+                                              {nvidia::gxf::Arg("dev_id", device_id)});
+          if (dev_handle.is_null()) {
+            HOLOSCAN_LOG_ERROR("Failed to create GPUDevice for resource '{}'", name_);
+          } else {
+            // TODO: warn and handle case if the resource was already in a different entity group
 
-          ::holoscan::gxf::create_gpu_device_component(
-              gxf_context_, gpu_device_tid, gpu_device_eid, device_component_name, device_id);
-          HOLOSCAN_LOG_DEBUG("Adding GPUDevice with id {} to entity group containing resource '{}'",
-                             device_id,
-                             name());
-          // Add this Resource and the newly created GPUDevice to this new entity group
-          GXF_ASSERT_SUCCESS(GxfUpdateEntityGroup(gxf_context_, entity_group_gid, gxf_eid_));
-          GXF_ASSERT_SUCCESS(GxfUpdateEntityGroup(gxf_context_, entity_group_gid, gpu_device_eid));
+            // The GPUDevice and this resource have the same eid.
+            // Make their eid is added to the newly created entity group.
+            GXF_ASSERT_SUCCESS(GxfUpdateEntityGroup(gxf_context_, entity_group_gid, gxf_eid_));
+          }
           dev_id_handled = true;
         }
       }
     }
-    if (!dev_id_handled) {
-      HOLOSCAN_GXF_CALL(::holoscan::gxf::GXFParameterAdaptor::set_param(
-          gxf_context_, gxf_cid_, key.c_str(), param_wrap));
-    }
-
+    HOLOSCAN_LOG_TRACE(
+        "GXF component '{}' of type '{}': setting GXF parameter '{}'", name_, gxf_typename(), key);
+    if (!dev_id_handled) { set_gxf_parameter(name_, key, param_wrap); }
     // TODO: handle error
     HOLOSCAN_LOG_TRACE("GXFResource '{}':: setting GXF parameter '{}'", name(), key);
   }
 
   is_initialized_ = true;
+}
+
+void GXFResource::add_to_graph_entity(Operator* op) {
+  if (gxf_context_ == nullptr) {
+    // cannot reassign to a different graph entity if the resource was already initialized with GXF
+    if (gxf_graph_entity_ && is_initialized_) { return; }
+
+    gxf_graph_entity_ = op->graph_entity();
+    fragment_ = op->fragment();
+    if (gxf_graph_entity_) {
+      gxf_context_ = gxf_graph_entity_->context();
+      gxf_eid_ = gxf_graph_entity_->eid();
+    }
+  }
+  this->initialize();
 }
 
 }  // namespace holoscan::gxf

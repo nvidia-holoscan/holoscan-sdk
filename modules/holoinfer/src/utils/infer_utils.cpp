@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +38,7 @@ cudaError_t check_cuda(cudaError_t result) {
 
 gxf_result_t report_error(const std::string& module, const std::string& submodule) {
   std::string error_string{"Error in " + module + ", Sub-module->" + submodule};
-  HOLOSCAN_LOG_ERROR("%s\n", error_string.c_str());
+  HOLOSCAN_LOG_ERROR("{}", error_string);
   return GXF_FAILURE;
 }
 

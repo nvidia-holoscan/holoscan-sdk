@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -178,6 +178,14 @@ bool GXFExtensionManager::load_extensions_from_yaml(const YAML::Node& node, bool
   try {
     for (const auto& entry : node[key.c_str()]) {
       auto file_name = entry.as<std::string>();
+      // Warn regarding extension removed in Holoscan 2.0.
+      if (file_name.find("libgxf_stream_playback.so") != std::string::npos) {
+        HOLOSCAN_LOG_WARN(
+            "As of Holoscan 2.0, VideoStreamReplayerOp and VideoStreamRecorderOp no longer require "
+            "specifying the libgxf_stream_playback.so extension. This extension is no longer "
+            "shipped with Holoscan and should be removed from the application's YAML config file.");
+        continue;
+      }
       auto result = load_extension(file_name, no_error_message, search_path_envs);
       if (!result) { return false; }
     }

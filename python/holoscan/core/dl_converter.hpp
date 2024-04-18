@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,9 +38,6 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-// Forward declaration
-class DLManagedTensorCtx;
-
 /**
  * @brief Structure to hold the context of a DLManagedTensor.
  *
@@ -61,7 +58,7 @@ struct ArrayInterfaceMemoryBuffer {
  * @param obj The Python object to set the array interface object.
  * @param ctx The context of the DLManagedTensor.
  */
-void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorCtx> ctx);
+void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorContext> ctx);
 
 /**
  * @brief Provide `__dlpack__` method

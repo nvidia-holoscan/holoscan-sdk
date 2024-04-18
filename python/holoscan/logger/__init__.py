@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,42 +17,21 @@
 .. autosummary::
 
     holoscan.logger.LogLevel
-    holoscan.logger.disable_backtrace
-    holoscan.logger.dump_backtrace
-    holoscan.logger.enable_backtrace
-    holoscan.logger.flush
-    holoscan.logger.flush_level
-    holoscan.logger.flush_on
     holoscan.logger.log_level
     holoscan.logger.set_log_level
     holoscan.logger.set_log_pattern
-    holoscan.logger.should_backtrace
 """
 
 from ._logger import (
     LogLevel,
-    disable_backtrace,
-    dump_backtrace,
-    enable_backtrace,
-    flush,
-    flush_level,
-    flush_on,
     log_level,
     set_log_level,
     set_log_pattern,
-    should_backtrace,
 )
 
 __all__ = [
     "LogLevel",
-    "disable_backtrace",
-    "dump_backtrace",
-    "enable_backtrace",
-    "flush",
-    "flush_level",
-    "flush_on",
     "log_level",
     "set_log_level",
     "set_log_pattern",
-    "should_backtrace",
 ]

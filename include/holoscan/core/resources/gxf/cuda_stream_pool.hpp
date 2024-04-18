@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +47,8 @@ class CudaStreamPool : public Allocator {
   const char* gxf_typename() const override { return "nvidia::gxf::CudaStreamPool"; }
 
   void setup(ComponentSpec& spec) override;
+
+  nvidia::gxf::CudaStreamPool* get() const;
 
  private:
   Parameter<int32_t> dev_id_;

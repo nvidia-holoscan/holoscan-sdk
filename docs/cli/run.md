@@ -21,7 +21,7 @@ spec:
 
 ## Synopsis
 
-`holoscan run` [](#cli-help) [](#cli-log-level) [](#cli-run-address) [](#cli-run-driver) [](#cli-run-input) [](#cli-run-output) [](#cli-run-fragments) [](#cli-run-worker) [](#cli-run-worker-address) [](#cli-run-config) [](#cli-run-network) [](#cli-run-nic) [](#cli-run-use-all-nics) [](#cli-run-render) [](#cli-run-quiet) [](#cli-run-shm-size)[](#cli-run-terminal) [](#cli-run-device) [](#cli-run-uid) [](#cli-run-gid)[](#cli-run-image-tag)
+`holoscan run` [](#cli-help) [](#cli-log-level) [](#cli-run-address) [](#cli-run-driver) [](#cli-run-input) [](#cli-run-output) [](#cli-run-fragments) [](#cli-run-worker) [](#cli-run-worker-address) [](#cli-run-config) [](#cli-run-network) [](#cli-run-nic) [](#cli-run-use-all-nics) [](#cli-run-render) [](#cli-run-quiet) [](#cli-run-shm-size)[](#cli-run-terminal) [](#cli-run-device) [](#cli-run-gpu) [](#cli-run-uid) [](#cli-run-gid)[](#cli-run-image-tag)
 
 ## Examples
 
@@ -74,6 +74,11 @@ When specified, a directory mount is set up to the value defined in the environm
 :::{note}
 Ensure that the directory on the host is accessible by the current user or the user specified with [--uid](#cli-run-uid).
 :::
+
+:::{note}
+Use the host system path when running applications inside Docker (DooD).
+:::
+
 
 (#cli-run-output)=
 
@@ -211,6 +216,24 @@ holoscan run --render --device ajantv0 video1 -- my-application-image:1.0
 ```
 :::
 
+
+(#cli-run-gpu)=
+
+### `[--gpu]`
+
+Override the value of the `NVIDIA_VISIBLE_DEVICES` environment variable with the default value set to 
+the value defined in the [package manifest file](./hap.md#package-manifest) or `all` if undefined.
+
+Refer to the [GPU Enumeration](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html#gpu-enumeration)
+page for all available options.
+
+:::{note}
+The default value is `nvidia.com/igpu=0` when running a HAP built for iGPU on a system with both iGPU and dGPU,
+:::
+
+:::{note}
+A single integer value translates to the device index, not the number of GPUs.
+:::
 
 (#cli-run-uid)=
 

@@ -87,21 +87,23 @@ RUN apt-get update \
 ENV PYTHONPATH="{{ app_dir }}:$PYTHONPATH"
 {% endif %}
 
-
 {% if application_type == 'CppCMake' or application_type == 'Binary' %}
-
+    {% if custom_base_image == True or custom_holoscan_sdk == True %}
 # Update NV GPG repo key
 # https://developer.nvidia.com/blog/updating-the-cuda-linux-gpg-repository-key/
-
 RUN if [ $(uname -m) = "aarch64" ]; then ARCH=sbsa; else ARCH=x86_64; fi \
     && curl -OL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/$ARCH/cuda-keyring_1.0-1_all.deb \
     && dpkg -i cuda-keyring_1.0-1_all.deb
 
+# Use user-specified Holoscan SDK Debian Package
 COPY ./{{ holoscan_sdk_filename }} /tmp/{{ holoscan_sdk_filename }}
 RUN apt-get update \
     && apt-get install -y /tmp/{{ holoscan_sdk_filename }} \
     && rm -rf /var/lib/apt/lists/*
-
+    {% else %}
+# Use embedded Holoscan SDK
+{# no op here #}
+    {% endif %}
 {% endif %}
 
 RUN groupadd -f -g $GID $UNAME
@@ -120,8 +122,9 @@ RUN chmod +x {{ working_dir }}/tools
 
 # Copy gRPC health probe
 {% if health_probe is defined %}
-COPY ./grpc_health_probe /bin/grpc_health_probe
-RUN chmod +x /bin/grpc_health_probe
+
+RUN curl -L -o /bin/grpc_health_probe {{ health_probe | pprint }} \
+    && chmod +x /bin/grpc_health_probe && ls -l /bin/grpc_health_probe
 
 HEALTHCHECK --interval=10s --timeout=1s \
     CMD /bin/grpc_health_probe -addr=:8777 || exit 1
@@ -137,29 +140,35 @@ COPY ./pip/requirements.txt /tmp/requirements.txt
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir --user -r /tmp/requirements.txt
 
-# Install Holoscan from PyPI only when sdk_type is Holoscan. 
-# For MONAI Deploy, the APP SDK will install it unless user specifies the Holoscan SDK file.
-{% if holoscan_sdk_filename == 'pypi.org' and sdk_type == 'holoscan' %}
-# Install Holoscan from PyPI org
-RUN pip install holoscan=={{ holoscan_sdk_version }}
-{% elif sdk_type == 'holoscan' %}
-# Copy user-specified Holoscan SDK file
+{#  Use Holoscan SDK in the image unless specified by the user.
+For MONAI Deploy, the APP SDK will install it unless user specifies the Holoscan SDK file. #}
+{% if sdk_type == 'holoscan' %}
+
+    {% if custom_holoscan_sdk == True %}
+# Copy user-specified Holoscan SDK wheel file
 COPY ./{{ holoscan_sdk_filename }} /tmp/{{ holoscan_sdk_filename }}
 RUN pip install /tmp/{{ holoscan_sdk_filename }}
-{% endif %}
+    {% elif custom_base_image == True %}
+# Install Holoscan SDK wheel from PyPI
+RUN pip install holoscan=={{ holoscan_sdk_version }}
+    {% else %}
+# Use embedded Holoscan SDK
+{# no op here #}
+    {% endif %}
+{% else %} 
+# MONAI Deploy
 
-{% if monai_deploy_sdk_filename == 'pypi.org' %}
-# Install MONAI Deploy from PyPI org
-RUN pip install monai-deploy-app-sdk=={{ monai_deploy_app_sdk_version }}
-{% elif sdk_type == 'monai-deploy' %}
+    {% if custom_monai_deploy_sdk %}
 # Copy user-specified MONAI Deploy SDK file
 COPY ./{{ monai_deploy_sdk_filename }} /tmp/{{ monai_deploy_sdk_filename }}
 RUN pip install /tmp/{{ monai_deploy_sdk_filename }}
-{% endif %}
+    {% else %}
+# Install MONAI Deploy from PyPI org
+RUN pip install monai-deploy-app-sdk=={{ monai_deploy_app_sdk_version }}
+    {% endif %}
 
 {% endif %}
-
-
+{% endif %}
 
 {% if models is defined %}
 COPY ./models  {{ models_dir }}

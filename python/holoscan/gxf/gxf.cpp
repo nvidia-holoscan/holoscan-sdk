@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,6 @@
 #include "holoscan/core/gxf/gxf_extension_registrar.hpp"
 #include "holoscan/core/gxf/gxf_io_context.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 
 #include "gxf/core/gxf.h"
@@ -99,10 +98,6 @@ PYBIND11_MODULE(_gxf, m) {
       "context"_a,
       "extension_filenames"_a = std::vector<std::string>{},
       "manifest_filenames"_a = std::vector<std::string>{});
-
-  py::class_<gxf::GXFTensor, std::shared_ptr<gxf::GXFTensor>>(
-      m, "GXFTensor", doc::GXFTensor::doc_GXFTensor)
-      .def(py::init<>(), doc::GXFTensor::doc_GXFTensor);
 
   py::class_<gxf::GXFComponent, std::shared_ptr<gxf::GXFComponent>>(
       m, "GXFComponent", doc::GXFComponent::doc_GXFComponent)

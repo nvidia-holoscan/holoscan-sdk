@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,17 +19,29 @@
 
 #include <stdlib.h>  // setenv
 
+#include <memory>
 #include <string>
 
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/resources/gxf/allocator.hpp"
 
 namespace holoscan {
 
+// Note: UcxSerializationBuffer does not inherit from SerializationBuffer
 UcxSerializationBuffer::UcxSerializationBuffer(const std::string& name,
-                                               nvidia::gxf::SerializationBuffer* component)
-    : SerializationBuffer(name, component) {
-  // no additional parameters to set here
+                                               nvidia::gxf::UcxSerializationBuffer* component)
+    : gxf::GXFResource(name, component) {
+  auto maybe_buffer_size = component->getParameter<size_t>("buffer_size");
+  if (!maybe_buffer_size) { throw std::runtime_error("Failed to get maybe_buffer_size"); }
+  buffer_size_ = maybe_buffer_size.value();
+
+  auto maybe_allocator =
+      component->getParameter<nvidia::gxf::Handle<nvidia::gxf::Allocator>>("allocator");
+  if (!maybe_allocator) { throw std::runtime_error("Failed to get allocator"); }
+  auto allocator_handle = maybe_allocator.value();
+  allocator_ =
+      std::make_shared<Allocator>(std::string{allocator_handle->name()}, allocator_handle.get());
 }
 
 void UcxSerializationBuffer::setup(ComponentSpec& spec) {
@@ -63,6 +75,10 @@ void UcxSerializationBuffer::setup(ComponentSpec& spec) {
              default_buffer_size);
 }
 
+nvidia::gxf::UcxSerializationBuffer* UcxSerializationBuffer::get() const {
+  return static_cast<nvidia::gxf::UcxSerializationBuffer*>(gxf_cptr_);
+}
+
 void UcxSerializationBuffer::initialize() {
   // Set up prerequisite parameters before calling GXFOperator::initialize()
   auto frag = fragment();
@@ -72,7 +88,9 @@ void UcxSerializationBuffer::initialize() {
       args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "allocator"); });
   // Create an UnboundedAllocator if no allocator was provided
   if (has_allocator == args().end()) {
-    auto allocator = frag->make_resource<UnboundedAllocator>("allocator");
+    auto allocator = frag->make_resource<UnboundedAllocator>("ucx_serialization_buffer_allocator");
+    allocator->gxf_cname(allocator->name().c_str());
+    if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
     add_arg(Arg("allocator") = allocator);
   }
   GXFResource::initialize();

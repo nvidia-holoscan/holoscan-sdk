@@ -3,13 +3,13 @@
 Video Pipeline Latency Tool
 ===========================
 
-The Holoscan Developer Kits excel as a high-performance computing platform
+The NVIDIA Developer Kits excel as a high-performance computing platform
 by combining high-bandwidth video I/O components and the compute capabilities
 of an NVIDIA GPU to meet the needs of the most demanding video processing and
 inference applications.
 
 For many video processing applications located at the edge--especially
-those designed to augment medical instruments and aid live medical 
+those designed to augment medical instruments and aid live medical
 procedures--minimizing the latency added between image capture and
 display, often referred to as the end-to-end latency, is of the utmost
 importance.
@@ -22,7 +22,7 @@ capture and display is incorporated as this usually involves external capture
 hardware (e.g. cameras and other sensors) and displays.
 
 In order to establish a baseline measurement of the minimal end-to-end latency
-that can be achieved with the Holoscan Developer Kits and various video I/O
+that can be achieved with the NVIDIA Developer Kits and various video I/O
 hardware and software components, the Holoscan SDK includes a sample
 latency measurement tool.
 
@@ -32,7 +32,7 @@ Requirements
 Hardware
 ^^^^^^^^
 
-The latency measurement tool requires the use of a Holoscan Developer Kit in
+The latency measurement tool requires the use of a NVIDIA Developer Kit in
 dGPU mode, and operates by having an output component generate a sequence of
 known video frames that are then transferred back to an input component using a
 physical loopback cable.
@@ -203,7 +203,7 @@ GPU To Onboard HDMI Capture Card
 In this configuration, a DisplayPort to HDMI cable is connected from the GPU
 to the onboard HDMI capture card. This configuration supports the
 :ref:`OpenGL <producer_gl>` and :ref:`GStreamer <producer_gst>` producers, and
-the :ref:`V4L2 <consumer_v4l2>` and :ref:`GStreamer <consumer_gst>` consumers. 
+the :ref:`V4L2 <consumer_v4l2>` and :ref:`GStreamer <consumer_gst>` consumers.
 
 .. figure:: images/latency_setup_gpu_to_onboard_hdmi.jpg
    :align: center
@@ -273,7 +273,7 @@ back to an input **consumer** component using a physical loopback cable.
 Timestamps are compared throughout the life of the frame to measure the overall
 latency that the frame sees during this process, and these results are
 summarized when all of the frames have been received and the measurement
-completes.  See `Producers`_, `Consumers`_, and `Example Configurations`_ for 
+completes.  See `Producers`_, `Consumers`_, and `Example Configurations`_ for
 more details.
 
 Frame Measurements
@@ -678,7 +678,7 @@ V4L2 (Onboard HDMI Capture Card)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This consumer (:code:`v4l2`) uses the V4L2 API directly in order to capture
-frames using the HDMI capture card that is onboard the Holoscan Developer Kits.
+frames using the HDMI capture card that is onboard some of the NVIDIA Developer Kits.
 
 V4L2 Consumer Notes:
 

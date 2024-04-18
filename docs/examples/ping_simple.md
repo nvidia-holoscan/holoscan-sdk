@@ -16,23 +16,17 @@ The example source code and run instructions can be found in the [examples](http
 
 Here is a example workflow involving two operators that are connected linearly.
 
-```{mermaid}
+```{digraph} ping_simple
 :align: center
 :caption: A linear workflow
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
 
-classDiagram
-    direction LR
+    node [shape=record];
 
-    PingTxOp --|> PingRxOp : out...in
-
-    class PingTxOp {
-        out(out) int
-    }
-    class PingRxOp {
-        [in]in : int
-    }
+    tx [label="PingTxOp| |out(out) : int"];
+    rx [label="PingRxOp|[in]in : int | "];
+    tx -> rx [label="out...in"]
 ```
 
 In this example, the source operator **PingTxOp** produces integers from 1 to 10 and passes it to the sink operator **PingRxOp** which prints the integers to standard output.

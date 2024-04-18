@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@
     holoscan.resources.Receiver
     holoscan.resources.SerializationBuffer
     holoscan.resources.StdComponentSerializer
+    holoscan.resources.StdEntitySerializer
     holoscan.resources.Transmitter
     holoscan.resources.UnboundedAllocator
     holoscan.resources.UcxComponentSerializer
@@ -36,7 +37,6 @@
     holoscan.resources.UcxReceiver
     holoscan.resources.UcxSerializationBuffer
     holoscan.resources.UcxTransmitter
-    holoscan.resources.VideoStreamSerializer
 """
 
 from ._resources import (
@@ -52,6 +52,7 @@ from ._resources import (
     Receiver,
     SerializationBuffer,
     StdComponentSerializer,
+    StdEntitySerializer,
     Transmitter,
     UcxComponentSerializer,
     UcxEntitySerializer,
@@ -60,7 +61,6 @@ from ._resources import (
     UcxSerializationBuffer,
     UcxTransmitter,
     UnboundedAllocator,
-    VideoStreamSerializer,
 )
 
 __all__ = [
@@ -76,6 +76,7 @@ __all__ = [
     "Receiver",
     "SerializationBuffer",
     "StdComponentSerializer",
+    "StdEntitySerializer",
     "Transmitter",
     "UcxComponentSerializer",
     "UcxEntitySerializer",
@@ -84,5 +85,4 @@ __all__ = [
     "UcxSerializationBuffer",
     "UcxTransmitter",
     "UnboundedAllocator",
-    "VideoStreamSerializer",
 ]

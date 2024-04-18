@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,14 +43,8 @@ install(FILES
 # Testing
 option(HOLOSCAN_BUILD_V4L2_TESTS "Build tests for V4L2 loopback" OFF)
 if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
-  # Assumes that the v4l2 video loopback is mounted on /dev/video3.  This allows us to create a
-  # a virtual video device and stream data from an mp4 file without the need for a physical
-  # video input device. To setup v4l2 video loopback, refer to the "Use with V4L2 Loopback Devices"
-  # section of the README file for this example
-  file(READ ${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml CONFIG_STRING)
-  string(REPLACE "device: \"/dev/video0\"" "device: \"/dev/video3\"" CONFIG_STRING "${CONFIG_STRING}")
-  set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/python_v4l2_camera_config.yaml)
-  file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
+  # Assumes that the v4l2 video loopback has already been mounted and the yaml files have been
+  # updated to use the virtual loopback device.
 
   # Modify testcase to only run 10 frames
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.py PYTHON_SOURCE_STRING)
@@ -61,9 +55,7 @@ if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
   file(WRITE ${PYTHON_SOURCE_FILE} "${PYTHON_SOURCE_STRING}")
 
   add_test(NAME EXAMPLE_PYTHON_V4L2_CAMERA_TEST
-           COMMAND bash -c "ffmpeg -stream_loop -1 -re -i ${CMAKE_SOURCE_DIR}/data/racerx/racerx-small.mp4 \
-                                    -pix_fmt yuyv422 -f v4l2 /dev/video3 &  sleep 5; \
-                           python3 v4l2_camera_test.py --config ${CONFIG_FILE}; echo 'Done'; kill %1"
+           COMMAND python3 v4l2_camera_test.py
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 

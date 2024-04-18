@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "dl_converter.hpp"
+#include "gxf/std/dlpack_utils.hpp"  // DLDeviceFromPointer, DLDataTypeFromTypeString
 #include "holoscan/core/domain/tensor.hpp"
 #include "kwarg_handling.hpp"
 #include "tensor.hpp"
@@ -36,6 +37,28 @@ using std::string_literals::operator""s;
 using pybind11::literals::operator""_a;
 
 namespace py = pybind11;
+
+namespace {
+
+// A macro like CHECK_CUDA_ERROR from gxf/cuda/cuda_common.h, but it uses Holoscan-style
+// logging and throws an exception instead of returning an nvidia::gxf::Unexpected.
+#define CHECK_CUDA_THROW_ERROR(cu_result, stmt, ...)                                    \
+  do {                                                                                  \
+    cudaError_t err = (cu_result);                                                      \
+    if (err != cudaSuccess) {                                                           \
+      HOLOSCAN_LOG_ERROR("Runtime call {} in line {} of file {} failed with '{}' ({})", \
+                         #stmt,                                                         \
+                         __LINE__,                                                      \
+                         __FILE__,                                                      \
+                         cudaGetErrorString(err),                                       \
+                         err);                                                          \
+      throw std::runtime_error("Error occurred in CUDA runtime API call");              \
+    }                                                                                   \
+  } while (0)
+
+static constexpr const char* dlpack_capsule_name{"dltensor"};
+static constexpr const char* used_dlpack_capsule_name{"used_dltensor"};
+}  // namespace
 
 namespace holoscan {
 
@@ -83,7 +106,9 @@ void init_tensor(py::module_& m) {
       .def("__dlpack_device__", &PyTensor::dlpack_device, doc::Tensor::doc_dlpack_device);
 
   py::class_<PyTensor, Tensor, std::shared_ptr<PyTensor>>(m, "PyTensor", doc::Tensor::doc_Tensor)
-      .def_static("as_tensor", &PyTensor::as_tensor, "obj"_a, doc::Tensor::doc_as_tensor);
+      .def_static("as_tensor", &PyTensor::as_tensor, "obj"_a, doc::Tensor::doc_as_tensor)
+      .def_static(
+          "from_dlpack", &PyTensor::from_dlpack_pyobj, "obj"_a, doc::Tensor::doc_from_dlpack);
 
   py::enum_<DLDataTypeCode>(m, "DLDataTypeCode", py::module_local())
       .value("DLINT", kDLInt)
@@ -130,6 +155,18 @@ LazyDLManagedTensorDeleter::LazyDLManagedTensorDeleter() {
   // Use std::memory_order_relaxed because there are no other memory operations that need to be
   // synchronized with the fetch_add operation.
   if (s_instance_count.fetch_add(1, std::memory_order_relaxed) == 0) {
+    // Wait until both s_stop and s_is_running are false (busy-waiting).
+    // s_stop being true indicates that the previous deleter thread is still in the process
+    // of deleting the object.
+    while (true) {
+      {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (!s_stop && !s_is_running) { break; }
+      }
+      // Yield to other threads
+      std::this_thread::yield();
+    }
+
     std::lock_guard<std::mutex> lock(s_mutex);
     // Register pthread_atfork() and std::atexit() handlers (registered only once)
     //
@@ -151,7 +188,6 @@ LazyDLManagedTensorDeleter::LazyDLManagedTensorDeleter() {
       std::atexit(on_exit);
     }
 
-    s_stop = false;
     s_is_running = true;
     s_thread = std::thread(run);
     // Detach the thread so that it can be stopped when the application exits
@@ -274,10 +310,10 @@ void LazyDLManagedTensorDeleter::on_fork_child() {
 // PyTensor definition
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-PyTensor::PyTensor(std::shared_ptr<DLManagedTensorCtx>& ctx) : Tensor(ctx) {}
+PyTensor::PyTensor(std::shared_ptr<DLManagedTensorContext>& ctx) : Tensor(ctx) {}
 
 PyTensor::PyTensor(DLManagedTensor* dl_managed_tensor_ptr) {
-  dl_ctx_ = std::make_shared<DLManagedTensorCtx>();
+  dl_ctx_ = std::make_shared<DLManagedTensorContext>();
   // Create PyDLManagedMemoryBuffer to hold the DLManagedTensor and acquire GIL before calling
   // the deleter function
   dl_ctx_->memory_ref = std::make_shared<PyDLManagedMemoryBuffer>(dl_managed_tensor_ptr);
@@ -307,6 +343,20 @@ py::object PyTensor::as_tensor(const py::object& obj) {
     tensor = PyTensor::from_dlpack(obj);
   } else if (py::hasattr(obj, "__array_interface__")) {
     tensor = PyTensor::from_array_interface(obj);
+  } else {
+    throw std::runtime_error("Unsupported Python object type");
+  }
+  py::object py_tensor = py::cast(tensor);
+
+  // Set array interface attributes
+  set_array_interface(py_tensor, tensor->dl_ctx());
+  return py_tensor;
+}
+
+py::object PyTensor::from_dlpack_pyobj(const py::object& obj) {
+  std::shared_ptr<PyTensor> tensor;
+  if (py::hasattr(obj, "__dlpack__") && py::hasattr(obj, "__dlpack_device__")) {
+    tensor = PyTensor::from_dlpack(obj);
   } else {
     throw std::runtime_error("Unsupported Python object type");
   }
@@ -348,11 +398,17 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
   // bool data_readonly = data_array[1] > 0;
   // auto version = array_interface["version"].cast<int64_t>();
 
+  auto maybe_dldatatype = nvidia::gxf::DLDataTypeFromTypeString(typestr);
+  if (!maybe_dldatatype) {
+    throw std::runtime_error("Unable to determine DLDataType from NumPy typestr");
+  }
+  auto maybe_device = nvidia::gxf::DLDeviceFromPointer(data_ptr);
+  if (!maybe_device) { throw std::runtime_error("Unable to determine DLDevice from data pointer"); }
   DLTensor local_dl_tensor{
       .data = data_ptr,
-      .device = dldevice_from_pointer(data_ptr),
+      .device = maybe_device.value(),
       .ndim = static_cast<int32_t>(shape.size()),
-      .dtype = dldatatype_from_typestr(typestr),
+      .dtype = maybe_dldatatype.value(),
       .shape = shape.data(),
       .strides = nullptr,
       .byte_offset = 0,
@@ -402,24 +458,31 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
 
     if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
       cudaEvent_t curr_stream_event;
-      cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming);
-      cudaEventRecord(curr_stream_event, stream_ptr);
+      cudaError_t cuda_status;
+
+      cuda_status = cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming);
+      CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventCreateWithFlags");
+
+      cuda_status = cudaEventRecord(curr_stream_event, stream_ptr);
+      CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventRecord");
       // Make current stream (curr_stream_ptr) to wait until the given stream (stream_ptr)
-      // is finished.
-      // This is a reverse of py_dlpack() method (in dl_converter.hpp).
-      cudaStreamWaitEvent(curr_stream_ptr, curr_stream_event, 0);
-      cudaEventDestroy(curr_stream_event);
+      // is finished. This is a reverse of py_dlpack() method.
+      cuda_status = cudaStreamWaitEvent(curr_stream_ptr, curr_stream_event, 0);
+      CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaStreamWaitEvent");
+
+      cuda_status = cudaEventDestroy(curr_stream_event);
+      CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventDestroy");
     }
   }
   // Create DLManagedTensor object
-  auto dl_managed_tensor_ctx = new DLManagedTensorCtx;
+  auto dl_managed_tensor_ctx = new DLManagedTensorContext;
   auto& dl_managed_tensor = dl_managed_tensor_ctx->tensor;
 
   dl_managed_tensor_ctx->memory_ref = memory_buf;
 
   dl_managed_tensor.manager_ctx = dl_managed_tensor_ctx;
   dl_managed_tensor.deleter = [](DLManagedTensor* self) {
-    auto dl_managed_tensor_ctx = static_cast<DLManagedTensorCtx*>(self->manager_ctx);
+    auto dl_managed_tensor_ctx = static_cast<DLManagedTensorContext*>(self->manager_ctx);
     // Note: since 'memory_ref' is maintaining python object reference, we should acquire GIL in
     // case this function is called from another non-python thread, before releasing 'memory_ref'.
     py::gil_scoped_acquire scope_guard;
@@ -474,7 +537,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
     case kDLCUDA:
     case kDLCUDAManaged: {
       py::int_ stream_ptr(1);  // legacy stream
-      dlpack_capsule = py::reinterpret_borrow<py::capsule>(dlpack_func(stream_ptr));
+      dlpack_capsule = py::reinterpret_borrow<py::capsule>(dlpack_func("stream"_a = stream_ptr));
       break;
     }
     case kDLCPU:
@@ -492,7 +555,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
 
   PyObject* dlpack_capsule_ptr = dlpack_obj.ptr();
 
-  if (!PyCapsule_IsValid(dlpack_capsule_ptr, "dltensor")) {
+  if (!PyCapsule_IsValid(dlpack_capsule_ptr, dlpack_capsule_name)) {
     const char* capsule_name = PyCapsule_GetName(dlpack_capsule_ptr);
     throw std::runtime_error(
         fmt::format("Received an invalid DLPack capsule ('{}'). You might have already consumed "
@@ -501,7 +564,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
   }
 
   DLManagedTensor* dl_managed_tensor =
-      static_cast<DLManagedTensor*>(PyCapsule_GetPointer(dlpack_capsule_ptr, "dltensor"));
+      static_cast<DLManagedTensor*>(PyCapsule_GetPointer(dlpack_capsule_ptr, dlpack_capsule_name));
 
   // Set device
   dl_managed_tensor->dl_tensor.device = device;
@@ -510,7 +573,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
   std::shared_ptr<PyTensor> tensor = std::make_shared<PyTensor>(dl_managed_tensor);
 
   // Set the capsule name to 'used_dltensor' so that it will not be consumed again.
-  PyCapsule_SetName(dlpack_capsule_ptr, "used_dltensor");
+  PyCapsule_SetName(dlpack_capsule_ptr, used_dlpack_capsule_name);
 
   // Steal the ownership of the capsule so that it will not be destroyed when the capsule object
   // goes out of scope.

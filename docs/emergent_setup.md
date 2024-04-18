@@ -1,18 +1,12 @@
 (emergent-vision-tech)=
 # Emergent Vision Technologies (EVT)
 
-Thanks to a collaboration with [Emergent Vision Technologies](https://emergentvisiontec.com/), the Holoscan SDK now supports EVT high-speed cameras.
-
-:::{note}
-The addition of an EVT camera to the Holoscan Developer Kits
-is optional. The Holoscan SDK has an application that can be run with the EVT camera,
-but there are other applications that can be run without EVT camera.
-:::
+Thanks to a collaboration with [Emergent Vision Technologies](https://emergentvisiontec.com/), the Holoscan SDK now supports EVT high-speed cameras on NVIDIA Developer Kits equipped with a [ConnectX NIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/) using the [Rivermax SDK](https://developer.nvidia.com/networking/rivermax).
 
 (emergent-hw-install)=
 ## Installing EVT Hardware
 
-The EVT cameras can be connected to Holoscan Developer Kits though [Mellanox ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/), with the most simple connection method being a single cable between a camera and the devkit.
+The EVT cameras can be connected to NVIDIA Developer Kits through a [Mellanox ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/), with the most simple connection method being a single cable between a camera and the devkit.
 For 25 GigE cameras that use the SFP28 interface, this can be achieved by using [SFP28](https://store.nvidia.com/en-us/networking/store/product/MCP2M00-A001E30N/NVIDIAMCP2M00A001E30NDACCableEthernet25GbESFP281m/) cable with [QSFP28 to SFP28 adaptor](https://store.nvidia.com/en-us/networking/store/product/MAM1Q00A-QSA28/NVIDIAMAM1Q00AQSA28CableAdapter100Gbsto25GbsQSFP28toSFP28/).
 
 :::{note}

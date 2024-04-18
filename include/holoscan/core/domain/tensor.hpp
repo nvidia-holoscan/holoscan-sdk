@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,52 +26,22 @@
 #include <string>
 #include <vector>
 
+#include <gxf/std/tensor.hpp>
+
 namespace holoscan {
 
-/**
- * @brief Class that wraps a DLManagedTensor with a memory data reference.
- *
- * This class is used to wrap a DLManagedTensor (`tensor`) with a shared pointer to the memory
- * data (`memory_ref`). This is useful when the memory data is not owned by the DLManagedTensor, but
- * its lifetime is tied to the DLManagedTensor.
- *
- * In Holoscan SDK, this class is used to wrap a DLManagedTensor that is created by other libraries,
- * such as CuPy, with a shared pointer to the memory data so that the memory data is reference
- * counted and can be safely used/destroyed by the Holoscan SDK.
- */
-struct DLManagedTensorCtx {
-  DLManagedTensor tensor;            ///< The DLManagedTensor to wrap.
-  std::shared_ptr<void> memory_ref;  ///< The memory data reference.
-};
-
-/**
- * @brief Class to wrap the deleter of a DLManagedTensor.
- *
- * This class is used with DLManagedTensorCtx class to wrap the DLManagedTensor.
- *
- * A shared pointer to this class in DLManagedTensorCtx class is used as the deleter of the
- * DLManagedTensorCtx::memory_ref
- *
- * When the last reference to the DLManagedTensorCtx object is released,
- * DLManagedTensorCtx::memory_ref will also be destroyed, which will call the deleter function
- * of the DLManagedTensor object.
- *
- */
-class DLManagedMemoryBuffer {
- public:
-  explicit DLManagedMemoryBuffer(DLManagedTensor* self);
-  ~DLManagedMemoryBuffer();
-
- private:
-  DLManagedTensor* self_ = nullptr;
-};
+// TODO: keep old class name as an alias?
+//       also differs in that DLManagedTensorContext has additional members dl_shape and dl_strides
+// using DLManagedTensorCtx = nvidia::gxf::DLManagedTensorContext;
+using DLManagedTensorContext = nvidia::gxf::DLManagedTensorContext;
+using DLManagedMemoryBuffer = nvidia::gxf::DLManagedMemoryBuffer;
 
 /**
  * @brief Tensor class.
  *
  * A Tensor is a multi-dimensional array of elements of a single data type.
  *
- * The Tensor class is a wrapper around the DLManagedTensorCtx struct that holds the
+ * The Tensor class is a wrapper around the DLManagedTensorContext struct that holds the
  * DLManagedTensor object.
  * (https://dmlc.github.io/dlpack/latest/c_api.html#_CPPv415DLManagedTensor).
  *
@@ -83,11 +53,11 @@ class Tensor {
   Tensor() = default;
 
   /**
-   * @brief Construct a new Tensor from an existing DLManagedTensorCtx.
+   * @brief Construct a new Tensor from an existing DLManagedTensorContext.
    *
-   * @param ctx A shared pointer to the DLManagedTensorCtx to be used in Tensor construction.
+   * @param ctx A shared pointer to the DLManagedTensorContext to be used in Tensor construction.
    */
-  explicit Tensor(std::shared_ptr<DLManagedTensorCtx>& ctx) : dl_ctx_(ctx) {}
+  explicit Tensor(std::shared_ptr<DLManagedTensorContext>& ctx) : dl_ctx_(ctx) {}
 
   /**
    * @brief Construct a new Tensor from an existing DLManagedTensor pointer.
@@ -187,14 +157,14 @@ class Tensor {
   DLManagedTensor* to_dlpack();
 
   /**
-   * @brief Get the internal DLManagedTensorCtx of the Tensor.
+   * @brief Get the internal DLManagedTensorContext of the Tensor.
    *
-   * @return A shared pointer to the Tensor's DLManagedTensorCtx.
+   * @return A shared pointer to the Tensor's DLManagedTensorContext.
    */
-  std::shared_ptr<DLManagedTensorCtx>& dl_ctx() { return dl_ctx_; }
+  std::shared_ptr<DLManagedTensorContext>& dl_ctx() { return dl_ctx_; }
 
  protected:
-  std::shared_ptr<DLManagedTensorCtx> dl_ctx_;  ///< The DLManagedTensorCtx object.
+  std::shared_ptr<DLManagedTensorContext> dl_ctx_;  ///< The DLManagedTensorContext object.
 };
 
 /**

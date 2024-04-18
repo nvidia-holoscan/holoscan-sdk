@@ -16,174 +16,129 @@
 """  # noqa: E501
 
 import json
-from pathlib import Path
+import logging
 from typing import Any, List, Optional
 
-from .enum_types import Arch, Platform, PlatformConfiguration, SdkType
-from .exceptions import InvalidSourceFileError
+import requests
+
+from .enum_types import Arch, PlatformConfiguration, SdkType
+from .exceptions import InvalidSourceFileError, ManifestDownloadError
 
 
 class ArtifactSources:
-    """Provides default artifact source URLs with ability to override."""
+    """Provides default artifact source URLs with the ability to override."""
 
-    SectionVersion = "versions"
-    SectionDebianPackages = "debian-packges"
+    SectionDebianPackages = "debian-packages"
     SectionBaseImages = "base-images"
     SectionBuildImages = "build-images"
     SectionHealthProbe = "health-probes"
+    ManifestFileUrl = (
+        "https://edge.urm.nvidia.com/artifactory/sw-holoscan-cli-generic/artifacts.json"
+    )
+    EdgeROToken = "eyJ2ZXIiOiIyIiwidHlwIjoiSldUIiwiYWxnIjoiUlMyNTYiLCJraWQiOiJLcXV1ZVdTTlRjSkhqTFhGLTJCSnctX0lkRnY0eVhqREJyNEdWMU5Gc2NJIn0.eyJzdWIiOiJqZnJ0QDAxZHRqNnF0ZWNmcnB6MXJrNmg2cjAwd2FkXC91c2Vyc1wvc3ZjLWhvbG9zY2FuLWNsaS1wdWJsaWMtcm8iLCJzY3AiOiJtZW1iZXItb2YtZ3JvdXBzOnN2Yy1ob2xvc2Nhbi1jbGktcHVibGljLWdyb3VwIiwiYXVkIjoiamZydEAwMWR0ajZxdGVjZnJwejFyazZoNnIwMHdhZCIsImlzcyI6ImpmcnRAMDFkdGo2cXRlY2ZycHoxcms2aDZyMDB3YWRcL3VzZXJzXC9ycGFsYW5pc3dhbXkiLCJpYXQiOjE3MDY1NzA1NjUsImp0aSI6IjlmNmEyMmM1LTk5ZTItNGRlMi1hMDhiLTQxZjg2NzIyYmJjNyJ9.Y0gfyW2F0kxiKnMhGzNCyRRE2DNrDW6CUj5ozrQiIvAbSbhohskFcFmP836PU4p3ZQTzbYk9-bBwrqoPDUaZf8p9AW9GZ3mvlU2BxK0EQ-F4oKxA1_Z7agZ0KKcmcrfWnE4Ffy53qAD8PTk5vdcznpYOBpJtF4i16j2QcXvhVGGEqUyGa7_sONdK0sevb3ZztiEoupi4gD2wPTRn30rjpGIiFSDKiswAQwoyF_SqMCQWOBEeXMISp8hkEggUpvPrESv2lbpjgaKuEJ1CikbivYTJCcoqpgH7E72FXr1sB9jfwrFD8pkjtRpGGDxN43waXy4f3Ctr8_rpbmCvwSa9iw"  # noqa: E501
 
     def __init__(self) -> None:
-        self._data = {
-            SdkType.Holoscan.value: {
-                ArtifactSources.SectionVersion: ["1.0.3"],
-                ArtifactSources.SectionDebianPackages: {
-                    "1.0.3": {
-                        Arch.amd64.value: "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/holoscan_1.0.3.2-1_amd64.deb",  # noqa: E501
-                        Arch.arm64.value: {
-                            PlatformConfiguration.iGPU.value: "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/holoscan_1.0.3.2-1_arm64.deb",  # noqa: E501
-                            PlatformConfiguration.dGPU.value: "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/holoscan_1.0.3.2-1_arm64.deb",  # noqa: E501
-                        },
-                    },
-                },
-                ArtifactSources.SectionBaseImages: {
-                    PlatformConfiguration.iGPU.value: {
-                        Platform.JetsonAgxOrinDevKit.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-igpu",
-                        },
-                        Platform.IGXOrinDevIt.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-igpu",
-                        },
-                    },
-                    PlatformConfiguration.dGPU.value: {
-                        Platform.X64Workstation.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-dgpu",
-                        },
-                        Platform.IGXOrinDevIt.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-dgpu",
-                        },
-                    },
-                    PlatformConfiguration.CPU.value: {
-                        Platform.X64Workstation.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-dgpu",
-                        }
-                    },
-                },
-                ArtifactSources.SectionBuildImages: {
-                    PlatformConfiguration.iGPU.value: {
-                        Platform.JetsonAgxOrinDevKit.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-igpu",
-                        },
-                        Platform.IGXOrinDevIt.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-igpu",
-                        },
-                    },
-                    PlatformConfiguration.dGPU.value: {
-                        Platform.X64Workstation.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-dgpu",
-                        },
-                        Platform.IGXOrinDevIt.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-dgpu",
-                        },
-                    },
-                    PlatformConfiguration.CPU.value: {
-                        Platform.X64Workstation.value: {
-                            "1.0.3": "nvcr.io/nvidia/clara-holoscan/holoscan:v1.0.3-dgpu",
-                        }
-                    },
-                },
-                ArtifactSources.SectionHealthProbe: {
-                    Arch.amd64.value: {
-                        "1.0.3": "https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64",  # noqa: E501
-                    },
-                    Arch.arm64.value: {
-                        "1.0.3": "https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-arm64",  # noqa: E501
-                    },
-                },
-            },
-        }
-        self.validate(self._data)
+        self._logger = logging.getLogger("common")
+        self._supported_holoscan_versions = ["2.0.0"]
 
     @property
     def holoscan_versions(self) -> List[str]:
-        return self._data[SdkType.Holoscan.value]["versions"]
+        return self._supported_holoscan_versions
 
-    @property
-    def base_images(self) -> List[Any]:
-        return self._data[SdkType.Holoscan.value][ArtifactSources.SectionBaseImages]
+    def base_images(self, version) -> List[Any]:
+        return self._data[version][SdkType.Holoscan.value][ArtifactSources.SectionBaseImages]
 
-    @property
-    def build_images(self) -> List[Any]:
-        return self._data[SdkType.Holoscan.value][ArtifactSources.SectionBuildImages]
+    def build_images(self, version) -> List[Any]:
+        return self._data[version][SdkType.Holoscan.value][ArtifactSources.SectionBuildImages]
 
-    @property
-    def health_prob(self) -> List[Any]:
-        return self._data[SdkType.Holoscan.value][ArtifactSources.SectionHealthProbe]
+    def health_probe(self, version) -> List[Any]:
+        return self._data[version][ArtifactSources.SectionHealthProbe]
 
-    def load(self, file: Path):
-        """Overrides the default values from a given JOSN file.
-           Validates top-level attributes to ensure file is valid
+    def load(self, uri: str):
+        """Overrides the default values from a given JSON file.
+           Validates top-level attributes to ensure the file is valid
 
         Args:
             file (Path): Path to JSON file
         """
-        temp = json.loads(file.read_text())
+        if uri.startswith("https"):
+            self._download_manifest_internal(uri)
+        elif uri.startswith("http"):
+            raise ManifestDownloadError(
+                "Downloading manifest files from non-HTTPS servers is not supported."
+            )
+        else:
+            self._logger.info(f"Using CLI manifest file from {uri}...")
+            with open(uri) as file:
+                temp = json.load(file)
 
-        try:
-            self.validate(temp)
-        except Exception as ex:
-            raise InvalidSourceFileError(f"{file} is missing required data: {ex}") from ex
-
-        self._data = temp
+            try:
+                self.validate(temp)
+                self._data = temp
+            except Exception as ex:
+                raise InvalidSourceFileError(f"{uri} is missing required data: {ex}") from ex
 
     def validate(self, data: Any):
-        assert SdkType.Holoscan.value in data
+        self._logger.debug("Validating CLI manifest file...")
 
-        assert ArtifactSources.SectionVersion in data[SdkType.Holoscan.value]
-        assert ArtifactSources.SectionDebianPackages in data[SdkType.Holoscan.value]
-        assert ArtifactSources.SectionBaseImages in data[SdkType.Holoscan.value]
-        assert ArtifactSources.SectionBuildImages in data[SdkType.Holoscan.value]
+        for key in data:
+            item = data[key]
+            assert SdkType.Holoscan.value in item
+            holoscan = item[SdkType.Holoscan.value]
 
-        for version in data[SdkType.Holoscan.value][ArtifactSources.SectionVersion]:
-            assert version in data[SdkType.Holoscan.value][ArtifactSources.SectionDebianPackages]
-            assert (
-                Arch.amd64.value
-                in data[SdkType.Holoscan.value][ArtifactSources.SectionDebianPackages][version]
-            )
-            assert version in data[SdkType.Holoscan.value][ArtifactSources.SectionDebianPackages]
-            assert (
-                Arch.arm64.value
-                in data[SdkType.Holoscan.value][ArtifactSources.SectionDebianPackages][version]
-            )
+            assert ArtifactSources.SectionDebianPackages in holoscan
+            assert ArtifactSources.SectionBaseImages in holoscan
+            assert ArtifactSources.SectionBuildImages in holoscan
 
-        for config in PlatformConfiguration:
-            assert config.value in data[SdkType.Holoscan.value][ArtifactSources.SectionBaseImages]
-            assert config.value in data[SdkType.Holoscan.value][ArtifactSources.SectionBuildImages]
+            for config in PlatformConfiguration:
+                assert config.value in holoscan[ArtifactSources.SectionBaseImages]
+                assert config.value in holoscan[ArtifactSources.SectionBuildImages]
+
+    def download_manifest(self):
+        self._download_manifest_internal(
+            ArtifactSources.ManifestFileUrl,
+            {"Authorization": f"Bearer {ArtifactSources.EdgeROToken}"},
+        )
+
+    def _download_manifest_internal(self, url, headers=None):
+        self._logger.info("Downloading CLI manifest file...")
+        manifest = requests.get(url, headers=headers)
+
+        try:
+            manifest.raise_for_status()
+        except Exception as ex:
+            raise ManifestDownloadError(
+                f"Error downloading manifest file from {url}: {manifest.reason}"
+            ) from ex
+        else:
+            self._data = manifest.json()
+            self.validate(self._data)
 
     def debian_packages(
         self, version: str, architecture: Arch, platform_configuration: PlatformConfiguration
     ) -> Optional[str]:
-        """Gets the URI of a debian package based on the version,
+        """Gets the URI of a Debian package based on the version,
         the architecture and the platform configuration.
 
         Args:
             version (str): version of package
-            architecture (Arch): architecture oif the package
+            architecture (Arch): architecture of the package
             platform_configuration (PlatformConfiguration): platform configuration of the package
 
         Returns:
             Optional[str]: _description_
         """
-        debian_sources = self._data[SdkType.Holoscan.value][ArtifactSources.SectionDebianPackages]
-        if version not in debian_sources:
-            return None
+        debian_sources = self._data[version][SdkType.Holoscan.value][
+            ArtifactSources.SectionDebianPackages
+        ]
 
-        if architecture == Arch.amd64 and architecture.value in debian_sources[version]:
-            return debian_sources[version][architecture.value]
+        if architecture == Arch.amd64 and architecture.value in debian_sources:
+            return debian_sources[architecture.value]
         elif (
             architecture == Arch.arm64
-            and architecture.value in debian_sources[version]
-            and platform_configuration.value in debian_sources[version][architecture.value]
+            and architecture.value in debian_sources
+            and platform_configuration.value in debian_sources[architecture.value]
         ):
-            return debian_sources[version][architecture.value][platform_configuration.value]
+            return debian_sources[architecture.value][platform_configuration.value]
 
         return None

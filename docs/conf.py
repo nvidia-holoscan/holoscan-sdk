@@ -34,7 +34,7 @@ exhale_dir = os.getenv("EXHALEDIR")
 # -- Project information -----------------------------------------------------
 
 project = "Holoscan SDK"
-copyright = "2022-2023, NVIDIA"  # noqa: A001
+copyright = "2022-2024, NVIDIA"  # noqa: A001
 author = "NVIDIA"
 
 # The full version, including alpha/beta/rc tags
@@ -57,12 +57,13 @@ extensions = [
     "exhale",
     "myst_parser",
     "numpydoc",
+    "sphinx.ext.graphviz",
     "sphinx.ext.autosectionlabel",  # https://docs.readthedocs.io/en/stable/guides/cross-referencing-with-sphinx.html#automatically-label-sections # noqa: E501
     "sphinx.ext.autodoc",  # needed for Python API docs (provides automodule)
     "sphinx.ext.autosummary",  # needed for Python API docs (provides autosummary)
-    "sphinxcontrib.mermaid",  # https://sphinxcontrib-mermaid-demo.readthedocs.io/en/latest/
     "sphinx_design",  # https://sphinx-design.readthedocs.io/en/latest/
 ]
+
 
 # Make sure the target is unique
 autosectionlabel_prefix_document = True
@@ -79,6 +80,9 @@ exclude_patterns = [build_dir, doxygen_dir]
 
 # Enabling to be consistent with prior documentation
 numfig = True
+
+# -- Options for graphviz output ---------------------------------------------
+graphviz_output_format = "svg"
 
 # -- Options for HTML output -------------------------------------------------
 
@@ -210,21 +214,6 @@ autodoc_default_options = {
 # -- Options for autosummary ---------------------------------------------------
 
 autosummary_generate = False
-
-# -- Options for sphinx-mermaid ------------------------------------------------
-#   Reference: https://github.com/mgaitan/sphinxcontrib-mermaid/issues/44
-#              (we eventually use mmdc's PDF generation capability instead)
-
-mermaid_version = "9.2.2"
-
-# Use PDF diagram for latex PDF generation (with cropping the generated PDF)
-if tags.has("noapi"):  # noqa: F821
-    mermaid_cmd = "/usr/bin/mmdc"
-    # 'docker/docs-builder/Dockerfile' creates 'puppeteer-config.json'
-    mermaid_params = ["-p", "/usr/bin/puppeteer-config.json"]
-    # pdfcrop is installed in the docker image (by 'texlive-extra-utils')
-    mermaid_pdfcrop = "pdfcrop"
-    mermaid_output_format = "pdf"
 
 # -- Options for Sphinx --------------------------------------------------------
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,56 +55,6 @@ pattern : str
 References
 ----------
 .. [1] https://spdlog.docsforge.com/v1.x/3.custom-formatting/
-)doc")
-
-PYDOC(enable_backtrace, R"doc(
-Enable backtrace support on the logger.
-
-When enabled, all debug/trace messages are stored in a circular buffer until needed for debugging.
-
-Parameters
-----------
-n_messages : str
-    The number of messages in the circular buffer.
-)doc")
-
-PYDOC(disable_backtrace, R"doc(
-Disable backtrace support on the logger.
-)doc")
-
-PYDOC(dump_backtrace, R"doc(
-Dump the loggers backtrace buffer.
-)doc")
-
-PYDOC(should_backtrace, R"doc(
-Boolean indicating whether backtracing is enabled.
-
-Returns
--------
-bool
-    Whether backtracing are enabled.
-)doc")
-
-PYDOC(flush, R"doc(
-Force the logger to immediately flush its contents.
-)doc")
-
-PYDOC(flush_level, R"doc(
-Determine the minimum log level that will trigger an automatic flush.
-
-Returns
--------
-level : holoscan.logger.LogLevel
-    The level at which the flush occurs.
-)doc")
-
-PYDOC(flush_on, R"doc(
-Sets the minimum log level that will trigger an automatic flush.
-
-Parameters
-----------
-level : holoscan.logger.LogLevel
-    The level at which the logger should automatically flush.
 )doc")
 
 }  // namespace Logger

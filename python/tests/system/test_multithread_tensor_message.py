@@ -18,13 +18,14 @@
 import sys
 
 import cupy as cp
+import pytest
 from env_wrapper import env_var_context
 
 import holoscan
 from holoscan.conditions import CountCondition
 from holoscan.operators import FormatConverterOp
 from holoscan.resources import UnboundedAllocator
-from holoscan.schedulers import MultiThreadScheduler
+from holoscan.schedulers import EventBasedScheduler, MultiThreadScheduler
 
 cuda_device = cp.cuda.Device()
 # disable CuPy memory pool
@@ -124,7 +125,7 @@ GPU_USAGE_TOLERANCE = 30_000_000  # 30 MiB
 #  1000: 2094333952 => 5636096, 18874368 (with some background processes running)
 
 
-def launch_app():
+def launch_app(scheduler="multi_thread"):
     env_var_settings = {
         # set the recession period to 100 ms to reduce debug messages
         ("HOLOSCAN_CHECK_RECESSION_PERIOD_MS", "100"),
@@ -134,25 +135,37 @@ def launch_app():
     with env_var_context(env_var_settings):
         app = MultithreadTensorSenderApp()
 
-        scheduler = MultiThreadScheduler(
-            app,
-            worker_thread_number=4,
-            stop_on_deadlock=True,
-            stop_on_deadlock_timeout=500,
-            check_recession_period_ms=0.0,
-            name="multithread_scheduler",
-        )
+        if scheduler == "multi_thread":
+            scheduler = MultiThreadScheduler(
+                app,
+                worker_thread_number=4,
+                stop_on_deadlock=True,
+                stop_on_deadlock_timeout=500,
+                check_recession_period_ms=0.0,
+                name="multithread_scheduler",
+            )
+        elif scheduler == "event_based":
+            scheduler = EventBasedScheduler(
+                app,
+                worker_thread_number=4,
+                stop_on_deadlock=True,
+                stop_on_deadlock_timeout=500,
+                name="ebs",
+            )
+        else:
+            raise ValueError("scheduler must be one of {'multi_thread', 'event_based'}")
 
         app.scheduler(scheduler)
         app.run()
 
 
-def test_multithread_tensor_message(capfd):
+@pytest.mark.parametrize("scheduler", ["event_based", "multi_thread"])
+def test_multithread_tensor_message(scheduler, capfd):
     # Issue 4293741: Python application having more than two operators, using MultiThreadScheduler
     # (including distributed app), and sending Tensor can deadlock at runtime.
     global NUM_MSGS, GPU_MEMORY_HISTORY
 
-    launch_app()
+    launch_app(scheduler)
 
     # assert that no errors were logged
     captured = capfd.readouterr()

@@ -19,28 +19,18 @@ The example source code and run instructions can be found in the [examples](http
 
 Here is the diagram of the operators and workflow used in this example.
 
-```{mermaid}
+```{digraph} custom_op
 :align: center
 :caption: A linear workflow with new custom operator
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=record];
 
-classDiagram
-    direction LR
-
-    PingTxOp --|> PingMxOp : out...in
-    PingMxOp --|> PingRxOp : out...in
-
-    class PingTxOp {
-        out(out) int
-    }
-    class PingMxOp {
-        [in]in: int
-        out(out) int
-    }
-    class PingRxOp {
-        [in]in: int
-    }
+    tx [label="PingTxOp| |out(out) : int"];
+    mx [label="PingMxOp| [in]in : int | out(out) : int "];
+    rx [label="PingRxOp| [in]in : int | "];
+    tx -> mx [label="out...in"]
+    mx -> rx [label="out...in"]
 ```
 
 Compared to the previous example, we are adding a new **PingMxOp** operator between the

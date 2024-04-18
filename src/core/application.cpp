@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,7 @@
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 
@@ -104,7 +105,12 @@ namespace holoscan {
 Application::Application(const std::vector<std::string>& argv) : Fragment(), argv_(argv) {
   // Set the log level from the environment variable if it exists.
   // Or, set the default log level to INFO if it hasn't been set by the user.
-  if (!Logger::log_level_set_by_user) { holoscan::set_log_level(LogLevel::INFO); }
+  if (!Logger::log_level_set_by_user) {
+    holoscan::set_log_level(LogLevel::INFO);
+  } else {
+    // Allow log level to be reset from the environment variable if overridden.
+    holoscan::set_log_level(holoscan::log_level());
+  }
   // Set the log format from the environment variable if it exists.
   // Or, set the default log format depending on the log level if it hasn't been set by the user.
   holoscan::set_log_pattern();
@@ -242,8 +248,11 @@ expected<SchedulerType, ErrorCode> Application::get_distributed_app_scheduler_en
   if (env_value != nullptr && env_value[0] != '\0') {
     if (std::strcmp(env_value, "greedy") == 0) {
       return SchedulerType::kGreedy;
-    } else if (std::strcmp(env_value, "multithread") == 0) {
+    } else if (std::strcmp(env_value, "multithread") == 0 ||
+               std::strcmp(env_value, "multi_thread") == 0) {
       return SchedulerType::kMultiThread;
+    } else if (std::strcmp(env_value, "event_based") == 0) {
+      return SchedulerType::kEventBased;
     } else {
       HOLOSCAN_LOG_ERROR("Invalid value for HOLOSCAN_DISTRIBUTED_APP_SCHEDULER: {}", env_value);
       return make_unexpected(ErrorCode::kInvalidArgument);
@@ -359,6 +368,8 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
       // Check if holoscan::MultiThreadScheduler is already set to the fragment.
       // If it is, then we should use the default scheduler.
       // Otherwise, we should set new multi-thread scheduler.
+
+      // TODO: consider use of event-based scheduler?
       auto multi_thread_scheduler =
           std::dynamic_pointer_cast<holoscan::MultiThreadScheduler>(scheduler);
       if (!multi_thread_scheduler) { scheduler_setting = SchedulerType::kMultiThread; }
@@ -394,6 +405,21 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
           scheduler->add_arg(holoscan::Arg("max_duration_ms", max_duration_ms));
         }
         scheduler->add_arg(holoscan::Arg("check_recession_period_ms", check_recession_period_ms));
+        scheduler->add_arg(holoscan::Arg("worker_thread_number", worker_thread_number));
+      } break;
+      case SchedulerType::kEventBased: {
+        scheduler =
+            fragment->make_scheduler<holoscan::EventBasedScheduler>("event-based-scheduler");
+        unsigned int num_processors = std::thread::hardware_concurrency();
+        // TODO: check number of threads setting needed for event-based scheduler
+        // Currently, we use the number of operators in the fragment as the number of worker threads
+        int64_t worker_thread_number =
+            std::min(fragment->graph().get_nodes().size(), static_cast<size_t>(num_processors));
+        scheduler->add_arg(holoscan::Arg("stop_on_deadlock", stop_on_deadlock));
+        scheduler->add_arg(holoscan::Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout));
+        if (max_duration_ms >= 0) {
+          scheduler->add_arg(holoscan::Arg("max_duration_ms", max_duration_ms));
+        }
         scheduler->add_arg(holoscan::Arg("worker_thread_number", worker_thread_number));
       } break;
     }

@@ -16,6 +16,7 @@
 """  # noqa: E501
 
 import pytest
+from utils import remove_ignored_errors
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment
@@ -78,7 +79,7 @@ def test_distributed_app_invalid_add_flow(ports_arg, invalid_port, invalid_type,
     captured = capfd.readouterr()
 
     if invalid_port is None:
-        assert "error" not in captured.err
+        assert "error" not in remove_ignored_errors(captured.err)
         assert "Exception occurred" not in captured.err
     else:
         assert "error" in captured.err

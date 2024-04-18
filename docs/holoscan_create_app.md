@@ -86,21 +86,21 @@ It is also possible to instead launch the application asynchronously (i.e. non-b
 
 `````{tab-set}
 ````{tab-item} C++
-This can be done simply by replacing the call to {cpp:func}`run()<holoscan::Fragment::run>` with {cpp:func}`run_async()<holoscan::Fragment::run_async>` which returns a `std::future`. Calling `future.wait()` will block until the application has finished running.
+This can be done simply by replacing the call to {cpp:func}`run()<holoscan::Fragment::run>` with {cpp:func}`run_async()<holoscan::Fragment::run_async>` which returns a `std::future`. Calling `future.get()` will block until the application has finished running and throw an exception if a runtime error occurred during execution.
 ```{code-block} cpp
 :emphasize-lines: 3-4
 :name: holoscan-app-skeleton-cpp-async
 
 int main() {
   auto app = holoscan::make_application<App>();
-  future = app->run_async();
-  future.wait();
+  auto future = app->run_async();
+  future.get();
   return 0;
 }
 ```
 ````
 ````{tab-item} Python
-This can be done simply by replacing the call to {py:func}`run()<holoscan.Application.run>` with {py:func}`run_async()<holoscan.Application.run_async>` which returns a Python `concurrent.futures.Future`. Calling `future.result()` will block until the application has finished running.
+This can be done simply by replacing the call to {py:func}`run()<holoscan.Application.run>` with {py:func}`run_async()<holoscan.Application.run_async>` which returns a Python `concurrent.futures.Future`. Calling `future.result()` will block until the application has finished running and raise an exception if a runtime error occurred during execution.
 ```{code-block} python
 :emphasize-lines: 3-4
 :name: holoscan-app-skeleton-python-async
@@ -521,7 +521,7 @@ def compose(self):
 ````
 
 :::{note}
-Python operators that wrap an underlying C++ operator currently do not accept resources as positional arguments. Instead one needs to call the {py:func}`add_arg()<holoscan.core.Operator.add_arg>` method after the object has been constructed to add the resource. 
+Python operators that wrap an underlying C++ operator currently do not accept resources as positional arguments. Instead one needs to call the {py:func}`add_arg()<holoscan.core.Operator.add_arg>` method after the object has been constructed to add the resource.
 :::
 
 (configuring-app-scheduler)=
@@ -532,7 +532,7 @@ The [scheduler](./components/schedulers.md) controls how the application schedul
 
 The default scheduler is a single-threaded [`GreedyScheduler`](./components/schedulers.md#greedy-scheduler). An application can be configured to use a different scheduler `Scheduler` ({cpp:class}`C++ <holoscan::Scheduler>`/{py:class}`Python <holoscan.core.Scheduler>`) or change the parameters from the default scheduler, using the `scheduler()` function ({cpp:func}`C++ <holoscan::Fragment::scheduler>`/{py:func}`Python <holoscan.core.Fragment.scheduler>`).
 
-For example, if an application needs to run multiple operators in parallel, a [`MultiThreadScheduler`](./components/schedulers.md#multithreadscheduler) can instead be used.
+For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](./components/schedulers.md#multithreadscheduler) or [`EventBasedScheduler`](./components/schedulers.md#eventbasedscheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute.
 
 The code snippet belows shows how to set and configure a non-default scheduler:
 
@@ -545,7 +545,7 @@ The code snippet belows shows how to set and configure a non-default scheduler:
 :name: holoscan-config-scheduler-cpp
 
 auto app = holoscan::make_application<App>();
-auto scheduler = app->make_scheduler<holoscan::MultiThreadScheduler>(
+auto scheduler = app->make_scheduler<holoscan::EventBasedScheduler>(
   "myscheduler",
   Arg("worker_thread_number", 4),
   Arg("stop_on_deadlock", true)
@@ -562,7 +562,7 @@ app->run();
 :name: holoscan-config-scheduler-python
 
 app = App()
-scheduler = holoscan.schedulers.MultiThreadScheduler(
+scheduler = holoscan.schedulers.EventBasedScheduler(
     app,
     name="myscheduler",
     worker_thread_number=4,
@@ -600,17 +600,14 @@ instantiation and execution order of the operators.
 
 The simplest form of a workflow would be a single operator.
 
-```{mermaid}
+```{digraph} myop
 :align: center
 :caption: A one-operator workflow
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=record];
 
-classDiagram
-    direction LR
-
-    class MyOp {
-    }
+    myop [label="MyOp| | "];
 ```
 
 The graph above shows an **Operator** ({cpp:class}`C++ <holoscan::Operator>`/{py:class}`Python <holoscan.core.Operator>`) (named `MyOp`) that has neither inputs nor output ports.
@@ -658,28 +655,18 @@ class App(Application):
 
 Here is an example workflow where the operators are connected linearly:
 
-```{mermaid}
+```{digraph} linear_workflow
 :align: center
 :caption: A linear workflow
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=record];
 
-classDiagram
-    direction LR
-
-    SourceOp --|> ProcessOp : output...input
-    ProcessOp --|> SinkOp : output...input
-
-    class SourceOp {
-        output(out) Tensor
-    }
-    class ProcessOp {
-        [in]input : Tensor
-        output(out) Tensor
-    }
-    class SinkOp {
-        [in]input : Tensor
-    }
+    sourceop [label="SourceOp| |output(out) : Tensor"];
+    processop [label="ProcessOp| [in]input : Tensor | output(out) : Tensor "];
+    sinkop [label="SinkOp| [in]input : Tensor | "];
+    sourceop -> processop [label="output...input"]
+    processop -> sinkop [label="output...input"]
 ```
 
 In this example, **SourceOp** produces a message and passes it to **ProcessOp**. **ProcessOp** produces another message and passes it to **SinkOp**.
@@ -738,53 +725,27 @@ class App(Application):
 
 You can design a complex workflow like below where some operators have multi-inputs and/or multi-outputs:
 
-```{mermaid}
+```{digraph} complex_workflow
 :align: center
 :caption: A complex workflow (multiple inputs and outputs)
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    node [shape=record];
 
-classDiagram
-    direction TB
+    reader1 [label="{Reader1| |image(out)\nmetadata(out)}"];
+    reader2 [label="{Reader2| |roi(out)}"];
+    processor1 [label="{Processor1|[in]image1\n[in]image2\n[in]metadata|image(out)}"];
+    processor2 [label="{Processor2|[in]image\n[in]roi|image(out)}"];
+    processor3 [label="{Processor3|[in]image|seg_image(out)}"];
+    writer [label="{Writer|[in]image\n[in]seg_image| }"];
+    notifier [label="{Notifier|[in]image| }"];
 
-    Reader1 --|> Processor1 : image...{image1,image2}\nmetadata...metadata
-    Reader2 --|> Processor2 : roi...roi
-    Processor1 --|> Processor2 : image...image
-    Processor2 --|> Processor3 : image...image
-    Processor2 --|> Notifier : image...image
-    Processor1 --|> Writer : image...image
-    Processor3 --|> Writer : seg_image...seg_image
-
-    class Reader1 {
-        image(out)
-        metadata(out)
-    }
-    class Reader2 {
-        roi(out)
-    }
-    class Processor1 {
-        [in]image1
-        [in]image2
-        [in]metadata
-        image(out)
-    }
-    class Processor2 {
-        [in]image
-        [in]roi
-        image(out)
-    }
-    class Processor3 {
-        [in]image
-        seg_image(out)
-    }
-    class Writer {
-        [in]image
-        [in]seg_image
-    }
-    class Notifier {
-        [in]image
-    }
-
+    reader1->processor1 [label="image...{image1,image2}\nmetadata...metadata"]
+    reader2->processor2 [label="roi...roi"]
+    processor1->processor2 [label="image...image"]
+    processor1->writer [label="image...image"]
+    processor2->notifier [label="image...image"]
+    processor2->processor3 [label="image...image"]
+    processor3->writer [label="seg_image...seg_image"]
 ```
 
 

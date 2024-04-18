@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,12 +101,17 @@ ConfigureTest(OPERATORS_CLASSES_TEST
 target_link_libraries(OPERATORS_CLASSES_TEST
   PRIVATE
   holoscan::ops::aja
+  holoscan::ops::async_ping_rx
+  holoscan::ops::async_ping_tx
   holoscan::ops::bayer_demosaic
   holoscan::ops::format_converter
   holoscan::ops::holoviz
   holoscan::ops::inference
   holoscan::ops::inference_processor
+  holoscan::ops::ping_rx
+  holoscan::ops::ping_tx
   holoscan::ops::segmentation_postprocessor
+  holoscan::ops::v4l2
   holoscan::ops::video_stream_recorder
   holoscan::ops::video_stream_replayer
 )
@@ -169,12 +174,40 @@ target_link_libraries(SYSTEM_DISTRIBUTED_TEST
   set(CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
 "\
 HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500;\
-HOLOSCAN_MAX_DURATION_MS=2500\
+HOLOSCAN_MAX_DURATION_MS=2500;\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
 "
   )
 set_tests_properties(
   SYSTEM_DISTRIBUTED_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS}"
 )
+
+# Repeat distributed tests, but setting environment variables to use the event-based scheduler
+# (omitting UcxMessageSerialization tests in this case to reduce overall test time)
+ConfigureTest(
+  SYSTEM_DISTRIBUTED_EBS_TEST
+  system/distributed/distributed_app.cpp
+  system/distributed/distributed_demosaic_op_app.cpp
+  system/distributed/holoscan_ucx_ports_env.cpp
+  system/env_wrapper.cpp
+  system/ping_tensor_rx_op.cpp
+  system/ping_tensor_tx_op.cpp
+)
+target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
+  PRIVATE
+  holoscan::ops::bayer_demosaic
+  holoscan::ops::holoviz
+)
+
+  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
+"\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500;\
+HOLOSCAN_MAX_DURATION_MS=2500;\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+"
+  )
+set_tests_properties(
+  SYSTEM_DISTRIBUTED_EBS_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS}")
 
 
 # ##################################################################################################

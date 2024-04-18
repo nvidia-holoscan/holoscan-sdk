@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,8 +49,7 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
    * @param gxf_input_context The shared pointer to the GXFInputContext object.
    * @param gxf_output_context The shared pointer to the GXFOutputContext object.
    */
-  GXFExecutionContext(gxf_context_t context,
-                      std::shared_ptr<GXFInputContext> gxf_input_context,
+  GXFExecutionContext(gxf_context_t context, std::shared_ptr<GXFInputContext> gxf_input_context,
                       std::shared_ptr<GXFOutputContext> gxf_output_context);
 
   /**

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,11 +22,11 @@
 #include <utility>
 #include <vector>
 
+#include "gxf/std/tensor.hpp"
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator_spec.hpp"
@@ -345,8 +345,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     auto in_tensor = maybe_tensor;
 
     // Get needed information from the tensor
-    // cast Holoscan::Tensor to GXFTensor so attribute access code can remain as-is
-    holoscan::gxf::GXFTensor in_tensor_gxf{in_tensor->dl_ctx()};
+    // cast Holoscan::Tensor to nvidia::gxf::Tensor to use it's APIs directly
+    nvidia::gxf::Tensor in_tensor_gxf{in_tensor->dl_ctx()};
     out_shape = in_tensor_gxf.shape();
     in_tensor_data = in_tensor_gxf.pointer();
     if (in_tensor_data == nullptr) {
@@ -470,9 +470,9 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
                         nvidia::gxf::ComputeTrivialStrides(out_shape, dst_typesize)}},
                       false);
 
-  if (!out_message) { std::runtime_error("failed to create out_message"); }
+  if (!out_message) { throw std::runtime_error("failed to create out_message"); }
   const auto out_tensor = out_message.value().get<nvidia::gxf::Tensor>();
-  if (!out_tensor) { std::runtime_error("failed to create out_tensor"); }
+  if (!out_tensor) { throw std::runtime_error("failed to create out_tensor"); }
 
   // Set tensor to constant using NPP
   if (in_channels == 2 || in_channels == 3 || in_channels == 4) {

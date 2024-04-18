@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,10 +47,10 @@ PYBIND11_MODULE(_conditions, m) {
   m.attr("__version__") = "dev";
 #endif
 
-init_boolean(m);
-init_count(m);
-init_periodic(m);
-init_downstream_message_affordable(m);
-init_message_available(m);
+  init_boolean(m);
+  init_count(m);
+  init_periodic(m);
+  init_downstream_message_affordable(m);
+  init_message_available(m);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

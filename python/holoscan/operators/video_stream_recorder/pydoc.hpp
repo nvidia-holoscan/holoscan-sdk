@@ -24,30 +24,30 @@
 
 namespace holoscan::doc::VideoStreamRecorderOp {
 
-PYDOC(VideoStreamRecorderOp, R"doc(
-Operator class to record the video stream to a file.
-)doc")
-
 // PyVideoStreamRecorderOp Constructor
-PYDOC(VideoStreamRecorderOp_python, R"doc(
-Operator class to record the video stream to a file.
+PYDOC(VideoStreamRecorderOp, R"doc(
+Operator class to record a video stream to a file.
 
-Named inputs:
-    input: nvidia::gxf::Tensor
-        A message containing a video frame to serialize to disk.
+**==Named Inputs==**
+
+    input : nvidia::gxf::Tensor
+        A message containing a video frame to serialize to disk. The input tensor can be on either
+        the CPU or GPU. This data location will be recorded as part of the metadata serialized to
+        disk and if the data is later read back in via `VideoStreamReplayerOp`, the tensor output
+        of that operator will be on the same device (CPU or GPU).
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
+fragment : holoscan.core.Fragment (constructor only)
     The fragment that the operator belongs to.
 directory : str
     Directory path for storing files.
 basename : str
     User specified file name without extension.
 flush_on_tick : bool, optional
-    Flushes output buffer on every tick when ``True``.
-name : str, optional
-    The name of the operator.
+    Flushes output buffer on every tick when ``True``. Default value is ``False``.
+name : str, optional (constructor only)
+    The name of the operator. Default value is ``"video_stream_recorder"``.
 )doc")
 
 PYDOC(initialize, R"doc(

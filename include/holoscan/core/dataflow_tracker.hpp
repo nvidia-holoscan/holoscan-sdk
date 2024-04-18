@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -252,7 +252,7 @@ class DataFlowTracker {
 
   uint64_t num_last_messages_to_discard_ =
       kDefaultNumLastMessagesToDiscard;  ///< The number of messages to discard at the end of the
-                                      ///< execution of an application graph.
+                                         ///< execution of an application graph.
 
   bool is_file_logging_enabled_ = false;  ///< The variable to indicate if file logging is enabled.
   std::string logger_filename_;           ///< The name of the log file.

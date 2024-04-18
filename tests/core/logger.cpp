@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 
+#include <common/logger/spdlog_logger.hpp>
 #include <holoscan/holoscan.hpp>
 #include "../config.hpp"
 
@@ -46,9 +47,6 @@ TEST(Logger, TestLoggingPattern) {
 
   testing::internal::CaptureStderr();
   HOLOSCAN_LOG_INFO("my_message");
-
-  // can explicitly flush the log (not required for this test case)
-  Logger::flush();
 
   // test that the specified pattern includes the thread, but omits the message
   std::string log_output = testing::internal::GetCapturedStderr();
@@ -144,33 +142,6 @@ TEST(Logger, TestDefaultLogPattern) {
     setenv("HOLOSCAN_LOG_FORMAT", env_format, 1);
   } else {
     unsetenv("HOLOSCAN_LOG_FORMAT");
-  }
-}
-
-TEST(Logger, TestLoggingFlushLevel) {
-  auto default_level = Logger::flush_level();
-
-  Logger::flush_on(LogLevel::WARN);
-  EXPECT_EQ(Logger::flush_level(), LogLevel::WARN);
-
-  Logger::flush_on(default_level);
-}
-
-TEST(Logger, TestLoggingBacktrace) {
-  bool default_backtrace = Logger::should_backtrace();
-
-  Logger::enable_backtrace(32);
-  EXPECT_TRUE(Logger::should_backtrace());
-
-  Logger::disable_backtrace();
-  EXPECT_FALSE(Logger::should_backtrace());
-
-  Logger::dump_backtrace();
-
-  if (default_backtrace) {
-    Logger::enable_backtrace(32);
-  } else {
-    Logger::disable_backtrace();
   }
 }
 
@@ -418,6 +389,135 @@ TEST(Logger, TestDefaultLogLevel) {
   } else {
     unsetenv("HOLOSCAN_LOG_LEVEL");
   }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Test cases for SpdlogLogger
+////////////////////////////////////////////////////////////////////////////////
+
+namespace {
+constexpr const char* kLogTestString = "Test log message";
+constexpr const char* kLogFilePath = "/tmp/test_log_file";
+}  // namespace
+
+class MockSpdlogLogger : public nvidia::logger::SpdlogLogger {
+ public:
+  explicit MockSpdlogLogger(const char* name) : SpdlogLogger(name) {}
+
+  static std::shared_ptr<MockSpdlogLogger> create() {
+    return std::make_shared<MockSpdlogLogger>("mock_logger");
+  }
+};
+
+class RedirectLogTest : public ::testing::Test {
+ protected:
+  void SetUp() override { file_ = fopen(kLogFilePath, "wr"); }
+
+  void TearDown() override {
+    // Close the file
+    fclose(file_);
+  }
+
+  std::string get_file_content() {
+    // Read the file content from kLogFilePath
+    std::string file_content;
+    std::ifstream file;
+    file.open(kLogFilePath);
+    getline(file, file_content);
+    file.close();
+    return file_content;
+  }
+
+  std::FILE* file_ = nullptr;
+};
+
+TEST_F(RedirectLogTest, Trace) {
+  auto logger = MockSpdlogLogger::create();
+
+  logger->redirect(HOLOSCAN_LOG_LEVEL_TRACE, file_);
+  logger->level(HOLOSCAN_LOG_LEVEL_TRACE);
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_TRACE, kLogTestString);
+  std::string file_content = get_file_content();
+
+  EXPECT_NE(file_content.find(std::string(kLogTestString)), std::string::npos) << file_content;
+  EXPECT_NE(file_content.find(std::string("trace")), std::string::npos) << file_content;
+}
+
+TEST_F(RedirectLogTest, Debug) {
+  auto logger = MockSpdlogLogger::create();
+
+  logger->redirect(HOLOSCAN_LOG_LEVEL_DEBUG, file_);
+  logger->level(HOLOSCAN_LOG_LEVEL_DEBUG);
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_DEBUG, kLogTestString);
+  // Log info message
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_INFO, kLogTestString);
+  std::string file_content = get_file_content();
+
+  EXPECT_NE(file_content.find(std::string(kLogTestString)), std::string::npos) << file_content;
+  EXPECT_NE(file_content.find(std::string("debug")), std::string::npos) << file_content;
+  // Info log message should not be written to the file
+  EXPECT_EQ(file_content.find(std::string("info")), std::string::npos) << file_content;
+}
+
+TEST_F(RedirectLogTest, Info) {
+  auto logger = MockSpdlogLogger::create();
+
+  logger->redirect(HOLOSCAN_LOG_LEVEL_INFO, file_);
+  logger->level(HOLOSCAN_LOG_LEVEL_INFO);
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_INFO, kLogTestString);
+  std::string file_content = get_file_content();
+
+  EXPECT_NE(file_content.find(std::string(kLogTestString)), std::string::npos) << file_content;
+  EXPECT_NE(file_content.find(std::string("info")), std::string::npos) << file_content;
+}
+
+TEST_F(RedirectLogTest, Warn) {
+  auto logger = MockSpdlogLogger::create();
+
+  logger->redirect(HOLOSCAN_LOG_LEVEL_WARN, file_);
+  logger->level(HOLOSCAN_LOG_LEVEL_WARN);
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_WARN, kLogTestString);
+  std::string file_content = get_file_content();
+
+  EXPECT_NE(file_content.find(std::string(kLogTestString)), std::string::npos) << file_content;
+  EXPECT_NE(file_content.find(std::string("warn")), std::string::npos) << file_content;
+}
+
+TEST_F(RedirectLogTest, Error) {
+  auto logger = MockSpdlogLogger::create();
+
+  logger->redirect(HOLOSCAN_LOG_LEVEL_ERROR, file_);
+  logger->level(HOLOSCAN_LOG_LEVEL_ERROR);
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_ERROR, kLogTestString);
+  std::string file_content = get_file_content();
+
+  EXPECT_NE(file_content.find(std::string(kLogTestString)), std::string::npos) << file_content;
+  EXPECT_NE(file_content.find(std::string("error")), std::string::npos) << file_content;
+}
+
+TEST_F(RedirectLogTest, Critical) {
+  auto logger = MockSpdlogLogger::create();
+
+  logger->redirect(HOLOSCAN_LOG_LEVEL_CRITICAL, file_);
+  logger->level(HOLOSCAN_LOG_LEVEL_CRITICAL);
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_CRITICAL, kLogTestString);
+  std::string file_content = get_file_content();
+
+  EXPECT_NE(file_content.find(std::string(kLogTestString)), std::string::npos) << file_content;
+  EXPECT_NE(file_content.find(std::string("critical")), std::string::npos) << file_content;
+}
+
+TEST_F(RedirectLogTest, NullPointer) {
+  auto logger = MockSpdlogLogger::create();
+
+  logger->redirect(HOLOSCAN_LOG_LEVEL_CRITICAL, nullptr);
+  logger->level(HOLOSCAN_LOG_LEVEL_CRITICAL);
+  logger->log(__FILE__, __LINE__, "test", HOLOSCAN_LOG_LEVEL_CRITICAL, kLogTestString);
+  std::string file_content = get_file_content();
+
+  // No log message should be written to the file
+  EXPECT_EQ(file_content.find(std::string(kLogTestString)), std::string::npos) << file_content;
+  EXPECT_EQ(file_content.find(std::string("critical")), std::string::npos) << file_content;
 }
 
 }  // namespace holoscan

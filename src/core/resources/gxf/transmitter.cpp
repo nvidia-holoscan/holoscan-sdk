@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,5 +23,9 @@ namespace holoscan {
 
 Transmitter::Transmitter(const std::string& name, nvidia::gxf::Transmitter* component)
     : GXFResource(name, component) {}
+
+nvidia::gxf::Transmitter* Transmitter::get() const {
+  return static_cast<nvidia::gxf::Transmitter*>(gxf_cptr_);
+}
 
 }  // namespace holoscan

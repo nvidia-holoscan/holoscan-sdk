@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -93,59 +93,13 @@
 namespace holoscan::gxf {
 
 /**
- * @brief Add a connection between two components.
- *
- * @param context The GXF context.
- * @param source_cid The source component ID.
- * @param target_cid The target component ID.
- * @return The result code.
- */
-inline gxf_result_t add_connection(gxf_context_t context, gxf_uid_t source_cid,
-                                   gxf_uid_t target_cid) {
-  gxf_result_t code;
-  gxf_uid_t connect_eid;
-  const GxfEntityCreateInfo connect_entity_create_info = {nullptr, GXF_ENTITY_CREATE_PROGRAM_BIT};
-  HOLOSCAN_GXF_CALL(GxfCreateEntity(context, &connect_entity_create_info, &connect_eid));
-
-  gxf_tid_t connect_tid;
-  HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, "nvidia::gxf::Connection", &connect_tid));
-  gxf_uid_t connect_cid;
-  HOLOSCAN_GXF_CALL(GxfComponentAdd(context, connect_eid, connect_tid, "", &connect_cid));
-
-  HOLOSCAN_GXF_CALL(GxfParameterSetHandle(context, connect_cid, "source", source_cid));
-  code = GxfParameterSetHandle(context, connect_cid, "target", target_cid);
-  return code;
-}
-
-/**
- * @brief Create a GXF Component.
- *
- * @param context The GXF context.
- * @param component_type_name The GXF Component type.
- * @param component_name The name of the component.
- * @param eid The entity ID to which the component will be added.
- * @param cid The newly created component's ID will be returned here.
- */
-inline void create_gxf_component(gxf_context_t context, const char* component_type_name,
-                                 const char* component_name, gxf_uid_t eid, gxf_uid_t* cid) {
-  gxf_tid_t tid;
-  HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, component_type_name, &tid));
-
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentAdd(context, eid, tid, component_name, cid));
-}
-
-/**
  * @brief Get the entity ID of the component.
  *
  * @param context The GXF context.
  * @param cid The component ID.
  * @return The result code.
  */
-inline gxf_uid_t get_component_eid(gxf_context_t context, gxf_uid_t cid) {
-  gxf_uid_t eid;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentEntity(context, cid, &eid));
-  return eid;
-}
+gxf_uid_t get_component_eid(gxf_context_t context, gxf_uid_t cid);
 
 /**
  * @brief Get the full component name of the component.
@@ -154,18 +108,7 @@ inline gxf_uid_t get_component_eid(gxf_context_t context, gxf_uid_t cid) {
  * @param cid The component ID.
  * @return The full component name.
  */
-inline std::string get_full_component_name(gxf_context_t context, gxf_uid_t cid) {
-  const char* cname;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(context, cid, &cname));
-  gxf_uid_t eid;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentEntity(context, cid, &eid));
-  const char* ename;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(context, eid, &ename));
-
-  std::stringstream sstream;
-  sstream << ename << "/" << cname;
-  return sstream.str();
-}
+std::string get_full_component_name(gxf_context_t context, gxf_uid_t cid);
 
 /**
  * @brief Create a name from the prefix and the index.
@@ -174,11 +117,7 @@ inline std::string get_full_component_name(gxf_context_t context, gxf_uid_t cid)
  * @param index The index.
  * @return The created name (`<prefix>_<index>`).
  */
-inline std::string create_name(const char* prefix, int index) {
-  std::stringstream sstream;
-  sstream << prefix << "_" << index;
-  return sstream.str();
-}
+std::string create_name(const char* prefix, int index);
 
 /**
  * @brief Create a name from the prefix and the name.
@@ -187,11 +126,7 @@ inline std::string create_name(const char* prefix, int index) {
  * @param name The name.
  * @return The created name (`<prefix>_<name>`).
  */
-inline std::string create_name(const char* prefix, const std::string& name) {
-  std::stringstream sstream;
-  sstream << prefix << "_" << name;
-  return sstream.str();
-}
+std::string create_name(const char* prefix, const std::string& name);
 
 /**
  * @brief Return a component ID from the handle name.
@@ -316,51 +251,11 @@ inline gxf_uid_t find_component_handle(gxf_context_t context, gxf_uid_t componen
  * @return `true` if a component matching the criteria is found, `false` otherwise.
  * @see GxfComponentFind
  */
-inline bool has_component(gxf_context_t context, gxf_uid_t eid, gxf_tid_t tid = GxfTidNull(),
-                          const char* name = nullptr, int32_t* offset = nullptr,
-                          gxf_uid_t* cid = nullptr) {
-  gxf_uid_t temp_cid = 0;
-  auto result = GxfComponentFind(context, eid, tid, name, offset, cid ? cid : &temp_cid);
-  if (result == GXF_SUCCESS) {
-    return true;
-  } else {
-    return false;
-  }
-}
+bool has_component(gxf_context_t context, gxf_uid_t eid, gxf_tid_t tid = GxfTidNull(),
+                   const char* name = nullptr, int32_t* offset = nullptr, gxf_uid_t* cid = nullptr);
 
-inline gxf_uid_t add_entity_group(void* context, std::string name) {
-  gxf_uid_t entity_group_gid = kNullUid;
-  HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntityGroup(context, name.c_str(), &entity_group_gid));
-  return entity_group_gid;
-}
-
-inline std::pair<gxf_tid_t, gxf_uid_t> create_gpu_device_entity(void* context,
-                                                                std::string entity_name) {
-  // Get GPU device type id
-  gxf_tid_t device_tid = GxfTidNull();
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(context, "nvidia::gxf::GPUDevice", &device_tid));
-
-  // Create a GPUDevice entity
-  gxf_uid_t device_eid = kNullUid;
-  GxfEntityCreateInfo entity_create_info = {entity_name.c_str(), GXF_ENTITY_CREATE_PROGRAM_BIT};
-  HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntity(context, &entity_create_info, &device_eid));
-  GXF_ASSERT_NE(device_eid, kNullUid);
-  return std::make_pair(device_tid, device_eid);
-}
-
-inline gxf_uid_t create_gpu_device_component(void* context, gxf_tid_t device_tid,
-                                             gxf_uid_t device_eid, std::string component_name,
-                                             int32_t dev_id = 0) {
-  // Create the GPU device component
-  gxf_uid_t device_cid = kNullUid;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfComponentAdd(context, device_eid, device_tid, component_name.c_str(), &device_cid));
-  GXF_ASSERT_NE(device_cid, kNullUid);
-
-  // set the device ID parameter
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterSetInt32(context, device_cid, "dev_id", dev_id));
-  return device_cid;
-}
+/// Create a GXF entity group with the specified name
+gxf_uid_t add_entity_group(void* context, std::string name);
 
 }  // namespace holoscan::gxf
 

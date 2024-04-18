@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +49,6 @@ class PyDoubleBufferReceiver : public DoubleBufferReceiver {
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_.get());
-    initialize();
   }
 };
 
@@ -72,7 +71,6 @@ class PyUcxReceiver : public UcxReceiver {
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_.get());
-    initialize();
   }
 };
 

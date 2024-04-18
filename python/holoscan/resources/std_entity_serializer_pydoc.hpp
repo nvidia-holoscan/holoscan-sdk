@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,15 +24,15 @@
 
 namespace holoscan::doc {
 
-namespace VideoStreamSerializer {
+namespace StdEntitySerializer {
 
-PYDOC(VideoStreamSerializer, R"doc(
-Serializer for video streams.
+PYDOC(StdEntitySerializer, R"doc(
+Default serializer for GXF entities.
 )doc")
 
 // Constructor
-PYDOC(VideoStreamSerializer_python, R"doc(
-Serializer for video streams.
+PYDOC(StdEntitySerializer_python, R"doc(
+Default serializer for GXF entities.
 
 Parameters
 ----------
@@ -67,7 +67,7 @@ This method is called only once when the resource is created for the first
 time, and uses a light-weight initialization.
 )doc")
 
-}  // namespace VideoStreamSerializer
+}  // namespace StdEntitySerializer
 
 }  // namespace holoscan::doc
 

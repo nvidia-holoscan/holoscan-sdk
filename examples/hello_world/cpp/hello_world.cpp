@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,8 +26,7 @@ class HelloWorldOp : public Operator {
 
   HelloWorldOp() = default;
 
-  void setup(OperatorSpec& spec) override {
-  }
+  void setup(OperatorSpec& spec) override {}
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
@@ -38,7 +37,6 @@ class HelloWorldOp : public Operator {
 };
 
 }  // namespace holoscan::ops
-
 
 class HelloWorldApp : public holoscan::Application {
  public:

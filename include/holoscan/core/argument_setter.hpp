@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -266,6 +266,7 @@ class ArgumentSetter {
                           typename holoscan::type_info<typeT>::derived_type>(arg_value);
                       // Initialize the condition in case the condition created by
                       // Fragment::make_condition<T>() is added to the operator as an argument.
+                      // TODO: would like this to be assigned to the same entity as the operator
                       if (converted_value) { converted_value->initialize(); }
 
                       param = converted_value;
@@ -281,6 +282,7 @@ class ArgumentSetter {
                           typename holoscan::type_info<typeT>::derived_type>(arg_value);
                       // Initialize the resource in case the resource created by
                       // Fragment::make_resource<T>() is added to the operator as an argument.
+                      // TODO: would like this to be assigned to the same entity as the operator
                       if (converted_value) { converted_value->initialize(); }
 
                       param = converted_value;
@@ -389,6 +391,7 @@ class ArgumentSetter {
 
                         // Initialize the condition in case the condition created by
                         // Fragment::make_condition<T>() is added to the operator as an argument.
+                        // TODO: would like this to be assigned to the same entity as the operator
                         if (condition) { condition->initialize(); }
 
                         converted_value.push_back(condition);
@@ -411,6 +414,7 @@ class ArgumentSetter {
 
                         // Initialize the resource in case the resource created by
                         // Fragment::make_resource<T>() is added to the operator as an argument.
+                        // TODO: would like this to be assigned to the same entity as the operator
                         if (resource) { resource->initialize(); }
 
                         converted_value.push_back(resource);

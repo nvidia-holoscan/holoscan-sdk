@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,6 +61,16 @@ class GXFScheduler : public holoscan::Scheduler, public GXFComponent {
    * @return The GXF clock pointer used by the scheduler.
    */
   virtual nvidia::gxf::Clock* gxf_clock();
+
+ protected:
+  // Make Fragment a friend class so it can call reset_graph_entities
+  friend class holoscan::Fragment;
+
+  /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
+  void set_parameters() override;
+
+  /// Reset the GXF GraphEntity of all components associated with the scheduler
+  void reset_graph_entities() override;
 };
 
 }  // namespace holoscan::gxf

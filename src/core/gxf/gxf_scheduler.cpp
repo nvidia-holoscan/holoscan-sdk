@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #include <gxf/core/gxf.h>
 #include <gxf/std/clock.hpp>
 
+#include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
 
 namespace holoscan::gxf {
@@ -30,6 +31,24 @@ nvidia::gxf::Clock* GXFScheduler::gxf_clock() {
     HOLOSCAN_LOG_ERROR("GXFScheduler clock is not set");
     return nullptr;
   }
+}
+
+void GXFScheduler::set_parameters() {
+  update_params_from_args();
+
+  // Set Handler parameters
+  for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
+}
+
+void GXFScheduler::reset_graph_entities() {
+  HOLOSCAN_LOG_TRACE(
+      "GXFScheduler '{}' of type '{}'::reset_graph_entities", gxf_cname_, gxf_typename());
+
+  // Reset GraphEntity of resources_ and spec_->args() of Scheduler
+  Scheduler::reset_graph_entities();
+
+  // Reset the GraphEntity of this GXFScheduler itself
+  reset_gxf_graph_entity();
 }
 
 }  // namespace holoscan::gxf

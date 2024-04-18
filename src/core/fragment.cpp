@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,8 @@
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/gxf/gxf_network_context.hpp"
+#include "holoscan/core/gxf/gxf_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 
 using std::string_literals::operator""s;
@@ -165,9 +167,7 @@ std::unordered_set<std::string> nested_yaml_map_keys_(YAML::Node yaml_node) {
     keys.emplace(key);
     if (value.IsMap()) {
       std::unordered_set<std::string> inner_keys = nested_yaml_map_keys_(it->second);
-      for (const auto& inner_key : inner_keys) {
-        keys.emplace(key + "."s + inner_key);
-      }
+      for (const auto& inner_key : inner_keys) { keys.emplace(key + "."s + inner_key); }
     }
   }
   return keys;
@@ -182,9 +182,7 @@ std::unordered_set<std::string> Fragment::config_keys() {
   for (const auto& yaml_node : yaml_nodes) {
     if (yaml_node.IsMap()) {
       auto node_keys = nested_yaml_map_keys_(yaml_node);
-      for (const auto& k : node_keys) {
-        all_keys.insert(k);
-      }
+      for (const auto& k : node_keys) { all_keys.insert(k); }
     }
   }
   return all_keys;
@@ -492,9 +490,9 @@ void Fragment::compose_graph() {
   // Protect against the case where no add_operator or add_flow calls were made
   if (!graph_) {
     HOLOSCAN_LOG_ERROR(fmt::format(
-      "Fragment '{}' does not have any operators. Please check that there is at least one call to"
-      "`add_operator` or `add_flow` during `Fragment::compose`.",
-      name()));
+        "Fragment '{}' does not have any operators. Please check that there is at least one call to"
+        "`add_operator` or `add_flow` during `Fragment::compose`.",
+        name()));
     graph();
   }
 }
@@ -538,6 +536,17 @@ FragmentPortMap Fragment::port_info() const {
         op->name(), std::move(input_names), std::move(output_names), std::move(receiver_names));
   }
   return fragment_port_info;
+}
+
+void Fragment::reset_graph_entities() {
+  // Explicitly clean up graph entities. This is necessary for Python apps, because the Python
+  // object lifetime may outlive the Application runtime and these must be released prior to the
+  // call to `GxfContextDestroy` to avoid a segfault in the `nvidia::gxf::GraphEntity` destructor.
+  for (auto& op : graph().get_nodes()) { op->reset_graph_entities(); }
+  auto gxf_sch = std::dynamic_pointer_cast<gxf::GXFScheduler>(scheduler());
+  if (gxf_sch) { gxf_sch->reset_graph_entities(); }
+  auto gxf_network_context = std::dynamic_pointer_cast<gxf::GXFNetworkContext>(network_context());
+  if (gxf_network_context) { gxf_network_context->reset_graph_entities(); }
 }
 
 }  // namespace holoscan

@@ -1245,9 +1245,7 @@ void Vulkan::Impl::begin_transfer_pass() {
 }
 
 void Vulkan::Impl::end_transfer_pass() {
-  if (transfer_jobs_.empty()) {
-    throw std::runtime_error("Not in transfer pass.");
-  }
+  if (transfer_jobs_.empty()) { throw std::runtime_error("Not in transfer pass."); }
 
   TransferJob& transfer_job = transfer_jobs_.back();
 

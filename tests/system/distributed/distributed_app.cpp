@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,10 +19,12 @@
 
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
 
+#include "../env_wrapper.hpp"
 #include "utility_apps.hpp"
 namespace holoscan {
 
@@ -130,13 +132,12 @@ TEST(DistributedApp, TestUCXConnectionApp2) {
 TEST(DistributedApp, TestUCXLinearPipelineApp) {
   auto app = make_application<UCXLinearPipelineApp>();
 
-  // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 20") != std::string::npos);
 }
 
 TEST(DistributedApp, TestUCXBroadcastApp) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -242,8 +242,8 @@ class MessageLabel {
   /**
    * @brief Convert the MessageLabel to a string.
    *
-   * @return std::string The formatted string representing the MessageLabel with all the paths and the
-   * Operators with their publish and receive timestamps.
+   * @return std::string The formatted string representing the MessageLabel with all the paths and
+   * the Operators with their publish and receive timestamps.
    */
   std::string to_string() const;
 

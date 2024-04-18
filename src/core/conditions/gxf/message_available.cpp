@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +41,22 @@ void MessageAvailableCondition::setup(ComponentSpec& spec) {
       "stage does not exceed this count. It can for example be used in combination with codelets "
       "which do not clear the front stage in every tick.",
       ParameterFlag::kOptional);
+}
+
+nvidia::gxf::MessageAvailableSchedulingTerm* MessageAvailableCondition::get() const {
+  return static_cast<nvidia::gxf::MessageAvailableSchedulingTerm*>(gxf_cptr_);
+}
+
+void MessageAvailableCondition::min_size(uint64_t min_size) {
+  auto cond = get();
+  if (cond) { cond->setMinSize(min_size); }
+  min_size_ = min_size;
+}
+
+void MessageAvailableCondition::front_stage_max_size(size_t front_stage_max_size) {
+  auto cond = get();
+  if (cond) { cond->setFrontStageMaxSize(front_stage_max_size); }
+  front_stage_max_size_ = front_stage_max_size;
 }
 
 }  // namespace holoscan

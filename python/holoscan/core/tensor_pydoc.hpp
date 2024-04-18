@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,6 +57,50 @@ Base class representing a Holoscan Tensor.
 
 PYDOC(as_tensor, R"doc(
 Convert a Python object to a Tensor.
+
+Parameters
+==========
+object : array-like
+    An object such as a NumPy array, CuPy array, PyTorch tensor, etc. supporting one of the
+    supported protocols.
+
+Returns
+=======
+holocan.Tensor
+
+Notes
+=====
+For device arrays, this method first attempts to convert via ``__cuda_array_interface__`` [1]_,
+but falls back to the DLPack protocol [2]_, [3]_ if it is unavailable.
+
+For host arrays, this method first attempts to convert via the DLPack protocol, but falls back to
+the ``__array_interface__`` [3]_ if it is unavailable.
+
+References
+==========
+.. [1] https://numpy.org/doc/stable/reference/arrays.interface.html
+.. [2] https://dmlc.github.io/dlpack/latest/python_spec.html
+.. [3] https://data-apis.org/array-api/2022.12/API_specification/generated/array_api.array.__dlpack__.html
+.. [4] https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html
+)doc")
+
+PYDOC(from_dlpack, R"doc(
+Convert a Python object to a Tensor via the DLPack protocol [1]_, [2]_.
+
+Parameters
+==========
+object : array-like
+    An object such as a NumPy array, CuPy array, PyTorch tensor, etc. supporting one of the
+    supported protocols.
+
+Returns
+=======
+holocan.Tensor
+
+References
+==========
+.. [1] https://dmlc.github.io/dlpack/latest/python_spec.html
+.. [2] https://data-apis.org/array-api/2022.12/API_specification/generated/array_api.array.__dlpack__.html
 )doc")
 
 PYDOC(py_dlpack, R"doc(

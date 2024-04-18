@@ -75,6 +75,9 @@ if(HOLOSCAN_BUILD_TESTS)
                  holoviz_geometry_test.cpp
   )
 
+  target_include_directories(holoviz_geometry_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+
   target_compile_definitions(holoviz_geometry_test
     PRIVATE RECORD_OUTPUT RECORDING_DIR="${RECORDING_DIR}"
     PRIVATE SOURCE_VIDEO_BASENAME="${SOURCE_VIDEO_BASENAME}"

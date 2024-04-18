@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import logging
@@ -25,7 +25,6 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from ..common.constants import Constants, DefaultValues
 from ..common.dockerutils import build_docker_image, create_and_get_builder, docker_export_tarball
-from ..common.enum_types import SdkType
 from ..common.exceptions import WrongApplicationPathError
 from .parameters import PackageBuildParameters, PlatformBuildResults, PlatformParameters
 
@@ -70,7 +69,6 @@ class BuilderBase:
             PlatformBuildResults: build results
         """
         self._copy_supporting_files(platform_parameters)
-        self._copy_health_probe(platform_parameters)
         docker_file_path = self._write_dockerfile(platform_parameters)
 
         return self._build_internal(docker_file_path, platform_parameters)
@@ -125,17 +123,10 @@ class BuilderBase:
             build_result.docker_tag = platform_parameters.tag
             export_to_tar_ball = self._build_parameters.tarball_output is not None
         else:
-            if shutil.which("update-binfmts") is None:
-                build_result.succeeded = False
-                build_result.error = (
-                    "Skipped due to missing QEMU and its dependencies. "
-                    "Please follow the link to install QEMU "
-                    "https://docs.nvidia.com/datacenter/cloud-native/playground/x-arch.html#installing-qemu"  # noqa: E501
-                )
-                return build_result
             if self._build_parameters.tarball_output is not None:
                 builds["output"] = {
-                    "type": "oci",
+                    # type=oci cannot be loaded by docker: https://github.com/docker/buildx/issues/59
+                    "type": "docker",
                     "dest": build_result.tarball_filenaem,
                 }
             else:
@@ -261,11 +252,6 @@ Building image for:                 {platform_parameters.platform.value}
                         target_model_path, self._build_parameters.models[model].name
                     )
                     shutil.copy(self._build_parameters.models[model], target_model_path)
-
-    def _copy_health_probe(self, platform_parameters: PlatformParameters):
-        if self._build_parameters.sdk is SdkType.Holoscan:
-            target_path = os.path.join(self._temp_dir, "grpc_health_probe")
-            shutil.copy2(platform_parameters.health_probe, target_path)
 
     def _copy_docs(self):
         """Copy user documentations to temporary location"""

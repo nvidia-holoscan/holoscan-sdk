@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -127,8 +127,7 @@ vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_devic
   vk::DisplayPropertiesKHR selected_display = display_properties[0];
   for (auto&& displayProperty : display_properties) {
     HOLOSCAN_LOG_INFO("{}", displayProperty.displayName);
-    if (std::string(displayProperty.displayName).find(impl_->display_name_) !=
-                           std::string::npos) {
+    if (std::string(displayProperty.displayName).find(impl_->display_name_) != std::string::npos) {
       selected_display = displayProperty;
     }
   }

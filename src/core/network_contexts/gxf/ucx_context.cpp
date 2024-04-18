@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,10 @@ void UcxContext::setup(ComponentSpec& spec) {
   // spec.resource(gpu_device_, "Optional GPU device resource");
 }
 
+nvidia::gxf::UcxContext* UcxContext::get() const {
+  return static_cast<nvidia::gxf::UcxContext*>(gxf_cptr_);
+}
+
 void UcxContext::initialize() {
   HOLOSCAN_LOG_DEBUG("UcxContext::initialize");
   // Set up prerequisite parameters before calling GXFNetworkContext::initialize()
@@ -51,7 +55,8 @@ void UcxContext::initialize() {
     // fragment that sends the message and the sequence_number is not synchronized across
     // fragments.
     auto entity_serializer = frag->make_resource<holoscan::UcxEntitySerializer>(
-        "ucx_entity_serializer", Arg("verbose_warning") = false);
+        "ucx_context_ucxentity_serializer", Arg("verbose_warning") = false);
+    entity_serializer->gxf_cname(entity_serializer->name().c_str());
 
     // Note: Activation sequence of entities in GXF:
     // 1. System entities

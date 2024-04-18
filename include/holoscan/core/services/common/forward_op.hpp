@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,16 @@ namespace holoscan::ops {
  *
  * The ForwardOp receives data (from the 'in' input port) and forwards it to the next
  * operator (through the 'out' output port).
+ *
+ * ==Named Inputs==
+ *
+ * - **in** : gxf::Entity
+ *   - The input data to forward.
+ *
+ * ==Named Outputs==
+ *
+ * - **out** : gxf::Entity
+ *   - The forwarded data.
  */
 class ForwardOp : public holoscan::Operator {
  public:

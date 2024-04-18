@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@
 #include <cstdlib>  // for rand()
 #include <cstring>  // for memset()
 #include <iostream>
-#include <memory>  // for unique_ptr
+#include <memory>   // for unique_ptr
 #include <sstream>  // for istringstream
 #include <string>
 #include <unordered_set>

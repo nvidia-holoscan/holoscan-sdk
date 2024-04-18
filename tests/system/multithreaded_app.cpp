@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,7 @@ TEST(MultithreadedApp, TestSendingTensorToMultipleOperators) {
 
   EnvVarWrapper wrapper({
       std::make_pair("HOLOSCAN_LOG_LEVEL", "DEBUG"),
+      std::make_pair("HOLOSCAN_EXECUTOR_LOG_LEVEL", "INFO"),  // quiet multi_thread_scheduler.cpp
   });
 
   auto app = make_application<PingMultithreadApp>();

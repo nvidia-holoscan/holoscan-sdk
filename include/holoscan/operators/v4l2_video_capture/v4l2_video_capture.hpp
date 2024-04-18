@@ -33,18 +33,44 @@ namespace holoscan::ops {
  *
  * Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
  * - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
- * pixel format will be automatically selected. However, only `AB24` and `YUYV` are then supported.
- * If a pixel format is specified in the yaml file, then this format will be used. However, note
- * that the operator then expects that this format can be encoded as RGBA32. If not, the behaviour
- * is undefined.
+ *   pixel format will be automatically selected. However, only `AB24` and `YUYV` are then
+ *   supported.
+ *   If a pixel format is specified in the yaml file, then this format will be used. However, note
+ *   that the operator then expects that this format can be encoded as RGBA32. If not, the behavior
+ *   is undefined.
  * - Output stream is on host. Always RGBA32 at this time.
  *
  * Use `holoscan::ops::FormatConverterOp` to move data from the host to a GPU device.
  *
- * **Named outputs:**
- *     - *signal*: `nvidia::gxf::VideoBuffer`
- *         - Emits a message containing a video buffer on the host with format
- *         GXF_VIDEO_FORMAT_RGBA.
+ * ==Named Outputs==
+ *
+ * - **signal** : `nvidia::gxf::VideoBuffer`
+ *   - A message containing a video buffer on the host with format
+ *     GXF_VIDEO_FORMAT_RGBA.
+ *
+ * ==Parameters==
+ *
+ * - **allocator**: Memory allocator to use for the output.
+ * - **device**: The device to target (e.g. "/dev/video0" for device 0).
+ *   Default value is `"/dev/video0"`.
+ * - **width**: Width of the video stream. Optional (default: `0`).
+ * - **height**: Height of the video stream. Optional (default: `0`).
+ * - **num_buffers**: Number of V4L2 buffers to use. Optional (default: `4`).
+ * - **pixel_format**: Video stream pixel format (little endian four character code (fourcc)).
+ *   Default value is `"auto"`.
+ * - **exposure_time**: Exposure time of the camera sensor in multiples of 100 μs (e.g. setting
+ *   exposure_time to 100 is 10 ms). Optional (default: auto exposure, or camera sensor default).
+ *   Use `v4l2-ctl -d /dev/<your_device> -L` for a range of values supported by your device.
+ *   - When not set by the user, V4L2_CID_EXPOSURE_AUTO is set to V4L2_EXPOSURE_AUTO, or to
+ *     V4L2_EXPOSURE_APERTURE_PRIORITY if the former is not supported.
+ *   - When set by the user, V4L2_CID_EXPOSURE_AUTO is set to V4L2_EXPOSURE_SHUTTER_PRIORITY, or to
+ *     V4L2_EXPOSURE_MANUAL if the former is not supported. The provided value is then used to set
+ *     V4L2_CID_EXPOSURE_ABSOLUTE.
+ * - **gain**: Gain of the camera sensor. Optional (default: auto gain, or camera sensor default).
+ *   Use `v4l2-ctl -d /dev/<your_device> -L` for a range of values supported by your device.
+ *   - When not set by the user, V4L2_CID_AUTOGAIN is set to false (if supported).
+ *   - When set by the user, V4L2_CID_AUTOGAIN is set to true (if supported). The provided value is
+ *     then used to set V4L2_CID_GAIN.
  */
 class V4L2VideoCaptureOp : public Operator {
  public:
@@ -68,12 +94,17 @@ class V4L2VideoCaptureOp : public Operator {
   Parameter<uint32_t> height_;
   Parameter<uint32_t> num_buffers_;
   Parameter<std::string> pixel_format_;
+  Parameter<uint32_t> exposure_time_;
+  Parameter<uint32_t> gain_;
 
   void v4l2_initialize();
   void v4l2_requestbuffers();
   void v4l2_check_formats();
   void v4l2_set_mode();
   void v4l2_set_formats();
+  bool v4l2_camera_supports_control(int cid, const char* control_name);
+  void v4l2_set_camera_control(v4l2_control control, const char* control_name, bool warn);
+  void v4l2_set_camera_settings();
   void v4l2_start();
   void v4l2_read_buffer(v4l2_buffer& buf);
 

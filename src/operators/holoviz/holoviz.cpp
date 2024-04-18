@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -811,6 +811,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   // information
   for (auto&& message : messages) {
     const auto tensors = message.findAll<nvidia::gxf::Tensor>();
+    HOLOSCAN_LOG_DEBUG("tensors.size()={}", tensors.value().size());
     for (auto&& tensor : tensors.value()) {
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(tensor->name());
@@ -832,6 +833,8 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       }
     }
     const auto video_buffers = message.findAll<nvidia::gxf::VideoBuffer>();
+    HOLOSCAN_LOG_DEBUG("video_buffers.size()={}", video_buffers.value().size());
+
     for (auto&& video_buffer : video_buffers.value()) {
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(video_buffer->name());
@@ -886,6 +889,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         // pick the first one with that name
         break;
       }
+
       // check for video if no tensor found
       maybe_input_video = message->get<nvidia::gxf::VideoBuffer>(input_spec.tensor_name_.c_str());
       if (maybe_input_video) {  // pick the first one with that name

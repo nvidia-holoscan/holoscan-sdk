@@ -10,6 +10,7 @@
                 "env": {
                     "PATH": "${env:HOME}/.local/bin:${env:PATH}",
                     "CUDACXX": "/usr/local/cuda/bin/nvcc",
+                    "CMAKE_BUILD_PARALLEL_LEVEL": "${env:CMAKE_BUILD_PARALLEL_LEVEL}",
                 }
             },
             "presentation": {

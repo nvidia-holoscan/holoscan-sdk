@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
 # limitations under the License.
 ---
 source:  # V4L2VideoCaptureOp
-  # | Input device.  On devkit, /dev/video0 is generally HDMI in
+  # | Input device. On Clara AGX or NVIDIA IGX devkits, /dev/video0 is generally the HDMI IN
   device: "/dev/video0"
 
   # | App will auto-select default width and height if not provided
@@ -26,6 +26,13 @@ source:  # V4L2VideoCaptureOp
 
   # | App will auto-select the default "pixel_format" for your device if not provided.
   # | See this app's readme file for details.
-  # pixel_format: "AR24"
+  # pixel_format: "AB24"
+
+  # | These properties might not be supported for all v4l2 nodes.
+  # | The app will attempt to do auto exposure and gain if not provided. If auto is not supported,
+  # | it will use the defaults defined by your device.
+  # | See this app's readme file for details.
+  # exposure_time: 500
+  # gain: 100
 
 visualizer:  # Holoviz

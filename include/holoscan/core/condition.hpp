@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,6 +94,9 @@
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
+
+// Forward declarations
+class Operator;
 
 enum class ConditionType {
   kNone,              ///< No condition
@@ -206,8 +209,12 @@ class Condition : public Component {
   YAML::Node to_yaml_node() const override;
 
  protected:
-  std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
-  bool is_initialized_ = false;          ///< Whether the condition is initialized.
+  // Add friend classes that can call reset_graph_entites
+  friend class holoscan::Operator;
+
+  using Component::reset_graph_entities;
+
+  bool is_initialized_ = false;  ///< Whether the condition is initialized.
 };
 
 }  // namespace holoscan

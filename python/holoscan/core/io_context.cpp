@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "../gxf/entity.hpp"
@@ -32,7 +33,6 @@
 #include "holoscan/core/expected.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 #include "io_context_pydoc.hpp"
 #include "tensor.hpp"    // for PyTensor
@@ -582,4 +582,15 @@ void init_io_context(py::module_& m) {
   // register a cloudpickle-based serializer for Python objects
   register_py_object_codec();
 }
+
+PyInputContext::PyInputContext(ExecutionContext* execution_context, Operator* op,
+                               std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs,
+                               py::object py_op)
+    : gxf::GXFInputContext::GXFInputContext(execution_context, op, inputs), py_op_(py_op) {}
+
+PyOutputContext::PyOutputContext(ExecutionContext* execution_context, Operator* op,
+                                 std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs,
+                                 py::object py_op)
+    : gxf::GXFOutputContext::GXFOutputContext(execution_context, op, outputs), py_op_(py_op) {}
+
 }  // namespace holoscan

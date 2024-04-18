@@ -21,22 +21,18 @@ import pytest
 
 from holoscan.cli.common.artifact_sources import ArtifactSources
 from holoscan.cli.common.enum_types import Arch, PlatformConfiguration
-from holoscan.cli.common.exceptions import InvalidSourceFileError
 
 
 class TestArtifactSource:
-    @pytest.fixture(autouse=True)
-    def _setup(self) -> None:
+    def _init(self) -> None:
         self._artifact_source = ArtifactSources()
-
-    def test_default_top_level_attributes(self):
-        _ = ArtifactSources()
-
-    def test_loads_sample(self):
         current_file_path = Path(__file__).parent.resolve()
-        source_file_sample = current_file_path / "../../../../holoscan/cli/package-source.json"
-        artifact_sources = ArtifactSources()
-        artifact_sources.load(source_file_sample)
+        source_file_sample = current_file_path / "./package-source.json"
+        self._artifact_source.load(str(source_file_sample))
+
+    def test_loads_from_edge(self, monkeypatch):
+        artifact_source = ArtifactSources()
+        artifact_source.download_manifest()
 
     def test_loads_invalid_file(self, monkeypatch):
         monkeypatch.setattr(Path, "read_text", lambda x: "{}")
@@ -44,11 +40,29 @@ class TestArtifactSource:
         source_file_sample = Path("some-bogus-file.json")
         artifact_sources = ArtifactSources()
 
-        with pytest.raises(InvalidSourceFileError):
-            artifact_sources.load(source_file_sample)
+        with pytest.raises(FileNotFoundError):
+            artifact_sources.load(str(source_file_sample))
 
-    def test_debian_package_zero_six_amd64_dgpu(self):
-        assert (
-            self._artifact_source.debian_packages("1.0.3", Arch.amd64, PlatformConfiguration.dGPU)
-            is not None
-        )
+    @pytest.mark.parametrize(
+        "arch,platform_config",
+        [
+            (Arch.amd64, PlatformConfiguration.dGPU),
+            (Arch.arm64, PlatformConfiguration.dGPU),
+            (Arch.arm64, PlatformConfiguration.iGPU),
+        ],
+    )
+    def test_debian_package(self, arch, platform_config):
+        self._init()
+        assert self._artifact_source.debian_packages("1.0.3", arch, platform_config) is not None
+
+    def test_base_images(self):
+        self._init()
+        assert self._artifact_source.base_images("1.0.3") is not None
+
+    def test_build_images(self):
+        self._init()
+        assert self._artifact_source.build_images("1.0.3") is not None
+
+    def test_health_probe(self):
+        self._init()
+        assert self._artifact_source.health_probe("1.0.3") is not None

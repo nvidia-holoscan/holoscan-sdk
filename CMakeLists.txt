@@ -160,6 +160,11 @@ if(HOLOSCAN_BUILD_GXF_EXTENSIONS)
 endif()
 
 # ##############################################################################
+# # Configure scripts
+# ##############################################################################
+add_subdirectory(scripts)
+
+# ##############################################################################
 # # Package project
 # ##############################################################################
 
@@ -192,6 +197,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_video_stream_recorder
     op_video_stream_replayer
     op_v4l2
+    spdlog_logger
 )
 
 if(HOLOSCAN_BUILD_LIBTORCH)
@@ -250,17 +256,37 @@ install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/version_co
 
 # Install GXF
 install(DIRECTORY
-  ${GXF_core_INCLUDE_DIR}/common
-  ${GXF_core_INCLUDE_DIR}/gxf/core
-  ${GXF_core_INCLUDE_DIR}/gxf/cuda
-  ${GXF_core_INCLUDE_DIR}/gxf/multimedia
-  ${GXF_core_INCLUDE_DIR}/gxf/network
-  ${GXF_core_INCLUDE_DIR}/gxf/npp
-  ${GXF_core_INCLUDE_DIR}/gxf/serialization
-  ${GXF_core_INCLUDE_DIR}/gxf/std
+  ${GXF_INCLUDE_DIR}/common
+  ${GXF_INCLUDE_DIR}/gxf/app
+  ${GXF_INCLUDE_DIR}/gxf/core
+  ${GXF_INCLUDE_DIR}/gxf/cuda
+  ${GXF_INCLUDE_DIR}/gxf/logger
+  ${GXF_INCLUDE_DIR}/gxf/multimedia
+  ${GXF_INCLUDE_DIR}/gxf/serialization
+  ${GXF_INCLUDE_DIR}/gxf/std
+  ${GXF_INCLUDE_DIR}/gxf/ucx
 DESTINATION "include/gxf"
 COMPONENT "holoscan-gxf_libs"
 )
+foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type)
+    get_target_property(GXF_${_component}_LOCATION GXF::${_component} IMPORTED_LOCATION_${_build_type})
+    if(NOT GXF_${_component}_LOCATION)
+        get_target_property(GXF_${_component}_LOCATION GXF::${_component} IMPORTED_LOCATION)
+    endif()
+    if("${_component}" STREQUAL "gxe")
+        install(FILES ${HOLOSCAN_GXE_LOCATION}
+            DESTINATION "bin"
+            PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+            COMPONENT "holoscan-gxf_libs"
+        )
+    else()
+        install(FILES "${GXF_${_component}_LOCATION}"
+            DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
+            COMPONENT "holoscan-gxf_libs"
+        )
+    endif()
+endforeach()
 
 # Install CMake script to build GXE applications
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/GenerateGXEAppInstall.cmake"
@@ -286,21 +312,6 @@ DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 COMPONENT "holoscan-core"
 )
 
-install(FILES "${CMAKE_SOURCE_DIR}/scripts/download_ngc_data"
-              "${CMAKE_SOURCE_DIR}/scripts/convert_video_to_gxf_entities.py"
-              "${CMAKE_SOURCE_DIR}/scripts/gxf_entity_codec.py"
-DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
-PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
-COMPONENT "holoscan-core"
-)
-
-# Install CMake script to download example data from NGC
-install(FILES "${CMAKE_SOURCE_DIR}/scripts/download_example_data"
-DESTINATION "examples"
-PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
-COMPONENT "holoscan-core"
-)
-
 # Define docs and hooks
 set(holoscan_doc_string [=[
 libholoscan: Holoscan SDK C++ API
@@ -316,18 +327,29 @@ if(NOT TARGET fmt::fmt-header-only)
   add_library(fmt::fmt-header-only INTERFACE IMPORTED)
 endif()
 
-set(_GXFlibs core std multimedia cuda network npp serialization behavior_tree)
+set(_GXF_components @HOLOSCAN_GXF_COMPONENTS@)
 
-foreach(gxflib IN LISTS _GXFlibs)
-  if(NOT TARGET GXF::${gxflib})
-    add_library(GXF::${gxflib} SHARED IMPORTED)
-    set_target_properties(GXF::${gxflib} PROPERTIES
-      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libgxf_${gxflib}.so"
+foreach(gxf_component IN LISTS _GXF_components)
+  if(NOT TARGET GXF::${gxf_component} AND NOT (${gxf_component} STREQUAL "gxe"))
+    add_library(GXF::${gxf_component} SHARED IMPORTED)
+    set_target_properties(GXF::${gxf_component} PROPERTIES
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libgxf_${gxf_component}.so"
       IMPORTED_NO_SONAME ON
       INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/gxf"
     )
   endif()
 endforeach()
+
+if(TARGET GXF::ucx)
+    # GXF UCX classes publicly depend on UCX headers.
+    # Workaround to include those headers without explicitly providing UCX targets.
+    # http://cdash.nvidia.com/viewBuildError.php?buildid=4461
+    set_property(
+        TARGET GXF::ucx
+        APPEND PROPERTY
+            INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/3rdparty/ucx"
+    )
+endif()
 
 if(NOT TARGET GXF::gxe)
   add_executable(GXF::gxe IMPORTED)
@@ -342,6 +364,7 @@ set(GXF_EXTENSIONS_DIR "${PACKAGE_PREFIX_DIR}/lib/gxf_extensions")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 
 ]=])
+string(CONFIGURE "${holoscan_install_hook_code_string}" holoscan_install_hook_code_string @ONLY)
 
 set(holoscan_build_hook_code_string [=[
 ]=])

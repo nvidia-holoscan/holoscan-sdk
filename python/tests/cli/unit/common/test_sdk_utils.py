@@ -15,6 +15,7 @@
  limitations under the License.
 """  # noqa: E501
 
+
 import pytest
 from packaging.version import Version
 
@@ -76,22 +77,17 @@ class TestDetectHoloscanVersion:
     @pytest.fixture(autouse=True)
     def _setup(self) -> None:
         self._artifact_source = ArtifactSources()
-        self._artifact_source._data[SdkType.Holoscan.value][ArtifactSources.SectionVersion].append(
-            "0.6.0"
-        )
-        self._artifact_source._data[SdkType.Holoscan.value][ArtifactSources.SectionVersion].append(
-            "1.0.0"
-        )
+        self._artifact_source._supported_holoscan_versions = ["1.0.0"]
 
     def test_sdk_version_from_valid_user_input(self, monkeypatch):
-        assert detect_holoscan_version(self._artifact_source, Version("0.6.0")) == "0.6.0"
+        assert detect_holoscan_version(self._artifact_source, Version("1.0.0")) == "1.0.0"
 
     def test_sdk_version_from_invalid_user_input(self, monkeypatch):
         with pytest.raises(InvalidSdkError):
             detect_holoscan_version(self._artifact_source, Version("0.1.0"))
 
     def test_detect_sdk_version(self, monkeypatch):
-        version = "0.6.0"
+        version = "1.0.0"
 
         monkeypatch.setattr("importlib.metadata.version", lambda x: version)
 
@@ -99,12 +95,12 @@ class TestDetectHoloscanVersion:
         assert result == version
 
     def test_detect_sdk_version_with_patch(self, monkeypatch):
-        version = "0.6.0-beta-1"
+        version = "1.0.0-beta-1"
 
         monkeypatch.setattr("importlib.metadata.version", lambda x: version)
 
         result = detect_holoscan_version(self._artifact_source)
-        assert result == "0.6.0"
+        assert result == "1.0.0"
 
     def test_detect_sdk_version_with_unsupported_version(self, monkeypatch):
         version = "0.1.2"

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,6 @@ holoscan_pybind11_module(resources
     receivers.cpp
     resources.cpp
     serialization_buffers.cpp
+    std_entity_serializer.cpp
     transmitters.cpp
-    video_stream_serializer.cpp
 )

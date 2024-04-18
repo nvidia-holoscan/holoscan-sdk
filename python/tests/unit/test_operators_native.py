@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import os
@@ -34,6 +34,7 @@ from holoscan.operators.holoviz import (
 from holoscan.operators.inference import InferenceOp
 from holoscan.operators.inference_processor import InferenceProcessorOp
 from holoscan.operators.segmentation_postprocessor import SegmentationPostprocessorOp
+from holoscan.operators.v4l2_video_capture import V4L2VideoCaptureOp
 from holoscan.operators.video_stream_recorder import VideoStreamRecorderOp
 from holoscan.operators.video_stream_replayer import VideoStreamReplayerOp
 from holoscan.resources import (
@@ -315,7 +316,8 @@ class TestTensor:
         xp.testing.assert_array_equal(a, b)
 
     @pytest.mark.parametrize("module", ["cupy", "numpy"])
-    def test_from_dlpack(self, module):
+    @pytest.mark.parametrize("convert_method", ["as_tensor", "from_dlpack"])
+    def test_from_dlpack(self, module, convert_method):
         # Check if module is numpy and numpy version is less than 1.23 then skip the test
         # because numpy.from_dlpack is not available in numpy versions less than 1.23
         if module == "numpy" and tuple(map(int, np.__version__.split("."))) < (1, 23):
@@ -323,7 +325,8 @@ class TestTensor:
 
         xp = pytest.importorskip(module)
         arr_in = xp.random.randn(1, 2, 3, 4).astype(xp.float32)
-        tensor = Tensor.as_tensor(arr_in)
+        converter = getattr(Tensor, convert_method)
+        tensor = converter(arr_in)
         arr_out1 = xp.asarray(tensor)
         arr_out2 = xp.from_dlpack(tensor)
         xp.testing.assert_array_equal(arr_in, arr_out1)
@@ -341,6 +344,27 @@ class TestAJASourceOp:
             fragment=app,
             name=name,
             channel=NTV2Channel.NTV2_CHANNEL1,
+            width=1920,
+            height=1080,
+            rdma=True,
+            enable_overlay=False,
+            overlay_rdma=True,
+        )
+        assert isinstance(op, _Operator)
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_initialization_from_yaml(self, app, config_file, capfd):
+        app.config(config_file)
+        name = "source"
+        op = AJASourceOp(
+            fragment=app,
+            name=name,
             **app.kwargs("aja"),
         )
         assert isinstance(op, _Operator)
@@ -349,12 +373,7 @@ class TestAJASourceOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'segmentation_postprocessor  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
         assert "warning" not in captured.err
 
 
@@ -382,12 +401,8 @@ class TestFormatConverterOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'recorder_format_converter'  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
 
 
 class TestInferenceOp:
@@ -413,12 +428,7 @@ class TestInferenceOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'inference'  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
         assert "warning" not in captured.err
 
 
@@ -438,12 +448,7 @@ class TestInferenceProcessorOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'processor'  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
         assert "warning" not in captured.err
 
 
@@ -461,12 +466,7 @@ class TestSegmentationPostprocessorOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'segmentation_postprocessor'  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
         assert "warning" not in captured.err
 
 
@@ -481,11 +481,7 @@ class TestVideoStreamRecorderOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'recorder'  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
         assert "warning" not in captured.err
 
 
@@ -506,11 +502,7 @@ class TestVideoStreamReplayerOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'replayer'  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
         assert "warning" not in captured.err
 
 
@@ -699,11 +691,7 @@ class TestHolovizOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'visualizer  # noqa: E501
-        assert captured.err.count("[error]") <= 1
+        assert "error" not in captured.err
         assert "warning" not in captured.err
 
     @pytest.mark.parametrize(
@@ -890,10 +878,67 @@ class TestBayerDemosaicOp:
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
 
-        # Initializing outside the context of app.run() will result in the
-        # following error being logged because the GXFWrapper will not have
-        # been created for the operator:
-        #     [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'demosaic'  # noqa: E501
-        assert captured.err.count("[error]") <= 1
-        assert captured.err.count("[warning]") <= 1
+
+class TestV4L2VideoCaptureOp:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "video_capture"
+        op = V4L2VideoCaptureOp(
+            app,
+            name=name,
+            width=320,
+            height=240,
+            pixel_format="auto",
+            device="/dev/video0",
+            allocator=UnboundedAllocator(app, name="pool"),
+            exposure_time=500,
+            gain=100,
+        )
+        assert isinstance(op, _Operator)
+        assert len(op.args) == 8
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization(self, app, capfd):
+        name = "video_capture"
+        op = V4L2VideoCaptureOp(
+            app,
+            name=name,
+            allocator=UnboundedAllocator(app, name="pool"),
+        )
+        assert isinstance(op, _Operator)
+        assert len(op.args) == 6  # No hardcoded defaults for exposure and gain
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_initialization_from_yaml(self, app, config_file, capfd):
+        app.config(config_file)
+        name = "video_capture"
+        print(f"{app.kwargs('v4l2_video_capture')}")
+        op = V4L2VideoCaptureOp(
+            app,
+            name=name,
+            allocator=UnboundedAllocator(app, name="pool"),
+            **app.kwargs("v4l2_video_capture"),
+        )
+        assert isinstance(op, _Operator)
+        assert len(op.args) == 8
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err

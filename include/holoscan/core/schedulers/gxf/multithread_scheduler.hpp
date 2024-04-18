@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <memory>
 #include <string>
 
+#include <gxf/std/multi_thread_scheduler.hpp>
 #include "../../gxf/gxf_scheduler.hpp"
 #include "../../resources/gxf/clock.hpp"
 #include "../../resources/gxf/realtime_clock.hpp"
@@ -47,6 +48,8 @@ class MultiThreadScheduler : public gxf::GXFScheduler {
   int64_t stop_on_deadlock_timeout() { return stop_on_deadlock_timeout_; }
   // could return std::optional<int64_t>, but just using int64_t simplifies the Python bindings
   int64_t max_duration_ms() { return max_duration_ms_.has_value() ? max_duration_ms_.get() : -1; }
+
+  nvidia::gxf::MultiThreadScheduler* get() const;
 
  private:
   Parameter<std::shared_ptr<Clock>> clock_;

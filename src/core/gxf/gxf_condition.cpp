@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,9 @@
 
 #include <gxf/core/gxf.h>
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
@@ -67,33 +69,28 @@ void GXFCondition::initialize() {
     HOLOSCAN_LOG_ERROR("No component spec for GXFCondition '{}'", name());
     return;
   }
-  auto& spec = *spec_;
 
   // Set arguments
-  auto& params = spec.params();
-  for (auto& arg : args_) {
-    // Find if arg.name() is in spec.params()
-    if (params.find(arg.name()) == params.end()) {
-      HOLOSCAN_LOG_WARN("Argument '{}' not found in spec.params()", arg.name());
-      continue;
-    }
-
-    // Set arg.value() to spec.params()[arg.name()]
-    auto& param_wrap = params[arg.name()];
-
-    HOLOSCAN_LOG_TRACE("GXFCondition '{}':: setting argument '{}'", name(), arg.name());
-
-    ArgumentSetter::set_param(param_wrap, arg);
-  }
+  update_params_from_args();
 
   // Set Handler parameters
-  for (auto& [key, param_wrap] : params) {
-    HOLOSCAN_GXF_CALL(::holoscan::gxf::GXFParameterAdaptor::set_param(
-        gxf_context_, gxf_cid_, key.c_str(), param_wrap));
-    // TODO: handle error
-    HOLOSCAN_LOG_TRACE("GXFCondition '{}':: setting GXF parameter '{}'", name(), key);
-  }
+  for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
   is_initialized_ = true;
+}
+
+void GXFCondition::add_to_graph_entity(Operator* op) {
+  if (gxf_context_ == nullptr) {
+    // cannot reassign to a different graph entity if the condition was already initialized with GXF
+    if (gxf_graph_entity_ && is_initialized_) { return; }
+
+    gxf_graph_entity_ = op->graph_entity();
+    fragment_ = op->fragment();
+    if (gxf_graph_entity_) {
+      gxf_context_ = gxf_graph_entity_->context();
+      gxf_eid_ = gxf_graph_entity_->eid();
+    }
+  }
+  this->initialize();
 }
 
 }  // namespace holoscan::gxf

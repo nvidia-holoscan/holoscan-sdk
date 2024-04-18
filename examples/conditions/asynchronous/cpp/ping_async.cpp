@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include <string>
 
 #include <holoscan/holoscan.hpp>
 #include <holoscan/operators/async_ping_rx/async_ping_rx.hpp>
@@ -72,13 +74,22 @@ int main(int argc, char** argv) {
   app->set_async_receive(async_receive);
   app->set_async_transmit(async_transmit);
 
-  bool multithreaded = app->from_config("multithreaded").as<bool>();
-  if (multithreaded) {
+  std::string scheduler = app->from_config("scheduler").as<std::string>();
+  holoscan::ArgList scheduler_args{holoscan::Arg("stop_on_deadlock", true),
+                                   holoscan::Arg("stop_on_deadlock_timeout", 500L)};
+  if (scheduler == "multi_thread") {
     // use MultiThreadScheduler instead of the default GreedyScheduler
-    app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(
-        "multithread-scheduler",
-        holoscan::Arg("stop_on_deadlock", true),
-        holoscan::Arg("stop_on_deadlock_timeout", 500L)));
+    app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>("MTS", scheduler_args));
+  } else if (scheduler == "event_based") {
+    // use EventBasedScheduler instead of the default GreedyScheduler
+    app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>("EBS", scheduler_args));
+  } else if (scheduler == "greedy") {
+    app->scheduler(app->make_scheduler<holoscan::GreedyScheduler>("GS", scheduler_args));
+  } else if (scheduler != "default") {
+    throw std::runtime_error(fmt::format(
+        "unrecognized scheduler option '{}', should be one of {'multi_thread', 'event_based', "
+        "'greedy', 'default'}",
+        scheduler));
   }
 
   // run the application

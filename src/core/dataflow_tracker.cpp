@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,8 +40,7 @@ DataFlowTracker::~DataFlowTracker() {
 }
 
 void DataFlowTracker::end_logging() {
-  if (!logger_ofstream_.is_open())
-    return;
+  if (!logger_ofstream_.is_open()) return;
 
   // Write out the remaining messages from the log buffer and close ofstream
   for (auto it : buffered_messages_) { logger_ofstream_ << it << "\n"; }

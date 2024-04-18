@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,31 +26,30 @@ namespace holoscan {
 
 ManualClock::ManualClock(const std::string& name, nvidia::gxf::ManualClock* component)
     : Clock(name, component) {
-  uint64_t initial_timestamp = 0L;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfParameterGetUInt64(gxf_context_, gxf_cid_, "initial_timestamp", &initial_timestamp));
-  initial_timestamp_ = initial_timestamp;
+  auto maybe_initial_timestamp = component->getParameter<uint64_t>("initial_timestamp");
+  if (!maybe_initial_timestamp) { throw std::runtime_error("Failed to get initial_timestamp"); }
+  initial_timestamp_ = maybe_initial_timestamp.value();
+}
+
+nvidia::gxf::ManualClock* ManualClock::get() const {
+  return static_cast<nvidia::gxf::ManualClock*>(gxf_cptr_);
 }
 
 double ManualClock::time() const {
-  if (gxf_cptr_) {
-    nvidia::gxf::ManualClock* clock = static_cast<nvidia::gxf::ManualClock*>(gxf_cptr_);
-    return clock->time();
-  }
+  auto clock = get();
+  if (clock) { return clock->time(); }
   return 0.0;
 }
 
 int64_t ManualClock::timestamp() const {
-  if (gxf_cptr_) {
-    nvidia::gxf::ManualClock* clock = static_cast<nvidia::gxf::ManualClock*>(gxf_cptr_);
-    return clock->timestamp();
-  }
+  auto clock = get();
+  if (clock) { return clock->timestamp(); }
   return 0;
 }
 
 void ManualClock::sleep_for(int64_t duration_ns) {
-  if (gxf_cptr_) {
-    nvidia::gxf::ManualClock* clock = static_cast<nvidia::gxf::ManualClock*>(gxf_cptr_);
+  auto clock = get();
+  if (clock) {
     clock->sleepFor(duration_ns);
   } else {
     HOLOSCAN_LOG_ERROR("RealtimeClock component not yet registered with GXF");
@@ -58,8 +57,8 @@ void ManualClock::sleep_for(int64_t duration_ns) {
 }
 
 void ManualClock::sleep_until(int64_t target_time_ns) {
-  if (gxf_cptr_) {
-    nvidia::gxf::ManualClock* clock = static_cast<nvidia::gxf::ManualClock*>(gxf_cptr_);
+  auto clock = get();
+  if (clock) {
     clock->sleepUntil(target_time_ns);
   } else {
     HOLOSCAN_LOG_ERROR("RealtimeClock component not yet registered with GXF");

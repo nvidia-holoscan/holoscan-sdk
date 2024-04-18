@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,9 +50,7 @@ class App : public holoscan::Application {
       auto allocator = make_resource<BlockMemoryPool>("pool", 0, block_size, 1);
 
       source = make_operator<ops::V4L2VideoCaptureOp>(
-          "source",
-          from_config("source"),
-          Arg("allocator") = allocator);
+          "source", from_config("source"), Arg("allocator") = allocator);
 
       // Set Holoviz width and height from source resolution
       auto viz_args = from_config("visualizer");
@@ -61,8 +59,8 @@ class App : public holoscan::Application {
         else if (arg.name() == "height")
           viz_args.add(arg);
       }
-      visualizer = make_operator<ops::HolovizOp>(
-          "visualizer", viz_args, Arg("allocator") = allocator);
+      visualizer =
+          make_operator<ops::HolovizOp>("visualizer", viz_args, Arg("allocator") = allocator);
     } else {
       // width and height not given, use UnboundedAllocator (worse latency)
       source = make_operator<ops::V4L2VideoCaptureOp>(
@@ -83,9 +81,7 @@ int main(int argc, char** argv) {
   // Get the configuration
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path += "/v4l2_camera.yaml";
-  if ( argc >= 2 ) {
-    config_path = argv[1];
-  }
+  if (argc >= 2) { config_path = argv[1]; }
 
   app.config(config_path);
   app.run();
@@ -94,4 +90,3 @@ int main(int argc, char** argv) {
 
   return 0;
 }
-

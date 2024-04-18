@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +44,11 @@ class DownstreamMessageAffordableCondition : public gxf::GXFCondition {
 
   void initialize() override { GXFCondition::initialize(); }
 
+  // TODO(GXF4):   Expected<void> setTransmitter(Handle<Transmitter> value)
+  // TODO(GXF4):   Expected<void> setMinSize(uint64_t value)
+
  private:
+  // TODO(GXF4): this is now a std::set<Handle<Transmitter>> transmitters_
   Parameter<std::shared_ptr<gxf::GXFResource>> transmitter_;
   Parameter<uint64_t> min_size_;
 };

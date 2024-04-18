@@ -52,6 +52,9 @@ class PlatformParameters:
         self._data["holoscan_sdk_filename"] = None
         self._data["monai_deploy_sdk_file"] = None
         self._data["monai_deploy_sdk_filename"] = None
+        self._data["custom_base_image"] = False
+        self._data["custom_holoscan_sdk"] = False
+        self._data["custom_monai_deploy_sdk"] = False
 
     @property
     def tag(self) -> str:
@@ -66,6 +69,30 @@ class PlatformParameters:
     @property
     def tag_prefix(self) -> str:
         return self._tag_prefix
+
+    @property
+    def custom_base_image(self) -> Optional[str]:
+        return self._data["custom_base_image"]
+
+    @custom_base_image.setter
+    def custom_base_image(self, value: str):
+        self._data["custom_base_image"] = value
+
+    @property
+    def custom_holoscan_sdk(self) -> Optional[str]:
+        return self._data["custom_holoscan_sdk"]
+
+    @custom_holoscan_sdk.setter
+    def custom_holoscan_sdk(self, value: str):
+        self._data["custom_holoscan_sdk"] = value
+
+    @property
+    def custom_monai_deploy_sdk(self) -> Optional[str]:
+        return self._data["custom_monai_deploy_sdk"]
+
+    @custom_monai_deploy_sdk.setter
+    def custom_monai_deploy_sdk(self, value: str):
+        self._data["custom_monai_deploy_sdk"] = value
 
     @property
     def base_image(self) -> Optional[str]:

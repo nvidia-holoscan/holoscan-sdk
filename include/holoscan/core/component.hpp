@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -31,11 +32,11 @@
 #include "./arg.hpp"
 #include "./forward_def.hpp"
 
-#define HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()                                                \
-  template <typename ArgT,                                                                   \
-            typename... ArgsT,                                                               \
-            typename = std::enable_if_t<!std::is_base_of_v<Component, std::decay_t<ArgT>> && \
-                                        (std::is_same_v<Arg, std::decay_t<ArgT>> ||          \
+#define HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()                                                    \
+  template <typename ArgT,                                                                       \
+            typename... ArgsT,                                                                   \
+            typename = std::enable_if_t<!std::is_base_of_v<ComponentBase, std::decay_t<ArgT>> && \
+                                        (std::is_same_v<Arg, std::decay_t<ArgT>> ||              \
                                          std::is_same_v<ArgList, std::decay_t<ArgT>>)>>
 #define HOLOSCAN_COMPONENT_FORWARD_ARGS(class_name) \
   HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()             \
@@ -49,6 +50,10 @@
 
 namespace holoscan {
 
+namespace gxf {
+class GXFExecutor;
+}  // namespace gxf
+
 /**
  * @brief Base class for all components.
  *
@@ -56,9 +61,9 @@ namespace holoscan {
  * `holoscan::Condition`, and `holoscan::Resource`.
  * It is used to define the common interface for all components.
  */
-class Component {
+class ComponentBase {
  public:
-  Component() = default;
+  ComponentBase() = default;
 
   /**
    * @brief Construct a new Component object.
@@ -66,12 +71,12 @@ class Component {
    * @param args The arguments to be passed to the component.
    */
   HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()
-  explicit Component(ArgT&& arg, ArgsT&&... args) {
+  explicit ComponentBase(ArgT&& arg, ArgsT&&... args) {
     add_arg(std::forward<ArgT>(arg));
     (add_arg(std::forward<ArgsT>(args)), ...);
   }
 
-  virtual ~Component() = default;
+  virtual ~ComponentBase() = default;
 
   /**
    * @brief Get the identifier of the component.
@@ -164,12 +169,49 @@ class Component {
   std::string description() const;
 
  protected:
-  friend class Executor;
+  friend class holoscan::Executor;
+  // Make GXFExecutor a friend class so it can call protected initialization methods
+  friend class holoscan::gxf::GXFExecutor;
+
+  // Make Fragment a friend class so it can call reset_graph_entities
+  friend class holoscan::Fragment;
+
+  /// Update parameters based on the specified arguments
+  void update_params_from_args(std::unordered_map<std::string, ParameterWrapper>& params);
+
+  /// Reset the GXF GraphEntity of any arguments that have one
+  virtual void reset_graph_entities();
 
   int64_t id_ = -1;               ///< The ID of the component.
   std::string name_ = "";         ///< Name of the component
   Fragment* fragment_ = nullptr;  ///< Pointer to the fragment that owns this component
   std::vector<Arg> args_;         ///< List of arguments
+};
+
+/**
+ * @brief Common class for all non-Operator components
+ *
+ * This class is the base class for all non-Operator components including
+ * `holoscan::Condition`, `holoscan::Resource`, `holoscan::NetworkContext`, `holoscan::Scheduler`
+ * It is used to define the common interface for all components.
+ *
+ * `holoscan::Operator` does not inherit from this class as it uses `holosccan::OperatorSpec`
+ * instead of `holoscan::ComponentSpec`.
+ */
+class Component : public ComponentBase {
+ protected:
+  // Make GXFExecutor a friend class so it can call protected initialization methods
+  friend class holoscan::gxf::GXFExecutor;
+
+  using ComponentBase::update_params_from_args;
+
+  /// Update parameters based on the specified arguments
+  void update_params_from_args();
+
+  /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
+  virtual void set_parameters() {}
+
+  std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
 };
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,8 +34,7 @@ void AsyncPingTxOp::async_ping() {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_.get()));
 
-    if (async_condition_->event_state() ==
-        AsynchronousEventState::EVENT_WAITING) {
+    if (async_condition_->event_state() == AsynchronousEventState::EVENT_WAITING) {
       async_condition_->event_state(AsynchronousEventState::EVENT_DONE);
     }
   }
@@ -57,15 +56,13 @@ void AsyncPingTxOp::initialize() {
   auto frag = fragment();
 
   // Find if there is an argument for 'async_condition_'
-  auto has_async_condition =
-      std::find_if(args().begin(), args().end(), [](const auto& arg) {
-        return (arg.name() == "async_condition");
-      });
+  auto has_async_condition = std::find_if(args().begin(), args().end(), [](const auto& arg) {
+    return (arg.name() == "async_condition");
+  });
 
   // Create the BooleanCondition if there is no argument provided.
   if (has_async_condition == args().end()) {
-    async_condition_ =
-        frag->make_condition<holoscan::AsynchronousCondition>("async_condition");
+    async_condition_ = frag->make_condition<holoscan::AsynchronousCondition>("async_condition");
     add_arg(async_condition_.get());
   }
 

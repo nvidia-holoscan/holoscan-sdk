@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 
 #include "holoscan/core/common.hpp"
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 #include "holoscan/core/io_context.hpp"
 
@@ -46,7 +47,18 @@ gxf_result_t GXFWrapper::start() {
     HOLOSCAN_LOG_ERROR("GXFWrapper::start() - Operator is not set");
     return GXF_FAILURE;
   }
-  op_->start();
+
+  HOLOSCAN_LOG_TRACE("Starting operator: {}", op_->name());
+
+  try {
+    op_->start();
+  } catch (const std::exception& e) {
+    store_exception();
+    HOLOSCAN_LOG_ERROR(
+        "Exception occurred when starting operator: '{}' - {}", op_->name(), e.what());
+    return GXF_FAILURE;
+  }
+
   return GXF_SUCCESS;
 }
 
@@ -65,6 +77,10 @@ gxf_result_t GXFWrapper::tick() {
   try {
     op_->compute(*op_input, *op_output, exec_context);
   } catch (const std::exception& e) {
+    // Note: Rethrowing the exception (using `throw;`) would cause the Python interpreter to exit.
+    //       To avoid this, we store the exception and return GXF_FAILURE.
+    //       The exception is then rethrown in GXFExecutor::run_gxf_graph().
+    store_exception();
     HOLOSCAN_LOG_ERROR("Exception occurred for operator: '{}' - {}", op_->name(), e.what());
     return GXF_FAILURE;
   }
@@ -78,8 +94,24 @@ gxf_result_t GXFWrapper::stop() {
     HOLOSCAN_LOG_ERROR("GXFWrapper::stop() - Operator is not set");
     return GXF_FAILURE;
   }
-  op_->stop();
+
+  HOLOSCAN_LOG_TRACE("Stopping operator: {}", op_->name());
+
+  try {
+    op_->stop();
+  } catch (const std::exception& e) {
+    store_exception();
+    HOLOSCAN_LOG_ERROR(
+        "Exception occurred when stopping operator: '{}' - {}", op_->name(), e.what());
+    return GXF_FAILURE;
+  }
+
   return GXF_SUCCESS;
+}
+
+void GXFWrapper::store_exception() {
+  auto stored_exception = std::current_exception();
+  if (stored_exception != nullptr) { op_->fragment()->executor().exception(stored_exception); }
 }
 
 }  // namespace holoscan::gxf

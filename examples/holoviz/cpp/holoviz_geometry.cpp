@@ -240,6 +240,15 @@ class HolovizGeometryApp : public holoscan::Application {
   void compose() override {
     using namespace holoscan;
 
+    ArgList args;
+    auto data_directory = std::getenv("HOLOSCAN_INPUT_PATH");
+    if (data_directory != nullptr && data_directory[0] != '\0') {
+      auto video_directory = std::filesystem::path(data_directory);
+      video_directory /= "racerx";
+      args.add(Arg("directory", video_directory.string()));
+      HOLOSCAN_LOG_INFO("Using video from {}", video_directory.string());
+    }
+
     // Define the replayer, geometry source and holoviz operators
     auto replayer =
         make_operator<ops::VideoStreamReplayerOp>("replayer",
@@ -248,7 +257,8 @@ class HolovizGeometryApp : public holoscan::Application {
                                                   Arg("frame_rate", 0.f),
                                                   Arg("repeat", true),
                                                   Arg("realtime", true),
-                                                  Arg("count", count_));
+                                                  Arg("count", count_),
+                                                  args);
 
     auto source = make_operator<ops::GeometrySourceOp>("source");
 

@@ -153,7 +153,7 @@ def create_run_parser(
     advanced_group.add_argument(
         "--shm-size",
         dest="shm_size",
-        help="sets the size of /dev/shm. The format is "
+        help="set the size of /dev/shm. The format is "
         "<number(int,float)>[MB|m|GB|g|Mi|MiB|Gi|GiB]. "
         "Use 'config' to read the shared memory value defined in the app.json manifest. "
         "If not specified, the container is launched using '--ipc=host' with host system's "
@@ -164,7 +164,7 @@ def create_run_parser(
         dest="terminal",
         action="store_true",
         default=False,
-        help="enters terminal with all configured volume mappings and environment variables. "
+        help="enter terminal with all configured volume mappings and environment variables. "
         "(default: False)",
     )
     advanced_group.add_argument(
@@ -178,19 +178,27 @@ def create_run_parser(
         --device ajantv0 ajantv1 to mount AJA capture card 0 and 1.
         --device video1 to mount V4L2 video device 1. """,
     )
+    advanced_group.add_argument(
+        "--gpus",
+        dest="gpus",
+        help="""Override the value of NVIDIA_VISIBLE_DEVICES environment variable.
+        default: the value specified in the package manifest file or 'all' if not specified.
+        Refer to https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html#gpu-enumeration
+        for all available options.""",
+    )
 
     user_group = parser.add_argument_group(title="security options")
     user_group.add_argument(
         "--uid",
         type=str,
         default=os.getuid(),
-        help=f"runs the container with the UID. (default:{os.getuid()})",
+        help=f"run the container with the UID. (default:{os.getuid()})",
     )
     user_group.add_argument(
         "--gid",
         type=str,
         default=os.getgid(),
-        help=f"runs the container with the GID. (default:{os.getgid()})",
+        help=f"run the container with the GID. (default:{os.getgid()})",
     )
 
     return parser

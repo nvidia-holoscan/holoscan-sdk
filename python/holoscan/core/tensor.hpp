@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,13 +47,13 @@ static const std::unordered_map<DLDataTypeCode, const char*> dldatatypecode_name
 /**
  * @brief Class to wrap the deleter of a DLManagedTensor in Python.
  *
- * This class is used with DLManagedTensorCtx class to wrap the DLManagedTensor.
+ * This class is used with DLManagedTensorContext class to wrap the DLManagedTensor.
  *
- * A shared pointer to this class in DLManagedTensorCtx class is used as the deleter of the
- * DLManagedTensorCtx::memory_ref
+ * A shared pointer to this class in DLManagedTensorContext class is used as the deleter of the
+ * DLManagedTensorContext::memory_ref
  *
- * When the last reference to the DLManagedTensorCtx object is released,
- * DLManagedTensorCtx::memory_ref will also be destroyed, which will call the deleter function
+ * When the last reference to the DLManagedTensorContext object is released,
+ * DLManagedTensorContext::memory_ref will also be destroyed, which will call the deleter function
  * of the DLManagedTensor object.
  *
  * Compared to the C++ version (DLManagedMemoryBuffer), this class is used to acquire the GIL
@@ -148,11 +148,11 @@ class LazyDLManagedTensorDeleter {
 class PyTensor : public Tensor {
  public:
   /**
-   * @brief Construct a new Tensor from an existing DLManagedTensorCtx.
+   * @brief Construct a new Tensor from an existing DLManagedTensorContext.
    *
-   * @param ctx A shared pointer to the DLManagedTensorCtx to be used in Tensor construction.
+   * @param ctx A shared pointer to the DLManagedTensorContext to be used in Tensor construction.
    */
-  explicit PyTensor(std::shared_ptr<DLManagedTensorCtx>& ctx);
+  explicit PyTensor(std::shared_ptr<DLManagedTensorContext>& ctx);
 
   /**
    * @brief Construct a new Tensor from an existing DLManagedTensor pointer.
@@ -177,6 +177,7 @@ class PyTensor : public Tensor {
     return from_array_interface(obj, true);
   }
   static std::shared_ptr<PyTensor> from_dlpack(const py::object& obj);
+  static py::object from_dlpack_pyobj(const py::object& obj);
   static py::capsule dlpack(const py::object& obj, py::object stream);
   static py::tuple dlpack_device(const py::object& obj);
 };

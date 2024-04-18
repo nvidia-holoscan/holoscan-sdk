@@ -1,6 +1,6 @@
-# Use both Integrated and Discrete GPUs on Holoscan developer kits
+# Use both Integrated and Discrete GPUs on NVIDIA Developer Kits
 
-Holoscan developer kits like the [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) or the [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments/) have both a discrete GPU (dGPU - optional on IGX Orin) and an integrated GPU (iGPU - Tegra SoC).
+NVIDIA Developer Kits like the [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) or the [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments/) have both a discrete GPU (dGPU - optional on IGX Orin) and an integrated GPU (iGPU - Tegra SoC).
 
 As of this release, when these developer kits are flashed to leverage the dGPU, there are two limiting factors preventing the use of the iGPU:
 

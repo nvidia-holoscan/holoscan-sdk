@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,14 +57,29 @@ function(add_holoscan_operator operator)
 endfunction()
 
 # ##############################################################################
+# # Add library holoscan::spdlog_logger
+# ##############################################################################
+add_holoscan_library(spdlog_logger common/logger/spdlog_logger.cpp)
+target_link_libraries(spdlog_logger
+    PUBLIC
+        fmt::fmt-header-only
+        GXF::logger
+    PRIVATE
+        spdlog::spdlog_header_only
+)
+target_compile_definitions(spdlog_logger
+    INTERFACE
+        FMT_HEADER_ONLY=1
+)
+
+# ##############################################################################
 # # Add library holoscan::logger
 # ##############################################################################
 add_holoscan_library(logger logger/logger.cpp)
 target_link_libraries(logger
     PUBLIC
         fmt::fmt-header-only
-    PRIVATE
-        spdlog::spdlog_header_only
+        spdlog_logger
 )
 target_compile_definitions(logger
     INTERFACE
@@ -123,6 +138,7 @@ add_holoscan_library(core
     core/fragment_scheduler.cpp
     core/graphs/flow_graph.cpp
     core/gxf/entity.cpp
+    core/gxf/gxf_component.cpp
     core/gxf/gxf_condition.cpp
     core/gxf/gxf_execution_context.cpp
     core/gxf/gxf_extension_manager.cpp
@@ -131,7 +147,7 @@ add_holoscan_library(core
     core/gxf/gxf_operator.cpp
     core/gxf/gxf_resource.cpp
     core/gxf/gxf_scheduler.cpp
-    core/gxf/gxf_tensor.cpp
+    core/gxf/gxf_utils.cpp
     core/gxf/gxf_wrapper.cpp
     core/io_spec.cpp
     core/messagelabel.cpp
@@ -154,6 +170,7 @@ add_holoscan_library(core
     core/resources/gxf/receiver.cpp
     core/resources/gxf/serialization_buffer.cpp
     core/resources/gxf/std_component_serializer.cpp
+    core/resources/gxf/std_entity_serializer.cpp
     core/resources/gxf/transmitter.cpp
     core/resources/gxf/ucx_component_serializer.cpp
     core/resources/gxf/ucx_entity_serializer.cpp
@@ -161,9 +178,9 @@ add_holoscan_library(core
     core/resources/gxf/ucx_receiver.cpp
     core/resources/gxf/ucx_serialization_buffer.cpp
     core/resources/gxf/ucx_transmitter.cpp
-    core/resources/gxf/video_stream_serializer.cpp
     core/scheduler.cpp
     core/schedulers/greedy_fragment_allocation.cpp
+    core/schedulers/gxf/event_based_scheduler.cpp
     core/schedulers/gxf/greedy_scheduler.cpp
     core/schedulers/gxf/multithread_scheduler.cpp
     core/services/app_driver/client.cpp
@@ -181,6 +198,7 @@ add_holoscan_library(core
     core/system/network_utils.cpp
     core/system/system_resource_manager.cpp
     core/system/topology.cpp
+    utils/cuda_stream_handler.cpp  # keep here instead of separate lib for backwards compatibility with 1.0
     ${CORE_GRPC_SRCS}
 )
 
@@ -190,10 +208,12 @@ target_link_libraries(core
         holoscan::logger
         CUDA::cudart
         fmt::fmt-header-only
+        GXF::app
         GXF::core
         GXF::cuda
         GXF::serialization  # for nvidia::gxf::Endpoint
         GXF::std
+        GXF::ucx
         yaml-cpp
     PRIVATE
         hwloc
@@ -207,6 +227,7 @@ target_include_directories(core
       $<BUILD_INTERFACE:${tl-expected_SOURCE_DIR}/include>
       $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
       $<BUILD_INTERFACE:${cli11_SOURCE_DIR}/include>
+      $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
 )
 

@@ -37,16 +37,27 @@ namespace holoscan::ops {
 /**
  * @brief Operator carrying out post-processing operations on segmentation outputs.
  *
- * **Named inputs:**
- *     - *in_tensor*: `nvidia::gxf::Tensor`
- *         - Expects a message containing a 32-bit floating point tensor with name
- *         `in_tensor_name`. The expected data layout of this tensor is HWC, NCHW or NHWC format as
- *         specified via `data_format`.
+ * ==Named Inputs==
  *
- * **Named outputs:**
- *     - *out_tensor*: `nvidia::gxf::Tensor`
- *         - Emits a message containing a tensor named "out_tensor" that contains the segmentation
- *         labels. This tensor will have unsigned 8-bit integer data type and shape (H, W, 1).
+ * - **in_tensor** : `nvidia::gxf::Tensor`
+ *   - Expects a message containing a 32-bit floating point tensor with name
+ *     `in_tensor_name`. The expected data layout of this tensor is HWC, NCHW or NHWC format as
+ *     specified via `data_format`.
+ *
+ * ==Named Outputs==
+ *
+ * - **out_tensor** : `nvidia::gxf::Tensor`
+ *  - Emits a message containing a tensor named "out_tensor" that contains the segmentation
+ *    labels. This tensor will have unsigned 8-bit integer data type and shape (H, W, 1).
+ *
+ * ==Parameters==
+ *
+ * - **allocator**: Memory allocator to use for the output.
+ * - **in_tensor_name**: Name of the input tensor. Optional (default: `""`).
+ * - **network_output_type**: Network output type (e.g. 'softmax'). Optional (default: `"softmax"`).
+ * - **data_format**: Data format of network output. Optional (default: `"hwc"`).
+ * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams.
+ *   Optional (default: `nullptr`).
  */
 class SegmentationPostprocessorOp : public Operator {
  public:

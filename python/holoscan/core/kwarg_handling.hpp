@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,7 @@
 #ifndef HOLOSCAN_PYTHON_PYBIND11_CORE_KWARG_HANDLING_HPP
 #define HOLOSCAN_PYTHON_PYBIND11_CORE_KWARG_HANDLING_HPP
 
-#include <pybind11/numpy.h>     // py::array, py::dtype
+#include <pybind11/numpy.h>  // py::array, py::dtype
 #include <pybind11/pybind11.h>
 #include <yaml-cpp/yaml.h>
 

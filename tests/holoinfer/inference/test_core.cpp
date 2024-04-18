@@ -161,6 +161,7 @@ HoloInfer::InferStatus HoloInferTests::do_inference() {
   HoloInfer::InferStatus status = HoloInfer::InferStatus(HoloInfer::holoinfer_code::H_ERROR);
 
   try {
+    if (!holoscan_infer_context_) { return status; }
     return holoscan_infer_context_->execute_inference(inference_specs_->data_per_tensor_,
                                                       inference_specs_->output_per_model_);
   } catch (...) {

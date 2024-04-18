@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,8 @@
 
 #include <memory>
 #include <string>
+
+#include <gxf/ucx/ucx_transmitter.hpp>
 
 #include "./transmitter.hpp"
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
@@ -66,13 +68,15 @@ class UcxTransmitter : public Transmitter {
   Parameter<uint64_t> capacity_;
   Parameter<uint64_t> policy_;
 
+  nvidia::gxf::UcxTransmitter* get() const;
+
  private:
   Parameter<std::string> receiver_address_;
   Parameter<std::string> local_address_;
   Parameter<uint32_t> port_;
   Parameter<uint32_t> local_port_;
   Parameter<uint32_t> maximum_connection_retries_;
-  Parameter<std::shared_ptr<UcxSerializationBuffer>> buffer_;
+  Parameter<std::shared_ptr<holoscan::UcxSerializationBuffer>> buffer_;
   // TODO: support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
 };

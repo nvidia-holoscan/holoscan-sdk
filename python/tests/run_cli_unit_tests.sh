@@ -58,9 +58,12 @@ ensure_dir_exists() {
 
 platform=$(get_platform_str $(uname -p))
 export APP_BUILD_PATH=${PUBLIC_DIR}/build-${platform}/python/lib
+export APP_INSTALL_PATH=${PUBLIC_DIR}/install-${platform}/lib
 export PYTHONPATH=${APP_BUILD_PATH}:${PYTHONPATH}
 export HOLOSCAN_TESTS_DATA_PATH=${PUBLIC_DIR}/tests/data
+export LD_LIBRARY_PATH=${APP_INSTALL_PATH}:${LD_LIBRARY_PATH}
 ensure_dir_exists $APP_BUILD_PATH "application build"
+ensure_dir_exists $APP_INSTALL_PATH "application install"
 ensure_dir_exists $HOLOSCAN_TESTS_DATA_PATH "test data"
 echo "Running CLI unit test in ${PYTHONPATH}..."
 pytest cli/unit --cov ${PUBLIC_DIR}/build-${platform}/python/lib/holoscan/cli --cov-report=xml --cov-report term --capture=tee-sys

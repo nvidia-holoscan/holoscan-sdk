@@ -134,9 +134,9 @@ def create_package_parser(
     )
     advanced_group.add_argument(
         "--source",
-        type=valid_existing_path,
+        type=str,
         help="override Debian package, build container image and run container image from a "
-        "JSON formatted file.",
+        "JSON formatted file or a secured web server (HTTPS).",
     )
     advanced_group.add_argument(
         "--sdk-version",

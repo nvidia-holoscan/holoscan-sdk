@@ -39,18 +39,50 @@ namespace holoscan::ops {
 /**
  * @brief Inference Operator class to perform single/multi model inference.
  *
- * **Named inputs:**
- *     - *receivers*: multi-receiver accepting `nvidia::gxf::Tensor`(s)
- *         - Any number of upstream ports may be connected to this `receivers` port. The operator
- *         will search across all messages for tensors matching those specified in
- *         `in_tensor_names`. These are the set of input tensors used by the models in
- *         `inference_map`.
+ * ==Named Inputs==
  *
- * **Named outputs:**
- *     - *transmitter*: `nvidia::gxf::Tensor`(s)
- *         - A message containing tensors corresponding to the inference results from all models
- *         will be emitted. The names of the tensors transmitted correspond to those in
- *         `out_tensor_names`.
+ * - **receivers** : multi-receiver accepting `nvidia::gxf::Tensor`(s)
+ *   - Any number of upstream ports may be connected to this `receivers` port. The operator
+ *     will search across all messages for tensors matching those specified in
+ *     `in_tensor_names`. These are the set of input tensors used by the models in
+ *     `inference_map`.
+ *
+ * ==Named Outputs==
+ *
+ * - **transmitter** : `nvidia::gxf::Tensor`(s)
+ *   - A message containing tensors corresponding to the inference results from all models
+ *     will be emitted. The names of the tensors transmitted correspond to those in
+ *     `out_tensor_names`.
+ *
+ * ==Parameters==
+ *
+ * For more details on `InferenceOp` parameters, see
+ * [Customizing the Inference
+ * Operator](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/byom.html#customizing-the-inference-operator)
+ * or refer to [Inference](https://docs.nvidia.com/holoscan/sdk-user-guide/inference.html).
+ *
+ * - **backend**: Backend to use for inference. Set `"trt"` for TensorRT, `"torch"` for LibTorch
+ *   and `"onnxrt"` for the ONNX runtime.
+ * - **allocator**: Memory allocator to use for the output.
+ * - **inference_map**: Tensor to model map.
+ * - **model_path_map**: Path to the ONNX model to be loaded.
+ * - **pre_processor_map**: Pre processed data to model map.
+ * - **device_map**: Mapping of model (`DataMap`) to GPU ID for inference. Optional.
+ * - **backend_map**: Mapping of model (`DataMap`) to backend type for inference.
+ *   Backend options: `"trt"` or `"torch"`. Optional.
+ * - **in_tensor_names**: Input tensors (`std::vector<std::string>`). Optional.
+ * - **out_tensor_names**: Output tensors (`std::vector<std::string>`). Optional.
+ * - **infer_on_cpu**: Whether to run the computation on the CPU instead of GPU. Optional
+ *   (default: `false`).
+ * - **parallel_inference**: Whether to enable parallel execution. Optional (default: `true`).
+ * - **input_on_cuda**: Whether the input buffer is on the GPU. Optional (default: `true`).
+ * - **output_on_cuda**: Whether the output buffer is on the GPU. Optional (default: `true`).
+ * - **transmit_on_cuda**: Whether to transmit the message on the GPU. Optional (default: `true`).
+ * - **enable_fp16**: Use 16-bit floating point computations. Optional (default: `false`).
+ * - **is_engine_path**: Whether the input model path mapping is for trt engine files. Optional
+ *   (default: `false`).
+ * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams. Optional
+ *   (default: `nullptr`).
  */
 class InferenceOp : public holoscan::Operator {
  public:

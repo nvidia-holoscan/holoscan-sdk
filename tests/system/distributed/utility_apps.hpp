@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define SYSTEM_UTILITY_APPS_HPP
 
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -215,12 +216,17 @@ class SingleOpFragment : public holoscan::Fragment {
 
 class OneTxFragment : public holoscan::Fragment {
  public:
+  explicit OneTxFragment(int64_t count = 10) : count_(count) {}
+
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<PingTxOp>("tx", make_condition<CountCondition>(10));
+    auto tx = make_operator<PingTxOp>("tx", make_condition<CountCondition>(count_));
 
     add_operator(tx);
   }
+
+ private:
+  int64_t count_ = 10;
 };
 
 class OneTwoOutputsTxFragment : public holoscan::Fragment {
@@ -261,7 +267,7 @@ class OneMxFragment : public holoscan::Fragment {
  public:
   void compose() override {
     using namespace holoscan;
-    auto mx = make_operator<PingMxOp>("mx", make_condition<CountCondition>(10));
+    auto mx = make_operator<PingMxOp>("mx");
 
     add_operator(mx);
   }
@@ -271,7 +277,7 @@ class BroadcastFragment : public holoscan::Fragment {
  public:
   void compose() override {
     using namespace holoscan;
-    auto broadcast = make_operator<BroadcastOp>("broadcast", make_condition<CountCondition>(10));
+    auto broadcast = make_operator<BroadcastOp>("broadcast");
 
     add_operator(broadcast);
   }
@@ -281,7 +287,7 @@ class OneRxFragment : public holoscan::Fragment {
  public:
   void compose() override {
     using namespace holoscan;
-    auto rx = make_operator<PingRxOp>("rx", make_condition<CountCondition>(10));
+    auto rx = make_operator<PingRxOp>("rx");
 
     add_operator(rx);
   }
@@ -669,7 +675,8 @@ class UCXLinearPipelineApp : public holoscan::Application {
 
   void compose() override {
     using namespace holoscan;
-    auto fragment1 = make_fragment<OneTxFragment>("fragment1");
+    int64_t count = 20;
+    auto fragment1 = make_fragment<OneTxFragment>("fragment1", count);
     auto fragment2 = make_fragment<OneMxFragment>("fragment2");
     auto fragment3 = make_fragment<OneRxFragment>("fragment3");
 

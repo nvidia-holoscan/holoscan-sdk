@@ -18,14 +18,16 @@
 ############################################################
 # Versions
 ############################################################
-ARG ONNX_RUNTIME_VERSION=1.15.1
+# Dependencies ending in _YY.MM are built or extracted from
+# the TensorRT or PyTorch NGC containers of that same version
+ARG ONNX_RUNTIME_VERSION=1.15.1_23.08
 ARG LIBTORCH_VERSION=2.1.0_23.08
 ARG TORCHVISION_VERSION=0.16.0_23.08
 ARG VULKAN_SDK_VERSION=1.3.216.0
 ARG GRPC_VERSION=1.54.2
 ARG UCX_VERSION=1.15.0
-ARG GXF_VERSION=3.1_20240103_6bf4fcd2
-ARG MOFED_VERSION=23.07-0.5.1.2
+ARG GXF_VERSION=4.0_20240409_bc03d9d
+ARG MOFED_VERSION=23.10-2.1.3.1
 
 ############################################################
 # Base image
@@ -82,8 +84,9 @@ ARG ONNX_RUNTIME_VERSION
 # note: built with CUDA and TensorRT providers
 WORKDIR /opt/onnxruntime
 RUN curl -S -L -# -o ort.tgz \
-    https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-12.1-$(uname -m).tar.gz
-RUN tar -xf ort.tgz --strip-components 1
+    https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-12.2-$(uname -m).tar.gz
+RUN mkdir -p ${ONNX_RUNTIME_VERSION}
+RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2
 
 ############################################################
 # Libtorch
@@ -172,7 +175,7 @@ ARG MOFED_VERSION
 # only dependencies in the `MOFED_DEPS` variable (parsing the output of `--check-deps-only`) to
 # remove them in that same layer, to ensure they are not propagated in the final image.
 WORKDIR /opt/nvidia/mofed
-ARG MOFED_INSTALL_FLAGS="--upstream-libs --dpdk --with-mft --user-space-only --force --without-fw-update"
+ARG MOFED_INSTALL_FLAGS="--dpdk --with-mft --user-space-only --force --without-fw-update"
 RUN UBUNTU_VERSION=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d= -f2) \
     && OFED_PACKAGE="MLNX_OFED_LINUX-${MOFED_VERSION}-ubuntu${UBUNTU_VERSION}-$(uname -m)" \
     && curl -S -# -o ${OFED_PACKAGE}.tgz -L \
@@ -227,7 +230,7 @@ RUN patchelf --set-rpath '$ORIGIN/../lib' bin/*
 ############################################################
 # GXF
 ############################################################
-FROM base as gxf-downloader
+FROM base as gxf-builder
 ARG GXF_VERSION
 
 WORKDIR /opt/nvidia/gxf
@@ -235,7 +238,7 @@ RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=x86_64; fi \
     && curl -S -# -L -o gxf.tgz \
         https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
 RUN mkdir -p ${GXF_VERSION}
-RUN tar -xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1
+RUN tar xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1
 
 ############################################################
 # Build image (final)
@@ -304,8 +307,20 @@ ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${UCX}/lib"
 # Copy GXF
 ARG GXF_VERSION
 ENV GXF=/opt/nvidia/gxf/${GXF_VERSION}
-COPY --from=gxf-downloader ${GXF} ${GXF}
+COPY --from=gxf-builder ${GXF} ${GXF}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
+
+# Setup Docker & NVIDIA Container Toolkit's apt repositories to enable DooD
+# for packaging & running applications with the CLI
+# Ref: Docker installation: https://docs.docker.com/engine/install/ubuntu/
+# DooD (Docker-out-of-Docker): use the Docker (or Moby) CLI in your dev container to connect to
+#  your host's Docker daemon by bind mounting the Docker Unix socket.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+        tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 # APT INSTALLS
 #  valgrind - static analysis
@@ -319,6 +334,8 @@ ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
 #  v4l-utils - V4L2 operator utility
 #  libpng-dev - torchvision dependency
 #  libjpeg-dev - torchvision dependency
+#  docker-ce-cli - enable Docker DooD for CLI
+#  docker-buildx-plugin - enable Docker DooD for CLI
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         valgrind="1:3.18.1-*" \
@@ -338,6 +355,8 @@ RUN apt-get update \
         v4l-utils="1.22.1-*" \
         libpng-dev="1.6.37-*" \
         libjpeg-turbo8-dev="2.1.2-*" \
+        docker-ce-cli="5:25.0.3-*" \
+        docker-buildx-plugin="0.12.1-*" \
     && rm -rf /var/lib/apt/lists/*
 
 # PIP INSTALLS
@@ -345,14 +364,16 @@ RUN apt-get update \
 #  requirements.dev.txt
 #    coverage - test coverage of python tests
 #    pytest*  - testing
-#  requirements.txt
+#  requirements
+#    pip - 20.3+ needed for PEP 600
+#    cupy-cuda - dependency for holoscan python + examples
 #    cloudpickle - dependency for distributed apps
 #    python-on-whales - dependency for holoscan CLI
 #    Jinja2 - dependency for holoscan CLI
 #    packaging - dependency for holoscan CLI
 #    pyyaml - dependency for holoscan CLI
 #    requests - dependency for holoscan CLI
-#    cupy-cuda - dependency for holoscan python + examples
+#    psutil - dependency for holoscan CLI
 RUN if [ $(uname -m) = "x86_64" ]; then \
         python3 -m pip install --no-cache-dir \
             mkl==2021.1.1 \
@@ -362,6 +383,35 @@ RUN if [ $(uname -m) = "x86_64" ]; then \
         # This can be removed once upgrading to an MKL pip wheel that fixes the symlinks
         find /usr/local/lib -maxdepth 1 -type f -regex '.*\/lib\(tbb\|mkl\).*\.so\(\.[0-9]+\.[0-9]+\)?' -exec rm -v {} +; \
     fi
-COPY python/requirements.dev.txt /tmp
-COPY python/requirements.txt /tmp
+COPY python/requirements.dev.txt /tmp/requirements.dev.txt
+COPY python/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.dev.txt -r /tmp/requirements.txt
+
+# Creates a home directory for docker-in-docker to store files temporarily in the container,
+# necessary when running the holoscan CLI packager
+ENV HOME=/home/holoscan
+RUN mkdir -p $HOME && chmod 777 $HOME
+
+############################################################################################
+# Extra stage: igpu build image
+# The iGPU CMake build depends on libnvcudla.so as well as libnvdla_compiler.so, which are
+# part of the L4T BSP. As such, they should not be in the container, but mounted at runtime
+# (which the nvidia container runtime handles). However, we need the symbols at build time
+# for the TensorRT libraries to resolve. Since there is no stub library (unlike libcuda.so),
+# we need to include them in our builder. We use a separate stage so that `run build` can
+# use it if needed, but `run launch` (used to run apps in the container) doesn't need to.
+############################################################################################
+FROM build as build-igpu
+ARG GPU_TYPE
+RUN if [ ${GPU_TYPE} = "igpu" ]; then \
+        tmp_dir=$(mktemp -d) \
+        && curl -S -# -L -o $tmp_dir/l4t_core.deb \
+            https://repo.download.nvidia.com/jetson/t234/pool/main/n/nvidia-l4t-core/nvidia-l4t-core_36.1.0-20231206095146_arm64.deb \
+        && curl -S -# -L -o $tmp_dir/l4t_cuda.deb \
+            https://repo.download.nvidia.com/jetson/t234/pool/main/n/nvidia-l4t-cuda/nvidia-l4t-cuda_36.1.0-20231206095146_arm64.deb \
+        && curl -S -# -L -o $tmp_dir/l4t_dla.deb \
+            https://repo.download.nvidia.com/jetson/common/pool/main/n/nvidia-l4t-dla-compiler/nvidia-l4t-dla-compiler_36.1.0-20231206095146_arm64.deb \
+        && dpkg -x $tmp_dir/l4t_core.deb / \
+        && dpkg -x $tmp_dir/l4t_cuda.deb / \
+        && dpkg -x $tmp_dir/l4t_dla.deb /; \
+    fi

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,17 +18,20 @@
 #include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
 
 #include <fcntl.h>
+#include <jpeglib.h>
 #include <libv4l2.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <string>
-#include <utility>
+
 #include <algorithm>
+#include <cstring>
 #include <map>
 #include <numeric>
+#include <string>
+#include <utility>
 
-#include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/execution_context.hpp"
+#include "holoscan/core/resources/gxf/allocator.hpp"
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -76,6 +79,17 @@ void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
              "Pixel Format",
              "Pixel format of capture stream (little endian four character code (fourcc))",
              std::string(kDefaultPixelFormat));
+  spec.param(exposure_time_,
+             "exposure_time",
+             "Exposure Time",
+             "Exposure time of the camera sensor in multiples of 100 μs (e.g. setting "
+             "exposure_time to 100 is 10 ms). See V4L2_CID_EXPOSURE_ABSOLUTE.",
+             ParameterFlag::kOptional);
+  spec.param(gain_,
+             "gain",
+             "Gain",
+             "Gain of the camera sensor. See V4L2_CID_GAIN.",
+             ParameterFlag::kOptional);
 }
 
 void V4L2VideoCaptureOp::initialize() {
@@ -87,6 +101,7 @@ void V4L2VideoCaptureOp::start() {
   v4l2_set_mode();
   v4l2_check_formats();
   v4l2_set_formats();
+  v4l2_set_camera_settings();
   v4l2_requestbuffers();
   v4l2_start();
 }
@@ -103,13 +118,9 @@ void V4L2VideoCaptureOp::compute(InputContext& op_input, OutputContext& op_outpu
 
   // Create video buffer
   auto out_message = nvidia::gxf::Entity::New(context.context());
-  if (!out_message) {
-    throw std::runtime_error("Failed to allocate video output; terminating.");
-  }
+  if (!out_message) { throw std::runtime_error("Failed to allocate video output; terminating."); }
   auto video_buffer = out_message.value().add<nvidia::gxf::VideoBuffer>();
-  if (!video_buffer) {
-    throw std::runtime_error("Failed to allocate video buffer; terminating.");
-  }
+  if (!video_buffer) { throw std::runtime_error("Failed to allocate video buffer; terminating."); }
 
   // Get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
   auto allocator =
@@ -137,7 +148,6 @@ void V4L2VideoCaptureOp::compute(InputContext& op_input, OutputContext& op_outpu
       throw std::runtime_error(
           fmt::format("Failed to queue buffer {} on {}", buf.index, device_.get().c_str()));
     }
-
   } else {
     // Wrap memory into output buffer
     video_buffer.value()->wrapMemory(
@@ -173,9 +183,7 @@ void V4L2VideoCaptureOp::stop() {
   free(buffers_);
 
   // close FD
-  if (-1 == v4l2_close(fd_)) {
-    throw std::runtime_error("Close failed");
-  }
+  if (-1 == v4l2_close(fd_)) { throw std::runtime_error("Close failed"); }
 
   fd_ = -1;
 }
@@ -210,18 +218,16 @@ void V4L2VideoCaptureOp::v4l2_requestbuffers() {
   if (-1 == ioctl(fd_, VIDIOC_REQBUFS, &req)) {
     if (errno == EINVAL)
       throw std::runtime_error(fmt::format(
-        "Video capturing or DMABUF streaming is not supported type {} memory {} count {}",
-        req.type,
-        req.memory,
-        req.count));
+          "Video capturing or DMABUF streaming is not supported type {} memory {} count {}",
+          req.type,
+          req.memory,
+          req.count));
     else
       throw std::runtime_error("Request buffers Ioctl failed");
   }
 
   buffers_ = (Buffer*)calloc(req.count, sizeof(*buffers_));
-  if (!buffers_) {
-    throw std::runtime_error("Allocate buffers failed");
-  }
+  if (!buffers_) { throw std::runtime_error("Allocate buffers failed"); }
 
   for (uint32_t i = 0; i < req.count; ++i) {
     struct v4l2_buffer buf;
@@ -236,9 +242,7 @@ void V4L2VideoCaptureOp::v4l2_requestbuffers() {
 
     buffers_[i].length = buf.length;
     buffers_[i].ptr = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.m.offset);
-    if (MAP_FAILED == buffers_[i].ptr) {
-      throw std::runtime_error("MMAP failed");
-    }
+    if (MAP_FAILED == buffers_[i].ptr) { throw std::runtime_error("MMAP failed"); }
   }
 }
 
@@ -344,6 +348,112 @@ void V4L2VideoCaptureOp::v4l2_set_formats() {
   }
 }
 
+bool V4L2VideoCaptureOp::v4l2_camera_supports_control(int cid, const char* control_name) {
+  struct v4l2_queryctrl queryctrl;
+
+  memset(&queryctrl, 0, sizeof(queryctrl));
+  queryctrl.id = cid;
+
+  if (ioctl(fd_, VIDIOC_QUERYCTRL, &queryctrl) == -1) {
+    // EINVAL indicates that the control is not supported
+    if (errno == EINVAL) {
+      return false;
+    } else {
+      throw std::runtime_error(fmt::format("Querying {} failed", control_name));
+    }
+  }
+
+  return true;
+}
+
+// Set the device's control settings if supported
+void V4L2VideoCaptureOp::v4l2_set_camera_control(v4l2_control control, const char* control_name,
+                                                 bool warn) {
+  HOLOSCAN_LOG_DEBUG(fmt::format("Setting {} to {}", control_name, control.value));
+  if (v4l2_camera_supports_control(control.id, control_name)) {
+    if (ioctl(fd_, VIDIOC_S_CTRL, &control) == -1) {
+      HOLOSCAN_LOG_DEBUG(fmt::format("Setting {} to {} failed", control_name, control.value));
+      throw std::runtime_error(fmt::format("Setting {} to {} failed", control_name, control.value));
+    }
+  } else {
+    auto msg = fmt::format("Device does not support {}", control_name);
+    if (warn) {
+      HOLOSCAN_LOG_WARN(msg);
+    } else {
+      HOLOSCAN_LOG_DEBUG(msg);
+    }
+  }
+}
+
+void V4L2VideoCaptureOp::v4l2_set_camera_settings() {
+  struct v4l2_capability caps;
+  CLEAR(caps);
+
+  // To check if the dev is v4l2loopback
+  if (ioctl(fd_, VIDIOC_QUERYCAP, &caps) == -1) {
+    throw std::runtime_error("Querying video capabilities failed");
+  }
+  std::string busInfo = reinterpret_cast<const char*>(caps.bus_info);
+  if (busInfo.find("v4l2loopback") != std::string::npos) {
+    // Return before setting the camera parameters as loopback option
+    // does not have camera settings to run.
+    HOLOSCAN_LOG_DEBUG("Found a v4l2loopback device");
+    return;
+  }
+
+  struct v4l2_control control;
+  CLEAR(control);
+
+  // Set Exposure
+  if (exposure_time_.try_get().has_value()) {
+    // Manual exposure: try EXPOSURE_SHUTTER_PRIORITY first (manual exposure, auto iris)
+    control.id = V4L2_CID_EXPOSURE_AUTO;
+    control.value = V4L2_EXPOSURE_SHUTTER_PRIORITY;
+    try {
+      v4l2_set_camera_control(control, "V4L2_CID_EXPOSURE_AUTO", false);
+    } catch (std::exception& e) {
+      // If fails, try setting to full manual mode
+      control.value = V4L2_EXPOSURE_MANUAL;
+      v4l2_set_camera_control(control, "V4L2_CID_EXPOSURE_AUTO", true);
+    }
+    // Then set the value
+    CLEAR(control);
+    control.id = V4L2_CID_EXPOSURE_ABSOLUTE;
+    control.value = exposure_time_;
+    v4l2_set_camera_control(control, "V4L2_CID_EXPOSURE_ABSOLUTE", true);
+  } else {
+    // Auto exposure: try fully auto first (auto exposure, auto iris)
+    control.id = V4L2_CID_EXPOSURE_AUTO;
+    control.value = V4L2_EXPOSURE_AUTO;
+    try {
+      v4l2_set_camera_control(control, "V4L2_CID_EXPOSURE_AUTO", false);
+    } catch (std::exception& e) {
+      // If fails, try setting to APERTURE_PRIORITY (auto exposure, manual iris)
+      control.value = V4L2_EXPOSURE_APERTURE_PRIORITY;
+      v4l2_set_camera_control(control, "V4L2_CID_EXPOSURE_AUTO", false);
+    }
+  }
+
+  // Set Gain
+  if (gain_.try_get().has_value()) {
+    // Manual: turn auto gain off
+    control.id = V4L2_CID_AUTOGAIN;
+    control.value = 0;
+    v4l2_set_camera_control(control, "V4L2_CID_AUTOGAIN", false);
+
+    // Then set value
+    CLEAR(control);
+    control.id = V4L2_CID_GAIN;
+    control.value = gain_;
+    v4l2_set_camera_control(control, "V4L2_CID_GAIN", true);
+  } else {
+    // Auto gain
+    control.id = V4L2_CID_AUTOGAIN;
+    control.value = 1;
+    v4l2_set_camera_control(control, "V4L2_CID_AUTOGAIN", false);
+  }
+}
+
 void V4L2VideoCaptureOp::v4l2_start() {
   // Start streaming on V4L2 device
   // queue capture plane into device
@@ -379,22 +489,16 @@ void V4L2VideoCaptureOp::v4l2_read_buffer(v4l2_buffer& buf) {
   int r;
   r = select(fd_ + 1, &fds, NULL, NULL, &tv);
 
-  if (-1 == r) {
-    throw std::runtime_error("Error in querying file descriptor");
-  }
-  if (0 == r) {
-    throw std::runtime_error("Querying file descriptor timed out");
-  }
+  if (-1 == r) { throw std::runtime_error("Error in querying file descriptor"); }
+  if (0 == r) { throw std::runtime_error("Querying file descriptor timed out"); }
 
   buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   buf.memory = V4L2_MEMORY_MMAP;
-  if (-1 == ioctl(fd_, VIDIOC_DQBUF, &buf)) {
-    throw std::runtime_error("Failed to deque buffer");
-  }
+  if (-1 == ioctl(fd_, VIDIOC_DQBUF, &buf)) { throw std::runtime_error("Failed to deque buffer"); }
 
   if (buf.index >= num_buffers_.get()) {
-    throw std::runtime_error(fmt::format(
-      "Buf index is {} more than the queue size {}", buf.index, num_buffers_.get()));
+    throw std::runtime_error(
+        fmt::format("Buf index is {} more than the queue size {}", buf.index, num_buffers_.get()));
   }
 }
 

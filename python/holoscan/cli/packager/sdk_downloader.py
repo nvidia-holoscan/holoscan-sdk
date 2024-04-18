@@ -59,7 +59,7 @@ def download_health_probe_file(
         os.mkdir(target_dir)
 
     try:
-        download_url = artifact_sources.health_prob[arch.value][sdk_version]
+        download_url = artifact_sources.health_probe(sdk_version)[arch.value]
         logger.info(f"Downloading gRPC health probe from {download_url}...")
         response = requests.get(download_url)
         if not response.ok:
@@ -114,7 +114,9 @@ def download_sdk_debian_file(
                 "HTTP status {response.status_code}."
             )
     except Exception as ex:
-        raise InvalidSdkError(f"failed to download SDK from {debian_package_source}", ex) from ex
+        raise InvalidSdkError(
+            f"failed to download SDK from {debian_package_source}: {response.reason}."
+        ) from ex
 
     if debian_package_source.endswith(".deb"):
         filename = Path(debian_package_source).name
@@ -132,7 +134,9 @@ def download_sdk_debian_file(
             logger.info(f"Extracting Debian Package to {unzip_dir}...")
             z.extractall(unzip_dir)
         except Exception as ex:
-            raise InvalidSdkError(f"failed to unzip SDK from {debian_package_source}", ex) from ex
+            raise InvalidSdkError(
+                f"failed to unzip SDK from {debian_package_source}: {response.reason}."
+            ) from ex
 
         for file in os.listdir(unzip_dir):
             if file.endswith(".deb"):

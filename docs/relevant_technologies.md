@@ -13,7 +13,7 @@ The Holoscan SDK relies on multiple core technologies to achieve low latency and
 (gpudirect_rdma)=
 ## Rivermax and GPUDirect RDMA
 
-The Holoscan Developer Kits can be used along with the [NVIDIA Rivermax SDK](https://developer.nvidia.com/networking/rivermax) to provide an extremely efficient network connection using the onboard [ConnectX](https://www.nvidia.com/en-us/networking/ethernet-adapters/) network adapter that is further optimized for GPU workloads by using [GPUDirect](https://developer.nvidia.com/gpudirect) for RDMA. This technology avoids unnecessary memory copies and CPU overhead by copying data directly to or from pinned GPU memory, and supports both the integrated GPU or the discrete GPU.
+The NVIDIA Developer Kits equipped with a [ConnectX network adapter](https://www.nvidia.com/en-us/networking/ethernet-adapters/) can be used along with the [NVIDIA Rivermax SDK](https://developer.nvidia.com/networking/rivermax) to provide an extremely efficient network connection that is further optimized for GPU workloads by using [GPUDirect](https://developer.nvidia.com/gpudirect) for RDMA. This technology avoids unnecessary memory copies and CPU overhead by copying data directly to or from pinned GPU memory, and supports both the integrated GPU or the discrete GPU.
 
 :::{note}
 NVIDIA is also committed to supporting hardware vendors enable RDMA within their own drivers, an example of which is provided by the {ref}`aja_video_systems` as part of a partnership with
@@ -38,7 +38,7 @@ GXF will be mentioned in many places across this user guide, including a {ref}`d
 (tensorrt)=
 ## TensorRT Optimized Inference
 
-[NVIDIA TensorRT](https://developer.nvidia.com/tensorrt) is a deep learning inference framework based on CUDA that provided the highest optimizations to run on NVIDIA GPUs, including the Holoscan Developer Kits.
+[NVIDIA TensorRT](https://developer.nvidia.com/tensorrt) is a deep learning inference framework based on CUDA that provided the highest optimizations to run on NVIDIA GPUs, including the NVIDIA Developer Kits.
 
 The {ref}`inference module<holoinfer>` leverages TensorRT among other backends, and provides the ability to execute multiple inferences in parallel.
 

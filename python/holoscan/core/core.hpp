@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,15 +44,6 @@ void init_fragment(py::module_&);
 void init_application(py::module_&);
 void init_data_flow_tracker(py::module_&);
 void init_cli(py::module_&);
-
-// TODO: remove this unused function
-template <typename ObjT>
-std::vector<std::string> get_names_from_map(ObjT& map_obj) {
-  std::vector<std::string> names;
-  names.reserve(map_obj.size());
-  for (auto& i : map_obj) { names.push_back(i.first); }
-  return names;
-}
 
 }  // namespace holoscan
 

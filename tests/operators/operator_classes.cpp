@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +42,8 @@
 #include "common/assert.hpp"
 
 #include "holoscan/operators/aja_source/aja_source.hpp"
+#include "holoscan/operators/async_ping_rx/async_ping_rx.hpp"
+#include "holoscan/operators/async_ping_tx/async_ping_tx.hpp"
 #include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
 #include "holoscan/operators/format_converter/format_converter.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
@@ -50,6 +52,7 @@
 #include "holoscan/operators/ping_rx/ping_rx.hpp"
 #include "holoscan/operators/ping_tx/ping_tx.hpp"
 #include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
+#include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
 #include "holoscan/operators/video_stream_replayer/video_stream_replayer.hpp"
 
@@ -78,17 +81,7 @@ TEST_F(OperatorClassesWithGXFContext, TestAJASourceOpChannelFromYAML) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'aja-source'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
@@ -110,17 +103,8 @@ TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'aja-source'
 
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
@@ -156,17 +140,7 @@ TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'format_converter'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
@@ -183,17 +157,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'recorder'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
@@ -216,17 +180,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'replayer'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestSegmentationPostprocessorOp) {
@@ -246,18 +200,7 @@ TEST_F(OperatorClassesWithGXFContext, TestSegmentationPostprocessorOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator
-    //   'segmentation_postprocessor'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
@@ -284,17 +227,7 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'holoviz'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestHolovizOpInputSpec) {
@@ -325,17 +258,7 @@ TEST_F(OperatorClassesWithGXFContext, TestInferenceOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'inference'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOp) {
@@ -353,18 +276,7 @@ TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator
-    //   'processor'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOp) {
@@ -384,17 +296,7 @@ TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'bayer_demosaic'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOpDefaultConstructor) {
@@ -403,17 +305,7 @@ TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOpDefaultConstructor) {
   auto op = F.make_operator<ops::BayerDemosaicOp>();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  auto error_pos = log_output.find("error");
-  if (error_pos != std::string::npos) {
-    // Initializing a native operator outside the context of app.run() will result in the
-    // following error being logged because the GXFWrapper will not yet have been created for
-    // the operator:
-    //   [error] [gxf_executor.cpp:452] Unable to get GXFWrapper for Operator 'bayer_demosaic'
-
-    // GXFWrapper was mentioned and no additional error was logged
-    EXPECT_TRUE(log_output.find("GXFWrapper", error_pos + 1) != std::string::npos);
-    EXPECT_TRUE(log_output.find("error", error_pos + 1) == std::string::npos);
-  }
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
 TEST(Operator, TestNativeOperatorWithoutFragment) {
@@ -449,6 +341,102 @@ TEST_F(OperatorClassesWithGXFContext, TestPingTxOpOp) {
 
   auto op = F.make_operator<ops::PingTxOp>(name);
   EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestPingTxWithStringName) {
+  std::string name{"tx"};  // string is not a const
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::PingTxOp>(name);
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestAsyncPingRxOpOp) {
+  const std::string name{"async_rx"};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::AsyncPingRxOp>(name, Arg("delay", 10L), Arg("count", 10UL));
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestAsyncPingTxOpOp) {
+  const std::string name{"async_tx"};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::AsyncPingTxOp>(name, Arg("delay", 10L), Arg("count", 10UL));
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOp) {
+  const std::string name{"video_capture"};
+  uint32_t width = 1024;
+  uint32_t height = 768;
+  uint32_t exposure_time = 500;
+  uint32_t gain = 100;
+
+  ArgList kwargs{Arg{"device", std::string("/dev/video0")},
+                 Arg{"pixel_format", std::string("auto")},
+                 Arg{"width", width},
+                 Arg{"height", height},
+                 Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")},
+                 Arg{"exposure_time", exposure_time},
+                 Arg{"gain", gain}};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::V4L2VideoCaptureOp>(name, kwargs);
+  EXPECT_EQ(op->name(), name);
+  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::V4L2VideoCaptureOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpYAMLConfig) {
+  const std::string name{"video_capture"};
+
+  ArgList kwargs = F.from_config("v4l2_video_capture");
+  kwargs.add(Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")});
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::V4L2VideoCaptureOp>(name, kwargs);
+  EXPECT_EQ(op->name(), name);
+  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::V4L2VideoCaptureOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpDefaults) {
+  const std::string name{"video_capture"};
+
+  // load most arguments from the YAML file
+  ArgList kwargs = F.from_config("demosaic");
+  kwargs.add(Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")});
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::V4L2VideoCaptureOp>(name, kwargs);
+  EXPECT_EQ(op->name(), name);
+  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::V4L2VideoCaptureOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("error") == std::string::npos);

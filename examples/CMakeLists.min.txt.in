@@ -18,7 +18,11 @@ project(holoscan_examples)
 
 # Finds the package holoscan
 find_package(holoscan REQUIRED CONFIG
-             PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
+             PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install"
+                   "/workspace/holoscan-sdk/install-x86_64"
+                   "/workspace/holoscan-sdk/install-aarch64-dgpu"
+                   "/workspace/holoscan-sdk/install-aarch64-igpu"
+                   )
 
 # Enable testing
 include(CTest)

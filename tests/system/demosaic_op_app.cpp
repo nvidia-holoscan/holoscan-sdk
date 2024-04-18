@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,9 +83,15 @@ TEST(DemosaicOpApp, TestDummyDemosaicApp) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Graph activation failed") == std::string::npos);
+
   // verify that there are now no warnings about GPUDevice not being found
   std::string resource_warning = "cannot find Resource of type: nvidia::gxf::GPUDevice";
   EXPECT_TRUE(log_output.find(resource_warning) == std::string::npos);
+
+  // Verify that BlockMemoryPool and CudaStreamPool did not get initialized on a separate entity
+  // from DummyDemosaicApp. (check for absence of warning from GXFResource::initialize).
+  std::string graph_entity_warning = "initialized independent of a parent entity";
+  EXPECT_TRUE(log_output.find(graph_entity_warning) == std::string::npos);
 }
 
 TEST(DemosaicOpApp, TestDummyDemosaicAppWithExplicitInit) {
@@ -102,7 +108,13 @@ TEST(DemosaicOpApp, TestDummyDemosaicAppWithExplicitInit) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Graph activation failed") == std::string::npos);
+
   // verify that there are now no warnings about GPUDevice not being found
   std::string resource_warning = "cannot find Resource of type: nvidia::gxf::GPUDevice";
   EXPECT_TRUE(log_output.find(resource_warning) == std::string::npos);
+
+  // Due to `set_explicit_stream_pool_init = true` we expect to see a warning from
+  // GXFResource::initialize due to explicit initialization of a resource to its own entity.
+  std::string graph_entity_warning = "initialized independent of a parent entity";
+  EXPECT_TRUE(log_output.find(graph_entity_warning) != std::string::npos);
 }

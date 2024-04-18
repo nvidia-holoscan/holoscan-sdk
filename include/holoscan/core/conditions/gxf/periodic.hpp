@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,6 +114,8 @@ class PeriodicCondition : public gxf::GXFCondition {
    * @return The last run time stamp.
    */
   int64_t last_run_timestamp();
+
+  nvidia::gxf::PeriodicSchedulingTerm* get() const;
 
  private:
   Parameter<std::string> recess_period_;

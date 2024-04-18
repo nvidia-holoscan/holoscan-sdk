@@ -199,6 +199,11 @@ get_host_gpu() {
     fi
 }
 
+is_cross_gpu() {
+    [ "$GPU" != $(get_host_gpu) ]
+}
+
+
 get_arch+gpu_str() {
     local suffix=""
     if [ "$ARCH" = "aarch64" ]; then
@@ -485,12 +490,17 @@ Arguments:
 build() {
     # Prerequisite steps
     if [ "$DO_STANDALONE" != "true" ]; then
-        build_image
+        # Adjust final stage for igpu to support nvdla_compiler
+        local stage="build"
+        if [ "$GPU" = "igpu" ]; then
+            stage="build-igpu"
+        fi
+        build_image --target $stage
     fi
 
     # Default cuda architecture
     local default_cuda_archs="native"
-    if is_cross_compiling; then
+    if is_cross_compiling || is_cross_gpu; then
         default_cuda_archs="all"
     fi
 
@@ -508,8 +518,12 @@ build() {
     while [[ $# -gt 0 ]]; do
     case $1 in
         --build_libtorch)
-            build_libtorch='OFF'
+            build_libtorch_val=$(get_boolean "$2")
+            if [ "$build_libtorch_val" == "false" ]; then
+                build_libtorch='OFF'
+            fi
             reconfigure=true
+            shift
             shift
         ;;
         --cudaarchs)
@@ -551,17 +565,13 @@ build() {
     done
 
     # Error if requesting native cuda arch explicitly when cross-compiling
-    if [ "$cuda_archs" = "native" ] && is_cross_compiling; then
+    if [ "$cuda_archs" = "native" ] && (is_cross_compiling || is_cross_gpu); then
         fatal Y "Cross-compiling " W "(host: $(get_host_arch), target: $ARCH)" R " does not support 'native' cuda architecture."
     fi
 
-    # - Tegra (iGPU) limitation requires to mount the /usr/lib/aarch64-linux-gnu/tegra folder
-    # in the container for buildtime, which is handled by the NVIDIA runtime from the container
-    # toolkit. This is not ideal as it needs these drivers libraries at buildtime, which prevents
-    # cross-compilation to aarch64-igpu mode from aarch64-dgpu or x86_64 at this time.
-    # - native means we need the container to access the GPU for CMake to choose the architecture
+    # Native means we need the container to access the GPU for CMake to choose the architecture
     # to use for nvcc.
-    if [ "$GPU" = "igpu" ] || [ "$cuda_archs" = "native" ]; then
+    if [ "$cuda_archs" = "native" ]; then
         runtime=nvidia
     else
         runtime=runc
@@ -585,8 +595,7 @@ build() {
     #   Override the default entrypoint to hide the regular message from the base image
     #
     # --runtime ${runtime}
-    #   Docker runtime. Should ideally be runc for build (no need for drivers) but tegra/igpu needs
-    #   nvidia runtime due to limitation described above.
+    #   Docker runtime. Should ideally be runc for build (no need for drivers).
     #
     # --platform $(get_platform_str)
     #   Platform to build
@@ -881,7 +890,7 @@ Arguments:
 launch() {
     # Prerequisite steps
     if [ "$DO_STANDALONE" != "true" ]; then
-        build_image
+        build_image --target build
     fi
 
     local container_mount="/workspace/holoscan-sdk"
@@ -964,6 +973,9 @@ launch() {
         groups+=" --group-add $render_id"
     fi
 
+    # Add docker group to enable DooD
+    groups+=" --group-add $(get_group_id docker)"
+
     # DOCKER PARAMETERS
     #
     # --rm
@@ -986,6 +998,10 @@ launch() {
     # -v /etc/passwd:/etc/passwd:ro
     # ${groups} (--group-add render; --group-add video)
     #   Run the container as a non-root user. See details above for `groups` variable.
+    #
+    # -v /var/run/docker.sock:/var/run/docker.sock
+    #    Enable the use of Holoscan CLI with Docker outside of Docker (DooD) for packaging and 
+    #    running applications inside the container.
     #
     # -v ${TOP}:/workspace/holoscan-sdk
     #   Mount the source directory
@@ -1034,6 +1050,7 @@ launch() {
         -v /etc/group:/etc/group:ro \
         -v /etc/passwd:/etc/passwd:ro \
         ${groups} \
+        -v /var/run/docker.sock:/var/run/docker.sock \
         -v ${mount_point}:${container_mount} \
         ${extra_args[@]} \
         -w ${container_top}/${working_dir} \
@@ -1051,7 +1068,7 @@ launch() {
         --cap-add=CAP_SYS_PTRACE \
         --ulimit memlock=-1 \
         --ulimit stack=67108864 \
-        $img -c "$run_cmd"
+        $img -c "export PATH=\$PATH:${container_top}/${working_dir}/bin; $run_cmd" # Append the Holoscan bin folder to the existing `PATH` before running
 }
 
 vscode_desc() { c_echo 'Launch VSCode in DevContainer
@@ -1240,10 +1257,28 @@ run_html_builder() {
 }
 
 build_html_desc() { c_echo 'Generate HTML pages of the user guide
+
+Arguments:
+    --no-api   - Skip C++/Python api docs
 '
 }
 build_html() {
-    run_html_builder "make -j html"
+    local tags=""
+
+    # Parse CLI arguments
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-api)
+            tags="-t=noapi"
+            shift
+        ;;
+        *)
+            shift
+        ;;
+    esac
+    done
+
+    run_html_builder "make -j html SPHINXOPTS=${tags}"
 }
 
 live_html_desc() { c_echo "Generate and serve HTML pages of the user guide
@@ -1253,11 +1288,13 @@ Auto-reload on updates
 Arguments:
     -i|--ip   - Specifics IP address to serve the HTML guide (default: $LIVE_HTML_IP)
     -p|--port - Specifics address port to serve the HTML guide (default: $LIVE_HTML_PORT)
+    --no-api  - Skip C++/Python api docs
 "
 }
 live_html() {
     local ip=$LIVE_HTML_IP
     local port=$LIVE_HTML_PORT
+    local tags="-t=noexhale"
 
     # Parse CLI arguments
     while [[ $# -gt 0 ]]; do
@@ -1272,13 +1309,17 @@ live_html() {
             shift
             shift
         ;;
+        --no-api)
+            tags="-t=noapi"
+            shift
+        ;;
         *)
             shift
         ;;
     esac
     done
 
-    run_html_builder "make -j livehtml SPHINXOPTS='-t=noexhale --host ${ip} --port ${port}'"
+    run_html_builder "make -j livehtml SPHINXOPTS='${tags} --host ${ip} --port ${port}'"
 }
 
 build_pdf_desc() { c_echo 'Generate PDF of the user guide

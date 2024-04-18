@@ -104,7 +104,6 @@ def detect_holoscan_version(
     Returns:
         str: SDK version
     """
-
     if sdk_version is not None:
         if sdk_version.base_version not in artifact_sources.holoscan_versions:
             raise InvalidSdkError(

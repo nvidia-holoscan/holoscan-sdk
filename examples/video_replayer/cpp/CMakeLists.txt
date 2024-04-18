@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,6 +92,9 @@ if(HOLOSCAN_BUILD_TESTS)
   add_executable(video_replayer_test
     video_replayer_test.cpp
   )
+
+  target_include_directories(video_replayer_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 
   target_compile_definitions(video_replayer_test
     PRIVATE RECORD_OUTPUT RECORDING_DIR="${RECORDING_DIR}"

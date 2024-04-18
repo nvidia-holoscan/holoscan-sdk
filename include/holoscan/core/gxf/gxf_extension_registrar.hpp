@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -217,7 +217,7 @@ class GXFExtensionRegistrar {
    * @param tid The type ID of the extension to use.
    */
   void reset(gxf_context_t context, const char* extension_name,
-            const char* extension_description = "", gxf_tid_t tid = {0, 0}) {
+             const char* extension_description = "", gxf_tid_t tid = {0, 0}) {
     context_ = context;
     factory_ = std::make_unique<nvidia::gxf::DefaultExtension>();
     allocated_tids_.clear();
@@ -235,12 +235,8 @@ class GXFExtensionRegistrar {
     }
 
     // Set the extension information.
-    const nvidia::gxf::Expected<void> result = factory_->setInfo(extension_tid_,
-                                                                 extension_name,
-                                                                 extension_description,
-                                                                 "NVIDIA",
-                                                                 "1.0.0",
-                                                                 "Apache 2.0");
+    const nvidia::gxf::Expected<void> result = factory_->setInfo(
+        extension_tid_, extension_name, extension_description, "NVIDIA", "1.0.0", "Apache 2.0");
     if (!result) {
       HOLOSCAN_LOG_ERROR("Unable to set the GXF extension information: {}", result.error());
       return;

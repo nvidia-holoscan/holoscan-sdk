@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,12 +27,25 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "../../app_driver.hpp"
 #include "../../executor.hpp"
 #include "../../graph.hpp"
 #include "../../gxf/gxf_extension_manager.hpp"
+#include "gxf/app/graph_entity.hpp"
+
+namespace holoscan {
+
+// Forward declarations
+class Arg;
+class Condition;
+class Resource;
+
+}  // namespace holoscan
 
 namespace holoscan::gxf {
 
@@ -109,9 +122,10 @@ class GXFExecutor : public holoscan::Executor {
    *
    * @param fragment The fragment that this operator belongs to.
    * @param gxf_context The GXF context.
-   * @param eid The GXF entity ID.
+   * @param eid The GXF entity ID. (Deprecated: now ignored. The eid is obtained from op instead)
    * @param io_spec The input port specification.
    * @param bind_port If true, bind the port to the existing GXF Receiver component. Otherwise,
+   * @param op The operator to which this port is being added.
    * create a new GXF Receiver component.
    */
   static void create_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
@@ -133,9 +147,10 @@ class GXFExecutor : public holoscan::Executor {
    *
    * @param fragment The fragment that this operator belongs to.
    * @param gxf_context The GXF context.
-   * @param eid The GXF entity ID.
+   * @param eid The GXF entity ID. (Deprecated: now ignored. The eid is obtained from op instead)
    * @param io_spec The output port specification.
    * @param bind_port If true, bind the port to the existing GXF Transmitter component. Otherwise,
+   * @param op The operator to which this port is being added.
    * create a new GXF Transmitter component.
    */
   static void create_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
@@ -193,7 +208,7 @@ class GXFExecutor : public holoscan::Executor {
 
   bool initialize_gxf_graph(OperatorGraph& graph);
   void activate_gxf_graph();
-  bool run_gxf_graph();
+  void run_gxf_graph();
   bool connection_items(std::vector<std::shared_ptr<holoscan::ConnectionItem>>& connection_items);
 
   void add_operator_to_entity_group(gxf_context_t context, gxf_uid_t entity_group_gid,
@@ -222,7 +237,122 @@ class GXFExecutor : public holoscan::Executor {
   std::vector<std::shared_ptr<holoscan::ConnectionItem>> connection_items_;
 
   /// The list of implicit broadcast entities to be added to the network entity group.
-  std::list<gxf_uid_t> implicit_broadcast_entities_;
+  std::list<std::shared_ptr<nvidia::gxf::GraphEntity>> implicit_broadcast_entities_;
+
+  std::shared_ptr<nvidia::gxf::GraphEntity> util_entity_;
+  std::shared_ptr<nvidia::gxf::GraphEntity> gpu_device_entity_;
+  std::shared_ptr<nvidia::gxf::GraphEntity> scheduler_entity_;
+  std::shared_ptr<nvidia::gxf::GraphEntity> network_context_entity_;
+  std::shared_ptr<nvidia::gxf::GraphEntity> connections_entity_;
+
+ private:
+  // Map of connections indexed by source port uid and stores a pair of the target operator name
+  // and target port name
+  using TargetPort = std::pair<holoscan::OperatorGraph::NodeType, std::string>;
+  using TargetsInfo = std::tuple<std::string, IOSpec::ConnectorType, std::set<TargetPort>>;
+  using TargetConnectionsMapType = std::unordered_map<gxf_uid_t, TargetsInfo>;
+
+  using BroadcastEntityMapType = std::unordered_map<
+      holoscan::OperatorGraph::NodeType,
+      std::unordered_map<std::string, std::shared_ptr<nvidia::gxf::GraphEntity>>>;
+
+  /** @brief Initialize all GXF Resources in the map and assign them to graph_entity.
+   *
+   *  Utility function grouping common code across `initialize_network_context` and
+   *  `intialize_scheduler`.
+   *
+   * @param resources Unordered map of GXF resources.
+   * @param gxf_uid_t The entity to which the resources will be assigned.
+   * @param graph_entity nvidia::gxf::GraphEntity pointer for the resources.
+   *
+   */
+  void initialize_gxf_resources(
+      std::unordered_map<std::string, std::shared_ptr<Resource>>& resources, gxf_uid_t eid,
+      std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+
+  /** @brief Create a GXF Connection component between a transmitter and receiver.
+   *
+   * The Connection object created will belong to connections_entity_.
+   *
+   * @param source_cid The GXF Transmitter component ID.
+   * @param target_cid The GXF Receiver component ID.
+   * @return The GXF status code.
+   */
+  gxf_result_t add_connection(gxf_uid_t source_cid, gxf_uid_t target_cid);
+
+  /** @brief Create Broadcast components and add their nvidia::gxf::GraphEntity to
+   * broadcast_entites.
+   *
+   * This is a helper method that gets called by initialize_fragment.
+   *
+   * Creates broadcast components for any output ports of `op` that connect to more than one
+   * input port.
+   *
+   * Does not add any transmitter to the Broadcast entity. The transmitters will be added later
+   * when the incoming edges to the respective operators are processed.
+   *
+   * Any connected ports of the operator are removed from port_map_val.
+   *
+   * @param op The operator to create broadcast components for.
+   * @param broadcast_entities The mapping of broadcast graph entities.
+   * @param connections TODO
+   */
+  void create_broadcast_components(holoscan::OperatorGraph::NodeType op,
+                                   BroadcastEntityMapType& broadcast_entities,
+                                   const TargetConnectionsMapType& connections);
+
+  /** @brief Add connection between the prior Broadcast component and the current operator's input
+   * port(s).
+   *
+   * Creates a transmitter on the broadcast component and connects it to the input port of `op`.
+   *
+   * Any connected ports of the operator are removed from port_map_val.
+   *
+   * @param broadcast_entities The mapping of broadcast graph entities.
+   * @param op The broadcast entity's output will connect to the input port of this operator.
+   * @param prev_op The operator connected to the input of the broadcast entity. The capacity
+   * and policy of the transmitter added to the broadcast entity will be copied from the transmitter
+   * on the broadcasted output port of this operator.
+   * @param port_map_val The port mapping between prev_op and op.
+   */
+  void connect_broadcast_to_previous_op(const BroadcastEntityMapType& broadcast_entities,
+                                        holoscan::OperatorGraph::NodeType op,
+                                        holoscan::OperatorGraph::NodeType prev_op,
+                                        holoscan::OperatorGraph::EdgeDataType port_map_val);
+
+  /// Indicate whether this executor was created by a Holoscan Application.
+  bool is_holoscan() const;
+
+  /// Helper function that adds a GXF Condition to the specified graph entity
+  bool add_condition_to_graph_entity(std::shared_ptr<Condition> condition,
+                                     std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+
+  /// Helper function that adds a GXF Resource to the specified graph entity.
+  bool add_resource_to_graph_entity(std::shared_ptr<Resource> resource,
+                                    std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+
+  /* @brief Add an IOspec connector resource and any conditions to the graph entity.
+   *
+   * Helper function for add_component_arg_to_graph_entity.
+   *
+   * @param io_spec Pointer to the IOSpec object to update.
+   * @param graph_entity The graph entity this IOSpec will be associated with.
+   * @return true if the IOSpec's components were all successfully added to the graph entity.
+   */
+  bool add_iospec_to_graph_entity(IOSpec* io_spec,
+                                  std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+
+  /* @brief Add any GXF resources and conditions present in the arguments to the provided graph
+   * entity.
+   *
+   * Handles Component, Resource and IOSpec arguments and vectors of each of these.
+   *
+   * @param io_spec Pointer to the IOSpec object to update.
+   * @param graph_entity The graph entity this IOSpec will be associated with.
+   * @return true if the IOSpec's components were all successfully added to the graph entity.
+   */
+  void add_component_args_to_graph_entity(std::vector<Arg>& args,
+                                          std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
 };
 
 }  // namespace holoscan::gxf

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -163,18 +163,14 @@ RuntimeError
 
 PYDOC(name, R"doc(
 The name of the operator.
-
-Returns
--------
-name : str
 )doc")
 
 PYDOC(fragment, R"doc(
-The fragment that the operator belongs to.
+The fragment (``holoscan.core.Fragment``) that the operator belongs to.
+)doc")
 
-Returns
--------
-name : holoscan.core.Fragment
+PYDOC(spec, R"doc(
+The operator spec (``holoscan.core.OperatorSpec``) associated with the operator.
 )doc")
 
 PYDOC(conditions, R"doc(
@@ -246,6 +242,17 @@ YAML formatted string describing the operator.
 
 }  // namespace Operator
 
+namespace OperatorType {
+
+PYDOC(OperatorType, R"doc(
+Enum class for operator types used by the executor.
+
+- NATIVE: Native operator.
+- GXF: GXF operator.
+- VIRTUAL: Virtual operator. (for internal use, not intended for use by application authors)
+)doc")
+
+}  // namespace OperatorType
 }  // namespace holoscan::doc
 
 #endif  // PYHOLOSCAN_CORE_OPERATOR_PYDOC_HPP

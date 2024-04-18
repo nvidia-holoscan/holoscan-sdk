@@ -16,15 +16,6 @@
 # limitations under the License.
 
 ############################################################
-# Versions
-############################################################
-ARG ONNX_RUNTIME_VERSION=1.15.1
-ARG LIBTORCH_VERSION=2.1.0_23.08
-ARG TORCHVISION_VERSION=0.16.0_23.08
-ARG GRPC_VERSION=1.54.2
-ARG GXF_VERSION=3.1_20231009_b3d4e027
-
-############################################################
 # SDK Build Image, used to copy installs
 ############################################################
 ARG BUILD_IMAGE
@@ -57,6 +48,7 @@ FROM base as runtime_cpp_no_mkl
 #  libvulkan1 - for Vulkan apps (Holoviz)
 #  libegl1 - to run headless Vulkan apps
 #  libopenblas0 - libtorch dependency
+#  libnuma1 - libtorch dependency
 #  libgomp1 - libtorch & CuPy dependency
 #  libv4l2 - V4L2 operator dependency
 #  libpng16-16 - torchvision dependency
@@ -85,6 +77,7 @@ RUN apt-get update \
         libvulkan1="1.3.204.1-*" \
         libegl1="1.4.0-*" \
         libopenblas0="0.3.20+ds-*" \
+        libnuma1="2.0.14-*" \
         libgomp1="12.3.0-*" \
         libv4l-0="1.22.1-*" \
         libpng16-16="1.6.37-*" \
@@ -106,25 +99,28 @@ RUN apt-get update \
         && rm -f /usr/lib/*/libcudnn*train.so*
 
 # Copy ONNX Runtime
-ARG ONNX_RUNTIME_VERSION
+ARG ONNX_RUNTIME_VERSION=1.15.1_23.08
 ENV ONNX_RUNTIME=/opt/onnxruntime/${ONNX_RUNTIME_VERSION}/lib
 COPY --from=build ${ONNX_RUNTIME} ${ONNX_RUNTIME}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${ONNX_RUNTIME}"
 
 # Copy Libtorch
-ARG LIBTORCH_VERSION
+ARG LIBTORCH_VERSION=2.1.0_23.08
 ENV LIBTORCH=/opt/libtorch/${LIBTORCH_VERSION}/lib
 COPY --from=build ${LIBTORCH} ${LIBTORCH}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${LIBTORCH}"
 
 # Copy TorchVision
-ARG TORCHVISION_VERSION
+ARG TORCHVISION_VERSION=0.16.0_23.08
 ENV TORCHVISION=/opt/torchvision/${TORCHVISION_VERSION}/lib
 COPY --from=build ${TORCHVISION} ${TORCHVISION}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${TORCHVISION}"
 
 # Copy inherited Torch library dependency that result from building with NGC PyTorch container
 COPY --from=build /opt/hpcx/ucc/lib/libucc.so.1 $INSTALL_PATH/lib/libucc.so.1
+COPY --from=build /opt/hpcx/ompi/lib/libmpi.so.40 $INSTALL_PATH/lib/libmpi.so.40
+COPY --from=build /opt/hpcx/ompi/lib/libopen-rte.so.40 $INSTALL_PATH/lib/libopen-rte.so.40
+COPY --from=build /opt/hpcx/ompi/lib/libopen-pal.so.40 $INSTALL_PATH/lib/libopen-pal.so.40
 
 # Install GRDAPI (needed by Holoscan-core)
 ENV os=ubuntu2204
@@ -208,12 +204,14 @@ FROM runtime_cpp_pip_mkl as runtime_cpp_py
 
 # Install pip run dependencies
 #  requirements
-#    cuda-cupy - dependency for holoscan-core
+#    pip - 20.3+ needed for PEP 600
+#    cupy-cuda - dependency for holoscan python + examples
 #    cloudpickle - dependency for distributed apps
 #    python-on-whales - dependency for holoscan CLI
 #    Jinja2 - dependency for holoscan CLI
 #    packaging - dependency for holoscan CLI
 #    pyyaml - dependency for holoscan CLI
 #    requests - dependency for holoscan CLI
+#    psutil - dependency for holoscan CLI
 COPY python/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt

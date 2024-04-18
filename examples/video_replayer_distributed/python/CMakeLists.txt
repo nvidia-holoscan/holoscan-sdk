@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +41,13 @@ install(FILES
     COMPONENT "holoscan-examples"
 )
 
+# Install the minimal CMakeLists.txt file
+install(FILES CMakeLists.min.txt
+  RENAME "CMakeLists.txt"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
 
@@ -75,6 +82,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_TEST PROPERTIES
     DEPENDS "video_replayer_distributed_test.py"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
   # Add a test to check the validity of the frames
@@ -90,6 +98,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_RENDER_TEST PROPERTIES
     DEPENDS EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_TEST
     PASS_REGULAR_EXPRESSION "Valid video output!"
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
 endif()

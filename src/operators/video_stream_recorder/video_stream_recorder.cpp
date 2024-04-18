@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@
 
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
-#include "holoscan/core/resources/gxf/video_stream_serializer.hpp"
+#include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 
 namespace holoscan::ops {
 
@@ -56,7 +56,12 @@ void VideoStreamRecorderOp::initialize() {
   // Set up prerequisite parameters before calling GXFOperator::initialize()
   auto frag = fragment();
   auto entity_serializer =
-      frag->make_resource<holoscan::VideoStreamSerializer>("entity_serializer");
+      frag->make_resource<holoscan::StdEntitySerializer>("recorder__std_entity_serializer");
+  entity_serializer->gxf_cname(entity_serializer->name().c_str());
+  if (graph_entity_) {
+    entity_serializer->gxf_eid(graph_entity_->eid());
+    entity_serializer->gxf_graph_entity(graph_entity_);
+  }
   add_arg(Arg("entity_serializer") = entity_serializer);
 
   // Operator::initialize must occur after all arguments have been added
@@ -142,9 +147,9 @@ void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_ou
 
   auto entity = op_input.receive<gxf::Entity>("input").value();
 
-  // dynamic cast from holoscan::Resource to holoscan::VideoStreamSerializer
+  // dynamic cast from holoscan::Resource to holoscan::StdEntitySerializer
   auto vs_serializer =
-      std::dynamic_pointer_cast<holoscan::VideoStreamSerializer>(entity_serializer_.get());
+      std::dynamic_pointer_cast<holoscan::StdEntitySerializer>(entity_serializer_.get());
   // get the Handle to the underlying GXF EntitySerializer
   auto entity_serializer = nvidia::gxf::Handle<nvidia::gxf::EntitySerializer>::Create(
       context.context(), vs_serializer->gxf_cid());

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+
+#include <gxf/ucx/ucx_context.hpp>
 
 #include "../../gxf/gxf_network_context.hpp"
 #include "../../resources/gxf/ucx_entity_serializer.hpp"
@@ -45,6 +47,8 @@ class UcxContext : public gxf::GXFNetworkContext {
 
   void setup(ComponentSpec& spec) override;
   void initialize() override;
+
+  nvidia::gxf::UcxContext* get() const;
 
  private:
   Parameter<std::shared_ptr<UcxEntitySerializer>> entity_serializer_;

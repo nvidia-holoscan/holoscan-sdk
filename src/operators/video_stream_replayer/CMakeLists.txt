@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,3 @@ target_link_libraries(op_video_stream_replayer
         holoscan::core
         GXF::serialization
 )
-
-# Uses the VideoStreamSerializer from the GXF extension
-add_dependencies(op_video_stream_replayer gxf_stream_playback)

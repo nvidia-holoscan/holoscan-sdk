@@ -94,7 +94,7 @@ class BadAllOperatorApp(Application):
 
 
 @pytest.mark.parametrize("method", ["compute", "initialize", "start", "stop", "all"])
-def test_exception_handling(capfd, method):
+def test_exception_handling(method):
     if method == "compute":
         app = BadComputeOperatorApp()
     elif method == "initialize":
@@ -107,9 +107,6 @@ def test_exception_handling(capfd, method):
         app = BadAllOperatorApp()
     else:
         raise ValueError("invalid method name")
-    app.run()
 
-    # assert that the exception was logged
-    captured = capfd.readouterr()
-    assert "ZeroDivisionError: division by zero" in captured.err
-    assert captured.err.count("Traceback") == 1 if method != "all" else 4
+    with pytest.raises(ZeroDivisionError):
+        app.run()

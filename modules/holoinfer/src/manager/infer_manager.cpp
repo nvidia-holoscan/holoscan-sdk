@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -728,37 +728,116 @@ DimType ManagerInfer::get_output_dimensions() const {
 
 InferContext::InferContext() {
   try {
-    manager = std::make_unique<ManagerInfer>();
+    if (g_managers.find("current_manager") != g_managers.end()) {
+      HOLOSCAN_LOG_WARN("Inference context exists, cleaning up");
+      g_managers.at("current_manager").reset();
+      g_managers.erase("current_manager");
+    }
+    g_managers.insert({"current_manager", std::make_shared<ManagerInfer>()});
   } catch (const std::bad_alloc&) { throw; }
 }
 
 InferStatus InferContext::execute_inference(DataMap& data_map, DataMap& output_data_map) {
   InferStatus status = InferStatus();
+
+  if (g_managers.find(unique_id_) == g_managers.end()) {
+    status.set_code(holoinfer_code::H_ERROR);
+    status.set_message("Inference manager, Error: Inference manager not created or is not set up.");
+    return status;
+  }
+
   try {
+    g_manager = g_managers.at(unique_id_);
+
     if (data_map.size() == 0) {
       status.set_code(holoinfer_code::H_ERROR);
       status.set_message("Inference manager, Error: Data map empty for inferencing");
       return status;
     }
-    status = manager->execute_inference(data_map, output_data_map);
-  } catch (...) {
+    status = g_manager->execute_inference(data_map, output_data_map);
+  } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
-    status.set_message("Inference manager, Error in inference");
+    status.set_message(std::string("Inference manager, Error in inference setup: ") + e.what());
     return status;
   }
+
   return status;
 }
 
 InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& inference_specs) {
-  return manager->set_inference_params(inference_specs);
+  InferStatus status = InferStatus();
+  if (g_managers.size() == 0) {
+    status.set_code(holoinfer_code::H_ERROR);
+    status.set_message("Inference manager, Error: Inference Manager not initiated");
+    return status;
+  }
+
+  try {
+    auto multi_model_map = inference_specs->get_path_map();
+
+    if (multi_model_map.size() == 0) {
+      if (g_managers.find("current_manager") != g_managers.end()) {
+        g_managers.at("current_manager").reset();
+        g_managers.erase("current_manager");
+      }
+
+      status.set_code(holoinfer_code::H_ERROR);
+      status.set_message("Inference manager, Error: Multi modal map cannot be empty in setup.");
+      return status;
+    }
+
+    std::string unique_id_name("");
+    for (auto& [model_name, _] : multi_model_map) { unique_id_name += model_name + "_[]_"; }
+
+    unique_id_ = unique_id_name;
+    HOLOSCAN_LOG_INFO("Inference context ID: {}", unique_id_);
+
+    if (g_managers.find(unique_id_name) != g_managers.end()) {
+      if (g_managers.find("current_manager") != g_managers.end()) {
+        g_managers.erase("current_manager");
+      }
+
+      status.set_code(holoinfer_code::H_ERROR);
+      status.set_message(
+          "Inference manager, Error: A manager with the same unique ID already exists.");
+      HOLOSCAN_LOG_ERROR(
+          "Inference manager setup error: model keywords are repeated in multiple instances of "
+          "inference. All model instances must have unique keyword in the configuration file.");
+      return status;
+    }
+
+    if (g_managers.find("current_manager") == g_managers.end()) {
+      status.set_code(holoinfer_code::H_ERROR);
+      status.set_message("Inference manager, Error: Current Manager not initialized.");
+      HOLOSCAN_LOG_ERROR("Inference manager setup error: Inference context not initialized.");
+      return status;
+    }
+
+    g_managers.insert({unique_id_name, std::move(g_managers.at("current_manager"))});
+    g_managers.erase("current_manager");
+
+    g_manager = g_managers.at(unique_id_);
+    status = g_manager->set_inference_params(inference_specs);
+  } catch (const std::exception& e) {
+    status.set_code(holoinfer_code::H_ERROR);
+    status.set_message(std::string("Inference manager, Error in inference setup: ") + e.what());
+    return status;
+  }
+
+  return status;
 }
 
 InferContext::~InferContext() {
-  manager.reset();
+  if (g_managers.find(unique_id_) != g_managers.end()) {
+    g_manager = g_managers.at(unique_id_);
+    g_manager.reset();
+    g_managers.erase(unique_id_);
+  }
 }
 
 DimType InferContext::get_output_dimensions() const {
-  return manager->get_output_dimensions();
+  g_manager = g_managers.at(unique_id_);
+  return g_manager->get_output_dimensions();
 }
 
 }  // namespace inference

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,13 +55,14 @@ class Clock : public gxf::GXFResource {
    */
   template <typename Rep, typename Period>
   void sleep_for(std::chrono::duration<Rep, Period> duration) {
-    int64_t duration_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+    int64_t duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
     sleep_for(duration_ns);
   }
 
   /// @brief Waits until the given target time
   virtual void sleep_until(int64_t target_time_ns) = 0;
+
+  nvidia::gxf::Clock* get() const;
 };
 
 }  // namespace holoscan

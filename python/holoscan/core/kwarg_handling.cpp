@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include <pybind11/numpy.h>     // py::dtype, py::array
+#include <pybind11/numpy.h>  // py::dtype, py::array
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>       // needed for py::cast to work with std::vector types
+#include <pybind11/stl.h>  // needed for py::cast to work with std::vector types
 
 #include <cstdint>
 #include <memory>
@@ -29,6 +29,7 @@
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/resource.hpp"
+#include "holoscan/operators/aja_source/ntv2channel.hpp"
 #include "kwarg_handling.hpp"
 #include "kwarg_handling_pydoc.hpp"
 
@@ -249,6 +250,10 @@ py::object yaml_node_to_py_object(YAML::Node node) {
     }
     // Check if it is a string.
     {
+      // special case for string -> AJASourceOp NTV2Channel enum
+      NTV2Channel aja_t;
+      if (YAML::convert<NTV2Channel>::decode(node, aja_t)) { return py::cast(aja_t); }
+
       std::string t;
       if (YAML::convert<std::string>::decode(node, t)) { return py::str(t); }
     }

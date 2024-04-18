@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,17 @@ BooleanCondition::BooleanCondition(const std::string& name,
   enable_tick_ = term->checkTickEnabled();
 }
 
+nvidia::gxf::BooleanSchedulingTerm* BooleanCondition::get() const {
+  // Could use Component APIs, but keep gxf_cptr_ for now to handle any case
+  // where gxf_graph_entity_ is null.
+
+  // return gxf_component_.is_null()
+  //            ? nullptr
+  //            : dynamic_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_component_.get());
+
+  return static_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_cptr_);
+}
+
 void BooleanCondition::setup(ComponentSpec& spec) {
   spec.param(enable_tick_,
              "enable_tick",
@@ -40,30 +51,20 @@ void BooleanCondition::setup(ComponentSpec& spec) {
 }
 
 void BooleanCondition::enable_tick() {
-  if (gxf_cptr_) {
-    nvidia::gxf::BooleanSchedulingTerm* boolean_condition =
-        static_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_cptr_);
-    boolean_condition->enable_tick();
-  }
+  auto boolean_condition = get();
+  if (boolean_condition) { boolean_condition->enable_tick(); }
   enable_tick_ = true;
 }
 
 void BooleanCondition::disable_tick() {
-  if (gxf_cptr_) {
-    nvidia::gxf::BooleanSchedulingTerm* boolean_condition =
-        static_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_cptr_);
-    boolean_condition->disable_tick();
-  }
+  auto boolean_condition = get();
+  if (boolean_condition) { boolean_condition->disable_tick(); }
   enable_tick_ = false;
 }
 
 bool BooleanCondition::check_tick_enabled() {
-  if (gxf_cptr_) {
-    nvidia::gxf::BooleanSchedulingTerm* boolean_condition =
-        static_cast<nvidia::gxf::BooleanSchedulingTerm*>(gxf_cptr_);
-    enable_tick_ = boolean_condition->checkTickEnabled();
-  }
-  return enable_tick_.get();
+  auto boolean_condition = get();
+  return boolean_condition ? boolean_condition->checkTickEnabled() : enable_tick_.get();
 }
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,10 @@
 
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
+#include <cstdint>
 #include <string>
 
+#include "gxf/std/resources.hpp"  // for GPUDevice
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
 
@@ -34,23 +36,31 @@ constexpr int32_t kDefaultDeviceId = 0;
 
 CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component)
     : Allocator(name, component) {
-  // TODO: how to get the device ID now that it is a GPUDevice Resource and not a parameter?
-  dev_id_ = 0;
-  uint32_t stream_flags = 0;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfParameterGetUInt32(gxf_context_, gxf_cid_, "stream_flags", &stream_flags));
-  stream_flags_ = stream_flags;
-  int32_t stream_priority = 0;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfParameterGetInt32(gxf_context_, gxf_cid_, "stream_priority", &stream_priority));
-  stream_priority_ = stream_priority;
-  uint32_t reserved_size = 0;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfParameterGetUInt32(gxf_context_, gxf_cid_, "reserved_size", &reserved_size));
-  reserved_size_ = reserved_size;
-  uint32_t max_size = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt32(gxf_context_, gxf_cid_, "max_size", &max_size));
-  max_size_ = max_size;
+  auto maybe_stream_flags = component->getParameter<int32_t>("stream_flags");
+  if (!maybe_stream_flags) { throw std::runtime_error("Failed to get stream_flags"); }
+  stream_flags_ = maybe_stream_flags.value();
+
+  auto maybe_stream_priority = component->getParameter<int32_t>("stream_priority");
+  if (!maybe_stream_priority) { throw std::runtime_error("Failed to get stream_priority"); }
+  stream_priority_ = maybe_stream_priority.value();
+
+  auto maybe_reserved_size = component->getParameter<uint32_t>("reserved_size");
+  if (!maybe_reserved_size) { throw std::runtime_error("Failed to get reserved_size"); }
+  reserved_size_ = maybe_reserved_size.value();
+
+  auto maybe_max_size = component->getParameter<uint32_t>("max_size");
+  if (!maybe_max_size) { throw std::runtime_error("Failed to get max_size"); }
+  max_size_ = maybe_max_size.value();
+
+  auto maybe_gpu_device =
+      component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
+  if (!maybe_gpu_device) { throw std::runtime_error("Failed to get dev_id"); }
+  auto gpu_device_handle = maybe_gpu_device.value();
+  dev_id_ = gpu_device_handle->device_id();
+}
+
+nvidia::gxf::CudaStreamPool* CudaStreamPool::get() const {
+  return static_cast<nvidia::gxf::CudaStreamPool*>(gxf_cptr_);
 }
 
 void CudaStreamPool::setup(ComponentSpec& spec) {
@@ -62,22 +72,30 @@ void CudaStreamPool::setup(ComponentSpec& spec) {
   spec.param(stream_flags_,
              "stream_flags",
              "Stream Flags",
-             "Create CUDA streams with flags.",
+             "Flags for CUDA streams in the pool. The flag value will be passed to CUDA's "
+             "cudaStreamCreateWithPriority when creating the streams. A value of 0 corresponds to "
+             "`cudaStreamDefault` while a value of 1 corresponds to `cudaStreamNonBlocking`, "
+             "indicating that the stream can run concurrently with work in stream 0 (default "
+             "stream) and should not perform any implicit synchronization with it. See: "
+             "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html.",
              kDefaultStreamFlags);
   spec.param(stream_priority_,
              "stream_priority",
              "Stream Priority",
-             "Create CUDA streams with priority.",
+             "Priority of the CUDA streams in the pool. This is an integer value passed to "
+             "cudaSreamCreateWithPriority . Lower numbers represent higher priorities. See: "
+             "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html.",
              kDefaultStreamPriority);
-  spec.param(reserved_size_,
-             "reserved_size",
-             "Reserved Stream Size",
-             "Reserve several CUDA streams before 1st request coming",
-             kDefaultReservedSize);
+  spec.param(
+      reserved_size_,
+      "reserved_size",
+      "Reserved Stream Size",
+      "The number of CUDA streams to initially reserve in the pool (prior to first request).",
+      kDefaultReservedSize);
   spec.param(max_size_,
              "max_size",
-             "Maximum Stream Size",
-             "The maximum stream size for the pool to allocate, unlimited by default",
+             "Maximum Pool Size",
+             "The maximum number of streams that can be allocated, unlimited by default",
              kDefaultMaxSize);
 }
 

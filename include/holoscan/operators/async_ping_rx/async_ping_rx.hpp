@@ -28,11 +28,18 @@
 namespace holoscan::ops {
 
 /**
- * @brief Simple asynchronous receiver operator
+ * @brief Simple asynchronous receiver operator.
  *
- *    **Named inputs:**
- *        - *in*: any
- *            - A received value.
+ * ==Named Inputs==
+ *
+ * - **in** : any
+ *   - A received value.
+ *
+ * ==Parameters==
+ *
+ * - **delay**: Ping delay in ms. Optional (default: `10L`)
+ * - **async_condition**: AsynchronousCondition adding async support to the operator.
+ *   Optional (default: `nullptr`)
  */
 class AsyncPingRxOp : public Operator {
  public:

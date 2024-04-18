@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -209,7 +209,7 @@ PYBIND11_MODULE(_inference, m) {
            "is_engine_path"_a = false,
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "inference"s,
-           doc::InferenceOp::doc_InferenceOp_python)
+           doc::InferenceOp::doc_InferenceOp)
       .def("initialize", &InferenceOp::initialize, doc::InferenceOp::doc_initialize)
       .def("setup", &InferenceOp::setup, "spec"_a, doc::InferenceOp::doc_setup);
 

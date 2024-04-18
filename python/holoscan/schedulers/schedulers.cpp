@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +37,7 @@ namespace py = pybind11;
 
 namespace holoscan {
 
+void init_event_based_scheduler(py::module_&);
 void init_greedy_scheduler(py::module_&);
 void init_multithread_scheduler(py::module_&);
 
@@ -57,6 +58,7 @@ PYBIND11_MODULE(_schedulers, m) {
   m.attr("__version__") = "dev";
 #endif
 
+  init_event_based_scheduler(m);
   init_greedy_scheduler(m);
   init_multithread_scheduler(m);
 }  // PYBIND11_MODULE

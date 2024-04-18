@@ -18,23 +18,17 @@ The example source code and run instructions can be found in the [examples](http
 
 Here is the diagram of the operators and workflow used in this example.
 
-```{mermaid}
+```{digraph} video_replayer_distributed
 :align: center
 :caption: Workflow to load and display video from a file
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=record];
 
-classDiagram
-    direction LR
+    replayer [label="VideoStreamReplayerOp| |output(out) : Tensor"];
+    viz [label="HolovizOp|[in]receivers : Tensor | "];
 
-    VideoStreamReplayerOp --|> HolovizOp : output...receivers
-
-    class VideoStreamReplayerOp {
-        output(out) Tensor
-    }
-    class HolovizOp {
-        [in]receivers : Tensor
-    }
+    replayer -> viz [label="output...receivers"]
 ```
 
 This is the same workflow as the [single fragment video replayer](./video_replayer.md),  each operator is assigned to a separate fragment and there is now a network connection between the fragments.

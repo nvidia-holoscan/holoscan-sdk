@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,15 +23,6 @@
 #include "../macros.hpp"
 
 namespace holoscan::doc {
-
-namespace GXFTensor {
-
-// Constructor
-PYDOC(GXFTensor, R"doc(
-Base class representing a GXF Tensor.
-)doc")
-
-}  // namespace GXFTensor
 
 namespace GXFComponent {
 

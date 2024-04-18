@@ -25,19 +25,8 @@ mkdir ${DATA_DIR}
 racerx_version="20231009"
 racerx_md5="86cd7e5477bb9eaa0cfc0547912d77b2"
 
-${SCRIPT_DIR}/../lib/cmake/holoscan/download_ngc_data \
+${SCRIPT_DIR}/../bin/download_ngc_data \
     --url https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_racerx_video/versions/${racerx_version}/zip \
     --download_dir ${DATA_DIR} \
     --download_name racerx \
     --md5 ${racerx_md5}
-
-
-# Download the endoscopy sample data
-endoscopy_version="20230128"
-endoscopy_md5="9732a54944589f7ca4f1337e8adf0838"
-
-${SCRIPT_DIR}/../lib/cmake/holoscan/download_ngc_data \
-    --url https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_endoscopy_sample_data/versions/${endoscopy_version}/zip \
-    --download_dir ${DATA_DIR} \
-    --download_name endoscopy \
-    --md5 ${endoscopy_md5}

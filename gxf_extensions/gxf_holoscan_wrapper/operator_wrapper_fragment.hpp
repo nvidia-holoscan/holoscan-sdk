@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,9 +32,7 @@ class OperatorWrapperFragment : public holoscan::Fragment {
  public:
   OperatorWrapperFragment();
 
-  GXFExecutor& gxf_executor() {
-    return static_cast<GXFExecutor&>(executor());
-  }
+  GXFExecutor& gxf_executor() { return static_cast<GXFExecutor&>(executor()); }
 };
 
 }  // namespace holoscan::gxf

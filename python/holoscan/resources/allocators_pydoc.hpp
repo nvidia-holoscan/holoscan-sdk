@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +46,15 @@ Returns
 -------
 bool
     Availability of the resource.
+)doc")
+
+PYDOC(block_size, R"doc(
+Get the block size of the allocator.
+
+Returns
+-------
+int
+    The block size of the allocator. Returns 1 for byte-based allocators.
 )doc")
 
 PYDOC(allocate, R"doc(
@@ -142,15 +151,25 @@ fragment : holoscan.core.Fragment
 dev_id : int
     CUDA device ID. Specifies the device on which to create the stream pool.
 stream_flags : int
-    Flag values used in creating CUDA streams.
+    Flags for CUDA streams in the pool. This will be passed to CUDA's
+    cudaStreamCreateWithPriority [1]_ when creating the streams. The default value of 0 corresponds
+    to ``cudaStreamDefault``. A value of 1 corresponds to ``cudaStreamNonBlocking``, indicating
+    that the stream can run concurrently with work in stream 0 (default stream) and should not
+    perform any implicit synchronization with it.
 stream_priority : int
-    Priority values used in creating CUDA streams.
+    Priority value for CUDA streams in the pool. This is an integer value passed to
+    cudaSreamCreateWithPriority [1]_. Lower numbers represent higher priorities.
 reserved_size : int
-    TODO
+    The number of CUDA streams to initially reserve in the pool (prior to first request).
 max_size : int
-    Maximum stream size.
+    The maximum number of streams that can be allocated, unlimited by default.
 name : str, optional
     The name of the stream pool.
+
+References
+----------
+.. [1] https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html
+
 )doc")
 
 PYDOC(gxf_typename, R"doc(

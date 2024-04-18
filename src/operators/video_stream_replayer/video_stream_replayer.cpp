@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,8 +32,7 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/video_stream_serializer.hpp"
-
+#include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 
 namespace holoscan::ops {
 
@@ -93,7 +92,11 @@ void VideoStreamReplayerOp::initialize() {
   // Set up prerequisite parameters before calling GXFOperator::initialize()
   auto frag = fragment();
   auto entity_serializer =
-      frag->make_resource<holoscan::VideoStreamSerializer>("entity_serializer");
+      frag->make_resource<holoscan::StdEntitySerializer>("replayer__std_entity_serializer");
+  if (graph_entity_) {
+    entity_serializer->gxf_eid(graph_entity_->eid());
+    entity_serializer->gxf_graph_entity(graph_entity_);
+  }
   add_arg(Arg("entity_serializer") = entity_serializer);
 
   // Find if there is an argument for 'boolean_scheduling_term'
@@ -209,9 +212,9 @@ void VideoStreamReplayerOp::compute(InputContext& op_input, OutputContext& op_ou
       break;
     }
 
-    // dynamic cast from holoscan::Resource to holoscan::VideoStreamSerializer
+    // dynamic cast from holoscan::Resource to holoscan::StdEntitySerializer
     auto vs_serializer =
-        std::dynamic_pointer_cast<holoscan::VideoStreamSerializer>(entity_serializer_.get());
+        std::dynamic_pointer_cast<holoscan::StdEntitySerializer>(entity_serializer_.get());
     // get underlying GXF EntitySerializer
     auto entity_serializer = nvidia::gxf::Handle<nvidia::gxf::EntitySerializer>::Create(
         context.context(), vs_serializer->gxf_cid());
@@ -259,7 +262,7 @@ void VideoStreamReplayerOp::compute(InputContext& op_input, OutputContext& op_ou
       }
       if (time_to_delay < 0 && (playback_count_ % index_frame_count_ != 0)) {
         HOLOSCAN_LOG_INFO(
-            fmt::format("Playing video stream is lagging behind (count: % {} , delay: {} ns)",
+            fmt::format("Playing video stream is lagging behind (count: {} , delay: {} ns)",
                         playback_count_,
                         time_to_delay));
       }

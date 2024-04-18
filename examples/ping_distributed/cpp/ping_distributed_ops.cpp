@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -161,11 +161,13 @@ void PingTensorTxOp::compute(InputContext&, OutputContext& op_output, ExecutionC
       tensor_shape, dtype, bytes_per_element, strides, storage_type, allocator.value());
   if (!result) { HOLOSCAN_LOG_ERROR("failed to generate tensor"); }
 
-  // Create Holoscan GXF tensor
-  auto holoscan_gxf_tensor = holoscan::gxf::GXFTensor(*gxf_tensor);
-
   // Create Holoscan tensor
-  auto holoscan_tensor = holoscan_gxf_tensor.as_tensor();
+  auto maybe_dl_ctx = (*gxf_tensor).toDLManagedTensorContext();
+  if (!maybe_dl_ctx) {
+    HOLOSCAN_LOG_ERROR(
+        "failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
+  }
+  std::shared_ptr<Tensor> holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
 
   // insert tensor into the TensorMap
   out_message.insert({tensor_name_.get().c_str(), holoscan_tensor});

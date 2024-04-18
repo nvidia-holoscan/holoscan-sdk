@@ -21,16 +21,9 @@ import pytest
 
 from holoscan.logger import (
     LogLevel,
-    disable_backtrace,
-    dump_backtrace,
-    enable_backtrace,
-    flush,
-    flush_level,
-    flush_on,
     log_level,
     set_log_level,
     set_log_pattern,
-    should_backtrace,
 )
 
 
@@ -74,33 +67,3 @@ def test_set_log_level(level):
             os.environ["HOLOSCAN_LOG_LEVEL"] = orig_env
         # restore the logging level prior to the test
         set_log_level(orig_level)
-
-
-def test_logger_flush():
-    level = flush_level()
-
-    flush_on(LogLevel.TRACE)
-    assert flush_level() == LogLevel.TRACE
-
-    flush()
-
-    # restore original flush level
-    flush_on(level)
-
-
-def test_logger_backtrace():
-    # determine initial setting
-    enabled = should_backtrace()
-
-    enable_backtrace(32)
-    assert should_backtrace()
-    dump_backtrace()
-
-    disable_backtrace()
-    assert not should_backtrace()
-
-    # restore original backtrace setting
-    if enabled:
-        enable_backtrace(32)
-    else:
-        disable_backtrace()

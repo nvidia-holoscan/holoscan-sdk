@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,6 +53,8 @@ class ManualClock : public Clock {
 
   /// @brief Waits until the given target time
   void sleep_until(int64_t target_time_ns) override;
+
+  nvidia::gxf::ManualClock* get() const;
 
  private:
   Parameter<int64_t> initial_timestamp_;

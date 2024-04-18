@@ -24,55 +24,73 @@
 
 namespace holoscan::doc::BayerDemosaicOp {
 
-// Constructor
+// PyBayerDemosaicOp Constructor
 PYDOC(BayerDemosaicOp, R"doc(
 Bayer Demosaic operator.
-)doc")
 
-// PyBayerDemosaicOp Constructor
-PYDOC(BayerDemosaicOp_python, R"doc(
-Bayer Demosaic operator.
+**==Named Inputs==**
 
-Named inputs:
-    receiver: nvidia::gxf::Tensor or nvidia::gxf::VideoBuffer
+    receiver : nvidia::gxf::Tensor or nvidia::gxf::VideoBuffer
         The input video frame to process. If the input is a VideoBuffer it must be an 8-bit
         unsigned grayscale video (nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY). The video
         buffer may be in either host or device memory (a host->device copy is performed if needed).
         If a video buffer is not found, the input port message is searched for a tensor with the
-        name specified by `in_tensor_name`. This must be a device tensor in either 8-bit or 16-bit
+        name specified by ``in_tensor_name``. This must be a device tensor in either 8-bit or 16-bit
         unsigned integer format.
 
-Named outputs:
-    transmitter: nvidia::gxf::Tensor
+**==Named Outputs==**
+
+    transmitter : nvidia::gxf::Tensor
         The output video frame after demosaicing. This will be a 3-channel RGB image if
-        `alpha_value` is ``True``, otherwise it will be a 4-channel RGBA image. The data type will
+        ``alpha_value`` is ``True``, otherwise it will be a 4-channel RGBA image. The data type will
         be either 8-bit or 16-bit unsigned integer (matching the bit depth of the input). The
-        name of the tensor that is output is controlled by `out_tensor_name`.
+        name of the tensor that is output is controlled by ``out_tensor_name``.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
+fragment : holoscan.core.Fragment (constructor only)
     The fragment that the operator belongs to.
 pool : holoscan.resources.Allocator
     Memory pool allocator used by the operator.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
-    `holoscan.resources.CudaStreamPool` instance to allocate CUDA streams.
+    ``holoscan.resources.CudaStreamPool`` instance to allocate CUDA streams. Default value is ``None``.
 in_tensor_name : str, optional
-    The name of the input tensor.
+    The name of the input tensor. Default value is ``""`` (empty string).
 out_tensor_name : str, optional
-    The name of the output tensor.
+    The name of the output tensor. Default value is ``""`` (empty string).
 interpolation_mode : int, optional
     The interpolation model to be used for demosaicing. Values available at:
-    https://docs.nvidia.com/cuda/npp/group__typedefs__npp.html#ga2b58ebd329141d560aa4367f1708f191
+    https://docs.nvidia.com/cuda/npp/nppdefs.html?highlight=Two%20parameter%20cubic%20filter#c.NppiInterpolationMode
+
+    - NPPI_INTER_UNDEFINED (``0``): Undefined filtering interpolation mode.
+    - NPPI_INTER_NN (``1``): Nearest neighbor filtering.
+    - NPPI_INTER_LINEAR (``2``): Linear interpolation.
+    - NPPI_INTER_CUBIC (``4``): Cubic interpolation.
+    - NPPI_INTER_CUBIC2P_BSPLINE (``5``): Two-parameter cubic filter (B=1, C=0)
+    - NPPI_INTER_CUBIC2P_CATMULLROM (``6``): Two-parameter cubic filter (B=0, C=1/2)
+    - NPPI_INTER_CUBIC2P_B05C03 (``7``): Two-parameter cubic filter (B=1/2, C=3/10)
+    - NPPI_INTER_SUPER (``8``): Super sampling.
+    - NPPI_INTER_LANCZOS (``16``): Lanczos filtering.
+    - NPPI_INTER_LANCZOS3_ADVANCED (``17``): Generic Lanczos filtering with order 3.
+    - NPPI_SMOOTH_EDGE (``0x8000000``): Smooth edge filtering.
+
+    Default value is ``0`` (NPPI_INTER_UNDEFINED).
 bayer_grid_pos : int, optional
-    The Bayer grid position (default of 2 = GBRG). Values available at:
-    https://docs.nvidia.com/cuda/npp/group__typedefs__npp.html#ga5597309d6766fb2dffe155990d915ecb
+    The Bayer grid position. Values available at:
+    https://docs.nvidia.com/cuda/npp/nppdefs.html?highlight=Two%20parameter%20cubic%20filter#c.NppiBayerGridPosition
+
+    - NPPI_BAYER_BGGR (``0``): Default registration position BGGR.
+    - NPPI_BAYER_RGGB (``1``): Registration position RGGB.
+    - NPPI_BAYER_GBRG (``2``): Registration position GBRG.
+    - NPPI_BAYER_GRBG (``3``): Registration position GRBG.
+
+    Default value is ``2`` (NPPI_BAYER_GBRG).
 generate_alpha : bool, optional
-    Generate alpha channel.
+    Generate alpha channel. Default value is ``False``.
 alpha_value : int, optional
-    Alpha value to be generated if `generate_alpha` is set to ``True``.
-name : str, optional
-    The name of the operator.
+    Alpha value to be generated if ``generate_alpha`` is set to ``True``. Default value is ``255``.
+name : str, optional (constructor only)
+    The name of the operator. Default value is ``"bayer_demosaic"``.
 )doc")
 
 PYDOC(gxf_typename, R"doc(

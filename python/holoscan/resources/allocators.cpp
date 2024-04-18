@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,7 +78,6 @@ class PyBlockMemoryPool : public BlockMemoryPool {
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_.get());
-    initialize();
   }
 };
 
@@ -88,8 +87,8 @@ class PyCudaStreamPool : public CudaStreamPool {
   using CudaStreamPool::CudaStreamPool;
 
   // Define a constructor that fully initializes the object.
-  PyCudaStreamPool(Fragment* fragment, int32_t dev_id, uint32_t stream_flags,
-                   int32_t stream_priority, uint32_t reserved_size, uint32_t max_size,
+  PyCudaStreamPool(Fragment* fragment, int32_t dev_id = 0, uint32_t stream_flags = 0,
+                   int32_t stream_priority = 0, uint32_t reserved_size = 1, uint32_t max_size = 0,
                    const std::string& name = "cuda_stream_pool")
       : CudaStreamPool(ArgList{
             Arg{"dev_id", dev_id},
@@ -102,7 +101,6 @@ class PyCudaStreamPool : public CudaStreamPool {
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_.get());
-    initialize();
   }
 };
 
@@ -118,7 +116,6 @@ class PyUnboundedAllocator : public UnboundedAllocator {
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_.get());
-    initialize();
   }
 };
 
@@ -135,7 +132,8 @@ void init_allocators(py::module_& m) {
           "gxf_typename", &Allocator::gxf_typename, doc::Allocator::doc_gxf_typename)
       .def("is_available", &Allocator::is_available, "size"_a, doc::Allocator::doc_is_available)
       .def("allocate", &Allocator::allocate, "size"_a, "type"_a, doc::Allocator::doc_allocate)
-      .def("free", &Allocator::free, "pointer"_a, doc::Allocator::doc_free);
+      .def("free", &Allocator::free, "pointer"_a, doc::Allocator::doc_free)
+      .def_property_readonly("block_size", &Allocator::block_size, doc::Allocator::doc_block_size);
   // TODO(grelee): for allocate / free how does std::byte* get cast to/from Python?
 
   py::class_<BlockMemoryPool, PyBlockMemoryPool, Allocator, std::shared_ptr<BlockMemoryPool>>(
@@ -157,11 +155,11 @@ void init_allocators(py::module_& m) {
       .def(
           py::init<Fragment*, int32_t, uint32_t, int32_t, uint32_t, uint32_t, const std::string&>(),
           "fragment"_a,
-          "dev_id"_a,
-          "stream_flags"_a,
-          "stream_priority"_a,
-          "reserved_size"_a,
-          "max_size"_a,
+          "dev_id"_a = 0,
+          "stream_flags"_a = 0u,
+          "stream_priority"_a = 0,
+          "reserved_size"_a = 1u,
+          "max_size"_a = 0u,
           "name"_a = "cuda_stream_pool"s,
           doc::CudaStreamPool::doc_CudaStreamPool_python)
       .def_property_readonly(

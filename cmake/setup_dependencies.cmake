@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,14 +39,15 @@ superbuild_depend(expected_rapids)
 superbuild_depend(fmt_rapids)
 superbuild_depend(glfw_rapids)
 superbuild_depend(grpc)
-superbuild_depend(gxf)
 superbuild_depend(hwloc)
+superbuild_depend(magic_enum)
 superbuild_depend(spdlog_rapids)
 superbuild_depend(tensorrt)
 superbuild_depend(threads)
 superbuild_depend(ucx)
 superbuild_depend(v4l2)
 superbuild_depend(yaml-cpp_rapids)
+superbuild_depend(gxf)
 
 # Testing dependencies
 if(HOLOSCAN_BUILD_TESTS)

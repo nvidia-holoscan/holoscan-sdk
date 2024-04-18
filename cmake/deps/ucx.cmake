@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,17 @@
 
 find_package(ucx 1.14.0 REQUIRED)
 
-install(DIRECTORY ${UCX_LIBRARIES}
+install(
+  DIRECTORY ${UCX_LIBRARIES}
   DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/.."
   COMPONENT "holoscan-dependencies"
   FILES_MATCHING PATTERN "*.so*"
 )
+
+foreach(ucx_target ucm ucp ucs uct)
+  install(
+    DIRECTORY ${UCX_INCLUDE_DIRS}/${ucx_target}
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/3rdparty/ucx"
+    COMPONENT "holoscan-dependencies"
+  )
+endforeach()

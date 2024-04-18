@@ -14,6 +14,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """  # noqa: E501
+from utils import remove_ignored_errors
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment
@@ -57,5 +58,5 @@ def test_distributed_app_invalid_fragment_compose(capfd):
     # assert that no errors were logged
     captured = capfd.readouterr()
 
-    assert "error" in captured.err
+    assert "error" in remove_ignored_errors(captured.err)
     assert "Fragment 'rx_fragment' does not have any operators" in captured.err

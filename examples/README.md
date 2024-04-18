@@ -1,8 +1,45 @@
 # Holoscan SDK Examples
 
-This directory contains examples to help users learn how to use the Holoscan SDK for development. See [HoloHub](https://nvidia-holoscan.github.io/holohub) to find additional reference applications.
+This directory contains examples to help users learn how to use the Holoscan SDK for development.
+See [HoloHub](https://nvidia-holoscan.github.io/holohub) to find additional reference applications.
 
-## Core
+## Build instructions
+
+- **From source**: See the [building guide](../DEVELOP.md)
+- **Python wheels**: Download the python examples from GitHub, no building necessary.
+- **NGC container or debian package**: the python examples and pre-built C++ examples are already included under `/opt/nvidia/holoscan/examples`. You can rebuild the C++ examples like so:
+
+   ```sh
+   export src_dir="/opt/nvidia/holoscan/examples/" # Add "<example_of_your_choice>/cpp" to build a specific example
+   export build_dir="/opt/nvidia/holoscan/examples/build` # Or the path of your choice
+   cmake -S $src_dir -B $build_dir
+   cmake --build $build_dir -j
+   ```
+
+## Run instructions
+
+See the README of each example for specific run instructions based on your installation type.
+
+## Test instructions
+
+- **From source**: See the [building guide](../DEVELOP.md#testing)
+- **Python wheels**: not available
+- **NGC container or debian package**:
+  - Running the following command will run the examples and compare the results with expected baselines.
+
+    ```sh
+    ctest --test-dir $build_dir
+    ```
+
+  - To group building and testing:
+
+    ```sh
+    /opt/nvidia/holoscan/examples/testing/run_example_tests
+    ```
+
+## Example list
+
+### Core
 
 The following examples demonstrate the basics of the Holoscan core API, and are ideal for new users starting with the SDK:
 
@@ -40,22 +77,21 @@ The following examples illustrate the use of specific resource classes that can 
 ## Inference
 * [**Bring-Your-Own-Model**](bring_your_own_model): create a simple inference pipeline for ML applications
 
-
-## Working with third-party frameworks
+### Working with third-party frameworks
 
 The following examples demonstrate how to seamlessly leverage third-party frameworks in holoscan applications:
 
 * [**NumPy native**](numpy_native): signal processing on the CPU using numpy arrays
 * [**CuPy native**](cupy_native): basic computation on the GPU using cupy arrays
 
-## Sensors
+### Sensors
 
 The following examples demonstrate how sensors can be used as input streams to your holoscan applications:
 
 * [**v4l2 camera**](v4l2_camera): for USB and HDMI input, such as USB cameras or HDMI output of laptop
 * [**AJA capture**](aja_capture): for AJA capture cards
 
-## GXF and Holoscan
+### GXF and Holoscan
 
 * [**Tensor interop**](tensor_interop): use the `Entity` message to pass tensors to/from Holoscan operators wrapping GXF codelets in Holoscan applications
 * [**Wrap operator as GXF extension**](wrap_operator_as_gxf_extension): wrap Holoscan native operators as GXF codelets to use in GXF applications

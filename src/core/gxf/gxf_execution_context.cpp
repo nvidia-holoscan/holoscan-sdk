@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,7 +37,7 @@ GXFExecutionContext::GXFExecutionContext(gxf_context_t context,
                                          std::shared_ptr<GXFInputContext> gxf_input_context,
                                          std::shared_ptr<GXFOutputContext> gxf_output_context)
     : gxf_input_context_(gxf_input_context), gxf_output_context_(gxf_output_context) {
-      context_ = context;
+  context_ = context;
 }
 
 }  // namespace holoscan::gxf

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,24 +28,28 @@ namespace holoscan {
 DoubleBufferTransmitter::DoubleBufferTransmitter(const std::string& name,
                                                  nvidia::gxf::DoubleBufferTransmitter* component)
     : Transmitter(name, component) {
-  uint64_t capacity = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "capacity", &capacity));
-  capacity_ = capacity;
-  uint64_t policy = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "policy", &policy));
-  policy_ = policy;
+  auto maybe_capacity = component->getParameter<uint64_t>("capacity");
+  if (!maybe_capacity) { throw std::runtime_error("Failed to get capacity"); }
+  auto maybe_policy = component->getParameter<uint64_t>("policy");
+  if (!maybe_policy) { throw std::runtime_error("Failed to get policy"); }
+  capacity_ = maybe_capacity.value();
+  policy_ = maybe_policy.value();
 }
 
 DoubleBufferTransmitter::DoubleBufferTransmitter(const std::string& name,
                                                  AnnotatedDoubleBufferTransmitter* component)
     : Transmitter(name, component) {
-  uint64_t capacity = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "capacity", &capacity));
-  capacity_ = capacity;
-  uint64_t policy = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "policy", &policy));
-  policy_ = policy;
+  auto maybe_capacity = component->getParameter<uint64_t>("capacity");
+  if (!maybe_capacity) { throw std::runtime_error("Failed to get capacity"); }
+  auto maybe_policy = component->getParameter<uint64_t>("policy");
+  if (!maybe_policy) { throw std::runtime_error("Failed to get policy"); }
+  capacity_ = maybe_capacity.value();
+  policy_ = maybe_policy.value();
   tracking_ = true;
+}
+
+nvidia::gxf::DoubleBufferTransmitter* DoubleBufferTransmitter::get() const {
+  return static_cast<nvidia::gxf::DoubleBufferTransmitter*>(gxf_cptr_);
 }
 
 const char* DoubleBufferTransmitter::gxf_typename() const {

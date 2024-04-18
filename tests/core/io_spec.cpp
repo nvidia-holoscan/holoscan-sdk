@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -305,7 +305,7 @@ TEST_F(IOSpecWithGXFContext, TestIOSpecDescription) {
   std::string entity_typename = typeid(holoscan::gxf::Entity).name();
 
   // Condition added in this way will not yet have had a fragment or component spec assigned
-  spec.condition(ConditionType::kMessageAvailable, Arg("min_size", static_cast<size_t>(5)));
+  spec.condition(ConditionType::kMessageAvailable, Arg("min_size", static_cast<uint64_t>(5)));
   auto cond = spec.conditions()[0].second;
   // manually set name and fragment for the condition
   cond->name("message_available");

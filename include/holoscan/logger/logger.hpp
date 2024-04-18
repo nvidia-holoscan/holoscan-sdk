@@ -159,15 +159,6 @@ class Logger {
   static void set_pattern(std::string pattern = "", bool* is_overridden_by_env = nullptr);
   static std::string& pattern();
 
-  static bool should_backtrace();
-  static void disable_backtrace();
-  static void enable_backtrace(size_t n_messages);
-  static void dump_backtrace();
-
-  static void flush();
-  static LogLevel flush_level();
-  static void flush_on(LogLevel level);
-
   template <typename FormatT, typename... ArgsT>
   static void log(const char* file, int line, const char* function_name, LogLevel level,
                   const FormatT& format, ArgsT&&... args) {

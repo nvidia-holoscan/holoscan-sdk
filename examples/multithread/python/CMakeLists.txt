@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,13 @@ install(FILES
 if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TEST
     COMMAND python3 multithread.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "sum of received values: 496")
+
+  add_test(NAME EXAMPLE_PYTHON_EVENT_BASED_TEST
+    COMMAND python3 multithread.py --event_based
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TEST PROPERTIES

@@ -30,6 +30,7 @@ from holoscan.resources import (
     Receiver,
     SerializationBuffer,
     StdComponentSerializer,
+    StdEntitySerializer,
     Transmitter,
     UcxComponentSerializer,
     UcxEntitySerializer,
@@ -38,7 +39,6 @@ from holoscan.resources import (
     UcxSerializationBuffer,
     UcxTransmitter,
     UnboundedAllocator,
-    VideoStreamSerializer,
 )
 
 
@@ -55,7 +55,7 @@ class TestBlockMemoryPool:
         assert isinstance(pool, Allocator)
         assert isinstance(pool, GXFResource)
         assert isinstance(pool, Resource)
-        assert pool.id != -1
+        assert pool.id == -1
         assert pool.gxf_typename == "nvidia::gxf::BlockMemoryPool"
 
         assert f"name: {name}" in repr(pool)
@@ -69,6 +69,20 @@ class TestBlockMemoryPool:
 
 
 class TestCudaStreamPool:
+    def test_default_initialization(self, app, capfd):
+        name = "cuda_stream"
+        pool = CudaStreamPool(fragment=app, name=name)
+        assert isinstance(pool, Allocator)
+        assert isinstance(pool, GXFResource)
+        assert isinstance(pool, Resource)
+        assert pool.id == -1
+        assert pool.gxf_typename == "nvidia::gxf::CudaStreamPool"
+        assert f"name: {name}" in repr(pool)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
     def test_kwarg_based_initialization(self, app, capfd):
         name = "cuda_stream"
         pool = CudaStreamPool(
@@ -83,7 +97,7 @@ class TestCudaStreamPool:
         assert isinstance(pool, Allocator)
         assert isinstance(pool, GXFResource)
         assert isinstance(pool, Resource)
-        assert pool.id != -1
+        assert pool.id == -1
         assert pool.gxf_typename == "nvidia::gxf::CudaStreamPool"
         assert f"name: {name}" in repr(pool)
 
@@ -105,7 +119,7 @@ class TestUnboundedAllocator:
         assert isinstance(alloc, Allocator)
         assert isinstance(alloc, GXFResource)
         assert isinstance(alloc, Resource)
-        assert alloc.id != -1
+        assert alloc.id == -1
         assert alloc.gxf_typename == "nvidia::gxf::UnboundedAllocator"
         assert f"name: {name}" in repr(alloc)
 
@@ -130,7 +144,7 @@ class TestStdDoubleBufferReceiver:
         assert isinstance(r, Receiver)
         assert isinstance(r, GXFResource)
         assert isinstance(r, Resource)
-        assert r.id != -1
+        assert r.id == -1
         assert r.gxf_typename == "nvidia::gxf::DoubleBufferReceiver"
         assert f"name: {name}" in repr(r)
 
@@ -155,7 +169,7 @@ class TestStdDoubleBufferTransmitter:
         assert isinstance(r, Transmitter)
         assert isinstance(r, GXFResource)
         assert isinstance(r, Resource)
-        assert r.id != -1
+        assert r.id == -1
         assert r.gxf_typename == "nvidia::gxf::DoubleBufferTransmitter"
         assert f"name: {name}" in repr(r)
 
@@ -177,7 +191,7 @@ class TestStdComponentSerializer:
         )
         assert isinstance(r, GXFResource)
         assert isinstance(r, Resource)
-        assert r.id != -1
+        assert r.id == -1
         assert r.gxf_typename == "nvidia::gxf::StdComponentSerializer"
         assert f"name: {name}" in repr(r)
 
@@ -190,17 +204,17 @@ class TestStdComponentSerializer:
         StdComponentSerializer(app)
 
 
-class TestVideoStreamSerializer:
+class TestStdEntitySerializer:
     def test_kwarg_based_initialization(self, app, capfd):
-        name = "vid-serializer"
-        r = VideoStreamSerializer(
+        name = "std-entity-serializer"
+        r = StdEntitySerializer(
             fragment=app,
             name=name,
         )
         assert isinstance(r, GXFResource)
         assert isinstance(r, Resource)
-        assert r.id != -1
-        assert r.gxf_typename == "nvidia::holoscan::stream_playback::VideoStreamSerializer"
+        assert r.id == -1
+        assert r.gxf_typename == "nvidia::gxf::StdEntitySerializer"
         assert f"name: {name}" in repr(r)
 
         # assert no warnings or errors logged
@@ -209,7 +223,7 @@ class TestVideoStreamSerializer:
         assert "warning" not in captured.err
 
     def test_default_initialization(self, app):
-        VideoStreamSerializer(app)
+        StdEntitySerializer(app)
 
 
 class TestManualClock:
@@ -223,7 +237,7 @@ class TestManualClock:
         assert isinstance(clk, Clock)
         assert isinstance(clk, GXFResource)
         assert isinstance(clk, Resource)
-        assert clk.id != -1
+        assert clk.id == -1
         assert clk.gxf_typename == "nvidia::gxf::ManualClock"
         assert f"name: {name}" in repr(clk)
 
@@ -249,7 +263,7 @@ class TestRealtimeClock:
         assert isinstance(clk, Clock)
         assert isinstance(clk, GXFResource)
         assert isinstance(clk, Resource)
-        assert clk.id != -1
+        assert clk.id == -1
         assert clk.gxf_typename == "nvidia::gxf::RealtimeClock"
         assert f"name: {name}" in repr(clk)
 
@@ -273,7 +287,7 @@ class TestSerializationBuffer:
         )
         assert isinstance(res, GXFResource)
         assert isinstance(res, Resource)
-        assert res.id != -1
+        assert res.id == -1  # -1 because initialize() isn't called
         assert res.gxf_typename == "nvidia::gxf::SerializationBuffer"
         assert f"name: {name}" in repr(res)
 
@@ -294,7 +308,7 @@ class TestUcxSerializationBuffer:
         )
         assert isinstance(res, GXFResource)
         assert isinstance(res, Resource)
-        assert res.id != -1
+        assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxSerializationBuffer"
         assert f"name: {name}" in repr(res)
 
@@ -314,7 +328,7 @@ class TestUcxComponentSerializer:
         )
         assert isinstance(res, GXFResource)
         assert isinstance(res, Resource)
-        assert res.id != -1
+        assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxComponentSerializer"
         assert f"name: {name}" in repr(res)
 
@@ -334,7 +348,7 @@ class TestUcxHoloscanComponentSerializer:
         )
         assert isinstance(res, GXFResource)
         assert isinstance(res, Resource)
-        assert res.id != -1
+        assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxHoloscanComponentSerializer"
         assert f"name: {name}" in repr(res)
 
@@ -354,7 +368,7 @@ class TestUcxEntitySerializer:
         )
         assert isinstance(res, GXFResource)
         assert isinstance(res, Resource)
-        assert res.id != -1
+        assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxEntitySerializer"
         assert f"name: {name}" in repr(res)
 
@@ -385,7 +399,7 @@ class TestUcxReceiver:
         assert isinstance(res, GXFResource)
         assert isinstance(res, Resource)
         assert isinstance(res, Receiver)
-        assert res.id != -1
+        assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxReceiver"
         assert f"name: {name}" in repr(res)
 
@@ -419,7 +433,7 @@ class TestUcxTransmitter:
         assert isinstance(res, GXFResource)
         assert isinstance(res, Resource)
         assert isinstance(res, Transmitter)
-        assert res.id != -1
+        assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxTransmitter"
         assert f"name: {name}" in repr(res)
 

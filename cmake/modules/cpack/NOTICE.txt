@@ -69,6 +69,10 @@ jq (https://github.com/jqlang/jq)
 Copyright (C) 2012 Stephen Dolan authors.
 Licensed under MIT (https://github.com/jqlang/jq/raw/master/COPYING)
 
+magic_enum (https://github.com/Neargye/magic_enum)
+Copyright (c) 2019 - 2023 Daniil Goncharov
+Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
+
 AJA NTV2 SDK (https://github.com/ibstewart/ntv2)
 Copyright (c) 2021 AJA Video Systems
 Licensed under MIT (https://github.com/ibstewart/ntv2/blob/holoscan-v0.2.0/LICENSE)

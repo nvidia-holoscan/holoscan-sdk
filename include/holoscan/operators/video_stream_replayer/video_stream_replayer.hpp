@@ -31,10 +31,28 @@ namespace holoscan::ops {
 /**
  * @brief Operator class to replay a video stream from a file.
  *
- * **Named outputs:**
- *     - *output*: `nvidia::gxf::Tensor`
- *         - A message containing a video frame deserialized from disk.
+ * ==Named Outputs==
  *
+ * - **output** : `nvidia::gxf::Tensor`
+ *   - A message containing a video frame deserialized from disk. Depending on the metadata in the
+ *     file being read, this tensor could be on either CPU or GPU. For the data used in examples
+ *     distributed with the SDK, the tensor will be an unnamed GPU tensor (name == "").
+ *
+ * ==Parameters==
+ *
+ * - **directory**: Directory path for reading files from.
+ * - **basename**: User specified file name without extension.
+ * - **batch_size**: Number of entities to read and publish for one tick. Optional (default: `1`).
+ * - **ignore_corrupted_entities**: If an entity could not be deserialized, it is ignored by
+ *   default; otherwise a failure is generated. Optional (default: `true`).
+ * - **frame_rate**: Frame rate to replay. If zero value is specified, it follows timings in
+ *   timestamps. Optional (default: `0.0`).
+ * - **realtime**: Playback video in realtime, based on frame_rate or timestamps.
+ *   Optional (default: `true`).
+ * - **repeat**: Repeat video stream in a loop. Optional (default: `false`).
+ * - **count**: Number of frame counts to playback. If zero value is specified, it is ignored.
+ *   If the count is less than the number of frames in the video, it would finish early.
+ *   Optional (default: `0`).
  */
 class VideoStreamReplayerOp : public holoscan::Operator {
  public:

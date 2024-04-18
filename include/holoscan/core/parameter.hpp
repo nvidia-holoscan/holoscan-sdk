@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -210,9 +210,7 @@ class MetaParameter {
    *
    * @return The reference to the optional value of the parameter.
    */
-  std::optional<ValueT>& try_get() {
-    return value_;
-  }
+  std::optional<ValueT>& try_get() { return value_; }
 
   /**
    * @brief Provides a pointer to the object managed by the shared pointer pointed to by the

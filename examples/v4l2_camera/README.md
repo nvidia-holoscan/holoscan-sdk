@@ -17,43 +17,48 @@ If using a container outside the `run` script, add `--group-add video` and `--de
 ### Local Development
 
 Install the following dependency:
+
 ```sh
-sudo apt-get install libv4l-dev=1.18.0-2build1
+sudo apt-get install libv4l-dev
+```
+
+To use `v4l2-ctl` for debugging, also install `v4l-utils`:
+
+```sh
+sudo apt-get install v4l-utils
 ```
 
 If you do not have permissions to open the video device, run:
+
 ```sh
- sudo usermod -aG video $USER
+sudo usermod -aG video $USER
 ```
 
 ### Updating HDMI IN Firmware
 
-Before using the HDMI IN device, please ensure that it has the latest firmware by following instructions from the [devkit guide](https://docs.nvidia.com/igx-orin/user-guide/latest/post-installation.html#updating-hdmi-in-input-firmware).
+Before using the HDMI IN device on NVIDIA IGX or Clara AGX developer kits, please ensure that it has the latest firmware by following instructions from the [devkit guide](https://docs.nvidia.com/igx-orin/user-guide/latest/post-installation.html#updating-hdmi-in-input-firmware).
 
 ## Parameters
 
 There are a few parameters that can be specified:
 
-* `device`: The mount point of the device (default=`"/dev/video0"`).
-* `pixel_format`: The [V4L2 pixel format](https://docs.kernel.org/userspace-api/media/v4l/pixfmt-intro.html) of the device, as FourCC code (if not specified, app will auto select 'AR24' or 'YUYV' if supported by the device)
-* `width`: The frame size width (if not specified, uses device default). Currently, only `V4L2_FRMSIZE_TYPE_DISCRETE` are supported.
-* `height`: The frame size height (if not specified, uses device default). Currently, only `V4L2_FRMSIZE_TYPE_DISCRETE` are supported.
+* `device`: The mount point of the device
+  * Default: `"/dev/video0"`
+  * List available options with `v4l2-ctl --list-devices`
+* `pixel_format`: The [V4L2 pixel format](https://docs.kernel.org/userspace-api/media/v4l/pixfmt-intro.html) of the device, as FourCC code
+  * Default: auto selects `AB24` or `YUYV` based on device support
+  * List available options with `v4l2-ctl -d /dev/<your_device> --list-formats`
+* `width` and `height`: The frame dimensions
+  * Default: device default
+  * List available options with `v4l2-ctl -d /dev/<your_device> --list-formats-ext`
+* `exposure_time`: The exposure time of the camera sensor in multiples of 100 μs (e.g. setting exposure_time to 100 is 10 ms)
+  * Default: auto exposure, or device default if auto is not supported
+  * List supported range with `v4l2-ctl -d /dev/<your_device> -L`
+* `gain`: The gain of the camera sensor
+  * Default: auto gain, or device default if auto is not supported
+  * List supported range with `v4l2-ctl -d /dev/<your_device> -L`
 
-**OBS:** Note that specifying both the `width` and `height` parameters will make the app use `BlockMemoryPool` rather than `UnboundedAllocator` which improves the latency (FPS), however
-please ensure that your device supports that combination of `width` and `height` (see `v4l2-ctl --list-formats-ext` below) otherwise the application will fail to start.
-
-The parameters of the available V4L2-supported devices can be found with:
-```sh
-v4l2-ctl --list-devices
-```
-followed by:
-```sh
-v4l2-ctl -d /dev/video0 --list-formats-ext
-```
-If you do not have the `v4l2-ctl` app, it can be installed with (if running via Holoscan Docker image, already available):
-```sh
-sudo apt-get install v4l-utils
-```
+> Note that specifying both the `width` and `height` parameters to values supported by your device (see `v4l2-ctl --list-formats-ext`) will make the app use `BlockMemoryPool` rather than `UnboundedAllocator` which optimizes memory and should improve the latency (FPS).
 
 ## Run Instructions
 

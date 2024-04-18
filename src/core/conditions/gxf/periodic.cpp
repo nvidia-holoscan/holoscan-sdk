@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,10 @@
 #include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan {
+
+nvidia::gxf::PeriodicSchedulingTerm* PeriodicCondition::get() const {
+  return static_cast<nvidia::gxf::PeriodicSchedulingTerm*>(gxf_cptr_);
+}
 
 PeriodicCondition::PeriodicCondition(int64_t recess_period_ns) {
   recess_period_ = std::to_string(recess_period_ns);
@@ -52,19 +56,16 @@ void PeriodicCondition::setup(ComponentSpec& spec) {
 
 void PeriodicCondition::recess_period(int64_t recess_period_ns) {
   std::string recess_period = std::to_string(recess_period_ns);
-  if (gxf_cid_) {
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfParameterSetStr(gxf_context_, gxf_cid_, "recess_period", recess_period.c_str()));
-  }
+  auto periodic = get();
+  if (periodic) { periodic->setParameter<std::string>("recess_period", recess_period); }
   recess_period_ = recess_period;
   recess_period_ns_ = recess_period_ns;
 }
 
 int64_t PeriodicCondition::recess_period_ns() {
-  if (gxf_cptr_) {
-    nvidia::gxf::PeriodicSchedulingTerm* periodic_scheduling_term =
-        static_cast<nvidia::gxf::PeriodicSchedulingTerm*>(gxf_cptr_);
-    auto recess_period_ns = periodic_scheduling_term->recess_period_ns();
+  auto periodic = get();
+  if (periodic) {
+    auto recess_period_ns = periodic->recess_period_ns();
     if (recess_period_ns != recess_period_ns_) {
       recess_period_ns_ = recess_period_ns;
       recess_period_ = std::to_string(recess_period_ns_);
@@ -75,17 +76,16 @@ int64_t PeriodicCondition::recess_period_ns() {
 
 int64_t PeriodicCondition::last_run_timestamp() {
   int64_t last_run_timestamp = 0;
-  if (gxf_cptr_) {
-    nvidia::gxf::PeriodicSchedulingTerm* periodic_scheduling_term =
-        static_cast<nvidia::gxf::PeriodicSchedulingTerm*>(gxf_cptr_);
-    auto result = periodic_scheduling_term->last_run_timestamp();
+  auto periodic = get();
+  if (periodic) {
+    auto result = periodic->last_run_timestamp();
     if (result) {
       last_run_timestamp = result.value();
     } else {
       HOLOSCAN_LOG_ERROR("PeriodicCondition: Unable to get the result of 'last_run_timestamp()'");
     }
   } else {
-    HOLOSCAN_LOG_ERROR("PeriodicCondition: gxf_cptr_ is null");
+    HOLOSCAN_LOG_ERROR("PeriodicCondition: GXF component pointer is null");
   }
   return last_run_timestamp;
 }

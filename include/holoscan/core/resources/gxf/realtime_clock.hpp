@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +59,8 @@ class RealtimeClock : public Clock {
    * than 1.0 cause time to run faster, while values less than 1.0 cause time to run more slowly.
    */
   void set_time_scale(double time_scale);
+
+  nvidia::gxf::RealtimeClock* get() const;
 
  private:
   Parameter<double> initial_time_offset_;

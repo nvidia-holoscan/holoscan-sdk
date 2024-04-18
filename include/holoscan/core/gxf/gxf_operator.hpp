@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +67,8 @@ class GXFOperator : public holoscan::Operator {
    * @return The GXF context object.
    */
   gxf_context_t gxf_context() const { return gxf_context_; }
+
+  // Note: now can get eid() from graph_entity_.eid()
 
   /**
    * @brief Set GXF entity ID.
@@ -170,6 +172,10 @@ class GXFOperator : public holoscan::Operator {
   }
 
  protected:
+  gxf_uid_t add_codelet_to_graph_entity() override;
+
+  void set_parameters() override;
+
   /**
    * @brief Register the GXF parameter adaptor for the given type.
    *
@@ -219,6 +225,7 @@ class GXFOperator : public holoscan::Operator {
           return GXF_FAILURE;
         });
   }
+
   gxf_context_t gxf_context_ = nullptr;  ///< The GXF context.
   gxf_uid_t gxf_eid_ = 0;                ///< GXF entity ID
   gxf_uid_t gxf_cid_ = 0;                ///< The GXF component ID.

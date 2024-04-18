@@ -167,7 +167,10 @@ class ManagerInfer {
 };
 
 /// Pointer to manager class for inference
-std::unique_ptr<ManagerInfer> manager;
+std::shared_ptr<ManagerInfer> g_manager;
+
+/// Map to store multi-instance managers
+std::map<std::string, std::shared_ptr<ManagerInfer>> g_managers;
 
 }  // namespace inference
 }  // namespace holoscan

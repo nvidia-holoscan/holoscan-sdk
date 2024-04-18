@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,6 +99,10 @@ add_dependencies(holoscan-python holoscan-python-cli)
 add_subdirectory(cli)
 add_subdirectory(conditions)
 add_subdirectory(core)
+target_link_libraries(core_python
+    PRIVATE holoscan::core
+    PRIVATE AJA::ajantv2  # need this to parse NTV2Channel enum from kwargs
+)
 add_subdirectory(executors)
 add_subdirectory(graphs)
 add_subdirectory(gxf)

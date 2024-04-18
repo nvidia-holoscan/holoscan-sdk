@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +47,11 @@ class Allocator : public gxf::GXFResource {
   virtual nvidia::byte* allocate(uint64_t size, MemoryStorageType type);
 
   virtual void free(nvidia::byte* pointer);
+
+  // Get the block size of this allocator, defaults to 1 for byte-based allocators
+  uint64_t block_size();
+
+  nvidia::gxf::Allocator* get() const;
 };
 
 }  // namespace holoscan

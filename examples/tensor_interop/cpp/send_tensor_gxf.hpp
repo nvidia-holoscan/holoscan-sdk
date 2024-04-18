@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,7 @@
 
 #include "gxf/std/allocator.hpp"
 #include "gxf/std/codelet.hpp"
-#include "gxf/std/parameter_parser_std.hpp"
+#include "gxf/core/parameter_parser_std.hpp"
 #include "gxf/std/tensor.hpp"
 #include "gxf/std/transmitter.hpp"
 
@@ -83,8 +83,8 @@ class SendTensor : public Codelet {
     }
 
     void* output_data_ptr = maybe_output_tensor.value()->pointer();
-    CUDA_TRY(cudaMemset(output_data_ptr, value_, tensor_shape.size() *
-                                                 gxf::PrimitiveTypeSize(element_type)));
+    CUDA_TRY(cudaMemset(
+        output_data_ptr, value_, tensor_shape.size() * gxf::PrimitiveTypeSize(element_type)));
 
     value_ = (value_ + 1) % 255;
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,21 +39,24 @@ class MessageAvailableCondition : public gxf::GXFCondition {
   void receiver(std::shared_ptr<gxf::GXFResource> receiver) { receiver_ = receiver; }
   std::shared_ptr<gxf::GXFResource> receiver() { return receiver_.get(); }
 
-  void min_size(size_t min_size) { min_size_ = min_size; }
+  void min_size(uint64_t min_size);
   size_t min_size() { return min_size_; }
 
-  void front_stage_max_size(size_t front_stage_max_size) {
-    front_stage_max_size_ = front_stage_max_size;
-  }
+  void front_stage_max_size(size_t front_stage_max_size);
   size_t front_stage_max_size() { return front_stage_max_size_; }
 
   void setup(ComponentSpec& spec) override;
 
   void initialize() override { GXFCondition::initialize(); }
 
+  nvidia::gxf::MessageAvailableSchedulingTerm* get() const;
+
+  // TODO(GXF4):   Expected<void> setReceiver(Handle<Receiver> value)
+
  private:
+  // TODO(GXF4): this is now a std::set<Handle<Receiver>> receivers_
   Parameter<std::shared_ptr<gxf::GXFResource>> receiver_;
-  Parameter<size_t> min_size_;
+  Parameter<uint64_t> min_size_;
   Parameter<size_t> front_stage_max_size_;
 };
 

@@ -55,8 +55,8 @@ The following dataset is used by this example:
   ```
 * **using deb package install**:
   ```bash
-  # [Prerequisite] Download NGC dataset above to `DATA_DIR`
-  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
+  /opt/nvidia/holoscan/examples/download_example_data
+  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
   python3 -m pip install cupy-cuda12x
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
   python3 /opt/nvidia/holoscan/examples/tensor_interop/python/tensor_interop.py

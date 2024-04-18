@@ -6,7 +6,7 @@
 
 ## Synopsis
 
-`holoscan` [](#cli-help) [](#cli-log-level) {[package](./package.md),[run](./run.md),[version](./version.md)}
+`holoscan` [](#cli-help) [](#cli-log-level) {[package](./package.md),[run](./run.md),[version](./version.md),[nics](./nics.md)}
 
 ## Positional Arguments
 

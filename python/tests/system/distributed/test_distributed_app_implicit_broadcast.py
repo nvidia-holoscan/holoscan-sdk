@@ -18,6 +18,7 @@
 import cupy as cp
 import pytest
 from env_wrapper import env_var_context
+from utils import remove_ignored_errors
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, Operator, OperatorSpec
@@ -150,7 +151,7 @@ def test_distributed_implicit_broadcast_app(message_type, capfd):
     # avoid catching the expected error message
     # : "error handling callback was invoked with status -25 (Connection reset by remote peer)"
     captured_error = captured.err.replace("error handling callback", "ucx handling callback")
-    assert "error" not in captured_error
+    assert "error" not in remove_ignored_errors(captured_error)
     assert "Exception occurred" not in captured_error
 
     # assert that the expected number of messages were received

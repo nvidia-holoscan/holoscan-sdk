@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,8 +38,10 @@ void UcxHoloscanComponentSerializer::initialize() {
       args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "allocator"); });
   // Create an UnboundedAllocator if no allocator was provided
   if (has_allocator == args().end()) {
-    auto allocator = frag->make_resource<UnboundedAllocator>("allocator");
+    auto allocator = frag->make_resource<UnboundedAllocator>("ucx_holoscan_component_allocator");
     add_arg(Arg("allocator") = allocator);
+    allocator->gxf_cname(allocator->name().c_str());
+    if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
   }
   GXFResource::initialize();
 }

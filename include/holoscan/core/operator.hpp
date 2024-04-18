@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +39,9 @@
 #include "./messagelabel.hpp"
 #include "./operator_spec.hpp"
 #include "./resource.hpp"
+
+#include "gxf/core/gxf.h"
+#include "gxf/app/graph_entity.hpp"
 
 #define HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()                                            \
   template <typename ArgT,                                                              \
@@ -118,6 +121,10 @@
 
 namespace holoscan {
 
+namespace gxf {
+class GXFExecutor;
+}  // namespace gxf
+
 /**
  * @brief Base class for all operators.
  *
@@ -130,7 +137,7 @@ namespace holoscan {
  * @note This class is not intended to be used directly. Inherit from this class to create a new
  * operator.
  */
-class Operator : public Component {
+class Operator : public ComponentBase {
  public:
   /**
    * @brief Operator type used by the executor.
@@ -139,6 +146,7 @@ class Operator : public Component {
     kNative,   ///< Native operator.
     kGXF,      ///< GXF operator.
     kVirtual,  ///< Virtual operator.
+               ///< (for internal use, not intended for use by application authors)
   };
 
   /**
@@ -163,7 +171,7 @@ class Operator : public Component {
    */
   OperatorType operator_type() const { return operator_type_; }
 
-  using Component::id;
+  using ComponentBase::id;
   /**
    * @brief Set the Operator ID.
    *
@@ -175,7 +183,7 @@ class Operator : public Component {
     return *this;
   }
 
-  using Component::name;
+  using ComponentBase::name;
   /**
    * @brief Set the name of the operator.
    *
@@ -192,7 +200,7 @@ class Operator : public Component {
     return *this;
   }
 
-  using Component::fragment;
+  using ComponentBase::fragment;
   /**
    * @brief Set the fragment of the operator.
    *
@@ -272,7 +280,7 @@ class Operator : public Component {
    */
   std::unordered_map<std::string, std::shared_ptr<Resource>>& resources() { return resources_; }
 
-  using Component::add_arg;
+  using ComponentBase::add_arg;
 
   /**
    * @brief Add a condition to the operator.
@@ -550,6 +558,13 @@ class Operator : public Component {
    */
   YAML::Node to_yaml_node() const override;
 
+  /**
+   * @brief Get the GXF GraphEntity object corresponding to this operator
+   *
+   * @return graph entity corresponding to the operator
+   */
+  std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity() { return graph_entity_; }
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -558,6 +573,40 @@ class Operator : public Component {
   friend class AnnotatedDoubleBufferReceiver;
   friend class AnnotatedDoubleBufferTransmitter;
   friend class DFFTCollector;
+
+  // Make GXFExecutor a friend class so it can call protected initialization methods
+  friend class holoscan::gxf::GXFExecutor;
+  // Fragment should be able to call reset_graph_entities
+  friend class Fragment;
+
+  /**
+   * @brief This function creates a GraphEntity corresponding to the operator
+   * @param context The GXF context.
+   * @param name The name of the entity to create.
+   * @return The GXF entity eid corresponding to the graph entity.
+   */
+  gxf_uid_t initialize_graph_entity(void* context, const std::string& entity_prefix = "");
+
+  /**
+   * @brief Add this operator as the codelet in the GXF GraphEntity
+   *
+   * @return The codelet component id corresponding to GXF codelet.
+   */
+  virtual gxf_uid_t add_codelet_to_graph_entity();
+
+  /// Initialize conditions and add GXF conditions to graph_entity_;
+  void initialize_conditions();
+
+  /// Initialize resources and add GXF resources to graph_entity_;
+  void initialize_resources();
+
+  using ComponentBase::update_params_from_args;
+
+  /// Update parameters based on the specified arguments
+  void update_params_from_args();
+
+  /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
+  virtual void set_parameters();
 
   /**
    * @brief This function returns a consolidated MessageLabel for all the input ports of an
@@ -673,18 +722,23 @@ class Operator : public Component {
         });
   }
 
+  /// Reset the GXF GraphEntity of any components associated with this operator
+  virtual void reset_graph_entities();
+
   OperatorType operator_type_ = OperatorType::kNative;  ///< The type of the operator.
   std::shared_ptr<OperatorSpec> spec_;                  ///< The operator spec of the operator.
   std::unordered_map<std::string, std::shared_ptr<Condition>>
       conditions_;  ///< The conditions of the operator.
   std::unordered_map<std::string, std::shared_ptr<Resource>>
-      resources_;  ///< The resources used by the operator.
+      resources_;                                           ///< The resources used by the operator.
+  std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity_;  ///< GXF graph entity corresponding to
+                                                            ///< the Operator
 
  private:
-  /**
-   * @brief Set the operator codelet or any other backend codebase.
-   */
+  ///  Set the operator codelet or any other backend codebase.
   void set_op_backend();
+
+  bool has_ucx_connector();  ///< Check if the operator has any UCX connectors.
 
   /// The MessageLabel objects corresponding to the input ports indexed by the input port.
   std::unordered_map<std::string, MessageLabel> input_message_labels;

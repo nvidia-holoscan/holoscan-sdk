@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,8 +41,8 @@ class PyInputContext : public gxf::GXFInputContext {
   /* Inherit the constructors */
   using gxf::GXFInputContext::GXFInputContext;
   PyInputContext(ExecutionContext* execution_context, Operator* op,
-                 std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs, py::object py_op)
-      : gxf::GXFInputContext::GXFInputContext(execution_context, op, inputs), py_op_(py_op) {}
+                 std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs,
+                 py::object py_op);
 
   py::object py_receive(const std::string& name);
 
@@ -57,8 +57,7 @@ class PyOutputContext : public gxf::GXFOutputContext {
 
   PyOutputContext(ExecutionContext* execution_context, Operator* op,
                   std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs,
-                  py::object py_op)
-      : gxf::GXFOutputContext::GXFOutputContext(execution_context, op, outputs), py_op_(py_op) {}
+                  py::object py_op);
 
   void py_emit(py::object& data, const std::string& name);
 

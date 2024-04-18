@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,6 @@
 #include "gxf/std/allocator.hpp"
 #include "gxf/std/tensor.hpp"
 #include "holoscan/core/codec_registry.hpp"
-#include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/core/message.hpp"
 
 namespace nvidia {
@@ -45,19 +44,10 @@ class UcxHoloscanComponentSerializer : public ComponentSerializer {
   Expected<void> configureSerializers();
   // Configures all deserializer functions
   Expected<void> configureDeserializers();
-  // Serializes a holoscan::gxf::GXFTensor
-  Expected<size_t> serializeHoloscanGXFTensor(const holoscan::gxf::GXFTensor& tensor,
-                                              Endpoint* endpoint);
-  // Deserializes a holoscan::gxf::GXFTensor
-  Expected<holoscan::gxf::GXFTensor> deserializeHoloscanGXFTensor(Endpoint* endpoint);
   // Serializes a holoscan::Message
   Expected<size_t> serializeHoloscanMessage(const holoscan::Message& message, Endpoint* endpoint);
   // Deserializes a holoscan::Message
   Expected<holoscan::Message> deserializeHoloscanMessage(Endpoint* endpoint);
-  // Serializes a nvidia::gxf::Tensor
-  Expected<size_t> serializeTensor(const Tensor& tensor, Endpoint* endpoint);
-  // Deserializes a nvidia::gxf::Tensor
-  Expected<Tensor> deserializeTensor(Endpoint* endpoint);
 
   Parameter<Handle<Allocator>> allocator_;
 };

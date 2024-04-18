@@ -25,10 +25,12 @@ namespace holoscan::ops {
 /**
  * @brief Simple transmitter operator.
  *
- * **Named outputs:**
- *     - *out*: int
- *         - An index value that increments by one on each call to `compute`. The starting value
- *         is 1.
+ * On each tick, it transmits an integer to the "out" port.
+ *
+ * ==Named Outputs==
+ *
+ * - **out** : int
+ *   - An index value that increments by one on each call to `compute`. The starting value is 1.
  */
 class PingTxOp : public Operator {
  public:

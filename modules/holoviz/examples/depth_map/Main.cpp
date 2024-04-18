@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -186,8 +186,8 @@ void generateSourceData(uint32_t frame_index) {
       for (uint32_t x = 0; x < width; ++x) {
         const uint8_t depth = (std::sin((float(x) / float(width)) * 3.14f * 4.f) *
                                    std::cos((float(y) / float(height)) * 3.14f * 3.f) +
-                               1.f) * offset *
-                              63.f;
+                               1.f) *
+                              offset * 63.f;
 
         depth_data[y * width + x] = depth;
         color_data[y * width + x] = depth | ((depth << (8 + (x & 1))) & 0xFF00) |

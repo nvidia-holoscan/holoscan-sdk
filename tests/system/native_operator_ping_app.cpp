@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -205,7 +205,10 @@ TEST(NativeOperatorPingApp, TestNativeForwardOpAppDanglingOutput) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
   // string tested here is from GXF itself, so may have to update it as GXF is updated
-  EXPECT_TRUE(log_output.find("Connection not found for Tx data2") != std::string::npos);
+  EXPECT_TRUE(log_output.find(
+                  "No receiver connected to transmitter of DownstreamReceptiveSchedulingTerm") !=
+              std::string::npos);
+  EXPECT_TRUE(log_output.find("The entity will never tick") != std::string::npos);
 }
 
 TEST(NativeOperatorPingApp, TestNativeForwardOpAppDanglingInput) {

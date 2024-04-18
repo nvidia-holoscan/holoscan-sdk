@@ -100,6 +100,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
     network: str = create_or_use_network(args.network, map_name)
     nic: str = args.nic if args.nic else None
     use_all_nics: bool = args.use_all_nics
+    gpus: str = args.gpus if args.gpus else None
     config: Path = args.config if args.config else None
     address: str = args.address if args.address else None
     worker_address: str = args.worker_address if args.worker_address else None
@@ -151,6 +152,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
         network,
         nic,
         use_all_nics,
+        gpus,
         config,
         render,
         user,
@@ -243,14 +245,18 @@ def _pkg_specific_dependency_verification(pkg_info: dict) -> bool:
     """Checks for any package specific dependencies.
 
     Currently it verifies the following dependencies:
-    * If gpu has been requested by the application, verify that nvidia-docker is installed.
-
+    * If gpu has been requested by the application, verify that nvidia-ctk is installed.
+    Note: when running inside a Docker container, always assume nvidia-ctk is installed.
     Args:
         pkg_info: package manifest as a python dict
 
     Returns:
         True if all dependencies are satisfied, otherwise False.
     """
+    if os.path.exists("/.dockerenv"):
+        logger.info("--> Skipping nvidia-ctk check inside Docker...\n")
+        return True
+
     requested_gpus = get_requested_gpus(pkg_info)
     if requested_gpus > 0:
         # check for NVIDIA Container TOolkit

@@ -24,30 +24,28 @@
 
 namespace holoscan::doc::InferenceProcessorOp {
 
+// PyInferenceProcessorOp Constructor
 PYDOC(InferenceProcessorOp, R"doc(
 Holoinfer Processing operator.
-)doc")
 
-// PyInferenceProcessorOp Constructor
-PYDOC(InferenceProcessorOp_python, R"doc(
-Holoinfer Processing operator.
+**==Named Inputs==**
 
-Named inputs:
-    receivers: multi-receiver accepting nvidia::gxf::Tensor(s)
-        Any number of upstream ports may be connected to this `receivers` port. The operator will
-        search across all messages for tensors matching those specified in `in_tensor_names`.
+    receivers : multi-receiver accepting nvidia::gxf::Tensor(s)
+        Any number of upstream ports may be connected to this ``receivers`` port. The operator will
+        search across all messages for tensors matching those specified in ``in_tensor_names``.
         These are the set of input tensors used by the processing operations specified in
-        `process_map`.
+        ``process_map``.
 
-Named outputs:
-    transmitter: nvidia::gxf::Tensor(s)
+**==Named Outputs==**
+
+    transmitter : nvidia::gxf::Tensor(s)
         A message containing tensors corresponding to the processed results from operations will
         be emitted. The names of the tensors transmitted correspond to those in
-        `out_tensor_names`.
+        ``out_tensor_names``.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
+fragment : holoscan.core.Fragment (constructor only)
     The fragment that the operator belongs to.
 allocator : holoscan.resources.Allocator
     Memory allocator to use for the output.
@@ -60,19 +58,21 @@ in_tensor_names : sequence of str, optional
 out_tensor_names : sequence of str, optional
     Names of output tensors in the order to be fed into the operator.
 input_on_cuda : bool, optional
-    Whether the input buffer is on the GPU.
+    Whether the input buffer is on the GPU. Default value is ``False``.
 output_on_cuda : bool, optional
-    Whether the output buffer is on the GPU.
+    Whether the output buffer is on the GPU. Default value is ``False``.
 transmit_on_cuda : bool, optional
-    Whether to transmit the message on the GPU.
+    Whether to transmit the message on the GPU. Default value is ``False``.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
-    `holoscan.resources.CudaStreamPool` instance to allocate CUDA streams.
+    ``holoscan.resources.CudaStreamPool`` instance to allocate CUDA streams.
+    Default value is ``None``.
 config_path : str, optional
-    File path to the config file.
+    File path to the config file. Default value is ``""``.
 disable_transmitter : bool, optional
     If ``True``, disable the transmitter output port of the operator.
-name : str, optional
-    The name of the operator.
+    Default value is ``False``.
+name : str, optional (constructor only)
+    The name of the operator. Default value is ``"postprocessor"``.
 )doc")
 
 PYDOC(initialize, R"doc(

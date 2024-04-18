@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +32,7 @@ void init_clocks(py::module_&);
 void init_serialization_buffers(py::module_&);
 void init_component_serializers(py::module_&);
 void init_entity_serializers(py::module_&);
-void init_video_stream_serializer(py::module_&);
+void init_std_entity_serializer(py::module_&);
 
 PYBIND11_MODULE(_resources, m) {
   m.doc() = R"pbdoc(
@@ -58,6 +58,6 @@ PYBIND11_MODULE(_resources, m) {
   init_serialization_buffers(m);
   init_component_serializers(m);
   init_entity_serializers(m);
-  init_video_stream_serializer(m);
+  init_std_entity_serializer(m);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

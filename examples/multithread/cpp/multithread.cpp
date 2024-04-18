@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -158,11 +158,23 @@ int main(int argc, char** argv) {
   app->set_delay(delay);
   app->set_delay_step(delay_step);
 
-  bool multithreaded = app->from_config("multithreaded").as<bool>();
-  if (multithreaded) {
+  std::string scheduler = app->from_config("scheduler").as<std::string>();
+  if (scheduler == "multi_thread") {
     // use MultiThreadScheduler instead of the default GreedyScheduler
     app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(
-        "multithread-scheduler", app->from_config("scheduler")));
+        "multithread-scheduler", app->from_config("multi_thread_scheduler")));
+  } else if (scheduler == "event_based") {
+    // use EventBasedScheduler instead of the default GreedyScheduler
+    app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
+        "event-based-scheduler", app->from_config("event_based_scheduler")));
+  } else if (scheduler == "greedy") {
+    app->scheduler(app->make_scheduler<holoscan::GreedyScheduler>(
+        "greedy-scheduler", app->from_config("greedy_scheduler")));
+  } else if (scheduler != "default") {
+    throw std::runtime_error(fmt::format(
+        "unrecognized scheduler option '{}', should be one of {'multi_thread', 'event_based', "
+        "'greedy', 'default'}",
+        scheduler));
   }
 
   app->run();

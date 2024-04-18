@@ -67,93 +67,27 @@ class PyApplication : public Application {
    * @param obj PyApplication object.
    * @return The argv_ as a Python list, discarding the first element.
    */
-  py::list py_argv() {
-    py::list argv;
-    // In Python, `sys.argv` returns `['']` if there are no arguments (i.e., when just `python` is
-    // called). We'll do the same here.
-    if (argv_.empty()) {
-      argv.append(py::cast("", py::return_value_policy::reference));
-      return argv;
-    }
-
-    for (auto iter = std::next(argv_.begin()); iter != argv_.end(); ++iter) {
-      argv.append(py::cast(*iter, py::return_value_policy::reference));
-    }
-
-    if (argv.empty()) { argv.append(py::cast("", py::return_value_policy::reference)); }
-    return argv;
-  }
+  py::list py_argv();
 
   /* Trampolines (need one for each virtual function) */
-  void add_operator(const std::shared_ptr<Operator>& op) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Application, add_operator, op);
-  }
+  void add_operator(const std::shared_ptr<Operator>& op) override;
   void add_flow(const std::shared_ptr<Operator>& upstream_op,
-                const std::shared_ptr<Operator>& downstream_op) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op);
-  }
+                const std::shared_ptr<Operator>& downstream_op) override;
   void add_flow(const std::shared_ptr<Operator>& upstream_op,
                 const std::shared_ptr<Operator>& downstream_op,
-                std::set<std::pair<std::string, std::string>> io_map) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op, io_map);
-  }
+                std::set<std::pair<std::string, std::string>> io_map) override;
   void add_flow(const std::shared_ptr<Fragment>& upstream_frag,
                 const std::shared_ptr<Fragment>& downstream_frag,
-                std::set<std::pair<std::string, std::string>> port_pairs) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Application, add_flow, upstream_frag, downstream_frag, port_pairs);
-  }
-  void compose() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Application, compose);
-  }
-  void run() override {
-    // Create a deleter for DLManagedTensor objects so that they can be deleted in a separate thread
-    // to avoid blocking the GXF runtime mutex.
-    LazyDLManagedTensorDeleter deleter;
-
-    // Get the trace and profile functions from sys
-    {
-      pybind11::gil_scoped_acquire gil;
-
-      auto sys_module = py::module::import("sys");
-
-      // Note that when cProfile is used, the profile_func_ is a cProfile.Profile object, not a
-      // function. If the return value of getprofile() is not a function, we need to use the
-      // existing c_profilefunc_ and c_profileobj_ instead of calling sys.setprofile() with
-      // profile_func_.
-      py_profile_func_ = sys_module.attr("getprofile")();
-      py_trace_func_ = sys_module.attr("gettrace")();
-
-      auto py_thread_state = _PyThreadState_UncheckedGet();
-      c_profilefunc_ = py_thread_state->c_profilefunc;
-      c_profileobj_ = py_thread_state->c_profileobj;
-      c_tracefunc_ = py_thread_state->c_tracefunc;
-      c_traceobj_ = py_thread_state->c_traceobj;
-
-#if PY_VERSION_HEX >= 0x030b0000  // >= Python 3.11.0
-      py_last_frame_ = py_thread_state->cframe->current_frame;
-#else
-      py_last_frame_ = py_thread_state->frame;  // = PyEval_GetFrame();
-#endif
-    }
-
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Application, run);
-  }
+                std::set<std::pair<std::string, std::string>> port_pairs) override;
+  void compose() override;
+  void run() override;
 
  private:
   friend class PyOperator;
 
   // Fake frame object for the last python frame (where Application.run() was called).
-#if PY_VERSION_HEX >= 0x030b0000  // >= Python 3.11.0
-  _PyInterpreterFrame* py_last_frame_ = nullptr;
-#else
-  PyFrameObject* py_last_frame_ = nullptr;
-#endif
+  // Actual type is either _PyInterpreterFrame* (PY_VERSION_HEX >= 0x030b0000) or PyFrameObject*.
+  void* py_last_frame_ = nullptr;
 
   // Trace/profile functions
   // - Retain a reference to the Python trace/profile function if available via

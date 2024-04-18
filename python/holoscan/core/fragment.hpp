@@ -58,41 +58,18 @@ class PyFragment : public Fragment {
   /* Inherit the constructors */
   using Fragment::Fragment;
 
-  explicit PyFragment(py::object op) : Fragment() {
-    py::gil_scoped_acquire scope_guard;
-    py_compose_ = py::getattr(op, "compose");
-  }
+  explicit PyFragment(py::object op);
 
   /* Trampolines (need one for each virtual function) */
-  void add_operator(const std::shared_ptr<Operator>& op) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Fragment, add_operator, op);
-  }
+  void add_operator(const std::shared_ptr<Operator>& op) override;
   void add_flow(const std::shared_ptr<Operator>& upstream_op,
-                const std::shared_ptr<Operator>& downstream_op) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_op, downstream_op);
-  }
+                const std::shared_ptr<Operator>& downstream_op) override;
   void add_flow(const std::shared_ptr<Operator>& upstream_op,
                 const std::shared_ptr<Operator>& downstream_op,
-                std::set<std::pair<std::string, std::string>> io_map) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_op, downstream_op, io_map);
-  }
+                std::set<std::pair<std::string, std::string>> io_map) override;
 
-  void compose() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    // PYBIND11_OVERRIDE(void, Fragment, compose);
-
-    // PYBIND11_OVERRIDE doesn't work when Fragment object is created during Application::compose().
-    // So we take the py::object from the constructor and call it here.
-    py::gil_scoped_acquire scope_guard;
-    py_compose_.operator()();
-  }
-  void run() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Fragment, run);
-  }
+  void compose() override;
+  void run() override;
 
  private:
   py::object py_compose_ = py::none();

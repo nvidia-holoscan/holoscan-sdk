@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -93,6 +93,9 @@ if(HOLOSCAN_BUILD_TESTS)
   video_replayer_distributed_test.cpp
   )
 
+  target_include_directories(video_replayer_distributed_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+
   target_compile_definitions(video_replayer_distributed_test
     PRIVATE RECORD_OUTPUT RECORDING_DIR="${RECORDING_DIR}"
     PRIVATE SOURCE_VIDEO_BASENAME="${SOURCE_VIDEO_BASENAME}"
@@ -119,6 +122,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
   # Add a test to check the validity of the frames
@@ -134,6 +138,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_RENDER_TEST PROPERTIES
   DEPENDS EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST
   PASS_REGULAR_EXPRESSION "Valid video output!"
+  FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
 endif()

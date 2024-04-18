@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,9 @@
 #include <memory>
 #include <vector>
 
+// TODO: provide get() method once upstream issue with missing GXF header is resolved
+// #include <gxf/serialization/std_component_serializer.hpp>
+
 #include "../../gxf/gxf_resource.hpp"
 #include "./unbounded_allocator.hpp"
 
@@ -41,6 +44,8 @@ class StdComponentSerializer : public gxf::GXFResource {
   void setup(ComponentSpec& spec) override;
 
   void initialize() override;
+
+  //  nvidia::gxf::StdComponentSerializer* get() const;
 
  private:
   Parameter<std::shared_ptr<holoscan::Allocator>> allocator_;

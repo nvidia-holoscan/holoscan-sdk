@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -35,6 +36,8 @@
 #include <common/logger.hpp>
 
 #include "holoscan/core/application.hpp"
+#include "holoscan/core/arg.hpp"
+#include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
 #include "holoscan/core/config.hpp"
@@ -49,12 +52,12 @@
 #include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
-#include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/annotated_double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/dfft_collector.hpp"
@@ -64,13 +67,45 @@
 #include "holoscan/core/services/common/virtual_operator.hpp"
 #include "holoscan/core/signal_handler.hpp"
 
+#include "gxf/app/arg.hpp"
 #include "gxf/std/default_extension.hpp"
-
 #include "gxf/std/extension_factory_helper.hpp"
 #include "gxf/std/monitor.hpp"
 #include "gxf/test/components/entity_monitor.hpp"
 
 namespace holoscan::gxf {
+
+namespace {
+std::pair<uint64_t, uint64_t> get_capacity_and_policy(
+    nvidia::gxf::Handle<nvidia::gxf::Component> component) {
+  uint64_t capacity = 1;
+  uint64_t policy = 2;
+  if (component.is_null()) {
+    HOLOSCAN_LOG_ERROR("Null component handle");
+    return std::make_pair(capacity, policy);
+  }
+  auto maybe_capacity = component->getParameter<uint64_t>("capacity");
+  if (maybe_capacity) {
+    capacity = maybe_capacity.value();
+  } else {
+    HOLOSCAN_LOG_ERROR("Failed to get capacity, using default value of {}", capacity);
+  }
+  auto maybe_policy = component->getParameter<uint64_t>("policy");
+  if (maybe_policy) {
+    policy = maybe_policy.value();
+  } else {
+    HOLOSCAN_LOG_ERROR("Failed to get policy, using default value of {}", policy);
+  }
+  return std::make_pair(capacity, policy);
+}
+
+bool has_ucx_connector(std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+  auto has_ucx_receiver = graph_entity->try_get("nvidia::gxf::UcxReceiver");
+  auto has_ucx_transmitter = graph_entity->try_get("nvidia::gxf::UcxTransmitter");
+  return has_ucx_receiver || has_ucx_transmitter;
+}
+
+}  // namespace
 
 static const std::vector<std::string> kDefaultGXFExtensions{
     "libgxf_std.so",
@@ -81,8 +116,7 @@ static const std::vector<std::string> kDefaultGXFExtensions{
 };
 
 static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
-    "libgxf_stream_playback.so",  // keep for use of VideoStreamSerializer
-    "libgxf_ucx_holoscan.so",     // serialize holoscan::gxf::GXFTensor and holoscan::Message
+    "libgxf_ucx_holoscan.so",  // serialize holoscan::Message
 };
 
 static nvidia::Severity s_gxf_log_level = nvidia::Severity::INFO;
@@ -208,7 +242,9 @@ GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
     //       GxfGetSharedContext(application->executor().context(), &shared_context));
     //   HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate1(shared_context, &context_));
     // } else {
-    GXF_LOG_INFO("Creating context");
+    auto frag_name_display = fragment_->name();
+    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+    HOLOSCAN_LOG_INFO("{}Creating context", frag_name_display);
     HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate(&context_));
     // }
     own_gxf_context_ = true;
@@ -225,9 +261,19 @@ GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
 }
 
 GXFExecutor::~GXFExecutor() {
+  implicit_broadcast_entities_.clear();
+  util_entity_.reset();
+  gpu_device_entity_.reset();
+  scheduler_entity_.reset();
+  network_context_entity_.reset();
+  connections_entity_.reset();
+
   // Deinitialize GXF context only if `own_gxf_context_` is true
   if (own_gxf_context_) {
-    GXF_LOG_INFO("Destroying context");
+    auto frag_name_display = fragment_->name();
+    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+    HOLOSCAN_LOG_INFO("{}Destroying context", frag_name_display);
+
     // Unregister signal handlers if any
     SignalHandler::unregister_signal_handler(context_, SIGINT);
     SignalHandler::unregister_signal_handler(context_, SIGTERM);
@@ -241,17 +287,32 @@ GXFExecutor::~GXFExecutor() {
   }
 }
 
+void GXFExecutor::initialize_gxf_resources(
+    std::unordered_map<std::string, std::shared_ptr<Resource>>& resources, gxf_uid_t eid,
+    std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+  for (const auto& [name, resource] : resources) {
+    // Note: native resources are only supported on Operator, not for NetworkContext or Scheduler
+    auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
+    // Initialize GXF component if it is not already initialized.
+    if (gxf_resource->gxf_context() == nullptr) {
+      gxf_resource->fragment(fragment());
+      if (graph_entity) { gxf_resource->gxf_graph_entity(graph_entity); }
+      gxf_resource->gxf_eid(eid);  // set GXF entity id
+      gxf_resource->initialize();
+    } else {
+      HOLOSCAN_LOG_ERROR("Resource '{}' is not a holoscan::gxf::GXFResource and will be ignored",
+                         name);
+    }
+  }
+}
+
 void GXFExecutor::add_operator_to_entity_group(gxf_context_t context, gxf_uid_t entity_group_gid,
                                                std::shared_ptr<Operator> op) {
-  gxf_uid_t op_eid = kNullUid;
-  if (op->operator_type() == Operator::OperatorType::kGXF) {
-    op_eid = std::dynamic_pointer_cast<holoscan::ops::GXFOperator>(op)->gxf_eid();
-  } else {
-    // get the GXF entity ID corresponding to the native operator's GXF Codelet
-    const std::string op_entity_name = fmt::format("{}{}", entity_prefix_, op->name());
-    HOLOSCAN_GXF_CALL_FATAL(GxfEntityFind(context, op_entity_name.c_str(), &op_eid));
+  auto graph_entity = op->graph_entity();
+  gxf_uid_t op_eid = graph_entity->eid();
+  if (!graph_entity) {
+    HOLOSCAN_LOG_ERROR("null GraphEntity found during add_operator_to_entity_group");
   }
-
   HOLOSCAN_LOG_DEBUG("Adding operator eid '{}' to entity group '{}'", op_eid, entity_group_gid);
   HOLOSCAN_GXF_CALL_FATAL(GxfUpdateEntityGroup(context, entity_group_gid, op_eid));
 }
@@ -262,25 +323,16 @@ void GXFExecutor::run(OperatorGraph& graph) {
     return;
   }
 
-  if (!run_gxf_graph()) {
-    HOLOSCAN_LOG_ERROR("Failed to run GXF graph");
-    return;
-  }
+  // Note that run_gxf_graph() can raise an exception.
+  run_gxf_graph();
 }
 
 std::future<void> GXFExecutor::run_async(OperatorGraph& graph) {
   if (!is_gxf_graph_initialized_) { initialize_gxf_graph(graph); }
 
   return std::async(std::launch::async, [this, &graph]() {
-    try {
-      this->run_gxf_graph();
-    } catch (const RuntimeError& e) {
-      // Do not propagate the exception to the caller because the failure is already logged
-      // by the GXF and the failure on GxfGraphWait() is expected when the graph is interrupted.
-      // (Normal execution with the distributed application.)
-      HOLOSCAN_LOG_DEBUG("Exception in GXFExecutor::run_gxf_graph - {}", e.what());
-    }
-    HOLOSCAN_LOG_INFO("Fragment '{}' Terminated", this->fragment()->name());
+    // Note that run_gxf_graph() can raise an exception.
+    this->run_gxf_graph();
   });
 }
 
@@ -302,6 +354,100 @@ std::shared_ptr<ExtensionManager> GXFExecutor::extension_manager() {
   return gxf_extension_manager_;
 }
 
+namespace {
+/* @brief Utility function used internally by the GXFExecutor::create_input_port static method.
+ *
+ * This function will only be called in the case of a GXF application that is wrapping a
+ * holoscan::Operator as a GXF codelet (as in examples/wrap_operator_as_gxf_extension).
+ *
+ * It will update the native operator's connectors to use the existing GXF receiver.
+ *
+ * Note: cannot use GXF GraphEntity C++ APIs here as the Operator here wraps a codelet which does
+ * not have a GraphEntity data member.
+ */
+void bind_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid, IOSpec* io_spec,
+                     const char* rx_name, IOSpec::ConnectorType rx_type, Operator* op) {
+  // Can't currently use GraphEntity API for this OperatorWrapper/bind_port code path
+  if (rx_type != IOSpec::ConnectorType::kDefault) {
+    // TODO: update bind_port code path for types other than ConnectorType::kDefault
+    throw std::runtime_error(fmt::format(
+        "Unable to support types other than ConnectorType::kDefault (rx_name: '{}')", rx_name));
+  }
+  const char* entity_name = "";
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(gxf_context, eid, &entity_name));
+
+  gxf_tid_t receiver_find_tid{};
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfComponentTypeId(gxf_context, "nvidia::gxf::Receiver", &receiver_find_tid));
+
+  gxf_uid_t receiver_cid = 0;
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfComponentFind(gxf_context, eid, receiver_find_tid, rx_name, nullptr, &receiver_cid));
+
+  gxf_tid_t receiver_tid{};
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context, receiver_cid, &receiver_tid));
+
+  gxf_tid_t double_buffer_receiver_tid{};
+
+  if (fragment->data_flow_tracker()) {
+    HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
+        gxf_context, "holoscan::AnnotatedDoubleBufferReceiver", &double_buffer_receiver_tid));
+  } else {
+    HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
+        gxf_context, "nvidia::gxf::DoubleBufferReceiver", &double_buffer_receiver_tid));
+  }
+
+  if (receiver_tid == double_buffer_receiver_tid) {
+    // It could be made more succinct by casting appropriately at the
+    // std::make_shared call, but, I don't have an example to test if it is working
+    if (fragment->data_flow_tracker()) {
+      holoscan::AnnotatedDoubleBufferReceiver* double_buffer_receiver_ptr = nullptr;
+      HOLOSCAN_GXF_CALL_FATAL(
+          GxfComponentPointer(gxf_context,
+                              receiver_cid,
+                              receiver_tid,
+                              reinterpret_cast<void**>(&double_buffer_receiver_ptr)));
+
+      if (double_buffer_receiver_ptr) {
+        auto receiver =
+            std::make_shared<holoscan::DoubleBufferReceiver>(rx_name, double_buffer_receiver_ptr);
+        // Set the existing DoubleBufferReceiver for this input
+        io_spec->connector(receiver);
+        double_buffer_receiver_ptr->op(op);
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get AnnotatedDoubleBufferReceiver pointer for the handle: '{}' in '{}' "
+            "entity",
+            rx_name,
+            entity_name);
+      }
+    } else {
+      nvidia::gxf::DoubleBufferReceiver* double_buffer_receiver_ptr = nullptr;
+      GxfComponentPointer(gxf_context,
+                          receiver_cid,
+                          receiver_tid,
+                          reinterpret_cast<void**>(&double_buffer_receiver_ptr));
+
+      if (double_buffer_receiver_ptr) {
+        auto receiver =
+            std::make_shared<holoscan::DoubleBufferReceiver>(rx_name, double_buffer_receiver_ptr);
+        // Set the existing DoubleBufferReceiver for this input
+        io_spec->connector(receiver);
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get DoubleBufferReceiver pointer for the handle: '{}' in '{}' entity",
+            rx_name,
+            entity_name);
+      }
+    }
+  } else {
+    HOLOSCAN_LOG_ERROR(
+        "Unsupported GXF receiver type for the handle: '{}' in '{}' entity", rx_name, entity_name);
+  }
+  return;
+}
+}  // namespace
+
 void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
                                     IOSpec* io_spec, bool bind_port, Operator* op) {
   const char* rx_name = io_spec->name().c_str();  // input port name
@@ -315,93 +461,23 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
           "ConnectorType::kDoubleBuffer.");
     }
   }
+  auto graph_entity = op->graph_entity();
 
   // If this executor is used by OperatorWrapper (bind_port == true) to wrap Native Operator,
-  // then we need to call `io_spec->connector(...)` to set the existing GXF Receiver for this
-  // input.
+  // then we need to call `bind_input_port` to set the existing GXF Receiver for this input.
   if (bind_port) {
-    if (rx_type != IOSpec::ConnectorType::kDefault) {
-      throw std::runtime_error(
-          "TODO: update bind_port code path for types other than ConnectorType::kDefault");
-    }
-    const char* entity_name = "";
-    HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(gxf_context, eid, &entity_name));
-
-    gxf_tid_t receiver_find_tid{};
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentTypeId(gxf_context, "nvidia::gxf::Receiver", &receiver_find_tid));
-
-    gxf_uid_t receiver_cid = 0;
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentFind(gxf_context, eid, receiver_find_tid, rx_name, nullptr, &receiver_cid));
-
-    gxf_tid_t receiver_tid{};
-    HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context, receiver_cid, &receiver_tid));
-
-    gxf_tid_t double_buffer_receiver_tid{};
-
-    if (fragment->data_flow_tracker()) {
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
-          gxf_context, "holoscan::AnnotatedDoubleBufferReceiver", &double_buffer_receiver_tid));
-    } else {
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
-          gxf_context, "nvidia::gxf::DoubleBufferReceiver", &double_buffer_receiver_tid));
-    }
-
-    if (receiver_tid == double_buffer_receiver_tid) {
-      // It could be made more succinct by casting appropriately at the
-      // std::make_shared call, but, I don't have an example to test if it is working
-      if (fragment->data_flow_tracker()) {
-        holoscan::AnnotatedDoubleBufferReceiver* double_buffer_receiver_ptr = nullptr;
-        HOLOSCAN_GXF_CALL_FATAL(
-            GxfComponentPointer(gxf_context,
-                                receiver_cid,
-                                receiver_tid,
-                                reinterpret_cast<void**>(&double_buffer_receiver_ptr)));
-
-        if (double_buffer_receiver_ptr) {
-          auto receiver =
-              std::make_shared<holoscan::DoubleBufferReceiver>(rx_name, double_buffer_receiver_ptr);
-          // Set the existing DoubleBufferReceiver for this input
-          io_spec->connector(receiver);
-          double_buffer_receiver_ptr->op(op);
-        } else {
-          HOLOSCAN_LOG_ERROR(
-              "Unable to get AnnotatedDoubleBufferReceiver pointer for the handle: '{}' in '{}' "
-              "entity",
-              rx_name,
-              entity_name);
-        }
-      } else {
-        nvidia::gxf::DoubleBufferReceiver* double_buffer_receiver_ptr = nullptr;
-        GxfComponentPointer(gxf_context,
-                            receiver_cid,
-                            receiver_tid,
-                            reinterpret_cast<void**>(&double_buffer_receiver_ptr));
-
-        if (double_buffer_receiver_ptr) {
-          auto receiver =
-              std::make_shared<holoscan::DoubleBufferReceiver>(rx_name, double_buffer_receiver_ptr);
-          // Set the existing DoubleBufferReceiver for this input
-          io_spec->connector(receiver);
-        } else {
-          HOLOSCAN_LOG_ERROR(
-              "Unable to get DoubleBufferReceiver pointer for the handle: '{}' in '{}' entity",
-              rx_name,
-              entity_name);
-        }
-      }
-    } else {
-      HOLOSCAN_LOG_ERROR("Unsupported GXF receiver type for the handle: '{}' in '{}' entity",
-                         rx_name,
-                         entity_name);
-    }
+    bind_input_port(fragment, gxf_context, eid, io_spec, rx_name, rx_type, op);
     return;
   }
 
   auto connector = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
-
-  if (!connector || (connector->gxf_cptr() == nullptr)) {
+  if (connector && (connector->gxf_cptr() != nullptr)) {
+    auto gxf_receiver = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(connector);
+    if (gxf_receiver && graph_entity) {
+      gxf_receiver->gxf_eid(graph_entity->eid());
+      gxf_receiver->gxf_graph_entity(graph_entity);
+    }
+  } else {
     // Create Receiver component for this input
     std::shared_ptr<Receiver> rx_resource;
     switch (rx_type) {
@@ -433,8 +509,22 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
     rx_resource->setup(*rx_spec);
     rx_resource->spec(std::move(rx_spec));
 
-    rx_resource->gxf_eid(eid);
-    rx_resource->initialize();
+    // Note: had to make sure GXFComponent calls addComponent and not addReceiver or addTransmitter
+    //       or errors will occur as follows:
+    // [error] [component.hpp:160] Expression 'parameter_registrar_->getComponentParameterInfoPtr(
+    //             tid, key)' failed with error 'GXF_ENTITY_COMPONENT_NOT_FOUND'.
+    // [error] [graph_entity.cpp:52] Expression 'codelet_->getParameterInfo(rx_name)' failed with
+    //             error 'GXF_ENTITY_COMPONENT_NOT_FOUND'.
+    // [error] [gxf_component.cpp:112] Failed to add component 'values:27' of type:
+    //             'nvidia::gxf::DoubleBufferReceiver'
+    // [info] [gxf_component.cpp:119] Initializing component '__condition_input__1' in entity
+    //             '370' via GxfComponentAdd
+    // [error] [gxf_condition.cpp:97] GXF call ::holoscan::gxf::GXFParameterAdaptor::set_param(
+    //              gxf_context_, gxf_cid_, key.c_str(), param_wrap) in line 97 of file
+
+    // Add to the same entity as the operator and initialize
+    // Note: it is important that GXFComponent calls addComponent and not addTransmitter for this
+    rx_resource->add_to_graph_entity(op);
 
     if (fragment->data_flow_tracker()) {
       holoscan::AnnotatedDoubleBufferReceiver* dbl_ptr;
@@ -476,17 +566,17 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
       case ConditionType::kMessageAvailable: {
         std::shared_ptr<MessageAvailableCondition> message_available_condition =
             std::dynamic_pointer_cast<MessageAvailableCondition>(condition);
-
+        // Note: GraphEntity::addSchedulingTerm requires a unique name here
+        std::string cond_name =
+            fmt::format("__{}_{}_cond_{}", op->name(), rx_name, condition_index);
         message_available_condition->receiver(connector);
-        message_available_condition->name(
-            ::holoscan::gxf::create_name("__condition_input_", condition_index).c_str());
+        message_available_condition->name(cond_name);
         message_available_condition->fragment(fragment);
         auto rx_condition_spec = std::make_shared<ComponentSpec>(fragment);
         message_available_condition->setup(*rx_condition_spec);
         message_available_condition->spec(std::move(rx_condition_spec));
-
-        message_available_condition->gxf_eid(eid);
-        message_available_condition->initialize();
+        // Add to the same entity as the operator and initialize
+        message_available_condition->add_to_graph_entity(op);
         break;
       }
       case ConditionType::kNone:
@@ -497,6 +587,97 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
     }
   }
 }
+
+namespace {
+/* @brief Utility function used internally by the GXFExecutor::create_output_port static method.
+ *
+ * This function will only be called in the case of a GXF application that is wrapping a
+ * holoscan::Operator as a GXF codelet (as in examples/wrap_operator_as_gxf_extension).
+ *
+ * It will update the native operator's connectors to use the existing GXF transmitter/
+ *
+ * Note: cannot use GXF GraphEntity C++ APIs here as the Operator here wraps a codelet which does
+ * not have a GraphEntity data member.
+ */
+void bind_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid, IOSpec* io_spec,
+                      const char* tx_name, IOSpec::ConnectorType tx_type, Operator* op) {
+  if (tx_type != IOSpec::ConnectorType::kDefault) {
+    // TODO: update bind_port code path for types other than ConnectorType::kDefault
+    throw std::runtime_error(fmt::format(
+        "Unable to support types other than ConnectorType::kDefault (tx_name: '{}')", tx_name));
+  }
+  const char* entity_name = "";
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(gxf_context, eid, &entity_name));
+
+  gxf_tid_t transmitter_find_tid{};
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfComponentTypeId(gxf_context, "nvidia::gxf::Transmitter", &transmitter_find_tid));
+
+  gxf_uid_t transmitter_cid = 0;
+  HOLOSCAN_GXF_CALL_FATAL(
+      GxfComponentFind(gxf_context, eid, transmitter_find_tid, tx_name, nullptr, &transmitter_cid));
+
+  gxf_tid_t transmitter_tid{};
+  HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context, transmitter_cid, &transmitter_tid));
+
+  gxf_tid_t double_buffer_transmitter_tid{};
+
+  if (fragment->data_flow_tracker()) {
+    HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
+        gxf_context, "holoscan::AnnotatedDoubleBufferTransmitter", &double_buffer_transmitter_tid));
+  } else {
+    HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
+        gxf_context, "nvidia::gxf::DoubleBufferTransmitter", &double_buffer_transmitter_tid));
+  }
+
+  if (transmitter_tid == double_buffer_transmitter_tid) {
+    if (fragment->data_flow_tracker()) {
+      holoscan::AnnotatedDoubleBufferTransmitter* double_buffer_transmitter_ptr = nullptr;
+      HOLOSCAN_GXF_CALL_FATAL(
+          GxfComponentPointer(gxf_context,
+                              transmitter_cid,
+                              transmitter_tid,
+                              reinterpret_cast<void**>(&double_buffer_transmitter_ptr)));
+
+      if (double_buffer_transmitter_ptr) {
+        auto transmitter = std::make_shared<holoscan::DoubleBufferTransmitter>(
+            tx_name, double_buffer_transmitter_ptr);
+        // Set the existing DoubleBufferTransmitter for this output
+        io_spec->connector(transmitter);
+        double_buffer_transmitter_ptr->op(op);
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get AnnotatedDoubleBufferTransmitter pointer for the handle: '{}' in '{}' "
+            "entity",
+            tx_name,
+            entity_name);
+      }
+    } else {
+      nvidia::gxf::DoubleBufferTransmitter* double_buffer_transmitter_ptr = nullptr;
+      GxfComponentPointer(gxf_context,
+                          transmitter_cid,
+                          transmitter_tid,
+                          reinterpret_cast<void**>(&double_buffer_transmitter_ptr));
+
+      if (double_buffer_transmitter_ptr) {
+        auto transmitter = std::make_shared<holoscan::DoubleBufferTransmitter>(
+            tx_name, double_buffer_transmitter_ptr);
+        // Set the existing DoubleBufferTransmitter for this output
+        io_spec->connector(transmitter);
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to get DoubleBufferTransmitter pointer for the handle: '{}' in '{}' entity",
+            tx_name,
+            entity_name);
+      }
+    }
+  } else {
+    HOLOSCAN_LOG_ERROR("Unsupported GXF transmitter type for the handle: '{}' in '{}' entity",
+                       tx_name,
+                       entity_name);
+  }
+}
+}  // namespace
 
 void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
                                      IOSpec* io_spec, bool bind_port, Operator* op) {
@@ -511,91 +692,22 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
           "ConnectorType::kDoubleBuffer.");
     }
   }
+  auto graph_entity = op->graph_entity();
   // If this executor is used by OperatorWrapper (bind_port == true) to wrap Native Operator,
-  // then we need to call `io_spec->connector(...)` to set the existing GXF Transmitter for this
-  // output.
+  // then we need to call `bind_output_port` to set the existing GXF Transmitter for this output.
   if (bind_port) {
-    if (tx_type != IOSpec::ConnectorType::kDefault) {
-      throw std::runtime_error(
-          "TODO: update bind_port code path for types other than ConnectorType::kDefault");
-    }
-    const char* entity_name = "";
-    HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(gxf_context, eid, &entity_name));
-
-    gxf_tid_t transmitter_find_tid{};
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentTypeId(gxf_context, "nvidia::gxf::Transmitter", &transmitter_find_tid));
-
-    gxf_uid_t transmitter_cid = 0;
-    HOLOSCAN_GXF_CALL_FATAL(GxfComponentFind(
-        gxf_context, eid, transmitter_find_tid, tx_name, nullptr, &transmitter_cid));
-
-    gxf_tid_t transmitter_tid{};
-    HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context, transmitter_cid, &transmitter_tid));
-
-    gxf_tid_t double_buffer_transmitter_tid{};
-
-    if (fragment->data_flow_tracker()) {
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(gxf_context,
-                                                 "holoscan::AnnotatedDoubleBufferTransmitter",
-                                                 &double_buffer_transmitter_tid));
-    } else {
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
-          gxf_context, "nvidia::gxf::DoubleBufferTransmitter", &double_buffer_transmitter_tid));
-    }
-
-    if (transmitter_tid == double_buffer_transmitter_tid) {
-      if (fragment->data_flow_tracker()) {
-        holoscan::AnnotatedDoubleBufferTransmitter* double_buffer_transmitter_ptr = nullptr;
-        HOLOSCAN_GXF_CALL_FATAL(
-            GxfComponentPointer(gxf_context,
-                                transmitter_cid,
-                                transmitter_tid,
-                                reinterpret_cast<void**>(&double_buffer_transmitter_ptr)));
-
-        if (double_buffer_transmitter_ptr) {
-          auto transmitter = std::make_shared<holoscan::DoubleBufferTransmitter>(
-              tx_name, double_buffer_transmitter_ptr);
-          // Set the existing DoubleBufferTransmitter for this output
-          io_spec->connector(transmitter);
-          double_buffer_transmitter_ptr->op(op);
-        } else {
-          HOLOSCAN_LOG_ERROR(
-              "Unable to get AnnotatedDoubleBufferTransmitter pointer for the handle: '{}' in '{}' "
-              "entity",
-              tx_name,
-              entity_name);
-        }
-      } else {
-        nvidia::gxf::DoubleBufferTransmitter* double_buffer_transmitter_ptr = nullptr;
-        GxfComponentPointer(gxf_context,
-                            transmitter_cid,
-                            transmitter_tid,
-                            reinterpret_cast<void**>(&double_buffer_transmitter_ptr));
-
-        if (double_buffer_transmitter_ptr) {
-          auto transmitter = std::make_shared<holoscan::DoubleBufferTransmitter>(
-              tx_name, double_buffer_transmitter_ptr);
-          // Set the existing DoubleBufferTransmitter for this output
-          io_spec->connector(transmitter);
-        } else {
-          HOLOSCAN_LOG_ERROR(
-              "Unable to get DoubleBufferTransmitter pointer for the handle: '{}' in '{}' entity",
-              tx_name,
-              entity_name);
-        }
-      }
-    } else {
-      HOLOSCAN_LOG_ERROR("Unsupported GXF transmitter type for the handle: '{}' in '{}' entity",
-                         tx_name,
-                         entity_name);
-    }
+    bind_output_port(fragment, gxf_context, eid, io_spec, tx_name, tx_type, op);
     return;
   }
 
   auto connector = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
-
-  if (!connector || (connector->gxf_cptr() == nullptr)) {
+  if (connector && (connector->gxf_cptr() != nullptr)) {
+    auto gxf_transmitter = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(connector);
+    if (gxf_transmitter && graph_entity) {
+      gxf_transmitter->gxf_eid(graph_entity->eid());
+      gxf_transmitter->gxf_graph_entity(graph_entity);
+    }
+  } else {
     // Create Transmitter component for this output
     std::shared_ptr<Transmitter> tx_resource;
     switch (tx_type) {
@@ -626,9 +738,9 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
     auto tx_spec = std::make_shared<ComponentSpec>(fragment);
     tx_resource->setup(*tx_spec);
     tx_resource->spec(std::move(tx_spec));
-
-    tx_resource->gxf_eid(eid);
-    tx_resource->initialize();
+    // add to the same entity as the operator and initialize
+    // Note: it is important that GXFComponent calls addComponent and not addTransmitter for this
+    tx_resource->add_to_graph_entity(op);
 
     if (fragment->data_flow_tracker()) {
       holoscan::AnnotatedDoubleBufferTransmitter* dbl_ptr;
@@ -671,17 +783,17 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
       case ConditionType::kDownstreamMessageAffordable: {
         std::shared_ptr<DownstreamMessageAffordableCondition> downstream_msg_affordable_condition =
             std::dynamic_pointer_cast<DownstreamMessageAffordableCondition>(condition);
-
+        // Note: GraphEntity::addSchedulingTerm requires a unique name here
+        std::string cond_name =
+            fmt::format("__{}_{}_cond_{}", op->name(), tx_name, condition_index);
         downstream_msg_affordable_condition->transmitter(connector);
-        downstream_msg_affordable_condition->name(
-            ::holoscan::gxf::create_name("__condition_output_", condition_index).c_str());
+        downstream_msg_affordable_condition->name(cond_name);
         downstream_msg_affordable_condition->fragment(fragment);
         auto tx_condition_spec = std::make_shared<ComponentSpec>(fragment);
         downstream_msg_affordable_condition->setup(*tx_condition_spec);
         downstream_msg_affordable_condition->spec(std::move(tx_condition_spec));
-
-        downstream_msg_affordable_condition->gxf_eid(eid);
-        downstream_msg_affordable_condition->initialize();
+        // add to the same entity as the operator and initialize
+        downstream_msg_affordable_condition->add_to_graph_entity(op);
         break;
       }
       case ConditionType::kNone:
@@ -875,27 +987,38 @@ void connect_ucx_transmitters_to_virtual_ops(
   }
 }
 
-using BroadcastEidMapType = std::unordered_map<holoscan::OperatorGraph::NodeType,
-                                               std::unordered_map<std::string, gxf_uid_t>>;
+}  // unnamed namespace
 
-/**
- * @brief Add connection between the prior Broadcast component and the current operator's input
- * port(s).
- *
- * Creates a transmitter on the broadcast component and connects it to the input port of `op`.
- *
- * Any connected ports of the operator are removed from port_map_val
- */
-void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
-                                      Fragment* fragment_,    // fragment_
-                                      const BroadcastEidMapType& broadcast_eids,
-                                      holoscan::OperatorGraph::NodeType op,
-                                      holoscan::OperatorGraph::NodeType prev_op,
-                                      holoscan::OperatorGraph::EdgeDataType port_map_val) {
+gxf_result_t GXFExecutor::add_connection(gxf_uid_t source_cid, gxf_uid_t target_cid) {
+  gxf_result_t code;
+
+  auto connection = connections_entity_->addComponent("nvidia::gxf::Connection");
+  if (!connection) {
+    HOLOSCAN_LOG_ERROR(
+        "Failed to add nvidia::gxf::Connection between source cid['{}'] and target cid['{}']",
+        source_cid,
+        target_cid);
+    return GXF_FAILURE;
+  }
+  // Use C API instead of Connection::setReceiver and Connection::setTransmitter since we don't
+  // already have Handle<Resource> for source and target.
+  gxf_uid_t connect_cid = connection->cid();
+  gxf_context_t context = connections_entity_->context();
+  HOLOSCAN_GXF_CALL(GxfParameterSetHandle(context, connect_cid, "source", source_cid));
+  code = GxfParameterSetHandle(context, connect_cid, "target", target_cid);
+  return code;
+}
+
+void GXFExecutor::connect_broadcast_to_previous_op(
+    const BroadcastEntityMapType& broadcast_entities, holoscan::OperatorGraph::NodeType op,
+    holoscan::OperatorGraph::NodeType prev_op, holoscan::OperatorGraph::EdgeDataType port_map_val) {
   auto op_type = op->operator_type();
 
+  // counter to ensure unique broadcast component names as required by nvidia::gxf::GraphEntity
+  static uint32_t btx_count = 0;
+
   // A Broadcast component was added for prev_op
-  for (const auto& [port_name, broadcast_eid] : broadcast_eids.at(prev_op)) {
+  for (const auto& [port_name, broadcast_entity] : broadcast_entities.at(prev_op)) {
     // Find the Broadcast component's source port name in the port-map.
     if (port_map_val->find(port_name) != port_map_val->end()) {
       // There is an output port of the prev_op that is associated with a Broadcast component.
@@ -905,7 +1028,6 @@ void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
       auto target_ports = port_map_val->at(port_name);
       for (const auto& target_port : target_ports) {
         // Create a Transmitter in the Broadcast entity.
-        gxf_uid_t tx_cid;
         auto& prev_op_io_spec = prev_op->spec()->outputs()[port_name];
         auto prev_connector_type = prev_op_io_spec->connector_type();
         auto prev_connector = prev_op_io_spec->connector();
@@ -925,26 +1047,36 @@ void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
         uint64_t prev_connector_policy = 2;  // fault
 
         // Create a transmitter based on the prev_connector_type.
-        // TODO(gbae): create a special resource for the broadcast codelet and use it.
         switch (prev_connector_type) {
           case IOSpec::ConnectorType::kDefault:
           case IOSpec::ConnectorType::kDoubleBuffer: {
             // We don't create a AnnotatedDoubleBufferTransmitter even if DFFT is on because
             // we don't want to annotate a message at the Broadcast component.
-            auto prev_double_buffer_connector =
+
+            // Clone the capacity and policy from previous connector
+            auto prev_ucx_connector =
                 std::dynamic_pointer_cast<DoubleBufferTransmitter>(prev_connector);
-            prev_connector_capacity = prev_double_buffer_connector->capacity_;
-            prev_connector_policy = prev_double_buffer_connector->policy_;
+            if (prev_ucx_connector) {
+              prev_connector_capacity = prev_ucx_connector->capacity_;
+              prev_connector_capacity = prev_ucx_connector->policy_;
+            } else {
+              HOLOSCAN_LOG_ERROR(
+                  "Failed to cast connector to DoubleBufferTransmitter, using default capacity and "
+                  "policy");
+            }
 
-            create_gxf_component(
-                context, "nvidia::gxf::DoubleBufferTransmitter", "", broadcast_eid, &tx_cid);
-            HOLOSCAN_GXF_CALL_FATAL(
-                GxfParameterSetUInt64(context, tx_cid, "capacity", prev_connector_capacity));
-            HOLOSCAN_GXF_CALL_FATAL(
-                GxfParameterSetUInt64(context, tx_cid, "policy", prev_connector_policy));
-
-            // Clone the condition of the prev_op's output port and set it as the
-            // transmitter's condition for the broadcast entity.
+            // Note: have to use add<T> instead of addTransmitter<T> because the
+            //       Transmitter is not a Parameter on the Broadcast codelet.
+            std::string btx_name = fmt::format("btx_{}", btx_count);
+            auto btx_handle = broadcast_entity->add<nvidia::gxf::DoubleBufferTransmitter>(
+                btx_name.c_str(),
+                nvidia::gxf::Arg("capacity", prev_connector_capacity),
+                nvidia::gxf::Arg("policy", prev_connector_policy));
+            if (!btx_handle) {
+              HOLOSCAN_LOG_ERROR("Failed to create broadcast transmitter for entity {}",
+                                 broadcast_entity->name());
+            }
+            btx_count += 1;  // increment to ensure unique names
 
             // 1. Find the output port's condition.
             //    (ConditionType::kDownstreamMessageAffordable)
@@ -960,29 +1092,32 @@ void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
 
             // 2. If it exists, clone it and set it as the transmitter's condition unless
             //    the connector type is kUCX.
+            uint64_t prev_min_size = 1;
             if (prev_condition) {
               auto prev_downstream_condition =
                   std::dynamic_pointer_cast<DownstreamMessageAffordableCondition>(prev_condition);
-              auto min_size = prev_downstream_condition->min_size();
+              prev_min_size = prev_downstream_condition->min_size();
 
-              gxf_uid_t tx_term_cid;
-              create_gxf_component(context,
-                                   "nvidia::gxf::DownstreamReceptiveSchedulingTerm",
-                                   "",
-                                   broadcast_eid,
-                                   &tx_term_cid);
-              HOLOSCAN_GXF_CALL_FATAL(
-                  GxfParameterSetHandle(context, tx_term_cid, "transmitter", tx_cid));
-              HOLOSCAN_GXF_CALL_FATAL(
-                  GxfParameterSetUInt64(context, tx_term_cid, "min_size", min_size));
+              // use add<T> to get the specific Handle so setTransmitter method can be used
+              std::string btx_term_name = fmt::format("btx_sched_term_{}", btx_count);
+              auto btx_term_handle =
+                  broadcast_entity->add<nvidia::gxf::DownstreamReceptiveSchedulingTerm>(
+                      btx_term_name.c_str(), nvidia::gxf::Arg("min_size", prev_min_size));
+              if (!btx_term_handle) {
+                HOLOSCAN_LOG_ERROR(
+                    "Failed to create broadcast transmitter scheduling term for entity {}",
+                    broadcast_entity->name());
+              }
+              btx_term_handle->setTransmitter(btx_handle);
             }
+
             // Get the current Operator's input port
             auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
                 op->spec()->inputs()[target_port]->connector());
             gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
 
             // Connect the newly created Transmitter with current operator's input port
-            ::holoscan::gxf::add_connection(context, tx_cid, target_cid);
+            add_connection(btx_handle->cid(), target_cid);
             HOLOSCAN_LOG_DEBUG(
                 "Connected DownstreamReceptiveSchedulingTerm for Broadcast source : {} -> "
                 "target : {}",
@@ -1003,20 +1138,17 @@ void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
                                                    arg_list);
             } else {
               auto prev_ucx_connector = std::dynamic_pointer_cast<UcxTransmitter>(prev_connector);
-              prev_connector_capacity = prev_ucx_connector->capacity_;
-              prev_connector_policy = prev_ucx_connector->policy_;
-
-              auto prev_connector_receiver_address = prev_ucx_connector->receiver_address();
-              auto prev_connector_port = prev_ucx_connector->port();
-              auto prev_connector_local_address = prev_ucx_connector->local_address();
-              auto prev_connector_local_port = prev_ucx_connector->local_port();
+              if (!prev_ucx_connector) {
+                throw std::runtime_error("failed to cast connector to UcxTransmitter");
+              }
+              // could also get these via prev_tx_handle->getParameter<T>(name) calls
               transmitter = std::make_shared<UcxTransmitter>(
-                  Arg("capacity", prev_connector_capacity),
-                  Arg("policy", prev_connector_policy),
-                  Arg("receiver_address", prev_connector_receiver_address),
-                  Arg("port", prev_connector_port),
-                  Arg("local_address", prev_connector_local_address),
-                  Arg("local_port", prev_connector_local_port));
+                  Arg("capacity", prev_ucx_connector->capacity_),
+                  Arg("policy", prev_ucx_connector->policy_),
+                  Arg("receiver_address", prev_ucx_connector->receiver_address()),
+                  Arg("port", prev_ucx_connector->port()),
+                  Arg("local_address", prev_ucx_connector->local_address()),
+                  Arg("local_port", prev_ucx_connector->local_port()));
             }
             auto broadcast_out_port_name = fmt::format("{}_{}", op->name(), port_name);
             transmitter->name(broadcast_out_port_name);
@@ -1026,7 +1158,8 @@ void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
             transmitter->spec(spec);
             // Set eid to the broadcast entity's eid so that this component is bound to the
             // broadcast entity.
-            transmitter->gxf_eid(broadcast_eid);
+            transmitter->gxf_eid(broadcast_entity->eid());
+            transmitter->gxf_graph_entity(broadcast_entity);
             // Create a transmitter in the broadcast entity.
             transmitter->initialize();
           } break;
@@ -1043,38 +1176,15 @@ void connect_broadcast_to_previous_op(gxf_context_t context,  // context_
   }
 }
 
-// Map of connections indexed by source port uid and stores a pair of the target operator name
-// and target port name
-using TargetPort = std::pair<holoscan::OperatorGraph::NodeType, std::string>;
-using TargetsInfo = std::pair<IOSpec::ConnectorType, std::set<TargetPort>>;
-using TargetConnectionsMapType = std::unordered_map<gxf_uid_t, TargetsInfo>;
-
-/**
- * @brief Create Broadcast components and add their IDs to broadcast_eids.
- *
- * Creates broadcast components for any output ports of `op` that connect to more than one
- * input port.
- *
- * Does not add any transmitter to the Broadcast entity. The transmitters will be added later
- * when the incoming edges to the respective operators are processed.
- *
- * Any connected ports of the operator are removed from port_map_val
- */
-void create_broadcast_components(gxf_context_t context,             // context_
-                                 const std::string& entity_prefix,  // entity_prefix_
-                                 holoscan::OperatorGraph::NodeType op,
-                                 std::list<gxf_uid_t>& implicit_broadcast_entities,
-                                 BroadcastEidMapType& broadcast_eids,
-                                 const TargetConnectionsMapType& connections) {
-  gxf_tid_t broadcast_tid = GxfTidNull();
-  gxf_tid_t rx_term_tid = GxfTidNull();
-
-  gxf_tid_t rx_double_buffer_tid = GxfTidNull();
-
+void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType op,
+                                              BroadcastEntityMapType& broadcast_entities,
+                                              const TargetConnectionsMapType& connections) {
   auto& op_name = op->name();
+  auto context = context_;
+  auto entity_prefix = entity_prefix_;
 
   for (const auto& [source_cid, target_info] : connections) {
-    auto& [connector_type, target_ports] = target_info;
+    auto& [source_cname, connector_type, target_ports] = target_info;
     if (target_ports.empty()) {
       HOLOSCAN_LOG_ERROR("No target component found for source_id: {}", source_cid);
       continue;
@@ -1082,10 +1192,7 @@ void create_broadcast_components(gxf_context_t context,             // context_
 
     // Insert GXF's Broadcast component if source port is connected to multiple targets
     if (target_ports.size() > 1) {
-      gxf_tid_t rx_tid = GxfTidNull();
-
-      const char* source_cname = "";
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(context, source_cid, &source_cname));
+      std::string rx_type_name;
 
       uint64_t curr_min_size = 1;
       uint64_t curr_connector_capacity = 1;
@@ -1111,21 +1218,19 @@ void create_broadcast_components(gxf_context_t context,             // context_
         curr_min_size = curr_downstream_condition->min_size();
       }
 
-      gxf_uid_t broadcast_eid;
+      auto broadcast_entity = std::make_shared<nvidia::gxf::GraphEntity>();
       auto broadcast_entity_name =
           fmt::format("{}_broadcast_{}_{}", entity_prefix, op_name, source_cname);
-      // TODO(gbae): create an operator class for the broadcast codelet and use it here
-      //             instead of using GXF API directly.
-      const GxfEntityCreateInfo broadcast_entity_create_info = {broadcast_entity_name.c_str(),
-                                                                GXF_ENTITY_CREATE_PROGRAM_BIT};
-      HOLOSCAN_GXF_CALL_FATAL(
-          GxfCreateEntity(context, &broadcast_entity_create_info, &broadcast_eid));
+      auto maybe = broadcast_entity->setup(context, broadcast_entity_name.c_str());
+      if (!maybe) {
+        throw std::runtime_error(
+            fmt::format("Failed to create broadcast entity: '{}'", broadcast_entity_name));
+      }
+      // Add the broadcast_entity to the list of implicit broadcast entities
+      implicit_broadcast_entities_.push_back(broadcast_entity);
 
-      // Add the broadcast_eid to the list of implicit broadcast entities
-      implicit_broadcast_entities.push_back(broadcast_eid);
-
-      // Add the broadcast_eid for the current operator and the source port name
-      broadcast_eids[op][source_cname] = broadcast_eid;
+      // Add the broadcast_entity for the current operator and the source port name
+      broadcast_entities[op][source_cname] = broadcast_entity;
 
       switch (connector_type) {
         case IOSpec::ConnectorType::kDefault:
@@ -1135,75 +1240,50 @@ void create_broadcast_components(gxf_context_t context,             // context_
           // We don't create a holoscan::AnnotatedDoubleBufferReceiver even if data flow
           // tracking is on because we don't want to mark annotations for the Broadcast
           // component.
-          if (rx_double_buffer_tid == GxfTidNull()) {
-            HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
-                context, "nvidia::gxf::DoubleBufferReceiver", &rx_double_buffer_tid));
+          rx_type_name = "nvidia::gxf::DoubleBufferReceiver";
+          auto curr_tx_handle =
+              op->graph_entity()->get<nvidia::gxf::DoubleBufferTransmitter>(source_cname.c_str());
+          if (curr_tx_handle.is_null()) {
+            HOLOSCAN_LOG_ERROR(
+                "Failed to get nvidia::gxf::DoubleBufferTransmitter, a default receive capacity "
+                "and policy will be used for the inserted broadcast component.");
+          } else {
+            HOLOSCAN_LOG_TRACE("getting capacity and policy from curr_tx_handle");
+            auto p = get_capacity_and_policy(curr_tx_handle);
+            curr_connector_capacity = p.first;
+            curr_connector_policy = p.second;
           }
-          rx_tid = rx_double_buffer_tid;
-
-          // Get the connector capacity and policy of the current operator's output port.
-          nvidia::gxf::DoubleBufferReceiver* curr_double_buffer_connector = nullptr;
-
-          HOLOSCAN_GXF_CALL_FATAL(
-              GxfComponentPointer(context,
-                                  source_cid,
-                                  rx_tid,
-                                  reinterpret_cast<void**>(&curr_double_buffer_connector)));
-
-          curr_connector_capacity = curr_double_buffer_connector->capacity_;
-          curr_connector_policy = curr_double_buffer_connector->policy_;
         } break;
         default:
           HOLOSCAN_LOG_ERROR("Unrecognized connector_type '{}' for source name '{}'",
                              static_cast<int>(connector_type),
                              source_cname);
       }
-      gxf_uid_t rx_cid;
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentAdd(context, broadcast_eid, rx_tid, "", &rx_cid));
-      // Set capacity and policy of the receiver component.
-      HOLOSCAN_GXF_CALL_FATAL(
-          GxfParameterSetUInt64(context, rx_cid, "capacity", curr_connector_capacity));
-      HOLOSCAN_GXF_CALL_FATAL(
-          GxfParameterSetUInt64(context, rx_cid, "policy", curr_connector_policy));
-
-      if (rx_term_tid == GxfTidNull()) {
-        HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
-            context, "nvidia::gxf::MessageAvailableSchedulingTerm", &rx_term_tid));
-      }
-      gxf_uid_t rx_term_cid;
-      HOLOSCAN_GXF_CALL_FATAL(
-          GxfComponentAdd(context, broadcast_eid, rx_term_tid, "", &rx_term_cid));
-      HOLOSCAN_GXF_CALL_FATAL(GxfParameterSetHandle(context, rx_term_cid, "receiver", rx_cid));
-      HOLOSCAN_GXF_CALL_FATAL(
-          GxfParameterSetUInt64(context, rx_term_cid, "min_size", curr_min_size));
-
-      if (broadcast_tid == GxfTidNull()) {
-        HOLOSCAN_GXF_CALL_FATAL(
-            GxfComponentTypeId(context, "nvidia::gxf::Broadcast", &broadcast_tid));
-      }
-      gxf_uid_t broadcast_cid;
       auto broadcast_component_name =
           fmt::format("{}_broadcast_component_{}_{}", entity_prefix, op_name, source_cname);
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentAdd(
-          context, broadcast_eid, broadcast_tid, broadcast_component_name.c_str(), &broadcast_cid));
-      HOLOSCAN_GXF_CALL_FATAL(GxfParameterSetHandle(context, broadcast_cid, "source", rx_cid));
-
-      HOLOSCAN_LOG_DEBUG(
-          "Connected MessageAvailableSchedulingTerm to receiver for Broadcast entity : {}",
-          broadcast_entity_name);
+      auto broadcast_codelet =
+          broadcast_entity->addCodelet("nvidia::gxf::Broadcast", broadcast_component_name.c_str());
+      if (broadcast_codelet.is_null()) {
+        HOLOSCAN_LOG_ERROR("Failed to create broadcast codelet for entity: {}",
+                           broadcast_entity->name());
+      }
+      // Broadcast component's receiver Parameter is named "source" so have to use that here
+      auto broadcast_rx = broadcast_entity->addReceiver(rx_type_name.c_str(), "source");
+      if (broadcast_rx.is_null()) {
+        HOLOSCAN_LOG_ERROR("Failed to create receiver for broadcast component: {}",
+                           broadcast_entity->name());
+      }
+      broadcast_entity->configReceiver(
+          "source", curr_connector_capacity, curr_connector_policy, curr_min_size);
 
       // Connect Broadcast entity's receiver with the transmitter of the current operator
-      ::holoscan::gxf::add_connection(context, source_cid, rx_cid);
+      add_connection(source_cid, broadcast_rx->cid());
     }
   }
 }
 
-}  // unnamed namespace
-
 bool GXFExecutor::initialize_fragment() {
   HOLOSCAN_LOG_DEBUG("Initializing Fragment.");
-
-  auto context = context_;
 
   // Initialize the GXF graph by creating GXF entities related to the Holoscan operators in a
   // topologically sorted order. Operators are created as nodes in the graph of the fragment are
@@ -1237,10 +1317,10 @@ bool GXFExecutor::initialize_fragment() {
   std::unordered_set<holoscan::OperatorGraph::NodeType> visited_nodes;
   visited_nodes.reserve(operators.size());
 
-  // Keep a list of all the broadcast entity ids, if an operator's output port is connected to
-  // multiple inputs. The map is indexed by the operators. Each value in the map is indexed by the
-  // source port name
-  BroadcastEidMapType broadcast_eids;
+  // Keep a list of all the nvidia::gxf::GraphEntity entities holding broadcast codelets, if an
+  // operator's output port is connected to multiple inputs. The map is indexed by the operators.
+  // Each value in the map is indexed by the source port name.
+  BroadcastEntityMapType broadcast_entities;
 
   // Initialize the indegrees of all nodes in the graph and add root operators to the worklist.
   for (auto& node : operators) {
@@ -1283,7 +1363,14 @@ bool GXFExecutor::initialize_fragment() {
 
     HOLOSCAN_LOG_DEBUG("Operator: {}", op_name);
     // Initialize the operator while we are visiting a node in the graph
-    op->initialize();
+    try {
+      op->initialize();
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_ERROR(
+          "Exception occurred during initialization of operator: '{}' - {}", op->name(), e.what());
+      throw;
+    }
+
     auto op_type = op->operator_type();
 
     HOLOSCAN_LOG_DEBUG("Connecting earlier operators of Op: {}", op_name);
@@ -1303,11 +1390,10 @@ bool GXFExecutor::initialize_fragment() {
       // If the previous operator is found to be one that is connected to the current operator via
       // the Broadcast component, then add the connection between the Broadcast component and the
       // current operator's input port.
-      if (broadcast_eids.find(prev_op) != broadcast_eids.end()) {
+      if (broadcast_entities.find(prev_op) != broadcast_entities.end()) {
         // Add transmitter to the prev_op's broadcast component and connect it to op's input port.
         // Any connected ports are removed from port_map_val.
-        connect_broadcast_to_previous_op(
-            context_, fragment_, broadcast_eids, op, prev_op, port_map_val);
+        connect_broadcast_to_previous_op(broadcast_entities, op, prev_op, port_map_val);
       }
 
       if (port_map_val->size()) {
@@ -1351,7 +1437,7 @@ bool GXFExecutor::initialize_fragment() {
             // visit the operator which is connected to the current operator.
             if (prev_op->id() != -1) {
               gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
-              ::holoscan::gxf::add_connection(context, source_cid, target_cid);
+              add_connection(source_cid, target_cid);
               HOLOSCAN_LOG_DEBUG(
                   "Connected directly source : {} -> target : {}", source_port, *target_port);
             } else {
@@ -1391,14 +1477,17 @@ bool GXFExecutor::initialize_fragment() {
             auto source_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
                 op_spec->outputs()[source_port]->connector());
             gxf_uid_t source_cid = source_gxf_resource->gxf_cid();
+            std::string source_cname = source_gxf_resource->name();
 
             auto connector_type = op_spec->outputs()[source_port]->connector_type();
             if (connections.find(source_cid) == connections.end()) {
-              connections[source_cid] = TargetsInfo{connector_type, std::set<TargetPort>{}};
+              connections[source_cid] =
+                  TargetsInfo{source_cname, connector_type, std::set<TargetPort>{}};
             }
             // For the source port, add a target in the tuple form (next operator, receiving port
             // name)
-            connections[source_cid].second.insert(std::make_pair(next_op, target_port));
+            std::get<std::set<TargetPort>>(connections[source_cid])
+                .insert(std::make_pair(next_op, target_port));
           }
         }
       }
@@ -1415,19 +1504,20 @@ bool GXFExecutor::initialize_fragment() {
     // Iterate through downstream connections and find the direct ones to connect, only if
     // downstream operator is already initialized. This is to handle cycles in the graph.
     for (auto [source_cid, target_info] : connections) {
-      if (target_info.second.size() == 1) {
+      auto& [source_cname, connector_type, target_ports] = target_info;
+      if (target_ports.size() == 1) {
         // There is a direct connection without Broadcast
         // Check if next op is already initialized, that means, it's a cycle and we can add the
         // connection now
-        auto tmp_next_op = target_info.second.begin()->first;
-        if (tmp_next_op->id() != -1 && target_info.first != IOSpec::ConnectorType::kUCX) {
+        auto tmp_next_op = target_ports.begin()->first;
+        if (tmp_next_op->id() != -1 && connector_type != IOSpec::ConnectorType::kUCX) {
           // Operator is already initialized
           HOLOSCAN_LOG_DEBUG("next op {} is already initialized, due to a cycle.",
                              tmp_next_op->name());
           auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
-              tmp_next_op->spec()->inputs()[target_info.second.begin()->second]->connector());
+              tmp_next_op->spec()->inputs()[target_ports.begin()->second]->connector());
           gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
-          ::holoscan::gxf::add_connection(context, source_cid, target_cid);
+          add_connection(source_cid, target_cid);
           HOLOSCAN_LOG_TRACE(
               "Next Op {} is connected to the current Op  {} as a downstream connection due to a "
               "cycle.",
@@ -1437,11 +1527,10 @@ bool GXFExecutor::initialize_fragment() {
       }
     }
 
-    // Create the Broadcast components and add their IDs to broadcast_eids, but do not add any
+    // Create the Broadcast components and add their IDs to broadcast_entities, but do not add any
     // transmitter to the Broadcast entity. The transmitters will be added later when the incoming
     // edges to the respective operators are processed.
-    create_broadcast_components(
-        context, entity_prefix_, op, implicit_broadcast_entities_, broadcast_eids, connections);
+    create_broadcast_components(op, broadcast_entities, connections);
     if (op_type != Operator::OperatorType::kVirtual) {
       for (auto& next_op : graph.get_next_nodes(op)) {
         if (next_op->id() != -1 && next_op->operator_type() != Operator::OperatorType::kVirtual) {
@@ -1454,9 +1543,8 @@ bool GXFExecutor::initialize_fragment() {
             HOLOSCAN_LOG_ERROR("Could not find port map for {} -> {}", op_name, next_op->name());
             return false;
           }
-          if (broadcast_eids.find(op) != broadcast_eids.end()) {
-            connect_broadcast_to_previous_op(
-                context_, fragment_, broadcast_eids, next_op, op, port_map.value());
+          if (broadcast_entities.find(op) != broadcast_entities.end()) {
+            connect_broadcast_to_previous_op(broadcast_entities, next_op, op, port_map.value());
           }
         }
       }
@@ -1482,63 +1570,14 @@ bool GXFExecutor::initialize_operator(Operator* op) {
     return false;
   }
 
-  // If the type name is not set, the operator is assumed to be a Holoscan native operator and use
-  // `holoscan::gxf::GXFWrapper` as the GXF Codelet.
-  const bool is_native_operator = (op->operator_type() == Operator::OperatorType::kNative);
-  ops::GXFOperator* gxf_op = static_cast<ops::GXFOperator*>(op);
-
-  const char* codelet_typename = nullptr;
-  if (is_native_operator) {
-    codelet_typename = "holoscan::gxf::GXFWrapper";
-  } else {
-    codelet_typename = gxf_op->gxf_typename();
-  }
-
   auto& spec = *(op->spec());
 
-  gxf_uid_t eid = 0;
+  // op_eid_ should only be nonzero if OperatorWrapper wraps a codelet created by GXF.
+  // In that case GXF has already created the entity and we can't create a GraphEntity.
+  gxf_uid_t eid = (op_eid_ == 0) ? op->initialize_graph_entity(context_, entity_prefix_) : op_eid_;
 
-  // Create Entity for the operator if `op_eid_` is 0
-  if (op_eid_ == 0) {
-    const std::string op_entity_name = fmt::format("{}{}", entity_prefix_, op->name());
-    const GxfEntityCreateInfo entity_create_info = {op_entity_name.c_str(),
-                                                    GXF_ENTITY_CREATE_PROGRAM_BIT};
-    HOLOSCAN_GXF_CALL_MSG_FATAL(
-        GxfCreateEntity(context_, &entity_create_info, &eid),
-        "Unable to create GXF entity for operator '{}'. Please check if the "
-        "operator name is unique.",
-        op->name());
-  } else {
-    eid = op_eid_;
-  }
-
-  gxf_uid_t codelet_cid;
   // Create Codelet component if `op_cid_` is 0
-  if (op_cid_ == 0) {
-    gxf_tid_t codelet_tid;
-    HOLOSCAN_GXF_CALL(GxfComponentTypeId(context_, codelet_typename, &codelet_tid));
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentAdd(context_, eid, codelet_tid, op->name().c_str(), &codelet_cid));
-
-    // Set the operator to the GXFWrapper if it is a native operator
-    if (is_native_operator) {
-      holoscan::gxf::GXFWrapper* gxf_wrapper = nullptr;
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentPointer(
-          context_, codelet_cid, codelet_tid, reinterpret_cast<void**>(&gxf_wrapper)));
-      if (gxf_wrapper) {
-        gxf_wrapper->set_operator(op);
-      } else {
-        HOLOSCAN_LOG_ERROR("Unable to get GXFWrapper for Operator '{}'", op->name());
-      }
-    } else {
-      // Set the entity id
-      gxf_op->gxf_eid(eid);
-      // Set the codelet component id
-      gxf_op->gxf_cid(codelet_cid);
-    }
-  } else {
-    codelet_cid = op_cid_;
-  }
+  gxf_uid_t codelet_cid = (op_cid_ == 0) ? op->add_codelet_to_graph_entity() : op_cid_;
 
   // Set GXF Codelet ID as the ID of the operator
   op->id(codelet_cid);
@@ -1556,68 +1595,17 @@ bool GXFExecutor::initialize_operator(Operator* op) {
         fragment(), context_, eid, io_spec.get(), op_eid_ != 0, op);
   }
 
-  // Create Components for condition
-  for (const auto& [name, condition] : op->conditions()) {
-    auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
-    // Initialize GXF component if it is not already initialized.
-    if (gxf_condition != nullptr && gxf_condition->gxf_context() == nullptr) {
-      gxf_condition->fragment(fragment());
+  HOLOSCAN_LOG_TRACE("Configuring operator: {}", op->name());
 
-      gxf_condition->gxf_eid(eid);  // set GXF entity id
-    }
-    // Initialize condition
-    gxf_condition->initialize();
-  }
+  // add Component(s) and/or Resource(s) added as Arg/ArgList to the graph entity
+  add_component_args_to_graph_entity(op->args(), op->graph_entity());
 
-  // Create Components for resource
-  for (const auto& [name, resource] : op->resources()) {
-    auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
-    // Initialize GXF component if it is not already initialized.
-    if (gxf_resource != nullptr && gxf_resource->gxf_context() == nullptr) {
-      gxf_resource->fragment(fragment());
+  // Initialize components and resources (and add any GXF components to the Operator's graph_entity)
+  op->initialize_conditions();
+  op->initialize_resources();
 
-      gxf_resource->gxf_eid(eid);  // set GXF entity id
-    }
-    // Initialize resource
-    resource->initialize();
-  }
-
-  // Set arguments
-  auto& params = spec.params();
-  for (auto& arg : op->args()) {
-    // Find if arg.name() is in spec_->params()
-    if (params.find(arg.name()) == params.end()) {
-      HOLOSCAN_LOG_WARN("Argument '{}' is not defined in spec", arg.name());
-      continue;
-    }
-
-    // Set arg.value() to spec_->params()[arg.name()]
-    auto& param_wrap = params[arg.name()];
-
-    HOLOSCAN_LOG_TRACE("GXFOperator '{}':: setting argument '{}'", op->name(), arg.name());
-
-    ArgumentSetter::set_param(param_wrap, arg);
-  }
-
-  // Set Handler parameters if it is an operator that wraps an existing GXF Codelet.
-  if (!is_native_operator) {
-    // Set Handler parameters
-    for (auto& [key, param_wrap] : params) {
-      HOLOSCAN_GXF_CALL_WARN_MSG(::holoscan::gxf::GXFParameterAdaptor::set_param(
-                                     context_, codelet_cid, key.c_str(), param_wrap),
-                                 "GXFOperator '{}':: failed to set GXF parameter '{}'",
-                                 op->name(),
-                                 key);
-      HOLOSCAN_LOG_TRACE("GXFOperator '{}':: setting GXF parameter '{}'", op->name(), key);
-    }
-  } else {
-    // Set only default parameter values
-    for (auto& [key, param_wrap] : params) {
-      // If no value is specified, the default value will be used by setting an empty argument.
-      Arg empty_arg("");
-      ArgumentSetter::set_param(param_wrap, empty_arg);
-    }
-  }
+  // Set any parameters based on the specified arguments and parameter value defaults.
+  op->set_parameters();
   return true;
 }
 
@@ -1633,10 +1621,6 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
   const std::string& new_input_label = fmt::format("{}:{}", receivers_name, iospec_vector.size());
   HOLOSCAN_LOG_TRACE("add_receivers: Creating new input port with label '{}'", new_input_label);
   auto& input_port = downstream_op_spec->input<holoscan::gxf::Entity>(new_input_label);
-  // TODO: Currently, there is no convenient API to set the condition of the receivers (input
-  // ports)
-  //       from the setup() method of the operator. We need to add a new API to set the condition
-  //       of the receivers (input ports) from the setup() method of the operator.
 
   // Add the new input port to the vector.
   iospec_vector.push_back(&input_port);
@@ -1648,6 +1632,20 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
   new_input_labels.push_back(new_input_label);
 
   return true;
+}
+
+bool GXFExecutor::is_holoscan() const {
+  bool zero_eid = (op_eid_ == 0);
+  bool zero_cid = (op_cid_ == 0);
+  if (zero_eid ^ zero_cid) {
+    // Both will be zero for Holoscan applications, but nonzero for GXF applications
+    HOLOSCAN_LOG_ERROR(
+        "Both op_eid_ and op_cid_ should be zero or nonzero. op_eid_: {}, op_cid_: {}",
+        op_eid_,
+        op_cid_);
+    return false;
+  }
+  return zero_eid && zero_cid;
 }
 
 bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
@@ -1684,16 +1682,27 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
     std::scoped_lock lock{gxf_execution_mutex};
 
     // Additional setup for GXF Application
-    gxf_uid_t eid;
     const std::string utility_entity_name = fmt::format("{}_holoscan_util_entity", entity_prefix_);
-    const GxfEntityCreateInfo entity_create_info = {utility_entity_name.c_str(),
-                                                    GXF_ENTITY_CREATE_PROGRAM_BIT};
-    HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntity(context, &entity_create_info, &eid));
+    util_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
+    auto maybe = util_entity_->setup(context, utility_entity_name.c_str());
+    if (!maybe) {
+      throw std::runtime_error(
+          fmt::format("Failed to create utility entity: '{}'", utility_entity_name));
+    }
+    gxf_uid_t eid = util_entity_->eid();
+
+    connections_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
+    const std::string connections_entity_name =
+        fmt::format("{}_holoscan_connections_entity", entity_prefix_);
+    connections_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
+    maybe = connections_entity_->setup(context_, connections_entity_name.c_str());
+    if (!maybe) {
+      throw std::runtime_error(
+          "Failed to create entity to hold nvidia::gxf::Connection components.");
+    }
 
     auto scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(fragment_->scheduler());
-    // have to set the application eid before initialize() can be called
-    scheduler->gxf_eid(eid);
-    scheduler->initialize();
+    scheduler->initialize();  // will call GXFExecutor::initialize_scheduler
 
     // Initialize the fragment and its operators
     if (!initialize_fragment()) {
@@ -1703,21 +1712,12 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
 
     // If DFFT is on, then attach the DFFTCollector EntityMonitor to the main entity
     if (fragment_->data_flow_tracker()) {
-      gxf_tid_t monitor_tid;
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(context, "holoscan::DFFTCollector", &monitor_tid));
-
-      gxf_uid_t monitor_cid;
-      HOLOSCAN_GXF_CALL_FATAL(
-          GxfComponentAdd(context, eid, monitor_tid, "dft_tracker", &monitor_cid));
-
-      holoscan::DFFTCollector* dfft_collector_ptr = nullptr;
-      HOLOSCAN_GXF_CALL_FATAL(GxfComponentPointer(
-          context, monitor_cid, monitor_tid, reinterpret_cast<void**>(&dfft_collector_ptr)));
-      if (!dfft_collector_ptr) {
-        throw std::runtime_error(
-            fmt::format("Unable to retrieve holoscan::DFFTCollector pointer."));
+      auto dft_tracker_handle = util_entity_->add<holoscan::DFFTCollector>("dft_tracker", {});
+      if (dft_tracker_handle.is_null()) {
+        throw std::runtime_error(fmt::format("Unable to add holoscan::DFFTCollector component."));
       }
 
+      holoscan::DFFTCollector* dfft_collector_ptr = dft_tracker_handle.get();
       dfft_collector_ptr->data_flow_tracker(fragment_->data_flow_tracker());
 
       // Identify leaf and root operators and add to the DFFTCollector object
@@ -1729,14 +1729,6 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
         }
       }
     }
-
-    // Cache TIDs for UcxReceiver and UcxTransmitter
-    gxf_tid_t ucx_receiver_tid = GxfTidNull();
-    gxf_tid_t ucx_transmitter_tid = GxfTidNull();
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentTypeId(context, "nvidia::gxf::UcxReceiver", &ucx_receiver_tid));
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentTypeId(context, "nvidia::gxf::UcxTransmitter", &ucx_transmitter_tid));
 
     // network context initialization after connection entities were created (see GXF's program.cpp)
     if (fragment_->network_context()) {
@@ -1750,26 +1742,35 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       std::string entity_group_name = "network_entity_group";
       auto entity_group_gid = ::holoscan::gxf::add_entity_group(context_, entity_group_name);
 
-      std::string device_entity_name = fmt::format("{}gpu_device_entity", entity_prefix_);
-      std::string device_component_name = "gpu_device_component";
-      auto [gpu_device_tid, gpu_device_eid] =
-          ::holoscan::gxf::create_gpu_device_entity(context, device_entity_name);
-
       int32_t gpu_id =
           static_cast<int32_t>(AppDriver::get_int_env_var("HOLOSCAN_UCX_DEVICE_ID", 0));
-      ::holoscan::gxf::create_gpu_device_component(
-          context, gpu_device_tid, gpu_device_eid, device_component_name, gpu_id);
+      std::string device_entity_name = fmt::format("{}gpu_device_entity", entity_prefix_);
+      gpu_device_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
+      auto maybe = gpu_device_entity_->setup(context, device_entity_name.c_str());
+      if (!maybe) {
+        throw std::runtime_error(
+            fmt::format("Failed to create GPU device entity: '{}'", device_entity_name));
+      }
+      // TODO (GXF4): should have an addResource to add to resources_ member instead of components_?
+      auto device_handle = gpu_device_entity_->addComponent(
+          "nvidia::gxf::GPUDevice", "gpu_device_component", {nvidia::gxf::Arg("dev_id", gpu_id)});
+      if (device_handle.is_null()) {
+        HOLOSCAN_LOG_ERROR("Failed to create GPU device resource for device {}", gpu_id);
+      }
 
       // Note: GxfUpdateEntityGroup
       //   calls Runtime::GxfUpdateEntityGroup(gid, eid)
-      //     which calls  EntityGroups::groupAddEntity(gid, eid); (entity_groups_ in SharedContext)
-      //       which calls EntityGroupItem::addEntity for the EntityGroupItem corresponding to gid
+      //     which calls  EntityGroups::groupAddEntity(gid, eid); (entity_groups_ in
+      //     SharedContext)
+      //       which calls EntityGroupItem::addEntity for the EntityGroupItem corresponding to
+      //       gid
       //         any eid corresponding to a ResourceBase class like GPUDevice or ThreadPool is
       //             stored in internal resources_ vector
       //         all other eid are stored in the entities vector
 
       // add GPUDevice resource to the networking entity group
-      GXF_ASSERT_SUCCESS(GxfUpdateEntityGroup(context_, entity_group_gid, gpu_device_eid));
+      GXF_ASSERT_SUCCESS(
+          GxfUpdateEntityGroup(context_, entity_group_gid, gpu_device_entity_->eid()));
 
       // add the network context to the entity group
       auto gxf_network_context =
@@ -1799,16 +1800,10 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       }
 
       // Add implicit broadcast entities to the network entity group if they have a UCX connector
-      for (auto& broadcast_eid : implicit_broadcast_entities_) {
-        bool has_ucx_connector = false;
-
-        if (gxf::has_component(context, broadcast_eid, ucx_receiver_tid) ||
-            gxf::has_component(context, broadcast_eid, ucx_transmitter_tid)) {
-          has_ucx_connector = true;
-        }
-
+      for (auto& broadcast_entity : implicit_broadcast_entities_) {
         // Add the entity to the entity group if it has a UCX connector
-        if (has_ucx_connector) {
+        if (has_ucx_connector(broadcast_entity)) {
+          auto broadcast_eid = broadcast_entity->eid();
           HOLOSCAN_LOG_DEBUG("Adding implicit broadcast eid '{}' to entity group '{}'",
                              broadcast_eid,
                              entity_group_gid);
@@ -1818,36 +1813,19 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
     } else {
       HOLOSCAN_LOG_DEBUG("GXFExecutor::run: no NetworkContext to initialize");
 
-      // Loop through all operator ports and raise an error if any are UCX-based.
-      // (UCX-based connections require a UcxContext).
+      const std::string ucx_error_msg{
+          "UCX-based connection found, but there is no NetworkContext."};
+
+      // Raise an error if any operator has a UCX connector.
       auto operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
       for (auto& node : operator_graph.get_nodes()) {
-        auto op_spec = node->spec();
-        for (const auto& [_, io_spec] : op_spec->inputs()) {
-          if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
-            throw std::runtime_error("UCX-based connection found, but there is no NetworkContext.");
-          }
-        }
-        for (const auto& [_, io_spec] : op_spec->outputs()) {
-          if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
-            throw std::runtime_error("UCX-based connection found, but there is no NetworkContext.");
-          }
-        }
+        if (node->has_ucx_connector()) { throw std::runtime_error(ucx_error_msg); }
       }
 
-      // Find any implicit broadcast entities with a UCX connector and raise an error.
-      for (auto& broadcast_eid : implicit_broadcast_entities_) {
-        bool has_ucx_connector = false;
-
-        if (gxf::has_component(context, broadcast_eid, ucx_receiver_tid) ||
-            gxf::has_component(context, broadcast_eid, ucx_transmitter_tid)) {
-          has_ucx_connector = true;
-        }
-
+      // Raise an error if any broadcast entity has a UCX connector
+      for (auto& broadcast_entity : implicit_broadcast_entities_) {
         // Add the entity to the entity group if it has a UCX connector
-        if (has_ucx_connector) {
-          throw std::runtime_error("UCX-based connection found, but there is no NetworkContext.");
-        }
+        if (has_ucx_connector(broadcast_entity)) { throw std::runtime_error(ucx_error_msg); }
       }
     }
   }
@@ -1867,7 +1845,7 @@ void GXFExecutor::activate_gxf_graph() {
   }
 }
 
-bool GXFExecutor::run_gxf_graph() {
+void GXFExecutor::run_gxf_graph() {
   auto context = context_;
 
   // Install signal handler
@@ -1890,25 +1868,37 @@ bool GXFExecutor::run_gxf_graph() {
   SignalHandler::register_signal_handler(context, SIGTERM, sig_handler);
 
   // Run the graph
+  auto frag_name_display = fragment_->name();
+  if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
   activate_gxf_graph();
-  HOLOSCAN_LOG_INFO("Running Graph...");
+  HOLOSCAN_LOG_INFO("{}Running Graph...", frag_name_display);
   HOLOSCAN_GXF_CALL_FATAL(GxfGraphRunAsync(context));
-  HOLOSCAN_LOG_INFO("Waiting for completion...");
-  HOLOSCAN_LOG_INFO("Graph execution waiting. Fragment: {}", fragment_->name());
+  HOLOSCAN_LOG_INFO("{}Waiting for completion...", frag_name_display);
   auto wait_result = HOLOSCAN_GXF_CALL_WARN(GxfGraphWait(context));
-  if (wait_result != GXF_SUCCESS) {
-    // Usually the graph is already deactivated when GxfGraphWait() fails.
-    is_gxf_graph_activated_ = false;
-    HOLOSCAN_LOG_ERROR("GxfGraphWait Error: {}", GxfResultStr(wait_result));
-    throw RuntimeError(ErrorCode::kFailure, "Failed to wait for graph to complete");
+  if (wait_result == GXF_SUCCESS) {
+    HOLOSCAN_LOG_INFO("{}Deactivating Graph...", frag_name_display);
+    // Usually the graph is already deactivated by the GXF framework (program.cpp)
+    // when GxfGraphWait() fails.
+    HOLOSCAN_GXF_CALL_WARN(GxfGraphDeactivate(context));
   }
-
-  HOLOSCAN_LOG_INFO("Graph execution deactivating. Fragment: {}", fragment_->name());
-  HOLOSCAN_LOG_INFO("Deactivating Graph...");
-  HOLOSCAN_GXF_CALL_WARN(GxfGraphDeactivate(context));
   is_gxf_graph_activated_ = false;
-  HOLOSCAN_LOG_INFO("Graph execution finished. Fragment: {}", fragment_->name());
-  return true;
+
+  // TODO: do we want to move the log level of these info messages to debug?
+  HOLOSCAN_LOG_INFO("{}Graph execution finished.", frag_name_display);
+
+  // clean up any shared pointers to graph entities within operators, scheulder, network context
+  fragment_->reset_graph_entities();
+
+  if (wait_result != GXF_SUCCESS) {
+    const std::string error_msg =
+        fmt::format("{}Graph execution error: {}", frag_name_display, GxfResultStr(wait_result));
+    HOLOSCAN_LOG_ERROR(error_msg);
+    auto& stored_exception = exception_;
+    if (stored_exception) {
+      // Rethrow the stored exception if there is one
+      std::rethrow_exception(stored_exception);
+    }
+  }
 }
 
 bool GXFExecutor::connection_items(
@@ -1954,9 +1944,6 @@ void GXFExecutor::register_extensions() {
         "GXF wrapper to support Holoscan SDK native operators");
     extension_factory.add_type<holoscan::Message>("Holoscan message type",
                                                   {0x61510ca06aa9493b, 0x8a777d0bf87476b7});
-
-    extension_factory.add_component<holoscan::gxf::GXFTensor, nvidia::gxf::Tensor>(
-        "Holoscan's GXF Tensor type", {0xa02945eaf20e418c, 0x8e6992b68672ce40});
     extension_factory.add_type<holoscan::Tensor>("Holoscan's Tensor type",
                                                  {0xa5eb0ed57d7f4aa2, 0xb5865ccca0ef955c});
 
@@ -1992,83 +1979,39 @@ bool GXFExecutor::initialize_scheduler(Scheduler* sch) {
   }
 
   gxf::GXFScheduler* gxf_sch = static_cast<gxf::GXFScheduler*>(sch);
+  gxf_sch->gxf_context(context_);
 
-  auto& spec = *(sch->spec());
-
-  gxf_uid_t eid = 0;
-  // Create Entity for the scheduler if `op_eid_` is 0
-  if (op_eid_ == 0) {
+  // op_eid_ and op_cid_ will only be nonzero if OperatorWrapper wraps a codelet created by GXF.
+  // (i.e. this executor belongs to a GXF application using a Holoscan operator as a codelet)
+  // In that case GXF we do not create a GraphEntity or a Component for the scheduler.
+  gxf_uid_t eid = op_eid_;
+  gxf_uid_t scheduler_cid = op_cid_;
+  if (is_holoscan()) {
     const std::string scheduler_entity_name = fmt::format("{}{}", entity_prefix_, sch->name());
-    const GxfEntityCreateInfo entity_create_info = {scheduler_entity_name.c_str(),
-                                                    GXF_ENTITY_CREATE_PROGRAM_BIT};
-    HOLOSCAN_GXF_CALL_MSG_FATAL(
-        GxfCreateEntity(context_, &entity_create_info, &eid),
-        "Unable to create GXF entity for scheduler '{}'. Please check if the "
-        "scheduler name is unique.",
-        sch->name());
-  } else {
-    eid = op_eid_;
-  }
-
-  gxf_uid_t scheduler_cid;
-  // Create Codelet component if `op_cid_` is 0
-  if (op_cid_ == 0) {
-    gxf_tid_t scheduler_tid;
-    HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(context_, gxf_sch->gxf_typename(), &scheduler_tid));
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentAdd(context_, eid, scheduler_tid, sch->name().c_str(), &scheduler_cid));
-
-    // Set the entity id
+    scheduler_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
+    auto maybe = scheduler_entity_->setup(context_, scheduler_entity_name.c_str());
+    if (!maybe) {
+      throw std::runtime_error(
+          fmt::format("Failed to create entity for scheduler: '{}'", scheduler_entity_name));
+    }
+    eid = scheduler_entity_->eid();
+    // Set the entity id and graph entity shared pointer
+    gxf_sch->gxf_graph_entity(scheduler_entity_);
     gxf_sch->gxf_eid(eid);
-    // Set the scheduler component id
-    gxf_sch->gxf_cid(scheduler_cid);
-  } else {
-    scheduler_cid = op_cid_;
-  }
 
+    // Create Scheduler component
+    gxf_sch->gxf_initialize();
+    scheduler_cid = gxf_sch->gxf_cid();
+
+    // initialize all GXF resources and assign them to a graph entity
+    initialize_gxf_resources(sch->resources(), eid, scheduler_entity_);
+
+    // Set any parameters based on the specified arguments and parameter value defaults.
+    add_component_args_to_graph_entity(sch->args(), scheduler_entity_);
+    sch->set_parameters();
+  }
   // Set GXF Scheduler ID as the ID of the scheduler
   sch->id(scheduler_cid);
-
-  // Create Components for resource
-  for (const auto& [name, resource] : sch->resources()) {
-    auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
-    // Initialize GXF component if it is not already initialized.
-    if (gxf_resource->gxf_context() == nullptr) {
-      gxf_resource->fragment(fragment());
-
-      gxf_resource->gxf_eid(eid);  // set GXF entity id
-      gxf_resource->initialize();
-    }
-  }
-
-  // Set arguments
-  auto& params = spec.params();
-  for (auto& arg : sch->args()) {
-    // Find if arg.name() is in spec_->params()
-    if (params.find(arg.name()) == params.end()) {
-      HOLOSCAN_LOG_WARN("Argument '{}' is not defined in spec", arg.name());
-      continue;
-    }
-
-    // Set arg.value() to spec_->params()[arg.name()]
-    auto& param_wrap = params[arg.name()];
-
-    HOLOSCAN_LOG_TRACE("GXFScheduler '{}':: setting argument '{}'", sch->name(), arg.name());
-
-    ArgumentSetter::set_param(param_wrap, arg);
-  }
-
-  // Set Handler parameters
-  for (auto& [key, param_wrap] : params) {
-    HOLOSCAN_LOG_TRACE("GXFScheduler '{}':: setting GXF parameter '{}'", sch->name(), key);
-    HOLOSCAN_GXF_CALL_WARN_MSG(::holoscan::gxf::GXFParameterAdaptor::set_param(
-                                   context_, scheduler_cid, key.c_str(), param_wrap),
-                               "GXFScheduler '{}':: failed to set GXF parameter '{}'",
-                               sch->name(),
-                               key);
-    // TODO: handle error
-  }
-
   return true;
 }
 
@@ -2080,88 +2023,155 @@ bool GXFExecutor::initialize_network_context(NetworkContext* network_context) {
 
   gxf::GXFNetworkContext* gxf_network_context =
       static_cast<gxf::GXFNetworkContext*>(network_context);
+  gxf_network_context->gxf_context(context_);
 
-  auto& spec = *(network_context->spec());
-
-  gxf_uid_t eid = 0;
-
-  // Create Entity for the network_context if `op_eid_` is 0
-  if (op_eid_ == 0) {
+  // op_eid_ and op_cid_ will only be nonzero if OperatorWrapper wraps a codelet created by GXF.
+  // (i.e. this executor belongs to a GXF application using a Holoscan operator as a codelet)
+  // In that case GXF we do not create a GraphEntity or a Component for the network context.
+  gxf_uid_t eid = op_eid_;
+  gxf_uid_t network_context_cid = op_cid_;
+  if (is_holoscan()) {
     const std::string network_context_entity_name =
         fmt::format("{}{}", entity_prefix_, network_context->name());
-    const GxfEntityCreateInfo entity_create_info = {network_context_entity_name.c_str(),
-                                                    GXF_ENTITY_CREATE_PROGRAM_BIT};
-    HOLOSCAN_GXF_CALL_MSG_FATAL(
-        GxfCreateEntity(context_, &entity_create_info, &eid),
-        "Unable to create GXF entity for scheduler '{}'. Please check if the "
-        "scheduler name is unique.",
-        network_context->name());
-  } else {
-    eid = op_eid_;
-  }
-
-  gxf_uid_t network_context_cid;
-  // Create Codelet component if `op_cid_` is 0
-  if (op_cid_ == 0) {
-    gxf_tid_t network_context_tid;
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentTypeId(context_, gxf_network_context->gxf_typename(), &network_context_tid));
-    HOLOSCAN_GXF_CALL_FATAL(GxfComponentAdd(
-        context_, eid, network_context_tid, network_context->name().c_str(), &network_context_cid));
-
-    // Set the entity id
+    // TODO (GXF4): add way to check error code and throw runtime_error if setup call failed
+    network_context_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
+    auto maybe = network_context_entity_->setup(context_, network_context_entity_name.c_str());
+    if (!maybe) {
+      throw std::runtime_error(fmt::format("Failed to create entity for network context: '{}'",
+                                           network_context_entity_name));
+    }
+    eid = network_context_entity_->eid();
+    // Set the entity id and graph entity shared pointer
+    gxf_network_context->gxf_graph_entity(network_context_entity_);
     gxf_network_context->gxf_eid(eid);
-    // Set the network_context component id
-    gxf_network_context->gxf_cid(network_context_cid);
-  } else {
-    network_context_cid = op_cid_;
-  }
 
+    // Create NetworkContext component
+    gxf_network_context->gxf_initialize();
+    network_context_cid = gxf_network_context->gxf_cid();
+
+    // initialize all GXF resources and assign them to a graph entity
+    initialize_gxf_resources(network_context->resources(), eid, network_context_entity_);
+
+    // Set any parameters based on the specified arguments and parameter value defaults.
+    add_component_args_to_graph_entity(network_context->args(), network_context_entity_);
+    network_context->set_parameters();
+  }
   // Set GXF NetworkContext ID as the ID of the network_context
   network_context->id(network_context_cid);
+  return true;
+}
 
-  // Create Components for resource
-  for (const auto& [name, resource] : network_context->resources()) {
-    auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
-    // Initialize GXF component if it is not already initialized.
-    if (gxf_resource->gxf_context() == nullptr) {
-      gxf_resource->fragment(fragment());
+bool GXFExecutor::add_condition_to_graph_entity(
+    std::shared_ptr<Condition> condition, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+  if (condition && graph_entity) {
+    add_component_args_to_graph_entity(condition->args(), graph_entity);
+    auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
 
-      gxf_resource->gxf_eid(eid);  // set GXF entity id
-      gxf_resource->initialize();
+    // do not overwrite previous graph entity if this condition is already associated with one
+    if (gxf_condition && !gxf_condition->gxf_graph_entity()) {
+      HOLOSCAN_LOG_TRACE(
+          "Adding Condition '{}' to graph entity '{}'", condition->name(), graph_entity->name());
+      gxf_condition->gxf_eid(graph_entity->eid());
+      gxf_condition->gxf_graph_entity(graph_entity);
+      // Don't have to call initialize() here, ArgumentSetter already calls it later.
+      return true;
+    } else {
+      // Non-GXF condition isn't supported, so log an error if this unexpected path is reached.
+      HOLOSCAN_LOG_ERROR("Failed to cast condition '{}' to holoscan::gxf::GXFCondition",
+                         condition->name());
     }
   }
+  return false;
+}
 
-  // Set arguments
-  auto& params = spec.params();
-  for (auto& arg : network_context->args()) {
-    // Find if arg.name() is in spec_->params()
-    if (params.find(arg.name()) == params.end()) {
-      HOLOSCAN_LOG_WARN("Argument '{}' is not defined in spec", arg.name());
+bool GXFExecutor::add_resource_to_graph_entity(
+    std::shared_ptr<Resource> resource, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+  if (resource && graph_entity) {
+    add_component_args_to_graph_entity(resource->args(), graph_entity);
+    // Native Resources will not be added to the GraphEntity
+    auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
+
+    // do not overwrite previous graph entity if this resource is already associated with one
+    // (e.g. sometimes the same allocator may be used across multiple operators)
+    if (gxf_resource && !gxf_resource->gxf_graph_entity()) {
+      HOLOSCAN_LOG_TRACE(
+          "Adding Resource '{}' to graph entity '{}'", resource->name(), graph_entity->name());
+      gxf_resource->gxf_eid(graph_entity->eid());
+      gxf_resource->gxf_graph_entity(graph_entity);
+      // Don't have to call initialize() here, ArgumentSetter already calls it later.
+      return true;
+    }
+  }
+  return false;
+}
+
+bool GXFExecutor::add_iospec_to_graph_entity(
+    IOSpec* io_spec, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+  if (!io_spec || !graph_entity) { return false; }
+  auto resource = io_spec->connector();
+  bool overall_status = false;
+  if (!resource) {
+    HOLOSCAN_LOG_ERROR("IOSpec: failed to cast io_spec->connector() to GXFResource");
+    return overall_status;
+  }
+  overall_status = add_resource_to_graph_entity(resource, graph_entity);
+  if (!overall_status) {
+    HOLOSCAN_LOG_ERROR("IOSpec: failed to add connector '{}' to graph entity", resource->name());
+  }
+  for (auto& [_, condition] : io_spec->conditions()) {
+    bool condition_status = add_condition_to_graph_entity(condition, graph_entity);
+    if (!condition_status) {
+      HOLOSCAN_LOG_ERROR("IOSpec: failed to add connector '{}' to graph entity", condition->name());
+    }
+    overall_status = overall_status && condition_status;
+  }
+  return overall_status;
+}
+
+void GXFExecutor::add_component_args_to_graph_entity(
+    std::vector<Arg>& args, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+  for (auto& arg : args) {
+    auto arg_type = arg.arg_type();
+    auto element_type = arg_type.element_type();
+    if ((element_type != ArgElementType::kResource) &&
+        (element_type != ArgElementType::kCondition) && (element_type != ArgElementType::kIOSpec)) {
       continue;
     }
-
-    // Set arg.value() to spec_->params()[arg.name()]
-    auto& param_wrap = params[arg.name()];
-
-    HOLOSCAN_LOG_TRACE(
-        "GXFNetworkContext '{}':: setting argument '{}'", network_context->name(), arg.name());
-
-    ArgumentSetter::set_param(param_wrap, arg);
+    auto container_type = arg_type.container_type();
+    if ((container_type != ArgContainerType::kNative) &&
+        (container_type != ArgContainerType::kVector)) {
+      HOLOSCAN_LOG_ERROR(
+          "Error setting GXF entity for argument '{}': Operator currently only supports scalar and "
+          "vector containers for arguments of Condition, Resource or IOSpec type.",
+          arg.name());
+      continue;
+    }
+    if (container_type == ArgContainerType::kNative) {
+      if (element_type == ArgElementType::kCondition) {
+        auto condition = std::any_cast<std::shared_ptr<Condition>>(arg.value());
+        add_condition_to_graph_entity(condition, graph_entity);
+      } else if (element_type == ArgElementType::kResource) {
+        auto resource = std::any_cast<std::shared_ptr<Resource>>(arg.value());
+        add_resource_to_graph_entity(resource, graph_entity);
+      } else if (element_type == ArgElementType::kIOSpec) {
+        auto io_spec = std::any_cast<IOSpec*>(arg.value());
+        add_iospec_to_graph_entity(io_spec, graph_entity);
+      }
+    } else if (container_type == ArgContainerType::kVector) {
+      if (element_type == ArgElementType::kCondition) {
+        auto conditions = std::any_cast<std::vector<std::shared_ptr<Condition>>>(arg.value());
+        for (auto& condition : conditions) {
+          add_condition_to_graph_entity(condition, graph_entity);
+        }
+      } else if (element_type == ArgElementType::kResource) {
+        auto resources = std::any_cast<std::vector<std::shared_ptr<Resource>>>(arg.value());
+        for (auto& resource : resources) { add_resource_to_graph_entity(resource, graph_entity); }
+      } else if (element_type == ArgElementType::kIOSpec) {
+        auto io_specs = std::any_cast<std::vector<IOSpec*>>(arg.value());
+        for (auto& io_spec : io_specs) { add_iospec_to_graph_entity(io_spec, graph_entity); }
+      }
+    }
   }
-
-  // Set Handler parameters
-  for (auto& [key, param_wrap] : params) {
-    HOLOSCAN_LOG_TRACE(
-        "GXFNetworkContext '{}':: setting GXF parameter '{}'", network_context->name(), key);
-    HOLOSCAN_GXF_CALL_WARN_MSG(::holoscan::gxf::GXFParameterAdaptor::set_param(
-                                   context_, network_context_cid, key.c_str(), param_wrap),
-                               "GXFNetworkContext '{}':: failed to set GXF parameter '{}'",
-                               network_context->name(),
-                               key);
-  }
-
-  return true;
 }
 
 }  // namespace holoscan::gxf

@@ -238,7 +238,7 @@ You can set environment variables to modify the default actions of services and 
 
 - **HOLOSCAN_HEALTH_CHECK_PORT** : designates the port number on which the Health Checking Service is launched. It must be an integer value representing a valid port number. If unspecified, it defaults to `8777`.
 
-- **HOLOSCAN_DISTRIBUTED_APP_SCHEDULER** : controls which scheduler is used for distributed applications. It can be set to either `greedy` or `multithread`. If unspecified, the default scheduler is `multithread`.
+- **HOLOSCAN_DISTRIBUTED_APP_SCHEDULER** : controls which scheduler is used for distributed applications. It can be set to either `greedy`, `multi_thread` or `event_based`. `multithread` is also allowed as a synonym for `multi_thread` for backwards compatibility. If unspecified, the default scheduler is `multi_thread`.
 
 - **HOLOSCAN_STOP_ON_DEADLOCK** : can be used in combination with `HOLOSCAN_DISTRIBUTED_APP_SCHEDULER` to control whether or not the application will automatically stop on deadlock. Values of "True", "1" or "ON" will be interpreted as true (enable stop on deadlock). It is true if unspecified. This environment variable is only used when `HOLOSCAN_DISTRIBUTED_APP_SCHEDULER` is explicitly set.
 
@@ -292,6 +292,120 @@ A table of the types that have codecs pre-registered so that they can be seriali
 | std::shared_ptr&lt;%&gt;                | T is any of the scalar, vector or std::string types above |
 | tensor types                            | holoscan::Tensor, nvidia::gxf::Tensor, nvidia::gxf::VideoBuffer, nvidia::gxf::AudioBuffer |
 | GXF-specific types                      | nvidia::gxf::TimeStamp, nvidia::gxf::EndOfStream                                          |
+
+
+:::{warning}
+If an operator transmitting both CPU and GPU tensors is to be used in distributed applications, the same output port cannot mix both GPU and CPU tensors. CPU and GPU tensor outputs should be placed on separate output ports. This is a limitation of the underlying UCX library being used for zero-copy tensor serialization between operators.
+
+As a concrete example, assume an operator, `MyOperator` with a single output port named "out" defined in it's setup method. If the output port is only ever going to connect to other operators within a fragment, but never across fragments then it is okay to have a `TensorMap` with a mixture of host and device arrays on that single port.
+
+`````{tab-set}
+````{tab-item} C++
+
+```cpp
+void MyOperator::setup(OperatorSpec& spec) {
+  spec.output<holoscan::TensorMap>("out");
+}
+
+void MyOperator::compute(OperatorSpec& spec) {
+
+  // omitted: some computation resulting in multiple holoscan::Tensors
+  // (two on CPU ("cpu_coords_tensor" and "cpu_metric_tensor") and one on device ("gpu_tensor").
+
+  TensorMap out_message;
+
+  // insert all tensors in one TensorMap (mixing CPU and GPU tensors is okay when ports only connect within a Fragment)
+  out_message.insert({"coordinates", cpu_coords_tensor});
+  out_message.insert({"metrics", cpu_metric_tensor});
+  out_message.insert({"mask", gpu_tensor});
+
+  op_output.emit(out_message, "out");
+}
+
+```
+
+````
+````{tab-item} Python
+
+```python
+class MyOperator:
+
+    def setup(self, spec: OperatorSpec):
+        spec.output("out")
+
+
+    def compute(self, op_input, op_output, context):
+        # Omitted: assume some computation resulting in three holoscan::Tensor or tensor-like
+        # objects. Two on CPU ("cpu_coords_tensor" and "cpu_metric_tensor") and one on device
+        # ("gpu_tensor").
+
+        # mixing CPU and GPU tensors in a single dict is okay only for within-Fragment connections
+        op_output.emit(
+            dict(
+                coordinates=cpu_coords_tensor,
+                metrics=cpu_metrics_tensor,
+                mask=gpu_tensor,
+            ),
+            "out"
+        )
+```
+`````
+
+However, this mixing of CPU and GPU arrays on a single port will not work for distributed apps and instead separate ports should be used if it is necessary for an operator to communicate across fragments.
+
+`````{tab-set}
+````{tab-item} C++
+
+```cpp
+void MyOperator::setup(OperatorSpec& spec) {
+  spec.output<holoscan::TensorMap>("out_host");
+  spec.output<holoscan::TensorMap>("out_device");
+}
+
+void MyOperator::compute(OperatorSpec& spec) {
+
+  // some computation resulting in a pair of holoscan::Tensor, one on CPU ("cpu_tensor") and one on device ("gpu_tensor").
+  TensorMap out_message_host;
+  TensorMap out_message_device;
+
+  // put all CPU tensors on one port
+  out_message_host.insert({"coordinates", cpu_coordinates_tensor});
+  out_message_host.insert({"metrics", cpu_metrics_tensor});
+  op_output.emit(out_message_host, "out_host");
+
+  // put all GPU tensors on another
+  out_message_device.insert({"mask", gpu_tensor});
+  op_output.emit(out_message_device, "out_device");
+}
+```
+
+````
+````{tab-item} Python
+
+```python
+class MyOperator:
+
+    def setup(self, spec: OperatorSpec):
+        spec.output("out_host")
+        spec.output("out_device")
+
+
+    def compute(self, op_input, op_output, context):
+        # Omitted: assume some computation resulting in three holoscan::Tensor or tensor-like
+        # objects. Two on CPU ("cpu_coords_tensor" and "cpu_metric_tensor") and one on device
+        # ("gpu_tensor").
+
+        # split CPU and GPU tensors across ports for compatibility with inter-fragment communication
+        op_output.emit(
+            dict(coordinates=cpu_coords_tensor, metrics=cpu_metrics_tensor),
+            "out_host"
+        )
+        op_output.emit(dict(mask=gpu_tensor), "out_device")
+```
+
+````
+`````
+:::
 
 
 ### Python

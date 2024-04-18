@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,9 +81,8 @@ void init_io_spec(py::module_& m) {
            [](IOSpec& io_spec, std::shared_ptr<Resource> connector) {
              return io_spec.connector(connector);
            })
-      .def(
-          "__repr__",
-            // use py::object and obj.cast to avoid a segfault if object has not been initialized
-          [](const IOSpec& iospec) { return iospec.description(); });
+      .def("__repr__",
+           // use py::object and obj.cast to avoid a segfault if object has not been initialized
+           [](const IOSpec& iospec) { return iospec.description(); });
 }
 }  // namespace holoscan

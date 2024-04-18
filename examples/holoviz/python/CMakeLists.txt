@@ -95,6 +95,13 @@ install(FILES
     COMPONENT "holoscan-examples"
 )
 
+# Install the minimal CMakeLists.txt file
+install(FILES CMakeLists.min.txt
+  RENAME "CMakeLists.txt"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Holoviz Geometry 3D Testing
 if(HOLOSCAN_BUILD_TESTS)
 

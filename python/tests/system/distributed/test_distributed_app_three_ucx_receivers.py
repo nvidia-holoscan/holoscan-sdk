@@ -20,6 +20,7 @@
 
 import numpy as np
 from env_wrapper import env_var_context
+from utils import remove_ignored_errors
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, Operator, OperatorSpec
@@ -162,8 +163,8 @@ NUM_MSGS = 100
 
 def launch_app():
     env_var_settings = {
-        # set the recession period to 10 ms to reduce debug messages
-        ("HOLOSCAN_CHECK_RECESSION_PERIOD_MS", "10"),
+        # set the recession period to 5 ms to reduce debug messages
+        ("HOLOSCAN_CHECK_RECESSION_PERIOD_MS", "5"),
         # set the max duration to 10s to have enough time to run the test
         # (connection time takes ~5 seconds)
         ("HOLOSCAN_MAX_DURATION_MS", "10000"),
@@ -193,7 +194,7 @@ def test_distributed_app_three_ucx_receivers(capfd):
     # avoid catching the expected error message
     # : "error handling callback was invoked with status -25 (Connection reset by remote peer)"
     captured_error = captured.err.replace("error handling callback", "ucx handling callback")
-    assert "error" not in captured_error
+    assert "error" not in remove_ignored_errors(captured_error)
     assert "Exception occurred" not in captured_error
 
     # assert that the expected number of messages were received

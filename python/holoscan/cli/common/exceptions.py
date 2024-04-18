@@ -108,6 +108,13 @@ class InvalidSharedMemoryValueError(HoloscanSdkError):
     pass
 
 
+class ManifestDownloadError(HoloscanSdkError):
+    """
+    Raise when the failed to download manifest file."""
+
+    pass
+
+
 class UnmatchedDeviceError(HoloscanSdkError):
     """
     Raise when the shared memory value is invalid."""
@@ -116,3 +123,10 @@ class UnmatchedDeviceError(HoloscanSdkError):
         super().__init__(
             f"The following devices cannot be found in /dev/: {str.join(',', unmatched_devices)}"
         )
+
+
+class GpuResourceError(HoloscanSdkError):
+    """
+    Raise when the available GPUs are less than requetsed."""
+
+    pass

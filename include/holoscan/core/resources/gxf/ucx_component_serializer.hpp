@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,8 @@
 
 #include <memory>
 #include <vector>
+
+#include <gxf/ucx/ucx_component_serializer.hpp>
 
 #include "../../gxf/gxf_resource.hpp"
 #include "./allocator.hpp"
@@ -43,6 +45,8 @@ class UcxComponentSerializer : public gxf::GXFResource {
   void setup(ComponentSpec& spec) override;
 
   void initialize() override;
+
+  nvidia::gxf::UcxComponentSerializer* get() const;
 
  private:
   Parameter<std::shared_ptr<holoscan::Allocator>> allocator_;

@@ -20,7 +20,7 @@ import pytest
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.resources import ManualClock, RealtimeClock
-from holoscan.schedulers import GreedyScheduler, MultiThreadScheduler
+from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 
 class MinimalOp(Operator):
@@ -72,7 +72,9 @@ def test_minimal_app(ping_config_file, SchedulerClass, capfd):  # noqa: N803
     assert captured.out.count("** stop method called **") == 1
 
 
-@pytest.mark.parametrize("SchedulerClass", [GreedyScheduler, MultiThreadScheduler])
+@pytest.mark.parametrize(
+    "SchedulerClass", [EventBasedScheduler, GreedyScheduler, MultiThreadScheduler]
+)
 @pytest.mark.parametrize("ClockClass", [RealtimeClock, ManualClock])
 def test_minimal_app_with_clock(ping_config_file, SchedulerClass, ClockClass):  # noqa: N803
     app = MinimalApp()
@@ -87,6 +89,18 @@ def test_app_ping_config_keys(ping_config_file):
     keys = app.config_keys()
     assert isinstance(keys, set)
     assert keys == {"mx", "mx.multiplier"}
+
+
+def test_deprecated_extension(deprecated_extension_config_file, capfd):
+    app = MinimalApp()
+    app.config(deprecated_extension_config_file)
+
+    app.run()
+
+    captured_error = capfd.readouterr().err
+    warning_msg = "no longer require specifying the libgxf_stream_playback.so extension"
+    # deprecated extension is listed twice in the config file (once with full path)
+    assert captured_error.count(warning_msg) == 2
 
 
 def test_app_config_keys(config_file):

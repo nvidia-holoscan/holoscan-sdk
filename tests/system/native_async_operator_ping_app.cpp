@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,7 +80,8 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncRxApp) {
   auto multithreaded = GetParam();
   if (multithreaded) {
     app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(
-        "multithread-scheduler", holoscan::Arg("stop_on_deadlock", false),
+        "multithread-scheduler",
+        holoscan::Arg("stop_on_deadlock", false),
         holoscan::Arg("max_duration_ms", 1000L)));
   }
 

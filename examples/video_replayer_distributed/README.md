@@ -1,7 +1,8 @@
 # Distributed Video Replayer
 
 Minimal example to demonstrate the use of the video stream replayer operator to load video from disk in a distributed manner.
-The video frames need to have been converted to a gxf entity format, as shown [here](../../scripts/README.md#convert_video_to_gxf_entitiespy).
+
+The video frames need to have been converted to a gxf entity format to use as input. You can use the `convert_video_to_gxf_entities.py` script installed in `/opt/nvidia/holoscan/bin` or available [on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#convert_video_to_gxf_entitiespy) (tensors will be loaded on the GPU).
 
 > Note: Support for H264 stream support is in progress and can be found on [HoloHub](https://nvidia-holoscan.github.io/holohub)
 
@@ -21,8 +22,8 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 
 * **using deb package install**:
   ```bash
-  # [Prerequisite] Download NGC dataset above to `DATA_DIR` (e.g., `/opt/nvidia/data`)
-  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
+  /opt/nvidia/holoscan/examples/download_example_data
+  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
 
   # Set the application folder
   APP_DIR=/opt/nvidia/holoscan/examples/video_replayer_distributed/cpp
@@ -82,8 +83,8 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
   ```
 * **using deb package install**:
   ```bash
-  # [Prerequisite] Download NGC dataset above to `DATA_DIR` (e.g., `/opt/nvidia/data`)
-  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
+  /opt/nvidia/holoscan/examples/download_example_data
+  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
 
   # Set the application folder
@@ -156,9 +157,9 @@ Refer to the documentation in the [user guide](https://docs.nvidia.com/holoscan/
 #    in one machine (e.g. IP address `10.2.34.56`) using the port number `10000`,
 #    and another worker (`fragment2` that renders video to display) in another machine.
 #    If `--fragments` is not specified, any fragment in the application will be chosen to run.
-#    The `--nic <network-interface>` argument is required when running a distributed application 
+#    The `--nic <network-interface>` argument is required when running a distributed application
 #    across multiple nodes; it instructs the application to use the specified network
-#    interface for communicating with other application nodes. 
+#    interface for communicating with other application nodes.
 #
 #    note: use the following command to get a list of available network interface name and its assigned IP address.
 ip -o -4 addr show | awk '{print $2, $4}'

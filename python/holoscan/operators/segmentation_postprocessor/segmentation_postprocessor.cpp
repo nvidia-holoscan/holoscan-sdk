@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -113,7 +113,7 @@ PYBIND11_MODULE(_segmentation_postprocessor, m) {
            "data_format"_a = "hwc"s,
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "segmentation_postprocessor"s,
-           doc::SegmentationPostprocessorOp::doc_SegmentationPostprocessorOp_python)
+           doc::SegmentationPostprocessorOp::doc_SegmentationPostprocessorOp)
       .def("setup",
            &SegmentationPostprocessorOp::setup,
            "spec"_a,

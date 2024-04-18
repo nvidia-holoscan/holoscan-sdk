@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +63,10 @@ void MultiThreadScheduler::setup(ComponentSpec& spec) {
              0L);
 }
 
+nvidia::gxf::MultiThreadScheduler* MultiThreadScheduler::get() const {
+  return static_cast<nvidia::gxf::MultiThreadScheduler*>(gxf_cptr_);
+}
+
 void MultiThreadScheduler::initialize() {
   // Set up prerequisite parameters before calling Scheduler::initialize()
   auto frag = fragment();
@@ -72,7 +76,9 @@ void MultiThreadScheduler::initialize() {
       args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "clock"); });
   // Create the clock if there was no argument provided.
   if (has_clock == args().end()) {
-    clock_ = frag->make_resource<holoscan::RealtimeClock>("realtime_clock");
+    clock_ = frag->make_resource<holoscan::RealtimeClock>("multithread_scheduler__realtime_clock");
+    clock_->gxf_cname(clock_->name().c_str());
+    if (gxf_eid_ != 0) { clock_->gxf_eid(gxf_eid_); }
     add_arg(clock_.get());
   }
 

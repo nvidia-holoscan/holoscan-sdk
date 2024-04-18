@@ -61,15 +61,14 @@ You can also follow along using your own dataset by adjusting the operator param
 The video stream replayer supports reading video files that are encoded as gxf entities.  These files are provided with the ultrasound dataset as the `ultrasound_256x256.gxf_entities` and `ultrasound_256x256.gxf_index` files.
 
 :::{note}
-To use your own video data, you can use the `convert_video_to_gxf_entities.py` script from [here](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#convert_video_to_gxf_entitiespy) to encode your video.
-
+To use your own video data, you can use the `convert_video_to_gxf_entities.py` script (installed in `/opt/nvidia/holoscan/bin` or [on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#convert_video_to_gxf_entitiespy)) to encode your video. Note that - using this script - the metadata in the generated GXF tensor files will indicate that the data should be copied to the GPU on read.
 :::
 
 ### Input model
 
 Currently, the inference operators in Holoscan are able to load [ONNX models](https://onnx.ai/), or [TensorRT](https://developer.nvidia.com/tensorrt) engine files built for the GPU architecture on which you will be running the model. TensorRT engines are automatically generated from ONNX by the operators when the applications run.
 
-If you are converting your model from PyTorch to ONNX, chances are your input is NCHW and will need to be converted to NHWC. We provide an example [transformation script on Github](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#graph_surgeonpy) named  `graph_surgeon.py`. You may need to modify the dimensions as needed before modifying your model.
+If you are converting your model from PyTorch to ONNX, chances are your input is NCHW and will need to be converted to NHWC. We provide an example transformation script named  `graph_surgeon.py`, installed in `/opt/nvidia/holoscan/bin` or available [on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#graph_surgeonpy). You may need to modify the dimensions as needed before modifying your model.
 
 :::{tip}
 To get a better understanding of your model, and if this step is necessary, websites such as [netron.app](https://netron.app/) can be used.

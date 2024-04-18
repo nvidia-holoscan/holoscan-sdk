@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,10 +22,10 @@
 #include <memory>
 #include <string>
 
+#include <gxf/serialization/serialization_buffer.hpp>
+
 #include "../../gxf/gxf_resource.hpp"
 #include "./unbounded_allocator.hpp"
-
-#include <gxf/serialization/serialization_buffer.hpp>
 
 namespace holoscan {
 
@@ -48,6 +48,8 @@ class SerializationBuffer : public gxf::GXFResource {
   void setup(ComponentSpec& spec) override;
 
   void initialize() override;
+
+  nvidia::gxf::SerializationBuffer* get() const;
 
  private:
   Parameter<std::shared_ptr<holoscan::Allocator>> allocator_;

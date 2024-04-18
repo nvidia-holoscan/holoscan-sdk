@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +55,7 @@ rapids_cpm_find(GLFW 3.3.7
     GITHUB_REPOSITORY glfw/glfw
     GIT_TAG 3.3.7
     OPTIONS
+    "BUILD_SHARED_LIBS OFF"
     "CXXOPTS_BUILD_EXAMPLES OFF"
     "CXXOPTS_BUILD_TESTS OFF"
     "GLFW_BUILD_TESTS OFF"
@@ -63,10 +64,3 @@ rapids_cpm_find(GLFW 3.3.7
     "GLFW_INSTALL OFF"
     EXCLUDE_FROM_ALL
 )
-
-if(GLFW_ADDED)
-    install(TARGETS glfw
-        DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-        COMPONENT "holoscan-dependencies"
-    )
-endif()

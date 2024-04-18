@@ -51,6 +51,7 @@ from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.core._core import ParameterFlag, PyOperatorSpec
 from holoscan.executors import GXFExecutor
 from holoscan.graphs import FlowGraph, OperatorFlowGraph
+from holoscan.operators.aja_source import NTV2Channel  # noqa: F401 (needed to parse AJA 'channel')
 from holoscan.resources import (
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
@@ -578,7 +579,7 @@ class TestFragment:
 
         aja_kwargs = fragment.from_config("aja")
         assert isinstance(aja_kwargs, ArgList)
-        assert aja_kwargs.size == len(aja_kwargs.args) == 5
+        assert aja_kwargs.size == len(aja_kwargs.args) == 6
         # all arguments in the ArgList are YAML nodes
         for arg in aja_kwargs.args:
             assert arg.arg_type.element_type == ArgElementType.YAML_NODE
@@ -771,7 +772,7 @@ class TestApplication:
 
         aja_kwargs = app.from_config("aja")
         assert isinstance(aja_kwargs, ArgList)
-        assert aja_kwargs.size == 5
+        assert aja_kwargs.size == 6
 
     def test_kwargs(self, app, config_file):
         app.config(config_file)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +21,11 @@
 #include <gxf/core/gxf.h>
 
 #include <iostream>
+#include <memory>
 #include <string>
 
+#include <gxf/app/graph_entity.hpp>
+#include "../parameter.hpp"
 #include "./gxf_utils.hpp"
 
 namespace holoscan::gxf {
@@ -49,31 +52,33 @@ class GXFComponent {
   std::string& gxf_cname() { return gxf_cname_; }
   void gxf_cname(const std::string& name) { gxf_cname_ = name; }
 
+  std::shared_ptr<nvidia::gxf::GraphEntity> gxf_graph_entity() { return gxf_graph_entity_; }
+
+  void gxf_graph_entity(std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+    gxf_graph_entity_ = graph_entity;
+  }
+
   void* gxf_cptr() { return gxf_cptr_; }
 
-  void gxf_initialize() {
-    if (gxf_context_ == nullptr) {
-      HOLOSCAN_LOG_ERROR("Initializing with null GXF context");
-      return;
-    }
-    if (gxf_eid_ == 0) {
-      HOLOSCAN_LOG_ERROR("Initializing with null GXF eid");
-      return;
-    }
+  nvidia::gxf::Handle<nvidia::gxf::Component> gxf_component() { return gxf_component_; }
 
-    HOLOSCAN_GXF_CALL(GxfComponentTypeId(gxf_context_, gxf_typename(), &gxf_tid_));
-    HOLOSCAN_GXF_CALL(
-        GxfComponentAdd(gxf_context_, gxf_eid_, gxf_tid_, gxf_cname().c_str(), &gxf_cid_));
-    HOLOSCAN_GXF_CALL(GxfComponentPointer(
-        gxf_context_, gxf_cid_, gxf_tid_, reinterpret_cast<void**>(&gxf_cptr_)));
-  }
+  void gxf_initialize();
+
+  /// Set a given parameter on the underlying GXF component
+  void set_gxf_parameter(const std::string& component_name, const std::string& key,
+                         ParameterWrapper& param_wrap);
+
+  void reset_gxf_graph_entity() { gxf_graph_entity_.reset(); }
 
  protected:
   gxf_context_t gxf_context_ = nullptr;
   gxf_uid_t gxf_eid_ = 0;
   gxf_tid_t gxf_tid_ = {};
   gxf_uid_t gxf_cid_ = 0;
+  std::shared_ptr<nvidia::gxf::GraphEntity> gxf_graph_entity_;
   std::string gxf_cname_;
+  // TODO: remove gxf_cptr_ and use the Component Handle everywhere instead?
+  nvidia::gxf::Handle<nvidia::gxf::Component> gxf_component_;
   void* gxf_cptr_ = nullptr;
 };
 

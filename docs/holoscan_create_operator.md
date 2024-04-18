@@ -37,21 +37,20 @@ We will cover how to use {ref}`Conditions <exhale_class_classholoscan_1_1Conditi
 
 Typically, the `start()` and the `stop()` functions are only called once during the application's lifecycle. However, if the scheduling conditions are met again, the operator can be scheduled for execution, and the `start()` method will be called again.
 
-```{mermaid}
+```{digraph} lifecycle
 :align: center
 :caption: The sequence of method calls in the lifecycle of a Holoscan Operator
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=Mrecord];
 
-flowchart LR
-    start(start)
-    stop(stop)
-    compute(compute)
+    start [label="start"]
+    compute [label="compute"]
+    stop [label="stop"]
 
-    start --> compute
-    compute --> compute
-    compute --> stop
-
+    start -> compute
+    compute -> compute
+    compute -> stop
 ```
 
 We can override the default behavior of the operator by implementing the above methods. The following example shows how to implement a custom operator that overrides start, stop and compute methods.
@@ -689,7 +688,7 @@ components:
    parameters:
      allocator: allocator
  - name: entity_serializer
-   type: nvidia::holoscan::stream_playback::VideoStreamSerializer   # inheriting from nvidia::gxf::EntitySerializer
+   type: nvidia::gxf::StdEntitySerializer
    parameters:
      component_serializers: [component_serializer]
  - type: MyRecorder
@@ -738,7 +737,7 @@ void MyRecorderOp::initialize() {
   // Set up prerequisite parameters before calling GXFOperator::initialize()
   auto frag = fragment();
   auto serializer =
-      frag->make_resource<holoscan::VideoStreamSerializer>("serializer");
+      frag->make_resource<holoscan::StdEntitySerializer>("serializer");
   add_arg(Arg("serializer") = serializer);
 
   GXFOperator::initialize();
@@ -765,7 +764,7 @@ components:
    parameters:
      allocator: allocator
  - name: entity_serializer
-   type: nvidia::holoscan::stream_playback::VideoStreamSerializer   # inheriting from nvidia::gxf::EntitySerializer
+   type: nvidia::gxf::StdEntitySerializer
    parameters:
      component_serializers: [component_serializer]
  - type: MyRecorder
@@ -781,7 +780,7 @@ components:
 ```
 
 :::{note}
-The Holoscan C++ API already provides the {cpp:class}`holoscan::VideoStreamSerializer` class which wraps the `nvidia::holoscan::stream_playback::VideoStreamSerializer` GXF component, used here as `serializer`.
+The Holoscan C++ API already provides the {cpp:class}`holoscan::StdEntitySerializer` class which wraps the `nvidia::gxf::StdEntitySerializer` GXF component, used here as `serializer`.
 :::
 
 #### Building your GXF operator
@@ -812,28 +811,19 @@ Supporting Tensor Interoperability
 
 Consider the following example, where `GXFSendTensorOp` and `GXFReceiveTensorOp` are GXF operators, and where `ProcessTensorOp` is a C++ native operator:
 
-```{mermaid}
+```{digraph} interop
 :align: center
 :caption: The tensor interoperability between C++ native operator and GXF operator
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=record];
 
-classDiagram
-    direction LR
+    source [label="GXFSendTensorOp| |signal(out) : Tensor"];
+    process [label="ProcessTensorOp| [in]in : TensorMap | out(out) : TensorMap "];
+    sink [label="GXFReceiveTensorOp| [in]signal : Tensor | "];
 
-    GXFSendTensorOp --|> ProcessTensorOp : signal...in
-    ProcessTensorOp --|> GXFReceiveTensorOp : out...signal
-
-    class GXFSendTensorOp {
-        signal(out) Tensor
-    }
-    class ProcessTensorOp {
-        [in]in : TensorMap
-        out(out) TensorMap
-    }
-    class GXFReceiveTensorOp {
-        [in]signal : Tensor
-    }
+    source->process [label="signal...in"]
+    process->sink [label="out...signal"]
 ```
 
 The following code shows how to implement `ProcessTensorOp`'s `compute()` method as a C++ native operator communicating with GXF operators. Focus on the use of the `holoscan::gxf::Entity`:
@@ -919,21 +909,21 @@ We will cover how to use {py:mod}`Conditions <holoscan.conditions>` in the {ref}
 
 Typically, the `start()` and the `stop()` functions are only called once during the application's lifecycle. However, if the scheduling conditions are met again, the operator can be scheduled for execution, and the `start()` method will be called again.
 
-```{mermaid}
+```{digraph} lifecycle2
 :align: center
 :caption: The sequence of method calls in the lifecycle of a Holoscan Operator
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
 
-flowchart LR
-    start(start)
-    stop(stop)
-    compute(compute)
+    node [shape=Mrecord];
 
-    start --> compute
-    compute --> compute
-    compute --> stop
+    start [label="start"]
+    compute [label="compute"]
+    stop [label="stop"]
 
+    start -> compute
+    compute -> compute
+    compute -> stop
 ```
 
 We can override the default behavior of the operator by implementing the above methods. The following example shows how to implement a custom operator that overrides start, stop and compute methods.
@@ -1572,28 +1562,19 @@ As described in the {ref}`Interoperability between GXF and native C++ operators<
 
 Consider the following example, where `VideoStreamReplayerOp` and `HolovizOp` are Python wrapped C++ operators, and where `ImageProcessingOp` is a Python native operator:
 
-```{mermaid}
+```{digraph} interop2
 :align: center
 :caption: The tensor interoperability between Python native operator and C++\-based Python GXF operator
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=record];
 
-classDiagram
-    direction LR
+    video [label="VideoStreamReplayerOp| |output_tensor(out) : Tensor"];
+    processop [label="ImageProcessingOp| [in]input_tensor : dict[str,Tensor] | output_tensor(out) : dict[str,Tensor]"];
+    viz [label="HolovizOp| [in]receivers : Tensor | "];
 
-    VideoStreamReplayerOp --|> ImageProcessingOp : output_tensor...input_tensor
-    ImageProcessingOp --|> HolovizOp : output_tensor...receivers
-
-    class VideoStreamReplayerOp {
-        output_tensor(out) Tensor
-    }
-    class ImageProcessingOp {
-        [in]input_tensor : dict[str,Tensor]
-        output_tensor(out) dict[str,Tensor]
-    }
-    class HolovizOp {
-        [in]receivers : Tensor
-    }
+    video->processop [label="output_tensor...input_tensor"]
+    processop->viz [label="output_tensor...receivers"]
 ```
 
 The following code shows how to implement `ImageProcessingOp`'s `compute()` method as a Python native operator communicating with C++ operators:

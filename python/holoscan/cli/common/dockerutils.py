@@ -29,8 +29,8 @@ from python_on_whales import docker
 from ..common.utils import run_cmd_output
 from .constants import DefaultValues, EnvironmentVariables
 from .enum_types import PlatformConfiguration, SdkType
-from .exceptions import InvalidManifestError, RunContainerError
-from .utils import get_requested_gpus
+from .exceptions import GpuResourceError, InvalidManifestError, RunContainerError
+from .utils import get_gpu_count, get_requested_gpus
 
 logger = logging.getLogger("common")
 
@@ -161,6 +161,7 @@ def docker_run(
     network: str,
     network_interface: Optional[str],
     use_all_nics: bool,
+    gpu_enum: Optional[str],
     config: Optional[Path],
     render: bool,
     user: str,
@@ -216,11 +217,12 @@ def docker_run(
         if display is not None:
             environment_variables["DISPLAY"] = display
 
-    gpu = None
-
+    # Use user-specified --gpu values
+    if gpu_enum is not None:
+        environment_variables["NVIDIA_VISIBLE_DEVICES"] = gpu_enum
     # If the image was built for iGPU but the system is configured for dGPU, attempt
     # targeting the system's iGPU using the CDI spec
-    if platform_config == PlatformConfiguration.iGPU.value and not _host_is_native_igpu():
+    elif platform_config == PlatformConfiguration.iGPU.value and not _host_is_native_igpu():
         environment_variables["NVIDIA_VISIBLE_DEVICES"] = "nvidia.com/igpu=0"
         logger.info(
             "Attempting to run an image for iGPU (integrated GPU) on a system configured "
@@ -229,10 +231,22 @@ def docker_run(
             "user guide. If not, either rebuild the image for dGPU or run this image on a "
             "system configured for iGPU only (ex: Jetson AGX, Nano...)."
         )
+    # Otherwise, read specs from package manifest
     else:
         requested_gpus = get_requested_gpus(pkg_info)
-        if requested_gpus > 0:
-            gpu = "all"
+        available_gpus = get_gpu_count()
+
+        if available_gpus < requested_gpus:
+            raise GpuResourceError(
+                f"Available GPUs ({available_gpus}) are less than required ({requested_gpus}). "
+            )
+
+        if requested_gpus == 0:
+            environment_variables["NVIDIA_VISIBLE_DEVICES"] = "all"
+        else:
+            environment_variables["NVIDIA_VISIBLE_DEVICES"] = ",".join(
+                map(str, range(0, requested_gpus))
+            )
 
     if "path" in app_info["input"]:
         mapped_input = Path(app_info["input"]["path"]).as_posix()
@@ -312,7 +326,6 @@ def docker_run(
             user,
             volumes,
             environment_variables,
-            gpu,
             shared_memory_size,
             ipc_mode,
             ulimits,
@@ -330,7 +343,6 @@ def docker_run(
             user,
             volumes,
             environment_variables,
-            gpu,
             shared_memory_size,
             ipc_mode,
             ulimits,
@@ -349,7 +361,6 @@ def _start_container(
     user,
     volumes,
     environment_variables,
-    gpu,
     shared_memory_size,
     ipc_mode,
     ulimits,
@@ -360,7 +371,6 @@ def _start_container(
         image_name,
         command=commands,
         envs=environment_variables,
-        gpus=gpu,
         hostname=name,
         name=name,
         networks=[network],
@@ -418,7 +428,6 @@ def _enter_terminal(
     user,
     volumes,
     environment_variables,
-    gpu,
     shared_memory_size,
     ipc_mode,
     ulimits,
@@ -438,7 +447,6 @@ def _enter_terminal(
         detach=False,
         entrypoint="/bin/bash",
         envs=environment_variables,
-        gpus=gpu,
         hostname=name,
         interactive=True,
         name=name,

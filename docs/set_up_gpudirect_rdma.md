@@ -19,7 +19,7 @@ The following steps are required to ensure your ConnectX can be used for RDMA ov
 
 ### 1. Install MOFED drivers
 
-Ensure the Mellanox OFED drivers version 23.07 or above are installed:
+Ensure the Mellanox OFED drivers version 23.10 or above are installed:
 
 ```bash
 cat /sys/module/mlx5_core/version
@@ -30,7 +30,7 @@ If not installed, or an older version, install the appropriate version from the 
 ```bash
 # You can choose different versions/OS or download directly from the
 # Download Center in the webpage linked above
-MOFED_VERSION="23.07-0.5.1.2"
+MOFED_VERSION="23.10-2.1.3.1"
 OS="ubuntu22.04"
 MOFED_PACKAGE="MLNX_OFED_LINUX-${MOFED_VERSION}-${OS}-$(uname -m)"
 wget --progress=dot:giga https://www.mellanox.com/downloads/ofed/MLNX_OFED-${MOFED_VERSION}/${MOFED_PACKAGE}.tgz

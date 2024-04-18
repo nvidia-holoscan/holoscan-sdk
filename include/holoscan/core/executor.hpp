@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,6 +111,30 @@ class Executor {
    */
   virtual std::shared_ptr<ExtensionManager> extension_manager() { return extension_manager_; }
 
+  /**
+   * @brief Set the exception.
+   *
+   * This method is called by the framework to store the exception that occurred during the
+   * execution of the fragment.
+   * If the exception is set, this exception is rethrown by the framework after the execution of
+   * the fragment.
+   *
+   * @param e The exception to store.
+   */
+  void exception(const std::exception_ptr& e) { exception_ = e; }
+
+  /**
+   * @brief Get the stored exception.
+   *
+   * This method is called by the framework to get the stored exception that occurred during the
+   * execution of the fragment.
+   * If the exception is set, this exception is rethrown by the framework after the execution of
+   * the fragment.
+   *
+   * @return The reference to the stored exception.
+   */
+  const std::exception_ptr& exception() { return exception_; }
+
  protected:
   friend class Fragment;        // make Fragment a friend class to access protected members of
                                 // Executor (add_receivers()).
@@ -212,6 +236,7 @@ class Executor {
   Fragment* fragment_ = nullptr;                         ///< The fragment of the executor.
   void* context_ = nullptr;                              ///< The context.
   std::shared_ptr<ExtensionManager> extension_manager_;  ///< The extension manager.
+  std::exception_ptr exception_;                         ///< The stored exception.
 };
 
 }  // namespace holoscan

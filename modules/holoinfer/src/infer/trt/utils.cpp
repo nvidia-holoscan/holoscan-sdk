@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,7 @@ bool valid_file_path(const std::string& filepath) {
 }
 
 bool generate_engine_path(const NetworkOptions& options, const std::string& onnx_model_path,
-                               std::string& engine_path) {
+                          std::string& engine_path) {
   cudaDeviceProp device_prop;
   auto status = cudaGetDeviceProperties(&device_prop, options.device_index);
   if (status != cudaSuccess) {
@@ -45,17 +45,12 @@ bool generate_engine_path(const NetworkOptions& options, const std::string& onnx
   gpu_name.erase(remove(gpu_name.begin(), gpu_name.end(), ' '), gpu_name.end());
 
   engine_path.reserve(1024);
-  engine_path = std::filesystem::path(onnx_model_path).replace_extension("").string() + "."
-                + gpu_name + "."
-                + std::to_string(device_prop.major) + "."
-                + std::to_string(device_prop.minor) + "."
-                + std::to_string(device_prop.multiProcessorCount)
-                + ".trt."
-                + std::to_string(NV_TENSORRT_MAJOR) + "."
-                + std::to_string(NV_TENSORRT_MINOR) + "."
-                + std::to_string(NV_TENSORRT_PATCH) + "."
-                + std::to_string(NV_TENSORRT_BUILD)
-                + ".engine";
+  engine_path =
+      std::filesystem::path(onnx_model_path).replace_extension("").string() + "." + gpu_name + "." +
+      std::to_string(device_prop.major) + "." + std::to_string(device_prop.minor) + "." +
+      std::to_string(device_prop.multiProcessorCount) + ".trt." +
+      std::to_string(NV_TENSORRT_MAJOR) + "." + std::to_string(NV_TENSORRT_MINOR) + "." +
+      std::to_string(NV_TENSORRT_PATCH) + "." + std::to_string(NV_TENSORRT_BUILD) + ".engine";
 
   if (options.use_fp16) {
     engine_path += ".fp16";

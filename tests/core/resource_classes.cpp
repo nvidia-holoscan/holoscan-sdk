@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +39,7 @@
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 #include "holoscan/core/resources/gxf/serialization_buffer.hpp"
 #include "holoscan/core/resources/gxf/std_component_serializer.hpp"
+#include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp"
@@ -46,7 +47,6 @@
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
 #include "holoscan/core/resources/gxf/ucx_transmitter.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
-#include "holoscan/core/resources/gxf/video_stream_serializer.hpp"
 #include "common/assert.hpp"
 
 using namespace std::string_literals;
@@ -179,18 +179,17 @@ TEST_F(ResourceClassesWithGXFContext, TestUnboundedAllocatorDefaultConstructor) 
   auto resource = F.make_resource<UnboundedAllocator>();
 }
 
-TEST_F(ResourceClassesWithGXFContext, TestVideoStreamSerializer) {
+TEST_F(ResourceClassesWithGXFContext, TestStdEntitySerializer) {
   const std::string name{"video-stream-serializer"};
-  auto resource = F.make_resource<VideoStreamSerializer>(name);
+  auto resource = F.make_resource<StdEntitySerializer>(name);
   EXPECT_EQ(resource->name(), name);
-  EXPECT_EQ(typeid(resource), typeid(std::make_shared<VideoStreamSerializer>()));
-  EXPECT_EQ(std::string(resource->gxf_typename()),
-            "nvidia::holoscan::stream_playback::VideoStreamSerializer"s);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<StdEntitySerializer>()));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::StdEntitySerializer"s);
   EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
-TEST_F(ResourceClassesWithGXFContext, TestVideoStreamSerializerDefaultConstructor) {
-  auto resource = F.make_resource<VideoStreamSerializer>();
+TEST_F(ResourceClassesWithGXFContext, TestStdEntitySerializerDefaultConstructor) {
+  auto resource = F.make_resource<StdEntitySerializer>();
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestReceiver) {

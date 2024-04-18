@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,8 @@ class GXFResource : public holoscan::Resource, public gxf::GXFComponent {
   GXFResource(const std::string& name, nvidia::gxf::Component* component);
 
   void initialize() override;
+
+  void add_to_graph_entity(Operator* op);
 };
 
 }  // namespace holoscan::gxf

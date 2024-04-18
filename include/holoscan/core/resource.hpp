@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,6 +81,11 @@
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
+
+// Forward declarations
+class NetworkContext;
+class Scheduler;
+class Operator;
 
 /**
  * @brief Base class for all resources.
@@ -202,8 +207,14 @@ class Resource : public Component {
   YAML::Node to_yaml_node() const override;
 
  protected:
+  // Add friend classes that can call reset_graph_entites
+  friend class holoscan::NetworkContext;
+  friend class holoscan::Scheduler;
+  friend class holoscan::Operator;
+
+  using Component::reset_graph_entities;
+
   ResourceType resource_type_ = ResourceType::kNative;  ///< The type of the resource.
-  std::shared_ptr<ComponentSpec> spec_;                 ///< The component specification.
   bool is_initialized_ = false;                         ///< Whether the resource is initialized.
 };
 

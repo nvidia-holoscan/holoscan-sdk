@@ -171,44 +171,45 @@ struct codec<std::string> {
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Codec type 4: serialization of std::vector<bool> only
 //
-// Note: Have to serialize std::vector<bool> differently than the numeric types due to how it is
-//       packed. This is currently inefficient as 8x the data size is transferred due to bit->byte
-//       conversion. Could revisit packing the data more efficiently if needed, but likely not
-//       worth it if only a small length vector is being sent.
+// Performs bit-packing/unpacking to/from uint8_t type for more efficient serialization.
 
 // codec of std::vector<bool>
 template <>
 struct codec<std::vector<bool>> {
   static expected<size_t, RuntimeError> serialize(const std::vector<bool>& data,
                                                   Endpoint* endpoint) {
-    ContiguousDataHeader header;
-    header.size = data.size();
-    header.bytes_per_element = header.size > 0 ? sizeof(data[0]) : 1;
-    auto size = endpoint->write_trivial_type<ContiguousDataHeader>(&header);
+    size_t total_bytes = 0;
+    size_t num_bits = data.size();
+    size_t num_bytes = (num_bits + 7) / 8;  // the number of bytes needed to store the bits
+    auto size = endpoint->write_trivial_type<size_t>(&num_bits);
     if (!size) { return forward_error(size); }
-    size_t total_bytes = size.value();
-    expected<size_t, RuntimeError> size2;
-    for (const auto b : data) {
-      bool bool_b = b;
-      size2 = endpoint->write_trivial_type<bool>(&bool_b);
-      if (!size2) { return forward_error(size2); }
+    total_bytes += size.value();
+    std::vector<uint8_t> packed_data(num_bytes, 0);  // Create a vector to store the packed data
+    for (size_t i = 0; i < num_bits; ++i) {
+      if (data[i]) {
+        packed_data[i / 8] |= (1 << (i % 8));  // Pack the bits into the bytes
+      }
     }
-    total_bytes += size2.value() * header.size;
+    auto result = endpoint->write(packed_data.data(), packed_data.size());
+    if (!result) { return forward_error(result); }
+    total_bytes += result.value();
     return total_bytes;
   }
 
   static expected<std::vector<bool>, RuntimeError> deserialize(Endpoint* endpoint) {
-    ContiguousDataHeader header;
-    auto header_size = endpoint->read_trivial_type<ContiguousDataHeader>(&header);
-    if (!header_size) { return forward_error(header_size); }
-    std::vector<bool> data;
-    data.resize(header.size);
-    expected<size_t, RuntimeError> result;
-    for (auto&& b : data) {
-      bool bool_b;
-      result = endpoint->read_trivial_type<bool>(&bool_b);
-      if (!result) { return forward_error(result); }
-      b = bool_b;
+    size_t num_bits;
+    auto size = endpoint->read_trivial_type<size_t>(&num_bits);
+    if (!size) { return forward_error(size); }
+    size_t num_bytes =
+        (num_bits + 7) / 8;  // Calculate the number of bytes needed to store the bits
+    std::vector<uint8_t> packed_data(num_bytes, 0);  // Create a vector to store the packed data
+    auto result = endpoint->read(packed_data.data(), packed_data.size());
+    if (!result) { return forward_error(result); }
+    std::vector<bool> data(num_bits, false);  // Create a vector to store the unpacked data
+    for (size_t i = 0; i < num_bits; ++i) {
+      if (packed_data[i / 8] & (1 << (i % 8))) {  // Unpack the bits from the bytes
+        data[i] = true;
+      }
     }
     return data;
   }

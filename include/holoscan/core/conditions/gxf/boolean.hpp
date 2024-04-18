@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,8 @@ class BooleanCondition : public gxf::GXFCondition {
   bool check_tick_enabled();
 
   void setup(ComponentSpec& spec) override;
+
+  nvidia::gxf::BooleanSchedulingTerm* get() const;
 
  private:
   Parameter<bool> enable_tick_;

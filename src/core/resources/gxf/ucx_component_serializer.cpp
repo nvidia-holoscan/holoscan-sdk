@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,10 @@ void UcxComponentSerializer::setup(ComponentSpec& spec) {
   spec.param(allocator_, "allocator", "Memory allocator", "Memory allocator for tensor components");
 }
 
+nvidia::gxf::UcxComponentSerializer* UcxComponentSerializer::get() const {
+  return static_cast<nvidia::gxf::UcxComponentSerializer*>(gxf_cptr_);
+}
+
 void UcxComponentSerializer::initialize() {
   HOLOSCAN_LOG_DEBUG("UcxComponentSerializer::initialize");
   // Set up prerequisite parameters before calling GXFOperator::initialize()
@@ -38,8 +42,10 @@ void UcxComponentSerializer::initialize() {
       args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "allocator"); });
   // Create an UnboundedAllocator if no allocator was provided
   if (has_allocator == args().end()) {
-    auto allocator = frag->make_resource<UnboundedAllocator>("allocator");
+    auto allocator = frag->make_resource<UnboundedAllocator>("ucx_component_allocator");
     add_arg(Arg("allocator") = allocator);
+    allocator->gxf_cname(allocator->name().c_str());
+    if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
   }
   GXFResource::initialize();
 }

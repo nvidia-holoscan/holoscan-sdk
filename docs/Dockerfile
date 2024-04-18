@@ -28,7 +28,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Deadsnakes repo is added then package index files are updated
 #  software-properties-common - Needed to use `add-apt-repository`
 #  build-essential - Adds GNU/g++ compiler collection
-#  curl - Used to download Doxygen and Node.js
+#  curl - Used to download Doxygen
 #  python3-pip - Needed for pip installs
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -36,6 +36,7 @@ RUN apt-get update \
     curl \
     python3-pip \
     gnupg \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # Install up to date doxygen for better C++ parsing with a few cases like
@@ -47,21 +48,6 @@ RUN cd /tmp/ \
     && make install \
     && cd .. \
     && rm -rf doxygen*
-
-# Install Node.js 20 using DEB packages
-# https://github.com/nodesource/distributions#debian-and-ubuntu-based-distributions
-RUN mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
-    | tee /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Mermaid CLI
-RUN npm install --production -g @mermaid-js/mermaid-cli
 
 # Install Python dependencies
 # Pinned additional sphinxcontrib-* extensions to specific versions to avoid following error:
@@ -88,37 +74,14 @@ RUN python3 -m pip install --no-cache-dir \
 FROM $BASE_IMAGE as docs-html
 
 # Copy over installed denpendencies from docs-base
-COPY --from=docs-base /usr/bin/curl /usr/bin/curl
-COPY --from=docs-base /usr/bin/node /usr/bin/node
-COPY --from=docs-base /usr/bin/npx /usr/bin/npx
-COPY --from=docs-base /usr/bin/npm /usr/bin/npm
-COPY --from=docs-base /usr/bin/mmdc /usr/bin/mmdc
-COPY --from=docs-base /usr/bin/corepack /usr/bin/corepack
+COPY --from=docs-base /usr/bin/dot /usr/bin/dot
 COPY --from=docs-base /usr/local/bin/doxygen /usr/local/bin/doxygen
 COPY --from=docs-base /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=docs-base /usr/local/bin/sphinx-build /usr/local/bin/sphinx-build
 COPY --from=docs-base /usr/local/bin/sphinx-autobuild /usr/local/bin/sphinx-autobuild
-COPY --from=docs-base /usr/lib/node_modules /usr/lib/node_modules
 COPY --from=docs-base /usr/lib/python3/dist-packages /usr/lib/python3/dist-packages
-COPY --from=docs-base /usr/include/node /usr/include/node
-COPY --from=docs-base /usr/share/doc/nodejs /usr/share/doc/nodejs
-
-# Below logic needed due to copy cmds being used instead of local installs
-# ------------------------------------------------------------------------
-# Update npm executable to invoke the npm module's CLI script and pass the
-# current Node.js process as an argument
-RUN echo '#!/usr/bin/env node' > /usr/bin/npm \
-    && echo "require('/usr/lib/node_modules/npm/lib/cli.js')(process)" >> /usr/bin/npm && \
-    # Update mmdc (mermaid-cli) executable to set the current process title to 'mmdc',
-    # invoke the mermaid module's CLI function, and print any error if one is encountered
-    echo '#!/usr/bin/env node' > /usr/bin/mmdc \
-    && echo "process.title = 'mmdc'; \
-    import('/usr/lib/node_modules/@mermaid-js/mermaid-cli/src/index.js') \
-    .then(({ cli, error }) => cli().catch((exception) => error(exception instanceof Error ? exception.stack : exception))) \
-    .catch((err) => { \
-    console.error(err); \
-    process.exit(1); \
-    });" >> /usr/bin/mmdc
+COPY --from=docs-base /usr/share/fonts  /usr/share/fonts
+COPY --from=docs-base /lib/x86_64-linux-gnu/  /lib/x86_64-linux-gnu/
 
 #################################################################
 # PDF docs image that installs pdf/latex dependencies to the base
@@ -137,6 +100,3 @@ RUN apt-get update \
     libgbm1 \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
-
-# Add configuration for for puppeteer
-RUN echo '{"args": ["--no-sandbox"]}' >> /usr/bin/puppeteer-config.json

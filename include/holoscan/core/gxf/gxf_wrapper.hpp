@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,7 @@
 #include "holoscan/core/gxf/gxf_operator.hpp"
 
 #include "gxf/std/codelet.hpp"
-#include "gxf/std/parameter_parser_std.hpp"
+#include "gxf/core/parameter_parser_std.hpp"
 
 namespace holoscan::gxf {
 
@@ -49,6 +49,8 @@ class GXFWrapper : public nvidia::gxf::Codelet {
   void set_operator(Operator* op) { op_ = op; }
 
  private:
+  void store_exception();
+
   Operator* op_ = nullptr;
 };
 

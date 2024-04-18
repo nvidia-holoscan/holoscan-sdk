@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,21 +22,22 @@
 namespace holoscan {
 
 Allocator::Allocator(const std::string& name, nvidia::gxf::Allocator* component)
-    : GXFResource(name, component) {}
+    : gxf::GXFResource(name, component) {}
+
+nvidia::gxf::Allocator* Allocator::get() const {
+  return static_cast<nvidia::gxf::Allocator*>(gxf_cptr_);
+}
 
 bool Allocator::is_available(uint64_t size) {
-  if (gxf_cptr_) {
-    nvidia::gxf::Allocator* allocator = static_cast<nvidia::gxf::Allocator*>(gxf_cptr_);
-    return allocator->is_available(size);
-  }
+  auto allocator = get();
+  if (allocator) { return allocator->is_available(size); }
 
   return false;
 }
 
 nvidia::byte* Allocator::allocate(uint64_t size, MemoryStorageType type) {
-  if (gxf_cptr_) {
-    nvidia::gxf::Allocator* allocator = static_cast<nvidia::gxf::Allocator*>(gxf_cptr_);
-
+  auto allocator = get();
+  if (allocator) {
     auto result = allocator->allocate(size, static_cast<nvidia::gxf::MemoryStorageType>(type));
     if (result) { return result.value(); }
   }
@@ -48,11 +49,17 @@ nvidia::byte* Allocator::allocate(uint64_t size, MemoryStorageType type) {
 }
 
 void Allocator::free(nvidia::byte* pointer) {
-  if (gxf_cptr_) {
-    nvidia::gxf::Allocator* allocator = static_cast<nvidia::gxf::Allocator*>(gxf_cptr_);
+  auto allocator = get();
+  if (allocator) {
     auto result = allocator->free(pointer);
     if (!result) { HOLOSCAN_LOG_ERROR("Failed to free memory at {}", static_cast<void*>(pointer)); }
   }
+}
+
+uint64_t Allocator::block_size() {
+  auto allocator = get();
+  if (!allocator) { throw std::runtime_error("null GXF component pointer"); }
+  return allocator->block_size();
 }
 
 }  // namespace holoscan

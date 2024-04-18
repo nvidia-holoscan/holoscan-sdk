@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +48,14 @@ class BlockMemoryPool : public Allocator {
   const char* gxf_typename() const override { return "nvidia::gxf::BlockMemoryPool"; }
 
   void setup(ComponentSpec& spec) override;
+
+  // Returns the storage type of the memory blocks
+  nvidia::gxf::MemoryStorageType storage_type() const;
+
+  // Returns the total number of blocks
+  uint64_t num_blocks() const;
+
+  nvidia::gxf::BlockMemoryPool* get() const;
 
  private:
   Parameter<int32_t> storage_type_;

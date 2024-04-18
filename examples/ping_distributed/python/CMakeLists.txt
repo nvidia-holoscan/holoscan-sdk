@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +39,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "AssertionError:"
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST
@@ -48,6 +49,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "AssertionError:"
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST
@@ -56,6 +58,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Usage: ping_distributed.py \\[OPTIONS\\]"
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_INVALID_DEVICE_TEST
@@ -67,5 +70,6 @@ if(HOLOSCAN_BUILD_TESTS)
     ENVIRONMENT "HOLOSCAN_UCX_DEVICE_ID=-5"
     PASS_REGULAR_EXPRESSION "GPUDevice value found and cached. dev_id: -5"
     PASS_REGULAR_EXPRESSION "cudaSetDevice Failed - 101, device id -5"
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 endif()

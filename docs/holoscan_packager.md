@@ -52,34 +52,43 @@ Ensure the following are installed in the environment where you want to run the 
 
 The Holoscan CLI is installed as part of the Holoscan SDK and can be called with the following instructions depending on your installation:
 
-**If installed as a python wheel**
+
+`````{tab-set}
+````{tab-item} Python Wheel
 
 - In a virtual environment: the `holoscan` CLI should already be in the PATH
-- Globally: ensure that `$HOME/.local/bin` is added to your `PATH`. Run the following command make it available across sessions:
+- System python: ensure that `$HOME/.local/bin` is added to your `PATH`. If using bash, the following command will make it persist across sessions:
 
    ```bash
    echo 'export PATH=$HOME/.local/bin:$PATH' >> ~/.bashrc
    ```
 
-**If installed as a debian package**
+````
+````{tab-item} Debian Package
 
-Ensure that `/opt/nvidia/holoscan/` is added to your `PATH`. Run the following command make it available across sessions:
+Ensure that `/opt/nvidia/holoscan/` is added to your `PATH`. If using bash, the following command will make it persist across sessions:
 
 ```bash
 echo 'alias holoscan=/opt/nvidia/holoscan/bin/holoscan' >> ~/.bashrc
 ```
 
-**If built or installed from source (local only)**
+````
+````{tab-item} From source
 
-Ensure that `${BUILD_OR_INSTALL_DIR}/bin` is added to your `PATH`. Run the following command make it available across sessions:
+If building the SDK from source and starting the build container with `run launch`, the `holoscan` CLI should already be in the PATH.
+
+If building bare-metal (advanced), ensure that `<BUILD_OR_INSTALL_DIR>/bin` is added to your `PATH`. If using bash, the following command will make it persist across sessions:
 
 ```bash
-echo 'alias holoscan=${BUILD_OR_INSTALL_DIR}/bin/holoscan' >> ~/.bashrc
+echo 'alias holoscan=<BUILD_OR_INSTALL_DIR>/bin/holoscan' >> ~/.bashrc
 ```
 
-:::{warning}
-The Holoscan CLI is not available inside the [NGC Container](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan) nor the development container (from source).
-:::
+````
+
+````{tab-item} NGC Container
+The NGC container has the CLI installed already, no additional steps are required.
+````
+`````
 
 ## Package an application
 

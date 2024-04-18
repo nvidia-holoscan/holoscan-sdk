@@ -10,7 +10,8 @@ There are two operators involved in this example:
 
 The transmit operator will be asynchronous if `async_transmit: true` in `ping_async.yaml`.
 The receive operator will be asynchronous if `async_receive: true` in `ping_async.yaml`.
-The multi-threaded scheduler will be used if `multithreaded: true` in  `ping_async.yaml`.
+
+The scheduler to be used can be set via the `scheduler` entry in `ping_async.yaml`. It defaults to `event_based` (an event-based multi-thread scheduler), but can also be set to either `multi_thread` (polling-based) or `greedy` (single thread).
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/components/conditions.html) to learn more about the Asynchronous Condition.*
 

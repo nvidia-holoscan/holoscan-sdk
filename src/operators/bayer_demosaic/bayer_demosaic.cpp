@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +23,11 @@
 #include <string>
 #include <utility>
 
+#include "gxf/std/tensor.hpp"
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/gxf/gxf_tensor.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator_spec.hpp"
@@ -68,20 +68,21 @@ void BayerDemosaicOp::setup(OperatorSpec& spec) {
              "Name of the output tensor",
              std::string(""));
   spec.param(pool_, "pool", "Pool", "Pool to allocate the output message.");
-  spec.param(bayer_interp_mode_,
-             "interpolation_mode",
-             "Interpolation used for demosaicing",
-             "The interpolation model to be used for demosaicing (default UNDEFINED). Values "
-             "available at: "
-             "https://docs.nvidia.com/cuda/npp/"
-             "group__typedefs__npp.html#ga2b58ebd329141d560aa4367f1708f191",
-             0);
+  spec.param(
+      bayer_interp_mode_,
+      "interpolation_mode",
+      "Interpolation used for demosaicing",
+      "The interpolation model to be used for demosaicing (default: NPPI_INTER_UNDEFINED). Values "
+      "available at: "
+      "https://docs.nvidia.com/cuda/npp/nppdefs.html?highlight="
+      "Two%20parameter%20cubic%20filter#c.NppiInterpolationMode",
+      0);
   spec.param(bayer_grid_pos_,
              "bayer_grid_pos",
              "Bayer grid position",
-             "The Bayer grid position (default GBRG). Values available at: "
-             "https://docs.nvidia.com/cuda/npp/"
-             "group__typedefs__npp.html#ga5597309d6766fb2dffe155990d915ecb",
+             "The Bayer grid position (default: NPPI_BAYER_GBRG). Values available at: "
+             "https://docs.nvidia.com/cuda/npp/nppdefs.html?highlight="
+             "Two%20parameter%20cubic%20filter#c.NppiBayerGridPosition",
              2);
   spec.param(generate_alpha_,
              "generate_alpha",
@@ -210,8 +211,8 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
     auto in_tensor = maybe_tensor;
 
     // Get needed information from the tensor
-    // cast Holoscan::Tensor to GXFTensor so attribute access code can remain as-is
-    holoscan::gxf::GXFTensor in_tensor_gxf{in_tensor->dl_ctx()};
+    // cast Holoscan::Tensor to nvidia::gxf::Tensor so attribute access code can remain as-is
+    nvidia::gxf::Tensor in_tensor_gxf{in_tensor->dl_ctx()};
 
     input_data_ptr = in_tensor_gxf.pointer();
     if (input_data_ptr == nullptr) {
@@ -249,7 +250,10 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
                             nvidia::gxf::Shape{rows, columns, out_channels}, element_size)}},
                       false);
 
-  if (!out_message) { throw std::runtime_error("Failed to allocate tensors in output message"); }
+  if (!out_message) {
+    throw std::runtime_error(fmt::format("Failed to allocate tensors in output message: {}",
+                                         GxfResultStr(out_message.error())));
+  }
 
   // get the tensor of interest
   const auto maybe_output_tensor =

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,7 +55,7 @@ class PyMessageAvailableCondition : public MessageAvailableCondition {
   // Define a constructor that fully initializes the object.
   PyMessageAvailableCondition(Fragment* fragment,
                               // std::shared_ptr<gxf::GXFResource> receiver,
-                              size_t min_size = 1UL, size_t front_stage_max_size = 1UL,
+                              uint64_t min_size = 1UL, size_t front_stage_max_size = 1UL,
                               const std::string& name = "noname_message_available_condition")
       : MessageAvailableCondition(
             ArgList{Arg{"min_size", min_size}, Arg{"front_stage_max_size", front_stage_max_size}}) {
@@ -73,7 +73,7 @@ void init_message_available(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<MessageAvailableCondition>>(
       m, "MessageAvailableCondition", doc::MessageAvailableCondition::doc_MessageAvailableCondition)
-      .def(py::init<Fragment*, size_t, size_t, const std::string&>(),
+      .def(py::init<Fragment*, uint64_t, size_t, const std::string&>(),
            "fragment"_a,
            "min_size"_a = 1UL,
            "front_stage_max_size"_a = 1UL,

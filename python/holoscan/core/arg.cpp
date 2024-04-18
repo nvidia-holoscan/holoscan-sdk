@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -148,7 +148,7 @@ void init_arg(py::module_& m) {
       .def_property_readonly("description", &Arg::description, doc::Arg::doc_description)
       .def(
           "__repr__",
-            // use py::object and obj.cast to avoid a segfault if object has not been initialized
+          // use py::object and obj.cast to avoid a segfault if object has not been initialized
           [](const Arg& arg) { return arg.description(); },
           R"doc(Return repr(self).)doc");
 
@@ -166,7 +166,7 @@ void init_arg(py::module_& m) {
       .def_property_readonly("description", &ArgList::description, doc::ArgList::doc_description)
       .def(
           "__repr__",
-            // use py::object and obj.cast to avoid a segfault if object has not been initialized
+          // use py::object and obj.cast to avoid a segfault if object has not been initialized
           [](const ArgList& list) { return list.description(); },
           R"doc(Return repr(self).)doc");
 
@@ -183,7 +183,7 @@ void init_arg(py::module_& m) {
       .def_property_readonly("to_string", &ArgType::to_string, doc::ArgType::doc_to_string)
       .def(
           "__repr__",
-            // use py::object and obj.cast to avoid a segfault if object has not been initialized
+          // use py::object and obj.cast to avoid a segfault if object has not been initialized
           [](const ArgType& t) { return t.to_string(); },
           R"doc(Return repr(self).)doc");
   // Register argument setter and gxf parameter adaptor for py::object

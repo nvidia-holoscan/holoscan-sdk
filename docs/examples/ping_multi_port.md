@@ -17,33 +17,20 @@ The example source code and run instructions can be found in the [examples](http
 
 Here is the diagram of the operators and workflow used in this example.
 
-```{mermaid}
+```{digraph} ping_multi_port
 :align: center
 :caption: A workflow with multiple inputs and outputs
 
-%%{init: {"theme": "base", "themeVariables": { "fontSize": "16px"}} }%%
+    rankdir="LR"
+    node [shape=record];
 
-classDiagram
-    direction LR
-
-    PingTxOp --|> PingMxOp : out1...in1
-    PingTxOp --|> PingMxOp : out2...in2
-    PingMxOp --|> PingRxOp : out1...receivers
-    PingMxOp --|> PingRxOp : out2...receivers
-
-    class PingTxOp {
-        out1(out) ValueData
-        out2(out) ValueData
-    }
-    class PingMxOp {
-        [in]in1 : ValueData
-        [in]in2 : ValueData
-        out1(out) ValueData
-        out2(out) ValueData
-    }
-    class PingRxOp {
-        [in]receivers : ValueData
-    }
+    tx [label="PingTxOp| |out1(out) : ValueData\nout2(out) : ValueData"];
+    mx [label="PingMxOp|[in]in1 : ValueData\n[in]in2 : ValueData|out1(out) : ValueData\nout2(out) : ValueData"];
+    rx [label="PingRxOp|[in]receivers : ValueData | "];
+    tx -> mx [label="out1...in1"]
+    tx -> mx [label="out2...in2"]
+    mx -> rx [label="out1...receivers"]
+    mx -> rx [label="out2...receivers"]
 ```
 
 In this example, `PingTxOp` sends a stream of odd integers to the `out1` port, and even integers to the `out2` port. `PingMxOp` receives these values using `in1` and `in2` ports, multiplies them by a constant factor, then forwards them to a single port - `receivers` - on `PingRxOp`.
@@ -494,6 +481,6 @@ Running the application should give you output similar to the following in your 
 ```
 
 :::{note}
-Depending on your log level you may see more or fewer messages. The output above was generated using the default value of `INFO`.  
+Depending on your log level you may see more or fewer messages. The output above was generated using the default value of `INFO`.
 Refer to the {ref}`Logging<holoscan-logging>` section for more details on how to set the log level.
 :::

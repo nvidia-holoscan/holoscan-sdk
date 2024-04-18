@@ -21,7 +21,7 @@ from argparse import ArgumentParser
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.schedulers import GreedyScheduler, MultiThreadScheduler
+from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 
 class PingTxOp(Operator):
@@ -119,13 +119,14 @@ class ParallelPingApp(Application):
             self.add_flow(d, rx, {("out_val", "values"), ("out_name", "names")})
 
 
-def main(threads, num_delays, delay, delay_step):
+def main(threads, num_delays, delay, delay_step, event_based):
     app = ParallelPingApp(num_delays=num_delays, delay=delay, delay_step=delay_step)
     if threads == 0:
         # Explicitly setting GreedyScheduler is not strictly required as it is the default.
         scheduler = GreedyScheduler(app, name="greedy_scheduler")
     else:
-        scheduler = MultiThreadScheduler(
+        scheduler_class = EventBasedScheduler if event_based else MultiThreadScheduler
+        scheduler = scheduler_class(
             app,
             worker_thread_number=threads,
             stop_on_deadlock=True,
@@ -148,9 +149,10 @@ if __name__ == "__main__":
         type=int,
         default=-1,
         help=(
-            "The number of threads to use for the multi-threaded scheduler. Set this to 0 to use "
+            "The number of threads to use for multi-threaded schedulers. Set this to 0 to use "
             "the default greedy scheduler instead. If set to -1, multiprocessing.cpu_count() "
-            "threads will be used."
+            "threads will be used. To use the event-based scheduler instead of the default "
+            "multi-thread scheduler, please specify --event_based."
         ),
     )
     parser.add_argument(
@@ -181,6 +183,15 @@ if __name__ == "__main__":
             "0 to (num_delay_ops - 1)."
         ),
     )
+    parser.add_argument(
+        "--event_based",
+        action="store_true",
+        help=(
+            "Sets the application to use the event-based scheduler instead of the default "
+            "multi-thread scheduler when threads > 0."
+        ),
+    )
+
     args = parser.parse_args()
     if args.delay < 0:
         raise ValueError("delay must be non-negative")
@@ -199,4 +210,5 @@ if __name__ == "__main__":
         num_delays=args.num_delay_ops,
         delay=args.delay,
         delay_step=args.delay_step,
+        event_based=args.event_based,
     )

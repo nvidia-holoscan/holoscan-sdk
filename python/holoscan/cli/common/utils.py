@@ -50,6 +50,10 @@ def get_requested_gpus(pkg_info: dict) -> int:
     return num_gpu
 
 
+def get_gpu_count():
+    return len(run_cmd_output("nvidia-smi -L").splitlines())
+
+
 def run_cmd(cmd: str) -> int:
     """
     Executes command and return the returncode of the executed command.
@@ -66,7 +70,7 @@ def run_cmd(cmd: str) -> int:
     return proc.wait()
 
 
-def run_cmd_output(cmd: str) -> int:
+def run_cmd_output(cmd: str) -> str:
     """
     Executes command and returns the output.
 

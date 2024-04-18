@@ -62,5 +62,7 @@ if __name__ == "__main__":
 
     print_status()  # print status while application is running
 
+    # Block until application is done and raise any exceptions
     future.result()
+
     print("# Application has finished running.")

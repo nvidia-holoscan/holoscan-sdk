@@ -30,11 +30,22 @@
 namespace holoscan::ops {
 
 /**
- * @brief Operator class to record the video stream to a file.
+ * @brief Operator class to record a video stream to a file.
  *
- * **Named input:**
- *     - *input*: `nvidia::gxf::Tensor`
- *         - A message containing a video frame to serialize to disk.
+ * ==Named Inputs==
+ *
+ * - **input** : `nvidia::gxf::Tensor`
+ *   - A message containing a video frame to serialize to disk. The input tensor can be on either
+ *     the CPU or GPU. This data location will be recorded as part of the metadata serialized to
+ *     disk and if the data is later read back in via `VideoStreamReplayerOp`, the tensor output of
+ *     that operator will be on the same device (CPU or GPU).
+ *
+ * ==Parameters==
+ *
+ * - **directory**: Directory path for storing files.
+ * - **basename**: User specified file name without extension.
+ * - **flush_on_tick**: Flushes output buffer on every tick when `true`.
+ *   Optional (default: `false`).
  */
 class VideoStreamRecorderOp : public holoscan::Operator {
  public:

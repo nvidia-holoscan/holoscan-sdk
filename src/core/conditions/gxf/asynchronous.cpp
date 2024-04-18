@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,25 +33,23 @@ AsynchronousCondition::AsynchronousCondition(const std::string& name,
   }
 }
 
+nvidia::gxf::AsynchronousSchedulingTerm* AsynchronousCondition::get() const {
+  return static_cast<nvidia::gxf::AsynchronousSchedulingTerm*>(gxf_cptr_);
+}
+
 void AsynchronousCondition::setup(ComponentSpec& spec) {
   (void)spec;  // no parameters to set
 }
 
 void AsynchronousCondition::event_state(AsynchronousEventState state) {
-  if (gxf_cptr_) {
-    nvidia::gxf::AsynchronousSchedulingTerm* asynchronous_scheduling_term =
-        static_cast<nvidia::gxf::AsynchronousSchedulingTerm*>(gxf_cptr_);
-    asynchronous_scheduling_term->setEventState(state);
-  }
+  auto asynchronous_scheduling_term = get();
+  if (asynchronous_scheduling_term) { asynchronous_scheduling_term->setEventState(state); }
   event_state_ = state;
 }
 
 AsynchronousEventState AsynchronousCondition::event_state() const {
-  if (gxf_cptr_) {
-    nvidia::gxf::AsynchronousSchedulingTerm* asynchronous_scheduling_term =
-        static_cast<nvidia::gxf::AsynchronousSchedulingTerm*>(gxf_cptr_);
-    return asynchronous_scheduling_term->getEventState();
-  }
+  auto asynchronous_scheduling_term = get();
+  if (asynchronous_scheduling_term) { return asynchronous_scheduling_term->getEventState(); }
   return event_state_;
 }
 

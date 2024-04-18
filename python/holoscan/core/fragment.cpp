@@ -154,4 +154,42 @@ void init_fragment(py::module_& m) {
           R"doc(Return repr(self).)doc");
 }
 
+PyFragment::PyFragment(py::object op) : Fragment() {
+  py::gil_scoped_acquire scope_guard;
+  py_compose_ = py::getattr(op, "compose");
+}
+
+void PyFragment::add_operator(const std::shared_ptr<Operator>& op) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_operator, op);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                          const std::shared_ptr<Operator>& downstream_op) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_op, downstream_op);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                          const std::shared_ptr<Operator>& downstream_op,
+                          std::set<std::pair<std::string, std::string>> io_map) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_op, downstream_op, io_map);
+}
+
+void PyFragment::compose() {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  // PYBIND11_OVERRIDE(void, Fragment, compose);
+
+  // PYBIND11_doesn't work when Fragment object is created during Application::compose().
+  // So we take the py::object from the constructor and call it here.
+  py::gil_scoped_acquire scope_guard;
+  py_compose_.operator()();
+}
+
+void PyFragment::run() {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, run);
+}
+
 }  // namespace holoscan

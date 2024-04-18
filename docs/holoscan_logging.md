@@ -69,11 +69,6 @@ Under the hood, Holoscan SDK uses GXF to execute the computation graph. By defau
 For distributed applications, it can sometimes be useful to also enable additional logging for the UCX library used to transmit data between fragments. This can be done by setting the UCX environment variable `UCX_LOG_LEVEL` to one of: fatal, error, warn, info, debug, trace, req, data, async, func, poll. These have the behavior as described here: [UCX log levels](https://github.com/openucx/ucx/blob/v1.14.0/src/ucs/config/types.h#L16C1-L31).
 :::
 
-#### Precedence
-If the `HOLOSCAN_LOG_LEVEL` environment variable is set, this setting is used to set the logging level.  If the
-environment variable is not set, then the application setting is used if available.  If not, the SDK default setting
-of INFO is used as the logging level.
-
 ## Logger Format
 
 When a message is printed out, the default message format shows the message severity level, filename:linenumber, and
@@ -144,9 +139,15 @@ For more details on custom formatting and details of each flag, please see the [
 Additionally, at runtime, the user can also set the `HOLOSCAN_LOG_FORMAT` environment variable to modify the logger format.  The accepted string pattern is the same as the string pattern for
 the `set_log_pattern()` api mentioned above.
 
-:::{note}
-If the `HOLOSCAN_LOG_FORMAT` environment variable is set, this setting is used to set the logger format.  If the environment variable is not set, then the application setting is used if available.  If not, the SDK default message format is used.
-:::
+#### Precedence of Logger Level and Logger Format
+
+The `HOLOSCAN_LOG_LEVEL` environment variable takes precedence and overrides the application settings, such as `Logger::set_log_level()` ({cpp:func}`C++ <holoscan::set_log_level>`/{py:func}`Python <holoscan.logger.set_log_level>`).
+
+When `HOLOSCAN_LOG_LEVEL` is set, it determines the logging level. If this environment variable is unset, the application settings are used if they are available. Otherwise, the SDK's default logging level of INFO is applied.
+
+Similarly, the `HOLOSCAN_LOG_FORMAT` environment variable takes precedence and overrides the application settings, such as `Logger::set_log_pattern()` ({cpp:func}`C++ <holoscan::set_log_pattern>`/{py:func}`Python <holoscan.logger.set_log_pattern>`).
+
+When `HOLOSCAN_LOG_FORMAT` is set, it determines the logging format. If this environment variable is unset, the application settings are used if they are available. Otherwise, the SDK's default logging format depending on the current log level (`FULL` format for `DEBUG` and `TRACE` log levels. `DEFAULT` format for other log levels) is applied.
 
 ## Calling the Logger in Your Application
 

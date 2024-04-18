@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,39 +15,41 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_RESOURCES_GXF_VIDEO_STREAM_SERIALIZER_HPP
-#define HOLOSCAN_CORE_RESOURCES_GXF_VIDEO_STREAM_SERIALIZER_HPP
+#ifndef HOLOSCAN_CORE_RESOURCES_GXF_STD_ENTITY_SERIALIZER_HPP
+#define HOLOSCAN_CORE_RESOURCES_GXF_STD_ENTITY_SERIALIZER_HPP
 
 #include <memory>
 #include <vector>
+
+#include <gxf/serialization/std_entity_serializer.hpp>
 
 #include "../../gxf/gxf_resource.hpp"
 
 namespace holoscan {
 
 /**
- * @brief Video stream entity serializer.
+ * @brief Standard GXF entity serializer.
  *
- * Used by VideoStreamReplayerOp to deserialize video streams and by VideoStreamRecorderOp to
- * serialize video streams.
+ * The VideoStreamSerializer entity serializer uses this as its entity serializer.
  */
-class VideoStreamSerializer : public gxf::GXFResource {
+class StdEntitySerializer : public gxf::GXFResource {
  public:
-  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(VideoStreamSerializer, GXFResource)
-  VideoStreamSerializer() = default;
+  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(StdEntitySerializer, GXFResource)
+  StdEntitySerializer() = default;
 
-  const char* gxf_typename() const override {
-    return "nvidia::holoscan::stream_playback::VideoStreamSerializer";
-  }
+  const char* gxf_typename() const override { return "nvidia::gxf::StdEntitySerializer"; }
 
   void setup(ComponentSpec& spec) override;
 
   void initialize() override;
 
+  nvidia::gxf::StdEntitySerializer* get() const;
+
  private:
   Parameter<std::vector<std::shared_ptr<holoscan::Resource>>> component_serializers_;
+  Parameter<bool> verbose_warning_;
 };
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_RESOURCES_GXF_VIDEO_STREAM_SERIALIZER_HPP */
+#endif /* HOLOSCAN_CORE_RESOURCES_GXF_STD_ENTITY_SERIALIZER_HPP */

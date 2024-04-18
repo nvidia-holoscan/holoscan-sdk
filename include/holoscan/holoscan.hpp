@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +60,7 @@
 #include "./core/resources/gxf/cuda_stream_pool.hpp"
 #include "./core/resources/gxf/serialization_buffer.hpp"
 #include "./core/resources/gxf/std_component_serializer.hpp"
+#include "./core/resources/gxf/std_entity_serializer.hpp"
 #include "./core/resources/gxf/unbounded_allocator.hpp"
 #include "./core/resources/gxf/ucx_component_serializer.hpp"
 #include "./core/resources/gxf/ucx_entity_serializer.hpp"
@@ -67,9 +68,9 @@
 #include "./core/resources/gxf/ucx_receiver.hpp"
 #include "./core/resources/gxf/ucx_serialization_buffer.hpp"
 #include "./core/resources/gxf/ucx_transmitter.hpp"
-#include "./core/resources/gxf/video_stream_serializer.hpp"
 
 // Schedulers
+#include "./core/schedulers/gxf/event_based_scheduler.hpp"
 #include "./core/schedulers/gxf/greedy_scheduler.hpp"
 #include "./core/schedulers/gxf/multithread_scheduler.hpp"
 

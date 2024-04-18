@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@ aja:
   rdma: true
   enable_overlay: false
   overlay_rdma: true
+  channel: "NTV2_CHANNEL1"
 
 replayer:
   basename: "racerx"
@@ -176,3 +177,11 @@ demosaic:
   generate_alpha: false
   bayer_grid_pos: 2
   interpolation_mode: 0 # this is the only interpolation mode supported by NPP currently
+
+v4l2_video_capture:
+  width: 320
+  height: 240
+  pixel_format: "auto"
+  device: "/dev/video0"
+  exposure_time: 500
+  gain: 100

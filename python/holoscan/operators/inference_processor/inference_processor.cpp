@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -185,7 +185,7 @@ PYBIND11_MODULE(_inference_processor, m) {
            "cuda_stream_pool"_a = py::none(),
            "config_path"_a = ""s,
            "name"_a = "postprocessor"s,
-           doc::InferenceProcessorOp::doc_InferenceProcessorOp_python)
+           doc::InferenceProcessorOp::doc_InferenceProcessorOp)
       .def("initialize",
            &InferenceProcessorOp::initialize,
            doc::InferenceProcessorOp::doc_initialize)

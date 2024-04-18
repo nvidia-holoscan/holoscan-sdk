@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +52,8 @@ class DoubleBufferReceiver : public Receiver {
    * the GXF Component.
    */
   void track();
+
+  nvidia::gxf::DoubleBufferReceiver* get() const;
 
   Parameter<uint64_t> capacity_;
   Parameter<uint64_t> policy_;

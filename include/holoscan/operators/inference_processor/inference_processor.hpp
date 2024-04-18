@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_HOLOINFER_PROCESSOR_INFERENCE_PROCESSOR_HPP
-#define HOLOSCAN_OPERATORS_HOLOINFER_PROCESSOR_INFERENCE_PROCESSOR_HPP
+#ifndef HOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_INFERENCE_PROCESSOR_HPP
+#define HOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_INFERENCE_PROCESSOR_HPP
 
 #include <map>
 #include <memory>
@@ -39,18 +39,38 @@ namespace holoscan::ops {
 /**
  * @brief Inference Processor Operator class to perform operations per input tensor.
  *
- * **Named inputs:**
- *     - *receivers*: multi-receiver accepting `nvidia::gxf::Tensor`(s)
- *         - Any number of upstream ports may be connected to this `receivers` port. The operator
- *         will search across all messages for tensors matching those specified in
- *         `in_tensor_names`. These are the set of input tensors used by the processing operations
- *         specified in `process_map`.
+ * ==Named Inputs==
  *
- * **Named outputs:**
- *     - *transmitter*: `nvidia::gxf::Tensor`(s)
- *         - A message containing tensors corresponding to the processed results from operations
- *         will be emitted. The names of the tensors transmitted correspond to those in
- *         `out_tensor_names`.
+ * - **receivers** : multi-receiver accepting `nvidia::gxf::Tensor`(s)
+ *   - Any number of upstream ports may be connected to this `receivers` port. The operator
+ *     will search across all messages for tensors matching those specified in
+ *     `in_tensor_names`. These are the set of input tensors used by the processing operations
+ *     specified in `process_map`.
+ *
+ * ==Named Outputs==
+ *
+ * - **transmitter** : `nvidia::gxf::Tensor`(s)
+ *   - A message containing tensors corresponding to the processed results from operations
+ *     will be emitted. The names of the tensors transmitted correspond to those in
+ *     `out_tensor_names`.
+ *
+ * ==Parameters==
+ *
+ * - **allocator**: Memory allocator to use for the output.
+ * - **process_operations**: Operations (`DataVecMap`) in sequence on tensors.
+ * - **processed_map**: Input-output tensor mapping (`DataVecMap`)
+ * - **in_tensor_names**: Names of input tensors (`std::vector<std::string>`) in the order to be fed
+ *   into the operator. Optional.
+ * - **out_tensor_names**: Names of output tensors (`std::vector<std::string>`) in the order to be
+ *   fed into the operator. Optional.
+ * - **input_on_cuda**: Whether the input buffer is on the GPU. Optional (default: `false`).
+ * - **output_on_cuda**: Whether the output buffer is on the GPU. Optional (default: `false`).
+ * - **transmit_on_cuda**: Whether to transmit the message on the GPU. Optional (default: `false`).
+ * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams.
+ *   Optional (default: `nullptr`).
+ * - **config_path**: File path to the config file. Optional (default: `""`).
+ * - **disable_transmitter**: If `true`, disable the transmitter output port of the operator.
+ *   Optional (default: `false`).
  */
 class InferenceProcessorOp : public holoscan::Operator {
  public:
@@ -151,4 +171,4 @@ class InferenceProcessorOp : public holoscan::Operator {
 };
 
 }  // namespace holoscan::ops
-#endif /* HOLOSCAN_OPERATORS_HOLOINFER_PROCESSOR_INFERENCE_PROCESSOR_HPP */
+#endif /* HOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_INFERENCE_PROCESSOR_HPP */

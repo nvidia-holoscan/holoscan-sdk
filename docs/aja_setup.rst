@@ -14,14 +14,14 @@ applications as sysmem to GPU copies are eliminated from the processing
 pipeline.
 
 The following instructions describe the steps required to setup and use an AJA
-device with RDMA support on Holoscan Developer Kits. Note that the AJA NTV2
+device with RDMA support on NVIDIA Developer Kits with a PCIe slot. Note that the AJA NTV2
 SDK support for Holoscan includes all of the `AJA Developer Products`_,
 though the following instructions have only been verified for the `Corvid 44
 12G BNC`_ and `KONA HDMI`_ products, specifically.
 
 .. Note::
 
-   The addition of an AJA device to a Holoscan Developer Kit is
+   The addition of an AJA device to a NVIDIA Developer Kit is
    optional. The Holoscan SDK has elements that can be run with an AJA device
    with the additional features mentioned above, but those elements can also
    run without AJA. For example, there are Holoscan sample applications that have

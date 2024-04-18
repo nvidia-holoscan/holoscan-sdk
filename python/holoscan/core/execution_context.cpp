@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,4 +39,22 @@ void init_execution_context(py::module_& m) {
       .def_property_readonly("input", &PyExecutionContext::py_input)
       .def_property_readonly("output", &PyExecutionContext::py_output);
 }
+
+PyExecutionContext::PyExecutionContext(gxf_context_t context,
+                                       std::shared_ptr<PyInputContext>& py_input_context,
+                                       std::shared_ptr<PyOutputContext>& py_output_context,
+                                       py::object op)
+    : gxf::GXFExecutionContext(context, py_input_context, py_output_context),
+      py_op_(op),
+      py_input_context_(py_input_context),
+      py_output_context_(py_output_context) {}
+
+std::shared_ptr<PyInputContext> PyExecutionContext::py_input() const {
+  return py_input_context_;
+}
+
+std::shared_ptr<PyOutputContext> PyExecutionContext::py_output() const {
+  return py_output_context_;
+}
+
 }  // namespace holoscan

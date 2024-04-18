@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,9 +92,7 @@ void PingTensorTxOp::compute(InputContext&, OutputContext& op_output, ExecutionC
   // Allocate and initialize the CUDA memory.
   CUDA_TRY(cudaMalloc(pointer.get(), nbytes));
   std::vector<uint8_t> data(nbytes);
-  for (size_t index = 0; index < data.size(); ++index) {
-    data[index] = (index_ + index) % 256;
-  }
+  for (size_t index = 0; index < data.size(); ++index) { data[index] = (index_ + index) % 256; }
   CUDA_TRY(cudaMemcpy(*pointer, data.data(), nbytes, cudaMemcpyKind::cudaMemcpyHostToDevice));
 
   // Holoscan Tensor doesn't support direct memory allocation.

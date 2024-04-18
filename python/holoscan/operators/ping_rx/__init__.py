@@ -21,12 +21,13 @@ from holoscan.core import Operator, OperatorSpec
 class PingRxOp(Operator):
     """Simple receiver operator.
 
-    Named inputs:
-        in: any
-            A received value.
-
     This is an example of a native operator with one input port.
     On each tick, it receives an integer from the "in" port.
+
+    **==Named Inputs==**
+
+        in : any
+            A received value.
     """
 
     def __init__(self, fragment, *args, **kwargs):

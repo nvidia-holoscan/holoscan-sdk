@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,6 @@
 #   - libgxf_cuda.so
 #   - libgxf_multimedia.so
 #   - libgxf_serialization.so
-#   - libgxf_stream_playback.so
 
 source: "replayer" # or "aja"
 do_record: false   # or 'true' if you want to record input video stream.
@@ -187,3 +186,11 @@ demosaic:
   interpolation_mode: 0 # this is the only interpolation mode supported by NPP currently
 
 video_composer:
+
+v4l2_video_capture:
+  width: 320
+  height: 240
+  pixel_format: "auto"
+  device: "/dev/video0"
+  exposure_time: 500
+  gain: 100

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,17 +27,42 @@
 
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/domain/tensor.hpp"
+#include "gxf/std/dlpack_utils.hpp"  // nvidia::gxf::numpyTypestr
+
+namespace {
+
+// A macro like CHECK_CUDA_ERROR from gxf/cuda/cuda_common.h, but it uses Holoscan-style
+// logging and throws an exception instead of returning an nvidia::gxf::Unexpected.
+#define CHECK_CUDA_THROW_ERROR(cu_result, stmt, ...)                                    \
+  do {                                                                                  \
+    cudaError_t err = (cu_result);                                                      \
+    if (err != cudaSuccess) {                                                           \
+      HOLOSCAN_LOG_ERROR("Runtime call {} in line {} of file {} failed with '{}' ({})", \
+                         #stmt,                                                         \
+                         __LINE__,                                                      \
+                         __FILE__,                                                      \
+                         cudaGetErrorString(err),                                       \
+                         err);                                                          \
+      throw std::runtime_error("Error occurred in CUDA runtime API call");              \
+    }                                                                                   \
+  } while (0)
+
+}  // namespace
 
 namespace holoscan {
 
-void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorCtx> ctx) {
+void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorContext> ctx) {
   DLTensor& dl_tensor = ctx->tensor.dl_tensor;
 
   if (dl_tensor.data) {
     // Prepare the array interface items
 
     // Main items
-    const char* type_str = numpy_dtype(dl_tensor.dtype);
+    auto maybe_type_str = nvidia::gxf::numpyTypestr(dl_tensor.dtype);
+    if (!maybe_type_str) {
+      throw std::runtime_error("Unable to determine NumPy dtype from DLPack tensor");
+    }
+    const char* type_str = maybe_type_str.value();
     py::tuple shape = array2pytuple<pybind11::int_>(dl_tensor.shape, dl_tensor.ndim);
     py::str typestr = py::str(type_str);
     py::tuple data = pybind11::make_tuple(py::int_(reinterpret_cast<uint64_t>(dl_tensor.data)),
@@ -139,10 +164,19 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream) {
   // Wait for the current stream to finish before the provided stream starts consuming the memory.
   if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
     cudaEvent_t curr_stream_event;
-    cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming);
-    cudaEventRecord(curr_stream_event, curr_stream_ptr);
-    cudaStreamWaitEvent(stream_ptr, curr_stream_event, 0);
-    cudaEventDestroy(curr_stream_event);
+    cudaError_t cuda_status;
+
+    cuda_status = cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming);
+    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventCreateWithFlags");
+
+    cuda_status = cudaEventRecord(curr_stream_event, curr_stream_ptr);
+    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventRecord");
+
+    cuda_status = cudaStreamWaitEvent(stream_ptr, curr_stream_event, 0);
+    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaStreamWaitEvent");
+
+    cuda_status = cudaEventDestroy(curr_stream_event);
+    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventDestroy");
   }
 
   DLManagedTensor* dl_managed_tensor = tensor->to_dlpack();

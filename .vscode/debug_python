@@ -19,7 +19,7 @@
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 
 if [ -e ${SCRIPT_DIR}/debug_env.sh ]; then
-    # User can place debug_env.sh in the same directory as this script (scripts/debug_env.sh would be ignored in git repo)
+    # User can place debug_env.sh in the same directory as this script (.vscode/debug_env.sh would be ignored in git repo)
     . ${SCRIPT_DIR}/debug_env.sh
 fi
 

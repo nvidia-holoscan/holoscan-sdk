@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,20 +38,7 @@ void Resource::initialize() {
 
   // Set arguments
   auto& params = spec.params();
-  for (auto& arg : args_) {
-    // Find if arg.name() is in spec.params()
-    if (params.find(arg.name()) == params.end()) {
-      HOLOSCAN_LOG_WARN("Argument '{}' not found in spec_->params()", arg.name());
-      continue;
-    }
-
-    // Set arg.value() to spec.params()[arg.name()]
-    auto& param_wrap = params[arg.name()];
-
-    HOLOSCAN_LOG_TRACE("GXFResource '{}':: setting argument '{}'", name(), arg.name());
-
-    ArgumentSetter::set_param(param_wrap, arg);
-  }
+  update_params_from_args(params);
 
   // Set default values for unspecified arguments if the resource is native
   if (resource_type_ == ResourceType::kNative) {

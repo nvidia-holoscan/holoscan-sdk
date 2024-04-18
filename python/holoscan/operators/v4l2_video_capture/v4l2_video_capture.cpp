@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +16,7 @@
  */
 
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>  // for unordered_map -> dict, etc.
+#include <pybind11/stl.h>  // for std::optional support
 
 #include <cstdint>
 #include <memory>
@@ -61,13 +61,22 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
                        uint32_t height = 0, uint32_t num_buffers = 4,
                        const std::string& pixel_format = "auto",
-                       const std::string& name = "v4l2_video_capture")
+                       const std::string& name = "v4l2_video_capture",
+                       std::optional<uint32_t> exposure_time = std::nullopt,
+                       std::optional<uint32_t> gain = std::nullopt)
       : V4L2VideoCaptureOp(ArgList{Arg{"allocator", allocator},
                                    Arg{"device", device},
                                    Arg{"width", width},
                                    Arg{"height", height},
                                    Arg{"numBuffers", num_buffers},
                                    Arg{"pixel_format", pixel_format}}) {
+    if (exposure_time.has_value()) {
+      this->add_arg(Arg{"exposure_time", exposure_time.value() });
+    }
+    if (gain.has_value()) {
+      this->add_arg(Arg{"gain", gain.value() });
+    }
+
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -104,7 +113,9 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
                     uint32_t,
                     uint32_t,
                     const std::string&,
-                    const std::string&>(),
+                    const std::string&,
+                    std::optional<uint32_t>,
+                    std::optional<uint32_t>>(),
            "fragment"_a,
            "allocator"_a,
            "device"_a = "0"s,
@@ -113,7 +124,9 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
            "num_buffers"_a = 4,
            "pixel_format"_a = "auto"s,
            "name"_a = "v4l2_video_capture"s,
-           doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp_python)
+           "exposure_time"_a = py::none(),
+           "gain"_a = py::none(),
+           doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp)
       .def("initialize", &V4L2VideoCaptureOp::initialize, doc::V4L2VideoCaptureOp::doc_initialize)
       .def("setup", &V4L2VideoCaptureOp::setup, "spec"_a, doc::V4L2VideoCaptureOp::doc_setup);
 }  // PYBIND11_MODULE NOLINT

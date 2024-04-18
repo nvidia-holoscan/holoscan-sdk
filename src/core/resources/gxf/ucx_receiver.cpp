@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 
+#include "gxf/ucx/ucx_serialization_buffer.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -29,29 +30,29 @@ namespace holoscan {
 
 UcxReceiver::UcxReceiver(const std::string& name, nvidia::gxf::Receiver* component)
     : Receiver(name, component) {
-  uint64_t capacity = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "capacity", &capacity));
-  capacity_ = capacity;
-  uint64_t policy = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt64(gxf_context_, gxf_cid_, "policy", &policy));
-  policy_ = policy;
-  const char* address;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetStr(gxf_context_, gxf_cid_, "address", &address));
-  address_ = std::string(address);
-  uint32_t port = 0;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetUInt32(gxf_context_, gxf_cid_, "port", &port));
-  port_ = port;
+  auto maybe_capacity = component->getParameter<uint64_t>("capacity");
+  if (!maybe_capacity) { throw std::runtime_error("Failed to get capacity"); }
+  capacity_ = maybe_capacity.value();
+
+  auto maybe_policy = component->getParameter<uint64_t>("policy");
+  if (!maybe_policy) { throw std::runtime_error("Failed to get policy"); }
+  policy_ = maybe_policy.value();
+
+  auto maybe_address = component->getParameter<std::string>("address");
+  if (!maybe_address) { throw std::runtime_error("Failed to get address"); }
+  address_ = maybe_address.value();
+
+  auto maybe_port = component->getParameter<uint32_t>("port");
+  if (!maybe_port) { throw std::runtime_error("Failed to get port"); }
+  port_ = maybe_port.value();
 
   // get the serialization buffer object
-  gxf_uid_t buffer_cid;
-  HOLOSCAN_GXF_CALL_FATAL(GxfParameterGetHandle(gxf_context_, gxf_cid_, "buffer", &buffer_cid));
-  gxf_tid_t ucx_serialization_buffer_tid{};
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(
-      gxf_context_, "nvidia::gxf::UcxSerializationBuffer", &ucx_serialization_buffer_tid));
-  nvidia::gxf::SerializationBuffer* buffer_ptr;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentPointer(
-      gxf_context_, gxf_cid_, ucx_serialization_buffer_tid, reinterpret_cast<void**>(&buffer_ptr)));
-  buffer_ = std::make_shared<UcxSerializationBuffer>(std::string{buffer_ptr->name()}, buffer_ptr);
+  auto maybe_buffer =
+      component->getParameter<nvidia::gxf::Handle<nvidia::gxf::UcxSerializationBuffer>>("buffer");
+  if (!maybe_buffer) { throw std::runtime_error("Failed to get buffer"); }
+  auto buffer_handle = maybe_buffer.value();
+  buffer_ = std::make_shared<holoscan::UcxSerializationBuffer>(std::string{buffer_handle->name()},
+                                                               buffer_handle.get());
 }
 
 void UcxReceiver::setup(ComponentSpec& spec) {
@@ -64,6 +65,10 @@ void UcxReceiver::setup(ComponentSpec& spec) {
 
   // TODO: implement OperatorSpec::resource for managing nvidia::gxf:Resource types
   // spec.resource(gpu_device_, "Optional GPU device resource");
+}
+
+nvidia::gxf::UcxReceiver* UcxReceiver::get() const {
+  return static_cast<nvidia::gxf::UcxReceiver*>(gxf_cptr_);
 }
 
 void UcxReceiver::initialize() {
@@ -79,6 +84,8 @@ void UcxReceiver::initialize() {
     auto buffer =
         frag->make_resource<holoscan::UcxSerializationBuffer>("ucx_rx_serialization_buffer");
     add_arg(Arg("buffer") = buffer);
+    buffer->gxf_cname(buffer->name().c_str());
+    if (gxf_eid_ != 0) { buffer->gxf_eid(gxf_eid_); }
   }
   GXFResource::initialize();
 }
