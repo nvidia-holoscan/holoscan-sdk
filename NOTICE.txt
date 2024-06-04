@@ -47,8 +47,8 @@ Licensed under MIT (https://github.com/fmtlib/fmt/blob/8.1.1/LICENSE.rst)
 
 GLFW (https://www.glfw.org/)
 Copyright (c) 2002-2006 Marcus Geelnard
-Copyright (c) 2006-2016 Camilla Berglund <elmindreda@glfw.org>
-Licensed under Zlib (https://github.com/glfw/glfw/blob/3.3.7/COPYING.txt)
+Copyright (c) 2006-2019 Camilla Löwy
+Licensed under Zlib (https://github.com/glfw/glfw/blob/3.4/LICENSE.md)
 
 gRPC (https://github.com/grpc/grpc)
 Copyright 2014 gRPC authors.
@@ -80,6 +80,20 @@ Copyright © 2013-2014 University of Wisconsin-La Crosse. All rights reserved.
 Copyright © 2015      Research Organization for Information Science and Technology (RIST). All rights reserved.
 Copyright © 2015-2016 Intel, Inc.  All rights reserved.
 Licensed under BSD-3-clause (https://github.com/open-mpi/hwloc/blob/hwloc-2.9.0/COPYING)
+
+AJA NTV2 SDK (https://github.com/nvidia-holoscan/libajantv2)
+Copyright (c) 2023 AJA Video Systems
+Licensed under MIT (https://github.com/nvidia-holoscan/libajantv2/blob/holoscan/LICENSE)
+
+libdecor-0-plugin-1-cairo (https://packages.ubuntu.com/jammy/libdecor-0-plugin-1-cairo)
+2010 Intel Corporation
+2011 Benjamin Franzke
+2017-2018 Red Hat Inc
+2018-2019 Jonas Ã…dahl
+2019 Christian Rauch
+2021 Christian Rauch
+2021 Marco Trevisan
+Licensed under MIT (http://changelogs.ubuntu.com/changelogs/pool/main/libd/libdecor-0/libdecor-0_0.1.0-3build1/copyright)
 
 libegl1 (https://packages.ubuntu.com/jammy/libegl1)
 2013-2017 NVIDIA Corporation
@@ -144,6 +158,63 @@ libvulkan1 (https://packages.ubuntu.com/jammy/libvulkan1)
 2015-2016 LunarG, Inc
 Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/main/v/vulkan-loader/vulkan-loader_1.3.204.1-2/copyright)
 
+libwayland-client (https://packages.ubuntu.com/jammy/libwayland-client++0)
+Copyright: 2014-2019, Nils Christopher Brause
+Copyright: 2014-2019, Nils Christopher Brause, Philipp Kerling
+Copyright: 2014-2019, Philipp Kerling, Nils Christopher Brause
+Copyright: 2015-2016, Red Hat Inc.
+Copyright: 2013-2014, Collabora, Ltd.
+Copyright: 2017-2019, Philipp Kerling
+Copyright: 2014-2019, Nils Christopher Brause, Philipp Kerling, Zsolt BÃ¶lÃ¶ny
+Copyright: 2012-2013, Intel Corporation
+Copyright: 2014, Jonas Ã…dahl
+Copyright: 2014, Stephen "Lyude" Chandler Paul
+Copyright: 2014-2019, Philipp Kerling, Nils Christopher Brause, Craig Andrews, Tobias Kortkamp, Balint Reczey
+Copyright: 2014-2019, Nils Christopher Brause, Philipp Kerling, Bernd Kuhls
+Copyright: 2012-2013, Intel Corporation
+Copyright: 2016, The Chromium Authors.
+Copyright: 2008-2011, Kristian HÃ¸gsberg
+Copyright: 2008-2013, Kristian HÃƒÂ¸gsberg
+Copyright: 2008-2013, Kristian HÃƒÂ¸gsberg
+Copyright: 2015, Jason Ekstrand
+Copyright: 2015-2016, Red Hat
+Copyright: 2015, Samsung Electronics Co., Ltd
+Copyright: 2018, Simon Ser
+Copyright: 2017 wsnipex <wsnipex@a1.net> 2019 Balint Reczey <rbalint@ubuntu.com>
+Licensed under MIT, BSD-2 (https://changelogs.ubuntu.com/changelogs/pool/universe/w/waylandpp/waylandpp_0.2.8-2/copyright)
+
+libwayland-dev (https://packages.ubuntu.com/jammy/libwayland-dev)
+Copyright: Â© 2011 Cyril Brulebois <kibi@debian.org>
+Copyright: Â© 1999 SuSE, Inc. Â© 2002 Keith Packard Â© 2006, 2008 Junio C Hamano Â© 2008-2012 Kristian HÃ¸gsberg Â© 2010-2012 Intel Corporation Â© 2011 Benjamin Franzke Â© 2012-2013, 2016 Collabora, Ltd Â© 2012-2013 Jason Ekstrand Â© 2012-2014 Jonas Ã…dahl Â© 2013 Marek Chalupa Â© 2014-2015 Red Hat, Inc. Â© 2015 Giulio Camuffo  Â© 2016 KlarÃ¤lvdalens Datakonsult AB Â© 2016 Yong Bakos Â© 2017 NVIDIA CORPORATION Â© 2017 Samsung Electronics Co., Ltd
+Licensed under MIT (https://changelogs.ubuntu.com/changelogs/pool/main/w/wayland/wayland_1.20.0-1ubuntu0.1/copyright)
+
+libwayland-egl1 (https://packages.ubuntu.com/jammy/libwayland-egl1)
+Copyright 2011 Cyril Brulebois <kibi@debian.org>
+Copyright: 1999 SuSE, Inc.
+Copyright: 2002 Keith Packard
+Copyright: 2006, 2008 Junio C Hamano
+Copyright: 2008-2012 Kristian HÃ¸gsberg
+Copyright: 2010-2012 Intel Corporation
+Copyright: 2011 Benjamin Franzke
+Copyright: 2012-2013, 2016 Collabora, Ltd
+Copyright: 2012-2013 Jason Ekstrand
+Copyright: 2012-2014 Jonas Ã…dahl
+Copyright: 2013 Marek Chalupa
+Copyright: 2014-2015 Red Hat, Inc.
+Copyright: 2015 Giulio Camuffo
+Copyright: 2016 KlarÃ¤lvdalens Datakonsult AB
+Copyright: 2016 Yong Bakos
+Copyright: 2017 NVIDIA CORPORATION
+Copyright: 2017 Samsung Electronics Co., Ltd
+Licensed under X11 (https://changelogs.ubuntu.com/changelogs/pool/main/w/wayland/wayland_1.20.0-1ubuntu0.1/copyright)
+
+libxkbcommon-dev (https://packages.ubuntu.com/jammy/libxkbcommon-dev)
+Copyright 1985, 1987, 1988, 1990, 1998  The Open Group
+Copyright 2008, 2009  Dan Nicholson
+Copyright (c) 1993, 1994, 1995, 1996 by Silicon Graphics Computer Systems, Inc.
+Copyright 1987, 1988 by Digital Equipment Corporation, Maynard, Massachusetts.
+Licensed under MIT (https://changelogs.ubuntu.com/changelogs/pool/main/libx/libxkbcommon/libxkbcommon_1.4.0-1/copyright)
+
 magic_enum (https://github.com/Neargye/magic_enum)
 Copyright (c) 2019 - 2023 Daniil Goncharov
 Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
@@ -155,10 +226,6 @@ Licensed under ISSL (https://www.intel.com/content/www/us/en/developer/articles/
 Ninja (https://packages.ubuntu.com/jammy/ninja-build)
 2011-2014 Google
 Licensed under Apache 2 License (http://changelogs.ubuntu.com/changelogs/pool/universe/n/ninja-build/ninja-build_1.10.1-1/copyright)
-
-AJA NTV2 SDK (https://github.com/ibstewart/ntv2)
-Copyright (c) 2021 AJA Video Systems
-Licensed under MIT (https://github.com/ibstewart/ntv2/blob/holoscan-v0.2.0/LICENSE)
 
 nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
@@ -174,6 +241,11 @@ openblas (https://packages.ubuntu.com/jammy/libopenblas0)
 2013      Martin Koehler, grisuthedragon@users.github.com
 2020      IBM Corporation
 Licensed under BSD (http://changelogs.ubuntu.com/changelogs/pool/universe/o/openblas/openblas_0.3.20+ds-1/copyright)
+
+pkg-config (https://packages.ubuntu.com/jammy/pkg-config)
+Copyright (C) 2001, 2002 Red Hat Inc.
+Copyright (C) 2004, 2005 Tollef Fog Heen <tfheen@err.no>
+Licensed under GPLv2 (http://changelogs.ubuntu.com/changelogs/pool/main/p/pkg-config/pkg-config_0.29.2-1ubuntu3/copyright)
 
 pybind11 (https://github.com/pybind/pybind11)
 Copyright (c) 2016 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.

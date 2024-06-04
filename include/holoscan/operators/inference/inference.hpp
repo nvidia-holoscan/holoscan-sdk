@@ -69,6 +69,7 @@ namespace holoscan::ops {
  * - **pre_processor_map**: Pre processed data to model map.
  * - **device_map**: Mapping of model (`DataMap`) to GPU ID for inference. Optional.
  * - **backend_map**: Mapping of model (`DataMap`) to backend type for inference.
+ * - **temporal_map**: Mapping of model (`DataMap`) to a frame delay for model inference. Optional.
  *   Backend options: `"trt"` or `"torch"`. Optional.
  * - **in_tensor_names**: Input tensors (`std::vector<std::string>`). Optional.
  * - **out_tensor_names**: Output tensors (`std::vector<std::string>`). Optional.
@@ -83,6 +84,14 @@ namespace holoscan::ops {
  *   (default: `false`).
  * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams. Optional
  *   (default: `nullptr`).
+ *
+ * ==Device Memory Requirements==
+ *
+ * When using this operator with a `BlockMemoryPool`, `num_blocks` must be greater than or equal to
+ * the number of output tensors that will be produced. The `block_size` in bytes must be greater
+ * than or equal to the largest output tensor (in bytes). If `output_on_cuda` is true, the blocks
+ * should be in device memory (`storage_type`=1), otherwise they should be CUDA pinned host memory
+ * (`storage_type`=0).
  */
 class InferenceOp : public holoscan::Operator {
  public:
@@ -138,6 +147,9 @@ class InferenceOp : public holoscan::Operator {
 
   /// @brief Map with key as model name and value as GPU ID for inference
   Parameter<DataMap> device_map_;
+
+  /// @brief Map with key as model name and value as frame delay for model inference
+  Parameter<DataMap> temporal_map_;
 
   ///  @brief Input tensor names
   Parameter<std::vector<std::string>> in_tensor_names_;

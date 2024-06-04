@@ -110,6 +110,13 @@ class Tensor {
   std::vector<int64_t> strides() const;
 
   /**
+   * @brief Check if the tensor a has contiguous, row-major memory layout.
+   *
+   * @return True if the tensor is contiguous, False otherwise.
+   */
+  bool is_contiguous() const;
+
+  /**
    * @brief Get the size (number of elements) in the Tensor.
    *
    * The size is defined as the number of elements, not the number of bytes. For the latter,

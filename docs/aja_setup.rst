@@ -4,10 +4,10 @@ AJA Video Systems
 =================
 
 `AJA`_ provides a wide range of proven, professional video I/O devices, and thanks to a
-partnership between NVIDIA and AJA, Holoscan supports the AJA NTV2 SDK and device
-drivers as of the NTV2 SDK 16.1 release.
+partnership between NVIDIA and AJA, Holoscan provides ongoing support for the AJA NTV2
+SDK and device drivers.
 
-The AJA drivers and SDK now offer RDMA support for NVIDIA GPUs. This feature allows
+The AJA drivers and SDK offer RDMA support for NVIDIA GPUs. This feature allows
 video data to be captured directly from the AJA card to GPU memory, which
 significantly reduces latency and system PCI bandwidth for GPU video processing
 applications as sysmem to GPU copies are eliminated from the processing
@@ -17,7 +17,7 @@ The following instructions describe the steps required to setup and use an AJA
 device with RDMA support on NVIDIA Developer Kits with a PCIe slot. Note that the AJA NTV2
 SDK support for Holoscan includes all of the `AJA Developer Products`_,
 though the following instructions have only been verified for the `Corvid 44
-12G BNC`_ and `KONA HDMI`_ products, specifically.
+12G BNC`_, `KONA XM`, and `KONA HDMI`_ products, specifically.
 
 .. Note::
 
@@ -32,6 +32,7 @@ though the following instructions have only been verified for the `Corvid 44
 .. _AJA: https://www.aja.com/
 .. _AJA Developer Products: https://www.aja.com/family/developer
 .. _Corvid 44 12G BNC: https://www.aja.com/products/corvid-44-12g-bnc
+.. _KONA XM: https://www.aja.com/products/kona-xm
 .. _KONA HDMI: https://www.aja.com/products/kona-hdmi
 
 
@@ -115,8 +116,8 @@ then perform the following to clone the NTV2 SDK source code.
 
    .. code-block:: sh
 
-      $ git clone https://github.com/nvidia-holoscan/ntv2.git
-      $ export NTV2=$(pwd)/ntv2
+      $ git clone https://github.com/nvidia-holoscan/libajantv2.git
+      $ export NTV2=$(pwd)/libajantv2
 
 .. Note::
 
@@ -126,8 +127,37 @@ then perform the following to clone the NTV2 SDK source code.
    repository whenever possible with the goal to minimize or eliminate
    divergence between the two repositories.
 
-.. _AJA NTV2 Repository: https://github.com/aja-video/ntv2
+.. _AJA NTV2 Repository: https://github.com/aja-video/libajantv2
 
+
+.. _nvidia_open_driver_install:
+
+Installing the NVIDIA Open Kernel Modules for RDMA Support
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If the AJA NTV2 drivers are going to be built with RDMA support, the open-source
+NVIDIA kernel modules must be installed instead of the default proprietary drivers.
+If the drivers were installed from an NVIDIA driver installer package then follow
+the directions on the `NVIDIA Open GPU Kernel Module Source GitHub`_ page. If the
+NVIDIA drivers were installed using an Ubuntu package via `apt`, then replace the
+installed `nvidia-kernel-source` package with the corresponding `nvidia-kernel-open`
+package. For example, the following shows that the `545` version drivers are installed:
+
+   .. code-block:: sh
+
+      S dpkg --list | grep nvidia-kernel-source
+      ii  nvidia-kernel-source-545    545.23.08-0ubuntu1    amd64    NVIDIA kernel source package
+
+And the following will replace those with the corresponding `nvidia-kernel-open` drivers:
+
+   .. code-block:: sh
+
+      S sudo apt install -y nvidia-kernel-open-545
+      $ sudo dpkg-reconfigure nvidia-dkms-545
+
+The system must then be rebooted to load the new open kernel modules.
+
+.. _NVIDIA Open GPU Kernel Module Source GitHub: https://github.com/NVIDIA/open-gpu-kernel-modules
 
 .. _aja_driver_build:
 
@@ -137,13 +167,13 @@ Building the AJA NTV2 Drivers
 The following will build the AJA NTV2 drivers with RDMA support enabled. Once
 built, the kernel module (**ajantv2.ko**) and load/unload scripts
 (**load_ajantv2** and **unload_ajantv2**) will be output to the
-:code:`${NTV2}/bin` directory.
+:code:`${NTV2}/driver/bin` directory.
 
    .. code-block:: sh
 
       $ export AJA_RDMA=1 # Or unset AJA_RDMA to disable RDMA support
       $ unset AJA_IGPU # Or export AJA_IGPU=1 to run on the integrated GPU of the IGX Orin Devkit (L4T >= 35.4)
-      $ make -j --directory ${NTV2}/ajadriver/linux
+      $ make -j --directory ${NTV2}/driver/linux
 
 
 .. _aja_driver_load:
@@ -164,9 +194,8 @@ The AJA drivers must be manually loaded every time the machine is rebooted using
 
    .. code-block:: sh
 
-      $ sudo sh ${NTV2}/bin/load_ajantv2
+      $ sudo sh ${NTV2}/driver/bin/load_ajantv2
       loaded ajantv2 driver module
-      created node /dev/ajantv20
 
    .. Note::
 
@@ -239,15 +268,17 @@ previous step, :ref:`aja_sdk_install`. If any errors occur, see the
           2Kp47.95a, 2Kp48a
 
 2. To ensure that RDMA support has been compiled into the AJA driver and is
-   functioning correctly, the :code:`testrdma` utility can be used:
+   functioning correctly, the :code:`rdmawhacker` utility can be used (use
+   `<ctrl-c>` to terminate):
 
    .. code-block:: sh
 
-      $ testrdma -t500
+      $ rdmawhacker
 
-      test device 0  start 0  end 7  size 8388608  count 500
-
-      frames/errors 500/0
+      DMA engine 1 WRITE 8388608 bytes  rate: 3975.63 MB/sec  496.95 xfers/sec
+      Max rate: 4010.03 MB/sec
+      Min rate: 3301.69 MB/sec
+      Avg rate: 3923.94 MB/sec
 
 
 .. _aja_use_in_containers:
@@ -265,7 +296,7 @@ the :code:`--device` docker argument, such as `--device /dev/ajantv20:/dev/ajant
 
 Troubleshooting
 ---------------
-1. **Problem:** The :code:`sudo sh ${NTV2}/bin/load_ajantv2` command returns
+1. **Problem:** The :code:`sudo sh ${NTV2}/driver/bin/load_ajantv2` command returns
    an error.
 
    **Solutions:**
@@ -327,11 +358,11 @@ Troubleshooting
          ib_core               211721  1 mlx5_ib
          nvidia              34655210  315 nvidia_modeset
 
-3. **Problem:** The :code:`testrdma` command outputs the following error:
+3. **Problem:** The :code:`rdmawhacker` command outputs the following error:
 
       .. code-block:: sh
 
-         error - GPU buffer lock failed
+         ## ERROR: GPU buffer lock failed
 
    **Solution:** The AJA drivers need to be compiled with RDMA support enabled.
    Follow the instructions in :ref:`aja_driver_build`, making sure not to skip

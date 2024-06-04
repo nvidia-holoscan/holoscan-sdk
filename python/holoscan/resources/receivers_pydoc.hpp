@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,13 +47,6 @@ PYDOC(DoubleBufferReceiver, R"doc(
 Receiver using a double-buffered queue.
 
 New messages are first pushed to a back stage.
-)doc")
-
-// Constructor
-PYDOC(DoubleBufferReceiver_python, R"doc(
-Receiver using a double-buffered queue.
-
-New messages are first pushed to a back stage.
 
 Parameters
 ----------
@@ -90,13 +83,6 @@ spec : holoscan.core.ComponentSpec
 namespace UcxReceiver {
 
 PYDOC(UcxReceiver, R"doc(
-UCX network receiver using a double-buffered queue.
-
-New messages are first pushed to a back stage.
-)doc")
-
-// Constructor
-PYDOC(UcxReceiver_python, R"doc(
 UCX network receiver using a double-buffered queue.
 
 New messages are first pushed to a back stage.

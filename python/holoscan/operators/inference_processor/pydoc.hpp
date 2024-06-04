@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_PYDOC_HPP
 
 #include <string>
 
@@ -42,6 +42,14 @@ Holoinfer Processing operator.
         A message containing tensors corresponding to the processed results from operations will
         be emitted. The names of the tensors transmitted correspond to those in
         ``out_tensor_names``.
+
+**==Device Memory Requirements==**
+
+    When using this operator with a ``holoscan.resources.BlockMemoryPool``, ``num_blocks`` must be
+    greater than or equal to the number of output tensors that will be produced. The ``block_size``
+    in bytes must be greater than or equal to the largest output tensor (in bytes). If
+    ``output_on_cuda`` is ``True``, the blocks should be in device memory (``storage_type=1``),
+    otherwise they should be CUDA pinned host memory (``storage_type=0``).
 
 Parameters
 ----------
@@ -93,4 +101,4 @@ spec : holoscan.core.OperatorSpec
 
 }  // namespace holoscan::doc::InferenceProcessorOp
 
-#endif /* HOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_PYDOC_HPP */

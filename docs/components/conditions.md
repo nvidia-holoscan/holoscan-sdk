@@ -32,18 +32,13 @@ Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{p
 
 **Conditions are AND-combined**
 
-An Operator can be associated with multiple conditions which define
-it's execution behavior. Conditions are AND combined to describe
-the current state of an operator. For an operator to be executed by the
-scheduler, all the conditions must be in `READY` state and
-conversely, the operator is unscheduled from execution whenever any one of
-the scheduling term reaches `NEVER` state. The priority of various states
-during AND combine follows the
-order `NEVER`, `WAIT_EVENT`, `WAIT`, `WAIT_TIME`, and `READY`.
+An Operator can be associated with multiple conditions which define its execution behavior. Conditions are AND combined to describe
+the current state of an operator. For an operator to be executed by the scheduler, all the conditions must be in `READY` state and
+conversely, the operator is unscheduled from execution whenever any one of the scheduling terms reaches `NEVER` state. The priority of various states during AND combine follows the order `NEVER`, `WAIT_EVENT`, `WAIT`, `WAIT_TIME`, and `READY`.
 
 ## MessageAvailableCondition
 
-An operator associated with `MessageAvailableCondition` is executed when the associated queue of the input port has at least a certain number of elements.
+An operator associated with `MessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::MessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.MessageAvailableCondition>`) is executed when the associated queue of the input port has at least a certain number of elements.
 This condition is associated with a specific input port of an operator through the `condition()` method on the return value (IOSpec) of the OperatorSpec's `input()` method.
 
 The minimum number of messages that permits the execution of the operator is specified by `min_size` parameter (default: `1`).
@@ -53,19 +48,19 @@ It can be used for operators which do not consume all messages from the queue.
 
 ## DownstreamMessageAffordableCondition
 
-This condition specifies that an operator shall be executed if the input port of the downstream operator for a given output port can accept new messages.
+The `DownstreamMessageAffordableCondition` ({cpp:class}`C++ <holoscan::gxf::DownstreamMessageAffordableCondition>`/{py:class}`Python <holoscan.conditions.DownstreamMessageAffordableCondition>`) condition specifies that an operator shall be executed if the input port of the downstream operator for a given output port can accept new messages.
 This condition is associated with a specific output port of an operator through the `condition()` method on the return value (IOSpec) of the OperatorSpec's `output()` method.
 The minimum number of messages that permits the execution of the operator is specified by `min_size` parameter (default: `1`).
 
 ## CountCondition
 
-An operator associated with `CountCondition` is executed for a specific number of times specified using its `count` parameter.
+An operator associated with `CountCondition` ({cpp:class}`C++ <holoscan::gxf::CountCondition>`/{py:class}`Python <holoscan.conditions.CountCondition>`) is executed for a specific number of times specified using its `count` parameter.
 The scheduling status of the operator associated with this condition can either be in `READY` or `NEVER` state.
 The scheduling status reaches the `NEVER` state when the operator has been executed `count` number of times.
 
 ## BooleanCondition
 
-An operator associated with `BooleanCondition` is executed when the associated boolean variable is set to `true`.
+An operator associated with `BooleanCondition` ({cpp:class}`C++ <holoscan::gxf::BooleanCondition>`/{py:class}`Python <holoscan.conditions.BooleanCondition>`) is executed when the associated boolean variable is set to `true`.
 The boolean variable is set to `true`/`false` by calling the `enable_tick()`/`disable_tick()` methods on the `BooleanCondition` object.
 The `check_tick_enabled()` method can be used to check if the boolean variable is set to `true`/`false`.
 The scheduling status of the operator associated with this condition can either be in `READY` or `NEVER` state.
@@ -99,16 +94,12 @@ def compute(self, op_input, op_output, context):
 
 ## PeriodicCondition
 
-An operator associated with `PeriodicCondition` is executed after periodic time intervals specified using its `recess_period` parameter.
-The scheduling status of the operator associated with this condition can either be in `READY` or `WAIT_TIME` state.
-For the first time or after periodic time intervals, the scheduling status of the operator associated with this condition is set to `READY` and the operator is executed.
-After the operator is executed, the scheduling status is set to `WAIT_TIME` and the operator is not executed until the `recess_period` time interval.
+An operator associated with `PeriodicCondition` ({cpp:class}`C++ <holoscan::gxf::PeriodicCondition>`/{py:class}`Python <holoscan.conditions.PeriodicCondition>`) is executed after periodic time intervals specified using its `recess_period` parameter. The scheduling status of the operator associated with this condition can either be in `READY` or `WAIT_TIME` state.
+For the first time or after periodic time intervals, the scheduling status of the operator associated with this condition is set to `READY` and the operator is executed. After the operator is executed, the scheduling status is set to `WAIT_TIME`, and the operator is not executed until the `recess_period` time interval.
 
 ## AsynchronousCondition
 
-AsynchronousCondition is primarily associated with operators which are working with asynchronous events happening outside of their regular execution performed by the scheduler.
-Since these events are non-periodic in nature, AsynchronousCondition prevents the scheduler from polling the operator for its status regularly and reduces CPU utilization.
-The scheduling status of the operator associated with this condition can either be in `READY`, `WAIT`, `WAIT_EVENT` or `NEVER` states based on the asynchronous event it's waiting on.
+`AsynchronousCondition` ({cpp:class}`C++ <holoscan::gxf::AsynchronousCondition>`/{py:class}`Python <holoscan.conditions.AsynchronousCondition>`) is primarily associated with operators which are working with asynchronous events happening outside of their regular execution performed by the scheduler. Since these events are non-periodic in nature, `AsynchronousCondition` prevents the scheduler from polling the operator for its status regularly and reduces CPU utilization. The scheduling status of the operator associated with this condition can either be in `READY`, `WAIT`, `WAIT_EVENT`, or `NEVER` states based on the asynchronous event it's waiting on.
 
 The state of an asynchronous event is described using `AsynchronousEventState` and is updated using the `event_state()` API.
 
@@ -120,8 +111,4 @@ The state of an asynchronous event is described using `AsynchronousEventState` a
 | EVENT\_DONE                  | Event done notification received, operator ready to be ticked       |
 | EVENT\_NEVER                 | Operator does not want to be executed again, end of execution       |
 
-Operators associated with this scheduling term most likely have an asynchronous thread which can update the state of the condition outside of it's regular execution cycle performed by the scheduler.
-When the asynchronous event state is in `WAIT` state, the scheduler regularly polls for the scheduling state of the operator.
-When the asynchronous event state is in `EVENT_WAITING` state, schedulers will not check the scheduling status of the operator again until they receive an event notification.
-Setting the state of the asynchronous event to `EVENT_DONE` automatically sends the event notification to the scheduler.
-Operators can use the `EVENT_NEVER` state to indicate the end of its execution cycle.
+Operators associated with this scheduling term most likely have an asynchronous thread which can update the state of the condition outside of its regular execution cycle performed by the scheduler. When the asynchronous event state is in `WAIT` state, the scheduler regularly polls for the scheduling state of the operator. When the asynchronous event state is in `EVENT_WAITING` state, schedulers will not check the scheduling status of the operator again until they receive an event notification. Setting the state of the asynchronous event to `EVENT_DONE` automatically sends the event notification to the scheduler. Operators can use the `EVENT_NEVER` state to indicate the end of its execution cycle. As for all of the condition types, the condition type can be used with any of the schedulers.

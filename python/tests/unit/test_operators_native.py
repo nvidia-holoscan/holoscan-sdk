@@ -254,7 +254,7 @@ class TestTensor:
         assert t.shape == arr.shape
         assert t.strides == arr.strides
 
-        assert type(t.data).__name__ == "PyCapsule"
+        assert isinstance(t.data, int)
 
     @pytest.mark.parametrize(
         "dtype", unsigned_dtypes + signed_dtypes + float_dtypes + complex_dtypes

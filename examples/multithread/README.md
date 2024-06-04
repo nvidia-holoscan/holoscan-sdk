@@ -15,8 +15,7 @@ The user can configure the number of delay operators via the `num_delay_op` para
 
 The number of workers used by the multi-threaded scheduler is controlled by the `worker_thread_number` parameter in `app_config.yaml`.
 
-Data Flow Tracking is also optionally enabled by changing the `tracking` field in the YAML file.
-It is set to `false` by default.
+Data Flow Tracking is also optionally enabled by changing the `tracking` field in the YAML file. It is set to `false` by default. Other options in the YAML include a `silent` option to suppress verbose output from the operators (`false` by default) and a `count` option that can be used to control how many messages are sent from the transmitter (1 by default).
 
 ### Build instructions
 

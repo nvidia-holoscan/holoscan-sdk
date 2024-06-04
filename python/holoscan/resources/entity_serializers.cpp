@@ -70,7 +70,7 @@ void init_entity_serializers(py::module_& m) {
            // "component_serializers"_a = std::vector<std::shared_ptr<holoscan::Resource>>{},
            "verbose_warning"_a = false,
            "name"_a = "ucx_entity_serializer"s,
-           doc::UcxEntitySerializer::doc_UcxEntitySerializer_python)
+           doc::UcxEntitySerializer::doc_UcxEntitySerializer)
       .def_property_readonly("gxf_typename",
                              &UcxEntitySerializer::gxf_typename,
                              doc::UcxEntitySerializer::doc_gxf_typename)

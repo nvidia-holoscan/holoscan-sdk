@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -54,7 +55,7 @@ class PyAJASourceOp : public AJASourceOp {
   using AJASourceOp::AJASourceOp;
 
   // Define a constructor that fully initializes the object.
-  PyAJASourceOp(Fragment* fragment, const std::string& device = "0"s,
+  PyAJASourceOp(Fragment* fragment, const py::args& args, const std::string& device = "0"s,
                 NTV2Channel channel = NTV2Channel::NTV2_CHANNEL1, uint32_t width = 1920,
                 uint32_t height = 1080, uint32_t framerate = 60, bool rdma = false,
                 bool enable_overlay = false,
@@ -69,6 +70,7 @@ class PyAJASourceOp : public AJASourceOp {
                             Arg{"enable_overlay", enable_overlay},
                             Arg{"overlay_channel", overlay_channel},
                             Arg{"overlay_rdma", overlay_rdma}}) {
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -80,20 +82,10 @@ class PyAJASourceOp : public AJASourceOp {
 
 PYBIND11_MODULE(_aja_source, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
+        Holoscan SDK AJASourceOp Python Bindings
         ---------------------------------------
         .. currentmodule:: _aja_source
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::enum_<NTV2Channel>(m, "NTV2Channel")
       .value("NTV2_CHANNEL1", NTV2Channel::NTV2_CHANNEL1)
@@ -110,6 +102,7 @@ PYBIND11_MODULE(_aja_source, m) {
   py::class_<AJASourceOp, PyAJASourceOp, Operator, std::shared_ptr<AJASourceOp>>(
       m, "AJASourceOp", doc::AJASourceOp::doc_AJASourceOp)
       .def(py::init<Fragment*,
+                    const py::args&,
                     const std::string&,
                     NTV2Channel,
                     uint32_t,

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_OPERATOR_HPP
-#define PYBIND11_CORE_OPERATOR_HPP
+#ifndef PYHOLOSCAN_CORE_OPERATOR_HPP
+#define PYHOLOSCAN_CORE_OPERATOR_HPP
 
 #include <pybind11/pybind11.h>
 
@@ -163,4 +163,4 @@ class PyOperator : public Operator {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_OPERATOR_HPP */
+#endif /* PYHOLOSCAN_CORE_OPERATOR_HPP */

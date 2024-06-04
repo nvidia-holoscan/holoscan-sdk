@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +46,7 @@ Class representing a condition.
 Can be initialized with any number of Python positional and keyword arguments.
 
 If a `name` keyword argument is provided, it must be a `str` and will be
-used to set the name of the Operator.
+used to set the name of the condition.
 
 If a `fragment` keyword argument is provided, it must be of type
 `holoscan.core.Fragment` (or

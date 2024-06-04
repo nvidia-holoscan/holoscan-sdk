@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_FRAGMENT_HPP
-#define PYBIND11_CORE_FRAGMENT_HPP
+#ifndef PYHOLOSCAN_CORE_FRAGMENT_HPP
+#define PYHOLOSCAN_CORE_FRAGMENT_HPP
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -77,4 +77,4 @@ class PyFragment : public Fragment {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_FRAGMENT_HPP */
+#endif /* PYHOLOSCAN_CORE_FRAGMENT_HPP */

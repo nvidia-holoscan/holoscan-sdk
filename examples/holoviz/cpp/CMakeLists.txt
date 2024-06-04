@@ -13,7 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Create example
+# Create examples
+add_executable(holoviz_camera
+  holoviz_camera.cpp
+)
+
+target_link_libraries(holoviz_camera
+  PRIVATE
+  holoscan::core
+  holoscan::ops::holoviz
+)
+
 add_executable(holoviz_geometry
   holoviz_geometry.cpp
 )
@@ -28,28 +38,29 @@ target_link_libraries(holoviz_geometry
 # Set the install RPATH based on the location of the Holoscan SDK libraries
 # The GXF extensions are loaded by the GXF libraries - no need to include here
 file(RELATIVE_PATH install_lib_relative_path ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR})
+set_target_properties(holoviz_camera PROPERTIES INSTALL_RPATH "\$ORIGIN/${install_lib_relative_path}")
 set_target_properties(holoviz_geometry PROPERTIES INSTALL_RPATH "\$ORIGIN/${install_lib_relative_path}")
 
 # Get relative folder path for the app
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
-# Install the source
-install(FILES holoviz_geometry.cpp
-  DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-examples
-)
+  # Install the source
+  install(FILES holoviz_camera.cpp holoviz_geometry.cpp
+    DESTINATION "${app_relative_dest_path}"
+    COMPONENT holoscan-examples
+  )
 
-# Install the minimal CMakeLists.txt file
-install(FILES CMakeLists.min.txt
-  RENAME "CMakeLists.txt"
-  DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-examples
-)
+  # Install the minimal CMakeLists.txt file
+  install(FILES CMakeLists.min.txt
+    RENAME "CMakeLists.txt"
+    DESTINATION "${app_relative_dest_path}"
+    COMPONENT holoscan-examples
+  )
 endif()
 
 # Install the app
-install(TARGETS holoviz_geometry
+install(TARGETS holoviz_camera holoviz_geometry
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )
@@ -64,10 +75,12 @@ if(HOLOSCAN_BUILD_TESTS)
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
   # Patch the current example to enable recording the rendering window
+  set(_patch_file ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/holoviz_geometry/cpp_holoviz_geometry.patch)
   add_custom_command(OUTPUT holoviz_geometry_test.cpp
     PRE_LINK
     COMMAND patch -u -o holoviz_geometry_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.cpp
-            ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/holoviz_geometry/cpp_holoviz_geometry.patch
+            ${_patch_file}
+    DEPENDS ${_patch_file}
   )
 
   # Create the test executable
@@ -92,13 +105,12 @@ if(HOLOSCAN_BUILD_TESTS)
     holoscan::ops::format_converter
   )
 
-  # Add the test and make sure it runs
+  # Add the geometry test and make sure it runs
   add_test(NAME EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry_test --count 10
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Received camera pose:"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )
 
@@ -116,5 +128,16 @@ if(HOLOSCAN_BUILD_TESTS)
     DEPENDS EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST
     PASS_REGULAR_EXPRESSION "Valid video output!"
   )
+
+  # Add the camera example and make sure it runs
+  add_test(NAME EXAMPLE_CPP_HOLOVIZ_CAMERA_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/holoviz_camera --count 120
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_HOLOVIZ_CAMERA_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Received camera pose:"
+    PASS_REGULAR_EXPRESSION "Scheduler stopped: Some entities are waiting for execution, but there are no periodic or async entities to get out of the deadlock."
+  )
+
 
 endif()

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_EXECUTION_CONTEXT_HPP
-#define PYBIND11_CORE_EXECUTION_CONTEXT_HPP
+#ifndef PYHOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
+#define PYHOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 
 #include <pybind11/pybind11.h>
 
@@ -52,4 +52,4 @@ class PyExecutionContext : public gxf::GXFExecutionContext {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_EXECUTION_CONTEXT_HPP */
+#endif /* PYHOLOSCAN_CORE_EXECUTION_CONTEXT_HPP */

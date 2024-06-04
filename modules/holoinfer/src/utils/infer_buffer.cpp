@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@ namespace inference {
  *
  * @param element_type Input data type. Float32 is the only supported element type.
  *
- * @returns Bytes used in storing element type
+ * @return Bytes used in storing element type
  */
 uint32_t get_element_size(holoinfer_datatype element_type) noexcept {
   switch (element_type) {
@@ -52,10 +52,13 @@ InferStatus allocate_buffers(DataMap& buffers, std::vector<int64_t>& dims,
                              bool allocate_cuda, int device_id) {
   size_t buffer_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
 
-  auto data_buffer = std::make_shared<DataBuffer>(datatype, device_id);
-  if (!data_buffer) {
+  std::shared_ptr<DataBuffer> data_buffer;
+  try {
+    data_buffer = std::make_shared<DataBuffer>(datatype, device_id);
+  } catch (std::exception& e) {
     InferStatus status = InferStatus(holoinfer_code::H_ERROR);
-    status.set_message("Data buffer creation failed for " + keyname);
+    status.set_message(
+        fmt::format("Data buffer creation failed for {} with error {}", keyname, e.what()));
     return status;
   }
   data_buffer->host_buffer.resize(buffer_size);
@@ -74,9 +77,11 @@ void DeviceFree::operator()(void* ptr) const {
 
 DataBuffer::DataBuffer(holoinfer_datatype data_type, int device_id)
     : type_(data_type), device_id_(device_id) {
-  device_buffer = std::make_shared<DeviceBuffer>(type_);
-  if (!device_buffer) {
-    throw std::runtime_error("Device buffer creation failed in DataBuffer constructor");
+  try {
+    device_buffer = std::make_shared<DeviceBuffer>(type_);
+  } catch (std::exception& e) {
+    throw std::runtime_error(
+        fmt::format("Device buffer creation failed in DataBuffer constructor with {}", e.what()));
   }
   host_buffer.set_type(type_);
 }

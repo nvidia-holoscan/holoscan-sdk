@@ -865,9 +865,9 @@ test() {
 	#
     local run_headless=$([ -z ${DISPLAY-} ] && echo "xvfb-run -a")
     launch $(get_build_dir) \
-        ${extra_args[@]} \
         --init \
         --cap-drop=NET_BIND_SERVICE \
+        ${extra_args[@]} \
         --run-cmd "$run_headless ctest . $test_regex_flag --timeout $timeout --output-on-failure $verbose $options"
 }
 
@@ -885,6 +885,7 @@ Arguments:
     --mount-point - Specifies the mount point (default is the directory of this script)
     --run-cmd - Specifies a command to run in the container instead of running interactively.
                 This is the equivalent of what you would put after `bash -c` with `docker run`.
+    --ssh-x11 : Enable X11 forwarding of graphical HoloHub applications over SSH
 '
 }
 launch() {
@@ -898,6 +899,7 @@ launch() {
     local mount_device_opt=""
     local extra_args=""
     local run_cmd="bash"
+    local ssh_x11=0
 
     # Skip the first argument to pass the remaining arguments to the docker command.
     local working_dir=${1:-$(get_build_dir)}
@@ -918,6 +920,10 @@ launch() {
             shift
             shift
         ;;
+        --ssh-x11)
+            ssh_x11=1
+            shift
+        ;;
         *)
             extra_args+=("$1")
             shift
@@ -927,12 +933,6 @@ launch() {
 
     local host_mount_to_top=$(realpath --relative-to="$mount_point" "$TOP")
     local container_top="${container_mount}/${host_mount_to_top}"
-
-    # Allow the docker group to access X11.
-    # Note: not necessary for WSL2 (`SI:localuser:wslg` is added by default)
-    if [ -v DISPLAY ] && command -v xhost >/dev/null; then
-        run_command xhost +local:docker
-    fi
 
     # Mount V4L2 device nodes
     for video_dev in $(find /dev -regex '/dev/video[0-9]+'); do
@@ -976,6 +976,40 @@ launch() {
     # Add docker group to enable DooD
     groups+=" --group-add $(get_group_id docker)"
 
+    # display - use XDG_SESSION_TYPE to detect X11 or Wayland
+    # see https://www.freedesktop.org/software/systemd/man/latest/pam_systemd.html#%24XDG_SESSION_TYPE
+    if [ -n "${XDG_SESSION_TYPE-}" ]; then
+        display_server_opt="-e XDG_SESSION_TYPE"
+        if [ "${XDG_SESSION_TYPE}" == "wayland" ]; then
+            display_server_opt+=" -e WAYLAND_DISPLAY"
+        fi
+    fi
+    if [ -n "${XDG_RUNTIME_DIR-}" ]; then
+        display_server_opt+=" -e XDG_RUNTIME_DIR"
+        if [ -d ${XDG_RUNTIME_DIR} ]; then
+            display_server_opt+=" -v ${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}"
+        fi
+    fi
+    # if XDG_SESSION_TYPE is not set or set to tty or x11, use X11
+    if [ -z "${XDG_SESSION_TYPE-}" ] || [ "${XDG_SESSION_TYPE}" == "x11" ] || [ "${XDG_SESSION_TYPE}" == "tty" ]; then
+        # Allow the docker group to access X11.
+        # Note: not necessary for WSL2 (`SI:localuser:wslg` is added by default)
+        if [ -v DISPLAY ] && command -v xhost >/dev/null; then
+            run_command xhost +local:docker
+        fi
+        display_server_opt+=" -v /tmp/.X11-unix:/tmp/.X11-unix"
+        display_server_opt+=" -e DISPLAY"
+    fi
+    # Allow X11 forwarding over SSH
+    if [[ $ssh_x11 -gt 0 ]]; then
+        XAUTH=/tmp/.docker.xauth
+        xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -
+        chmod 777 $XAUTH
+
+        display_server_opt+=" -v $XAUTH:$XAUTH"
+        display_server_opt+=" -e XAUTHORITY=$XAUTH"
+    fi
+
     # DOCKER PARAMETERS
     #
     # --rm
@@ -1000,7 +1034,7 @@ launch() {
     #   Run the container as a non-root user. See details above for `groups` variable.
     #
     # -v /var/run/docker.sock:/var/run/docker.sock
-    #    Enable the use of Holoscan CLI with Docker outside of Docker (DooD) for packaging and 
+    #    Enable the use of Holoscan CLI with Docker outside of Docker (DooD) for packaging and
     #    running applications inside the container.
     #
     # -v ${TOP}:/workspace/holoscan-sdk
@@ -1010,12 +1044,10 @@ launch() {
     #   Start in the build or install directory
     #
     # --runtime=nvidia \
-    # -e NVIDIA_DRIVER_CAPABILITIES=all
     #   Enable GPU acceleration
     #
-    # -v /tmp/.X11-unix:/tmp/.X11-unix
-    # -e DISPLAY
-    #   Enable graphical applications
+    # ${display_server_opt}
+    #   Enable graphical applications (X11 or Wayland)
     #
     # ${mount_device_opt}
     #   --device /dev/video${i}
@@ -1052,12 +1084,9 @@ launch() {
         ${groups} \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v ${mount_point}:${container_mount} \
-        ${extra_args[@]} \
         -w ${container_top}/${working_dir} \
         --runtime=nvidia \
-        -e NVIDIA_DRIVER_CAPABILITIES=all \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        -e DISPLAY \
+        ${display_server_opt} \
         ${mount_device_opt} \
         -e PYTHONPATH=${container_top}/${working_dir}/python/lib \
         -e HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib \
@@ -1068,6 +1097,7 @@ launch() {
         --cap-add=CAP_SYS_PTRACE \
         --ulimit memlock=-1 \
         --ulimit stack=67108864 \
+        ${extra_args[@]} \
         $img -c "export PATH=\$PATH:${container_top}/${working_dir}/bin; $run_cmd" # Append the Holoscan bin folder to the existing `PATH` before running
 }
 
@@ -1248,7 +1278,6 @@ run_html_builder() {
         --entrypoint=bash \
         -u $(id -u):$(id -g) \
         --runtime=nvidia \
-        -e NVIDIA_DRIVER_CAPABILITIES=all \
         -v ${TOP}:/workspace/holoscan-sdk \
         -w /workspace/holoscan-sdk/${DOCS_SRC_DIR} \
         -e PYTHONPATH=/workspace/holoscan-sdk/$(get_install_dir)/python/lib \

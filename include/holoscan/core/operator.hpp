@@ -594,10 +594,10 @@ class Operator : public ComponentBase {
    */
   virtual gxf_uid_t add_codelet_to_graph_entity();
 
-  /// Initialize conditions and add GXF conditions to graph_entity_;
+  /// Initialize conditions and add GXF conditions to graph_entity_
   void initialize_conditions();
 
-  /// Initialize resources and add GXF resources to graph_entity_;
+  /// Initialize resources and add GXF resources to graph_entity_
   void initialize_resources();
 
   using ComponentBase::update_params_from_args;

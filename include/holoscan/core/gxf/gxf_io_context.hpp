@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@
 
 namespace holoscan::gxf {
 
-nvidia::gxf::Receiver* get_gxf_receiver(const std::unique_ptr<IOSpec>& input_spec);
+nvidia::gxf::Receiver* get_gxf_receiver(const std::shared_ptr<IOSpec>& input_spec);
 
 /**
  * @brief Class to hold the input context for a GXF Operator.
@@ -51,7 +51,7 @@ class GXFInputContext : public InputContext {
    * @param inputs inputs The references to the map of the input specs.
    */
   GXFInputContext(ExecutionContext* execution_context, Operator* op,
-                  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs);
+                  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs);
 
   /**
    * @brief Get a pointer to the GXF execution runtime.
@@ -87,7 +87,7 @@ class GXFOutputContext : public OutputContext {
    * @param outputs outputs The references to the map of the output specs.
    */
   GXFOutputContext(ExecutionContext* execution_context, Operator* op,
-                   std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs);
+                   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs);
 
   /**
    * @brief Get pointer to the GXF execution runtime.

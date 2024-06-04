@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,11 +43,6 @@ For example: datetime.timedelta(minutes=1), datetime.timedelta(seconds=1),
 datetime.timedelta(milliseconds=1) and datetime.timedelta(microseconds=1).
 Supported argument names are: weeks| days | hours | minutes | seconds | millisecons | microseconds
 This requires `import datetime`.
-)doc")
-
-// PyPeriodicCondition Constructor
-PYDOC(PeriodicCondition_python, R"doc(
-Condition class to support periodic execution of operators.
 
 Parameters
 ----------

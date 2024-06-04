@@ -90,13 +90,6 @@ PYDOC(BlockMemoryPool, R"doc(
 Block memory pool resource.
 
 Provides a maximum number of equally sized blocks of memory.
-)doc")
-
-// Constructor
-PYDOC(BlockMemoryPool_python, R"doc(
-Block memory pool resource.
-
-Provides a maximum number of equally sized blocks of memory.
 
 Parameters
 ----------
@@ -137,11 +130,6 @@ spec : holoscan.core.ComponentSpec
 namespace CudaStreamPool {
 
 PYDOC(CudaStreamPool, R"doc(
-CUDA stream pool.
-)doc")
-
-// Constructor
-PYDOC(CudaStreamPool_python, R"doc(
 CUDA stream pool.
 
 Parameters
@@ -195,13 +183,6 @@ spec : holoscan.core.ComponentSpec
 namespace UnboundedAllocator {
 
 PYDOC(UnboundedAllocator, R"doc(
-Unbounded allocator.
-
-This allocator uses dynamic memory allocation without an upper bound.
-)doc")
-
-// Constructor
-PYDOC(UnboundedAllocator_python, R"doc(
 Unbounded allocator.
 
 This allocator uses dynamic memory allocation without an upper bound.

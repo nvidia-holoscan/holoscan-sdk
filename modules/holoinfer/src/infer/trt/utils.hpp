@@ -41,7 +41,11 @@ namespace inference {
  */
 class Logger : public nvinfer1::ILogger {
   void log(Severity severity, const char* msg) noexcept override {
-    if (severity <= Severity::kWARNING) { HOLOSCAN_LOG_INFO(msg); }
+    if (severity <= Severity::kWARNING) {
+      try {  // ignore potential fmt::format_error exception
+        HOLOSCAN_LOG_INFO(msg);
+      } catch (std::exception& e) {}
+    }
   };
 };
 

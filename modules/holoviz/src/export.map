@@ -64,7 +64,9 @@
 
             "holoscan::viz::ReadFramebuffer(holoscan::viz::ImageFormat, unsigned int, unsigned int, unsigned long, unsigned long long, unsigned long)";
 
+            "holoscan::viz::SetCamera(float, float, float, float, float, float, float, float, float, bool)";
             "holoscan::viz::GetCameraPose(unsigned long, float*)";
+            "holoscan::viz::GetCameraPose(float (&) [9], float (&) [3])";
         };
     local:
         *;

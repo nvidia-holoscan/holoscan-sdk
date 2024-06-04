@@ -17,10 +17,15 @@ limitations under the License.
 
 from collections.abc import MutableMapping, Sequence
 
-from holoscan.core import IOSpec
+from holoscan.core import IOSpec, io_type_registry
 from holoscan.resources import Allocator, CudaStreamPool, UnboundedAllocator  # noqa: F401
 
 from ._holoviz import HolovizOp as _HolovizOp
+from ._holoviz import Pose3D  # noqa: F401
+from ._holoviz import register_types as _register_types
+
+# register methods for receiving or emitting list[HolovizOp.InputSpec] and camera pose types
+_register_types(io_type_registry)
 
 _holoviz_str_to_input_type = {
     "unknown": _HolovizOp.InputType.UNKNOWN,
@@ -53,6 +58,7 @@ class HolovizOp(_HolovizOp):
     def __init__(
         self,
         fragment,
+        *args,
         allocator=None,
         receivers=(),
         tensors=(),
@@ -68,6 +74,10 @@ class HolovizOp(_HolovizOp):
         enable_render_buffer_input=False,
         enable_render_buffer_output=False,
         enable_camera_pose_output=False,
+        camera_pose_output_type="projection_matrix",
+        camera_eye=(0.0, 0.0, 1.0),
+        camera_look_at=(0.0, 0.0, 0.0),
+        camera_up=(0.0, 1.0, 0.0),
         font_path="",
         cuda_stream_pool=None,
         name="holoviz_op",
@@ -182,7 +192,8 @@ class HolovizOp(_HolovizOp):
             tensor_input_specs.append(ispec)
 
         super().__init__(
-            fragment=fragment,
+            fragment,
+            *args,
             allocator=allocator,
             receivers=receiver_iospecs,
             tensors=tensor_input_specs,
@@ -198,6 +209,10 @@ class HolovizOp(_HolovizOp):
             enable_render_buffer_input=enable_render_buffer_input,
             enable_render_buffer_output=enable_render_buffer_output,
             enable_camera_pose_output=enable_camera_pose_output,
+            camera_pose_output_type=camera_pose_output_type,
+            camera_eye=camera_eye,
+            camera_look_at=camera_look_at,
+            camera_up=camera_up,
             font_path=font_path,
             cuda_stream_pool=cuda_stream_pool,
             name=name,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,13 +22,18 @@
 namespace holoscan {
 namespace inference {
 
-Params::Params(const std::string& _model_path, const std::string& _infer_name, bool _usecuda)
-    : model_file_path_(_model_path), instance_name_(_infer_name), use_cuda_(_usecuda) {}
+Params::Params(const std::string& _model_path, const std::string& _infer_name, bool _usecuda,
+               int _device_id)
+    : model_file_path_(_model_path),
+      instance_name_(_infer_name),
+      use_cuda_(_usecuda),
+      device_id_(_device_id) {}
 
 Params::Params() {
   model_file_path_ = "";
   instance_name_ = "";
   use_cuda_ = false;
+  device_id_ = 0;
 }
 
 bool Params::get_cuda_flag() const {
@@ -61,6 +66,14 @@ void Params::set_device_id(int device_id) {
 
 int Params::get_device_id() const {
   return device_id_;
+}
+
+void Params::set_temporal_id(unsigned int& temporal_id) {
+  temporal_id_ = temporal_id;
+}
+
+unsigned int Params::get_temporal_id() const {
+  return temporal_id_;
 }
 
 void Params::set_tensor_names(const std::vector<std::string>& _tensor_names, bool type) {

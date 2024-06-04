@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,8 +46,8 @@ YAML::Node ComponentSpec::to_yaml_node() const {
     YAML::Node param_node;
     param_node["name"] = name;
     param_node["type"] = type;
-    param_node["description"] = param->description();
-    param_node["flag"] = parameterflag_namemap[param->flag()];
+    param_node["description"] = param ? param->description() : "";
+    param_node["flag"] = parameterflag_namemap[param ? param->flag() : ParameterFlag::kNone];
     node["params"].push_back(param_node);
   }
   return node;

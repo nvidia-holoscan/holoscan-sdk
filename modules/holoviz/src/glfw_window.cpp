@@ -111,10 +111,6 @@ GLFWWindow::GLFWWindow(GLFWwindow* window) : impl_(new Impl) {
   int width, height;
   glfwGetWindowSize(window, &width, &height);
   impl_->frame_buffer_size_cb(window, width, height);
-
-  // setup camera
-  CameraManip.setLookat(
-      nvmath::vec3f(0.f, 0.f, 1.f), nvmath::vec3f(0.f, 0.f, 0.f), nvmath::vec3f(0.f, 1.f, 0.f));
 }
 
 GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitFlags flags)
@@ -131,10 +127,6 @@ GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitF
 
   // set framebuffer size with initial window size
   impl_->frame_buffer_size_cb(impl_->window_, width, height);
-
-  // setup camera
-  CameraManip.setLookat(
-      nvmath::vec3f(0.f, 0.f, 1.f), nvmath::vec3f(0.f, 0.f, 0.f), nvmath::vec3f(0.f, 1.f, 0.f));
 }
 
 GLFWWindow::~GLFWWindow() {}
@@ -222,6 +214,20 @@ void GLFWWindow::setup_callbacks(std::function<void(int width, int height)> fram
   impl_->prev_key_cb_ = glfwSetKeyCallback(impl_->window_, &GLFWWindow::Impl::key_cb);
 }
 
+void GLFWWindow::restore_callbacks() {
+  glfwSetFramebufferSizeCallback(impl_->window_, impl_->prev_frame_buffer_size_cb_);
+  glfwSetMouseButtonCallback(impl_->window_, impl_->prev_mouse_button_cb_);
+  glfwSetScrollCallback(impl_->window_, impl_->prev_scroll_cb_);
+  glfwSetCursorPosCallback(impl_->window_, impl_->prev_cursor_pos_cb_);
+  glfwSetKeyCallback(impl_->window_, impl_->prev_key_cb_);
+
+  impl_->frame_buffer_size_cb_ = nullptr;
+  impl_->prev_key_cb_ = nullptr;
+  impl_->prev_cursor_pos_cb_ = nullptr;
+  impl_->prev_mouse_button_cb_ = nullptr;
+  impl_->prev_scroll_cb_ = nullptr;
+}
+
 const char** GLFWWindow::get_required_instance_extensions(uint32_t* count) {
   return glfwGetRequiredInstanceExtensions(count);
 }
@@ -278,11 +284,9 @@ void GLFWWindow::begin() {
   glfwPollEvents();
 }
 
-void GLFWWindow::end() {}
-
-void GLFWWindow::get_view_matrix(nvmath::mat4f* view_matrix) {
-  *view_matrix = nvmath::perspectiveVK(CameraManip.getFov(), 1.f /*aspectRatio*/, 0.1f, 1000.0f) *
-                 CameraManip.getMatrix();
+void GLFWWindow::end() {
+  // call the base class
+  Window::end();
 }
 
 float GLFWWindow::get_aspect_ratio() {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,14 +43,8 @@ str
 
 namespace DoubleBufferTransmitter {
 
-PYDOC(DoubleBufferTransmitter, R"doc(
-Transmitter using a double-buffered queue.
-
-Messages are pushed to a back stage after they are published.
-)doc")
-
 // Constructor
-PYDOC(DoubleBufferTransmitter_python, R"doc(
+PYDOC(DoubleBufferTransmitter, R"doc(
 Transmitter using a double-buffered queue.
 
 Messages are pushed to a back stage after they are published.
@@ -90,13 +84,6 @@ spec : holoscan.core.ComponentSpec
 namespace UcxTransmitter {
 
 PYDOC(UcxTransmitter, R"doc(
-UCX network transmitter using a double-buffered queue.
-
-Messages are pushed to a back stage after they are published.
-)doc")
-
-// Constructor
-PYDOC(UcxTransmitter_python, R"doc(
 UCX network transmitter using a double-buffered queue.
 
 Messages are pushed to a back stage after they are published.

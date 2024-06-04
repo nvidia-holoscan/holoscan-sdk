@@ -97,7 +97,7 @@ void init_component_serializers(py::module_& m) {
       .def(py::init<Fragment*, const std::string&>(),
            "fragment"_a,
            "name"_a = "standard_component_serializer"s,
-           doc::StdComponentSerializer::doc_StdComponentSerializer_python)
+           doc::StdComponentSerializer::doc_StdComponentSerializer)
       .def_property_readonly("gxf_typename",
                              &StdComponentSerializer::gxf_typename,
                              doc::StdComponentSerializer::doc_gxf_typename)
@@ -116,7 +116,7 @@ void init_component_serializers(py::module_& m) {
            "fragment"_a,
            "allocator"_a = py::none(),
            "name"_a = "ucx_component_serializer"s,
-           doc::UcxComponentSerializer::doc_UcxComponentSerializer_python)
+           doc::UcxComponentSerializer::doc_UcxComponentSerializer)
       .def_property_readonly("gxf_typename",
                              &UcxComponentSerializer::gxf_typename,
                              doc::UcxComponentSerializer::doc_gxf_typename)

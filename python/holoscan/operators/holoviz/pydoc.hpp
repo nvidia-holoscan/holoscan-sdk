@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP
 
 #include <string>
 
@@ -43,11 +43,11 @@ This is a Vulkan-based visualizer.
         must be found or an exception will be raised. Any extra, named tensors not present in the
         ``tensors`` parameter specification (or optional, dynamic ``input_specs`` input) will be
         ignored.
-    input_specs : list[holoscan.operators.HolovizOp.InputSpec] (optional)
+    input_specs : list[holoscan.operators.HolovizOp.InputSpec], optional
         A list of ``InputSpec`` objects. This port can be used to dynamically update the overlay
         specification at run time. No inputs are required on this port in order for the operator
         to ``compute``.
-    render_buffer_input : nvidia::gxf::VideoBuffer (optional)
+    render_buffer_input : nvidia::gxf::VideoBuffer, optional
         An empty render buffer can optionally be provided. The video buffer must have format
         GXF_VIDEO_FORMAT_RGBA and be in device memory. This input port only exists if
         ``enable_render_buffer_input`` was set to ``True``, in which case ``compute`` will only be
@@ -55,16 +55,35 @@ This is a Vulkan-based visualizer.
 
 **==Named Outputs==**
 
-    render_buffer_output : nvidia::gxf::VideoBuffer (optional)
+    render_buffer_output : nvidia::gxf::VideoBuffer, optional
         Output for a filled render buffer. If an input render buffer is specified, it is using
         that one, else it allocates a new buffer. The video buffer will have format
         GXF_VIDEO_FORMAT_RGBA and will be in device memory. This output is useful for offline
         rendering or headless mode. This output port only exists if ``enable_render_buffer_output``
         was set to ``True``.
-    camera_pose_output : std::array<float, 16> (optional)
-        The camera pose. The parameters returned represent the values of a 4x4 row major
-        projection matrix. This output port only exists if ``enable_camera_pose_output`` was set to
-        ``True``.
+    camera_pose_output : std::array<float, 16> or nvidia::gxf::Pose3D, optional
+        The camera pose. Depending on the value of ``camera_pose_output_type`` this outputs a 4x4
+        row major projection matrix (type ``std::array<float, 16>``) or the camera extrinsics model
+        (type ``nvidia::gxf::Pose3D``). This output port only exists if
+        ``enable_camera_pose_output`` was set to ``True``.
+
+**==Device Memory Requirements==**
+
+    If ``render_buffer_input`` is enabled, the provided buffer is used and no memory block will be
+    allocated. Otherwise, when using this operator with a ``holoscan.resources.BlockMemoryPool``, a
+    single device memory block is needed (``storage_type=1``). The size of this memory block can be
+    determined by rounding the width and height up to the nearest even size and then padding the
+    rows as needed so that the row stride is a multiple of 256 bytes. C++ code to calculate the
+    block size is as follows
+
+.. code-block:: python
+
+    def get_block_size(height, width):
+        height_even = height + (height & 1)
+        width_even = width + (width & 1)
+        row_bytes = width_even * 4;  # 4 bytes per pixel for 8-bit RGBA
+        row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes // 256 + 1) * 256)
+        return height_even * row_stride
 
 Parameters
 ----------
@@ -84,7 +103,8 @@ color_lut : list of list of float, optional
 window_title : str, optional
     Title on window canvas. Default value is ``"Holoviz"``.
 display_name : str, optional
-    In exclusive mode, name of display to use as shown with xrandr. Default value is ``"DP-0"``.
+    In exclusive mode, name of display to use as shown with `xrandr` or `hwinfo --monitor`. Default
+    value is ``"DP-0"``.
 width : int, optional
     Window width or display resolution width if in exclusive or fullscreen mode. Default value is
     ``1920``.
@@ -106,9 +126,18 @@ enable_render_buffer_input : bool, optional
 enable_render_buffer_output : bool, optional
     If ``True``, an additional output port, named ``"render_buffer_output"`` is added to the
     operator. Default value is ``False``.
-enable_camera_pose_output : bool, optional.
+enable_camera_pose_output : bool, optional
     If ``True``, an additional output port, named ``"camera_pose_output"`` is added to the
     operator. Default value is ``False``.
+camera_pose_output_type : str, optional
+    Type of data output at ``"camera_pose_output"``. Supported values are ``projection_matrix`` and
+    ``extrinsics_model``. Default value is ``projection_matrix``.
+camera_eye : sequence of three floats, optional
+    Initial camera eye position. Default value is ``(0.0, 0.0, 1.0)``.
+camera_look_at : sequence of three floats, optional
+    Initial camera look at position. Default value is ``(0.0, 0.0, 0.0)``.
+camera_up : sequence of three floats, optional
+    Initial camera up vector. Default value is ``(0.0, 1.0, 0.0)``.
 font_path : str, optional
     File path for the font used for rendering text. Default value is ``""``.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
@@ -326,6 +355,21 @@ spec : holoscan.core.OperatorSpec
 
 }  // namespace holoscan::doc::HolovizOp
 
+namespace holoscan::doc::HolovizOp::Pose3D {
+
+PYDOC(Pose3D, R"doc(
+nvidia::gxf::Pose3D object representing a camera pose
+
+Attributes
+----------
+rotation : list of float
+    9 floating point values representing a 3x3 rotation matrix.
+translation : list of float
+    3 floating point values representing a translation vector.
+)doc")
+
+}  // namespace holoscan::doc::HolovizOp::Pose3D
+
 namespace holoscan::doc::HolovizOp::InputSpec {
 
 // HolovizOp.InputSpec Constructor
@@ -405,4 +449,4 @@ viewport instead of the upper left corner.
 
 }  // namespace holoscan::doc::HolovizOp::InputSpec
 
-#endif /* HOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP */

@@ -12,6 +12,8 @@ This application demonstrates interoperability between a native operator (`Proce
 
 Notably, the two GXF codelets have not been wrapped as Holoscan operators, but are instead registered at runtime in the `compose` method of the application.
 
+Note that this C++ example shows how to explicitly wrap GXF codelets (`SendTensor` and `ReceiveTensor`) for use from Holoscan by creating a class that inherits from `holoscan::ops::GXFOperator`. More recently there is a `holoscan::ops::GXFCodelet` class which simplifies this process and allows the codelets to directly be used via `make_operator<holoscan::ops::GXFCodelet>`. This second approach to using an existing GXF codelet is demonstrated in `examples/import_gxf_components`.
+
 ### Run instructions
 
 * **using deb package install or NGC container**:
@@ -50,12 +52,11 @@ The following dataset is used by this example:
   export HOLOSCAN_INPUT_PATH=<DATA_DIR>
   # [Prerequisite] Download example .py and .yaml file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
-  python3 -m pip install cupy-cuda12x
   python3 <APP_DIR>/tensor_interop.py
   ```
 * **using deb package install**:
   ```bash
-  /opt/nvidia/holoscan/examples/download_example_data
+  sudo /opt/nvidia/holoscan/examples/download_example_data
   export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
   python3 -m pip install cupy-cuda12x
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib

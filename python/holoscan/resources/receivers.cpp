@@ -91,7 +91,7 @@ void init_receivers(py::module_& m) {
            "capacity"_a = 1UL,
            "policy"_a = 2UL,
            "name"_a = "double_buffer_receiver"s,
-           doc::DoubleBufferReceiver::doc_DoubleBufferReceiver_python)
+           doc::DoubleBufferReceiver::doc_DoubleBufferReceiver)
       .def_property_readonly("gxf_typename",
                              &DoubleBufferReceiver::gxf_typename,
                              doc::DoubleBufferReceiver::doc_gxf_typename)
@@ -113,7 +113,7 @@ void init_receivers(py::module_& m) {
            "address"_a = std::string("0.0.0.0"),
            "port"_a = kDefaultUcxPort,
            "name"_a = "ucx_receiver"s,
-           doc::UcxReceiver::doc_UcxReceiver_python)
+           doc::UcxReceiver::doc_UcxReceiver)
       .def_property_readonly(
           "gxf_typename", &UcxReceiver::gxf_typename, doc::UcxReceiver::doc_gxf_typename)
       .def("setup", &UcxReceiver::setup, "spec"_a, doc::UcxReceiver::doc_setup);

@@ -8,7 +8,6 @@ This minimal application multiplies two randomly generated matrices on the GPU, 
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
-  python3 -m pip install cupy-cuda12x
   python3 <APP_DIR>/matmul.py
   ```
 * **using deb package install**:

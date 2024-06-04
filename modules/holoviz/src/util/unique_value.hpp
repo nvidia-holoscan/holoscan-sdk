@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,7 +61,7 @@ class UniqueValue : public NonCopyable {
   /**
    * Release the value
    *
-   * @returns value
+   * @return value
    */
   T release() noexcept {
     T value = value_;
@@ -101,27 +101,27 @@ class UniqueValue : public NonCopyable {
   T get() const noexcept { return value_; }
 
   /**
-   * @returns true if the value is set
+   * @return true if the value is set
    */
   explicit operator bool() const noexcept { return (value_ != T()); }
 
   /**
-   * @returns reference to value
+   * @return reference to value
    */
   T& operator*() const { return value_; }
 
   /**
-   * @returns value
+   * @return value
    */
   T operator->() const noexcept { return value_; }
 
   /**
-   * @returns true if equal
+   * @return true if equal
    */
   bool operator==(const UniqueValue& other) const { return (value_ == other.value_); }
 
   /**
-   * @returns true if not equal
+   * @return true if not equal
    */
   bool operator!=(const UniqueValue& other) const { return !(operator==(other)); }
 

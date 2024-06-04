@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,8 +79,7 @@ void init_downstream_message_affordable(py::module_& m) {
            "fragment"_a,
            "min_size"_a = 1L,
            "name"_a = "noname_downstream_affordable_condition"s,
-           doc::DownstreamMessageAffordableCondition::
-               doc_DownstreamMessageAffordableCondition_python)
+           doc::DownstreamMessageAffordableCondition::doc_DownstreamMessageAffordableCondition)
       .def_property_readonly("gxf_typename",
                              &DownstreamMessageAffordableCondition::gxf_typename,
                              doc::DownstreamMessageAffordableCondition::doc_gxf_typename)

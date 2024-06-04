@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@ add_subdirectory(async_ping_rx)
 add_subdirectory(async_ping_tx)
 add_subdirectory(bayer_demosaic)
 add_subdirectory(format_converter)
+add_subdirectory(gxf_codelet)
 add_subdirectory(holoviz)
 add_subdirectory(inference)
 add_subdirectory(inference_processor)

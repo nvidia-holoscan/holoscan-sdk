@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,7 +51,7 @@ class ManagerProcessor {
    * the tensor as vector of strings. Each value in the vector of strings is the supported
    * operation.
    *
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
 
@@ -65,7 +65,7 @@ class ManagerProcessor {
    * @param inferred_result_map Map with output tensor name as key, and related DataBuffer as
    * value
    * @param dimension_map Map with tensor name as key and related output dimension as value.
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus process(const MultiMappings& tensor_oper_map, const MultiMappings& in_out_tensor_map,
                       DataMap& inferred_result_map,
@@ -80,7 +80,7 @@ class ManagerProcessor {
    * @param inferred_result_map Map Contains output tensor name as key, and related DataBuffer as
    * value
    * @param dimension_map Map with tensor name as key and related output dimension as value.
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus process_multi_tensor_operation(
       const std::string tensor_name, const std::vector<std::string>& tensor_oper_map,
@@ -88,14 +88,14 @@ class ManagerProcessor {
   /*
    * @brief Get processed data
    *
-   * @returns DataMap with tensor name as key and related DataBuffer as value
+   * @return DataMap with tensor name as key and related DataBuffer as value
    */
   DataMap get_processed_data() const;
 
   /*
    * @brief Get processed data dimensions
    *
-   * @returns DataMap with tensor name as key and related dimension as value
+   * @return DataMap with tensor name as key and related dimension as value
    */
   DimType get_processed_data_dims() const;
 

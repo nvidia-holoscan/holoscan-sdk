@@ -70,19 +70,27 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
 
-  # set environment variables used by distributed applications in the tests
-  # - UCX_TCP_CM_REUSEADDR=y : Reuse port for UCX
-  #   (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
-  # - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500    : Set deadlock timeout for distributed app
-  # - HOLOSCAN_MAX_DURATION_MS=2500             : Set max duration for distributed app
+# set environment variables used by distributed applications in the tests
+# - UCX_TCP_CM_REUSEADDR=y : Reuse port for UCX
+#   (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
+# - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500    : Set deadlock timeout for distributed app
+# - HOLOSCAN_MAX_DURATION_MS=2500             : Set max duration for distributed app
+if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
   set(CMAKE_DISTRIBUTED_TEST_FLAGS
 "\
-UCX_TCP_CM_REUSEADDR=y;\
-UCX_PROTO_ENABLE=y;\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500;\
-HOLOSCAN_MAX_DURATION_MS=2500\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=6000;\
+HOLOSCAN_MAX_DURATION_MS=6000\
 "
   )
+else()
+  set(CMAKE_DISTRIBUTED_TEST_FLAGS
+"\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000;\
+HOLOSCAN_MAX_DURATION_MS=3000\
+"
+  )
+endif()
+
   set_tests_properties(python-api-system-distributed-tests PROPERTIES ENVIRONMENT
     "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread"
   )

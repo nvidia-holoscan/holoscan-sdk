@@ -40,32 +40,56 @@ namespace py = pybind11;
 
 namespace holoscan {
 
+/// Convert a py::object to a `YAML::Node` type.
+template <typename typeT>
+inline static YAML::Node cast_to_yaml_node(const py::handle& obj) {
+  YAML::Node yaml_node;
+  yaml_node.push_back(obj.cast<typeT>());
+  return yaml_node[0];
+}
+
+// Specialization for uint8_t
+template <>
+inline YAML::Node cast_to_yaml_node<uint8_t>(const py::handle& obj) {
+  YAML::Node yaml_node;
+  yaml_node.push_back(obj.cast<int64_t>());
+  return yaml_node[0];
+}
+
+// Specialization for int8_t
+template <>
+inline YAML::Node cast_to_yaml_node<int8_t>(const py::handle& obj) {
+  YAML::Node yaml_node;
+  yaml_node.push_back(obj.cast<int64_t>());
+  return yaml_node[0];
+}
+
 void set_scalar_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& out) {
   std::string dtype_name = dt.attr("name").cast<std::string>();
   if (dtype_name == "float16") {  // currently promoting float16 scalars to float
-    out = obj.cast<float>();
+    out = cast_to_yaml_node<float>(obj);
   } else if (dtype_name == "float32") {
-    out = obj.cast<float>();
+    out = cast_to_yaml_node<float>(obj);
   } else if (dtype_name == "float64") {
-    out = obj.cast<double>();
+    out = cast_to_yaml_node<double>(obj);
   } else if (dtype_name == "bool") {
-    out = obj.cast<bool>();
+    out = cast_to_yaml_node<bool>(obj);
   } else if (dtype_name == "int8") {
-    out = obj.cast<int8_t>();
+    out = cast_to_yaml_node<int8_t>(obj);
   } else if (dtype_name == "int16") {
-    out = obj.cast<int16_t>();
+    out = cast_to_yaml_node<int16_t>(obj);
   } else if (dtype_name == "int32") {
-    out = obj.cast<int32_t>();
+    out = cast_to_yaml_node<int32_t>(obj);
   } else if (dtype_name == "int64") {
-    out = obj.cast<int64_t>();
+    out = cast_to_yaml_node<int64_t>(obj);
   } else if (dtype_name == "uint8") {
-    out = obj.cast<uint8_t>();
+    out = cast_to_yaml_node<uint8_t>(obj);
   } else if (dtype_name == "uint16") {
-    out = obj.cast<uint16_t>();
+    out = cast_to_yaml_node<uint16_t>(obj);
   } else if (dtype_name == "uint32") {
-    out = obj.cast<uint32_t>();
+    out = cast_to_yaml_node<uint32_t>(obj);
   } else if (dtype_name == "uint64") {
-    out = obj.cast<uint64_t>();
+    out = cast_to_yaml_node<uint64_t>(obj);
   } else {
     throw std::runtime_error("unsupported dtype: "s + dtype_name + ", leaving Arg uninitialized"s);
   }
@@ -75,23 +99,21 @@ void set_scalar_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& o
 template <typename T>
 void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   // not intended for images or other large tensors, just
-  // for short arrays containing parameter settings to operators
+  // for short arrays containing parameter settings to operators/resources
   if (obj.attr("ndim").cast<int>() == 1) {
-    std::vector<T> v;
-    v.reserve(obj.attr("size").cast<size_t>());
-    for (auto item : obj) v.push_back(item.cast<T>());
-    out = v;
+    YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
+    for (const auto& item : obj) yaml_node.push_back(cast_to_yaml_node<T>(item));
+    out = yaml_node;
   } else if (obj.attr("ndim").cast<int>() == 2) {
-    std::vector<std::vector<T>> v;
-    std::vector<py::ssize_t> shape = obj.attr("shape").cast<std::vector<py::ssize_t>>();
-    v.reserve(static_cast<size_t>(shape[0]));
+    YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
     for (auto item : obj) {
-      std::vector<T> vv;
-      vv.reserve(static_cast<size_t>(shape[1]));
-      for (auto inner_item : item) { vv.push_back(inner_item.cast<T>()); }
-      v.push_back(vv);
+      YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
+      for (const auto& inner_item : item) {
+        inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
+      }
+      if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
     }
-    out = v;
+    out = yaml_node;
   } else {
     throw std::runtime_error("Only 1d and 2d NumPy arrays are supported.");
   }
@@ -100,27 +122,49 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
 template <typename T>
 void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
   // not intended for images or other large tensors, just
-  // for short arrays containing parameter settings to operators
+  // for short arrays containing parameter settings to operators/resources
 
-  auto first_item = seq[0];
-  if (py::isinstance<py::sequence>(first_item) && !py::isinstance<py::str>(first_item)) {
-    // Handle list of list and other sequence of sequence types.
-    std::vector<std::vector<T>> v;
-    v.reserve(static_cast<size_t>(py::len(seq)));
-    for (auto item : seq) {
-      std::vector<T> vv;
-      vv.reserve(static_cast<size_t>(py::len(item)));
-      for (auto inner_item : item) { vv.push_back(inner_item.cast<T>()); }
-      v.push_back(vv);
+  if constexpr (std::is_same_v<T, std::shared_ptr<Resource>> ||
+                std::is_same_v<T, std::shared_ptr<Condition>>) {
+    auto first_item = seq[0];
+    if (py::isinstance<py::sequence>(first_item) && !py::isinstance<py::str>(first_item)) {
+      // Handle list of list and other sequence of sequence types.
+      std::vector<std::vector<T>> v;
+      v.reserve(static_cast<size_t>(py::len(seq)));
+      for (auto item : seq) {
+        std::vector<T> vv;
+        vv.reserve(static_cast<size_t>(py::len(item)));
+        for (auto inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+        v.push_back(vv);
+      }
+      out = v;
+    } else {
+      // 1d vector to handle a sequence of elements
+      std::vector<T> v;
+      size_t length = py::len(seq);
+      v.reserve(length);
+      for (auto item : seq) v.push_back(item.cast<T>());
+      out = v;
     }
-    out = v;
   } else {
-    // 1d vector to handle a sequence of elements
-    std::vector<T> v;
-    size_t length = py::len(seq);
-    v.reserve(length);
-    for (auto item : seq) v.push_back(item.cast<T>());
-    out = v;
+    auto first_item = seq[0];
+    if (py::isinstance<py::sequence>(first_item) && !py::isinstance<py::str>(first_item)) {
+      // Handle list of list and other sequence of sequence types.
+      YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
+      for (auto item : seq) {
+        YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
+        for (const auto& inner_item : item) {
+          inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
+        }
+        if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
+      }
+      out = yaml_node;
+    } else {
+      // 1d vector to handle a sequence of elements
+      YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
+      for (const auto& item : seq) yaml_node.push_back(cast_to_yaml_node<T>(item));
+      out = yaml_node;
+    }
   }
 }
 
@@ -339,7 +383,7 @@ py::object arg_to_py_object(Arg& arg) {
 Arg py_object_to_arg(py::object obj, std::string name = "") {
   Arg out(name);
   if (py::isinstance<py::str>(obj)) {
-    out = obj.cast<std::string>();
+    out = cast_to_yaml_node<std::string>(obj);
   } else if (py::isinstance<py::array>(obj)) {
     // handle numpy arrays
     py::dtype array_dtype = obj.cast<py::array>().dtype();
@@ -350,11 +394,11 @@ Arg py_object_to_arg(py::object obj, std::string name = "") {
     // will work for any that can be cast to py::list
     set_vector_arg_via_iterable(obj, out);
   } else if (py::isinstance<py::bool_>(obj)) {
-    out = obj.cast<bool>();
+    out = cast_to_yaml_node<bool>(obj);
   } else if (py::isinstance<py::int_>(obj) || PyLong_Check(obj.ptr())) {
-    out = obj.cast<int64_t>();
+    out = cast_to_yaml_node<int64_t>(obj);
   } else if (py::isinstance<py::float_>(obj)) {
-    out = obj.cast<double>();
+    out = cast_to_yaml_node<double>(obj);
   } else if (PyComplex_Check(obj.ptr())) {
     throw std::runtime_error("complex value cannot be converted to Arg");
   } else if (PyNumber_Check(obj.ptr())) {
@@ -367,7 +411,7 @@ Arg py_object_to_arg(py::object obj, std::string name = "") {
       return out;
     } else {
       // cast any other unknown numeric type to double
-      out = obj.cast<double>();
+      out = cast_to_yaml_node<double>(obj);
     }
   } else if (py::isinstance<Resource>(obj)) {
     out = obj.cast<std::shared_ptr<Resource>>();

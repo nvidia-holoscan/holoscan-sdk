@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_GXF_ENTITY_HPP
-#define PYBIND11_GXF_ENTITY_HPP
+#ifndef PYHOLOSCAN_GXF_ENTITY_HPP
+#define PYHOLOSCAN_GXF_ENTITY_HPP
 
 #include <pybind11/pybind11.h>
 
@@ -45,4 +45,4 @@ class PyEntity : public gxf::Entity {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_GXF_ENTITY_HPP */
+#endif /* PYHOLOSCAN_GXF_ENTITY_HPP */

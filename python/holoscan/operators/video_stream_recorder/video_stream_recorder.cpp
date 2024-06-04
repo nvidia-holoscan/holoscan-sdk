@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -53,12 +54,13 @@ class PyVideoStreamRecorderOp : public VideoStreamRecorderOp {
   using VideoStreamRecorderOp::VideoStreamRecorderOp;
 
   // Define a constructor that fully initializes the object.
-  PyVideoStreamRecorderOp(Fragment* fragment, const std::string& directory,
+  PyVideoStreamRecorderOp(Fragment* fragment, const py::args& args, const std::string& directory,
                           const std::string& basename, bool flush_on_tick_ = false,
                           const std::string& name = "video_stream_recorder")
       : VideoStreamRecorderOp(ArgList{Arg{"directory", directory},
                                       Arg{"basename", basename},
                                       Arg{"flush_on_tick", flush_on_tick_}}) {
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -70,27 +72,22 @@ class PyVideoStreamRecorderOp : public VideoStreamRecorderOp {
 
 PYBIND11_MODULE(_video_stream_recorder, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK VideoStreamRecorderOp Python Bindings
+        --------------------------------------------------
         .. currentmodule:: _video_stream_recorder
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<VideoStreamRecorderOp,
              PyVideoStreamRecorderOp,
              Operator,
              std::shared_ptr<VideoStreamRecorderOp>>(
       m, "VideoStreamRecorderOp", doc::VideoStreamRecorderOp::doc_VideoStreamRecorderOp)
-      .def(py::init<Fragment*, const std::string&, const std::string&, bool, const std::string&>(),
+      .def(py::init<Fragment*,
+                    const py::args&,
+                    const std::string&,
+                    const std::string&,
+                    bool,
+                    const std::string&>(),
            "fragment"_a,
            "directory"_a,
            "basename"_a,

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_BAYER_DEMOSAIC_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_BAYER_DEMOSAIC_PYDOC_HPP
 
 #include <string>
 
@@ -32,11 +32,11 @@ Bayer Demosaic operator.
 
     receiver : nvidia::gxf::Tensor or nvidia::gxf::VideoBuffer
         The input video frame to process. If the input is a VideoBuffer it must be an 8-bit
-        unsigned grayscale video (nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY). The video
-        buffer may be in either host or device memory (a host->device copy is performed if needed).
-        If a video buffer is not found, the input port message is searched for a tensor with the
-        name specified by ``in_tensor_name``. This must be a device tensor in either 8-bit or 16-bit
-        unsigned integer format.
+        unsigned grayscale video (`nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY`). If a video
+        buffer is not found, the input port message is searched for a device
+        tensor with the name specified by `in_tensor_name`. The tensor must have either 8-bit or
+        16-bit unsigned integer format. The tensor or video buffer may be in either host or device
+        memory (a host->device copy is performed if needed).
 
 **==Named Outputs==**
 
@@ -45,6 +45,16 @@ Bayer Demosaic operator.
         ``alpha_value`` is ``True``, otherwise it will be a 4-channel RGBA image. The data type will
         be either 8-bit or 16-bit unsigned integer (matching the bit depth of the input). The
         name of the tensor that is output is controlled by ``out_tensor_name``.
+
+**==Device Memory Requirements==**
+
+    When using this operator with a ``holoscan.resources.BlockMemoryPool``, the minimum
+    ``block_size`` is ``(rows * columns * output_channels * element_size_bytes)`` where
+    ``output_channels`` is 4 when ``generate_alpha`` is ``True`` and 3 otherwise. If the input
+    tensor or video buffer is already on the device, only a single memory block is needed. However,
+    if the input is on the host, a second memory block will also be needed in order to make an
+    internal copy of the input to the device. The memory buffer must be on device
+    (``storage_type=1``).
 
 Parameters
 ----------
@@ -93,15 +103,6 @@ name : str, optional (constructor only)
     The name of the operator. Default value is ``"bayer_demosaic"``.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
 PYDOC(initialize, R"doc(
 Initialize the operator.
 
@@ -120,4 +121,4 @@ spec : holoscan.core.OperatorSpec
 
 }  // namespace holoscan::doc::BayerDemosaicOp
 
-#endif /* HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_BAYER_DEMOSAIC_PYDOC_HPP */

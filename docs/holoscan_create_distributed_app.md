@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
 ### Serialization of Custom Data Types for Distributed Applications
 
-Transmission of data between fragments of a multi-fragment application is done via the [Unified Communications X (UCX)](https://openucx.org/) library. In order to transmit data, it must be serialized into a binary form suitable for transmission over a network. For Tensors ({ref}{cpp:class}`C++ <holoscan::Tensor>`/{py:class}`Python <holoscan.core.Tensor>`), strings and various scalar and vector numeric types, serialization is already built in. For more details on concrete examples of how to extend the data serialization support to additional user-defined classes, see the separate page on {ref}`serialization<object-serialization>`.
+Transmission of data between fragments of a multi-fragment application is done via the [Unified Communications X (UCX)](https://openucx.org/) library. In order to transmit data, it must be serialized into a binary form suitable for transmission over a network. For Tensors ({cpp:class}`C++ <holoscan::Tensor>`/{py:class}`Python <holoscan.core.Tensor>`), strings and various scalar and vector numeric types, serialization is already built in. For more details on concrete examples of how to extend the data serialization support to additional user-defined classes, see the separate page on {ref}`serialization<object-serialization>`.
 
 
 (building-and-running-a-distributed-application)=

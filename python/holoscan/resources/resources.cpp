@@ -29,6 +29,7 @@ void init_allocators(py::module_&);
 void init_receivers(py::module_&);
 void init_transmitters(py::module_&);
 void init_clocks(py::module_&);
+void init_gxf_component_resource(py::module_&);
 void init_serialization_buffers(py::module_&);
 void init_component_serializers(py::module_&);
 void init_entity_serializers(py::module_&);
@@ -36,25 +37,16 @@ void init_std_entity_serializer(py::module_&);
 
 PYBIND11_MODULE(_resources, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK Resources Python Bindings
+        --------------------------------------
         .. currentmodule:: _resources
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   init_allocators(m);
   init_receivers(m);
   init_transmitters(m);
   init_clocks(m);
+  init_gxf_component_resource(m);
   init_serialization_buffers(m);
   init_component_serializers(m);
   init_entity_serializers(m);

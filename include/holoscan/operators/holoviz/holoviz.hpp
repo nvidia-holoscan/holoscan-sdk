@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
-#define HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#ifndef INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#define INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
 
 #include <array>
 #include <memory>
@@ -48,9 +48,20 @@ struct BufferInfo;
  *
  * This high-speed viewer handles compositing, blending, and visualization of RGB or RGBA images,
  * masks, geometric primitives, text and depth maps. The operator can auto detect the format of the
- * input tensors when only the `receivers` parameter list is specified. Else the input specification
- * can be set at creation time using the `tensors` parameter or at runtime when passing input
- * specifications to the `input_specs` port.
+ * input tensors acquired at the `receivers` port. Else the input specification can be set at
+ * creation time using the `tensors` parameter or at runtime when passing input specifications to
+ * the `input_specs` port.
+ *
+ * Depth maps and 3D geometry are rendered in 3D and support camera movement. The camera is
+ * controlled using the mouse:
+ *    - Orbit        (LMB)
+ *    - Pan          (LMB + CTRL  | MMB)
+ *    - Dolly        (LMB + SHIFT | RMB | Mouse wheel)
+ *    - Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
+ *    - Zoom         (Mouse wheel + SHIFT)
+ * Or by providing new values at the `camera_eye_input`, `camera_look_at_input` or `camera_up_input`
+ * input ports. The camera pose can be output at the `camera_pose_output` port when
+ * `enable_camera_pose_output` is set to `true`.
  *
  * ==Named Inputs==
  *
@@ -75,6 +86,12 @@ struct BufferInfo;
  *     GXF_VIDEO_FORMAT_RGBA and be in device memory. This input port only exists if
  *     `enable_render_buffer_input` was set to true, in which case `compute` will only be
  *     called when a message arrives on this input.
+ * - **camera_eye_input** : `std::array<float, 3>` (optional)
+ *   - Camera eye position. The camera is animated to reach the new position.
+ * - **camera_look_at_input** : `std::array<float, 3>` (optional)
+ *   - Camera look at position. The camera is animated to reach the new position.
+ * - **camera_up_input** :  : `std::array<float, 3>` (optional)
+ *   - Camera up vector. The camera is animated to reach the new vector.
  *
  * ==Named Outputs==
  *
@@ -84,10 +101,11 @@ struct BufferInfo;
  *     GXF_VIDEO_FORMAT_RGBA and will be in device memory. This output is useful for offline
  *     rendering or headless mode. This output port only exists if `enable_render_buffer_output`
  *     was set to true.
- * - **camera_pose_output** : `std::array<float, 16>` (optional)
- *   - The camera pose. The parameters returned represent the values of a 4x4 row major
- *     projection matrix. This output port only exists if `enable_camera_pose_output` was set to
- *     true.
+ * - **camera_pose_output** : `std::array<float, 16>` or `nvidia::gxf::Pose3D` (optional)
+ *   - Output the camera pose. Depending on the value of `camera_pose_output_type` this outputs a
+ *     4x4 row major projection matrix (type `std::array<float, 16>`) or the camera extrinsics
+ *     model (type `nvidia::gxf::Pose3D`). This output port only exists if
+ *     `enable_camera_pose_output` was set to `True`.
  *
  * ==Parameters==
  *
@@ -96,18 +114,10 @@ struct BufferInfo;
  *   - type: `std::vector<gxf::Handle<gxf::Receiver>>`
  * - **enable_render_buffer_input**: Enable `render_buffer_input` (default: `false`)
  *   - type: `bool`
- * - **render_buffer_input**: Input for an empty render buffer, type `gxf::VideoBuffer`.
- *   - type: `gxf::Handle<gxf::Receiver>`
  * - **enable_render_buffer_output**: Enable `render_buffer_output` (default: `false`)
  *   - type: `bool`
- * - **render_buffer_output**: Output for a filled render buffer. If an input render buffer is
- *   specified at `render_buffer_input` it uses that one, otherwise it allocates a new buffer.
- *   - type: `gxf::Handle<gxf::Transmitter>`
  * - **enable_camera_pose_output**: Enable `camera_pose_output` (default: `false`)
  *   - type: `bool`
- * - **camera_pose_output**: Output the camera pose. The camera parameters are returned in a
- *   4x4 row major projection matrix.
- *   - type: `std::array<float, 16>`
  * - **tensors**: List of input tensor specifications (default: `[]`)
  *   - type: `std::vector<InputSpec>`
  *     - **name**: name of the tensor containing the input data to display
@@ -166,8 +176,8 @@ struct BufferInfo;
  *   - type: `std::vector<std::vector<float>>`
  * - **window_title**: Title on window canvas (default: `"Holoviz"`)
  *   - type: `std::string`
- * - **display_name**: In exclusive mode, name of display to use as shown with xrandr (default:
- *   `DP-0`)
+ * - **display_name**: In exclusive mode, name of display to use as shown with `xrandr`
+ *   or `hwinfo --monitor` (default: `DP-0`)
  *   - type: `std::string`
  * - **width**: Window width or display resolution width if in exclusive or fullscreen mode
  *   (default: `1920`)
@@ -193,6 +203,36 @@ struct BufferInfo;
  *   - type: `std::string`
  * - **cuda_stream_pool**: Instance of gxf::CudaStreamPool
  *   - type: `gxf::Handle<gxf::CudaStreamPool>`
+ * - **camera_pose_output_type**: Type of data output at `camera_pose_output`. Supported values are
+ *   `projection_matrix` and `extrinsics_model`. Default value is `projection_matrix`.
+ *   - type: `std::string`
+ * - **camera_eye**: Initial camera eye position.
+ *   - type: `std::array<float, 3>`
+ * - **camera_look_at**: Initial camera look at position.
+ *   - type: `std::array<float, 3>`
+ * - **camera_up**: Initial camera up vector.
+ *   - type: `std::array<float, 3>`
+ *
+ * ==Device Memory Requirements==
+ *
+ * If `render_buffer_input` is enabled, the provided buffer is used and no memory block will be
+ * allocated. Otherwise, when using this operator with a `BlockMemoryPool`, a single device memory
+ * block is needed (`storage_type` = 1). The size of this memory block can be determined by
+ * rounding the width and height up to the nearest even size and then padding the rows as needed so
+ * that the row stride is a multiple of 256 bytes. C++ code to calculate the block size is as
+ * follows:
+ *
+ * ```cpp
+ * #include <cstdint>
+ *
+ * int64_t get_block_size(int32_t height, int32_t width) {
+ *   int32_t height_even = height + (height & 1);
+ *   int32_t width_even = width + (width & 1);
+ *   int64_t row_bytes = width_even * 4;  // 4 bytes per pixel for 8-bit RGBA
+ *   int64_t row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes / 256 + 1) * 256);
+ *   return height_even * row_stride;
+ * }
+ * ```
  *
  * ==Notes==
  *
@@ -266,13 +306,7 @@ struct BufferInfo;
  *
  *    The type of geometry drawn can be selected by setting `depth_map_render_mode`.
  *
- *    Depth maps are rendered in 3D and support camera movement. The camera is controlled using the
- *    mouse:
- *    - Orbit        (LMB)
- *    - Pan          (LMB + CTRL  | MMB)
- *    - Dolly        (LMB + SHIFT | RMB | Mouse wheel)
- *    - Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
- *    - Zoom         (Mouse wheel + SHIFT)
+ *    Depth maps are rendered in 3D and support camera movement.
  *
  * 4. Output
  *
@@ -359,17 +393,17 @@ class HolovizOp : public Operator {
     InputSpec(const std::string& tensor_name, const std::string& type_str);
 
     /**
-     * @returns an InputSpec from the YAML form output by description()
+     * @return an InputSpec from the YAML form output by description()
      */
     explicit InputSpec(const std::string& yaml_description);
 
     /**
-     * @returns true if the input spec is valid
+     * @return true if the input spec is valid
      */
     explicit operator bool() const noexcept { return !tensor_name_.empty(); }
 
     /**
-     * @returns a YAML string representation of the InputSpec
+     * @return a YAML string representation of the InputSpec
      */
     std::string description() const;
 
@@ -425,6 +459,9 @@ class HolovizOp : public Operator {
   void set_input_spec_geometry(const InputSpec& input_spec);
   void read_frame_buffer(InputContext& op_input, OutputContext& op_output,
                          ExecutionContext& context);
+  void render_color_image(const InputSpec& input_spec, BufferInfo& buffer_info);
+  void render_geometry(const ExecutionContext& context, const InputSpec& input_spec,
+                       BufferInfo& buffer_info);
   void render_depth_map(InputSpec* const input_spec_depth_map,
                         const BufferInfo& buffer_info_depth_map,
                         InputSpec* const input_spec_depth_map_color,
@@ -451,6 +488,10 @@ class HolovizOp : public Operator {
   Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
   Parameter<std::shared_ptr<Allocator>> allocator_;
   Parameter<std::string> font_path_;
+  Parameter<std::string> camera_pose_output_type_;
+  Parameter<std::array<float, 3>> camera_eye_;
+  Parameter<std::array<float, 3>> camera_look_at_;
+  Parameter<std::array<float, 3>> camera_up_;
 
   // internal state
   viz::InstanceHandle instance_ = nullptr;
@@ -461,7 +502,11 @@ class HolovizOp : public Operator {
   bool render_buffer_output_enabled_;
   bool camera_pose_output_enabled_;
   bool is_first_tick_ = true;
+
+  std::array<float, 3> camera_eye_cur_;      //< current camera eye position
+  std::array<float, 3> camera_look_at_cur_;  //< current camera look at position
+  std::array<float, 3> camera_up_cur_;       //< current camera up vector
 };
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */

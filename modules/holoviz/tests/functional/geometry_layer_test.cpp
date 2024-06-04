@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,7 @@
 
 #include <cuda/cuda_service.hpp>
 #include <holoviz/holoviz.hpp>
-#include "headless_fixture.hpp"
+#include "test_fixture.hpp"
 
 namespace viz = holoscan::viz;
 
@@ -87,12 +87,12 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.2f);
       data.push_back(0.4f);
       color_crc = {
-          0xe96c7246,  // RTX 6000, RTX A5000, RTX A6000
-          0x5f7bf4d3   // T4
+          0xe96c7246,  // Quadro
+          0x5f7bf4d3   // non-Quadro
       };
       depth_crc = {
-          0x802dbbb0,  // RTX 6000, RTX A5000, RTX A6000
-          0xbd6bedea   // T4
+          0x802dbbb0,  // Quadro
+          0xbd6bedea   // non-Quadro
       };
       break;
     case viz::PrimitiveTopology::LINE_STRIP:
@@ -105,12 +105,12 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.3f);
       data.push_back(0.2f);
       color_crc = {
-          0x162496c0,  // RTX 6000, RTX A5000, RTX A6000
-          0x9118f5cb   // T4
+          0x162496c0,  // Quadro
+          0x9118f5cb   // non-Quadro
       };
       depth_crc = {
-          0xfae233b9,  // RTX 6000, RTX A5000, RTX A6000
-          0x92c04b5    // T4
+          0xfae233b9,  // Quadro
+          0x92c04b5    // non-Quadro
       };
       break;
     case viz::PrimitiveTopology::TRIANGLE_LIST:
@@ -141,12 +141,12 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.3f);
       data.push_back(0.01f);
       color_crc = {
-          0xb507fa88,  // RTX 6000, RTX A5000, RTX A6000
-          0xf298654    // T4
+          0xb507fa88,  // Quadro
+          0xf298654    // non-Quadro
       };
       depth_crc = {
-          0x44098c3f,  // RTX 6000, RTX A5000, RTX A6000
-          0x6fe44aee   // T4
+          0x44098c3f,  // Quadro
+          0x6fe44aee   // non-Quadro
       };
       break;
     case viz::PrimitiveTopology::RECTANGLE_LIST:
@@ -161,12 +161,12 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.5f);
       data.push_back(0.3f);
       color_crc = {
-          0x19a05481,  // RTX 6000, RTX A5000, RTX A6000
-          0xf1f8f1b3   // T4
+          0x19a05481,  // Quadro
+          0xf1f8f1b3   // non-Quadro
       };
       depth_crc = {
-          0xf67bacdc,  // RTX 6000, RTX A5000, RTX A6000
-          0x41396ef5   // T4
+          0xf67bacdc,  // Quadro
+          0x41396ef5   // non-Quadro
       };
       break;
     case viz::PrimitiveTopology::OVAL_LIST:
@@ -181,12 +181,12 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.05f);
       data.push_back(0.07f);
       color_crc = {
-          0x2341eef6,  // RTX 6000, RTX A5000, RTX A6000
-          0xae3f0636   // T4
+          0x2341eef6,  // Quadro
+          0xae3f0636   // non-Quadro
       };
       depth_crc = {
-          0x41d7da93,  // RTX 6000, RTX A5000, RTX A6000
-          0x7e44520d   // T4
+          0x41d7da93,  // Quadro
+          0x7e44520d   // non-Quadro
       };
       break;
     case viz::PrimitiveTopology::POINT_LIST_3D:
@@ -194,8 +194,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(-0.5f);
       data.push_back(0.5f);
       data.push_back(0.8f);
-      color_crc = {0x83063d37};
-      depth_crc = {0x1273ab78};
+      color_crc = {0xd8f49994};
+      depth_crc = {0x4e371ba0};
       break;
     case viz::PrimitiveTopology::LINE_LIST_3D:
       primitive_count = 2;
@@ -213,12 +213,12 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.4f);
       data.push_back(0.5f);
       color_crc = {
-          0x30cd7e29,  // RTX 6000, RTX A5000, RTX A6000
-          0x697c858d   // T4
+          0xc7762cc5,  // Quadro
+          0xe9f3dbc3   // non-Quadro
       };
       depth_crc = {
-          0xa31c2460,  // RTX 6000, RTX A5000, RTX A6000
-          0x2eb67c7e   // T4
+          0x782f15cf,  // Quadro
+          0xed2056f8   // non-Quadro
       };
       break;
     case viz::PrimitiveTopology::LINE_STRIP_3D:
@@ -234,12 +234,12 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(-0.2f);
       data.push_back(0.2f);
       color_crc = {
-          0x6c8cfdee,  // RTX 6000, RTX A5000, RTX A6000
-          0xf8e2cd1f   // T4
+          0x135ba8af,  // Quadro
+          0x322d3fdd   // non-Quadro
       };
       depth_crc = {
-          0xc2d73af1,  // RTX 6000, RTX A5000, RTX A6000
-          0x48ecd6f9   // T4
+          0x38dcc175,  // Quadro
+          0xa2292265   // non-Quadro
       };
       break;
     case viz::PrimitiveTopology::TRIANGLE_LIST_3D:
@@ -263,8 +263,8 @@ TEST_P(PrimitiveTopology, Primitive) {
       data.push_back(0.25f);
       data.push_back(0.6f);
       data.push_back(0.5f);
-      color_crc = {0x9d0d88};
-      depth_crc = {0xb45187a8};
+      color_crc = {0xf372dff7};
+      depth_crc = {0x90e4e07d};
       break;
     default:
       EXPECT_TRUE(false) << "Unhandled primitive topology";
@@ -399,16 +399,16 @@ TEST_P(DepthMapRenderMode, DepthMap) {
   std::vector<uint32_t> crc;
   switch (depth_map_render_mode) {
     case viz::DepthMapRenderMode::POINTS:
-      crc = {0xcd990f6d};
+      crc = {0x46e021cb};
       break;
     case viz::DepthMapRenderMode::LINES:
       crc = {
-          0x92a330ea,  // RTX 6000, RTX A5000, RTX A6000
-          0xfd6f60f0   // T4
+          0x6b63061e,  // Quadro
+          0x69207440   // non-Quadro
       };
       break;
     case viz::DepthMapRenderMode::TRIANGLES:
-      crc = {0x97856df3};
+      crc = {0x9cb8d951};
       break;
   }
   EXPECT_NO_THROW(viz::Begin());

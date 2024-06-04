@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_PYDOC_HPP
 
 #include <string>
 
@@ -33,7 +33,7 @@ https://www.kernel.org/doc/html/v4.9/media/uapi/v4l/v4l2.html
 Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
 
  - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
-   pixel format will be automatically selected. However, only ``AB24`` and ``YUYV`` are then
+   pixel format will be automatically selected. However, only ``AB24``, ``YUYV``, and ``MJPG`` are then
    supported.
    If a pixel format is specified in the yaml file, then this format will be used. However, note
    that the operator then expects that this format can be encoded as RGBA32. If not, the behavior
@@ -46,6 +46,23 @@ Use ``holoscan.operators.FormatConverterOp`` to move data from the host to a GPU
 
     signal : nvidia::gxf::VideoBuffer
         A message containing a video buffer on the host with format GXF_VIDEO_FORMAT_RGBA.
+
+**==Device Memory Requirements==**
+
+    When using this operator with a ``holoscan.resources.BlockMemoryPool``, a single device memory
+    block is needed (``storage_type=1``). The size of this memory block can be determined by
+    rounding the width and height up to the nearest even size and then padding the rows as needed
+    so that the row stride is a multiple of 256 bytes. C++ code to calculate the block size is as
+    follows:
+
+.. code-block:: python
+
+    def get_block_size(height, width):
+        height_even = height + (height & 1)
+        width_even = width + (width & 1)
+        row_bytes = width_even * 4;  # 4 bytes per pixel for 8-bit RGBA
+        row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes // 256 + 1) * 256)
+        return height_even * row_stride
 
 Parameters
 ----------
@@ -103,4 +120,4 @@ and uses a light-weight initialization.
 
 }  // namespace holoscan::doc::V4L2VideoCaptureOp
 
-#endif /* HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_PYDOC_HPP */

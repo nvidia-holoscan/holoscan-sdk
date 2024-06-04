@@ -65,6 +65,7 @@ bool AppDriver::get_bool_env_var(const char* name, bool default_value) {
         value.begin(), value.end(), value.begin(), [](unsigned char c) { return std::tolower(c); });
 
     if (value == "true" || value == "1" || value == "on") { return true; }
+    if (value == "false" || value == "0" || value == "off") { return false; }
   }
 
   return default_value;
@@ -637,6 +638,11 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
   // Create a set of visited nodes to avoid visiting the same node more than once.
   std::unordered_set<holoscan::FragmentGraph::NodeType> visited_nodes;
   visited_nodes.reserve(fragments.size());
+
+  // Initialize connection_map_ for each fragment, regardless of whether it has connections
+  for (auto& node : fragments) {
+    connection_map_[node] = std::vector<std::shared_ptr<ConnectionItem>>();
+  }
 
   // Initialize the indegrees of all nodes in the graph and add root fragments to the worklist.
   for (auto& node : fragments) {

@@ -30,6 +30,7 @@ holoscan_packager
 holoscan_create_operator
 holoscan_logging
 holoscan_debugging
+holoscan_create_operator_python_bindings
 ```
 
 ```{toctree}
@@ -48,6 +49,7 @@ inference
 components/schedulers
 components/conditions
 components/resources
+components/analytics
 ```
 
 ```{toctree}
@@ -83,6 +85,7 @@ gxf/doc/index.md
 :caption: Performance Tools
 
 flow_tracking
+gxf_job_statistics
 latency_tool.rst
 ```
 

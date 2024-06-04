@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,7 +119,7 @@ class CudaService {
   ~CudaService();
 
   /**
-   * @returns true if running on a multi GPU system
+   * @return true if running on a multi GPU system
    */
   bool IsMultiGPU() const;
 
@@ -128,7 +128,7 @@ class CudaService {
    *
    * @param device_ptr CUDA device memory to check
    *
-   * @returns true if the memory is on the same device as the CudaService
+   * @return true if the memory is on the same device as the CudaService
    */
   bool IsMemOnDevice(CUdeviceptr device_ptr) const;
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -134,6 +134,11 @@ void InferenceOp::setup(OperatorSpec& spec) {
              "Model Keyword with associated device",
              "Device ID on which model will do inference.",
              DataMap());
+  spec.param(temporal_map_,
+             "temporal_map",
+             "Model Keyword with associated frame execution delay",
+             "Frame delay for model inference.",
+             DataMap());
   spec.param(pre_processor_map_,
              "pre_processor_map",
              "Pre processor setting per model",
@@ -193,6 +198,7 @@ void InferenceOp::start() {
                                                     pre_processor_map_.get().get_map(),
                                                     inference_map_.get().get_map(),
                                                     device_map_.get().get_map(),
+                                                    temporal_map_.get().get_map(),
                                                     is_engine_path_.get(),
                                                     infer_on_cpu_.get(),
                                                     parallel_inference_.get(),

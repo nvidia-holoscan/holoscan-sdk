@@ -57,27 +57,36 @@ class HoloInferTests {
   unsigned int pass_test_count = 0, fail_test_count = 0, total_test_count = 0;
 
   std::string backend = "trt";
-  std::vector<std::string> in_tensor_names = {"bmode_pre_proc", "aortic_pre_proc"};
-  std::vector<std::string> out_tensor_names = {"bmode_infer", "aortic_infer"};
+
+  std::vector<std::string> in_tensor_names = {"m1_pre_proc", "m2_pre_proc"};
+  std::vector<std::string> out_tensor_names = {"m1_infer", "m2_infer"};
+
+  std::string model_folder = "../examples/bring_your_own_model/model/";
 
   std::map<std::string, std::string> model_path_map = {
-      {"bmode_perspective", "../data/multiai_ultrasound/models/bmode_perspective.onnx"},
-      {"aortic_stenosis", "../data/multiai_ultrasound/models/aortic_stenosis.onnx"},
+      {"model_1", model_folder + "identity_model.onnx"},
+      {"model_2", model_folder + "identity_model.onnx"},
   };
 
-  std::map<std::string, std::string> device_map = {{"bmode_perspective", "0"},
-                                                   {"aortic_stenosis", "0"}};
+  std::map<std::string, std::string> device_map = {{"model_1", "0"}, {"model_2", "0"}};
+
+  std::map<std::string, std::string> temporal_map = {{"model_1", "1"}, {"model_2", "1"}};
 
   std::map<std::string, std::string> backend_map;
 
   std::map<std::string, std::vector<std::string>> pre_processor_map = {
-      {"bmode_perspective", {"bmode_pre_proc"}},
-      {"aortic_stenosis", {"aortic_pre_proc"}},
+      {"model_1", {"m1_pre_proc"}},
+      {"model_2", {"m2_pre_proc"}},
   };
 
   std::map<std::string, std::vector<std::string>> inference_map = {
-      {"bmode_perspective", {"bmode_infer"}},
-      {"aortic_stenosis", {"aortic_infer"}},
+      {"model_1", {"m1_infer"}},
+      {"model_2", {"m2_infer"}},
+  };
+
+  const std::map<std::string, std::vector<int>> in_tensor_dimensions = {
+      {"m1_pre_proc", {3, 256, 256}},
+      {"m2_pre_proc", {3, 256, 256}},
   };
 
   bool parallel_inference = true;
@@ -86,11 +95,6 @@ class HoloInferTests {
   bool input_on_cuda = true;
   bool output_on_cuda = true;
   bool is_engine_path = false;
-
-  const std::map<std::string, std::vector<int>> in_tensor_dimensions = {
-      {"bmode_pre_proc", {320, 240, 3}},
-      {"aortic_pre_proc", {300, 300, 3}},
-  };
 
   /// Pointer to inference context.
   std::unique_ptr<HoloInfer::InferContext> holoscan_infer_context_;

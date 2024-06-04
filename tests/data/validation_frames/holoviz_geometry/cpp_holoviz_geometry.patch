@@ -1,11 +1,11 @@
 diff --git a/public/examples/holoviz/cpp/holoviz_geometry.cpp b/public/examples/holoviz/cpp/holoviz_geometry.cpp
-index 2ac25f3b8..449ae0b68 100644
+index 1eb86c2ed..9be565f8a 100644
 --- a/public/examples/holoviz/cpp/holoviz_geometry.cpp
 +++ b/public/examples/holoviz/cpp/holoviz_geometry.cpp
 @@ -26,6 +26,12 @@
- 
+
  #include <gxf/std/tensor.hpp>
- 
+
 +#ifdef RECORD_OUTPUT
 +  #include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
 +  #include <holoscan/operators/format_converter/format_converter.hpp>
@@ -13,15 +13,15 @@ index 2ac25f3b8..449ae0b68 100644
 +#endif
 +
  namespace holoscan::ops {
- 
- class CameraPoseRxOp : public Operator {
-@@ -336,6 +342,9 @@ class HolovizGeometryApp : public holoscan::Application {
+
+ /**
+@@ -316,6 +322,9 @@ class HolovizGeometryApp : public holoscan::Application {
+     add_flow(source, visualizer, {{"outputs", "receivers"}});
      add_flow(source, visualizer, {{"output_specs", "input_specs"}});
      add_flow(replayer, visualizer, {{"output", "receivers"}});
-     add_flow(visualizer, camera_pose_rx, {{"camera_pose_output", "in"}});
 +
 +    // Recorder to validate the video output
 +    RECORDER(visualizer);
    }
- 
+
   private:

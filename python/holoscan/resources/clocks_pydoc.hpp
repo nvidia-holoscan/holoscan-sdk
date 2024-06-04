@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,11 +71,6 @@ target_time_ns : int
 namespace RealtimeClock {
 
 PYDOC(RealtimeClock, R"doc(
-Real-time clock class.
-)doc")
-
-// Constructor
-PYDOC(RealtimeClock_python, R"doc(
 Realtime clock.
 
 Parameters
@@ -127,11 +122,6 @@ time_scale : float, optional
 namespace ManualClock {
 
 PYDOC(ManualClock, R"doc(
-Manual clock class.
-)doc")
-
-// Constructor
-PYDOC(ManualClock_python, R"doc(
 Manual clock.
 
 Parameters
@@ -143,6 +133,7 @@ initial_timestamp : int, optional
 name : str, optional
     The name of the clock.
 )doc")
+
 PYDOC(gxf_typename, R"doc(
 The GXF type name of the resource.
 

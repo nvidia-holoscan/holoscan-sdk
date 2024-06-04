@@ -751,6 +751,8 @@ class Vulkan::Impl {
 Vulkan::Impl::~Impl() {
   try {
     if (device_) {
+      window_->restore_callbacks();
+
       device_.waitIdle();
 
       cleanup_transfer_jobs();

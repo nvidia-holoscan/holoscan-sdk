@@ -28,7 +28,9 @@ class TestGreedyScheduler:
         scheduler = GreedyScheduler(app)
         assert isinstance(scheduler, GXFScheduler)
         assert isinstance(scheduler, Scheduler)
-        assert isinstance(scheduler.spec, ComponentSpec)
+        # The 'scheduler.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
+        # derives from PyComponentSpec, which inherits from ComponentSpec.
+        assert issubclass(ComponentSpec, type(scheduler.spec))
 
     @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803
@@ -81,7 +83,9 @@ class TestMultiThreadScheduler:
         scheduler = MultiThreadScheduler(app)
         assert isinstance(scheduler, GXFScheduler)
         assert isinstance(scheduler, Scheduler)
-        assert isinstance(scheduler.spec, ComponentSpec)
+        # The 'scheduler.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
+        # derives from PyComponentSpec, which inherits from ComponentSpec.
+        assert issubclass(ComponentSpec, type(scheduler.spec))
 
     @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803
@@ -142,7 +146,9 @@ class TestEventBasedScheduler:
         scheduler = EventBasedScheduler(app)
         assert isinstance(scheduler, GXFScheduler)
         assert isinstance(scheduler, Scheduler)
-        assert isinstance(scheduler.spec, ComponentSpec)
+        # The 'scheduler.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
+        # derives from PyComponentSpec, which inherits from ComponentSpec.
+        assert issubclass(ComponentSpec, type(scheduler.spec))
 
     @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803

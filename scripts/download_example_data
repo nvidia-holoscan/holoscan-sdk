@@ -14,12 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This script downloads sample datasets for the examples.
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+set -e
+
+# This script downloads a sample dataset for some of the examples.
 
 # Creates the data directory
+# Note: we assume this script is installed in the `examples` folder
+SCRIPT_DIR="$(dirname $(realpath $0))"
 DATA_DIR=${SCRIPT_DIR}/../data
-mkdir ${DATA_DIR}
+mkdir -p ${DATA_DIR}
 
 # Download the racerx sample data
 racerx_version="20231009"

@@ -26,7 +26,9 @@ class TestUcxContext:
         e = UcxContext(app)
         assert isinstance(e, GXFNetworkContext)
         assert isinstance(e, NetworkContext)
-        assert isinstance(e.spec, ComponentSpec)
+        # The 'e.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
+        # derives from PyComponentSpec, which inherits from ComponentSpec.
+        assert issubclass(ComponentSpec, type(e.spec))
 
     def test_init_kwargs(self, app):
         entity_serializer = UcxEntitySerializer(

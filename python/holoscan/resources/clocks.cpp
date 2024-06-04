@@ -149,7 +149,7 @@ void init_clocks(py::module_& m) {
            "initial_time_scale"_a = 1.0,
            "use_time_since_epoch"_a = false,
            "name"_a = "realtime_clock"s,
-           doc::RealtimeClock::doc_RealtimeClock_python)
+           doc::RealtimeClock::doc_RealtimeClock)
       .def_property_readonly(
           "gxf_typename", &RealtimeClock::gxf_typename, doc::RealtimeClock::doc_gxf_typename)
       .def("setup", &RealtimeClock::setup, "spec"_a, doc::RealtimeClock::doc_setup)
@@ -178,7 +178,7 @@ void init_clocks(py::module_& m) {
            "fragment"_a,
            "initial_timestamp"_a = 0LL,
            "name"_a = "realtime_clock"s,
-           doc::ManualClock::doc_ManualClock_python)
+           doc::ManualClock::doc_ManualClock)
       .def_property_readonly(
           "gxf_typename", &ManualClock::gxf_typename, doc::ManualClock::doc_gxf_typename)
       .def("setup", &ManualClock::setup, "spec"_a, doc::ManualClock::doc_setup)

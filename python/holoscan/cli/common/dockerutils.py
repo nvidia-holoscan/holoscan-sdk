@@ -199,7 +199,7 @@ def docker_run(
     """
     volumes = []
     environment_variables = {
-        "NVIDIA_DRIVER_CAPABILITIES": "graphics,video,compute,utility,display",
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
         "HOLOSCAN_HOSTING_SERVICE": "HOLOSCAN_RUN",
         "UCX_CM_USE_ALL_DEVICES": "y" if use_all_nics else "n",
     }
@@ -216,6 +216,16 @@ def docker_run(
         display = os.environ.get("DISPLAY", None)
         if display is not None:
             environment_variables["DISPLAY"] = display
+        xdg_session_type = os.environ.get("XDG_SESSION_TYPE", None)
+        if xdg_session_type is not None:
+            environment_variables["XDG_SESSION_TYPE"] = xdg_session_type
+        xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR", None)
+        if xdg_runtime_dir is not None:
+            volumes.append((xdg_runtime_dir, xdg_runtime_dir))
+            environment_variables["XDG_RUNTIME_DIR"] = xdg_runtime_dir
+        wayland_display = os.environ.get("WAYLAND_DISPLAY", None)
+        if wayland_display is not None:
+            environment_variables["WAYLAND_DISPLAY"] = wayland_display
 
     # Use user-specified --gpu values
     if gpu_enum is not None:

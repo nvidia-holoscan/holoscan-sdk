@@ -44,6 +44,7 @@ class DummyDemosaicApp : public holoscan::Application {
                                                  Arg("columns", columns),
                                                  Arg("channels", channels),
                                                  Arg("tensor_name", tensor_name),
+                                                 Arg("storage_type", std::string("device")),
                                                  make_condition<CountCondition>(3));
 
     auto cuda_stream_pool = make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5);
@@ -66,15 +67,26 @@ class DummyDemosaicApp : public holoscan::Application {
 
   void set_explicit_stream_pool_init(bool value) { explicit_stream_pool_init_ = value; }
 
+  void set_storage_type(const std::string& storage_type) { storage_type_ = storage_type; }
+
  private:
   bool explicit_stream_pool_init_ = false;
+  std::string storage_type_ = std::string("device");
 };
 
-TEST(DemosaicOpApp, TestDummyDemosaicApp) {
+class DemosaicStorageParameterizedTestFixture : public ::testing::TestWithParam<std::string> {};
+
+INSTANTIATE_TEST_CASE_P(DemosaicOpAppTests, DemosaicStorageParameterizedTestFixture,
+                        ::testing::Values(std::string("device"), std::string("host"),
+                                          std::string("system")));
+
+TEST_P(DemosaicStorageParameterizedTestFixture, TestDummyDemosaicApp) {
   // Test fix for issue 4313690 (failure to initialize graph when using BayerDemosaicOp)
+  std::string storage_type = GetParam();
   using namespace holoscan;
 
   auto app = make_application<DummyDemosaicApp>();
+  app->set_storage_type(storage_type);
 
   // capture output to check that the expected messages were logged
   testing::internal::CaptureStderr();

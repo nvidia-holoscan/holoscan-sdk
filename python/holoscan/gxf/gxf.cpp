@@ -61,20 +61,10 @@ static const gxf_tid_t default_tid = {0, 0};
 
 PYBIND11_MODULE(_gxf, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK GXF Python Bindings
+        --------------------------------
         .. currentmodule:: _gxf
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   init_entity(m);
 

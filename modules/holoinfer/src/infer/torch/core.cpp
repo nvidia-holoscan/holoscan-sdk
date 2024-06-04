@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -284,7 +284,6 @@ InferStatus TorchInferImpl::transfer_to_output(
     default:
       return InferStatus(holoinfer_code::H_ERROR, "Unsupported datatype for transfer.");
   }
-  return InferStatus();
 }
 
 void TorchInfer::print_model_details() {
@@ -499,7 +498,7 @@ InferStatus TorchInfer::do_inference(const std::vector<std::shared_ptr<DataBuffe
                 return status;
               }
               torch::Tensor current_tensor = dict_outputs.at(impl_->output_names_[a]).toTensor();
-              auto status = impl_->transfer_to_output(output_buffer, current_tensor, a);
+              auto status = impl_->transfer_to_output(output_buffer, std::move(current_tensor), a);
               if (status.get_code() != holoinfer_code::H_SUCCESS) {
                 HOLOSCAN_LOG_ERROR("Transfer of Tensor {} failed in inferece core.",
                                    impl_->output_names_[a]);

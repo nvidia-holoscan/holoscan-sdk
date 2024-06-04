@@ -30,8 +30,13 @@
         "--security-opt=seccomp=unconfined",
     ],
     "containerEnv": {
+        // X11 support
         "DISPLAY": "${localEnv:DISPLAY}",
-        "NVIDIA_DRIVER_CAPABILITIES": "graphics,video,compute,utility,display",
+        // Wayland support
+        "WAYLAND_DISPLAY": "${localEnv:WAYLAND_DISPLAY}",
+        "XDG_RUNTIME_DIR": "${localEnv:XDG_RUNTIME_DIR}",
+        "XDG_SESSION_TYPE": "${localEnv:XDG_SESSION_TYPE}",
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
         // Set the following environment variables to use the same folder name as the host machine.
         // This is needed to launch container from the workspace folder that is not same as the SDK source root folder.
         "HOLOSCAN_PUBLIC_FOLDER": "${localEnv:HOLOSCAN_PUBLIC_FOLDER}",
@@ -40,7 +45,10 @@
         "CMAKE_BUILD_PARALLEL_LEVEL": "${localEnv:CMAKE_BUILD_PARALLEL_LEVEL}",
     },
     "mounts": [
+        // X11 support
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+        // Wayland support
+        "source=${localEnv:XDG_RUNTIME_DIR},target=${localEnv:XDG_RUNTIME_DIR},type=bind,consistency=cached",
     ],
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/holoscan-sdk,type=bind,consistency=cached",
     "workspaceFolder": "/workspace/holoscan-sdk",

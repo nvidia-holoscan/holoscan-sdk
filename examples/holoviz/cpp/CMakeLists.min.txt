@@ -20,6 +20,16 @@ project(holoviz_examples_cpp CXX)
 find_package(holoscan REQUIRED CONFIG
              PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
 
+add_executable(holoviz_camera
+  holoviz_camera.cpp
+)
+
+target_link_libraries(holoviz_camera
+  PRIVATE
+  holoscan::core
+  holoscan::ops::holoviz
+)
+
 add_executable(holoviz_geometry
   holoviz_geometry.cpp
 )

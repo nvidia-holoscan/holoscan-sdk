@@ -8,10 +8,12 @@ There are two operators involved in this example:
   1. a transmitter, set to transmit a sequence of integers from 1-20 to it's 'out' port
   2. a receiver that prints the received values to the terminal
 
-The transmit operator will be asynchronous if `async_transmit: true` in `ping_async.yaml`.
-The receive operator will be asynchronous if `async_receive: true` in `ping_async.yaml`.
+For the C++ application:
+- The transmit operator will be asynchronous if `async_transmit: true` in `ping_async.yaml`.
+- The receive operator will be asynchronous if `async_receive: true` in `ping_async.yaml`.
+- The scheduler to be used can be set via the `scheduler` entry in `ping_async.yaml`. It defaults to `event_based` (an event-based multi-thread scheduler), but can also be set to either `multi_thread` (polling-based) or `greedy` (single thread).
 
-The scheduler to be used can be set via the `scheduler` entry in `ping_async.yaml`. It defaults to `event_based` (an event-based multi-thread scheduler), but can also be set to either `multi_thread` (polling-based) or `greedy` (single thread).
+For the Python application, configuration is via command line arguments as described below.
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/components/conditions.html) to learn more about the Asynchronous Condition.*
 
@@ -40,6 +42,21 @@ sed -i -e 's#^async_receive:.*#async_receive: true#' ./examples/ping_async/cpp/p
 sed -i -e 's#^async_transmit:.*#async_transmit: true#' ./examples/ping_async/cpp/ping_async.yaml
 sed -i -e 's#^multithreaded:.*#multithreaded: true#' ./examples/ping_async/cpp/ping_async.yaml
 ./examples/ping_async/cpp/ping_async
+```
+
+# Python
+```bash
+python ./examples/ping_async/python/ping_async.py
+```
+
+By default, both transmit and receive are asynchronous. To see the available options run the
+application using `-h` or `--help`.
+
+For example, to send 5 messages, waiting 500 ms between messages and use async transmit and
+synchronous receive:
+
+```bash
+python ./examples/ping_async/python/ping_async.py --delay=500 --count=5 --sync_rx
 ```
 
 > ℹ️ Python apps can run outside those folders if `HOLOSCAN_INPUT_PATH` is set in your environment (automatically done by `./run launch`).

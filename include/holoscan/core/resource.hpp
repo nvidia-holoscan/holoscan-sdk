@@ -27,12 +27,13 @@
 #include "./gxf/gxf_component.hpp"
 #include "./gxf/gxf_utils.hpp"
 
-#define HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()                                                \
-  template <typename ArgT,                                                                  \
-            typename... ArgsT,                                                              \
-            typename = std::enable_if_t<!std::is_base_of_v<Resource, std::decay_t<ArgT>> && \
-                                        (std::is_same_v<Arg, std::decay_t<ArgT>> ||         \
-                                         std::is_same_v<ArgList, std::decay_t<ArgT>>)>>
+#define HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()                                                     \
+  template <typename ArgT,                                                                       \
+            typename... ArgsT,                                                                   \
+            typename =                                                                           \
+                std::enable_if_t<!std::is_base_of_v<::holoscan::Resource, std::decay_t<ArgT>> && \
+                                 (std::is_same_v<::holoscan::Arg, std::decay_t<ArgT>> ||         \
+                                  std::is_same_v<::holoscan::ArgList, std::decay_t<ArgT>>)>>
 
 /**
  * @brief Forward the arguments to the super class.
@@ -213,6 +214,14 @@ class Resource : public Component {
   friend class holoscan::Operator;
 
   using Component::reset_graph_entities;
+
+  using ComponentBase::update_params_from_args;
+
+  /// Update parameters based on the specified arguments
+  void update_params_from_args();
+
+  /// Set the parameters based on defaults (sets GXF parameters for GXF components)
+  virtual void set_parameters();
 
   ResourceType resource_type_ = ResourceType::kNative;  ///< The type of the resource.
   bool is_initialized_ = false;                         ///< Whether the resource is initialized.

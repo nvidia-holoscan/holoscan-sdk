@@ -36,5 +36,5 @@ The steps above cover what is required to write your own application and run it.
 
 ## 6. Master the details
 
-- Expand your understanding of the framework with details on the [logging utility](./holoscan_logging.md) or the [data flow tracking](./flow_tracking.md) benchmarking tool.
+- Expand your understanding of the framework with details on the [logging utility](./holoscan_logging.md) or the [data flow tracking](./flow_tracking.md) benchmarking tool and [job statistics](./gxf_job_statistics) measurements.
 - Learn more details on the configurable components that control the execution of your application, like [Schedulers], [Conditions], and [Resources]. (Advanced) These components are part on the GXF execution backend, hence the **Graph Execution Framework** section at the bottom of this guide if deep understanding of the application execution is needed.

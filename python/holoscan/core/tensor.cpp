@@ -99,8 +99,14 @@ void init_tensor(py::module_& m) {
       .def_property_readonly("dtype", &PyTensor::dtype, doc::Tensor::doc_dtype)
       .def_property_readonly("itemsize", &PyTensor::itemsize, doc::Tensor::doc_itemsize)
       .def_property_readonly("nbytes", &PyTensor::nbytes, doc::Tensor::doc_nbytes)
-      .def_property_readonly("data", &PyTensor::data, doc::Tensor::doc_data)
+      .def_property_readonly(
+          "data",
+          [](const Tensor& t) {
+            return static_cast<int64_t>(reinterpret_cast<uintptr_t>(t.data()));
+          },
+          doc::Tensor::doc_data)
       .def_property_readonly("device", &PyTensor::device, doc::Tensor::doc_device)
+      .def("is_contiguous", &PyTensor::is_contiguous, doc::Tensor::doc_is_contiguous)
       // DLPack protocol
       .def("__dlpack__", &PyTensor::dlpack, "stream"_a = py::none(), doc::Tensor::doc_dlpack)
       .def("__dlpack_device__", &PyTensor::dlpack_device, doc::Tensor::doc_dlpack_device);
@@ -599,4 +605,12 @@ py::tuple PyTensor::dlpack_device(const py::object& obj) {
   // raw pointer here instead.
   return py_dlpack_device(tensor.get());
 }
+
+bool is_tensor_like(py::object value) {
+  return ((py::hasattr(value, "__dlpack__") && py::hasattr(value, "__dlpack_device__")) ||
+          py::isinstance<holoscan::PyTensor>(value) ||
+          py::hasattr(value, "__cuda_array_interface__") ||
+          py::hasattr(value, "__array_interface__"));
+}
+
 }  // namespace holoscan

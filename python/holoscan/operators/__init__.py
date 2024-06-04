@@ -19,6 +19,7 @@
     holoscan.operators.AJASourceOp
     holoscan.operators.BayerDemosaicOp
     holoscan.operators.FormatConverterOp
+    holoscan.operators.GXFCodeletOp
     holoscan.operators.HolovizOp
     holoscan.operators.InferenceOp
     holoscan.operators.InferenceProcessorOp
@@ -35,6 +36,7 @@ _OPERATOR_MODULES = {
     "aja_source": ["AJASourceOp", "NTV2Channel"],
     "bayer_demosaic": ["BayerDemosaicOp"],
     "format_converter": ["FormatConverterOp"],
+    "gxf_codelet": ["GXFCodeletOp"],
     "holoviz": ["HolovizOp"],
     "inference": ["InferenceOp"],
     "inference_processor": ["InferenceProcessorOp"],

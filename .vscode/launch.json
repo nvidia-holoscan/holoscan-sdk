@@ -373,6 +373,24 @@
             ]
         },
         {
+            "name": "(gdb) examples/holoviz/cpp/holoviz_camera",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/holoviz/cpp/holoviz_camera",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) examples/holoviz/cpp/holoviz_geometry",
             "type": "cppdbg",
             "request": "launch",
@@ -484,6 +502,55 @@
                     "ignoreFailures": true
                 }
             ]
+        },
+        {
+            "name": "(gdb) examples/import_gxf_components/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/import_gxf_components/cpp/import_gxf_components",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/import_gxf_components/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/import_gxf_components/python/import_gxf_components.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+                {
+                    "name": "HOLOSCAN_INPUT_PATH",
+                    "value": "${command:cmake.buildDirectory}/../data"
+                },
+            ],
         },
         {
             "name": "(gdb) examples/multithread/cpp/multithread",

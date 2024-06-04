@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,6 +119,10 @@ YAML::Node Arg::to_yaml_node() const {
   node["type"] = arg_type_.to_string();
   node["value"] = any_as_node(value_, arg_type_);
   return node;
+}
+
+YAML::Node Arg::value_to_yaml_node() const {
+  return any_as_node(value_, arg_type_);
 }
 
 std::string Arg::description() const {

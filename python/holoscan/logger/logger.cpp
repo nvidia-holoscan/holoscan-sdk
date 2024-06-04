@@ -31,18 +31,10 @@ namespace holoscan {
 
 PYBIND11_MODULE(_logger, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK Logger Python Bindings
+        -----------------------------------
         .. currentmodule:: _logger
-        .. autosummary::
-           :toctree: _generate
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::enum_<LogLevel>(m, "LogLevel", doc::Logger::doc_LogLevel)
       .value("TRACE", LogLevel::TRACE)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,11 +27,6 @@ namespace holoscan::doc {
 namespace SerializationBuffer {
 
 PYDOC(SerializationBuffer, R"doc(
-Serialization Buffer.
-)doc")
-
-// Constructor
-PYDOC(SerializationBuffer_python, R"doc(
 Serialization Buffer.
 
 Parameters
@@ -69,11 +64,6 @@ spec : holoscan.core.ComponentSpec
 namespace UcxSerializationBuffer {
 
 PYDOC(UcxSerializationBuffer, R"doc(
-UCX serialization buffer.
-)doc")
-
-// Constructor
-PYDOC(UcxSerializationBuffer_python, R"doc(
 UCX serialization buffer.
 
 Parameters

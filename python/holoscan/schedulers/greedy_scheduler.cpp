@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -98,7 +98,7 @@ void init_greedy_scheduler(py::module_& m) {
            "check_recession_period_ms"_a = 0.0,
            "stop_on_deadlock_timeout"_a = 0LL,
            "name"_a = "greedy_scheduler"s,
-           doc::GreedyScheduler::doc_GreedyScheduler_python)
+           doc::GreedyScheduler::doc_GreedyScheduler)
       .def_property_readonly("clock", &GreedyScheduler::clock)
       .def_property_readonly("max_duration_ms", &GreedyScheduler::max_duration_ms)
       .def_property_readonly("stop_on_deadlock", &GreedyScheduler::stop_on_deadlock)

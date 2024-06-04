@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,11 +27,6 @@ namespace holoscan::doc {
 namespace UcxEntitySerializer {
 
 PYDOC(UcxEntitySerializer, R"doc(
-UCX entity serializer.
-)doc")
-
-// Constructor
-PYDOC(UcxEntitySerializer_python, R"doc(
 UCX entity serializer.
 
 Parameters

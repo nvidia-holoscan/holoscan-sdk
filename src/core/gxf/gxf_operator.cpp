@@ -29,15 +29,15 @@ void GXFOperator::initialize() {
 gxf_uid_t GXFOperator::add_codelet_to_graph_entity() {
   HOLOSCAN_LOG_TRACE("calling graph_entity()->addCodelet for {}", name_);
   if (!graph_entity_) { throw std::runtime_error("graph entity is not initialized"); }
-  auto codelet_handle = graph_entity_->addCodelet(gxf_typename(), name_.c_str());
-  if (!codelet_handle) {
+  codelet_handle_ = graph_entity_->addCodelet(gxf_typename(), name_.c_str());
+  if (!codelet_handle_) {
     throw std::runtime_error("Failed to add codelet of type " + std::string(gxf_typename()));
   }
-  gxf_uid_t codelet_cid = codelet_handle->cid();
+  gxf_uid_t codelet_cid = codelet_handle_->cid();
   gxf_eid_ = graph_entity_->eid();
   gxf_cid_ = codelet_cid;
   gxf_context_ = graph_entity_->context();
-  HOLOSCAN_LOG_TRACE("\tadded codelet with cid = {}", codelet_handle->cid());
+  HOLOSCAN_LOG_TRACE("\tadded codelet with cid = {}", codelet_handle_->cid());
   return codelet_cid;
 }
 

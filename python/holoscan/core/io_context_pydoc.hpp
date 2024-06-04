@@ -55,6 +55,23 @@ Class representing an output context.
 
 }  // namespace OutputContext
 
+namespace EmitterReceiverRegistry {
+
+PYDOC(EmitterReceiverRegistry, R"doc(
+Registry of methods to emit/receive different types.
+)doc")
+
+PYDOC(registered_types, R"doc(
+List of types with an emitter and/or receiver registered
+
+Returns
+-------
+names : list of str
+	The list of registered emitter/receiver names.
+)doc")
+
+}  // namespace EmitterReceiverRegistry
+
 }  // namespace holoscan::doc
 
 #endif  // PYHOLOSCAN_CORE_IO_CONTEXT_PYDOC_HPP

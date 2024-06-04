@@ -35,7 +35,7 @@ class PingTxOp : public Operator {
   void setup(OperatorSpec& spec) override { spec.output<std::shared_ptr<int>>("out"); }
 
   void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
-    auto value = std::make_shared<int>(0);
+    int value = 0;
     op_output.emit(value, "out");
   };
 };
@@ -47,30 +47,33 @@ class DelayOp : public Operator {
   DelayOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<std::shared_ptr<int>>("in");
-    spec.output<std::shared_ptr<int>>("out_val");
+    spec.input<int>("in");
+    spec.output<int>("out_val");
     spec.output<std::string>("out_name");
     spec.param(
         delay_, "delay", "Delay", "Amount of delay before incrementing the input value", 0.5);
     spec.param(
         increment_, "increment", "Increment", "Integer amount to increment the input value by", 1);
+    spec.param(silent_, "silent", "Silent mode?", "Whether to log info on receive", false);
   }
 
   void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
-    auto value = op_input.receive<std::shared_ptr<int>>("in").value();
-
-    HOLOSCAN_LOG_INFO("{}: now waiting {} s", name(), delay_.get());
-
-    // sleep for the specified time (rounded down to the nearest microsecond)
-    int delay_us = static_cast<int>(delay_ * 1000000);
-    usleep(delay_us);
-    HOLOSCAN_LOG_INFO("{}: finished waiting", name());
+    auto value = op_input.receive<int>("in").value();
 
     // increment value by the specified increment
-    auto new_value = std::make_shared<int>(*value + increment_.get());
-    auto nm = std::string(name());
+    int new_value = value + increment_.get();
+    auto nm = std::string(name_);
 
-    HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), *new_value);
+    double delay = delay_.get();
+    bool silent = silent_.get();
+    if (delay > 0) {
+      if (!silent) { HOLOSCAN_LOG_INFO("{}: now waiting {} s", name(), delay); }
+      // sleep for the specified time (rounded down to the nearest microsecond)
+      int delay_us = static_cast<int>(delay * 1000000);
+      usleep(delay_us);
+      if (!silent) { HOLOSCAN_LOG_INFO("{}: finished waiting", name()); }
+    }
+    if (!silent) { HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value); }
     op_output.emit(new_value, "out_val");
     op_output.emit(nm, "out_name");
   };
@@ -78,13 +81,14 @@ class DelayOp : public Operator {
  private:
   Parameter<double> delay_;
   Parameter<int> increment_;
+  Parameter<bool> silent_;
 };
 
 class PingRxOp : public Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(PingRxOp)
 
-  PingRxOp() = default;
+  explicit PingRxOp(bool silent) : silent_(silent) {}
 
   void setup(OperatorSpec& spec) override {
     spec.param(
@@ -94,19 +98,23 @@ class PingRxOp : public Operator {
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    auto value_vector = op_input.receive<std::vector<std::shared_ptr<int>>>("values").value();
-    auto name_vector = op_input.receive<std::vector<std::string>>("names").value();
-
-    HOLOSCAN_LOG_INFO("number of received names: {}", name_vector.size());
-    HOLOSCAN_LOG_INFO("number of received values: {}", value_vector.size());
+    std::vector<int> value_vector;
+    std::vector<std::string> name_vector;
+    value_vector = op_input.receive<std::vector<int>>("values").value();
+    name_vector = op_input.receive<std::vector<std::string>>("names").value();
+    if (!silent_) {
+      HOLOSCAN_LOG_INFO("number of received names: {}", name_vector.size());
+      HOLOSCAN_LOG_INFO("number of received values: {}", value_vector.size());
+    }
     int total = 0;
-    for (auto vp : value_vector) { total += *vp; }
-    HOLOSCAN_LOG_INFO("sum of received values: {}", total);
+    for (auto vp : value_vector) { total += vp; }
+    if (!silent_) { HOLOSCAN_LOG_INFO("sum of received values: {}", total); }
   };
 
  private:
   Parameter<std::vector<IOSpec*>> names_;
   Parameter<std::vector<IOSpec*>> values_;
+  bool silent_ = false;
 };
 
 }  // namespace holoscan::ops
@@ -114,18 +122,22 @@ class PingRxOp : public Operator {
 class App : public holoscan::Application {
  public:
   void set_num_delays(int num_delays) { num_delays_ = num_delays; }
+  void set_count(int64_t count) { count_ = count; }
   void set_delay(double delay) { delay_ = delay; }
   void set_delay_step(double delay_step) { delay_step_ = delay_step; }
+  void set_silent(bool silent) { silent_ = silent; }
 
   void compose() override {
     using namespace holoscan;
 
-    auto tx = make_operator<ops::PingTxOp>("tx", make_condition<CountCondition>(1));
-    auto rx = make_operator<ops::PingRxOp>("rx");
+    auto tx = make_operator<ops::PingTxOp>("tx", make_condition<CountCondition>(count_));
+    auto rx = make_operator<ops::PingRxOp>("rx", silent_);
     for (int i = 0; i < num_delays_; ++i) {
       std::string delay_name = fmt::format("mx{}", i);
-      auto del_op = make_operator<ops::DelayOp, std::string>(
-          delay_name, Arg{"delay", delay_ + delay_step_ * i}, Arg{"increment", i});
+      auto del_op = make_operator<ops::DelayOp, std::string>(delay_name,
+                                                             Arg{"delay", delay_ + delay_step_ * i},
+                                                             Arg{"increment", i},
+                                                             Arg{"silent", silent_});
       add_flow(tx, del_op);
       add_flow(del_op, rx, {{"out_val", "values"}, {"out_name", "names"}});
     }
@@ -133,8 +145,10 @@ class App : public holoscan::Application {
 
  private:
   int num_delays_ = 32;
+  int64_t count_ = 1;
   double delay_ = 0.2;
   double delay_step_ = 0.05;
+  bool silent_ = false;
 };
 
 int main(int argc, char** argv) {
@@ -154,9 +168,13 @@ int main(int argc, char** argv) {
   int num_delay_ops = app->from_config("num_delay_ops").as<int>();
   double delay = app->from_config("delay").as<double>();
   double delay_step = app->from_config("delay_step").as<double>();
+  int count = app->from_config("count").as<int>();
+  bool silent = app->from_config("silent").as<bool>();
   app->set_num_delays(num_delay_ops);
   app->set_delay(delay);
   app->set_delay_step(delay_step);
+  app->set_count(count);
+  app->set_silent(silent);
 
   std::string scheduler = app->from_config("scheduler").as<std::string>();
   if (scheduler == "multi_thread") {
@@ -172,8 +190,8 @@ int main(int argc, char** argv) {
         "greedy-scheduler", app->from_config("greedy_scheduler")));
   } else if (scheduler != "default") {
     throw std::runtime_error(fmt::format(
-        "unrecognized scheduler option '{}', should be one of {'multi_thread', 'event_based', "
-        "'greedy', 'default'}",
+        "unrecognized scheduler option '{}', should be one of ('multi_thread', 'event_based', "
+        "'greedy', 'default')",
         scheduler));
   }
 

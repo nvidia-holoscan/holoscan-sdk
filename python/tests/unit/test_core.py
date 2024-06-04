@@ -45,6 +45,7 @@ from holoscan.core import (
     Resource,
     Scheduler,
     _Fragment,
+    io_type_registry,
     py_object_to_arg,
 )
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
@@ -991,3 +992,23 @@ class TestAsTensor:
 
         tensor_f = as_tensor(coords_f)
         assert tensor_f.strides == coords.strides
+
+
+class TestIOTypeRegistry:
+    def test_registery_entries(self):
+        registered_types = io_type_registry.registered_types()
+
+        # not an exhaustive list, just a few examples
+        assert "holoscan::Tensor" in registered_types
+        assert "CloudPickleSerializedObject" in registered_types
+        assert "std::string" in registered_types
+        assert "PyObject" in registered_types
+
+    def test_holoviz_registered_types(self):
+        # import HolovizOp to ensure its associated types will have been registered
+        from holoscan.operators import HolovizOp  # noqa: F401
+
+        registered_types = io_type_registry.registered_types()
+        assert "std::shared_ptr<nvidia::gxf::Pose3D>" in registered_types
+        assert "std::shared_ptr<std::array<float, 16>>" in registered_types
+        assert "std::vector<HolovizOp::InputSpec>" in registered_types

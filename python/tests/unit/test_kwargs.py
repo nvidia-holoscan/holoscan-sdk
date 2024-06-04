@@ -39,50 +39,50 @@ from holoscan.resources import UnboundedAllocator
     "value, container_type, element_type",
     [
         # Python float
-        (5.0, ArgContainerType.NATIVE, ArgElementType.FLOAT64),
+        (5.0, ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # strings and sequences of strings
-        ("abcd", ArgContainerType.NATIVE, ArgElementType.STRING),
+        ("abcd", ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # tuple, list set also work
-        (("ab", "cd"), ArgContainerType.VECTOR, ArgElementType.STRING),
-        (["ab", "cd"], ArgContainerType.VECTOR, ArgElementType.STRING),
-        ({"ab", "cd"}, ArgContainerType.VECTOR, ArgElementType.STRING),
+        (("ab", "cd"), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (["ab", "cd"], ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        ({"ab", "cd"}, ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # Python int gets cast to signed 64-bit int
-        (5, ArgContainerType.NATIVE, ArgElementType.INT64),
+        (5, ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # range works
-        (range(8), ArgContainerType.VECTOR, ArgElementType.INT64),
+        (range(8), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # generator works
-        ((a + 1 for a in range(3)), ArgContainerType.VECTOR, ArgElementType.INT64),
-        ((3, 5, -1), ArgContainerType.VECTOR, ArgElementType.INT64),
-        (False, ArgContainerType.NATIVE, ArgElementType.BOOLEAN),
-        (True, ArgContainerType.NATIVE, ArgElementType.BOOLEAN),
-        ((False, True), ArgContainerType.VECTOR, ArgElementType.BOOLEAN),
+        ((a + 1 for a in range(3)), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        ((3, 5, -1), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (False, ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (True, ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        ((False, True), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # numpy dtypes get cast to the respective C++ types
-        (np.uint8(3), ArgContainerType.NATIVE, ArgElementType.UNSIGNED8),
-        (np.uint16(3), ArgContainerType.NATIVE, ArgElementType.UNSIGNED16),
-        (np.uint32(3), ArgContainerType.NATIVE, ArgElementType.UNSIGNED32),
-        (np.uint64(3), ArgContainerType.NATIVE, ArgElementType.UNSIGNED64),
-        (np.int8(3), ArgContainerType.NATIVE, ArgElementType.INT8),
-        (np.int16(3), ArgContainerType.NATIVE, ArgElementType.INT16),
-        (np.int32(3), ArgContainerType.NATIVE, ArgElementType.INT32),
-        (np.int64(3), ArgContainerType.NATIVE, ArgElementType.INT64),
-        (np.float16(3), ArgContainerType.NATIVE, ArgElementType.FLOAT32),
-        (np.float32(3), ArgContainerType.NATIVE, ArgElementType.FLOAT32),
-        (np.float64(3), ArgContainerType.NATIVE, ArgElementType.FLOAT64),
-        (np.bool_(3), ArgContainerType.NATIVE, ArgElementType.BOOLEAN),
+        (np.uint8(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.uint16(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.uint32(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.uint64(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.int8(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.int16(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.int32(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.int64(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.float16(2.5), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.float32(2.5), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.float64(2.5), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
+        (np.bool_(3), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         (
-            np.arange(5, dtype=np.float16),
-            ArgContainerType.VECTOR,
-            ArgElementType.FLOAT32,  # float16 will be promoted to float32
+            np.full(5, 2.5, dtype=np.float16),
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,  # float16 will be promoted to float32
         ),
         (
-            np.arange(5, dtype=np.float32),
-            ArgContainerType.VECTOR,
-            ArgElementType.FLOAT32,
+            np.full(5, 2.5, dtype=np.float32),
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),
         (
-            np.arange(5, dtype=np.uint8),
-            ArgContainerType.VECTOR,
-            ArgElementType.UNSIGNED8,
+            np.full(5, 3, dtype=np.uint8),
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),
     ],
 )
@@ -156,80 +156,80 @@ def test_py_object_to_arg(value, container_type, element_type):
     [
         # list of lists
         (
-            [[3.0, 3.0, 3.0], [4.0, 4.0, 5.0]],
-            ArgContainerType.VECTOR,
-            ArgElementType.FLOAT64,
+            [[2.5, 2.5, 2.5], [2.5, 2.5, 2.5]],
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),
-        ([[3, 3, 3], [4, 4, 5]], ArgContainerType.VECTOR, ArgElementType.INT64),
+        ([[3, 3, 3], [4, 4, 5]], ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         (
             [[False, True], [True, True]],
-            ArgContainerType.VECTOR,
-            ArgElementType.BOOLEAN,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),
         # list of tuple
-        ([(3, 3, 3), (4, 4, 5)], ArgContainerType.VECTOR, ArgElementType.INT64),
+        ([(3, 3, 3), (4, 4, 5)], ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # sequence of sequence of mixed type
-        (([3, 3, 3], (4, 4, 5)), ArgContainerType.VECTOR, ArgElementType.INT64),
+        (([3, 3, 3], (4, 4, 5)), ArgContainerType.NATIVE, ArgElementType.YAML_NODE),
         # 2d array cases
         (
             np.ones((5, 8), dtype=bool),
-            ArgContainerType.VECTOR,
-            ArgElementType.BOOLEAN,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),
         (
-            np.arange(5 * 8, dtype=np.float32).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.FLOAT32,
+            np.full((5, 8), 2.5, dtype=np.float32),
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
-            np.arange(5 * 8, dtype=np.float64).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.FLOAT64,
+            np.full((5, 8), 2.5, dtype=np.float64),
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.int8).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.INT8,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.int16).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.INT16,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.int32).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.INT32,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.int64).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.INT64,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.uint8).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.UNSIGNED8,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.uint16).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.UNSIGNED16,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.uint32).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.UNSIGNED32,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             np.arange(5 * 8, dtype=np.uint64).reshape(5, 8),
-            ArgContainerType.VECTOR,
-            ArgElementType.UNSIGNED64,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),  # noqa
         (
             [["str1", "string2"], ["s3", "st4"]],
-            ArgContainerType.VECTOR,
-            ArgElementType.STRING,
+            ArgContainerType.NATIVE,
+            ArgElementType.YAML_NODE,
         ),
     ],
 )
@@ -302,10 +302,10 @@ def test_unsupported_numpy_dtype_raises():
 
 
 def test_unknown_scalar_numeric_type():
-    """Test that unknown scalar types get cast to double."""
+    """Test that unknown scalar types get cast to YAML Node."""
     arg = py_object_to_arg(decimal.Decimal(3))
     assert arg.arg_type.container_type == ArgContainerType.NATIVE
-    assert arg.arg_type.element_type == ArgElementType.FLOAT64
+    assert arg.arg_type.element_type == ArgElementType.YAML_NODE
 
 
 @pytest.mark.parametrize(
@@ -413,33 +413,23 @@ def test_arglist_from_kwargs():
         == """name: arglist
 args:
   - name: alpha
-    type: double
+    type: YAML::Node
     value: 5
   - name: beta
-    type: float
+    type: YAML::Node
     value: 3
   - name: offsets
-    type: std::vector<int64_t>
-    value:
-      - 1
-      - 0
-      - 3
+    type: YAML::Node
+    value: [1, 0, 3]
   - name: names
-    type: std::vector<std::string>
-    value:
-      - abc
-      - def
+    type: YAML::Node
+    value: [abc, def]
   - name: verbose
-    type: bool
+    type: YAML::Node
     value: false
   - name: flags
-    type: std::vector<bool>
-    value:
-      - false
-      - true
-      - true
-      - false
-      - true"""
+    type: YAML::Node
+    value: [false, true, true, false, true]"""
     )
 
 

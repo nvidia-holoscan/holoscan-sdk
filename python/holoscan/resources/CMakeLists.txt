@@ -18,6 +18,7 @@ holoscan_pybind11_module(resources
     clocks.cpp
     component_serializers.cpp
     entity_serializers.cpp
+    gxf_component_resource.cpp
     receivers.cpp
     resources.cpp
     serialization_buffers.cpp

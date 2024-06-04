@@ -38,6 +38,7 @@ FROM nvcr.io/nvidia/tensorrt:23.12-py3-igpu AS igpu_base
 FROM ${GPU_TYPE}_base AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 ############################################################
 # Variables
@@ -328,12 +329,14 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 #  libx* - X packages
 #  libvulkan1 - for Vulkan apps (Holoviz)
 #  vulkan-validationlayers, spirv-tools - for Vulkan validation layer (enabled for Holoviz in debug mode)
+#  libwayland-dev, libxkbcommon-dev, pkg-config - GLFW compile dependency for Wayland support
+#  libdecor-0-plugin-1-cairo - GLFW runtime dependency for Wayland window decorations
 #  libegl1 - to run headless Vulkan apps
 #  libopenblas0 - libtorch dependency
 #  libv4l-dev - V4L2 operator dependency
 #  v4l-utils - V4L2 operator utility
 #  libpng-dev - torchvision dependency
-#  libjpeg-dev - torchvision dependency
+#  libjpeg-dev - torchvision, v4l2 mjpeg dependency
 #  docker-ce-cli - enable Docker DooD for CLI
 #  docker-buildx-plugin - enable Docker DooD for CLI
 RUN apt-get update \
@@ -349,6 +352,10 @@ RUN apt-get update \
         libvulkan1="1.3.204.1-*" \
         vulkan-validationlayers="1.3.204.1-*" \
         spirv-tools="2022.1+1.3.204.0-*" \
+        libwayland-dev="1.20.0-*" \
+        libxkbcommon-dev="1.4.0-*" \
+        pkg-config="0.29.2-*" \
+        libdecor-0-plugin-1-cairo="0.1.0-*" \
         libegl1="1.4.0-*" \
         libopenblas0="0.3.20+ds-*" \
         libv4l-dev="1.22.1-*" \

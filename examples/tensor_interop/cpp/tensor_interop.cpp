@@ -87,7 +87,7 @@ class ProcessTensorOp : public Operator {
                ExecutionContext& context) override {
     // The type of `in_message` is 'holoscan::TensorMap'.
     auto in_message = op_input.receive<holoscan::TensorMap>("in").value();
-    // the type of out_message is TensorMap
+    // The type of out_message is TensorMap
     TensorMap out_message;
 
     for (auto& [key, tensor] : in_message) {  // Process with 'tensor' here.

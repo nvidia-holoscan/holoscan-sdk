@@ -27,31 +27,6 @@ from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
 
-class CameraPoseRxOp(Operator):
-    """Simple receiver operator.
-
-    This operator has a single input port:
-        input: "in"
-
-    This is an example of a native operator with one input port.
-    On each tick, it receives an integer from the "in" port.
-    """
-
-    def __init__(self, fragment, *args, **kwargs):
-        self.count = 0
-        # Need to call the base class constructor last
-        super().__init__(fragment, *args, **kwargs)
-
-    def setup(self, spec: OperatorSpec):
-        spec.input("in")
-
-    def compute(self, op_input, op_output, context):
-        value = op_input.receive("in")
-        if self.count == 0:
-            print(f"Received camera pose: {value}")
-        self.count += 1
-
-
 # Define custom Operators for use in the demo
 class GeometryGenerationOp(Operator):
     """Example creating geometric primitives for overlay on a video.
@@ -254,7 +229,6 @@ class MyVideoProcessingApp(Application):
             name="holoviz",
             width=width,
             height=height,
-            enable_camera_pose_output=True,
             tensors=[
                 # name="" here to match the output of VideoStreamReplayerOp
                 dict(name="", type="color", opacity=0.5, priority=0),
@@ -329,15 +303,9 @@ class MyVideoProcessingApp(Application):
                 ),
             ],
         )
-        # Since we specified `enable_camera_pose_output=True` for the visualizer, we can connect
-        # this output port to a receiver to print the camera pose. This receiver will just print
-        # the camera pose the first time one is received.
-        rx = CameraPoseRxOp(self, name="rx")
-
         self.add_flow(source, visualizer, {("output", "receivers")})
         self.add_flow(image_processing, visualizer, {("outputs", "receivers")})
         self.add_flow(image_processing, visualizer, {("output_specs", "input_specs")})
-        self.add_flow(visualizer, rx, {("camera_pose_output", "in")})
 
 
 def main(config_count):

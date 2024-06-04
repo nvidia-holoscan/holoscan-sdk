@@ -59,7 +59,7 @@ void init_std_entity_serializer(py::module_& m) {
       .def(py::init<Fragment*, const std::string&>(),
            "fragment"_a,
            "name"_a = "std_entity_serializer"s,
-           doc::StdEntitySerializer::doc_StdEntitySerializer_python)
+           doc::StdEntitySerializer::doc_StdEntitySerializer)
       .def_property_readonly("gxf_typename",
                              &StdEntitySerializer::gxf_typename,
                              doc::StdEntitySerializer::doc_gxf_typename)

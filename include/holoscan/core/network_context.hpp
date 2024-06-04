@@ -34,12 +34,13 @@
 #include "./forward_def.hpp"
 #include "./resource.hpp"
 
-#define HOLOSCAN_NETWORK_CONTEXT_FORWARD_TEMPLATE()                                               \
-  template <typename ArgT,                                                                        \
-            typename... ArgsT,                                                                    \
-            typename = std::enable_if_t<!std::is_base_of_v<NetworkContext, std::decay_t<ArgT>> && \
-                                        (std::is_same_v<Arg, std::decay_t<ArgT>> ||               \
-                                         std::is_same_v<ArgList, std::decay_t<ArgT>>)>>
+#define HOLOSCAN_NETWORK_CONTEXT_FORWARD_TEMPLATE()                                   \
+  template <typename ArgT,                                                            \
+            typename... ArgsT,                                                        \
+            typename = std::enable_if_t<                                              \
+                !std::is_base_of_v<::holoscan::NetworkContext, std::decay_t<ArgT>> && \
+                (std::is_same_v<::holoscan::Arg, std::decay_t<ArgT>> ||               \
+                 std::is_same_v<::holoscan::ArgList, std::decay_t<ArgT>>)>>
 
 /**
  * @brief Forward the arguments to the super class.

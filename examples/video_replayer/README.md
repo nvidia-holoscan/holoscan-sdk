@@ -17,7 +17,7 @@ The following dataset is used by this example:
 
 * **using deb package install**:
   ```bash
-  /opt/nvidia/holoscan/examples/download_example_data
+  sudo /opt/nvidia/holoscan/examples/download_example_data
   export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
   ./examples/video_replayer/cpp/video_replayer
   ```
@@ -48,7 +48,7 @@ The following dataset is used by this example:
   ```
 * **using deb package install**:
   ```bash
-  /opt/nvidia/holoscan/examples/download_example_data
+  sudo /opt/nvidia/holoscan/examples/download_example_data
   export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
   python3 /opt/nvidia/holoscan/examples/video_replayer/python/video_replayer.py

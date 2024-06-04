@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,7 +43,7 @@ namespace holoscan::utils {
  * @param module Module that called for data extraction
  * @param context GXF execution context
  * @param cuda_stream_handler Cuda steam handler
- * @returns GXF result code
+ * @return GXF result code
  */
 gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::string>& in_tensors,
                                 HoloInfer::DataMap& data_per_input_tensor,
@@ -67,7 +67,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
  * @param allocator GXF Memory allocator
  * @param module Module that called for data transmission
  * @param cuda_stream_handler Cuda steam handler
- * @returns GXF result code
+ * @return GXF result code
  */
 gxf_result_t transmit_data_per_model(gxf_context_t& cont,
                                      const HoloInfer::MultiMappings& model_to_tensor_map,

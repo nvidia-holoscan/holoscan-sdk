@@ -99,7 +99,7 @@ void init_event_based_scheduler(py::module_& m) {
            "max_duration_ms"_a = -1LL,
            "stop_on_deadlock_timeout"_a = 0LL,
            "name"_a = "multithread_scheduler"s,
-           doc::EventBasedScheduler::doc_EventBasedScheduler_python)
+           doc::EventBasedScheduler::doc_EventBasedScheduler)
       .def_property_readonly("clock", &EventBasedScheduler::clock)
       .def_property_readonly("worker_thread_number", &EventBasedScheduler::worker_thread_number)
       .def_property_readonly("max_duration_ms", &EventBasedScheduler::max_duration_ms)

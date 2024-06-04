@@ -59,13 +59,13 @@ class ImageProcessingOp(Operator):
         spec.param("sigma")
 
     def compute(self, op_input, op_output, context):
-        # in_message is of dict
+        # in_message is a dict of tensors
         in_message = op_input.receive("input_tensor")
 
         # smooth along first two axes, but not the color channels
         sigma = (self.sigma, self.sigma, 0)
 
-        # out_message is of dict
+        # out_message will be a dict of tensors
         out_message = dict()
 
         for key, value in in_message.items():

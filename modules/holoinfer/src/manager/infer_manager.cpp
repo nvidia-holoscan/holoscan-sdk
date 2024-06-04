@@ -35,6 +35,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
   auto multi_model_map = inference_specs->get_path_map();
   auto device_map = inference_specs->get_device_map();
+  auto temporal_map = inference_specs->get_temporal_map();
   auto backend_type = inference_specs->backend_type_;
   auto backend_map = inference_specs->get_backend_map();
   cuda_buffer_in_ = inference_specs->cuda_buffer_in_;
@@ -74,27 +75,37 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   }
 
   // set up gpu-dt
-  if (device_map.find("gpu-dt") != device_map.end()) {
-    auto dev_id = std::stoi(device_map.at("gpu-dt"));
-    device_gpu_dt = dev_id;
-    HOLOSCAN_LOG_INFO("ID of data transfer GPU updated to: {}", device_gpu_dt);
-  }
-
   std::set<int> unique_gpu_ids;
-  unique_gpu_ids.insert(device_gpu_dt);
 
-  for (auto const& [_, gpu_id] : device_map) {
-    auto dev_id = std::stoi(gpu_id);
-    cudaDeviceProp device_prop;
-    auto cstatus = cudaGetDeviceProperties(&device_prop, dev_id);
-    if (cstatus != cudaSuccess) {
-      HOLOSCAN_LOG_ERROR("Error in getting device properties for gpu id: {}.", dev_id);
-      HOLOSCAN_LOG_INFO("Use integer id's displayed after the GPU after executing: nvidia-smi -L");
-      status.set_message("Incorrect gpu id in the configuration.");
-      return status;
+  try {
+    if (device_map.find("gpu-dt") != device_map.end()) {
+      auto dev_id = std::stoi(device_map.at("gpu-dt"));
+      device_gpu_dt = dev_id;
+      HOLOSCAN_LOG_INFO("ID of data transfer GPU updated to: {}", device_gpu_dt);
     }
-    unique_gpu_ids.insert(dev_id);
-  }
+
+    unique_gpu_ids.insert(device_gpu_dt);
+
+    for (auto const& [_, gpu_id] : device_map) {
+      auto dev_id = std::stoi(gpu_id);
+      cudaDeviceProp device_prop;
+      auto cstatus = cudaGetDeviceProperties(&device_prop, dev_id);
+      if (cstatus != cudaSuccess) {
+        HOLOSCAN_LOG_ERROR("Error in getting device properties for gpu id: {}.", dev_id);
+        HOLOSCAN_LOG_INFO(
+            "Use integer id's displayed after the GPU after executing: nvidia-smi -L");
+        status.set_message("Incorrect gpu id in the configuration.");
+        return status;
+      }
+      unique_gpu_ids.insert(dev_id);
+    }
+  } catch (std::invalid_argument const& ex) {
+    HOLOSCAN_LOG_ERROR("Invalid argument in Device map: {}", ex.what());
+    raise_error("Inference Manager", "Error in Device map.");
+  } catch (std::out_of_range const& ex) {
+    HOLOSCAN_LOG_ERROR("Invalid range in Device map: {}", ex.what());
+    raise_error("Inference Manager", "Error in Device map.");
+  } catch (...) { raise_error("Inference Manager", "Error in Device map."); }
 
   auto vec_unique_gpu_ids = std::vector<int>(unique_gpu_ids.begin(), unique_gpu_ids.end());
 
@@ -175,6 +186,21 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       }
 
       infer_param_.at(model_name)->set_device_id(device_id);
+
+      unsigned int temporal_id = 1;
+      if (temporal_map.find(model_name) != temporal_map.end()) {
+        try {
+          temporal_id = std::stoul(temporal_map.at(model_name));
+          HOLOSCAN_LOG_INFO("Temporal id: {} for Model: {}", temporal_id, model_name);
+        } catch (std::invalid_argument const& ex) {
+          HOLOSCAN_LOG_ERROR("Invalid argument in Temporal map: {}", ex.what());
+          throw;
+        } catch (std::out_of_range const& ex) {
+          HOLOSCAN_LOG_ERROR("Invalid range in Temporal map: {}", ex.what());
+          throw;
+        }
+      }
+      infer_param_.at(model_name)->set_temporal_id(temporal_id);
 
       // Get input and output tensor maps of the model from inference_specs
       auto out_tensor_names = inference_specs->inference_map_.at(model_name);
@@ -259,6 +285,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           if (!new_ort_infer) {
             HOLOSCAN_LOG_ERROR(dlerror());
             status.set_message("ONNX Runtime context setup failure.");
+            dlclose(handle);
             return status;
           }
           dlclose(handle);
@@ -658,6 +685,8 @@ InferStatus ManagerInfer::execute_inference(DataMap& permodel_preprocess_data,
                                             DataMap& permodel_output_data) {
   InferStatus status = InferStatus();
 
+  if (frame_counter_++ == UINT_MAX - 1) { frame_counter_ = 0; }
+
   if (infer_param_.size() == 0) {
     status.set_code(holoinfer_code::H_ERROR);
     status.set_message(
@@ -672,24 +701,27 @@ InferStatus ManagerInfer::execute_inference(DataMap& permodel_preprocess_data,
   std::map<std::string, std::future<InferStatus>> inference_futures;
   s_time = std::chrono::steady_clock::now();
   for (const auto& [model_instance, _] : infer_param_) {
-    if (!parallel_processing_) {
-      InferStatus infer_status =
-          run_core_inference(model_instance, permodel_preprocess_data, permodel_output_data);
-      if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
-        status.set_code(holoinfer_code::H_ERROR);
-        infer_status.display_message();
-        status.set_message("Inference manager, Inference failed in execution for " +
-                           model_instance);
-        return status;
+    auto temporal_id = infer_param_.at(model_instance)->get_temporal_id();
+    if (frame_counter_ % temporal_id == 0) {
+      if (!parallel_processing_) {
+        InferStatus infer_status =
+            run_core_inference(model_instance, permodel_preprocess_data, permodel_output_data);
+        if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
+          status.set_code(holoinfer_code::H_ERROR);
+          infer_status.display_message();
+          status.set_message("Inference manager, Inference failed in execution for " +
+                             model_instance);
+          return status;
+        }
+      } else {
+        inference_futures.insert({model_instance,
+                                  std::async(std::launch::async,
+                                             std::bind(&ManagerInfer::run_core_inference,
+                                                       this,
+                                                       model_instance,
+                                                       permodel_preprocess_data,
+                                                       permodel_output_data))});
       }
-    } else {
-      inference_futures.insert({model_instance,
-                                std::async(std::launch::async,
-                                           std::bind(&ManagerInfer::run_core_inference,
-                                                     this,
-                                                     model_instance,
-                                                     permodel_preprocess_data,
-                                                     permodel_output_data))});
     }
   }
 

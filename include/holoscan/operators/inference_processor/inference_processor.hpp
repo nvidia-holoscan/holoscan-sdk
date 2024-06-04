@@ -71,6 +71,14 @@ namespace holoscan::ops {
  * - **config_path**: File path to the config file. Optional (default: `""`).
  * - **disable_transmitter**: If `true`, disable the transmitter output port of the operator.
  *   Optional (default: `false`).
+ *
+ * ==Device Memory Requirements==
+ *
+ * When using this operator with a `BlockMemoryPool`, `num_blocks` must be greater than or equal to
+ * the number of output tensors that will be produced. The `block_size` in bytes must be greater
+ * than or equal to the largest output tensor (in bytes). If `output_on_cuda` is true, the blocks
+ * should be in device memory (`storage_type`=1), otherwise they should be CUDA pinned host memory
+ * (`storage_type`=0).
  */
 class InferenceProcessorOp : public holoscan::Operator {
  public:

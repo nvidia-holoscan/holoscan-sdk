@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOVIZ_TESTS_FUNCTIONAL_HEADLESS_FIXTURE_HPP
-#define HOLOVIZ_TESTS_FUNCTIONAL_HEADLESS_FIXTURE_HPP
+#ifndef MODULES_HOLOVIZ_TESTS_FUNCTIONAL_TEST_FIXTURE_HPP
+#define MODULES_HOLOVIZ_TESTS_FUNCTIONAL_TEST_FIXTURE_HPP
 
 #include <gtest/gtest.h>
 
@@ -25,23 +25,28 @@
 #include <holoviz/holoviz.hpp>
 
 /**
- * Fixture that initializes Holoviz in headless mode and support functions to setup, read back
+ * Fixture that initializes Holoviz and has support functions to setup, read back
  * and compare data.
  */
-class TestHeadless : public ::testing::Test {
+class TestBase : public ::testing::Test {
  protected:
   /**
-   * Construct a new TestHeadless object
+   * Construct a new TestBase object
+   *
+   * @param init_flags init flags
    */
-  TestHeadless() = default;
+  explicit TestBase(holoscan::viz::InitFlags init_flags) : init_flags_(init_flags) {}
+  TestBase() = delete;
 
   /**
-   * Construct a new TestHeadless object with a given window size
+   * Construct a new TestBase object with a given window size
    *
    * @param width window width
    * @param height window height
+   * @param init_flags init flags
    */
-  TestHeadless(uint32_t width, uint32_t height) : width_(width), height_(height) {}
+  TestBase(uint32_t width, uint32_t height, holoscan::viz::InitFlags init_flags)
+      : width_(width), height_(height), init_flags_(init_flags) {}
 
   /// ::testing::Test virtual members
   ///@{
@@ -81,14 +86,14 @@ class TestHeadless : public ::testing::Test {
   /**
    * Read back color data and compare with the data generated with SetupData().
    *
-   * @returns false if read back and generated data do not match
+   * @return false if read back and generated data do not match
    */
   bool CompareColorResult();
 
   /**
    * Read back depth data and compare with the data generated with SetupData().
    *
-   * @returns false if read back and generated data do not match
+   * @return false if read back and generated data do not match
    */
   bool CompareDepthResult();
 
@@ -97,7 +102,7 @@ class TestHeadless : public ::testing::Test {
    *
    * @param crc32 vector of expected CRC32's
    *
-   * @returns false if CRC32 of read back does not match provided CRC32
+   * @return false if CRC32 of read back does not match provided CRC32
    */
   bool CompareColorResultCRC32(const std::vector<uint32_t> crc32);
 
@@ -106,7 +111,7 @@ class TestHeadless : public ::testing::Test {
    *
    * @param crc32 vector of expected CRC32's
    *
-   * @returns false if CRC32 of read back does not match provided CRC32
+   * @return false if CRC32 of read back does not match provided CRC32
    */
   bool CompareDepthResultCRC32(const std::vector<uint32_t> crc32);
 
@@ -119,6 +124,37 @@ class TestHeadless : public ::testing::Test {
 
   std::vector<uint8_t> color_data_;
   std::vector<float> depth_data_;
+
+ protected:
+  holoscan::viz::InitFlags init_flags_ = holoscan::viz::InitFlags::NONE;
+
+ private:
+  bool initialized_ = false;
 };
 
-#endif /* HOLOVIZ_TESTS_FUNCTIONAL_HEADLESS_FIXTURE_HPP */
+/**
+ * Fixture that initializes Holoviz in headless mode.
+ */
+class TestHeadless : public TestBase {
+ public:
+  TestHeadless() : TestBase(holoscan::viz::InitFlags::HEADLESS) {}
+
+  /**
+   * Construct a new TestHeadless object with a given window size
+   *
+   * @param width window width
+   * @param height window height
+   */
+  TestHeadless(uint32_t width, uint32_t height)
+      : TestBase(width, height, holoscan::viz::InitFlags::HEADLESS) {}
+};
+
+/**
+ * Fixture that initializes Holoviz in headless mode.
+ */
+class TestWindow : public TestBase {
+ public:
+  TestWindow() : TestBase(holoscan::viz::InitFlags::NONE) {}
+};
+
+#endif /* MODULES_HOLOVIZ_TESTS_FUNCTIONAL_TEST_FIXTURE_HPP */

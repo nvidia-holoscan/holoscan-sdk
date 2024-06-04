@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,11 +27,6 @@ namespace holoscan::doc {
 namespace StdComponentSerializer {
 
 PYDOC(StdComponentSerializer, R"doc(
-Serializer for GXF Timestamp and Tensor components.
-)doc")
-
-// Constructor
-PYDOC(StdComponentSerializer_python, R"doc(
 Serializer for GXF Timestamp and Tensor components.
 
 Parameters
@@ -72,11 +67,6 @@ time, and uses a light-weight initialization.
 namespace UcxComponentSerializer {
 
 PYDOC(UcxComponentSerializer, R"doc(
-UCX component serializer.
-)doc")
-
-// Constructor
-PYDOC(UcxComponentSerializer_python, R"doc(
 UCX component serializer.
 
 Parameters

@@ -18,18 +18,27 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>  // for vector
 
+#include <fmt/format.h>
+#include <fmt/ranges.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
+#include <gxf/multimedia/camera.hpp>
+#include "../../core/emitter_receiver_registry.hpp"  // EmitterReceiverRegistry
+#include "../../core/io_context.hpp"                 // PyOutputContext
 #include "holoscan/core/codec_registry.hpp"
+#include "holoscan/core/condition.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
+#include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/operators/holoviz/codecs.hpp"
@@ -42,6 +51,14 @@ using pybind11::literals::operator""_a;
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
 
 namespace py = pybind11;
+
+namespace holoscan {
+
+// default emitter_receiver templates can handle std::vector<holoscan::ops::HolovizOp::InputSpec>
+// default emitter_receiver templates can handle std::shared_ptr<std::array<float, 16>>
+// default emitter_receiver templates can handle std::shared_ptr<nvidia::gxf::Pose3D>
+
+}  // namespace holoscan
 
 namespace holoscan::ops {
 
@@ -62,7 +79,7 @@ class PyHolovizOp : public HolovizOp {
 
   // Define a constructor that fully initializes the object.
   PyHolovizOp(
-      Fragment* fragment, std::shared_ptr<::holoscan::Allocator> allocator,
+      Fragment* fragment, const py::args& args, std::shared_ptr<::holoscan::Allocator> allocator,
       std::vector<holoscan::IOSpec*> receivers = std::vector<holoscan::IOSpec*>(),
       const std::vector<HolovizOp::InputSpec>& tensors = std::vector<HolovizOp::InputSpec>(),
       const std::vector<std::vector<float>>& color_lut = std::vector<std::vector<float>>(),
@@ -70,7 +87,11 @@ class PyHolovizOp : public HolovizOp {
       uint32_t width = 1920, uint32_t height = 1080, float framerate = 60.f,
       bool use_exclusive_display = false, bool fullscreen = false, bool headless = false,
       bool enable_render_buffer_input = false, bool enable_render_buffer_output = false,
-      bool enable_camera_pose_output = false, const std::string& font_path = "",
+      bool enable_camera_pose_output = false,
+      const std::string& camera_pose_output_type = "projection_matrix",
+      const std::array<float, 3>& camera_eye = {0.f, 0.f, 1.f},
+      const std::array<float, 3>& camera_look_at = {0.f, 0.f, 0.f},
+      const std::array<float, 3>& camera_up = {0.f, 1.f, 1.f}, const std::string& font_path = "",
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
       const std::string& name = "holoviz_op")
       : HolovizOp(ArgList{Arg{"allocator", allocator},
@@ -86,12 +107,17 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"enable_render_buffer_input", enable_render_buffer_input},
                           Arg{"enable_render_buffer_output", enable_render_buffer_output},
                           Arg{"enable_camera_pose_output", enable_camera_pose_output},
+                          Arg{"camera_pose_output_type", camera_pose_output_type},
+                          Arg{"camera_eye", camera_eye},
+                          Arg{"camera_look_at", camera_look_at},
+                          Arg{"camera_up", camera_up},
                           Arg{"font_path", font_path}}) {
     // only append tensors argument if it is not empty
     //     avoids [holoscan] [error] [gxf_operator.hpp:126] Unable to handle parameter 'tensors'
     if (tensors.size() > 0) { this->add_arg(Arg{"tensors", tensors}); }
     if (receivers.size() > 0) { this->add_arg(Arg{"receivers", receivers}); }
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -103,25 +129,16 @@ class PyHolovizOp : public HolovizOp {
 
 PYBIND11_MODULE(_holoviz, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK HolovizOp Python Bindings
+        --------------------------------------
         .. currentmodule:: _holoviz
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<HolovizOp, PyHolovizOp, Operator, std::shared_ptr<HolovizOp>> holoviz_op(
       m, "HolovizOp", doc::HolovizOp::doc_HolovizOp);
   holoviz_op
       .def(py::init<Fragment*,
+                    const py::args&,
                     std::shared_ptr<::holoscan::Allocator>,
                     std::vector<holoscan::IOSpec*>,
                     const std::vector<HolovizOp::InputSpec>&,
@@ -137,6 +154,10 @@ PYBIND11_MODULE(_holoviz, m) {
                     bool,
                     bool,
                     bool,
+                    const std::string&,
+                    const std::array<float, 3>&,
+                    const std::array<float, 3>&,
+                    const std::array<float, 3>&,
                     const std::string&,
                     std::shared_ptr<holoscan::CudaStreamPool>,
                     const std::string&>(),
@@ -156,6 +177,10 @@ PYBIND11_MODULE(_holoviz, m) {
            "enable_render_buffer_input"_a = false,
            "enable_render_buffer_output"_a = false,
            "enable_camera_pose_output"_a = false,
+           "camera_pose_output_type"_a = "projection_matrix",
+           "camera_eye"_a = std::array<float, 3>{0.f, 0.f, 1.f},
+           "camera_look_at"_a = std::array<float, 3>{0.f, 0.f, 0.f},
+           "camera_up"_a = std::array<float, 3>{0.f, 1.f, 1.f},
            "font_path"_a = "",
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "holoviz_op"s,
@@ -215,10 +240,34 @@ PYBIND11_MODULE(_holoviz, m) {
       .def_readwrite("height", &HolovizOp::InputSpec::View::height_)
       .def_readwrite("matrix", &HolovizOp::InputSpec::View::matrix_);
 
+  // need to wrap nvidia::gxf::Pose3D for use of received Pose3D object from Python
+  py::class_<nvidia::gxf::Pose3D> Pose3D(m, "Pose3D", doc::HolovizOp::Pose3D::doc_Pose3D);
+  Pose3D.def_readwrite("rotation", &nvidia::gxf::Pose3D::rotation)
+      .def_readwrite("translation", &nvidia::gxf::Pose3D::translation)
+      .def("__repr__", [](const nvidia::gxf::Pose3D& pose) {
+        return fmt::format(
+            "Pose3D(rotation: {}, translation: {})", pose.rotation, pose.translation);
+      });
+
   // Register the std::vector<InputSpec> codec when the Python module is imported.
   // This is useful for, e.g. testing serialization with pytest without having to first create a
   // HolovizOp operator (which registers the type in its initialize method).
   CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::HolovizOp::InputSpec>>(
       "std::vector<std::vector<holoscan::ops::HolovizOp::InputSpec>>", true);
+
+  // Import the emitter/receiver registry from holoscan.core and pass it to this function to
+  // register this new C++ type with the SDK.
+  m.def("register_types", [](EmitterReceiverRegistry& registry) {
+    registry.add_emitter_receiver<std::vector<holoscan::ops::HolovizOp::InputSpec>>(
+        "std::vector<HolovizOp::InputSpec>"s);
+    // array camera pose object
+    registry.add_emitter_receiver<std::shared_ptr<std::array<float, 16>>>(
+        "std::shared_ptr<std::array<float, 16>>"s);
+    // Pose3D camera pose object
+    registry.add_emitter_receiver<std::shared_ptr<nvidia::gxf::Pose3D>>(
+        "std::shared_ptr<nvidia::gxf::Pose3D>"s);
+    // camera_eye_input, camera_look_at_input, camera_up_input
+    registry.add_emitter_receiver<std::array<float, 3>>("std::array<float, 3>"s);
+  });
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,8 +19,11 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#include <holoscan/core/analytics/csv_data_exporter.hpp>
 
 namespace holoscan {
 namespace inference {
@@ -44,34 +47,34 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
     }
 
     for (const auto& _op : _operations) {
-      if (_op.find("print") == std::string::npos) {
-        if (supported_transforms_.find(_op) != supported_transforms_.end()) {
-          // In future releases, this will be generalized with addition of more transforms.
-          if (_op.compare("generate_boxes") == 0) {
-            // unique key is created as a combination of input tensors and operation
-            auto key = fmt::format("{}-{}", p_op.first, _op);
-            HOLOSCAN_LOG_INFO("Transform map updated with key: {}", key);
-            transforms_.insert({key, std::make_unique<GenerateBoxes>(config_path_)});
+      std::vector<std::string> operation_strings;
+      string_split(_op, operation_strings, ',');
+      const std::string operation = operation_strings[0];
+      if (supported_transforms_.find(operation) != supported_transforms_.end()) {
+        // In future releases, this will be generalized with addition of more transforms.
+        if (operation == "generate_boxes") {
+          // unique key is created as a combination of input tensors and operation
+          auto key = fmt::format("{}-{}", p_op.first, operation);
+          HOLOSCAN_LOG_INFO("Transform map updated with key: {}", key);
+          transforms_.insert({key, std::make_unique<GenerateBoxes>(config_path_)});
 
-            std::vector<std::string> tensor_tokens;
-            string_split(p_op.first, tensor_tokens, ':');
+          std::vector<std::string> tensor_tokens;
+          string_split(p_op.first, tensor_tokens, ':');
 
-            auto status = transforms_.at(key)->initialize(tensor_tokens);
-            if (status.get_code() != holoinfer_code::H_SUCCESS) {
-              status.display_message();
-              return status;
-            }
+          auto status = transforms_.at(key)->initialize(tensor_tokens);
+          if (status.get_code() != holoinfer_code::H_SUCCESS) {
+            status.display_message();
+            return status;
           }
-        } else if (supported_compute_operations_.find(_op) == supported_compute_operations_.end()) {
-          return InferStatus(holoinfer_code::H_ERROR,
-                             "Data processor, Operation " + _op + " not supported.");
+          continue;
         }
-      } else {
-        if (supported_print_operations_.find(_op) == supported_print_operations_.end() &&
-            _op.find("print_custom_binary_classification") == std::string::npos) {
-          return InferStatus(holoinfer_code::H_ERROR,
-                             "Data processor, Print operation: " + _op + " not supported.");
-        }
+      }
+
+      if (supported_compute_operations_.find(operation) == supported_compute_operations_.end() &&
+          supported_print_operations_.find(operation) == supported_print_operations_.end() &&
+          supported_export_operations_.find(operation) == supported_export_operations_.end()) {
+        return InferStatus(holoinfer_code::H_ERROR,
+                           "Data processor, Operation " + _op + " not supported.");
       }
     }
   }
@@ -144,6 +147,55 @@ InferStatus DataProcessor::print_custom_binary_classification(
     HOLOSCAN_LOG_INFO("Input data size: {}", dsize);
     HOLOSCAN_LOG_INFO("This is binary classification custom print, size must be 2.");
   }
+  return InferStatus();
+}
+
+InferStatus DataProcessor::export_binary_classification_to_csv(
+    const std::vector<int>& dimensions, const void* indata,
+    const std::vector<std::string>& custom_strings) {
+  size_t dsize = accumulate(dimensions.begin(), dimensions.end(), 1, std::multiplies<size_t>());
+  if (dsize < 1) {
+    HOLOSCAN_LOG_ERROR("Input data size must be at least 1.");
+    return InferStatus(holoinfer_code::H_ERROR, "Data processor, Incorrect input data size");
+  }
+  auto indata_float = static_cast<const float*>(indata);
+
+  auto strings_count = custom_strings.size();
+  if (strings_count != 4) {
+    HOLOSCAN_LOG_INFO("The number of custom strings passed : {}", strings_count);
+    HOLOSCAN_LOG_INFO(
+        "This is export binary classification results to CSV file operation, size must be 4.");
+    return InferStatus();
+  }
+
+  if (dsize != 2) {
+    HOLOSCAN_LOG_INFO("Input data size: {}", dsize);
+    HOLOSCAN_LOG_INFO(
+        "This is export binary classification results to CSV file operation, size must be 2.");
+    return InferStatus();
+  }
+
+  if (!data_exporter_) {
+    const std::string app_name = custom_strings[0];
+    const std::vector<std::string> columns = {
+        custom_strings[1], custom_strings[2], custom_strings[3]};
+    data_exporter_ = std::make_unique<CsvDataExporter>(app_name, columns);
+  }
+
+  auto first_value = 1.0 / (1 + exp(-indata_float[0]));
+  auto second_value = 1.0 / (1 + exp(-indata_float[1]));
+  std::vector<std::string> data;
+  if (first_value > second_value) {
+    std::ostringstream confidence_score_ss;
+    confidence_score_ss << first_value;
+    data = {"1", "0", confidence_score_ss.str()};
+  } else {
+    std::ostringstream confidence_score_ss;
+    confidence_score_ss << second_value;
+    data = {"0", "1", confidence_score_ss.str()};
+  }
+  data_exporter_->export_data(data);
+
   return InferStatus();
 }
 
@@ -329,10 +381,6 @@ InferStatus DataProcessor::process_operation(const std::string& operation,
     return InferStatus(holoinfer_code::H_ERROR,
                        "Data processor, Exception in running " + operation);
   }
-  if (operation.find("print") == std::string::npos && processed_data_map.size() == 0) {
-    return InferStatus(holoinfer_code::H_ERROR, "Data processor, Processed data map empty");
-  }
-  return InferStatus();
 }
 
 }  // namespace inference

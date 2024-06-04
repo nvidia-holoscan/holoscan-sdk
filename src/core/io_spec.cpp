@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,16 @@ YAML::Node IOSpec::to_yaml_node() const {
       {ConnectorType::kUCX, "kUCX"s},
   };
 
+  std::unordered_map<ConditionType, std::string> conditiontype_namemap{
+      {ConditionType::kNone, "kNone"s},
+      {ConditionType::kMessageAvailable, "kMessageAvailable"s},
+      {ConditionType::kDownstreamMessageAffordable, "kDownstreamMessageAffordable"s},
+      {ConditionType::kCount, "kCount"s},
+      {ConditionType::kBoolean, "kBoolean"s},
+      {ConditionType::kPeriodic, "kPeriodic"s},
+      {ConditionType::kAsynchronous, "kAsynchronous"s},
+  };
+
   node["name"] = name();
   node["io_type"] = iotype_namemap[io_type()];
   node["typeinfo_name"] = std::string{typeinfo()->name()};
@@ -46,7 +56,17 @@ YAML::Node IOSpec::to_yaml_node() const {
   if (conn) { node["connector"] = conn->to_yaml_node(); }
   node["conditions"] = YAML::Node(YAML::NodeType::Sequence);
   for (const auto& c : conditions_) {
-    if (c.second) { node["conditions"].push_back(c.second->to_yaml_node()); }
+    if (c.first == ConditionType::kNone) {
+      YAML::Node none_condition = YAML::Node(YAML::NodeType::Map);
+      none_condition["type"] = conditiontype_namemap[c.first];
+      node["conditions"].push_back(none_condition);
+    } else {
+      if (c.second) {
+        YAML::Node condition = c.second->to_yaml_node();
+        condition["type"] = conditiontype_namemap[c.first];
+        node["conditions"].push_back(condition);
+      }
+    }
   }
   return node;
 }

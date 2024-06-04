@@ -110,6 +110,8 @@ set(CORE_PROTO_FILES
 grpc_generate_cpp(CORE_GRPC_SRCS CORE_GRPC_HDRS ${CORE_PROTO_FILES})
 
 add_holoscan_library(core
+    core/analytics/csv_data_exporter.cpp
+    core/analytics/data_exporter.cpp
     core/app_driver.cpp
     core/app_worker.cpp
     core/application.cpp
@@ -139,6 +141,7 @@ add_holoscan_library(core
     core/graphs/flow_graph.cpp
     core/gxf/entity.cpp
     core/gxf/gxf_component.cpp
+    core/gxf/gxf_component_info.cpp
     core/gxf/gxf_condition.cpp
     core/gxf/gxf_execution_context.cpp
     core/gxf/gxf_extension_manager.cpp
@@ -165,6 +168,7 @@ add_holoscan_library(core
     core/resources/gxf/double_buffer_receiver.cpp
     core/resources/gxf/double_buffer_transmitter.cpp
     core/resources/gxf/dfft_collector.cpp
+    core/resources/gxf/gxf_component_resource.cpp
     core/resources/gxf/manual_clock.cpp
     core/resources/gxf/realtime_clock.cpp
     core/resources/gxf/receiver.cpp

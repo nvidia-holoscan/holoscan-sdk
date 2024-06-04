@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,21 +16,22 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(ajantv2 16.2.0
+# Setting NTV2_VERSION_BUILD environment variable to avoid CMake warning
+set(ENV{NTV2_VERSION_BUILD} 1)
+
+rapids_cpm_find(ajantv2 17.0.1
     GLOBAL_TARGETS AJA::ajantv2
 
     CPM_ARGS
 
-    GITHUB_REPOSITORY nvidia-holoscan/ntv2
-    GIT_TAG 1321a8d4c1a8de696c996d05b65e5aa2934f89d1
+    GITHUB_REPOSITORY nvidia-holoscan/libajantv2
+    GIT_TAG d4250c556bcf1ebade627a3ef7a2027de7dc85ee
     OPTIONS
-    "AJA_BUILD_APPS OFF"
-    "AJA_BUILD_DOCS OFF"
-    "AJA_BUILD_DRIVER OFF"
-    "AJA_BUILD_LIBS ON"
-    "AJA_BUILD_PLUGINS OFF"
-    "AJA_BUILD_QA OFF"
-    "AJA_BUILD_TESTS OFF"
+    "AJANTV2_DISABLE_DEMOS ON"
+    "AJANTV2_DISABLE_DRIVER ON"
+    "AJANTV2_DISABLE_PLUGINS ON"
+    "AJANTV2_DISABLE_TESTS ON"
+    "AJANTV2_DISABLE_TOOLS ON"
     "AJA_INSTALL_HEADERS OFF"
     "AJA_INSTALL_SOURCES OFF"
     EXCLUDE_FROM_ALL
@@ -43,8 +44,8 @@ if(ajantv2_ADDED)
     add_library(AJA::ajantv2 ALIAS ajantv2)
 
     # Install the headers needed for development with the SDK
-    install(DIRECTORY ${ajantv2_SOURCE_DIR}/ajalibraries
-        DESTINATION "include"
+    install(DIRECTORY ${ajantv2_SOURCE_DIR}/ajantv2 ${ajantv2_SOURCE_DIR}/ajabase
+        DESTINATION "include/libajantv2"
         COMPONENT "holoscan-dependencies"
         FILES_MATCHING PATTERN "*.h" PATTERN "*.hh"
         )

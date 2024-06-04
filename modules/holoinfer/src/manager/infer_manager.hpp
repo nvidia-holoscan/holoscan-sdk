@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,7 +64,7 @@ class ManagerInfer {
    *
    * @param inference_specs specifications for inference
    *
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus set_inference_params(std::shared_ptr<InferenceSpecs>& inference_specs);
 
@@ -74,7 +74,7 @@ class ManagerInfer {
    * @param preprocess_data_map Input DataMap with model name as key and DataBuffer as value
    * @param output_data_map Output DataMap with tensor name as key and DataBuffer as value
    *
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus execute_inference(DataMap& preprocess_data_map, DataMap& output_data_map);
 
@@ -85,7 +85,7 @@ class ManagerInfer {
    * @param permodel_preprocess_data Input DataMap with model name as key and DataBuffer as value
    * @param permodel_output_data Output DataMap with tensor name as key and DataBuffer as value
    *
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus run_core_inference(const std::string& model_name, DataMap& permodel_preprocess_data,
                                  DataMap& permodel_output_data);
@@ -98,14 +98,14 @@ class ManagerInfer {
   /**
    * @brief Get input dimension per model
    *
-   * @returns Map with model name as key and dimension as value
+   * @return Map with model name as key and dimension as value
    */
   DimType get_input_dimensions() const;
 
   /**
    * @brief Get output dimension per tensor
    *
-   * @returns Map with tensor name as key and dimension as value
+   * @return Map with tensor name as key and dimension as value
    */
   DimType get_output_dimensions() const;
 
@@ -152,6 +152,9 @@ class ManagerInfer {
 
   /// Input buffer for multi-gpu inference
   std::map<std::string, DataMap> mgpu_input_buffer_;
+
+  /// Frame counter into the inference engine
+  unsigned int frame_counter_ = 0;
 
   /// Data transfer GPU. Default: 0. Not configurable in this release.
   int device_gpu_dt = 0;

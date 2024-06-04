@@ -59,17 +59,17 @@ PYDOC(as_tensor, R"doc(
 Convert a Python object to a Tensor.
 
 Parameters
-==========
+----------
 object : array-like
     An object such as a NumPy array, CuPy array, PyTorch tensor, etc. supporting one of the
     supported protocols.
 
 Returns
-=======
+-------
 holocan.Tensor
 
 Notes
-=====
+-----
 For device arrays, this method first attempts to convert via ``__cuda_array_interface__`` [1]_,
 but falls back to the DLPack protocol [2]_, [3]_ if it is unavailable.
 
@@ -77,7 +77,7 @@ For host arrays, this method first attempts to convert via the DLPack protocol, 
 the ``__array_interface__`` [3]_ if it is unavailable.
 
 References
-==========
+----------
 .. [1] https://numpy.org/doc/stable/reference/arrays.interface.html
 .. [2] https://dmlc.github.io/dlpack/latest/python_spec.html
 .. [3] https://data-apis.org/array-api/2022.12/API_specification/generated/array_api.array.__dlpack__.html
@@ -88,17 +88,17 @@ PYDOC(from_dlpack, R"doc(
 Convert a Python object to a Tensor via the DLPack protocol [1]_, [2]_.
 
 Parameters
-==========
+----------
 object : array-like
     An object such as a NumPy array, CuPy array, PyTorch tensor, etc. supporting one of the
     supported protocols.
 
 Returns
-=======
+-------
 holocan.Tensor
 
 References
-==========
+----------
 .. [1] https://dmlc.github.io/dlpack/latest/python_spec.html
 .. [2] https://data-apis.org/array-api/2022.12/API_specification/generated/array_api.array.__dlpack__.html
 )doc")
@@ -148,6 +148,15 @@ The size of a single element of the tensor's data.
 
 PYDOC(nbytes, R"doc(
 The size of the tensor's data in bytes.
+)doc")
+
+PYDOC(is_contiguous, R"doc(
+Determine whether the tensor has a contiguous, row-major memory layout.
+
+Returns
+-------
+bool
+    ``True`` if the tensor has a contiguous, row-major memory layout. ``False`` otherwise.
 )doc")
 
 PYDOC(dlpack, R"doc(

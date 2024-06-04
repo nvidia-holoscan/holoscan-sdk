@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/parameter.hpp"
 
+#include "holoscan/core/parameter.hpp"
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -161,6 +161,30 @@ TEST(Parameter, TestAsteriskOperator) {
   Parameter<std::shared_ptr<int>> param_int_shared_ptr;
   param_int_shared_ptr = std::make_shared<int>(data);
   ASSERT_EQ(*param_int_shared_ptr, 10);
+}
+
+// simple test for formatter feature
+TEST(Parameter, TestMetaParameterFormatter) {
+  MetaParameter p = MetaParameter<int>(5);
+  std::string format_message = fmt::format("{}", p);
+  EXPECT_EQ(format_message, std::string{"5"});
+  // capture output so that we can check that the expected value was logged
+  testing::internal::CaptureStderr();
+  HOLOSCAN_LOG_INFO("Formatted parameter value: {}", p);
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("5") != std::string::npos);
+}
+
+// simple test with format option for formatter feature
+TEST(Parameter, TestMetaParameterFormatterSyntax) {
+  MetaParameter seconds = MetaParameter<float>(1.32);
+  std::string format_message = fmt::format("{:0.3f}", seconds);
+  EXPECT_EQ(format_message, std::string{"1.320"});
+  // capture output so that we can check that the expected value was logged
+  testing::internal::CaptureStderr();
+  HOLOSCAN_LOG_INFO("Formatted parameter value: {:0.3f}", seconds);
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("1.320") != std::string::npos);
 }
 
 }  // namespace holoscan

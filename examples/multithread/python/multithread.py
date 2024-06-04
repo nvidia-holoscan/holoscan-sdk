@@ -20,7 +20,7 @@ import time
 from argparse import ArgumentParser
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, Operator, OperatorSpec, Tracker
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 
@@ -48,9 +48,10 @@ class DelayOp(Operator):
     value by a user-specified integer increment.
     """
 
-    def __init__(self, fragment, *args, delay=0.25, increment=1, **kwargs):
+    def __init__(self, fragment, *args, delay=0.25, increment=1, silent=False, **kwargs):
         self.delay = delay
         self.increment = increment
+        self.silent = silent
 
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
@@ -61,12 +62,17 @@ class DelayOp(Operator):
         spec.output("out_val")
 
     def compute(self, op_input, op_output, context):
-        print(f"{self.name}: now waiting {self.delay:0.3f} s")
-        time.sleep(self.delay)
-        print(f"{self.name}: finished waiting")
         new_value = op_input.receive("in") + self.increment
+
+        if self.delay > 0:
+            if not self.silent:
+                print(f"{self.name}: now waiting {self.delay:0.3f} s")
+            time.sleep(self.delay)
+            if not self.silent:
+                print(f"{self.name}: finished waiting")
         op_output.emit(self.name, "out_name")
-        print(f"{self.name}: sending new value ({new_value})")
+        if not self.silent:
+            print(f"{self.name}: sending new value ({new_value})")
         op_output.emit(new_value, "out_val")
 
 
@@ -77,7 +83,9 @@ class PingRxOp(Operator):
     number of inputs connected to is "receivers" port.
     """
 
-    def __init__(self, fragment, *args, **kwargs):
+    def __init__(self, fragment, *args, silent=False, **kwargs):
+        self.silent = silent
+
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
@@ -90,37 +98,50 @@ class PingRxOp(Operator):
         # been received.
         names = op_input.receive("names")
         values = op_input.receive("values")
-        print(f"number of received names: {len(names)}")
-        print(f"number of received values: {len(values)}")
-        print(f"sum of received values: {sum(values)}")
+        if not self.silent:
+            print(f"number of received names: {len(names)}")
+            print(f"number of received values: {len(values)}")
+            print(f"sum of received values: {sum(values)}")
 
 
 # Now define a simple application using the operators defined above
 
 
 class ParallelPingApp(Application):
-    def __init__(self, *args, num_delays=8, delay=0.5, delay_step=0.1, **kwargs):
+    def __init__(
+        self, *args, num_delays=8, delay=0.5, delay_step=0.1, count=1, silent=False, **kwargs
+    ):
         self.num_delays = num_delays
         self.delay = delay
         self.delay_step = delay_step
+        self.silent = silent
+        self.count = count
         super().__init__(*args, **kwargs)
 
     def compose(self):
         # Configure the operators. Here we use CountCondition to terminate
         # execution after a specific number of messages have been sent.
-        tx = PingTxOp(self, CountCondition(self, 1), name="tx")
+        tx = PingTxOp(self, CountCondition(self, self.count), name="tx")
         delay_ops = [
-            DelayOp(self, delay=self.delay + self.delay_step * n, increment=n, name=f"delay{n:02d}")
+            DelayOp(
+                self,
+                delay=self.delay + self.delay_step * n,
+                increment=n,
+                silent=self.silent,
+                name=f"delay{n:02d}",
+            )
             for n in range(self.num_delays)
         ]
-        rx = PingRxOp(self, name="rx")
+        rx = PingRxOp(self, silent=self.silent, name="rx")
         for d in delay_ops:
             self.add_flow(tx, d)
             self.add_flow(d, rx, {("out_val", "values"), ("out_name", "names")})
 
 
-def main(threads, num_delays, delay, delay_step, event_based):
-    app = ParallelPingApp(num_delays=num_delays, delay=delay, delay_step=delay_step)
+def main(threads, num_delays, delay, delay_step, event_based, count, silent, track):
+    app = ParallelPingApp(
+        num_delays=num_delays, delay=delay, delay_step=delay_step, count=count, silent=silent
+    )
     if threads == 0:
         # Explicitly setting GreedyScheduler is not strictly required as it is the default.
         scheduler = GreedyScheduler(app, name="greedy_scheduler")
@@ -135,7 +156,15 @@ def main(threads, num_delays, delay, delay_step, event_based):
         )
     app.scheduler(scheduler)
     tstart = time.time()
-    app.run()
+    if track:
+        with Tracker(
+            app, filename="logger.log", num_start_messages_to_skip=2, num_last_messages_to_discard=2
+        ) as tracker:
+            app.run()
+            tracker.print()
+    else:
+        app.run()
+
     duration = time.time() - tstart
     print(f"Total app runtime = {duration:0.3f} s")
 
@@ -191,6 +220,23 @@ if __name__ == "__main__":
             "multi-thread scheduler when threads > 0."
         ),
     )
+    parser.add_argument(
+        "-c",
+        "--count",
+        type=int,
+        default=1,
+        help="The number of messages to transmit.",
+    )
+    parser.add_argument(
+        "--silent",
+        action="store_true",
+        help="Disable info logging during operator compute.",
+    )
+    parser.add_argument(
+        "--track",
+        action="store_true",
+        help="enable data flow tracking",
+    )
 
     args = parser.parse_args()
     if args.delay < 0:
@@ -201,6 +247,8 @@ if __name__ == "__main__":
         raise ValueError("num_delay_ops must be >= 1")
     if args.threads < -1:
         raise ValueError("threads must be non-negative or -1 (for all threads)")
+    if args.count < 1:
+        raise ValueError("count must be a positive integer")
     elif args.threads == -1:
         # use up to maximum number of available threads
         args.threads = min(args.num_delay_ops, multiprocessing.cpu_count())
@@ -211,4 +259,7 @@ if __name__ == "__main__":
         delay=args.delay,
         delay_step=args.delay_step,
         event_based=args.event_based,
+        count=args.count,
+        silent=args.silent,
+        track=args.track,
     )

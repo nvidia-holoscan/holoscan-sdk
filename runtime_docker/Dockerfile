@@ -33,6 +33,7 @@ ARG MAX_PROC=32
 ARG INSTALL_PATH=/opt/nvidia/holoscan
 ARG GPU_TYPE=dgpu
 ARG DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 ############################################################
 # Runtime C++ (no MKL)
@@ -47,6 +48,8 @@ FROM base as runtime_cpp_no_mkl
 #  libx* - X packages
 #  libvulkan1 - for Vulkan apps (Holoviz)
 #  libegl1 - to run headless Vulkan apps
+#  libwayland-client0, libwayland-egl1, libxkbcommon0 - GLFW runtime dependency for Wayland
+#  libdecor-0-plugin-1-cairo - GLFW runtime dependency for Wayland window decorations
 #  libopenblas0 - libtorch dependency
 #  libnuma1 - libtorch dependency
 #  libgomp1 - libtorch & CuPy dependency
@@ -76,6 +79,10 @@ RUN apt-get update \
         libxrandr2="2:1.5.2-*" \
         libvulkan1="1.3.204.1-*" \
         libegl1="1.4.0-*" \
+        libwayland-client0="1.20.0-*" \
+        libwayland-egl1="1.20.0-*" \
+        libxkbcommon0="1.4.0-*" \
+        libdecor-0-plugin-1-cairo="0.1.0-*" \
         libopenblas0="0.3.20+ds-*" \
         libnuma1="2.0.14-*" \
         libgomp1="12.3.0-*" \
@@ -95,8 +102,8 @@ RUN apt-get update \
         libcusolver-12-2 \
         cuda-cupti-12-2 \
         cuda-nvtx-12-2 \
-        && rm -rf /var/lib/apt/lists/* \
-        && rm -f /usr/lib/*/libcudnn*train.so*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/lib/*/libcudnn*train.so*
 
 # Copy ONNX Runtime
 ARG ONNX_RUNTIME_VERSION=1.15.1_23.08

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -477,7 +477,7 @@ int main(int argc, char** argv) {
                   << "  -b, --bench    benchmark mode" << std::endl
                   << "  -l, --headless headless mode" << std::endl
                   << "  -d, --display  name of the display to use in exclusive mode"
-                     " (either EDID or xrandr name)"
+                     " (either EDID, `xrandr` or `hwinfo --monitor` name)"
                   << std::endl;
         return EXIT_SUCCESS;
 

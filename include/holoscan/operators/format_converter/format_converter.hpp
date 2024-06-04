@@ -55,12 +55,11 @@ enum class FormatConversionType {
  *
  * - **source_video** : `nvidia::gxf::Tensor` or `nvidia::gxf::VideoBuffer`
  *   - The input video frame to process. If the input is a VideoBuffer it must be in format
- *     GXF_VIDEO_FORMAT_RGBA, GXF_VIDEO_FORMAT_RGB or GXF_VIDEO_FORMAT_NV12. This video
- *     buffer may be in either host or device memory (a host->device copy is performed if
- *     needed). If a video buffer is not found, the input port message is searched for a tensor
- *     with the name specified by `in_tensor_name`. This must be a device tensor in one of
- *     several supported formats (unsigned 8-bit int or float32 graycale, unsigned 8-bit int
- *     RGB or RGBA YUV420 or NV12).
+ *     GXF_VIDEO_FORMAT_RGBA, GXF_VIDEO_FORMAT_RGB or GXF_VIDEO_FORMAT_NV12. If a video buffer is
+ *     not found, the input port message is searched for a tensor with the name specified by
+ *     `in_tensor_name`. This must be a tensor in one of several supported formats (unsigned 8-bit
+ *     int or float32 graycale, unsigned 8-bit int RGB or RGBA YUV420 or NV12). The tensor or video
+ *     buffer may be in either host or device memory (a host->device copy is performed if needed).
  *
  * ==Named Outputs==
  *
@@ -119,6 +118,24 @@ enum class FormatConversionType {
  *   Optional (default: `[0, 1, 2]` for 3-channel images and `[0, 1, 2, 3]` for 4-channel images).
  * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams.
  *   Optional (default: `nullptr`).
+ *
+ * ==Device Memory Requirements==
+ *
+ * When using this operator with a `BlockMemoryPool`, between 1 and 3 device memory blocks
+ * (`storage_type` = 1) will be required based on the input tensors and parameters:
+ *   - 1.) In all cases there is a memory block needed for the output tensor. The size of this
+ *     block will be `out_height * out_width * out_channels * out_element_size_bytes` where
+ *     (out_height, out_width) will either be (in_height, in_width) (or
+ *     (resize_height, resize_width) a resize was specified). `out_element_size` is the element
+ *     size in bytes (e.g. 1 for RGB888 or 4 for Float32).
+ *   - 2.) If a resize is being done, another memory block is required for this. This block will
+ *     have size `resize_height * resize_width * in_channels * in_element_size_bytes`.
+ *   - 3.) If the input tensor will be in host memory, a memory block is needed to copy the input
+ *     to the device. This block will have size
+ *     `in_height * in_width * in_channels * in_element_size_bytes`.
+ *
+ * Thus when declaring the memory pool, `num_blocks` should be between 1-3 and `block_size` should
+ * be set to the maximum of the individual blocks sizes described above.
  */
 class FormatConverterOp : public holoscan::Operator {
  public:

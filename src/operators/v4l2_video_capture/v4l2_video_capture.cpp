@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <jpeglib.h>
 #include <libv4l2.h>
+#include <libv4lconvert.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
@@ -148,6 +149,15 @@ void V4L2VideoCaptureOp::compute(InputContext& op_input, OutputContext& op_outpu
       throw std::runtime_error(
           fmt::format("Failed to queue buffer {} on {}", buf.index, device_.get().c_str()));
     }
+  } else if (pixel_format_use_ == V4L2_PIX_FMT_MJPEG) {
+    // Convert MJPG to RGBA output buffer
+    MJPEGToRGBA(read_buf.ptr, video_buffer.value()->pointer(), width_use_, height_use_);
+
+    // Return (queue) the buffer.
+    if (ioctl(fd_, VIDIOC_QBUF, &buf) < 0) {
+      throw std::runtime_error(
+          fmt::format("Failed to queue buffer {} on {}", buf.index, device_.get().c_str()));
+    }
   } else {
     // Wrap memory into output buffer
     video_buffer.value()->wrapMemory(
@@ -270,17 +280,20 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
     // Update format with valid user-given format
     pixel_format_use_ = pixel_format;
   } else if (pixel_format_.get() == "auto") {
-    // Currently, AB24 and YUYV are supported in auto mode
+    // Currently, AB24, YUYV, and MJPG are supported in auto mode
     uint32_t ab24 = v4l2_fourcc('A', 'B', '2', '4');
     uint32_t yuyv = v4l2_fourcc('Y', 'U', 'Y', 'V');
+    uint32_t mjpg = v4l2_fourcc('M', 'J', 'P', 'G');
 
     if (pixel_format_supported(fd_, ab24)) {
       pixel_format_use_ = ab24;
     } else if (pixel_format_supported(fd_, yuyv)) {
       pixel_format_use_ = yuyv;
+    } else if (pixel_format_supported(fd_, mjpg)) {
+      pixel_format_use_ = mjpg;
     } else {
       throw std::runtime_error(
-          "Automatic setting of pixel format failed: device does not support AB24 or YUYV. "
+          "Automatic setting of pixel format failed: device does not support AB24, YUYV, or MJPG. "
           " If you are sure that the device pixel format is RGBA, please specify the pixel format "
           "in the yaml configuration file.");
     }
@@ -537,6 +550,51 @@ void V4L2VideoCaptureOp::YUYVToRGBA(const void* yuyv, void* rgba, size_t width, 
     rgba_buf[i + 6] = b_convert(y, cb);
     rgba_buf[i + 7] = 255;
   }
+}
+
+// Support for MJPEG format
+// Each frame is a JPEG image so use libjpeg to decompress the image and modify it to
+// add alpha channel
+void V4L2VideoCaptureOp::MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t height) {
+  struct jpeg_decompress_struct cinfo;
+  struct jpeg_error_mgr jerr;
+  // Size of image is width * height * 3 (RGB)
+  unsigned long jpg_size = width * height * 3;
+  int row_stride;
+
+  cinfo.err = jpeg_std_error(&jerr);
+  jpeg_create_decompress(&cinfo);
+
+  const unsigned char* src_buf =
+      const_cast<unsigned char*>(static_cast<const unsigned char*>(mjpg));
+  unsigned char* dest_buf = static_cast<unsigned char*>(rgba);
+  jpeg_mem_src(&cinfo, src_buf, jpg_size);
+  int rc = jpeg_read_header(&cinfo, TRUE);
+
+  if (rc != 1) { throw std::runtime_error("Failed to read jpeg header"); }
+
+  jpeg_start_decompress(&cinfo);
+
+  // Each row has width * 4 pixels (RGBA)
+  row_stride = width * 4;
+
+  while (cinfo.output_scanline < cinfo.output_height) {
+    unsigned char* buffer_array[1];
+    buffer_array[0] = dest_buf + (cinfo.output_scanline) * row_stride;
+    // Decompress jpeg image and write it to buffer_arary
+    jpeg_read_scanlines(&cinfo, buffer_array, 1);
+    unsigned char* buf = buffer_array[0];
+    // Modify image to add alpha channel with values set to 255
+    // start from the end so we don't overwrite existing values
+    for (int i = (int)width * 3 - 1, j = row_stride - 1; i > 0; i -= 3, j -= 4) {
+      buf[j] = 255;
+      buf[j - 1] = buf[i];
+      buf[j - 2] = buf[i - 1];
+      buf[j - 3] = buf[i - 2];
+    }
+  }
+  jpeg_finish_decompress(&cinfo);
+  jpeg_destroy_decompress(&cinfo);
 }
 
 }  // namespace holoscan::ops

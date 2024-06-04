@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_IO_SPEC_HPP
-#define PYBIND11_CORE_IO_SPEC_HPP
+#ifndef PYHOLOSCAN_CORE_IO_SPEC_HPP
+#define PYHOLOSCAN_CORE_IO_SPEC_HPP
 
 #include <pybind11/pybind11.h>
 
@@ -43,4 +43,4 @@ static const std::unordered_map<IOSpec::ConnectorType, const char*> connector_ty
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_IO_SPEC_HPP */
+#endif /* PYHOLOSCAN_CORE_IO_SPEC_HPP */

@@ -24,6 +24,7 @@ namespace py = pybind11;
 
 namespace holoscan {
 
+void init_asynchronous(py::module_&);
 void init_boolean(py::module_&);
 void init_count(py::module_&);
 void init_periodic(py::module_&);
@@ -32,21 +33,12 @@ void init_message_available(py::module_&);
 
 PYBIND11_MODULE(_conditions, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
+        Holoscan SDK Conditions Python Bindings
         ---------------------------------------
         .. currentmodule:: _conditions
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
 
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
-
+  init_asynchronous(m);
   init_boolean(m);
   init_count(m);
   init_periodic(m);

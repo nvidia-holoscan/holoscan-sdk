@@ -33,7 +33,7 @@ namespace holoscan::ops {
  *
  * Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
  * - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
- *   pixel format will be automatically selected. However, only `AB24` and `YUYV` are then
+ *   pixel format will be automatically selected. However, only `AB24`, `YUYV`, and MJPG are then
  *   supported.
  *   If a pixel format is specified in the yaml file, then this format will be used. However, note
  *   that the operator then expects that this format can be encoded as RGBA32. If not, the behavior
@@ -71,6 +71,24 @@ namespace holoscan::ops {
  *   - When not set by the user, V4L2_CID_AUTOGAIN is set to false (if supported).
  *   - When set by the user, V4L2_CID_AUTOGAIN is set to true (if supported). The provided value is
  *     then used to set V4L2_CID_GAIN.
+ *
+ * ==Device Memory Requirements==
+ *
+ * When using this operator with a `BlockMemoryPool`, a single device memory block is needed
+ * (`storage_type` = 1). The size of this memory block can be determined by rounding the width and
+ * height up to the nearest even size and then padding the rows as needed so that the row stride is
+ * a multiple of 256 bytes. C++ code to calculate the block size is as follows:
+ *
+ * ```cpp
+ * #include <cstdint>
+ *
+ * int64_t get_block_size(int32_t height, int32_t width) {
+ *   int32_t height_even = height + (height & 1);
+ *   int32_t width_even = width + (width & 1);
+ *   int64_t row_bytes = width_even * 4;  // 4 bytes per pixel for 8-bit RGBA
+ *   int64_t row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes / 256 + 1) * 256);
+ *   return height_even * row_stride;
+ * }
  */
 class V4L2VideoCaptureOp : public Operator {
  public:
@@ -109,6 +127,7 @@ class V4L2VideoCaptureOp : public Operator {
   void v4l2_read_buffer(v4l2_buffer& buf);
 
   void YUYVToRGBA(const void* yuyv, void* rgba, size_t width, size_t height);
+  void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t height);
 
   struct Buffer {
     void* ptr;

@@ -188,6 +188,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_async_ping_tx
     op_bayer_demosaic
     op_format_converter
+    op_gxf_codelet
     op_holoviz
     op_inference
     op_inference_processor

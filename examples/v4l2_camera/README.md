@@ -5,7 +5,7 @@ This app captures video streams using [Video4Linux](https://www.kernel.org/doc/h
 #### Notes on the V4L2 operator
 
 * The V4L2 operator can read a range of pixel formats, though it will always output RGBA32 at this time.
-* If pixel format is not specified in the yaml configuration file, it will be automatically selected if `AB24` or `YUYV` is supported by the device. For other formats, you will need to specify the `pixel_format` parameter in the yaml file which will then be used. However, note that the operator expects that this format can be encoded as RGBA32. If not, the behavior is undefined.
+* If the pixel format is not specified in the YAML configuration file, it will automatically select either `AB24`, `YUYV`, or `MJPG` if supported by the device. The first supported format in the order provided will be used. For other formats, you will need to specify the `pixel_format` parameter in the yaml file which will then be used but note that the operator expects that these formats can be encoded as RGBA32. If not, the behavior is undefined.
 * The V4L2 operator outputs data on host. In order to move data from host to GPU device, use `holoscan::ops::FormatConverterOp`.
 
 ## Requirements
@@ -46,7 +46,7 @@ There are a few parameters that can be specified:
   * Default: `"/dev/video0"`
   * List available options with `v4l2-ctl --list-devices`
 * `pixel_format`: The [V4L2 pixel format](https://docs.kernel.org/userspace-api/media/v4l/pixfmt-intro.html) of the device, as FourCC code
-  * Default: auto selects `AB24` or `YUYV` based on device support
+  * Default: auto selects `AB24`, `YUYV`, or `MJPG` based on device support
   * List available options with `v4l2-ctl -d /dev/<your_device> --list-formats`
 * `width` and `height`: The frame dimensions
   * Default: device default

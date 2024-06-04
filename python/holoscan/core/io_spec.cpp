@@ -38,7 +38,8 @@ namespace py = pybind11;
 namespace holoscan {
 
 void init_io_spec(py::module_& m) {
-  py::class_<IOSpec> iospec(m, "IOSpec", R"doc(I/O specification class.)doc");
+  py::class_<IOSpec, std::shared_ptr<IOSpec>> iospec(
+      m, "IOSpec", R"doc(I/O specification class.)doc");
 
   py::enum_<IOSpec::IOType>(iospec, "IOType", doc::IOType::doc_IOType)
       .value("INPUT", IOSpec::IOType::kInput)

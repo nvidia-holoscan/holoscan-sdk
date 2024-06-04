@@ -49,10 +49,8 @@ void GXFResource::initialize() {
     return;
   }
 
-  // Set resource type before calling Resource::initialize()
+  // Set resource type and gxf context before calling Resource::initialize()
   resource_type_ = holoscan::Resource::ResourceType::kGXF;
-
-  Resource::initialize();
   auto& executor = fragment()->executor();
   auto gxf_executor = dynamic_cast<GXFExecutor*>(&executor);
   if (gxf_executor == nullptr) {
@@ -91,93 +89,9 @@ void GXFResource::initialize() {
     return;
   }
 
-  update_params_from_args();
-
-  static gxf_tid_t allocator_tid = GxfTidNull();  // issue 4336947
-
-  // Set Handler parameters
-  for (auto& [key, param_wrap] : spec_->params()) {
-    // Issue 4336947: dev_id parameter for allocator needs to be handled manually
-    bool dev_id_handled = false;
-    if (key.compare(std::string("dev_id")) == 0) {
-      if (!gxf_graph_entity_) {
-        HOLOSCAN_LOG_ERROR(
-            "`dev_id` parameter found, but gxf_graph_entity_ was not initialized so it could not "
-            "be added to the entity group. This parameter will be ignored and default GPU device 0 "
-            "will be used");
-        continue;
-      }
-      gxf_tid_t derived_tid = GxfTidNull();
-      bool is_derived = false;
-      gxf_result_t tid_result;
-      tid_result = GxfComponentTypeId(gxf_context_, gxf_typename(), &derived_tid);
-      if (tid_result != GXF_SUCCESS) {
-        HOLOSCAN_LOG_ERROR(
-            "Unable to get component type id of '{}': {}", gxf_typename(), tid_result);
-      }
-      if (GxfTidIsNull(allocator_tid)) {
-        tid_result = GxfComponentTypeId(gxf_context_, "nvidia::gxf::Allocator", &allocator_tid);
-        if (tid_result != GXF_SUCCESS) {
-          HOLOSCAN_LOG_ERROR("Unable to get component type id of 'nvidia::gxf::Allocator': {}",
-                             tid_result);
-        }
-      }
-      tid_result = GxfComponentIsBase(gxf_context_, derived_tid, allocator_tid, &is_derived);
-      if (tid_result != GXF_SUCCESS) {
-        HOLOSCAN_LOG_ERROR(
-            "Unable to get determine if '{}' is derived from 'nvidia::gxf::Allocator': {}",
-            gxf_typename(),
-            tid_result);
-      }
-      if (is_derived) {
-        HOLOSCAN_LOG_DEBUG(
-            "The dev_id parameter is deprecated by GXF and will be removed from "
-            "Holoscan SDK in the future.");
-
-        auto dev_id_param = *std::any_cast<Parameter<int32_t>*>(param_wrap.value());
-        if (dev_id_param.has_value()) {
-          int32_t device_id = dev_id_param.get();
-
-          auto devices = gxf_graph_entity_->findAll<nvidia::gxf::GPUDevice>();
-          if (devices.size() > 0) {
-            HOLOSCAN_LOG_WARN("Existing entity already has a GPUDevice resource");
-          }
-
-          // Create an EntityGroup to associate the GPUDevice with this resource
-          std::string entity_group_name =
-              fmt::format("{}_eid{}_dev_id{}_group", name(), gxf_eid_, device_id);
-          auto entity_group_gid =
-              ::holoscan::gxf::add_entity_group(gxf_context_, entity_group_name);
-
-          // Add GPUDevice component to the same entity as this resource
-          // TODO (GXF4): requested an addResource method to handle nvidia::gxf::ResourceBase types
-          std::string device_component_name =
-              fmt::format("{}_eid{}_gpu_device_id{}_component", name(), gxf_eid_, device_id);
-          auto dev_handle =
-              gxf_graph_entity_->addComponent("nvidia::gxf::GPUDevice",
-                                              device_component_name.c_str(),
-                                              {nvidia::gxf::Arg("dev_id", device_id)});
-          if (dev_handle.is_null()) {
-            HOLOSCAN_LOG_ERROR("Failed to create GPUDevice for resource '{}'", name_);
-          } else {
-            // TODO: warn and handle case if the resource was already in a different entity group
-
-            // The GPUDevice and this resource have the same eid.
-            // Make their eid is added to the newly created entity group.
-            GXF_ASSERT_SUCCESS(GxfUpdateEntityGroup(gxf_context_, entity_group_gid, gxf_eid_));
-          }
-          dev_id_handled = true;
-        }
-      }
-    }
-    HOLOSCAN_LOG_TRACE(
-        "GXF component '{}' of type '{}': setting GXF parameter '{}'", name_, gxf_typename(), key);
-    if (!dev_id_handled) { set_gxf_parameter(name_, key, param_wrap); }
-    // TODO: handle error
-    HOLOSCAN_LOG_TRACE("GXFResource '{}':: setting GXF parameter '{}'", name(), key);
-  }
-
-  is_initialized_ = true;
+  // Resource::initialize() is called after GXFComponent::gxf_initialize() to ensure that the
+  // component is initialized before setting parameters.
+  Resource::initialize();
 }
 
 void GXFResource::add_to_graph_entity(Operator* op) {
@@ -193,6 +107,99 @@ void GXFResource::add_to_graph_entity(Operator* op) {
     }
   }
   this->initialize();
+}
+
+void GXFResource::set_parameters() {
+  update_params_from_args();
+
+  // Set Handler parameters
+  for (auto& [key, param_wrap] : spec_->params()) {
+    // Issue 4336947: dev_id parameter for allocator needs to be handled manually
+    if (key.compare(std::string("dev_id")) == 0) {
+      if (!gxf_graph_entity_) {
+        HOLOSCAN_LOG_ERROR(
+            "`dev_id` parameter found, but gxf_graph_entity_ was not initialized so it could not "
+            "be added to the entity group. This parameter will be ignored and default GPU device 0 "
+            "will be used");
+        continue;
+      }
+      std::optional<int32_t> dev_id_value;
+      try {
+        auto dev_id_param = *std::any_cast<Parameter<int32_t>*>(param_wrap.value());
+        if (dev_id_param.has_value()) { dev_id_value = dev_id_param.get(); }
+      } catch (const std::bad_any_cast& e) {
+        HOLOSCAN_LOG_ERROR("Cannot cast dev_id argument to int32_t: {}}", e.what());
+      }
+      bool dev_id_handled = handle_dev_id(dev_id_value);
+      if (dev_id_handled) { continue; }
+    }
+
+    set_gxf_parameter(name_, key, param_wrap);
+  }
+}
+
+bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
+  static gxf_tid_t allocator_tid = GxfTidNull();  // issue 4336947
+
+  gxf_tid_t derived_tid = GxfTidNull();
+  bool is_derived = false;
+  gxf_result_t tid_result;
+  tid_result = GxfComponentTypeId(gxf_context_, gxf_typename(), &derived_tid);
+  if (tid_result != GXF_SUCCESS) {
+    HOLOSCAN_LOG_ERROR("Unable to get component type id of '{}': {}", gxf_typename(), tid_result);
+  }
+  if (GxfTidIsNull(allocator_tid)) {
+    tid_result = GxfComponentTypeId(gxf_context_, "nvidia::gxf::Allocator", &allocator_tid);
+    if (tid_result != GXF_SUCCESS) {
+      HOLOSCAN_LOG_ERROR("Unable to get component type id of 'nvidia::gxf::Allocator': {}",
+                         tid_result);
+    }
+  }
+  tid_result = GxfComponentIsBase(gxf_context_, derived_tid, allocator_tid, &is_derived);
+  if (tid_result != GXF_SUCCESS) {
+    HOLOSCAN_LOG_ERROR(
+        "Unable to get determine if '{}' is derived from 'nvidia::gxf::Allocator': {}",
+        gxf_typename(),
+        tid_result);
+  }
+  if (is_derived) {
+    HOLOSCAN_LOG_DEBUG(
+        "The dev_id parameter is deprecated by GXF and will be removed from "
+        "Holoscan SDK in the future.");
+
+    if (dev_id_value.has_value()) {
+      int32_t device_id = dev_id_value.value();
+
+      auto devices = gxf_graph_entity_->findAll<nvidia::gxf::GPUDevice>();
+      if (devices.size() > 0) {
+        HOLOSCAN_LOG_WARN("Existing entity already has a GPUDevice resource");
+      }
+
+      // Create an EntityGroup to associate the GPUDevice with this resource
+      std::string entity_group_name =
+          fmt::format("{}_eid{}_dev_id{}_group", name(), gxf_eid_, device_id);
+      auto entity_group_gid = ::holoscan::gxf::add_entity_group(gxf_context_, entity_group_name);
+
+      // Add GPUDevice component to the same entity as this resource
+      // TODO (GXF4): requested an addResource method to handle nvidia::gxf::ResourceBase types
+      std::string device_component_name =
+          fmt::format("{}_eid{}_gpu_device_id{}_component", name(), gxf_eid_, device_id);
+      auto dev_handle = gxf_graph_entity_->addComponent("nvidia::gxf::GPUDevice",
+                                                        device_component_name.c_str(),
+                                                        {nvidia::gxf::Arg("dev_id", device_id)});
+      if (dev_handle.is_null()) {
+        HOLOSCAN_LOG_ERROR("Failed to create GPUDevice for resource '{}'", name_);
+      } else {
+        // TODO: warn and handle case if the resource was already in a different entity group
+
+        // The GPUDevice and this resource have the same eid.
+        // Make their eid is added to the newly created entity group.
+        GXF_ASSERT_SUCCESS(GxfUpdateEntityGroup(gxf_context_, entity_group_gid, gxf_eid_));
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace holoscan::gxf

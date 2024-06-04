@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_TENSOR_HPP
-#define PYBIND11_CORE_TENSOR_HPP
+#ifndef PYHOLOSCAN_CORE_TENSOR_HPP
+#define PYHOLOSCAN_CORE_TENSOR_HPP
 
 #include <pybind11/pybind11.h>
 
@@ -182,6 +182,8 @@ class PyTensor : public Tensor {
   static py::tuple dlpack_device(const py::object& obj);
 };
 
+bool is_tensor_like(py::object value);
+
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_TENSOR_HPP */
+#endif /* PYHOLOSCAN_CORE_TENSOR_HPP */

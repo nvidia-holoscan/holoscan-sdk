@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the \"License\");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an \"AS IS\" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cmake_minimum_required(VERSION 3.20)
+project(holoscan_multi_branch_pipeline CXX)
+
+# Finds the package holoscan
+find_package(holoscan REQUIRED)
+
+add_executable(multi_branch_pipeline
+  multi_branch_pipeline.cpp
+)
+
+target_link_libraries(multi_branch_pipeline
+  PRIVATE
+  holoscan::core
+)
+
+# Copy config file to the build tree
+add_custom_target(multi_branch_pipeline_yaml
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multi_branch_pipeline.yaml" ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS "multi_branch_pipeline.yaml"
+    BYPRODUCTS "multi_branch_pipeline.yaml"
+)
+add_dependencies(multi_branch_pipeline multi_branch_pipeline_yaml)
+
+# Testing
+if(BUILD_TESTING)
+  add_test(NAME EXAMPLE_CPP_MULTI_BRANCH_OPERATOR_TEST
+           COMMAND multi_branch_pipeline
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  # rx2 should receive close to 100 message (values 0 - 99)
+  # rx1 will receive only some of these, but it is hard to know exactly which ones so just verify the first
+  set_tests_properties(EXAMPLE_CPP_MULTI_BRANCH_OPERATOR_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "receiver 'rx2' received value: 90"
+                       PASS_REGULAR_EXPRESSION "receiver 'rx1' received value: 0")
+endif()

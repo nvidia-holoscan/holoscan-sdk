@@ -99,6 +99,7 @@ target_include_directories(${PROJECT_NAME}
     PRIVATE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     PUBLIC
+        $<BUILD_INTERFACE:${tl-expected_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>

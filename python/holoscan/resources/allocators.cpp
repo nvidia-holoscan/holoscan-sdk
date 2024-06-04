@@ -145,7 +145,7 @@ void init_allocators(py::module_& m) {
            "num_blocks"_a,
            "dev_id"_a = 0,
            "name"_a = "block_memory_pool",
-           doc::BlockMemoryPool::doc_BlockMemoryPool_python)
+           doc::BlockMemoryPool::doc_BlockMemoryPool)
       .def_property_readonly(
           "gxf_typename", &BlockMemoryPool::gxf_typename, doc::BlockMemoryPool::doc_gxf_typename)
       .def("setup", &BlockMemoryPool::setup, "spec"_a, doc::BlockMemoryPool::doc_setup);
@@ -161,7 +161,7 @@ void init_allocators(py::module_& m) {
           "reserved_size"_a = 1u,
           "max_size"_a = 0u,
           "name"_a = "cuda_stream_pool"s,
-          doc::CudaStreamPool::doc_CudaStreamPool_python)
+          doc::CudaStreamPool::doc_CudaStreamPool)
       .def_property_readonly(
           "gxf_typename", &CudaStreamPool::gxf_typename, doc::CudaStreamPool::doc_gxf_typename)
       .def("setup", &CudaStreamPool::setup, "spec"_a, doc::CudaStreamPool::doc_setup);
@@ -174,7 +174,7 @@ void init_allocators(py::module_& m) {
       .def(py::init<Fragment*, const std::string&>(),
            "fragment"_a,
            "name"_a = "unbounded_allocator"s,
-           doc::UnboundedAllocator::doc_UnboundedAllocator_python)
+           doc::UnboundedAllocator::doc_UnboundedAllocator)
       .def_property_readonly("gxf_typename",
                              &UnboundedAllocator::gxf_typename,
                              doc::UnboundedAllocator::doc_gxf_typename)

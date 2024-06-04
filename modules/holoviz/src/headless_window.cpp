@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +42,8 @@ void HeadlessWindow::init_im_gui() {}
 
 void HeadlessWindow::setup_callbacks(
     std::function<void(int width, int height)> frame_buffer_size_cb) {}
+
+void HeadlessWindow::restore_callbacks() {}
 
 const char** HeadlessWindow::get_required_instance_extensions(uint32_t* count) {
   static char const* extensions[]{};
@@ -89,7 +91,10 @@ void HeadlessWindow::im_gui_new_frame() {
 
 void HeadlessWindow::begin() {}
 
-void HeadlessWindow::end() {}
+void HeadlessWindow::end() {
+  // call the base class
+  Window::end();
+}
 
 float HeadlessWindow::get_aspect_ratio() {
   return float(impl_->width_) / float(impl_->height_);

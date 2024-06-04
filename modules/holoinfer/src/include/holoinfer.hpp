@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,7 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
    *
    * @param inference_specs   Pointer to inference specifications
    *
-   * @returns InferStatus with appropriate holoinfer_code and message.
+   * @return InferStatus with appropriate holoinfer_code and message.
    */
   InferStatus set_inference_params(std::shared_ptr<InferenceSpecs>& inference_specs);
 
@@ -51,14 +51,14 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
    * @param preprocess_data_map   Map of model names as key mapped to the preprocessed input data
    * @param output_data_map       Map of tensor names as key mapped to the inferred data
    *
-   * @returns InferStatus with appropriate holoinfer_code and message.
+   * @return InferStatus with appropriate holoinfer_code and message.
    */
   InferStatus execute_inference(DataMap& preprocess_data_map, DataMap& output_data_map);
 
   /**
    * Gets output dimension per model
    *
-   * @returns Map of model as key mapped to the output dimension (of inferred data)
+   * @return Map of model as key mapped to the output dimension (of inferred data)
    */
   DimType get_output_dimensions() const;
 
@@ -78,7 +78,7 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    * @param process_operations   Map of tensor name as key, mapped to list of operations to be
    *                             applied in sequence on the tensor
    *
-   * @returns InferStatus with appropriate holoinfer_code and message.
+   * @return InferStatus with appropriate holoinfer_code and message.
    */
   InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
 
@@ -95,7 +95,7 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    * @param dimension_map Map is updated with model name as key mapped to dimension of processed
    * data as a vector
    *
-   * @returns InferStatus with appropriate holoinfer_code and message.
+   * @return InferStatus with appropriate holoinfer_code and message.
    */
   InferStatus process(const MultiMappings& tensor_oper_map, const MultiMappings& in_out_tensor_map,
                       DataMap& processed_result_map,
@@ -105,7 +105,7 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    * Get output data per Tensor
    * Toolkit supports one output per Tensor, in float32 type
    *
-   * @returns Map of tensor name as key mapped to the output float32 type data as a vector
+   * @return Map of tensor name as key mapped to the output float32 type data as a vector
    */
   DataMap get_processed_data() const;
 
@@ -113,7 +113,7 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    * Get output dimension per model
    * Toolkit supports one output per model
    *
-   * @returns Map of model as key mapped to the output dimension (of processed data) as a vector
+   * @return Map of model as key mapped to the output dimension (of processed data) as a vector
    */
   DimType get_processed_data_dims() const;
 };

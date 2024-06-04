@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include <common/type_name.hpp>
 #include "./common.hpp"
 #include "./domain/tensor_map.hpp"
 #include "./errors.hpp"
@@ -39,7 +40,7 @@
 namespace holoscan {
 
 static inline std::string get_well_formed_name(
-    const char* name, const std::unordered_map<std::string, std::unique_ptr<IOSpec>>& io_list) {
+    const char* name, const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_list) {
   std::string well_formed_name;
   if (name == nullptr || name[0] == '\0') {
     if (io_list.size() == 1) {
@@ -68,7 +69,7 @@ class InputContext {
    * @param inputs The references to the map of the input specs.
    */
   InputContext(ExecutionContext* execution_context, Operator* op,
-               std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs)
+               std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs)
       : execution_context_(execution_context), op_(op), inputs_(inputs) {}
 
   /**
@@ -99,7 +100,7 @@ class InputContext {
    * @brief Return the reference to the map of the input specs.
    * @return The reference to the map of the input specs.
    */
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs() const { return inputs_; }
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs() const { return inputs_; }
 
   /**
    * @brief Return whether the input port has any data.
@@ -368,8 +369,11 @@ class InputContext {
           return tensor_map;
         }
         auto error_message = fmt::format(
-            "Unable to cast the received data to the specified type (DataT) for input {}: {}",
+            "Unable to cast the received data to the specified type ({}) for input {} of type {}: "
+            "{}",
+            nvidia::TypenameAsString<DataT>(),
             name,
+            value.type().name(),
             e.what());
         HOLOSCAN_LOG_DEBUG(error_message);
         return make_unexpected<holoscan::RuntimeError>(
@@ -409,7 +413,7 @@ class InputContext {
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.
   Operator* op_ = nullptr;  ///< The operator that this context is associated with.
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs_;  ///< The inputs.
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs_;  ///< The inputs.
 };
 
 /**
@@ -438,7 +442,7 @@ class OutputContext {
    * @param outputs The references to the map of the output specs.
    */
   OutputContext(ExecutionContext* execution_context, Operator* op,
-                std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs)
+                std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs)
       : execution_context_(execution_context), op_(op), outputs_(outputs) {}
 
   /**
@@ -458,7 +462,7 @@ class OutputContext {
    * @brief Return the reference to the map of the output specs.
    * @return The reference to the map of the output specs.
    */
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs() const { return outputs_; }
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs() const { return outputs_; }
 
   /**
    * @brief The output data type.
@@ -651,7 +655,7 @@ class OutputContext {
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.
   Operator* op_ = nullptr;  ///< The operator that this context is associated with.
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs_;  ///< The outputs.
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs_;  ///< The outputs.
 };
 
 }  // namespace holoscan

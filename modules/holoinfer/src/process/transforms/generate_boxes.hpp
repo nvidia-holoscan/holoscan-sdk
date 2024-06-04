@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +42,17 @@ class GenerateBoxes : public TransformBase {
    * @brief Default Constructor
    */
   GenerateBoxes() {}
+
+  /**
+   * @brief Explicit Constructor
+   */
   explicit GenerateBoxes(const std::string& config_path) : config_path_(config_path) {}
+
+  /**
+   * @brief Default Destructor
+   */
+  ~GenerateBoxes() override = default;
+
   /**
    * @brief Initializer. Parses the config file and populates all required variables to be used in
    * the execution process

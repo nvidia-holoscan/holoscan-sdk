@@ -17,9 +17,7 @@
 
 #include "exclusive_window.hpp"
 
-#include <X11/extensions/Xrandr.h>
 #include <imgui.h>
-#include <vulkan/vulkan_xlib_xrandr.h>
 
 #include <array>
 #include <stdexcept>
@@ -44,13 +42,9 @@ struct ExclusiveWindow::Impl {
   uint32_t width_ = 0;
   uint32_t height_ = 0;
   uint32_t refresh_rate_ = 0;
-
-  Display* dpy_ = nullptr;
 };
 
-ExclusiveWindow::~ExclusiveWindow() {
-  if (impl_->dpy_) { XCloseDisplay(impl_->dpy_); }
-}
+ExclusiveWindow::~ExclusiveWindow() {}
 
 ExclusiveWindow::ExclusiveWindow(const char* display_name, uint32_t width, uint32_t height,
                                  uint32_t refresh_rate, InitFlags flags)
@@ -66,10 +60,11 @@ void ExclusiveWindow::init_im_gui() {}
 void ExclusiveWindow::setup_callbacks(
     std::function<void(int width, int height)> frame_buffer_size_cb) {}
 
+void ExclusiveWindow::restore_callbacks() {}
+
 const char** ExclusiveWindow::get_required_instance_extensions(uint32_t* count) {
   static char const* extensions[]{VK_KHR_SURFACE_EXTENSION_NAME,
                                   VK_KHR_DISPLAY_EXTENSION_NAME,
-                                  VK_EXT_ACQUIRE_XLIB_DISPLAY_EXTENSION_NAME,
                                   VK_EXT_DIRECT_MODE_DISPLAY_EXTENSION_NAME};
 
   *count = sizeof(extensions) / sizeof(extensions[0]);
@@ -135,23 +130,6 @@ vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_devic
   HOLOSCAN_LOG_INFO("Using display \"{}\"", selected_display.displayName);
 
   const vk::DisplayKHR display = selected_display.display;
-
-  // If the X11 server is running, acquire permission from the X-Server to directly
-  //                                                   access the display in Vulkan
-  impl_->dpy_ = XOpenDisplay(NULL);
-  if (impl_->dpy_) {
-    const PFN_vkAcquireXlibDisplayEXT vkAcquireXlibDisplayEXT =
-        PFN_vkAcquireXlibDisplayEXT(vkGetInstanceProcAddr(instance, "vkAcquireXlibDisplayEXT"));
-    if (!vkAcquireXlibDisplayEXT) {
-      throw std::runtime_error("Could not get proc address of vkAcquireXlibDisplayEXT");
-    }
-    HOLOSCAN_LOG_INFO("X server is running, trying to acquire display");
-    VkResult result = vkAcquireXlibDisplayEXT(physical_device, impl_->dpy_, display);
-    if (result < 0) {
-      nvvk::checkResult(result);
-      throw std::runtime_error("Failed to acquire display from X-Server.");
-    }
-  }
 
   // pick highest available resolution
   const std::vector<vk::DisplayModePropertiesKHR> modes =
@@ -262,7 +240,10 @@ void ExclusiveWindow::im_gui_new_frame() {
 
 void ExclusiveWindow::begin() {}
 
-void ExclusiveWindow::end() {}
+void ExclusiveWindow::end() {
+  // call the base class
+  Window::end();
+}
 
 float ExclusiveWindow::get_aspect_ratio() {
   return float(impl_->width_) / float(impl_->height_);

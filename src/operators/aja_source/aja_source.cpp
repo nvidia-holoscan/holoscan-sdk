@@ -217,9 +217,9 @@ AJAStatus AJASourceOp::SetupVideo() {
         return AJA_STATUS_UNSUPPORTED;
       }
       device_.Connect(NTV2_XptFrameBuffer1Input, NTV2_Xpt425Mux1ARGB);
-      device_.Connect(NTV2_XptFrameBuffer1BInput, NTV2_Xpt425Mux1BRGB);
+      device_.Connect(NTV2_XptFrameBuffer1DS2Input, NTV2_Xpt425Mux1BRGB);
       device_.Connect(NTV2_XptFrameBuffer2Input, NTV2_Xpt425Mux2ARGB);
-      device_.Connect(NTV2_XptFrameBuffer2BInput, NTV2_Xpt425Mux2BRGB);
+      device_.Connect(NTV2_XptFrameBuffer2DS2Input, NTV2_Xpt425Mux2BRGB);
       device_.Connect(NTV2_Xpt425Mux1AInput, NTV2_XptCSC1VidRGB);
       device_.Connect(NTV2_Xpt425Mux1BInput, NTV2_XptCSC2VidRGB);
       device_.Connect(NTV2_Xpt425Mux2AInput, NTV2_XptCSC3VidRGB);
@@ -230,9 +230,9 @@ AJAStatus AJASourceOp::SetupVideo() {
       device_.Connect(NTV2_XptCSC4VidInput, NTV2_XptHDMIIn1Q4);
     } else {
       device_.Connect(NTV2_XptFrameBuffer1Input, NTV2_Xpt425Mux1ARGB);
-      device_.Connect(NTV2_XptFrameBuffer1BInput, NTV2_Xpt425Mux1BRGB);
+      device_.Connect(NTV2_XptFrameBuffer1DS2Input, NTV2_Xpt425Mux1BRGB);
       device_.Connect(NTV2_XptFrameBuffer2Input, NTV2_Xpt425Mux2ARGB);
-      device_.Connect(NTV2_XptFrameBuffer2BInput, NTV2_Xpt425Mux2BRGB);
+      device_.Connect(NTV2_XptFrameBuffer2DS2Input, NTV2_Xpt425Mux2BRGB);
       device_.Connect(NTV2_Xpt425Mux1AInput, NTV2_XptHDMIIn1RGB);
       device_.Connect(NTV2_Xpt425Mux1BInput, NTV2_XptHDMIIn1Q2RGB);
       device_.Connect(NTV2_Xpt425Mux2AInput, NTV2_XptHDMIIn1Q3RGB);

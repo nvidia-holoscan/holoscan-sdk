@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +64,13 @@ void init_gxf_operator(py::module_& m) {
                     py::overload_cast<>(&ops::GXFOperator::gxf_cid, py::const_),
                     py::overload_cast<gxf_uid_t>(&ops::GXFOperator::gxf_cid),
                     doc::GXFOperator::doc_gxf_cid)
+      .def("initialize",
+           &ops::GXFOperator::initialize,
+           doc::GXFOperator::doc_initialize)  // note: virtual function
+      .def(
+          "setup", &ops::GXFOperator::setup, doc::GXFOperator::doc_setup)  // note: virtual function
+      .def_property_readonly(
+          "description", &ops::GXFOperator::description, doc::GXFOperator::doc_description)
       .def(
           "__repr__",
           [](const py::object& obj) {

@@ -22,6 +22,7 @@
 #include <memory>
 #include <string>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -57,7 +58,8 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
   using V4L2VideoCaptureOp::V4L2VideoCaptureOp;
 
   // Define a constructor that fully initializes the object.
-  PyV4L2VideoCaptureOp(Fragment* fragment, std::shared_ptr<::holoscan::Allocator> allocator,
+  PyV4L2VideoCaptureOp(Fragment* fragment, const py::args& args,
+                       std::shared_ptr<::holoscan::Allocator> allocator,
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
                        uint32_t height = 0, uint32_t num_buffers = 4,
                        const std::string& pixel_format = "auto",
@@ -76,7 +78,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
     if (gain.has_value()) {
       this->add_arg(Arg{"gain", gain.value() });
     }
-
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -86,20 +88,10 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
 
 PYBIND11_MODULE(_v4l2_video_capture, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK V4L2VideoCaptureOp Python Bindings
+        -----------------------------------------------
         .. currentmodule:: _v4l2_video_capture
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<V4L2VideoCaptureOp,
              PyV4L2VideoCaptureOp,
@@ -107,6 +99,7 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
              std::shared_ptr<V4L2VideoCaptureOp>>(
       m, "V4L2VideoCaptureOp", doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp)
       .def(py::init<Fragment*,
+                    const py::args&,
                     std::shared_ptr<::holoscan::Allocator>,
                     const std::string&,
                     uint32_t,

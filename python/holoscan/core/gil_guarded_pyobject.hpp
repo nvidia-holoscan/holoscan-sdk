@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_GIL_GUARDED_PYOBJECT_HPP
-#define PYBIND11_CORE_GIL_GUARDED_PYOBJECT_HPP
+#ifndef PYHOLOSCAN_CORE_GIL_GUARDED_PYOBJECT_HPP
+#define PYHOLOSCAN_CORE_GIL_GUARDED_PYOBJECT_HPP
 
 #include <pybind11/pybind11.h>
 
@@ -56,4 +56,4 @@ class GILGuardedPyObject {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_GIL_GUARDED_PYOBJECT_HPP */
+#endif /* PYHOLOSCAN_CORE_GIL_GUARDED_PYOBJECT_HPP */

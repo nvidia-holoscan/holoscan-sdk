@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,7 +70,7 @@ void init_count(py::module_& m) {
            "fragment"_a,
            "count"_a = 1L,
            "name"_a = "noname_count_condition"s,
-           doc::CountCondition::doc_CountCondition_python)
+           doc::CountCondition::doc_CountCondition)
       .def_property_readonly(
           "gxf_typename", &CountCondition::gxf_typename, doc::CountCondition::doc_gxf_typename)
       .def("setup", &CountCondition::setup, doc::CountCondition::doc_setup)

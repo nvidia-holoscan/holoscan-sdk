@@ -182,7 +182,7 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
     input_data_ptr = frame->pointer();
 
     // if the input tensor is not coming from device then move it to device
-    if (input_memory_type != nvidia::gxf::MemoryStorageType::kDevice) {
+    if (input_memory_type == nvidia::gxf::MemoryStorageType::kSystem) {
       size_t buffer_size = rows * columns * in_channels * element_size;
 
       if (buffer_size > device_scratch_buffer_.size()) {
@@ -213,8 +213,59 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
     // Get needed information from the tensor
     // cast Holoscan::Tensor to nvidia::gxf::Tensor so attribute access code can remain as-is
     nvidia::gxf::Tensor in_tensor_gxf{in_tensor->dl_ctx()};
+    auto in_rank = in_tensor_gxf.rank();
+    if (in_rank != 3) {
+      throw std::runtime_error(
+          fmt::format("Input tensor has {} dimensions. Expected a tensor with 3 dimensions "
+                      "(corresponding to an RGB or RGBA image).",
+                      in_rank));
+    }
 
-    input_data_ptr = in_tensor_gxf.pointer();
+    DLDevice dev = in_tensor->device();
+    if ((dev.device_type != kDLCUDA) && (dev.device_type != kDLCPU) &&
+        (dev.device_type != kDLCUDAHost)) {
+      throw std::runtime_error(
+          "Input tensor must be in CUDA device memory, CUDA pinned memory or on the CPU.");
+    }
+
+    // Originally had:
+    //   auto is_contiguous = in_tensor_gxf.isContiguous().value();
+    // but there was a bug in GXF 4.0's isContiguous(), so added is_contiguous to holoscan::Tensor
+    // instead.
+    if (!in_tensor->is_contiguous()) {
+      throw std::runtime_error(
+          fmt::format("Tensor must have a row-major memory layout (values along the last axis "
+                      " are adjacent in memory). Detected shape:({}, {}, {}), "
+                      "strides: ({}, {}, {})",
+                      in_tensor_gxf.shape().dimension(0),
+                      in_tensor_gxf.shape().dimension(1),
+                      in_tensor_gxf.shape().dimension(2),
+                      in_tensor_gxf.stride(0),
+                      in_tensor_gxf.stride(1),
+                      in_tensor_gxf.stride(2)));
+    }
+
+    if (dev.device_type == kDLCPU) {
+      size_t buffer_size = rows * columns * in_channels * element_size;
+
+      if (buffer_size > device_scratch_buffer_.size()) {
+        device_scratch_buffer_.resize(
+            pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
+        if (!device_scratch_buffer_.pointer()) {
+          throw std::runtime_error(
+              fmt::format("Failed to allocate device scratch buffer ({} bytes)", buffer_size));
+        }
+      }
+
+      CUDA_TRY(cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
+                          static_cast<const void*>(in_tensor_gxf.pointer()),
+                          buffer_size,
+                          cudaMemcpyHostToDevice));
+      input_data_ptr = device_scratch_buffer_.pointer();
+    } else {
+      input_data_ptr = in_tensor_gxf.pointer();
+    }
+
     if (input_data_ptr == nullptr) {
       // This should never happen, but just in case...
       HOLOSCAN_LOG_ERROR("Unable to get tensor data pointer. nullptr returned.");

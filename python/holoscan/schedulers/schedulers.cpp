@@ -43,20 +43,10 @@ void init_multithread_scheduler(py::module_&);
 
 PYBIND11_MODULE(_schedulers, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
+        Holoscan SDK Schedulers Python Bindings
         ---------------------------------------
         .. currentmodule:: _schedulers
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   init_event_based_scheduler(m);
   init_greedy_scheduler(m);

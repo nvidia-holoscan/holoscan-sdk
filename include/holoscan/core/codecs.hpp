@@ -168,6 +168,26 @@ struct codec<std::string> {
   }
 };
 
+// will hold Python cloudpickle strings in this container to differentiate from std::string
+struct CloudPickleSerializedObject {
+  std::string serialized;
+};
+
+// codec for CloudPickleSerializedObject
+template <>
+struct codec<CloudPickleSerializedObject> {
+  static expected<size_t, RuntimeError> serialize(const CloudPickleSerializedObject& value,
+                                                  Endpoint* endpoint) {
+    return serialize_binary_blob<std::string>(value.serialized, endpoint);
+  }
+  static expected<CloudPickleSerializedObject, RuntimeError> deserialize(Endpoint* endpoint) {
+    auto maybe_string = deserialize_binary_blob<std::string>(endpoint);
+    if (!maybe_string) { return forward_error(maybe_string); }
+    CloudPickleSerializedObject cloudpickle_obj{std::move(maybe_string.value())};
+    return cloudpickle_obj;
+  }
+};
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Codec type 4: serialization of std::vector<bool> only
 //

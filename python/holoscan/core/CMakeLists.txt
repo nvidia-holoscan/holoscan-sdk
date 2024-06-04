@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ holoscan_pybind11_module(
     core.cpp
     dataflow_tracker.cpp
     dl_converter.cpp
+    emitter_receiver_registry.cpp
     execution_context.cpp
     executor.cpp
     fragment.cpp
@@ -35,4 +36,16 @@ holoscan_pybind11_module(
     scheduler.cpp
     tensor.cpp
     ../gxf/entity.cpp
+)
+
+# Copy headers
+install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DESTINATION include/holoscan/python
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+    DIRECTORY_PERMISSIONS OWNER_READ OWNER_EXECUTE OWNER_WRITE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+    COMPONENT "holoscan-python_libs"
+    FILES_MATCHING
+    PATTERN "*.hpp"
+    PATTERN "*pydoc.hpp" EXCLUDE
 )

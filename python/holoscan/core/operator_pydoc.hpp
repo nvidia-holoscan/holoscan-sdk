@@ -63,6 +63,10 @@ name : str
     The name of the input port.
 )doc")
 
+PYDOC(inputs, R"doc(
+Return the reference of the input port map.
+)doc")
+
 PYDOC(output, R"doc(
 Add an outputput to the specification.
 )doc")
@@ -74,6 +78,10 @@ Parameters
 ----------
 name : str
     The name of the output port.
+)doc")
+
+PYDOC(outputs, R"doc(
+Return the reference of the output port map.
 )doc")
 
 PYDOC(param, R"doc(
@@ -134,7 +142,7 @@ Operator class.
 Can be initialized with any number of Python positional and keyword arguments.
 
 If a `name` keyword argument is provided, it must be a `str` and will be
-used to set the name of the Operator.
+used to set the name of the operator.
 
 `Condition` classes will be added to ``self.conditions``, `Resource`
 classes will be added to ``self.resources``, and any other arguments will be

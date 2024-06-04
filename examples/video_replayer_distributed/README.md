@@ -22,7 +22,7 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 
 * **using deb package install**:
   ```bash
-  /opt/nvidia/holoscan/examples/download_example_data
+  sudo /opt/nvidia/holoscan/examples/download_example_data
   export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
 
   # Set the application folder
@@ -31,8 +31,6 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 
 * **from NGC container**:
   ```bash
-  # HOLOSCAN_INPUT_PATH is set to /opt/nvidia/data by default
-
   # Set the application folder
   APP_DIR=/opt/nvidia/holoscan/examples/video_replayer_distributed/cpp
   ```
@@ -83,7 +81,7 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
   ```
 * **using deb package install**:
   ```bash
-  /opt/nvidia/holoscan/examples/download_example_data
+  sudo /opt/nvidia/holoscan/examples/download_example_data
   export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
 
@@ -92,8 +90,6 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
   ```
 * **from NGC container**:
   ```bash
-  # HOLOSCAN_INPUT_PATH is set to /opt/nvidia/data by default
-
   # Set the application folder
   APP_DIR=/opt/nvidia/holoscan/examples/video_replayer_distributed/python
   ```

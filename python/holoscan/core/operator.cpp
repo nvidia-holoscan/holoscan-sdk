@@ -58,6 +58,10 @@ void init_operator(py::module_& m) {
            "name"_a,
            doc::OperatorSpec::doc_input_kwargs,
            py::return_value_policy::reference_internal)
+      .def_property_readonly("inputs",
+                             &OperatorSpec::inputs,
+                             doc::OperatorSpec::doc_inputs,
+                             py::return_value_policy::reference_internal)
       .def("output",
            py::overload_cast<>(&OperatorSpec::output<gxf::Entity>),
            doc::OperatorSpec::doc_output,
@@ -67,6 +71,10 @@ void init_operator(py::module_& m) {
            "name"_a,
            doc::OperatorSpec::doc_output_kwargs,
            py::return_value_policy::reference_internal)
+      .def_property_readonly("outputs",
+                             &OperatorSpec::outputs,
+                             doc::OperatorSpec::doc_outputs,
+                             py::return_value_policy::reference_internal)
       .def_property_readonly(
           "description", &OperatorSpec::description, doc::OperatorSpec::doc_description)
       .def(
@@ -80,11 +88,6 @@ void init_operator(py::module_& m) {
   //       to end users of the API, but are used internally to enable native operators
   //       defined from python via inheritance from the `Operator` class as defined in
   //       core/__init__.py.
-
-  py::enum_<ParameterFlag>(m, "ParameterFlag", doc::ParameterFlag::doc_ParameterFlag)
-      .value("NONE", ParameterFlag::kNone)
-      .value("OPTIONAL", ParameterFlag::kOptional)
-      .value("DYNAMIC", ParameterFlag::kDynamic);
 
   py::class_<PyOperatorSpec, OperatorSpec, std::shared_ptr<PyOperatorSpec>>(
       m, "PyOperatorSpec", R"doc(Operator specification class.)doc")
@@ -536,13 +539,16 @@ void PyOperator::set_py_tracing() {
 }
 
 void PyOperator::initialize() {
-  Operator::initialize();
   // Get the initialize method of the Python Operator class and call it
   py::gil_scoped_acquire scope_guard;
 
   set_py_tracing();
 
   py_initialize_.operator()();
+
+  // Call the parent class's initialize method after invoking the Python Operator's initialize
+  // method.
+  Operator::initialize();
 }
 
 void PyOperator::start() {

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_APPLICATION_HPP
-#define PYBIND11_CORE_APPLICATION_HPP
+#ifndef PYHOLOSCAN_CORE_APPLICATION_HPP
+#define PYHOLOSCAN_CORE_APPLICATION_HPP
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -103,4 +103,4 @@ class PyApplication : public Application {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_APPLICATION_HPP */
+#endif /* PYHOLOSCAN_CORE_APPLICATION_HPP */

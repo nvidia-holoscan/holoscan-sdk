@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_DL_CONVERTER_HPP
-#define PYBIND11_CORE_DL_CONVERTER_HPP
+#ifndef PYHOLOSCAN_CORE_DL_CONVERTER_HPP
+#define PYHOLOSCAN_CORE_DL_CONVERTER_HPP
 
 #include <dlpack/dlpack.h>
 #include <pybind11/pybind11.h>
@@ -131,4 +131,4 @@ pybind11::tuple array2pytuple(const T* arr, size_t length) {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_DL_CONVERTER_HPP */
+#endif /* PYHOLOSCAN_CORE_DL_CONVERTER_HPP */

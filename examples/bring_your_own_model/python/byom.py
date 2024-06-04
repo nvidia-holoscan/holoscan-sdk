@@ -58,26 +58,26 @@ class BYOMApp(Application):
             raise ValueError(f"Could not find video data: {self.video_dir=}")
 
     def compose(self):
-        host_allocator = UnboundedAllocator(self, name="host_allocator")
+        allocator = UnboundedAllocator(self, name="allocator")
 
         source = VideoStreamReplayerOp(
             self, name="replayer", directory=self.video_dir, **self.kwargs("replayer")
         )
 
         preprocessor = FormatConverterOp(
-            self, name="preprocessor", pool=host_allocator, **self.kwargs("preprocessor")
+            self, name="preprocessor", pool=allocator, **self.kwargs("preprocessor")
         )
 
         inference = InferenceOp(
             self,
             name="inference",
-            allocator=host_allocator,
+            allocator=allocator,
             model_path_map=self.model_path_map,
             **self.kwargs("inference"),
         )
 
         postprocessor = SegmentationPostprocessorOp(
-            self, name="postprocessor", allocator=host_allocator, **self.kwargs("postprocessor")
+            self, name="postprocessor", allocator=allocator, **self.kwargs("postprocessor")
         )
 
         viz = HolovizOp(self, name="viz", **self.kwargs("viz"))
@@ -106,7 +106,18 @@ if __name__ == "__main__":
         default="none",
         help=("Set the data path"),
     )
+    parser.add_argument(
+        "-c",
+        "--config",
+        default="none",
+        help=("Set the configuration file"),
+    )
 
     args = parser.parse_args()
-    config_file = os.path.join(os.path.dirname(__file__), "byom.yaml")
+
+    if args.config == "none":
+        config_file = os.path.join(os.path.dirname(__file__), "byom.yaml")
+    else:
+        config_file = args.config
+
     main(config_file=config_file, data=args.data)

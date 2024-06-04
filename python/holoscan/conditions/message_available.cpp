@@ -78,7 +78,7 @@ void init_message_available(py::module_& m) {
            "min_size"_a = 1UL,
            "front_stage_max_size"_a = 1UL,
            "name"_a = "noname_message_available_condition"s,
-           doc::MessageAvailableCondition::doc_MessageAvailableCondition_python)
+           doc::MessageAvailableCondition::doc_MessageAvailableCondition)
       .def_property_readonly("gxf_typename",
                              &MessageAvailableCondition::gxf_typename,
                              doc::MessageAvailableCondition::doc_gxf_typename)

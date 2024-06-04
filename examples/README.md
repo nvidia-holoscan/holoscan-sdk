@@ -11,8 +11,8 @@ See [HoloHub](https://nvidia-holoscan.github.io/holohub) to find additional refe
 
    ```sh
    export src_dir="/opt/nvidia/holoscan/examples/" # Add "<example_of_your_choice>/cpp" to build a specific example
-   export build_dir="/opt/nvidia/holoscan/examples/build` # Or the path of your choice
-   cmake -S $src_dir -B $build_dir
+   export build_dir="/opt/nvidia/holoscan/examples/build" # Or the path of your choice
+   cmake -S $src_dir -B $build_dir -D Holoscan_ROOT="/opt/nvidia/holoscan"
    cmake --build $build_dir -j
    ```
 
@@ -60,16 +60,17 @@ The following examples demonstrate the basics of the Holoscan core API, and are 
 
 The following examples illustrate the use of specific **schedulers** to define when operators are run:
 
-* [**Multithread Scheduler**](multithread): run operators in parallel
+* [**Multithread or Event-Based Schedulers**](multithread): run operators in parallel
+* [**Multi-Rate Pipeline**](multi_branch_pipeline): Demonstrates how to override default operator port properties to allow parallel downstream branches of a pipeline to operate at different frame rates
 
 The following examples illustrate the use of specific **conditions** to modify the behavior of operators:
 
-* [**PeriodicCondition**](conditions/periodic): trigger an operator at a user-defined time interval.
+* [**PeriodicCondition**](conditions/periodic): trigger an operator at a user-defined time interval
 * [**AsynchronousCondition**](conditions/asynchronous): allow operators to run asynchronously (C++ API only)
 
 The following examples illustrate the use of specific resource classes that can be passed to operators or schedulers:
 
-* [**Clock**](resources/clock): demonstrates assignment of a user-configured clock to the Holoscan SDK scheduler and how its runtime methods can be accessed from an operator's compute method.
+* [**Clock**](resources/clock): demonstrate assignment of a user-configured clock to the Holoscan SDK scheduler and how its runtime methods can be accessed from an operator's compute method.
 
 ## Visualization
 * [**Holoviz**](holoviz): display overlays of various geometric primitives
@@ -94,4 +95,5 @@ The following examples demonstrate how sensors can be used as input streams to y
 ### GXF and Holoscan
 
 * [**Tensor interop**](tensor_interop): use the `Entity` message to pass tensors to/from Holoscan operators wrapping GXF codelets in Holoscan applications
+* [**Import GXF Components**](import_gxf_components): import the existing GXF Codelets and Components into Holoscan applications
 * [**Wrap operator as GXF extension**](wrap_operator_as_gxf_extension): wrap Holoscan native operators as GXF codelets to use in GXF applications

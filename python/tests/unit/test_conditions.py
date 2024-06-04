@@ -20,6 +20,8 @@ import datetime
 import pytest
 
 from holoscan.conditions import (
+    AsynchronousCondition,
+    AsynchronousEventState,
     BooleanCondition,
     CountCondition,
     DownstreamMessageAffordableCondition,
@@ -68,6 +70,43 @@ args:
 
     def test_positional_initialization(self, app):
         BooleanCondition(app, False, "bool")
+
+
+@pytest.mark.parametrize("name", ["READY", "WAIT", "EVENT_WAITING", "EVENT_DONE", "EVENT_NEVER"])
+def test_aynchronous_event_state_enum(name):
+    assert hasattr(AsynchronousEventState, name)
+
+
+class TestAsynchronousCondition:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "async"
+        cond = AsynchronousCondition(fragment=app, name=name)
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, Condition)
+        assert cond.gxf_typename == "nvidia::gxf::AsynchronousSchedulingTerm"
+
+        assert (
+            f"""
+name: {name}
+fragment: ""
+args:
+  []
+"""
+            in repr(cond)
+        )
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_event_state(self, app, capfd):
+        cond = AsynchronousCondition(fragment=app, name="async")
+        assert cond.event_state == AsynchronousEventState.READY
+        cond.event_state = AsynchronousEventState.EVENT_NEVER
+
+    def test_default_initialization(self, app):
+        AsynchronousCondition(app)
 
 
 class TestCountCondition:

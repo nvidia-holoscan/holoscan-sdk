@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_PYTHON_PYBIND11_CORE_KWARG_HANDLING_HPP
-#define HOLOSCAN_PYTHON_PYBIND11_CORE_KWARG_HANDLING_HPP
+#ifndef PYHOLOSCAN_CORE_KWARG_HANDLING_HPP
+#define PYHOLOSCAN_CORE_KWARG_HANDLING_HPP
 
 #include <pybind11/numpy.h>  // py::array, py::dtype
 #include <pybind11/pybind11.h>
@@ -50,4 +50,4 @@ py::dict arglist_to_kwargs(ArgList&);
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_PYTHON_PYBIND11_CORE_KWARG_HANDLING_HPP */
+#endif /* PYHOLOSCAN_CORE_KWARG_HANDLING_HPP */

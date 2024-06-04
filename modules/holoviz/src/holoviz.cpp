@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -195,6 +195,14 @@ void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t bu
   Context::get().read_framebuffer(fmt, width, height, buffer_size, device_ptr, row_pitch);
 }
 
+void SetCamera(float eye_x, float eye_y, float eye_z, float look_at_x, float look_at_y,
+               float look_at_z, float up_x, float up_y, float up_z, bool anim) {
+  nvmath::vec3f eye(eye_x, eye_y, eye_z);
+  nvmath::vec3f look_at(look_at_x, look_at_y, look_at_z);
+  nvmath::vec3f up(up_x, up_y, up_z);
+  Context::get().get_window()->set_camera(eye, look_at, up, anim);
+}
+
 void GetCameraPose(size_t size, float* matrix) {
   if (size != 16) { throw std::invalid_argument("Size of the matrix array should be 16"); }
   if (matrix == nullptr) { throw std::invalid_argument("Pointer to matrix should not be nullptr"); }
@@ -206,6 +214,20 @@ void GetCameraPose(size_t size, float* matrix) {
   for (uint32_t row = 0; row < 4; ++row) {
     for (uint32_t col = 0; col < 4; ++col) { matrix[row * 4 + col] = view_matrix(row, col); }
   }
+}
+
+void GetCameraPose(float (&rotation)[9], float (&translation)[3]) {
+  nvmath::mat4f camera_matrix;
+  Context::get().get_window()->get_camera_matrix(&camera_matrix);
+
+  // nvmath::mat4f is column major, the outgoing matrix is row major, transpose while copying
+  for (uint32_t row = 0; row < 3; ++row) {
+    for (uint32_t col = 0; col < 3; ++col) { rotation[row * 3 + col] = camera_matrix(row, col); }
+  }
+
+  translation[0] = camera_matrix(0, 3);
+  translation[1] = camera_matrix(1, 3);
+  translation[2] = camera_matrix(2, 3);
 }
 
 }  // namespace holoscan::viz

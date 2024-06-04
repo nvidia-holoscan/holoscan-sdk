@@ -57,12 +57,12 @@ class Layer {
   virtual ~Layer();
 
   /**
-   * @returns  the layer type
+   * @return  the layer type
    */
   Type get_type() const;
 
   /**
-   * @returns  the layer priority
+   * @return  the layer priority
    */
   int32_t get_priority() const;
 
@@ -74,7 +74,7 @@ class Layer {
   void set_priority(int32_t priority);
 
   /**
-   * @returns  the layer opacity
+   * @return  the layer opacity
    */
   float get_opacity() const;
 
@@ -99,7 +99,7 @@ class Layer {
   };
 
   /**
-   * @returns  the layer views
+   * @return  the layer views
    */
   const std::vector<View>& get_views() const;
 

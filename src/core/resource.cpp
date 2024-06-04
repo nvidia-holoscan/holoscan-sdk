@@ -34,21 +34,7 @@ void Resource::initialize() {
     return;
   }
 
-  auto& spec = *spec_;
-
-  // Set arguments
-  auto& params = spec.params();
-  update_params_from_args(params);
-
-  // Set default values for unspecified arguments if the resource is native
-  if (resource_type_ == ResourceType::kNative) {
-    // Set only default parameter values
-    for (auto& [key, param_wrap] : params) {
-      // If no value is specified, the default value will be used by setting an empty argument.
-      Arg empty_arg("");
-      ArgumentSetter::set_param(param_wrap, empty_arg);
-    }
-  }
+  set_parameters();
 
   is_initialized_ = true;
 }
@@ -62,6 +48,24 @@ YAML::Node Resource::to_yaml_node() const {
     node["spec"] = YAML::Null;
   }
   return node;
+}
+
+void Resource::update_params_from_args() {
+  update_params_from_args(spec_->params());
+}
+
+void Resource::set_parameters() {
+  update_params_from_args();
+
+  // Set default values for unspecified arguments if the resource is native
+  if (resource_type_ == ResourceType::kNative) {
+    // Set only default parameter values
+    for (auto& [key, param_wrap] : spec_->params()) {
+      // If no value is specified, the default value will be used by setting an empty argument.
+      Arg empty_arg("");
+      ArgumentSetter::set_param(param_wrap, empty_arg);
+    }
+  }
 }
 
 }  // namespace holoscan

@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -55,7 +56,8 @@ class PyBayerDemosaicOp : public BayerDemosaicOp {
   using BayerDemosaicOp::BayerDemosaicOp;
 
   // Define a constructor that fully initializes the object.
-  PyBayerDemosaicOp(Fragment* fragment, std::shared_ptr<holoscan::Allocator> pool,
+  PyBayerDemosaicOp(Fragment* fragment, const py::args& args,
+                    std::shared_ptr<holoscan::Allocator> pool,
                     std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                     const std::string& in_tensor_name = "", const std::string& out_tensor_name = "",
                     int interpolation_mode = 0, int bayer_grid_pos = 2, bool generate_alpha = false,
@@ -68,6 +70,7 @@ class PyBayerDemosaicOp : public BayerDemosaicOp {
                                 Arg{"generate_alpha", generate_alpha},
                                 Arg{"alpha_value", alpha_value}}) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -79,25 +82,16 @@ class PyBayerDemosaicOp : public BayerDemosaicOp {
 
 PYBIND11_MODULE(_bayer_demosaic, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK BayerDemosaicOp Python Bindings
+        --------------------------------------------
         .. currentmodule:: _bayer_demosaic
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<BayerDemosaicOp, PyBayerDemosaicOp, Operator, std::shared_ptr<BayerDemosaicOp>>(
       m, "BayerDemosaicOp", doc::BayerDemosaicOp::doc_BayerDemosaicOp)
       .def(py::init<>(), doc::BayerDemosaicOp::doc_BayerDemosaicOp)
       .def(py::init<Fragment*,
+                    const py::args&,
                     std::shared_ptr<holoscan::Allocator>,
                     std::shared_ptr<holoscan::CudaStreamPool>,
                     const std::string&,
@@ -116,7 +110,7 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
            "bayer_grid_pos"_a = 2,
            "generate_alpha"_a = false,
            "alpha_value"_a = 255,
-           "name"_a = "format_converter"s,
+           "name"_a = "bayer_demosaic"s,
            doc::BayerDemosaicOp::doc_BayerDemosaicOp)
       .def("initialize", &BayerDemosaicOp::initialize, doc::BayerDemosaicOp::doc_initialize)
       .def("setup", &BayerDemosaicOp::setup, "spec"_a, doc::BayerDemosaicOp::doc_setup);

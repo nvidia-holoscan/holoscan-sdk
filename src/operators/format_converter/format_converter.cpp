@@ -47,6 +47,24 @@
     _holoscan_cuda_err;                                                                         \
   })
 
+namespace {
+
+bool has_c_ordered_memory_layout(const nvidia::gxf::Tensor& in_tensor_gxf, int rank,
+                                 int n_channels) {
+  // Could use in_tensor_gxf.isContiguous() to check contiguity, but we want to support cases
+  // with some padding between rows, so do this custom check to support that case.
+  // All but first axis must be contiguous in memory.
+  if (rank == 3) {
+    return (in_tensor_gxf.stride(1) == n_channels * in_tensor_gxf.stride(2)) ||
+           (in_tensor_gxf.stride(2) == in_tensor_gxf.bytes_per_element());
+  } else if (rank == 2) {
+    return in_tensor_gxf.stride(1) == in_tensor_gxf.bytes_per_element();
+  } else {
+    throw std::runtime_error("rank must be 2 or 3");
+  }
+}
+}  // namespace
+
 namespace holoscan::ops {
 
 // Note that currently "uint8" for the `input_dtype` or `output_dtype` arguments to the operator
@@ -318,8 +336,9 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
     // If the buffer is in host memory, copy it to a device (GPU) buffer
     // as needed for the NPP resize/convert operations.
-    if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost) {
-      size_t buffer_size = rows * columns * in_channels;
+    if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem) {
+      uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(in_primitive_type);
+      size_t buffer_size = rows * columns * in_channels * element_size;
       if (buffer_size > device_scratch_buffer_->size()) {
         device_scratch_buffer_->resize(
             pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
@@ -351,14 +370,60 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     in_tensor_data = in_tensor_gxf.pointer();
     if (in_tensor_data == nullptr) {
       // This should never happen, but just in case...
-      HOLOSCAN_LOG_ERROR("Unable to get tensor data pointer. nullptr returned.");
+      throw std::runtime_error(fmt::format("Unable to get tensor data pointer. nullptr returned."));
     }
     in_primitive_type = in_tensor_gxf.element_type();
     in_memory_storage_type = in_tensor_gxf.storage_type();
+    auto in_rank = in_tensor_gxf.rank();
+    if (in_rank < 2 || in_rank > 3) {
+      throw std::runtime_error(
+          fmt::format("Input tensor has {} dimensions. Expected a tensor with 2 or 3 dimensions "
+                      "(rows, columns[, channels]).",
+                      in_rank));
+    }
     rows = in_tensor_gxf.shape().dimension(0);
     columns = in_tensor_gxf.shape().dimension(1);
     in_channels = in_tensor_gxf.shape().dimension(2);
     out_channels = in_channels;
+
+    if (!has_c_ordered_memory_layout(in_tensor_gxf, in_rank, in_channels)) {
+      std::string stride_string;
+      if (in_rank == 2) {
+        stride_string = fmt::format("({}, {})", in_tensor_gxf.stride(0), in_tensor_gxf.stride(1));
+      } else {
+        stride_string = fmt::format("({}, {}, {})",
+                                    in_tensor_gxf.stride(0),
+                                    in_tensor_gxf.stride(1),
+                                    in_tensor_gxf.stride(2));
+      }
+      throw std::runtime_error(
+          fmt::format("Tensor is expected to be in a C-contiguous memory layout "
+                      "(values along the last axis are adjacent in memory). "
+                      "Detected strides: {}",
+                      stride_string));
+    }
+
+    if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem) {
+      uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(in_primitive_type);
+      size_t buffer_size = rows * columns * in_channels * element_size;
+
+      if (buffer_size > device_scratch_buffer_->size()) {
+        device_scratch_buffer_->resize(
+            pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
+        if (!device_scratch_buffer_->pointer()) {
+          throw std::runtime_error(
+              fmt::format("Failed to allocate device scratch buffer ({} bytes)", buffer_size));
+        }
+      }
+
+      CUDA_TRY(cudaMemcpy(static_cast<void*>(device_scratch_buffer_->pointer()),
+                          static_cast<const void*>(in_tensor_gxf.pointer()),
+                          buffer_size,
+                          cudaMemcpyHostToDevice));
+      in_tensor_data = device_scratch_buffer_->pointer();
+      in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
+    }
+
     in_color_planes.resize(1);
     in_color_planes[0].width = columns;
     in_color_planes[0].height = rows;
@@ -366,9 +431,10 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     in_color_planes[0].size = in_color_planes[0].height * in_color_planes[0].stride;
   }
 
-  if (in_memory_storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
+  if (in_memory_storage_type != nvidia::gxf::MemoryStorageType::kDevice &&
+      in_memory_storage_type != nvidia::gxf::MemoryStorageType::kHost) {
     throw std::runtime_error(fmt::format(
-        "Tensor('{}') or VideoBuffer is not allocated on device.\n", in_tensor_name_.get()));
+        "Tensor('{}') or VideoBuffer was not allocated via CUDA APIs.\n", in_tensor_name_.get()));
   }
 
   if (in_dtype_ == FormatDType::kUnknown) {

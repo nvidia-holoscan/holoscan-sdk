@@ -37,7 +37,23 @@ class GXFResource : public holoscan::Resource, public gxf::GXFComponent {
 
   void initialize() override;
 
-  void add_to_graph_entity(Operator* op);
+ protected:
+  // Make GXFExecutor a friend class so it can call protected initialization methods
+  friend class holoscan::gxf::GXFExecutor;
+  // Operator::initialize_resources() needs to call add_to_graph_entity()
+  friend class holoscan::Operator;
+
+  virtual void add_to_graph_entity(Operator* op);
+
+  /**
+   * This method is invoked by `GXFResource::initialize()`.
+   * By overriding this method, we can modify how GXF Codelet's parameters are set from the
+   * arguments.
+   */
+  void set_parameters() override;
+  bool handle_dev_id(std::optional<int32_t>& dev_id_value);
+  /// The GXF type name (used for GXFComponentResource)
+  std::string gxf_typename_ = "unknown_gxf_typename";
 };
 
 }  // namespace holoscan::gxf

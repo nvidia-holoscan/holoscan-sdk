@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,7 +37,8 @@ class ExclusiveWindow : public Window {
    * Construct a new exclusive window.
    *
    * @param display_name  name of the display, this can either be the EDID name as displayed
-   *                      in the NVIDIA Settings, or the output name used by xrandr,
+   *                      in the NVIDIA Settings, or the output name provided by `xrandr` or
+   *                      `hwinfo --monitor`.
    *                      if nullptr then the first display is selected.
    * @param width         desired width, ignored if 0
    * @param height        desired height, ignored if 0
@@ -62,6 +63,7 @@ class ExclusiveWindow : public Window {
   ///@{
   void init_im_gui() override;
   void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) override;
+  void restore_callbacks() override;
 
   const char** get_required_instance_extensions(uint32_t* count) override;
   const char** get_required_device_extensions(uint32_t* count) override;

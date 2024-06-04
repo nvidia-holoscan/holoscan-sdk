@@ -459,12 +459,6 @@ def compose(self):
 
   # Pass directly to the operator constructor
   my_op = MyOp(self, c1, c2, c3, name="my_op")
-
-  # Built-in operators that wrap an underlying C++ operator class currently do not accept
-  # Condition classes as positional arguments from the Python API. Instead, one should add the
-  # condition via the add_arg method of the class
-  postproc_op = SegmentationPostprocessorOp(self, allocator=UnboundedAllocator(self), name="post")
-  postproc_op.add_arg(CountCondition(self, count=10))
 ```
 ````
 
@@ -474,10 +468,6 @@ This is also illustrated in the [conditions](https://github.com/nvidia-holoscan/
 
 :::{note}
 You'll need to specify a unique name for the conditions if there are multiple conditions applied to an operator.
-:::
-
-:::{note}
-Python operators that wrap an underlying C++ operator currently do not accept conditions as positional arguments. Instead one needs to call the {py:func}`add_arg()<holoscan.core.Operator.add_arg>` method after the object has been constructed to add the condition.
 :::
 
 (configuring-app-operator-resources)=
@@ -519,10 +509,6 @@ def compose(self):
   auto my_op = MyOp(self, name="my_op", pool1=p1, pool2=p2)
 ```
 ````
-
-:::{note}
-Python operators that wrap an underlying C++ operator currently do not accept resources as positional arguments. Instead one needs to call the {py:func}`add_arg()<holoscan.core.Operator.add_arg>` method after the object has been constructed to add the resource.
-:::
 
 (configuring-app-scheduler)=
 

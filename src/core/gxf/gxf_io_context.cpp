@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@
 
 namespace holoscan::gxf {
 
-nvidia::gxf::Receiver* get_gxf_receiver(const std::unique_ptr<IOSpec>& input_spec) {
+nvidia::gxf::Receiver* get_gxf_receiver(const std::shared_ptr<IOSpec>& input_spec) {
   auto connector = input_spec->connector();
   auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(connector);
   if (gxf_resource == nullptr) {
@@ -51,7 +51,7 @@ GXFInputContext::GXFInputContext(ExecutionContext* execution_context, Operator* 
     : InputContext(execution_context, op) {}
 
 GXFInputContext::GXFInputContext(ExecutionContext* execution_context, Operator* op,
-                                 std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs)
+                                 std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs)
     : InputContext(execution_context, op, inputs) {}
 
 gxf_context_t GXFInputContext::gxf_context() const {
@@ -139,7 +139,7 @@ GXFOutputContext::GXFOutputContext(ExecutionContext* execution_context, Operator
 
 GXFOutputContext::GXFOutputContext(
     ExecutionContext* execution_context, Operator* op,
-    std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs)
+    std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs)
     : OutputContext(execution_context, op, outputs) {}
 
 gxf_context_t GXFOutputContext::gxf_context() const {
@@ -191,7 +191,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
     }
   }
 
-  const std::unique_ptr<IOSpec>& output_spec = it->second;
+  const std::shared_ptr<IOSpec>& output_spec = it->second;
   auto connector = output_spec->connector();
 
   auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(connector);

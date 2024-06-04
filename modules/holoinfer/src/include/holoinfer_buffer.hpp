@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +44,7 @@ namespace inference {
  *
  * @param element_type Input data type. Float32 is the only supported element type.
  *
- * @returns Bytes used in storing element type
+ * @return Bytes used in storing element type
  */
 uint32_t get_element_size(holoinfer_datatype t) noexcept;
 
@@ -87,21 +87,21 @@ class DeviceBuffer {
   /**
    * @brief Get the data buffer
    *
-   * @returns Void pointer to the buffer
+   * @return Void pointer to the buffer
    */
   void* data();
 
   /**
    * @brief Get the size of the allocated buffer
    *
-   * @returns size
+   * @return size
    */
   size_t size() const;
 
   /**
    * @brief Get the bytes allocated
    *
-   * @returns allocated bytes
+   * @return allocated bytes
    */
   size_t get_bytes() const;
 
@@ -206,6 +206,7 @@ struct InferenceSpecs {
    * @param pre_processor_map Map with model name as key, input tensor names in vector form as value
    * @param inference_map Map with model name as key, output tensor names in vector form as value
    * @param device_map Map with model name as key, GPU ID for inference as value
+   * @param temporal_map Map with model name as key, frame number to skip for inference as value
    * @param is_engine_path Input path to model is trt engine
    * @param oncpu Perform inference on CPU
    * @param parallel_proc Perform parallel inference of multiple models
@@ -216,14 +217,15 @@ struct InferenceSpecs {
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
-                 bool is_engine_path, bool oncpu, bool parallel_proc, bool use_fp16,
-                 bool cuda_buffer_in, bool cuda_buffer_out)
+                 const Mappings& temporal_map, bool is_engine_path, bool oncpu, bool parallel_proc,
+                 bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
         pre_processor_map_(pre_processor_map),
         inference_map_(inference_map),
         device_map_(device_map),
+        temporal_map_(temporal_map),
         is_engine_path_(is_engine_path),
         oncuda_(!oncpu),
         parallel_processing_(parallel_proc),
@@ -249,6 +251,12 @@ struct InferenceSpecs {
    */
   Mappings get_device_map() const { return device_map_; }
 
+  /**
+   * @brief Get the Temporal map
+   * @return Mappings data
+   */
+  Mappings get_temporal_map() const { return temporal_map_; }
+
   /// @brief Backend type (for all models)
   std::string backend_type_{""};
 
@@ -266,6 +274,9 @@ struct InferenceSpecs {
 
   /// @brief Map with key as model name and value as GPU ID for inference
   Mappings device_map_;
+
+  /// @brief Map with key as model name and frame number to skip for inference as value
+  Mappings temporal_map_;
 
   /// @brief Flag showing if input model path is path to engine files
   bool is_engine_path_ = false;
@@ -302,7 +313,7 @@ struct InferenceSpecs {
  * @param keyname Storage name in the map against the created DataBuffer
  * @param allocate_cuda flag to allocate cuda buffer
  * @param device_id GPU ID to allocate buffers on
- * @returns InferStatus with appropriate code and message
+ * @return InferStatus with appropriate code and message
  */
 InferStatus allocate_buffers(DataMap& buffers, std::vector<int64_t>& dims,
                              holoinfer_datatype datatype, const std::string& keyname,

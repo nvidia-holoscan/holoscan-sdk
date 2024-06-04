@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +42,8 @@ class HolovizToHolovizApp : public holoscan::Application {
   ArgList get_enable_arg() {
     if (std::holds_alternative<Arg>(enable_arg_)) { return ArgList({std::get<Arg>(enable_arg_)}); }
     if (std::holds_alternative<std::string>(enable_arg_)) {
-      return from_config(std::get<std::string>(enable_arg_));
+      std::string arg_name = std::get<std::string>(enable_arg_);
+      if (arg_name != "") { return from_config(arg_name); }
     }
     return ArgList();
   }
@@ -52,8 +53,9 @@ class HolovizToHolovizApp : public holoscan::Application {
     auto allocator = Arg("allocator", make_resource<holoscan::UnboundedAllocator>("allocator"));
     auto count = make_condition<CountCondition>(10);
     auto headless = Arg("headless", true);
-    auto shape = ArgList({Arg("rows", height), Arg("columns", width), Arg("channels", 3)});
-    auto source = make_operator<ops::PingTensorTxOp>("ping_source", shape);
+    auto shape_args = ArgList({Arg("rows", height), Arg("columns", width), Arg("channels", 3)});
+    auto source = make_operator<ops::PingTensorTxOp>(
+        "ping_source", shape_args, Arg("storage_type", storage_type_));
     auto renderer = make_operator<ops::HolovizOp>("renderer",
                                                   count,
                                                   headless,
@@ -66,25 +68,34 @@ class HolovizToHolovizApp : public holoscan::Application {
     auto pool = Arg("pool", make_resource<holoscan::UnboundedAllocator>("pool"));
     auto in_dtype = Arg("in_dtype", std::string("rgba8888"));
     auto out_dtype = Arg("out_dtype", std::string("rgb888"));
-    auto video_to_tensor =
-        make_operator<ops::FormatConverterOp>("converter", in_dtype, out_dtype, pool);
-
-    auto comparator = make_operator<ops::TensorCompareOp>("comparator");
 
     add_flow(source, renderer, {{"out", "receivers"}});
-    add_flow(source, comparator, {{"out", "input1"}});
-    add_flow(renderer, video_to_tensor, {{"render_buffer_output", "source_video"}});
-    add_flow(video_to_tensor, comparator, {{"tensor", "input2"}});
+
+    // TensorCompareOp only works for device tensors
+    if (storage_type_ == "device") {
+      auto comparator = make_operator<ops::TensorCompareOp>("comparator");
+      auto video_to_tensor =
+          make_operator<ops::FormatConverterOp>("converter", in_dtype, out_dtype, pool);
+
+      add_flow(renderer, video_to_tensor, {{"render_buffer_output", "source_video"}});
+      add_flow(source, comparator, {{"out", "input1"}});
+      add_flow(video_to_tensor, comparator, {{"tensor", "input2"}});
+    }
   }
+
+  void set_storage_type(const std::string& storage_type) { storage_type_ = storage_type; }
 
  private:
   StringOrArg enable_arg_;
+  std::string storage_type_ = std::string("device");
 
   HolovizToHolovizApp() = delete;
 };
 
-void run_app(StringOrArg enable_arg, std::string failure_str = "") {
+void run_app(StringOrArg enable_arg, const std::string& failure_str = "",
+             const std::string& storage_type = "device") {
   auto app = make_application<HolovizToHolovizApp>(enable_arg);
+  app->set_storage_type(storage_type);
 
   const std::string config_file = test_config.get_test_data_file("app_config.yaml");
   app->config(config_file);
@@ -105,6 +116,20 @@ void run_app(StringOrArg enable_arg, std::string failure_str = "") {
   }
 }
 
+class HolovizStorageParameterizedTestFixture : public ::testing::TestWithParam<std::string> {};
+
+INSTANTIATE_TEST_CASE_P(HolovizOpAppTests, HolovizStorageParameterizedTestFixture,
+                        ::testing::Values(std::string("device"), std::string("host"),
+                                          std::string("system")));
+
+// run this case with various tensor memory storage types
+TEST_P(HolovizStorageParameterizedTestFixture, TestHolovizStorageTypes) {
+  std::string storage_type = GetParam();
+  // run without any extra arguments, just to verify HolovizOp support various memory types
+  run_app("", "", storage_type);
+}
+
+// run this case with various tensor memory storage types
 TEST(HolovizApps, TestEnableRenderBufferOutputYAML) {
   run_app("holoviz_enable_ports");
 }

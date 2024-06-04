@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -124,8 +124,9 @@ InferStatus ManagerProcessor::process(
         std::vector<int64_t> processed_dims;
         std::vector<std::string> out_tensor_names, custom_strings;
 
-        // if operation is print, then no need to allocate output memory
-        if (operation.find("print") != std::string::npos) {
+        // if operation is print or export, then no need to allocate output memory
+        if (operation.find("print") != std::string::npos ||
+            operation.find("export") != std::string::npos) {
           if (operation.compare("print") == 0 || operation.compare("print_int32") == 0) {
             std::cout << "Printing results from " << tensor_name << " -> ";
           } else {
@@ -140,6 +141,20 @@ InferStatus ManagerProcessor::process(
                 return InferStatus(
                     holoinfer_code::H_ERROR,
                     "Process manager, Custom binary print operation must generate 3 strings");
+              }
+              operation = custom_strings[0];
+              custom_strings.erase(custom_strings.begin());
+            } else if (operation.find("export_binary_classification_to_csv") != std::string::npos) {
+              std::istringstream cstrings(operation);
+
+              std::string custom_string;
+              while (std::getline(cstrings, custom_string, ',')) {
+                custom_strings.push_back(custom_string);
+              }
+              if (custom_strings.size() != 5) {
+                return InferStatus(
+                    holoinfer_code::H_ERROR,
+                    "Process manager, Export output to CSV operation must generate 5 strings");
               }
               operation = custom_strings[0];
               custom_strings.erase(custom_strings.begin());

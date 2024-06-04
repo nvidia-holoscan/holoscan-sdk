@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,11 +28,11 @@ namespace DownstreamMessageAffordableCondition {
 
 PYDOC(DownstreamMessageAffordableCondition, R"doc(
 Condition that permits execution when the downstream operator can accept new messages.
-)doc")
 
-// PyDownstreamMessageAffordableCondition Constructor
-PYDOC(DownstreamMessageAffordableCondition_python, R"doc(
-Condition that permits execution when the downstream operator can accept new messages.
+Satisfied when the receiver queue of any connected downstream operators has at least a certain
+number of elements free. The minimum number of messages that permits the execution of
+the entity is specified by `min_size`. It can be used for operators to prevent operators from
+sending a message when the downstream operator is not ready to receive it.
 
 Parameters
 ----------

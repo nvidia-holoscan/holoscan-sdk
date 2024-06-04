@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,32 +70,32 @@ class FramebufferSequence {
   void acquire();
 
   /**
-   * @returns the framebuffer color format/
+   * @return the framebuffer color format/
    */
   vk::Format get_color_format() const { return color_format_; }
 
   /**
-   * @returns the framebuffer depth format/
+   * @return the framebuffer depth format/
    */
   vk::Format get_depth_format() const { return depth_format_; }
 
   /**
-   * @returns the image view of a color buffer
+   * @return the image view of a color buffer
    */
   vk::ImageView get_color_image_view(uint32_t i) const;
 
   /**
-   * @returns the image view of a depth buffer
+   * @return the image view of a depth buffer
    */
   vk::ImageView get_depth_image_view(uint32_t i) const;
 
   /**
-   * @returns the color buffer count
+   * @return the color buffer count
    */
   uint32_t get_image_count() const { return image_count_; }
 
   /**
-   * @returns the index of the current active color buffer
+   * @return the index of the current active color buffer
    */
   uint32_t get_active_image_index() const;
 
@@ -112,28 +112,28 @@ class FramebufferSequence {
    * semaphore of the previous frame, else it's the semaphore used to acquire the swap queue
    * image.
    *
-   * @returns active read semaphore
+   * @return active read semaphore
    */
   vk::Semaphore get_active_read_semaphore() const;
 
   /**
    * Get the active write semaphore.
    *
-   * @returns active write semaphore
+   * @return active write semaphore
    */
   vk::Semaphore get_active_written_semaphore() const;
 
   /**
    * Get the active color image.
    *
-   * @returns active color image
+   * @return active color image
    */
   vk::Image get_active_color_image() const;
 
   /**
    * Get the active depth image.
    *
-   * @returns active depth image
+   * @return active depth image
    */
   vk::Image get_active_depth_image() const;
 

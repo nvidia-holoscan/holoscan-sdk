@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +36,7 @@ class Window {
   /**
    * Construct a new Window object.
    */
-  Window() {}
+  Window();
 
   /**
    * Destroy the Window object.
@@ -54,6 +54,11 @@ class Window {
    * @param framebuffersize_cb    Called when the frame buffer size changes
    */
   virtual void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) = 0;
+
+  /**
+   * Restore call backs.
+   */
+  virtual void restore_callbacks() = 0;
 
   /**
    * Get the required instance extensions for vulkan.
@@ -99,12 +104,12 @@ class Window {
                                         vk::Instance instance) = 0;
 
   /**
-   * @returns true if the window should be closed
+   * @return true if the window should be closed
    */
   virtual bool should_close() = 0;
 
   /**
-   * @returns true if the window is minimized
+   * @return true if the window is minimized
    */
   virtual bool is_minimized() = 0;
 
@@ -124,14 +129,32 @@ class Window {
   virtual void end() = 0;
 
   /**
+   * Set the camera eye, look at and up vectors.
+   *
+   * @param eye_x, eye_y, eye_z               eye position
+   * @param look_at_x, look_at_y, look_at_z   look at position
+   * @param up_x, up_y, up_z                  up vector
+   * @param anim                              animate transition
+   */
+  void set_camera(const nvmath::vec3f& eye, const nvmath::vec3f& look_at, const nvmath::vec3f& up,
+                  bool anim);
+
+  /**
    * Get the view matrix
    *
    * @param view_matrix
    */
-  virtual void get_view_matrix(nvmath::mat4f* view_matrix) { *view_matrix = nvmath::mat4f(1); }
+  void get_view_matrix(nvmath::mat4f* view_matrix);
 
   /**
-   * @returns the horizontal aspect ratio
+   * Get the view matrix
+   *
+   * @param view_matrix
+   */
+  void get_camera_matrix(nvmath::mat4f* camera_matrix);
+
+  /**
+   * @return the horizontal aspect ratio
    */
   virtual float get_aspect_ratio() = 0;
 };

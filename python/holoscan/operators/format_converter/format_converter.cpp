@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -58,9 +59,9 @@ class PyFormatConverterOp : public FormatConverterOp {
   using FormatConverterOp::FormatConverterOp;
 
   // Define a constructor that fully initializes the object.
-  PyFormatConverterOp(Fragment* fragment, std::shared_ptr<holoscan::Allocator> pool,
-                      const std::string& out_dtype, const std::string& in_dtype = "",
-                      const std::string& in_tensor_name = "",
+  PyFormatConverterOp(Fragment* fragment, const py::args& args,
+                      std::shared_ptr<holoscan::Allocator> pool, const std::string& out_dtype,
+                      const std::string& in_dtype = "", const std::string& in_tensor_name = "",
                       const std::string& out_tensor_name = "", float scale_min = 0.f,
                       float scale_max = 1.f, uint8_t alpha_value = static_cast<uint8_t>(255),
                       int32_t resize_height = 0, int32_t resize_width = 0, int32_t resize_mode = 0,
@@ -80,6 +81,7 @@ class PyFormatConverterOp : public FormatConverterOp {
                                   Arg{"out_channel_order", out_channel_order},
                                   Arg{"pool", pool}}) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -91,24 +93,15 @@ class PyFormatConverterOp : public FormatConverterOp {
 
 PYBIND11_MODULE(_format_converter, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK FormatConverterOp Python Bindings
+        ----------------------------------------------
         .. currentmodule:: _format_converter
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<FormatConverterOp, PyFormatConverterOp, Operator, std::shared_ptr<FormatConverterOp>>(
       m, "FormatConverterOp", doc::FormatConverterOp::doc_FormatConverterOp)
       .def(py::init<Fragment*,
+                    const py::args&,
                     std::shared_ptr<holoscan::Allocator>,
                     const std::string&,
                     const std::string&,

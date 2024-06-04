@@ -90,7 +90,20 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
       throw std::runtime_error(fmt::format("Tensor '{}' not found in message", in_tensor_name));
     }
   }
+
   auto in_tensor = maybe_tensor;
+  // validate tensor format
+  DLDevice dev = in_tensor->device();
+  if (dev.device_type != kDLCUDA && dev.device_type != kDLCUDAHost) {
+    throw std::runtime_error("Input tensor must be in CUDA device or pinned host memory.");
+  }
+  DLDataType dtype = in_tensor->dtype();
+  if (dtype.code != kDLFloat || dtype.bits != 32) {
+    throw std::runtime_error("Input tensor must be of type float32.");
+  }
+  if (!in_tensor->is_contiguous()) {
+    throw std::runtime_error("Input tensor must have row-major memory layout.");
+  }
 
   // get the CUDA stream from the input message
   gxf_result_t stream_handler_result =
@@ -107,11 +120,13 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
       shape.channels = in_tensor->shape()[2];
     } break;
     case DataFormat::kNCHW: {
+      if (in_tensor->shape()[0] != 1) { throw std::runtime_error("Batch size must be 1"); }
       shape.channels = in_tensor->shape()[1];
       shape.height = in_tensor->shape()[2];
       shape.width = in_tensor->shape()[3];
     } break;
     case DataFormat::kNHWC: {
+      if (in_tensor->shape()[0] != 1) { throw std::runtime_error("Batch size must be 1"); }
       shape.height = in_tensor->shape()[1];
       shape.width = in_tensor->shape()[2];
       shape.channels = in_tensor->shape()[3];
@@ -121,6 +136,16 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
   if (static_cast<size_t>(shape.channels) > kMaxChannelCount) {
     throw std::runtime_error(fmt::format(
         "Input channel count larger than allowed: {} > {}", shape.channels, kMaxChannelCount));
+  }
+
+  if ((network_output_type_value_ == NetworkOutputType::kSigmoid) && (shape.channels > 1)) {
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      HOLOSCAN_LOG_WARN(
+          "Multi-channel input provided, but network_output_type is 'sigmoid'. Only the first "
+          "channel will be used.");
+    }
   }
 
   // Create a new message (nvidia::gxf::Entity)

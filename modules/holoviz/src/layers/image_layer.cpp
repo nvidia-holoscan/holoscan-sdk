@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,7 @@ namespace holoscan::viz {
 
 namespace {
 
-/// @returns true if fmt is a depth format
+/// @return true if fmt is a depth format
 bool is_depth_format(ImageFormat fmt) {
   return ((fmt == ImageFormat::D16_UNORM) || (fmt == ImageFormat::X8_D24_UNORM) ||
           (fmt == ImageFormat::D32_SFLOAT));

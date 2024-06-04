@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_INFERENCE_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_INFERENCE_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_INFERENCE_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_INFERENCE_PYDOC_HPP
 
 #include <string>
 
@@ -42,6 +42,13 @@ Inference operator.
         be emitted. The names of the tensors transmitted correspond to those in
         ``out_tensor_names``.
 
+**==Device Memory Requirements==**
+
+    When using this operator with a ``holoscan.resources.BlockMemoryPool``, ``num_blocks`` must be
+    greater than or equal to the number of output tensors that will be produced. The ``block_size``
+    in bytes must be greater than or equal to the largest output tensor (in bytes). If
+    ``output_on_cuda`` is ``True``, the blocks should be in device memory (``storage_type=1``),
+    otherwise they should be CUDA pinned host memory (``storage_type=0``).
 
 For more details on ``InferenceOp`` parameters, see
 [Customizing the Inference Operator](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/byom.html#customizing-the-inference-operator)
@@ -56,15 +63,17 @@ backend : {"trt", "onnxrt", "torch"}
     ``"onnxrt"`` for the ONNX runtime.
 allocator : holoscan.resources.Allocator
     Memory allocator to use for the output.
-inference_map : holoscan.operators.InferenceOp.DataVecMap
+inference_map : dict[str, List[str]]
     Tensor to model map.
-model_path_map : holoscan.operators.InferenceOp.DataMap
+model_path_map : dict[str, str]
     Path to the ONNX model to be loaded.
-pre_processor_map : holoscan.operators.InferenceOp::DataVecMap
+pre_processor_map : dict[str, List[str]]
     Pre processed data to model map.
-device_map : holoscan.operators.InferenceOp.DataMap, optional
+device_map : dict[str, int], optional
     Mapping of model to GPU ID for inference.
-backend_map : holoscan.operators.InferenceOp.DataMap, optional
+temporal_map : dict[str, int], optional
+    Mapping of model to frame delay for inference.
+backend_map : dict[str, str], optional
     Mapping of model to backend type for inference. Backend options: ``"trt"`` or ``"torch"``
 in_tensor_names : sequence of str, optional
     Input tensors.
@@ -109,4 +118,4 @@ spec : holoscan.core.OperatorSpec
 
 }  // namespace holoscan::doc::InferenceOp
 
-#endif /* HOLOSCAN_OPERATORS_INFERENCE_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_INFERENCE_PYDOC_HPP */

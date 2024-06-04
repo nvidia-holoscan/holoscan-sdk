@@ -34,6 +34,20 @@ Tensor::Tensor(DLManagedTensor* dl_managed_tensor_ptr) {
   dl_managed_tensor = *dl_managed_tensor_ptr;
 }
 
+bool Tensor::is_contiguous() const {
+  int32_t r = static_cast<uint64_t>(ndim());  // rank
+  int64_t expected_stride = itemsize();       // size of a single element
+  auto tensor_strides = strides();
+  auto tensor_shape = shape();
+  for (int32_t i = r - 1; i >= 0; --i) {
+    int64_t s = tensor_strides[i];                       // stride
+    int64_t d = static_cast<uint64_t>(tensor_shape[i]);  // dimension
+    if (s != expected_stride) { return false; }
+    expected_stride *= d;
+  }
+  return true;
+}
+
 DLManagedTensor* Tensor::to_dlpack() {
   auto dl_managed_tensor_ctx = new DLManagedTensorContext;
   auto& dl_managed_tensor = dl_managed_tensor_ctx->tensor;

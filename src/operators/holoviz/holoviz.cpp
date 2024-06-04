@@ -40,6 +40,7 @@
 #include "holoscan/operators/holoviz/buffer_info.hpp"
 #include "holoscan/operators/holoviz/codecs.hpp"
 
+#include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
 #include "gxf/std/scheduling_terms.hpp"
 #include "gxf/std/tensor.hpp"
@@ -379,6 +380,9 @@ void HolovizOp::setup(OperatorSpec& spec) {
   spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
 
   spec.input<std::any>("input_specs").condition(ConditionType::kNone);
+  spec.input<std::array<float, 3>>("camera_eye_input").condition(ConditionType::kNone);
+  spec.input<std::array<float, 3>>("camera_look_at_input").condition(ConditionType::kNone);
+  spec.input<std::array<float, 3>>("camera_up_input").condition(ConditionType::kNone);
 
   auto& render_buffer_input =
       spec.input<gxf::Entity>("render_buffer_input").condition(ConditionType::kNone);
@@ -395,12 +399,11 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "using that one, else it allocates a new buffer.",
              &render_buffer_output);
 
-  auto& camera_pose_output = spec.output<std::array<float, 16>>("camera_pose_output");
+  auto& camera_pose_output = spec.output<nvidia::gxf::Pose3D>("camera_pose_output");
   spec.param(camera_pose_output_,
              "camera_pose_output",
              "CameraPoseOutput",
-             "Output the camera pose. The camera parameters are returned in a 4x4 row major "
-             "projection matrix.",
+             "Output the camera extrinsics model.",
              &camera_pose_output);
 
   spec.param(
@@ -423,11 +426,12 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Window title",
              "Title on window canvas",
              DEFAULT_WINDOW_TITLE);
-  spec.param(display_name_,
-             "display_name",
-             "Display name",
-             "In exclusive mode, name of display to use as shown with xrandr.",
-             DEFAULT_DISPLAY_NAME);
+  spec.param(
+      display_name_,
+      "display_name",
+      "Display name",
+      "In exclusive mode, name of display to use as shown with `xrandr` or `hwinfo --monitor`.",
+      DEFAULT_DISPLAY_NAME);
   spec.param(width_,
              "width",
              "Width",
@@ -457,7 +461,7 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "headless",
              "Headless",
              "Enable headless mode. No window is opened, the render buffer is output to "
-             "‘render_buffer_output’.",
+             "`render_buffer_output`.",
              DEFAULT_HEADLESS);
   spec.param(window_close_scheduling_term_,
              "window_close_scheduling_term",
@@ -472,6 +476,19 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "FontPath",
              "File path for the font used for rendering text",
              std::string());
+  spec.param(camera_pose_output_type_,
+             "camera_pose_output_type",
+             "Camera Pose Output Type",
+             "Type of data output at `camera_pose_output`. Supported values are "
+             "`projection_matrix` and `extrinsics_model`.",
+             std::string("projection_matrix"));
+  spec.param(camera_eye_, "camera_eye", "Camera Eye", "Camera eye position", {{0.f, 0.f, 1.f}});
+  spec.param(camera_look_at_,
+             "camera_look_at",
+             "Camera Look At",
+             "Camera look at position",
+             {{0.f, 0.f, 0.f}});
+  spec.param(camera_up_, "camera_up", "Camera Up", "Camera up vector", {{0.f, 1.f, 0.f}});
 
   cuda_stream_handler_.define_params(spec);
 }
@@ -626,6 +643,350 @@ void HolovizOp::set_input_spec_geometry(const InputSpec& input_spec) {
   viz::LineWidth(input_spec.line_width_);
 }
 
+void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buffer_info) {
+  // sanity checks
+  if (buffer_info.rank != 3) {
+    throw std::runtime_error(fmt::format("Expected rank 3 for tensor '{}', type '{}', but got {}",
+                                         buffer_info.name,
+                                         inputTypeToString(input_spec.type_),
+                                         buffer_info.rank));
+  }
+  if (buffer_info.image_format == static_cast<viz::ImageFormat>(-1)) {
+    std::runtime_error(
+        fmt::format("Color image: element type {} and channel count {} not supported",
+                    static_cast<int>(buffer_info.element_type),
+                    buffer_info.components));
+  }
+
+  viz::ImageFormat image_format;
+  if (input_spec.type_ == InputType::COLOR_LUT) {
+    if (buffer_info.components != 1) {
+      throw std::runtime_error(
+          fmt::format("Expected one channel for tensor '{}' when using lookup table, but got {}",
+                      buffer_info.name,
+                      buffer_info.components));
+    }
+    if (lut_.empty()) {
+      throw std::runtime_error(fmt::format(
+          "Type of tensor '{}' is '{}', but a color lookup table has not been specified",
+          buffer_info.name,
+          inputTypeToString(input_spec.type_)));
+    }
+
+    // when using a LUT, the unorm formats are handled as single channel int formats
+    switch (buffer_info.image_format) {
+      case viz::ImageFormat::R8_UNORM:
+        image_format = viz::ImageFormat::R8_UINT;
+        break;
+      case viz::ImageFormat::R8_SNORM:
+        image_format = viz::ImageFormat::R8_SINT;
+        break;
+      case viz::ImageFormat::R16_UNORM:
+        image_format = viz::ImageFormat::R16_UINT;
+        break;
+      case viz::ImageFormat::R16_SNORM:
+        image_format = viz::ImageFormat::R16_SINT;
+        break;
+      default:
+        image_format = buffer_info.image_format;
+        break;
+    }
+  } else {
+    image_format = buffer_info.image_format;
+  }
+
+  // start an image layer
+  viz::BeginImageLayer();
+  set_input_spec(input_spec);
+
+  if (input_spec.type_ == InputType::COLOR_LUT) {
+    viz::LUT(lut_.size() / 4,
+             viz::ImageFormat::R32G32B32A32_SFLOAT,
+             lut_.size() * sizeof(float),
+             lut_.data());
+  }
+
+  viz::ImageComponentMapping(buffer_info.component_swizzle[0],
+                             buffer_info.component_swizzle[1],
+                             buffer_info.component_swizzle[2],
+                             buffer_info.component_swizzle[3]);
+  if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
+    // if it's the device convert to `CUDeviceptr`
+    const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
+    viz::ImageCudaDevice(
+        buffer_info.width, buffer_info.height, image_format, cu_buffer_ptr, buffer_info.stride[0]);
+  } else {
+    // convert to void * if using the system/host
+    const auto host_buffer_ptr = reinterpret_cast<const void*>(buffer_info.buffer_ptr);
+    viz::ImageHost(buffer_info.width,
+                   buffer_info.height,
+                   image_format,
+                   host_buffer_ptr,
+                   buffer_info.stride[0]);
+  }
+  viz::EndLayer();
+}
+
+void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec& input_spec,
+                                BufferInfo& buffer_info) {
+  if ((buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat32) &&
+      (buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat64)) {
+    throw std::runtime_error(
+        fmt::format("Expected gxf::PrimitiveType::kFloat32 or gxf::PrimitiveType::kFloat64 "
+                    "element type for coordinates, but got element type {}",
+                    static_cast<int>(buffer_info.element_type)));
+  }
+
+  // get pointer to tensor buffer
+  std::vector<nvidia::byte> host_buffer;
+  if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
+    host_buffer.resize(buffer_info.bytes_size);
+
+    // copy from device to host
+    CUDA_TRY(cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
+                             static_cast<const void*>(buffer_info.buffer_ptr),
+                             buffer_info.bytes_size,
+                             cudaMemcpyDeviceToHost,
+                             cuda_stream_handler_.get_cuda_stream(context.context())));
+    // wait for the CUDA memory copy to finish
+    CUDA_TRY(cudaStreamSynchronize(cuda_stream_handler_.get_cuda_stream(context.context())));
+
+    buffer_info.buffer_ptr = host_buffer.data();
+  }
+
+  // start a geometry layer
+  viz::BeginGeometryLayer();
+  set_input_spec_geometry(input_spec);
+
+  const auto coordinates = buffer_info.width;
+
+  if (input_spec.type_ == InputType::TEXT) {
+    // text is defined by the top left coordinate and the size (x, y, s) per string, text
+    // strings are define by InputSpec::text_
+    if ((buffer_info.components < 2) || (buffer_info.components > 3)) {
+      throw std::runtime_error(fmt::format("Expected two or three values per text, but got '{}'",
+                                           buffer_info.components));
+    }
+    if (input_spec.text_.empty()) {
+      throw std::runtime_error(
+          fmt::format("No text has been specified by input spec '{}'.", input_spec.tensor_name_));
+    }
+    uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
+    constexpr uint32_t values_per_coordinate = 3;
+    float coords[values_per_coordinate]{0.f, 0.f, 0.05f};
+    for (uint32_t index = 0; index < coordinates; ++index) {
+      uint32_t component_index = 0;
+      // copy from source array
+      while (component_index < buffer_info.components) {
+        switch (buffer_info.element_type) {
+          case nvidia::gxf::PrimitiveType::kFloat32:
+            coords[component_index] = reinterpret_cast<const float*>(src_coord)[component_index];
+            break;
+          case nvidia::gxf::PrimitiveType::kFloat64:
+            coords[component_index] = reinterpret_cast<const double*>(src_coord)[component_index];
+            break;
+          default:
+            throw std::runtime_error("Unhandled element type");
+        }
+        ++component_index;
+      }
+      src_coord += buffer_info.stride[1];
+      viz::Text(
+          coords[0],
+          coords[1],
+          coords[2],
+          input_spec.text_[std::min(index, static_cast<uint32_t>(input_spec.text_.size()) - 1)]
+              .c_str());
+    }
+  } else {
+    std::vector<float> coords;
+    viz::PrimitiveTopology topology;
+    uint32_t primitive_count;
+    uint32_t coordinate_count;
+    uint32_t values_per_coordinate;
+    std::vector<float> default_coord;
+    switch (input_spec.type_) {
+      case InputType::POINTS:
+        // point primitives, one coordinate (x, y) per primitive
+        if (buffer_info.components != 2) {
+          throw std::runtime_error(
+              fmt::format("Expected two values per point, but got '{}'", buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::POINT_LIST;
+        primitive_count = coordinates;
+        coordinate_count = primitive_count;
+        values_per_coordinate = 2;
+        default_coord = {0.f, 0.f};
+        break;
+      case InputType::LINES:
+        // line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
+        if (buffer_info.components != 2) {
+          throw std::runtime_error(fmt::format("Expected two values per line vertex, but got '{}'",
+                                               buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::LINE_LIST;
+        primitive_count = coordinates / 2;
+        coordinate_count = primitive_count * 2;
+        values_per_coordinate = 2;
+        default_coord = {0.f, 0.f};
+        break;
+      case InputType::LINE_STRIP:
+        // line strip primitive, a line primitive i is defined by each coordinate (xi, yi) and
+        // the following (xi+1, yi+1)
+        if (buffer_info.components != 2) {
+          throw std::runtime_error(fmt::format(
+              "Expected two values per line strip vertex, but got '{}'", buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::LINE_STRIP;
+        primitive_count = coordinates - 1;
+        coordinate_count = coordinates;
+        values_per_coordinate = 2;
+        default_coord = {0.f, 0.f};
+        break;
+      case InputType::TRIANGLES:
+        // triangle primitive, three coordinates (x0, y0), (x1, y1) and (x2, y2) per primitive
+        if (buffer_info.components != 2) {
+          throw std::runtime_error(fmt::format(
+              "Expected two values per triangle vertex, but got '{}'", buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::TRIANGLE_LIST;
+        primitive_count = coordinates / 3;
+        coordinate_count = primitive_count * 3;
+        values_per_coordinate = 2;
+        default_coord = {0.f, 0.f};
+        break;
+      case InputType::CROSSES:
+        // cross primitive, a cross is defined by the center coordinate and the size (xi, yi,
+        // si)
+        if ((buffer_info.components < 2) || (buffer_info.components > 3)) {
+          throw std::runtime_error(fmt::format(
+              "Expected two or three values per cross, but got '{}'", buffer_info.components));
+        }
+
+        topology = viz::PrimitiveTopology::CROSS_LIST;
+        primitive_count = coordinates;
+        coordinate_count = primitive_count;
+        values_per_coordinate = 3;
+        default_coord = {0.f, 0.f, 0.05f};
+        break;
+      case InputType::RECTANGLES:
+        // axis aligned rectangle primitive, each rectangle is defined by two coordinates (xi,
+        // yi) and (xi+1, yi+1)
+        if (buffer_info.components != 2) {
+          throw std::runtime_error(fmt::format(
+              "Expected two values per rectangle vertex, but got '{}'", buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::RECTANGLE_LIST;
+        primitive_count = coordinates / 2;
+        coordinate_count = primitive_count * 2;
+        values_per_coordinate = 2;
+        default_coord = {0.f, 0.f};
+        break;
+      case InputType::OVALS:
+        // oval primitive, an oval primitive is defined by the center coordinate and the axis
+        // sizes (xi, yi, sxi, syi)
+        if ((buffer_info.components < 2) || (buffer_info.components > 4)) {
+          throw std::runtime_error(fmt::format(
+              "Expected two, three or four values per oval, but got '{}'", buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::OVAL_LIST;
+        primitive_count = coordinates;
+        coordinate_count = primitive_count;
+        values_per_coordinate = 4;
+        default_coord = {0.f, 0.f, 0.05f, 0.05f};
+        break;
+      case InputType::POINTS_3D:
+        // point primitives, one coordinate (x, y, z) per primitive
+        if (buffer_info.components != 3) {
+          throw std::runtime_error(fmt::format("Expected three values per 3D point, but got '{}'",
+                                               buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::POINT_LIST_3D;
+        primitive_count = coordinates;
+        coordinate_count = primitive_count;
+        values_per_coordinate = 3;
+        default_coord = {0.f, 0.f, 0.f};
+        break;
+      case InputType::LINES_3D:
+        // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
+        if (buffer_info.components != 3) {
+          throw std::runtime_error(fmt::format(
+              "Expected three values per 3D line vertex, but got '{}'", buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::LINE_LIST_3D;
+        primitive_count = coordinates / 2;
+        coordinate_count = primitive_count * 2;
+        values_per_coordinate = 3;
+        default_coord = {0.f, 0.f, 0.f};
+        break;
+      case InputType::LINE_STRIP_3D:
+        // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
+        if (buffer_info.components != 3) {
+          throw std::runtime_error(
+              fmt::format("Expected three values per 3D line strip vertex, but got '{}'",
+                          buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::LINE_STRIP_3D;
+        primitive_count = coordinates - 1;
+        coordinate_count = coordinates;
+        values_per_coordinate = 3;
+        default_coord = {0.f, 0.f};
+        break;
+      case InputType::TRIANGLES_3D:
+        // triangle primitive, three coordinates (x0, y0, z0), (x1, y1, z1) and (x2, y2, z2)
+        // per primitive
+        if (buffer_info.components != 3) {
+          throw std::runtime_error(
+              fmt::format("Expected three values per 3D triangle vertex, but got '{}'",
+                          buffer_info.components));
+        }
+        topology = viz::PrimitiveTopology::TRIANGLE_LIST_3D;
+        primitive_count = coordinates / 3;
+        coordinate_count = primitive_count * 3;
+        values_per_coordinate = 3;
+        default_coord = {0.f, 0.f};
+        break;
+      default:
+        throw std::runtime_error(
+            fmt::format("Unhandled tensor type '{}'", inputTypeToString(input_spec.type_)));
+    }
+
+    // copy coordinates
+    uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
+    coords.reserve(coordinate_count * values_per_coordinate);
+
+    for (uint32_t index = 0; index < coordinate_count; ++index) {
+      uint32_t component_index = 0;
+      // copy from source array
+      while (component_index < std::min(buffer_info.components, values_per_coordinate)) {
+        switch (buffer_info.element_type) {
+          case nvidia::gxf::PrimitiveType::kFloat32:
+            coords.push_back(reinterpret_cast<const float*>(src_coord)[component_index]);
+            break;
+          case nvidia::gxf::PrimitiveType::kFloat64:
+            coords.push_back(reinterpret_cast<const double*>(src_coord)[component_index]);
+            break;
+          default:
+            throw std::runtime_error("Unhandled element type");
+        }
+        ++component_index;
+      }
+      // fill from default array
+      while (component_index < values_per_coordinate) {
+        coords.push_back(default_coord[component_index]);
+        ++component_index;
+      }
+      src_coord += buffer_info.stride[1];
+    }
+
+    if (primitive_count) {
+      viz::Primitive(topology, primitive_count, coords.size(), coords.data());
+    }
+  }
+
+  viz::EndLayer();
+}
+
 void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
                                  const BufferInfo& buffer_info_depth_map,
                                  InputSpec* const input_spec_depth_map_color,
@@ -692,6 +1053,7 @@ void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
 
 void HolovizOp::initialize() {
   register_converter<std::vector<InputSpec>>();
+  register_converter<std::array<float, 3>>();
   register_codec<std::vector<InputSpec>>("std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
 
   // Set up prerequisite parameters before calling Operator::initialize()
@@ -742,6 +1104,21 @@ void HolovizOp::start() {
     viz::Init(width_, height_, window_title_.get().c_str(), init_flags);
   }
 
+  // initialize the camera with the provided parameters
+  camera_eye_cur_ = camera_eye_.get();
+  camera_look_at_cur_ = camera_look_at_.get();
+  camera_up_cur_ = camera_up_.get();
+  viz::SetCamera(camera_eye_cur_[0],
+                 camera_eye_cur_[1],
+                 camera_eye_cur_[2],
+                 camera_look_at_cur_[0],
+                 camera_look_at_cur_[1],
+                 camera_look_at_cur_[2],
+                 camera_up_cur_[0],
+                 camera_up_cur_[1],
+                 camera_up_cur_[2],
+                 false);
+
   // get the color lookup table
   const auto& color_lut = color_lut_.get();
   lut_.reserve(color_lut.size() * 4);
@@ -772,17 +1149,15 @@ void HolovizOp::stop() {
 
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                         ExecutionContext& context) {
-  std::vector<gxf::Entity> messages_h =
-      op_input.receive<std::vector<gxf::Entity>>("receivers").value();
+  // receive input messages
+  auto receivers_messages = op_input.receive<std::vector<gxf::Entity>>("receivers").value();
 
-  // create vector of nvidia::gxf::Entity as expected by the code below
-  std::vector<nvidia::gxf::Entity> messages;
-  messages.reserve(messages_h.size());
-  for (auto& message_h : messages_h) {
-    // cast each holoscan::gxf:Entity to its base class
-    nvidia::gxf::Entity message = static_cast<nvidia::gxf::Entity>(message_h);
-    messages.push_back(message);
-  }
+  auto input_specs_messages =
+      op_input.receive<std::vector<holoscan::ops::HolovizOp::InputSpec>>("input_specs");
+
+  auto camera_eye_message = op_input.receive<std::array<float, 3>>("camera_eye_input");
+  auto camera_look_at_message = op_input.receive<std::array<float, 3>>("camera_look_at_input");
+  auto camera_up_message = op_input.receive<std::array<float, 3>>("camera_up_input");
 
   // make instance current
   ScopedPushInstance scoped_instance(instance_);
@@ -796,14 +1171,40 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   // nothing to do if minimized
   if (viz::WindowIsMinimized()) { return; }
 
+  // create vector of nvidia::gxf::Entity as expected by the code below
+  std::vector<nvidia::gxf::Entity> messages;
+  messages.reserve(receivers_messages.size());
+  for (auto& receivers_message : receivers_messages) {
+    // cast each holoscan::gxf:Entity to its base class
+    nvidia::gxf::Entity message = static_cast<nvidia::gxf::Entity>(receivers_message);
+    messages.push_back(message);
+  }
+
+  // handle camera messages
+  if (camera_eye_message || camera_eye_message || camera_up_message) {
+    if (camera_eye_message) { camera_eye_cur_ = camera_eye_message.value(); }
+    if (camera_look_at_message) { camera_look_at_cur_ = camera_look_at_message.value(); }
+    if (camera_up_message) { camera_up_cur_ = camera_up_message.value(); }
+    // set the camera
+    viz::SetCamera(camera_eye_cur_[0],
+                   camera_eye_cur_[1],
+                   camera_eye_cur_[2],
+                   camera_look_at_cur_[0],
+                   camera_look_at_cur_[1],
+                   camera_look_at_cur_[2],
+                   camera_up_cur_[0],
+                   camera_up_cur_[1],
+                   camera_up_cur_[2],
+                   true);
+  }
+
   // build the input spec list
   std::vector<InputSpec> input_spec_list(initial_input_spec_);
 
   // check the messages for input specs, they are added to the list
-  if (!op_input.empty("input_specs")) {
-    auto msg_input_specs =
-        op_input.receive<std::vector<holoscan::ops::HolovizOp::InputSpec>>("input_specs").value();
-    input_spec_list.insert(input_spec_list.end(), msg_input_specs.begin(), msg_input_specs.end());
+  if (input_specs_messages) {
+    input_spec_list.insert(
+        input_spec_list.end(), input_specs_messages->begin(), input_specs_messages->end());
   }
 
   // then get all tensors and video buffers of all messages, check if an input spec for the tensor
@@ -929,95 +1330,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
     switch (input_spec.type_) {
       case InputType::COLOR:
-      case InputType::COLOR_LUT: {
+      case InputType::COLOR_LUT:
         // 2D color image
-
-        // sanity checks
-        if (buffer_info.rank != 3) {
-          throw std::runtime_error(
-              fmt::format("Expected rank 3 for tensor '{}', type '{}', but got {}",
-                          buffer_info.name,
-                          inputTypeToString(input_spec.type_),
-                          buffer_info.rank));
-        }
-        if (buffer_info.image_format == static_cast<viz::ImageFormat>(-1)) {
-          std::runtime_error(
-              fmt::format("Color image: element type {} and channel count {} not supported",
-                          static_cast<int>(buffer_info.element_type),
-                          buffer_info.components));
-        }
-
-        viz::ImageFormat image_format;
-        if (input_spec.type_ == InputType::COLOR_LUT) {
-          if (buffer_info.components != 1) {
-            throw std::runtime_error(fmt::format(
-                "Expected one channel for tensor '{}' when using lookup table, but got {}",
-                buffer_info.name,
-                buffer_info.components));
-          }
-          if (lut_.empty()) {
-            throw std::runtime_error(fmt::format(
-                "Type of tensor '{}' is '{}', but a color lookup table has not been specified",
-                buffer_info.name,
-                inputTypeToString(input_spec.type_)));
-          }
-
-          // when using a LUT, the unorm formats are handled as single channel int formats
-          switch (buffer_info.image_format) {
-            case viz::ImageFormat::R8_UNORM:
-              image_format = viz::ImageFormat::R8_UINT;
-              break;
-            case viz::ImageFormat::R8_SNORM:
-              image_format = viz::ImageFormat::R8_SINT;
-              break;
-            case viz::ImageFormat::R16_UNORM:
-              image_format = viz::ImageFormat::R16_UINT;
-              break;
-            case viz::ImageFormat::R16_SNORM:
-              image_format = viz::ImageFormat::R16_SINT;
-              break;
-            default:
-              image_format = buffer_info.image_format;
-              break;
-          }
-        } else {
-          image_format = buffer_info.image_format;
-        }
-
-        // start an image layer
-        viz::BeginImageLayer();
-        set_input_spec(input_spec);
-
-        if (input_spec.type_ == InputType::COLOR_LUT) {
-          viz::LUT(lut_.size() / 4,
-                   viz::ImageFormat::R32G32B32A32_SFLOAT,
-                   lut_.size() * sizeof(float),
-                   lut_.data());
-        }
-
-        viz::ImageComponentMapping(buffer_info.component_swizzle[0],
-                                   buffer_info.component_swizzle[1],
-                                   buffer_info.component_swizzle[2],
-                                   buffer_info.component_swizzle[3]);
-        if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
-          // if it's the device convert to `CUDeviceptr`
-          const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
-          viz::ImageCudaDevice(buffer_info.width,
-                               buffer_info.height,
-                               image_format,
-                               cu_buffer_ptr,
-                               buffer_info.stride[0]);
-        } else {
-          // convert to void * if using the system/host
-          const auto host_buffer_ptr = reinterpret_cast<const void*>(buffer_info.buffer_ptr);
-          viz::ImageHost(buffer_info.width,
-                         buffer_info.height,
-                         image_format,
-                         host_buffer_ptr,
-                         buffer_info.stride[0]);
-        }
-        viz::EndLayer();
-      } break;
+        render_color_image(input_spec, buffer_info);
+        break;
 
       case InputType::POINTS:
       case InputType::LINES:
@@ -1030,274 +1346,11 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       case InputType::POINTS_3D:
       case InputType::LINES_3D:
       case InputType::LINE_STRIP_3D:
-      case InputType::TRIANGLES_3D: {
+      case InputType::TRIANGLES_3D:
         // geometry layer
-        if ((buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat32) &&
-            (buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat64)) {
-          throw std::runtime_error(
-              fmt::format("Expected gxf::PrimitiveType::kFloat32 or gxf::PrimitiveType::kFloat64 "
-                          "element type for coordinates, but got element type {}",
-                          static_cast<int>(buffer_info.element_type)));
-        }
+        render_geometry(context, input_spec, buffer_info);
+        break;
 
-        // get pointer to tensor buffer
-        std::vector<nvidia::byte> host_buffer;
-        if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
-          host_buffer.resize(buffer_info.bytes_size);
-
-          // copy from device to host
-          CUDA_TRY(cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
-                                   static_cast<const void*>(buffer_info.buffer_ptr),
-                                   buffer_info.bytes_size,
-                                   cudaMemcpyDeviceToHost,
-                                   cuda_stream_handler_.get_cuda_stream(context.context())));
-          // wait for the CUDA memory copy to finish
-          CUDA_TRY(cudaStreamSynchronize(cuda_stream_handler_.get_cuda_stream(context.context())));
-
-          buffer_info.buffer_ptr = host_buffer.data();
-        }
-
-        // start a geometry layer
-        viz::BeginGeometryLayer();
-        set_input_spec_geometry(input_spec);
-
-        const auto coordinates = buffer_info.width;
-
-        if (input_spec.type_ == InputType::TEXT) {
-          // text is defined by the top left coordinate and the size (x, y, s) per string, text
-          // strings are define by InputSpec::text_
-          if ((buffer_info.components < 2) || (buffer_info.components > 3)) {
-            throw std::runtime_error(fmt::format(
-                "Expected two or three values per text, but got '{}'", buffer_info.components));
-          }
-          if (input_spec.text_.empty()) {
-            throw std::runtime_error(fmt::format("No text has been specified by input spec '{}'.",
-                                                 input_spec.tensor_name_));
-          }
-          uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
-          constexpr uint32_t values_per_coordinate = 3;
-          float coords[values_per_coordinate]{0.f, 0.f, 0.05f};
-          for (uint32_t index = 0; index < coordinates; ++index) {
-            uint32_t component_index = 0;
-            // copy from source array
-            while (component_index < buffer_info.components) {
-              switch (buffer_info.element_type) {
-                case nvidia::gxf::PrimitiveType::kFloat32:
-                  coords[component_index] =
-                      reinterpret_cast<const float*>(src_coord)[component_index];
-                  break;
-                case nvidia::gxf::PrimitiveType::kFloat64:
-                  coords[component_index] =
-                      reinterpret_cast<const double*>(src_coord)[component_index];
-                  break;
-                default:
-                  throw std::runtime_error("Unhandled element type");
-              }
-              ++component_index;
-            }
-            src_coord += buffer_info.stride[1];
-            viz::Text(
-                coords[0],
-                coords[1],
-                coords[2],
-                input_spec
-                    .text_[std::min(index, static_cast<uint32_t>(input_spec.text_.size()) - 1)]
-                    .c_str());
-          }
-        } else {
-          std::vector<float> coords;
-          viz::PrimitiveTopology topology;
-          uint32_t primitive_count;
-          uint32_t coordinate_count;
-          uint32_t values_per_coordinate;
-          std::vector<float> default_coord;
-          switch (input_spec.type_) {
-            case InputType::POINTS:
-              // point primitives, one coordinate (x, y) per primitive
-              if (buffer_info.components != 2) {
-                throw std::runtime_error(fmt::format("Expected two values per point, but got '{}'",
-                                                     buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::POINT_LIST;
-              primitive_count = coordinates;
-              coordinate_count = primitive_count;
-              values_per_coordinate = 2;
-              default_coord = {0.f, 0.f};
-              break;
-            case InputType::LINES:
-              // line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
-              if (buffer_info.components != 2) {
-                throw std::runtime_error(fmt::format(
-                    "Expected two values per line vertex, but got '{}'", buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::LINE_LIST;
-              primitive_count = coordinates / 2;
-              coordinate_count = primitive_count * 2;
-              values_per_coordinate = 2;
-              default_coord = {0.f, 0.f};
-              break;
-            case InputType::LINE_STRIP:
-              // line strip primitive, a line primitive i is defined by each coordinate (xi, yi) and
-              // the following (xi+1, yi+1)
-              if (buffer_info.components != 2) {
-                throw std::runtime_error(
-                    fmt::format("Expected two values per line strip vertex, but got '{}'",
-                                buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::LINE_STRIP;
-              primitive_count = coordinates - 1;
-              coordinate_count = coordinates;
-              values_per_coordinate = 2;
-              default_coord = {0.f, 0.f};
-              break;
-            case InputType::TRIANGLES:
-              // triangle primitive, three coordinates (x0, y0), (x1, y1) and (x2, y2) per primitive
-              if (buffer_info.components != 2) {
-                throw std::runtime_error(
-                    fmt::format("Expected two values per triangle vertex, but got '{}'",
-                                buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::TRIANGLE_LIST;
-              primitive_count = coordinates / 3;
-              coordinate_count = primitive_count * 3;
-              values_per_coordinate = 2;
-              default_coord = {0.f, 0.f};
-              break;
-            case InputType::CROSSES:
-              // cross primitive, a cross is defined by the center coordinate and the size (xi, yi,
-              // si)
-              if ((buffer_info.components < 2) || (buffer_info.components > 3)) {
-                throw std::runtime_error(
-                    fmt::format("Expected two or three values per cross, but got '{}'",
-                                buffer_info.components));
-              }
-
-              topology = viz::PrimitiveTopology::CROSS_LIST;
-              primitive_count = coordinates;
-              coordinate_count = primitive_count;
-              values_per_coordinate = 3;
-              default_coord = {0.f, 0.f, 0.05f};
-              break;
-            case InputType::RECTANGLES:
-              // axis aligned rectangle primitive, each rectangle is defined by two coordinates (xi,
-              // yi) and (xi+1, yi+1)
-              if (buffer_info.components != 2) {
-                throw std::runtime_error(
-                    fmt::format("Expected two values per rectangle vertex, but got '{}'",
-                                buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::RECTANGLE_LIST;
-              primitive_count = coordinates / 2;
-              coordinate_count = primitive_count * 2;
-              values_per_coordinate = 2;
-              default_coord = {0.f, 0.f};
-              break;
-            case InputType::OVALS:
-              // oval primitive, an oval primitive is defined by the center coordinate and the axis
-              // sizes (xi, yi, sxi, syi)
-              if ((buffer_info.components < 2) || (buffer_info.components > 4)) {
-                throw std::runtime_error(
-                    fmt::format("Expected two, three or four values per oval, but got '{}'",
-                                buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::OVAL_LIST;
-              primitive_count = coordinates;
-              coordinate_count = primitive_count;
-              values_per_coordinate = 4;
-              default_coord = {0.f, 0.f, 0.05f, 0.05f};
-              break;
-            case InputType::POINTS_3D:
-              // point primitives, one coordinate (x, y, z) per primitive
-              if (buffer_info.components != 3) {
-                throw std::runtime_error(fmt::format(
-                    "Expected three values per 3D point, but got '{}'", buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::POINT_LIST_3D;
-              primitive_count = coordinates;
-              coordinate_count = primitive_count;
-              values_per_coordinate = 3;
-              default_coord = {0.f, 0.f, 0.f};
-              break;
-            case InputType::LINES_3D:
-              // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
-              if (buffer_info.components != 3) {
-                throw std::runtime_error(
-                    fmt::format("Expected three values per 3D line vertex, but got '{}'",
-                                buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::LINE_LIST_3D;
-              primitive_count = coordinates / 2;
-              coordinate_count = primitive_count * 2;
-              values_per_coordinate = 3;
-              default_coord = {0.f, 0.f, 0.f};
-              break;
-            case InputType::LINE_STRIP_3D:
-              // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
-              if (buffer_info.components != 3) {
-                throw std::runtime_error(
-                    fmt::format("Expected three values per 3D line strip vertex, but got '{}'",
-                                buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::LINE_STRIP_3D;
-              primitive_count = coordinates - 1;
-              coordinate_count = coordinates;
-              values_per_coordinate = 3;
-              default_coord = {0.f, 0.f};
-              break;
-            case InputType::TRIANGLES_3D:
-              // triangle primitive, three coordinates (x0, y0, z0), (x1, y1, z1) and (x2, y2, z2)
-              // per primitive
-              if (buffer_info.components != 3) {
-                throw std::runtime_error(
-                    fmt::format("Expected three values per 3D triangle vertex, but got '{}'",
-                                buffer_info.components));
-              }
-              topology = viz::PrimitiveTopology::TRIANGLE_LIST_3D;
-              primitive_count = coordinates / 3;
-              coordinate_count = primitive_count * 3;
-              values_per_coordinate = 3;
-              default_coord = {0.f, 0.f};
-              break;
-            default:
-              throw std::runtime_error(
-                  fmt::format("Unhandled tensor type '{}'", inputTypeToString(input_spec.type_)));
-          }
-
-          // copy coordinates
-          uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
-          coords.reserve(coordinate_count * values_per_coordinate);
-
-          for (uint32_t index = 0; index < coordinate_count; ++index) {
-            uint32_t component_index = 0;
-            // copy from source array
-            while (component_index < std::min(buffer_info.components, values_per_coordinate)) {
-              switch (buffer_info.element_type) {
-                case nvidia::gxf::PrimitiveType::kFloat32:
-                  coords.push_back(reinterpret_cast<const float*>(src_coord)[component_index]);
-                  break;
-                case nvidia::gxf::PrimitiveType::kFloat64:
-                  coords.push_back(reinterpret_cast<const double*>(src_coord)[component_index]);
-                  break;
-                default:
-                  throw std::runtime_error("Unhandled element type");
-              }
-              ++component_index;
-            }
-            // fill from default array
-            while (component_index < values_per_coordinate) {
-              coords.push_back(default_coord[component_index]);
-              ++component_index;
-            }
-            src_coord += buffer_info.stride[1];
-          }
-
-          if (primitive_count) {
-            viz::Primitive(topology, primitive_count, coords.size(), coords.data());
-          }
-        }
-
-        viz::EndLayer();
-      } break;
       case InputType::DEPTH_MAP: {
         // 2D depth map
         if (buffer_info.element_type != nvidia::gxf::PrimitiveType::kUnsigned8) {
@@ -1367,11 +1420,26 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
   // check if the the camera pose should be output
   if (camera_pose_output_enabled_) {
-    auto camera_pose_output = std::make_shared<std::array<float, 16>>();
+    if (camera_pose_output_type_.get() == "projection_matrix") {
+      auto camera_pose_output = std::make_shared<std::array<float, 16>>();
 
-    viz::GetCameraPose(camera_pose_output->size(), camera_pose_output->data());
+      viz::GetCameraPose(camera_pose_output->size(), camera_pose_output->data());
 
-    op_output.emit(camera_pose_output, "camera_pose_output");
+      op_output.emit(camera_pose_output, "camera_pose_output");
+    } else if (camera_pose_output_type_.get() == "extrinsics_model") {
+      float rotation[9];
+      float translation[3];
+
+      viz::GetCameraPose(rotation, translation);
+
+      auto pose = std::make_shared<nvidia::gxf::Pose3D>();
+      std::copy(std::begin(rotation), std::end(rotation), std::begin(pose->rotation));
+      std::copy(std::begin(translation), std::end(translation), std::begin(pose->translation));
+      op_output.emit(pose, "camera_pose_output");
+    } else {
+      throw std::runtime_error(fmt::format("Unhandled camera pose output type type '{}'",
+                                           camera_pose_output_type_.get()));
+    }
   }
 
   if (is_first_tick_) {

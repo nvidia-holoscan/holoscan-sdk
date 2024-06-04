@@ -31,6 +31,9 @@ using nvidia::gxf::AsynchronousEventState;
 /**
  * @brief Condition class to support asynchronous execution of operators.
  *
+ * This condition waits on an asynchronous event which can happen outside of the regular compute
+ * function of an operator.
+ *
  * The method `event_state()` method is used to get or set the asynchronous condition's state.
  * The possible states are:
  *   - AsynchronousEventState::READY          ///< Initial state, first compute call is pending
@@ -43,9 +46,9 @@ using nvidia::gxf::AsynchronousEventState;
  *   - AsynchronousEventState::EVENT_NEVER    ///< Entity will not call compute again, end of
  *                                                 execution
  *
- * TODO: expand documentation
- *
- * This class wraps GXF SchedulingTerm(`nvidia::gxf::AsynchronousSchedulingTerm`).
+ * This class wraps GXF SchedulingTerm(`nvidia::gxf::AsynchronousSchedulingTerm`). The event used
+ * corresponds to `gxf_event_t` enum value `GXF_EVENT_EXTERNAL` which is supported by all
+ * schedulers.
  */
 class AsynchronousCondition : public gxf::GXFCondition {
  public:

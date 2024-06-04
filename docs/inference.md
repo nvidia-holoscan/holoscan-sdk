@@ -88,6 +88,11 @@ Required parameters and related features available with the Holoscan Inference M
         - Each entry in `device_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and GPU identifier as the value. This GPU ID is used to execute the inference for the specified model.
         - GPUs specified in the `device_map` must have P2P (peer to peer) access and they must be connected to the same PCIE configuration. If P2P access is not possible among GPUs, the host (CPU memory) will be used to transfer the data.
         - Multi-GPU inferencing is supported for all backends.
+    - `temporal_map`: Temporal inferencing is enabled if `temporal_map` is populated in the parameter set.
+        - Each entry in `temporal_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and frame delay as the value. Frame delay represents the frame count that are skipped by the operator in doing the inference for that particular model. A model with the value of 1, is inferred per frame. A model with a value of 10 is inferred for every 10th frame coming into the operator, which is the 1st frame, 11th frame, 21st frame and so on. Additionally, the operator will transmit the last inferred result for all the frames that are not inferred. For example, a model with a value of 10 will be inferred at 11th frame and from 12th to 20th frame, the result from 11th frame is transmitted.
+        - If the `temporal_map` is absent in the parameter set, all models are inferred for all the frames.
+        - All models are not mandatory in the `temporal_map`.  The missing models are inferred per frame.
+        - Temporal map based inferencing is supported for all backends.
     - `backend_map`: Multiple backends can be used in the same application with this parameter.
         - Each entry in `backend_map` has a unique keyword representing the model (same as used in `model_path_map`), and the `backend` as the value.
         - A sample backend_map is shown below. In the example, model_1 uses the `tensorRT` backend, and model 2 and model 3 uses the `torch` backend for inference.

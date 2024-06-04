@@ -58,7 +58,7 @@ cudaError_t check_cuda(cudaError_t result);
  * @param module    Module of error occurrence
  * @param submodule Submodule/Function of error occurrence with the error message (as string)
  *
- * @returns GXF Error code: GXF_FAILURE
+ * @return GXF Error code: GXF_FAILURE
  */
 gxf_result_t _HOLOSCAN_EXTERNAL_API_ report_error(const std::string& module,
                                                   const std::string& submodule);

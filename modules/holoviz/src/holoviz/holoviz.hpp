@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -117,7 +117,7 @@ InstanceHandle Create();
 void SetCurrent(InstanceHandle instance);
 
 /**
- * @returns the current instance for the active thread.
+ * @return the current instance for the active thread.
  */
 InstanceHandle GetCurrent();
 
@@ -153,7 +153,8 @@ void Init(uint32_t width, uint32_t height, const char* title, InitFlags flags = 
  *    SSH into the machine, stop the X server with `sudo systemctl stop display-manager`.
  *
  * @param displayName   name of the display, this can either be the EDID name as displayed in the
- *                      NVIDIA Settings, or the output name used by xrandr,
+ *                      NVIDIA Settings, or the output name provided by `xrandr` or
+ *                      `hwinfo --monitor`.
  *                      if nullptr then the first display is selected.
  * @param width         desired width, ignored if 0
  * @param height        desired height, ignored if 0
@@ -188,14 +189,14 @@ void SetCudaStream(CUstream stream);
 /**
  * Check if the window close button had been pressed
  *
- * @returns true if the window close button had been pressed
+ * @return true if the window close button had been pressed
  */
 bool WindowShouldClose();
 
 /**
  * Check if the window is minimized. This can be used to skip rendering on minimized windows.
  *
- * @returns true if the window is minimized
+ * @return true if the window is minimized
  */
 bool WindowIsMinimized();
 
@@ -480,6 +481,17 @@ void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t bu
                      CUdeviceptr device_ptr, size_t row_pitch = 0);
 
 /**
+ * Set the camera eye, look at and up vectors.
+ *
+ * @param eye_x, eye_y, eye_z               eye position
+ * @param look_at_x, look_at_y, look_at_z   look at position
+ * @param up_x, up_y, up_z                  up vector
+ * @param anim                              animate transition
+ */
+void SetCamera(float eye_x, float eye_y, float eye_z, float look_at_x, float look_at_y,
+               float look_at_z, float up_x, float up_y, float up_z, bool anim = false);
+
+/**
  * Get the camera pose.
  *
  * The camera parameters are returned in a 4x4 row major projection matrix.
@@ -495,6 +507,27 @@ void ReadFramebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t bu
  * @param matrix pointer to a float array to store the row major projection matrix to
  */
 void GetCameraPose(size_t size, float* matrix);
+
+/**
+ * Get the camera pose.
+ *
+ * The camera parameters are returned as camera extrinsics parameters.
+ * The extrinsics camera matrix is defined as follow:
+ * @code
+ *  T = [R | t]
+ * @endcode
+ *
+ * The camera is operated using the mouse.
+ *  - Orbit        (LMB)
+ *  - Pan          (LMB + CTRL  | MMB)
+ *  - Dolly        (LMB + SHIFT | RMB | Mouse wheel)
+ *  - Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
+ *  - Zoom         (Mouse wheel + SHIFT)
+ *
+ * @param rotation row major rotation matrix
+ * @param translation translation vector
+ */
+void GetCameraPose(float (&rotation)[9], float (&translation)[3]);
 
 }  // namespace holoscan::viz
 

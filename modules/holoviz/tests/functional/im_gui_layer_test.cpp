@@ -22,7 +22,7 @@
 
 #include <holoviz/holoviz.hpp>
 #include <util/unique_value.hpp>
-#include "headless_fixture.hpp"
+#include "test_fixture.hpp"
 
 namespace viz = holoscan::viz;
 

@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -53,7 +54,7 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
   using VideoStreamReplayerOp::VideoStreamReplayerOp;
 
   // Define a constructor that fully initializes the object.
-  PyVideoStreamReplayerOp(Fragment* fragment, const std::string& directory,
+  PyVideoStreamReplayerOp(Fragment* fragment, const py::args& args, const std::string& directory,
                           const std::string& basename, size_t batch_size = 1UL,
                           bool ignore_corrupted_entities = true, float frame_rate = 0.f,
                           bool realtime = true, bool repeat = false, uint64_t count = 0UL,
@@ -66,6 +67,7 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
                                       Arg{"realtime", realtime},
                                       Arg{"repeat", repeat},
                                       Arg{"count", count}}) {
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -77,20 +79,10 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
 
 PYBIND11_MODULE(_video_stream_replayer, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK VideoStreamReplayerOp Python Bindings
+        --------------------------------------------------
         .. currentmodule:: _video_stream_replayer
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<VideoStreamReplayerOp,
              PyVideoStreamReplayerOp,
@@ -98,6 +90,7 @@ PYBIND11_MODULE(_video_stream_replayer, m) {
              std::shared_ptr<VideoStreamReplayerOp>>(
       m, "VideoStreamReplayerOp", doc::VideoStreamReplayerOp::doc_VideoStreamReplayerOp)
       .def(py::init<Fragment*,
+                    const py::args&,
                     const std::string&,
                     const std::string&,
                     size_t,
@@ -116,7 +109,7 @@ PYBIND11_MODULE(_video_stream_replayer, m) {
            "realtime"_a = true,
            "repeat"_a = false,
            "count"_a = 0UL,
-           "name"_a = "format_converter"s,
+           "name"_a = "video_stream_replayer"s,
            doc::VideoStreamReplayerOp::doc_VideoStreamReplayerOp)
       .def("initialize",
            &VideoStreamReplayerOp::initialize,

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_LOGGER_HPP
-#define HOLOSCAN_CORE_LOGGER_HPP
+#ifndef HOLOSCAN_LOGGER_LOGGER_HPP
+#define HOLOSCAN_LOGGER_LOGGER_HPP
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>  // allows fmt to format std::array, std::vector, etc.
@@ -167,12 +167,13 @@ class Logger {
                 function_name,
                 level,
                 format,
-                fmt::make_args_checked<ArgsT...>(format, args...));
+                fmt::make_args_checked<ArgsT...>(format, std::forward<ArgsT>(args)...));
   }
 
   template <typename FormatT, typename... ArgsT>
   static void log(LogLevel level, const FormatT& format, ArgsT&&... args) {
-    log_message(level, format, fmt::make_args_checked<ArgsT...>(format, args...));
+    log_message(
+        level, format, fmt::make_args_checked<ArgsT...>(format, std::forward<ArgsT>(args)...));
   }
 
   /**
@@ -326,4 +327,4 @@ inline void log_message(const char* file, int line, const char* function_name, L
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_LOGGER_HPP */
+#endif /* HOLOSCAN_LOGGER_LOGGER_HPP */

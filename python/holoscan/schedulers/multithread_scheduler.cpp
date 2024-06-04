@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -103,7 +103,7 @@ void init_multithread_scheduler(py::module_& m) {
            "max_duration_ms"_a = -1LL,
            "stop_on_deadlock_timeout"_a = 0LL,
            "name"_a = "multithread_scheduler"s,
-           doc::MultiThreadScheduler::doc_MultiThreadScheduler_python)
+           doc::MultiThreadScheduler::doc_MultiThreadScheduler)
       .def_property_readonly("clock", &MultiThreadScheduler::clock)
       .def_property_readonly("worker_thread_number", &MultiThreadScheduler::worker_thread_number)
       .def_property_readonly("max_duration_ms", &MultiThreadScheduler::max_duration_ms)

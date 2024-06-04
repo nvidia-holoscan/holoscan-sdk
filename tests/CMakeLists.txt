@@ -70,6 +70,7 @@ ConfigureTest(
   core/condition.cpp
   core/condition_classes.cpp
   core/config.cpp
+  core/data_exporter.cpp
   core/dataflow_tracker.cpp
   core/fragment.cpp
   core/fragment_allocation.cpp
@@ -126,6 +127,8 @@ ConfigureTest(
   system/env_wrapper.cpp
   system/exception_handling.cpp
   system/demosaic_op_app.cpp
+  system/format_converter_op_apps.cpp
+  system/jobstatistics_app.cpp
   system/holoviz_op_apps.cpp
   system/multithreaded_app.cpp
   system/native_async_operator_ping_app.cpp
@@ -157,6 +160,7 @@ ConfigureTest(
   system/distributed/holoscan_ucx_ports_env.cpp
   system/distributed/ping_message_rx_op.cpp
   system/distributed/ping_message_tx_op.cpp
+  system/distributed/standalone_fragments.cpp
   system/distributed/ucx_message_serialization_ping_app.cpp
   system/env_wrapper.cpp
   system/ping_tensor_rx_op.cpp
@@ -169,15 +173,26 @@ target_link_libraries(SYSTEM_DISTRIBUTED_TEST
 )
 
 # set environment variables used by distributed applications in the tests
-# - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500    : Set deadlock timeout for distributed app
-# - HOLOSCAN_MAX_DURATION_MS=2500             : Set max duration for distributed app
+# - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000    : Set deadlock timeout for distributed app
+# - HOLOSCAN_MAX_DURATION_MS=3000             : Set max duration for distributed app
+if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
   set(CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
 "\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500;\
-HOLOSCAN_MAX_DURATION_MS=2500;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=6000;\
+HOLOSCAN_MAX_DURATION_MS=6000;\
 HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
 "
   )
+else()
+  set(CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
+"\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000;\
+HOLOSCAN_MAX_DURATION_MS=3000;\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
+"
+  )
+endif()
+
 set_tests_properties(
   SYSTEM_DISTRIBUTED_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS}"
 )
@@ -189,6 +204,7 @@ ConfigureTest(
   system/distributed/distributed_app.cpp
   system/distributed/distributed_demosaic_op_app.cpp
   system/distributed/holoscan_ucx_ports_env.cpp
+  system/distributed/standalone_fragments.cpp
   system/env_wrapper.cpp
   system/ping_tensor_rx_op.cpp
   system/ping_tensor_tx_op.cpp
@@ -201,8 +217,8 @@ target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
 
   set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
 "\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500;\
-HOLOSCAN_MAX_DURATION_MS=2500;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=5000;\
+HOLOSCAN_MAX_DURATION_MS=5000;\
 HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
 "
   )
@@ -248,13 +264,12 @@ target_link_libraries(HOLOINFER_TEST
     holoinfer
 )
 
-add_dependencies(HOLOINFER_TEST multiai_ultrasound_data)
-
 # ##################################################################################################
 # * Flow Tracking tests ----------------------------------------------------------------------------------
 ConfigureTest(
   FLOW_TRACKING_TEST
   flow_tracking/flow_tracking_cycle.cpp
+  flow_tracking/entity_passthrough.cpp
 )
 target_link_libraries(FLOW_TRACKING_TEST
   PRIVATE

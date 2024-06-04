@@ -15,14 +15,21 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_IO_CONTEXT_HPP
-#define PYBIND11_CORE_IO_CONTEXT_HPP
+#ifndef PYHOLOSCAN_CORE_IO_CONTEXT_HPP
+#define PYHOLOSCAN_CORE_IO_CONTEXT_HPP
 
 #include <pybind11/pybind11.h>
 
+#include <any>
 #include <memory>
 #include <string>
+#include <tuple>
+#include <type_traits>
+#include <typeindex>
+#include <typeinfo>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "gil_guarded_pyobject.hpp"
 #include "holoscan/core/execution_context.hpp"
@@ -41,7 +48,7 @@ class PyInputContext : public gxf::GXFInputContext {
   /* Inherit the constructors */
   using gxf::GXFInputContext::GXFInputContext;
   PyInputContext(ExecutionContext* execution_context, Operator* op,
-                 std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs,
+                 std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,
                  py::object py_op);
 
   py::object py_receive(const std::string& name);
@@ -56,10 +63,10 @@ class PyOutputContext : public gxf::GXFOutputContext {
   using gxf::GXFOutputContext::GXFOutputContext;
 
   PyOutputContext(ExecutionContext* execution_context, Operator* op,
-                  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs,
+                  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs,
                   py::object py_op);
 
-  void py_emit(py::object& data, const std::string& name);
+  void py_emit(py::object& data, const std::string& name, const std::string& emitter_name = "");
 
  private:
   py::object py_op_ = py::none();
@@ -67,4 +74,4 @@ class PyOutputContext : public gxf::GXFOutputContext {
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_IO_CONTEXT_HPP */
+#endif /* PYHOLOSCAN_CORE_IO_CONTEXT_HPP */

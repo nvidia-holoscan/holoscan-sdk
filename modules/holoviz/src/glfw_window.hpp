@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_GLFW_WINDOW_HPP
-#define HOLOSCAN_VIZ_GLFW_WINDOW_HPP
+#ifndef MODULES_HOLOVIZ_SRC_GLFW_WINDOW_HPP
+#define MODULES_HOLOVIZ_SRC_GLFW_WINDOW_HPP
 
 #include <cstdint>
 #include <memory>
@@ -64,6 +64,7 @@ class GLFWWindow : public Window {
   ///@{
   void init_im_gui() override;
   void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) override;
+  void restore_callbacks() override;
 
   const char** get_required_instance_extensions(uint32_t* count) override;
   const char** get_required_device_extensions(uint32_t* count) override;
@@ -81,8 +82,6 @@ class GLFWWindow : public Window {
   void begin() override;
   void end() override;
 
-  void get_view_matrix(nvmath::mat4f* view_matrix) override;
-
   float get_aspect_ratio() override;
   ///@}
 
@@ -93,4 +92,4 @@ class GLFWWindow : public Window {
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_GLFW_WINDOW_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_GLFW_WINDOW_HPP */

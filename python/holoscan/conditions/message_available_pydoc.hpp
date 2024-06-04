@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,7 @@ namespace MessageAvailableCondition {
 PYDOC(MessageAvailableCondition, R"doc(
 Condition that permits execution when an upstream message is available.
 
-Executed when the associated receiver queue has at least a certain number of
+Satisfied when the associated receiver queue has at least a certain number of
 elements. The receiver is specified using the receiver parameter of the
 scheduling term. The minimum number of messages that permits the execution of
 the entity is specified by `min_size`. An optional parameter for this
@@ -37,11 +37,6 @@ scheduling term is `front_stage_max_size`, the maximum front stage message
 count. If this parameter is set, the scheduling term will only allow execution
 if the number of messages in the queue does not exceed this count. It can be
 used for operators which do not consume all messages from the queue.
-)doc")
-
-// PyMessageAvailableCondition Constructor
-PYDOC(MessageAvailableCondition_python, R"doc(
-Condition that permits execution when an upstream message is available.
 
 Parameters
 ----------
@@ -101,4 +96,4 @@ time, and uses a light-weight initialization.
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_CONDITIONS_MESSAGE_AVAILABLE_PYDOC_HPP
+#endif /* PYHOLOSCAN_CONDITIONS_MESSAGE_AVAILABLE_PYDOC_HPP */

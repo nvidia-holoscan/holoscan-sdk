@@ -202,14 +202,14 @@ See {enum}`viz::ImageFormat` for supported image formats. Additionally {func}`vi
 
 ### Geometry Layers
 
-A geometry layer is used to draw geometric primitives such as points, lines, rectangles, ovals or text.
+A geometry layer is used to draw 2d or 3d geometric primitives. 2d primitives are points, lines, line strips, rectangles, ovals or text and are defined with 2d coordinates (x, y). 3d primitives are points, lines, line strips or triangles and are defined with 3d coordinates (x, y, z).
 
-Coordinates start with (0, 0) in the top left and end with (1, 1) in the bottom right.
+Coordinates start with (0, 0) in the top left and end with (1, 1) in the bottom right for 2d primitives.
 
 `````{tab-set}
 ````{tab-item} Operator
 
-See [holoviz_geometry.cpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/cpp/holoviz_geometry.cpp) and [holoviz_geometry.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/python/holoviz_geometry.py).
+See [holoviz_geometry.cpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/cpp/holoviz_geometry.cpp) and [holoviz_geometry.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/python/holoviz_geometry.py) for 2d geometric primitives and and [holoviz_geometry.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/python/holoviz_geometry_3d.py) for 3d geometric primitives.
 
 ````
 ````{tab-item} Module
@@ -292,13 +292,6 @@ an 8-bit B component in byte 2, and an 8-bit A component in byte 3
 
 Depth maps are rendered in 3D and support camera movement.
 
-The camera is operated using the mouse.
-- Orbit        (LMB)
-- Pan          (LMB + CTRL  | MMB)
-- Dolly        (LMB + SHIFT | RMB | Mouse wheel)
-- Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
-- Zoom         (Mouse wheel + SHIFT)
-
 `````{tab-set}
 ````{tab-item} Operator
 ```cpp
@@ -339,6 +332,27 @@ See [holoviz_views.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main
 ````
 ````{tab-item} Module
 Use {func}`viz::LayerAddView()` to add a view to a layer.
+````
+`````
+
+## Camera
+
+When rendering 3d geometry using a geometry layer with 3d primitives or using a depth map layer the camera properties can either be set by the application or interactively changed by the user.
+
+To interactively change the camera, use the mouse:
+
+- Orbit        (LMB)
+- Pan          (LMB + CTRL  | MMB)
+- Dolly        (LMB + SHIFT | RMB | Mouse wheel)
+- Look Around  (LMB + ALT   | LMB + CTRL + SHIFT)
+- Zoom         (Mouse wheel + SHIFT)
+
+`````{tab-set}
+````{tab-item} Operator
+See [holoviz_camera.cpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/cpp/holoviz_camera.cpp).
+````
+````{tab-item} Module
+Use {func}`viz::SetCamera()` to change the camera.
 ````
 `````
 
@@ -392,9 +406,12 @@ If the name is `nullptr` then the first display is selected.
 ````
 `````
 
-The name of the display can either be the EDID name as displayed in the NVIDIA Settings, or the output name used by `xrandr`.
+The name of the display can either be the EDID name as displayed in the NVIDIA Settings, or the output name provided by `xrandr` or
+`hwinfo --monitor`.
 
 :::{tip}
+`````{tab-set}
+````{tab-item} X11
 In this example output of `xrandr`, `DP-2` would be an adequate display name to use:
 ```bash
 Screen 0: minimum 8 x 8, current 4480 x 1440, maximum 32767 x 32767
@@ -407,6 +424,15 @@ DP-2 connected primary 2560x1440+1920+0 (normal left inverted right x axis y axi
    640x480       59.94
 USB-C-0 disconnected (normal left inverted right x axis y axis)
 ```
+````
+````{tab-item} Wayland and X11
+In this example output of `hwinfo`, `MSI MPG343CQR would be an adequate display name to use:
+```bash
+$ hwinfo --monitor | grep Model
+  Model: "MSI MPG343CQR"
+```
+````
+`````
 :::
 
 ## CUDA streams

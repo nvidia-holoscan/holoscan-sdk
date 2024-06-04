@@ -42,58 +42,58 @@ void HoloInferTests::inference_tests() {
 
   // Test: TRT backend, Missing input tensor
   status = prepare_for_inference();
-  auto dm = std::move(inference_specs_->data_per_tensor_.at("bmode_pre_proc"));
-  inference_specs_->data_per_tensor_.erase("bmode_pre_proc");
+  auto dm = std::move(inference_specs_->data_per_tensor_.at("m1_pre_proc"));
+  inference_specs_->data_per_tensor_.erase("m1_pre_proc");
   status = do_inference();
   holoinfer_assert(
       status, test_module, 3, test_identifier_infer.at(3), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->data_per_tensor_.insert({"bmode_pre_proc", dm});
+  inference_specs_->data_per_tensor_.insert({"m1_pre_proc", dm});
 
   // Test: TRT backend, Missing output tensor
   status = prepare_for_inference();
-  dm = std::move(inference_specs_->output_per_model_.at("aortic_infer"));
-  inference_specs_->output_per_model_.erase("aortic_infer");
+  dm = std::move(inference_specs_->output_per_model_.at("m2_infer"));
+  inference_specs_->output_per_model_.erase("m2_infer");
   status = do_inference();
   holoinfer_assert(
       status, test_module, 4, test_identifier_infer.at(4), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->output_per_model_.insert({"aortic_infer", dm});
+  inference_specs_->output_per_model_.insert({"m2_infer", dm});
 
   // Test: TRT backend, Empty input cuda buffer 1
-  auto dbs = inference_specs_->data_per_tensor_.at("bmode_pre_proc")->device_buffer->size();
-  inference_specs_->data_per_tensor_.at("bmode_pre_proc")->device_buffer->resize(0);
-  inference_specs_->data_per_tensor_.at("bmode_pre_proc")->device_buffer = nullptr;
+  auto dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer->size();
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer->resize(0);
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer = nullptr;
   status = do_inference();
   holoinfer_assert(
       status, test_module, 5, test_identifier_infer.at(5), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->data_per_tensor_.at("bmode_pre_proc")->device_buffer =
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer =
       std::make_shared<HoloInfer::DeviceBuffer>();
 
   // Test: TRT backend, Empty input cuda buffer 2
   status = do_inference();
   holoinfer_assert(
       status, test_module, 6, test_identifier_infer.at(6), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->data_per_tensor_.at("bmode_pre_proc")->device_buffer->resize(dbs);
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer->resize(dbs);
 
   // Test: TRT backend, Empty output cuda buffer 1
-  dbs = inference_specs_->output_per_model_.at("aortic_infer")->device_buffer->size();
-  inference_specs_->output_per_model_.at("aortic_infer")->device_buffer->resize(0);
+  dbs = inference_specs_->output_per_model_.at("m2_infer")->device_buffer->size();
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer->resize(0);
   status = do_inference();
   holoinfer_assert(
       status, test_module, 7, test_identifier_infer.at(7), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: TRT backend, Empty output cuda buffer 2
-  inference_specs_->output_per_model_.at("aortic_infer")->device_buffer = nullptr;
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer = nullptr;
   status = do_inference();
   holoinfer_assert(
       status, test_module, 8, test_identifier_infer.at(8), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->output_per_model_.at("aortic_infer")->device_buffer =
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer =
       std::make_shared<HoloInfer::DeviceBuffer>();
 
   // Test: TRT backend, Empty output cuda buffer 3
   status = do_inference();
   holoinfer_assert(
       status, test_module, 9, test_identifier_infer.at(9), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->output_per_model_.at("aortic_infer")->device_buffer->resize(dbs);
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer->resize(dbs);
 
   // Test: TRT backend, Basic end-to-end cuda inference
   status = do_inference();
@@ -133,20 +133,20 @@ void HoloInferTests::inference_tests() {
 
   // Test: TRT backend, Empty host input
   size_t re_dbs = 0;
-  dbs = inference_specs_->data_per_tensor_.at("bmode_pre_proc")->host_buffer.size();
-  inference_specs_->data_per_tensor_.at("bmode_pre_proc")->host_buffer.resize(re_dbs);
+  dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.size();
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(re_dbs);
   status = do_inference();
   holoinfer_assert(
       status, test_module, 15, test_identifier_infer.at(15), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->data_per_tensor_.at("bmode_pre_proc")->host_buffer.resize(dbs);
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(dbs);
 
   // Test: TRT backend, Empty host output
-  dbs = inference_specs_->output_per_model_.at("aortic_infer")->host_buffer.size();
-  inference_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(re_dbs);
+  dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer.size();
+  inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(re_dbs);
   status = do_inference();
   holoinfer_assert(
       status, test_module, 16, test_identifier_infer.at(16), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(dbs);
+  inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(dbs);
 
   if (use_onnxruntime) {
     // Test: ONNX backend, Basic parallel inference on CPU
@@ -194,26 +194,26 @@ void HoloInferTests::inference_tests() {
                        HoloInfer::holoinfer_code::H_SUCCESS);
 
       // Test: ONNX backend, Empty host input
-      dbs = inference_specs_->data_per_tensor_.at("bmode_pre_proc")->host_buffer.size();
-      inference_specs_->data_per_tensor_.at("bmode_pre_proc")->host_buffer.resize(0);
+      dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.size();
+      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(0);
       status = do_inference();
       holoinfer_assert(status,
                        test_module,
                        21,
                        test_identifier_infer.at(21),
                        HoloInfer::holoinfer_code::H_ERROR);
-      inference_specs_->data_per_tensor_.at("bmode_pre_proc")->host_buffer.resize(dbs);
+      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(dbs);
 
       // Test: ONNX backend, Empty host output
-      dbs = inference_specs_->output_per_model_.at("aortic_infer")->host_buffer.size();
-      inference_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(0);
+      dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer.size();
+      inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(0);
       status = do_inference();
       holoinfer_assert(status,
                        test_module,
                        22,
                        test_identifier_infer.at(22),
                        HoloInfer::holoinfer_code::H_ERROR);
-      inference_specs_->output_per_model_.at("aortic_infer")->host_buffer.resize(dbs);
+      inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(dbs);
     } else {
       // Test: ONNX backend on ARM, Basic sequential inference on GPU
       infer_on_cpu = false;
@@ -230,7 +230,7 @@ void HoloInferTests::inference_tests() {
     auto dev_id = 1;
     backend = "trt";
     auto cstatus = cudaGetDeviceProperties(&device_prop, dev_id);
-    device_map.at("bmode_perspective") = "1";
+    device_map.at("model_1") = "1";
 
     if (cstatus == cudaSuccess) {
       // Test: TRT backend, Basic sequential inference on multi-GPU
@@ -288,10 +288,10 @@ void HoloInferTests::inference_tests() {
                        test_identifier_infer.at(31),
                        HoloInfer::holoinfer_code::H_SUCCESS);
     }
-    device_map.at("bmode_perspective") = "0";
+    device_map.at("model_1") = "0";
 
     if (is_x86_64) {
-      device_map.at("aortic_stenosis") = "1";
+      device_map.at("model_2") = "1";
       if (cstatus == cudaSuccess) {
         // Test: ONNX backend, Basic sequential inference on multi-GPU
         status = prepare_for_inference();
@@ -320,7 +320,7 @@ void HoloInferTests::inference_tests() {
                          test_identifier_infer.at(25),
                          HoloInfer::holoinfer_code::H_ERROR);
       }
-      device_map.at("aortic_stenosis") = "0";
+      device_map.at("model_2") = "0";
     }
   }
 }

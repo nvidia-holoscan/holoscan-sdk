@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
 
 .. autosummary::
 
+    holoscan.conditions.AsynchronousCondition
     holoscan.conditions.BooleanCondition
     holoscan.conditions.CountCondition
     holoscan.conditions.DownstreamMessageAffordableCondition
@@ -24,6 +25,8 @@
 """
 
 from ._conditions import (
+    AsynchronousCondition,
+    AsynchronousEventState,
     BooleanCondition,
     CountCondition,
     DownstreamMessageAffordableCondition,
@@ -32,6 +35,8 @@ from ._conditions import (
 )
 
 __all__ = [
+    "AsynchronousCondition",
+    "AsynchronousEventState",
     "BooleanCondition",
     "CountCondition",
     "DownstreamMessageAffordableCondition",

@@ -32,12 +32,13 @@
 #include "./arg.hpp"
 #include "./forward_def.hpp"
 
-#define HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()                                                    \
-  template <typename ArgT,                                                                       \
-            typename... ArgsT,                                                                   \
-            typename = std::enable_if_t<!std::is_base_of_v<ComponentBase, std::decay_t<ArgT>> && \
-                                        (std::is_same_v<Arg, std::decay_t<ArgT>> ||              \
-                                         std::is_same_v<ArgList, std::decay_t<ArgT>>)>>
+#define HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()                                        \
+  template <typename ArgT,                                                           \
+            typename... ArgsT,                                                       \
+            typename = std::enable_if_t<                                             \
+                !std::is_base_of_v<::holoscan::ComponentBase, std::decay_t<ArgT>> && \
+                (std::is_same_v<::holoscan::Arg, std::decay_t<ArgT>> ||              \
+                 std::is_same_v<::holoscan::ArgList, std::decay_t<ArgT>>)>>
 #define HOLOSCAN_COMPONENT_FORWARD_ARGS(class_name) \
   HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()             \
   class_name(ArgT&& arg, ArgsT&&... args)           \

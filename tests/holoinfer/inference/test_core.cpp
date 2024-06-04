@@ -116,6 +116,7 @@ void HoloInferTests::setup_specifications() {
                                                                  pre_processor_map,
                                                                  inference_map,
                                                                  device_map,
+                                                                 temporal_map,
                                                                  is_engine_path,
                                                                  infer_on_cpu,
                                                                  parallel_inference,

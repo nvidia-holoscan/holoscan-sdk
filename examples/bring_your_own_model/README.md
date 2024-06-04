@@ -27,11 +27,11 @@ through how to modify the python example code to run the application with an ult
   ```
 * **using deb package install**:
   ```bash
-  /opt/nvidia/holoscan/examples/download_example_data
-  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
+  sudo /opt/nvidia/holoscan/examples/download_example_data
+  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
   export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  # Need to enable write permission in the model directory to write the engine file (use with caution)
-  sudo chmod a+w /opt/nvidia/holoscan/examples/bring_your_own_model/model
+  # Enable write permission in the sample model directory to write the optimized TensorRT engine file (use with caution)
+  sudo chown $USER /opt/nvidia/holoscan/examples/bring_your_own_model/model
   python3 /opt/nvidia/holoscan/examples/bring_your_own_model/python/byom.py
   ```
 * **from NGC container**:

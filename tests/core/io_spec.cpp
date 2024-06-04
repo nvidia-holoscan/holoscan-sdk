@@ -354,7 +354,8 @@ conditions:
       - name: min_size
         type: uint64_t
         value: 5
-    spec: ~)",
+    spec: ~
+    type: kMessageAvailable)",
                                         entity_typename);
   EXPECT_EQ(spec.description(), description);
 }

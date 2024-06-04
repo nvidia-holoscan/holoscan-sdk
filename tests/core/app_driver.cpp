@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <holoscan/holoscan.hpp>
 
@@ -109,6 +110,28 @@ TEST(AppDriver, TestExcludeCudaIpcTransportOnIgpu) {
     setenv("UCX_TLS", env_orig, 1);
   } else {
     unsetenv("UCX_TLS");
+  }
+}
+
+TEST(AppDriver, TestGetBoolEnvVar) {
+  // Test cases for get_bool_env_var (issue 4616525)
+  std::vector<std::pair<std::string, bool>> test_cases{
+      {"tRue", true},
+      {"False", false},
+      {"1", true},
+      {"0", false},
+      {"On", true},
+      {"Off", false},
+      {"", true},
+      {"invalid", true},
+  };
+
+  const char* env_name = "HOLOSCAN_TEST_BOOL_ENV_VAR";
+  for (const auto& [env_value, expected_result] : test_cases) {
+    setenv(env_name, env_value.c_str(), 1);
+    bool result = AppDriver::get_bool_env_var(env_name, true);
+    EXPECT_EQ(result, expected_result);
+    unsetenv(env_name);
   }
 }
 

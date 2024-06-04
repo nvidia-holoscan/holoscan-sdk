@@ -26,13 +26,7 @@ namespace holoscan::doc {
 
 namespace EventBasedScheduler {
 
-// Constructor
 PYDOC(EventBasedScheduler, R"doc(
-Event-based multi-thread scheduler class.
-)doc")
-
-// PyEventBasedScheduler Constructor
-PYDOC(EventBasedScheduler_python, R"doc(
 Event-based multi-thread scheduler
 
 Parameters

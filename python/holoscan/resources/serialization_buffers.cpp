@@ -88,7 +88,7 @@ void init_serialization_buffers(py::module_& m) {
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,
            "name"_a = "serialization_buffer"s,
-           doc::SerializationBuffer::doc_SerializationBuffer_python)
+           doc::SerializationBuffer::doc_SerializationBuffer)
       .def_property_readonly("gxf_typename",
                              &SerializationBuffer::gxf_typename,
                              doc::SerializationBuffer::doc_gxf_typename)
@@ -104,7 +104,7 @@ void init_serialization_buffers(py::module_& m) {
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,
            "name"_a = "serialization_buffer"s,
-           doc::UcxSerializationBuffer::doc_UcxSerializationBuffer_python)
+           doc::UcxSerializationBuffer::doc_UcxSerializationBuffer)
       .def_property_readonly("gxf_typename",
                              &UcxSerializationBuffer::gxf_typename,
                              doc::UcxSerializationBuffer::doc_gxf_typename)

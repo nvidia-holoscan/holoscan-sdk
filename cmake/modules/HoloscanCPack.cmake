@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,7 +96,7 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
 #   Note: only libnpp (non dev) needed at runtime
 # - libnvjitlink: needed by cupy
 # - libgomb1: needed by cupy
-# - libvulkan1, libx...: needed for holoviz operator
+# - libvulkan1 : needed for holoviz operator
 # - libegl1: needed for holoviz operator in headless mode
 # - libv4l-0: needed for v4l2 operator
 # - python3-cloudpickle: needed for python distributed applications
@@ -120,13 +120,14 @@ libcusparse.so.${CUDA_MAJOR} | ${CUSPARSE_PACKAGES}, \
 libnpp.so.${CUDA_MAJOR}-dev | ${NPP_DEV_PACKAGES}, \
 libnvJitLink.so.${CUDA_MAJOR} | ${NVJITLINK_PACKAGES}, \
 libgomb1, \
-libvulkan1, libx11-6, libxcb-glx0, libxcb-glx0, libxcursor1, libxi6, libxinerama1, libxrandr2, \
+libvulkan1, \
 libegl1, \
 libv4l-0, \
 python3-cloudpickle, \
 python3-pip"
 )
-# - libpng, libjpeg, libopenblas: needed for Torch inference backend
+# - libpng, libjpeg, libopenblas: needed for Torch inference backend.
+# - libjpeg needed by v4l2 for mjpeg support
 set(CPACK_DEBIAN_PACKAGE_SUGGESTS "libpng16-16, libjpeg-turbo8, libopenblas0")
 
 include(CPack)

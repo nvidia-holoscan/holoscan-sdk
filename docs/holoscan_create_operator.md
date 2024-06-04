@@ -98,7 +98,7 @@ class MyOp : public Operator {
 To create a custom operator in C++ it is necessary to create a subclass of
 {cpp:class}`holoscan::Operator`. The following example demonstrates how to use native operators (the operators that do not have an underlying, pre-compiled GXF Codelet).
 
-**Code Snippet:** [**examples/ping_multi_port/cpp/ping_multi_port.cpp**](https:://links-need-to-be-corrected.com)
+**Code Snippet:** [**examples/ping_multi_port/cpp/ping_multi_port.cpp**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_multi_port/cpp/ping_multi_port.cpp)
 
 ```{code-block} cpp
 :caption: examples/ping_multi_port/cpp/ping_multi_port.cpp
@@ -549,6 +549,10 @@ With the Holoscan C++ API, we can also wrap {ref}`GXF Codelets<holoscan-core-con
 
 :::{note}
 If you do not have an existing GXF extension, we recommend developing native operators using the {ref}`C++<native-cpp-operators>` or {ref}`Python<native-python-operators>` APIs to skip the need for wrapping gxf codelets as operators. If you do need to create a GXF Extension, follow the {ref}`Creating a GXF Extension <creating-gxf-extension>` section for a detailed explanation of the GXF extension development process.
+:::
+
+:::{tip}
+The manual codelet wrapping mechanism described below is no longer necessary in order to make use of a GXF Codelet as a Holoscan operator. There is a new {cpp:class}`~holoscan::ops::GXFCodeletOp` which allows directly using an existing GXF codelet via {cpp:func}`Fragment::make_operator <holoscan::Fragment::make_operator>` without having to first create a wrapper class for it. Similarly there is now also a {cpp:class}`~holoscan::GXFComponentResource` class which allows a GXF Component to be used as a Holoscan resource via {cpp:func}`Fragment::make_resource <holoscan::Fragment::make_resource>`. A detailed example of how to use each of these is provided for both C++ and Python applications in the [**examples/import_gxf_components**](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/import_gxf_components) folder.
 :::
 
 Given an existing GXF extension, we can create a simple "identity" application consisting of a replayer, which reads contents from a file on disk, and our recorder from the last section, which will store the output of the replayer exactly in the same format. This allows us to see whether the output of the recorder matches the original input files.
@@ -1311,249 +1315,11 @@ Here, `values` as returned by ``op_input.receive("receivers")`` will be a tuple 
 (python-wrapped-operators)=
 ### Python wrapping of a C++ operator
 
-:::{note}
-While we provide some utilities to simplify part of the process, this section is designed for advanced developers, since the wrapping of the C++ class using pybind11 is mostly manual and can vary greatly between each operator.
-:::
-
-For convenience while maintaining highest performance, {ref}`operators written in C++<holoscan-defining-operators-cpp>` can be wrapped in Python. In the Holoscan SDK, we've used pybind11 to wrap all the built-in operators in [`python/holoscan/operators`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v0.6.0/python/holoscan/operators). We'll highlight the main components below:
-
-#### Trampoline classes for handling Python kwargs
-
-In a C++ file (`my_op_pybind.cpp` in our skeleton code below), create a subclass of the C++ Operator class to wrap.  In the subclass, define a new constructor which takes a `Fragment`, an explicit list of parameters with potential default values (`argA`, `argB` below..), and an operator name to fully initialize the operator similar to what is done in [`Fragment::make_operator`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.5.0/include/holoscan/core/fragment.hpp#L207):
-
-```{code-block} cpp
-:caption: my_op_python/my_op_pybind.cpp
-
-#include <holoscan/core/fragment.hpp>
-#include <holoscan/core/operator.hpp>
-#include <holoscan/core/operator_spec.hpp>
-
-#include "my_op.hpp"
-
-class PyMyOp : public MyOp {
- public:
-  using MyOp::MyOp;
-
-  PyMyOp(
-    Fragment* fragment,
-    TypeA argA, TypeB argB = 0, ...,
-    const std::string& name = "my_op"
-  ) : MyOp(ArgList{
-            Arg{"argA", argA},
-            Arg{"argB", argB},
-            ...
-          }) {
-    # If you have arguments you can't pass directly to the `MyOp` constructor as an `Arg`, do
-    # the conversion and pass the result to `this->add_arg` before setting up the spec below.
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
-  }
-}
-```
-
-**Example**: Look at the implementation of `PyLSTMTensorRTInferenceOp` on [HoloHub](https://github.com/nvidia-holoscan/holohub/blob/main/operators/lstm_tensor_rt_inference/python/lstm_tensor_rt_inference.cpp) for a specific example, or any of the `Py*Op` classes used for the SDK built-in operators [here](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.6.0/python/holoscan/operators/operators.cpp). In the latter, you can find examples of `add_arg` used for less straightforward arguments.
-
-#### Documentation strings
-
-Prepare documentation strings (`const char*`) for your python class and its parameters, which we'll use in the next step.
-
-:::{note}
-Below we use a `PYDOC` macro defined in the [SDK](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.6.0/python/holoscan/macros.hpp) and available in [HoloHub](https://github.com/nvidia-holoscan/holohub/blob/main/cmake/pydoc/macros.hpp) as a utility to remove leading spaces. In this skeleton example, the documentation code is located in a header file named `my_op_pybind_docs.hpp`, under a custom `doc::MyOp` namespace. None of this is required, you just need to make the strings available in some way for the next section.
-:::
-
-```{code-block} cpp
-:caption: my_op_python/my_op_pybind_docs.hpp
-
-#include "../macros.hpp"
-
-namespace doc::MyOp {
-
-  PYDOC(cls, R"doc(
-  My operator.
-  )doc")
-
-  PYDOC(constructor, R"doc(
-  Create the operator.
-
-  Parameters
-  ----------
-  fragment : holoscan.core.Fragment
-      The fragment that the operator belongs to.
-  argA : TypeA
-      argA description
-  argB : TypeB, optional
-      argB description
-  name : str, optional
-      The name of the operator.
-  )doc")
-
-  PYDOC(initialize, R"doc(
-  Initialize the operator.
-
-  This method is called only once when the operator is created for the first time,
-  and uses a light-weight initialization.
-  )doc")
-
-  PYDOC(setup, R"doc(
-  Define the operator specification.
-
-  Parameters
-  ----------
-  spec : holoscan.core.OperatorSpec
-      The operator specification.
-  )doc")
-
-}
-```
-
-**Examples**: Continuing with the `LSTMTensorRTInferenceOp` example on HoloHub, the documentation strings are defined in [lstm_tensor_rt_inference_pydoc.hpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/lstm_tensor_rt_inference/python/lstm_tensor_rt_inference_pydoc.hpp). The documentation strings for the SDK built-in operators are located in [operators_pydoc.hpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.6.0/python/holoscan/operators/operators_pydoc.hpp).
-
-#### Writing glue code
-
-In the same C++ file as the first section, call `py::class_` within `PYBIND11_MODULE` to define your operator python class.
-
-:::{note}
-- If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND_11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` (covered in more details in the next section), in this case, `_my_op`.
-- If you are implementing the python wrapping in a standalone CMake project,the `<module_name>` passed to `PYBIND_11_MODULE` **must** match the name of the module passed to the [pybind11-add-module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) CMake function.
-:::
-
-```{code-block} cpp
-:caption: my_op_python/my_op_pybind.cpp (continued)
-:emphasize-lines: 11-12, 29
-
-#include <pybind11/pybind11.h>
-
-#include "my_op_pybind_docs.hpp"
-
-using pybind11::literals::operator""_a;
-namespace py = pybind11;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
-// See notes above, value of `<module_name>` is important
-PYBIND11_MODULE(<module_name>, m) {
-  m.doc() = R"pbdoc(
-    My Module Python Bindings
-    ---------------------------------------
-    .. currentmodule:: <module_name>
-    .. autosummary::
-      :toctree: _generate
-      add
-      subtract
-  )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
-
-  py::class_<MyOp, PyMyOp, Operator, std::shared_ptr<MyOp>>(
-    m, "MyOp", doc::MyOp::doc_cls)
-  .def(py::init<Fragment*, TypeA, TypeB, ..., const std::string&>(),
-      "fragment"_a,
-      "argA"_a,
-      "argB"_a = 0,
-      ...,
-      "name"_a = "my_op",
-      doc::MyOp::doc_constructor)
-  .def("initialize",
-      &MyOp::initialize,
-      doc::MyOp::doc_initialize)
-  .def("setup",
-      &MyOp::setup,
-      "spec"_a,
-      doc::MyOp::doc_setup);
-}
-```
-
-**Examples**: Like the trampoline class, the `PYBIND11_MODULE` implementation of the `LSTMTensorRTInferenceOp` example on HoloHub is located in [lstm_tensor_rt_inference.cpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/lstm_tensor_rt_inference/python/lstm_tensor_rt_inference.cpp#L104). For the SDK built-in operators, their class bindings are all implemented within a single `PYBIND11_MODULE` in [operators.cpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.6.0/python/holoscan/operators/operators.cpp#L469).
-
-#### Configuring with CMake
-
-We use CMake to configure pybind11 and build the bindings for the C++ operator you wish to wrap. There are two approaches detailed below, one for HoloHub (recommended), one for standalone CMake projects.
+Wrapping an operator developed in C++ for use from Python is covered in a separate section on {ref}`creating C++ operator Python bindings<holoscan-create-operators-python-bindings>`.
 
 :::{tip}
-To have your bindings built, ensure the CMake code below is executed as part of a CMake project which already defines the C++ operator as a CMake target, either built in your project (with `add_library`) or imported (with `find_package` or `find_library`).
+As of Holoscan 2.1, there is a {py:class}`~holoscan.operators.GXFCodeletOp` class which can be used to easily wrap an existing GXF codelet from Python without having to first write an underlying C++ wrapper class for it. Similarly there is now also a {py:class}`~holoscan.resources.GXFComponentResource` class which allows a GXF Component to be used as a Holoscan resource from Python applications. A detailed example of how to use each of these is provided for Python applications in the [**examples/import_gxf_components**](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/import_gxf_components/python) folder.
 :::
-
-`````{tab-set}
-````{tab-item} In HoloHub
-We provide a CMake utility function named `pybind11_add_holohub_module` in HoloHub to facilitate configuring and building your python bindings.
-
-In our skeleton code below, a top-level CMakeLists.txt which already defined the `my_op` target for the C++ operator would need to do `add_subdirectory(my_op_python)` to include the following CMakeLists.txt. The `pybind11_add_holohub_module` lists that C++ operator target, the C++ class to wrap, and the path to the C++ binding source code we implemented above.  Note how the `<module_name>` from the previous section would need to match `_<CPP_CMAKE_TARGET>` i.e. `_my_op`.
-
-```{code-block} cmake
-:caption: my_op_python/CMakeLists.txt
-
-include(pybind11_add_holohub_module)
-pybind11_add_holohub_module(
-    CPP_CMAKE_TARGET my_op
-    CLASS_NAME "MyOp"
-    SOURCES my_op_pybind.cpp
-)
-```
-
-**Example**: the cmake configuration for the `LSTMTensorRTInferenceOp` python bindings on HoloHub can be found [here](https://github.com/nvidia-holoscan/holohub/blob/main/operators/lstm_tensor_rt_inference/python/CMakeLists.txt). This directory is reachable thanks to the `add_subdirectory(python)` in the CMakeLists.txt one folder above, but that's an arbitrary opinionated location and not a required directory structure.
-
-````
-````{tab-item} Standalone CMake
-
-Follow the [pybind11 documentation](https://pybind11.readthedocs.io/en/stable/compiling.html#building-with-cmake) to configure your CMake project to use pybind11. Then, use the [pybind11_add_module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) function with the cpp files containing the code above, and link against `holoscan::core` and the library that exposes your C++ operator to wrap.
-
-```{code-block} cmake
-:caption: my_op_python/CMakeLists.txt
-
-pybind11_add_module(my_python_module my_op_pybind.cpp)
-target_link_libraries(my_python_module
-  PRIVATE holoscan::core
-  PUBLIC my_op
-)
-```
-
-**Example**: in the SDK, this is done [here](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.6.0/python/holoscan/CMakeLists.txt).
-
-````
-`````
-
-#### Importing the class in Python
-
-`````{tab-set}
-````{tab-item} In HoloHub
-
-When building your project, two files will be generated inside `<build_or_install_dir>/python/lib/holohub/my_op`:
-1. the shared library for your bindings (`_my_op.cpython-<pyversion>-<arch>-linux-gnu.so`)
-2. an `__init__.py` file that makes the necessary imports to expose this in python
-
-Assuming you have `export PYTHONPATH=<build_or_install_dir>/python/lib/`, you should then be able to create an application in Holohub that imports your class via:
-
-```python
-from holohub.my_op import MyOp
-```
-**Example**: `LSTMTensorRTInferenceOp` is imported in the Endoscopy Tool Tracking application on HoloHub [here](https://github.com/nvidia-holoscan/holohub/blob/06365894c7231c312e1217461f9014e3b50425e8/applications/endoscopy_tool_tracking/python/endoscopy_tool_tracking.py#L35).
-
-````
-````{tab-item} Standalone CMake
-
-When building your project, a shared library file holding the python bindings and named `my_python_module.cpython-<pyversion>-<arch>-linux-gnu.so` will be generated inside `<build_or_install_dir>/my_op_python` (configurable with `OUTPUT_NAME` and `LIBRARY_OUTPUT_DIRECTORY` respectively in CMake).
-
-From there, you can import it in python via:
-
-```py
-import holoscan.core
-import holoscan.gxf # if your c++ operator uses gxf extensions
-
-from <build_or_install_dir>.my_op_python import MyOp
-```
-
-:::{tip}
-To imitate HoloHub's behavior, you can also place that file alongside the .so file, name it `__init__.py`, and replace `<build_or_install_dir>` by `.`. It can then be imported as a python module, assuming `<build_or_install_dir>` is a module under the `PYTHONPATH` environment variable.
-:::
-````
-`````
 
 (interoperability-with-wrapped-operators-python)=
 ### Interoperability between wrapped and native Python operators
@@ -1585,13 +1351,13 @@ The following code shows how to implement `ImageProcessingOp`'s `compute()` meth
 :lineno-start: 62
 :emphasize-lines: 1,3,9,11,15,18,20
     def compute(self, op_input, op_output, context):
-        # in_message is of dict
+        # in_message is a dict of tensors
         in_message = op_input.receive("input_tensor")
 
         # smooth along first two axes, but not the color channels
         sigma = (self.sigma, self.sigma, 0)
 
-        # out_message is of dict
+        # out_message will be a dict of tensors
         out_message = dict()
 
         for key, value in in_message.items():
@@ -1659,3 +1425,66 @@ There is a special serialization code for tensor types for emit/receive of tenso
 
 This avoids NumPy or CuPy arrays being serialized to a string via cloudpickle so that they can efficiently be transmitted and the same type is returned again on the opposite side. Worth mentioning is that ,if the type emitted was e.g. a PyTorch host/device tensor on emit, the received value will be a numpy/cupy array since ANY object implementing the interfaces returns those types.
 :::
+
+## Advanced Topics
+
+### Further customizing inputs and outputs
+
+This section complements the information above on basic input and output port configuration given separately in the C++ and Python operator creation guides. The concepts described here are the same for either the C++ or Python APIs.
+
+By default, both the input and output ports of an Operator will use a double-buffered queue that has a capacity of one message and a policy that is set to error if a message arrives while the queue is already full. A single `MessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::MessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.MessageAvailableCondition>`)) condition is automatically placed on the operator for each input port so that the `compute` method will not be called until a single message is available at each port. Similarly each output port has a `DownstreamMessageAffordableCondition` ({cpp:class}`C++ <holoscan::gxf::DownstreamMessageAffordableCondition>`/{py:class}`Python <holoscan.conditions.DownstreamMessageAffordableCondition>`) condition that does not let the operator call `compute` until any operators connected downstream have space in their receiver queue for a single message. These default conditions ensure that messages never arrive at a queue when it is already full and that a message has already been received whenever the `compute` method is called. These default conditions make it relatively easy to connect a pipeline where each operator calls compute in turn, but may not be suitable for all applications. This section covers how the default behavior can be overridden on request.
+
+:::{note}
+Overriding operator port properties is an advanced topic. Developers may want to skip this section until they come across a case where the default behavior is not sufficient for their application.
+:::
+
+
+To override the properties of the queue used for a given port, the `connector` ({cpp:func}`C++ <holoscan::IOSpec::connector>`/{py:func}`Python <holoscan.core.IOSpec.connector>`) method can be used as shown in the example below. This example also shows how the `condition` ({cpp:func}`C++ <holoscan::IOSpec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method can be used to change the condition type placed on the Operator by a port. In general, when an operator has multiple conditions, they are AND combined, so the conditions on **all** ports must be satisfied before an operator can call `compute`.
+
+
+`````{tab-set}
+````{tab-item} C++ Example
+Consider the following code from within the {cpp:func}`holoscan::Operator::setup` method of an operator.
+```{code-block} cpp
+spec.output<TensorMap>("out1")
+
+spec.output<TensorMap>("out2").condition(ConditionType::kNone);
+
+spec.output<TensorMap>("in")
+        .connector(IOSpec::ConnectorType::kDoubleBuffer,
+                   Arg("capacity", static_cast<uint64_t>(2)),
+                   Arg("policy", static_cast<uint64_t>(1)))  // 0=pop, 1=reject, 2=fault (default)
+        .condition(ConditionType::kMessageAvailable,
+                   Arg("min_size", static_cast<uint64_t>(2)),
+                   Arg("front_stage_max_size", static_cast<size_t>(2)));
+```
+This would define
+- an output port named "out1" with the default properties
+- an output port named "out2" that still has the default connector (a {cpp:class}`holoscan::gxf::DoubleBufferTransmitter`), but the default condition of `ConditionType::kDownstreamMessageAffordable` is removed by setting `ConditionType::kNone`. This indicates that the operator will not check if any port downstream of "out2" has space available in its receiver queue before calling `compute`.
+- an input port named "in" where both the connector and condition have different parameters than the default. For example, the queue size is increased to 2 and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue.
+
+````
+````{tab-item} Python Example
+Consider the following code from within the {cpp:func}`holoscan::Operator::setup` method of an operator.
+```{code-block} python
+spec.output("out1")
+
+spec.output("out2").condition(ConditionType.NONE)
+
+spec.input("in").connector(
+    IOSpec.ConnectorType.DOUBLE_BUFFER,
+    capacity=2,
+    policy=1,  # 0=pop, 1=reject, 2=fault (default)
+).condition(ConditionType.MESSAGE_AVAILABLE, min_size=2, front_stage_max_size=2)
+
+```
+This would define
+- an output port named "out1" with the default properties
+- an output port named "out2" that still has the default connector (a {py:class}`holoscan.resources.DoubleBufferTransmitter`), but the default condition of `ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE` is removed by setting `ConditionType.NONE`. This indicates that the operator will not check if any port downstream of "out2" has space available in its receiver queue before calling `compute`.
+- an input port named "in1" where both the connector and condition have different parameters than the default. For example, the queue size is increased to 2 and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue.
+
+````
+`````
+
+To learn more about overriding connectors and/or conditions there is a [multi_branch_pipeline](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/multi_branch_pipeline) example which overrides default conditions to allow two branches of a pipeline to run at different frame rates. There is also an example of increasing the queue sizes available in [this Python queue policy test application](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_application_with_repeated_emit_on_same_port.py).
+

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,13 +27,6 @@ namespace holoscan::doc {
 namespace BooleanCondition {
 
 PYDOC(BooleanCondition, R"doc(
-Boolean condition class.
-
-Used to control whether an entity is executed.
-)doc")
-
-// PyBooleanCondition Constructor
-PYDOC(BooleanCondition_python, R"doc(
 Boolean condition.
 
 Parameters

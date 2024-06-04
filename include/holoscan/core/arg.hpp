@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,7 @@
 #include <vector>
 
 #include "./type_traits.hpp"
-#include "./common.hpp"
+#include "holoscan/logger/logger.hpp"
 
 // #include "gxf/std/complex.hpp"  // nvidia::gxf::complex64, complex128
 
@@ -313,6 +313,13 @@ class Arg {
    * @return YAML node including the name, type, and value of the argument.
    */
   YAML::Node to_yaml_node() const;
+
+  /**
+   * @brief Get a YAML representation of the argument value.
+   *
+   * @ return YAML node including the value of the argument.
+   */
+  YAML::Node value_to_yaml_node() const;
 
   /**
    * @brief Get a description of the argument.

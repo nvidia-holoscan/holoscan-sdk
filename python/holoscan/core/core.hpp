@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYBIND11_CORE_CORE_HPP
-#define PYBIND11_CORE_CORE_HPP
+#ifndef PYHOLOSCAN_CORE_CORE_HPP
+#define PYHOLOSCAN_CORE_CORE_HPP
 
 #include <pybind11/pybind11.h>
 
@@ -47,4 +47,4 @@ void init_cli(py::module_&);
 
 }  // namespace holoscan
 
-#endif /* PYBIND11_CORE_CORE_HPP */
+#endif /* PYHOLOSCAN_CORE_CORE_HPP */

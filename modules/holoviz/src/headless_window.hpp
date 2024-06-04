@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +55,7 @@ class HeadlessWindow : public Window {
   ///@{
   void init_im_gui() override;
   void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) override;
+  void restore_callbacks() override;
 
   const char** get_required_instance_extensions(uint32_t* count) override;
   const char** get_required_device_extensions(uint32_t* count) override;

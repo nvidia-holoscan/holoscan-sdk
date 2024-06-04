@@ -72,7 +72,6 @@ from ._core import (
     ArgType,
     CLIOptions,
     Component,
-    ComponentSpec,
     Condition,
     ConditionType,
     Config,
@@ -87,6 +86,8 @@ from ._core import Fragment as _Fragment
 from ._core import InputContext, IOSpec, Message, NetworkContext
 from ._core import Operator as _Operator
 from ._core import OutputContext, ParameterFlag
+from ._core import PyComponentSpec as ComponentSpec
+from ._core import PyRegistryContext as _RegistryContext
 from ._core import PyOperatorSpec as OperatorSpec
 from ._core import PyTensor as Tensor
 from ._core import (
@@ -97,6 +98,7 @@ from ._core import (
     kwargs_to_arglist,
     py_object_to_arg,
 )
+from ._core import register_types as _register_types
 
 Graph = OperatorGraph  # define alias for backward compatibility
 
@@ -137,6 +139,7 @@ __all__ = [
     "Tracker",
     "arg_to_py_object",
     "arglist_to_kwargs",
+    "io_type_registry",
     "kwargs_to_arglist",
     "py_object_to_arg",
 ]
@@ -356,3 +359,9 @@ class Tracker:
     def __exit__(self, exc_type, exc_value, exc_tb):
         if self.enable_logging:
             self.tracker.end_logging()
+
+
+_registry_context = _RegistryContext()
+io_type_registry = _registry_context.registry()
+
+_register_types(io_type_registry)

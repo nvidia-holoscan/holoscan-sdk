@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,15 @@ namespace holoscan::ops {
 
 gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor) {
   rank = tensor->rank();
+  // validate row-major memory layout
+  int32_t last_axis = rank - 1;
+  for (auto axis = last_axis; axis > 0; --axis) {
+    if (tensor->stride(axis) > tensor->stride(axis - 1)) {
+      HOLOSCAN_LOG_ERROR("Tensor must have a row-major memory layout (C-contiguous memory order).");
+      return GXF_INVALID_DATA_FORMAT;
+    }
+  }
+
   /// @todo this is assuming HWC, should either auto-detect (if possible) or make user
   /// configurable
   components = tensor->shape().dimension(tensor->rank() - 1);

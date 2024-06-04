@@ -276,7 +276,7 @@ void Operator::reset_graph_entities() {
   };
   auto reset_iospec =
       [reset_resource,
-       reset_condition](const std::unordered_map<std::string, std::unique_ptr<IOSpec>>& io_specs) {
+       reset_condition](const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_specs) {
         for (auto& [_, io_spec] : io_specs) {
           reset_resource(io_spec->connector());
           for (auto& [_, condition] : io_spec->conditions()) { reset_condition(condition); }

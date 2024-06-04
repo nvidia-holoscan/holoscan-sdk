@@ -22,6 +22,7 @@
     holoscan.resources.CudaStreamPool
     holoscan.resources.DoubleBufferReceiver
     holoscan.resources.DoubleBufferTransmitter
+    holoscan.resources.GXFComponentResource
     holoscan.resources.ManualClock
     holoscan.resources.MemoryStorageType
     holoscan.resources.RealtimeClock
@@ -38,6 +39,8 @@
     holoscan.resources.UcxSerializationBuffer
     holoscan.resources.UcxTransmitter
 """
+
+from holoscan.core import ComponentSpec, _Fragment
 
 from ._resources import (
     Allocator,
@@ -62,6 +65,9 @@ from ._resources import (
     UcxTransmitter,
     UnboundedAllocator,
 )
+from ._resources import (
+    GXFComponentResource as _GXFComponentResource,
+)
 
 __all__ = [
     "Allocator",
@@ -70,6 +76,7 @@ __all__ = [
     "CudaStreamPool",
     "DoubleBufferReceiver",
     "DoubleBufferTransmitter",
+    "GXFComponentResource",
     "ManualClock",
     "MemoryStorageType",
     "RealtimeClock",
@@ -86,3 +93,46 @@ __all__ = [
     "UcxTransmitter",
     "UnboundedAllocator",
 ]
+
+
+class GXFComponentResource(_GXFComponentResource):
+    def __setattr__(self, name, value):
+        readonly_attributes = [
+            "fragment",
+            "gxf_typename",
+            "conditions",
+            "resources",
+            "operator_type",
+            "description",
+        ]
+        if name in readonly_attributes:
+            raise AttributeError(f'cannot override read-only property "{name}"')
+        super().__setattr__(name, value)
+
+    def __init__(self, fragment, *args, **kwargs):
+        if not isinstance(fragment, _Fragment):
+            raise ValueError(
+                "The first argument to an GXFComponentResource's constructor must be the Fragment "
+                "(Application) to which it belongs."
+            )
+        # It is recommended to not use super()
+        # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
+        _GXFComponentResource.__init__(self, self, fragment, *args, **kwargs)
+        # Create a PyGXFComponentResourceSpec object and pass it to the C++ API
+        spec = ComponentSpec(fragment=self.fragment, op=self)
+        self.spec = spec
+        # Call setup method in the derived class
+        self.setup(spec)
+
+    def setup(self, spec: ComponentSpec):
+        # This method is invoked by the derived class to set up the operator.
+        super().setup(spec)
+
+    def initialize(self):
+        # Place holder for initialize method
+        pass
+
+
+# copy docstrings defined in core_pydoc.hpp
+GXFComponentResource.__doc__ = _GXFComponentResource.__doc__
+GXFComponentResource.__init__.__doc__ = _GXFComponentResource.__init__.__doc__

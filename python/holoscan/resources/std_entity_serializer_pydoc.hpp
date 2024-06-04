@@ -28,11 +28,6 @@ namespace StdEntitySerializer {
 
 PYDOC(StdEntitySerializer, R"doc(
 Default serializer for GXF entities.
-)doc")
-
-// Constructor
-PYDOC(StdEntitySerializer_python, R"doc(
-Default serializer for GXF entities.
 
 Parameters
 ----------

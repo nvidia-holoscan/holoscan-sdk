@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -73,7 +74,8 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
   using InferenceProcessorOp::InferenceProcessorOp;
 
   // Define a constructor that fully initializes the object.
-  PyInferenceProcessorOp(Fragment* fragment, std::shared_ptr<::holoscan::Allocator> allocator,
+  PyInferenceProcessorOp(Fragment* fragment, const py::args& args,
+                         std::shared_ptr<::holoscan::Allocator> allocator,
                          py::dict process_operations,  // InferenceProcessorOp::DataVecMap
                          py::dict processed_map,       // InferenceProcessorOp::DataVecMap
                          const std::vector<std::string>& in_tensor_names,
@@ -92,6 +94,7 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
                                      Arg{"config_path", config_path},
                                      Arg{"disable_transmitter", disable_transmitter}}) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
 
@@ -136,20 +139,10 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
 
 PYBIND11_MODULE(_inference_processor, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK InferenceProcessorOp Python Bindings
+        -------------------------------------------------
         .. currentmodule:: _inference_processor
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<InferenceProcessorOp,
              PyInferenceProcessorOp,
@@ -160,6 +153,7 @@ PYBIND11_MODULE(_inference_processor, m) {
 
   inference_processor_op
       .def(py::init<Fragment*,
+                    const py::args&,
                     std::shared_ptr<::holoscan::Allocator>,
                     py::dict,
                     py::dict,

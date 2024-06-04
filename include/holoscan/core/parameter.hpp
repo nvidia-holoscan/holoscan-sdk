@@ -18,6 +18,10 @@
 #ifndef HOLOSCAN_CORE_PARAMETER_HPP
 #define HOLOSCAN_CORE_PARAMETER_HPP
 
+// Include fmt library for specialized formatting
+#include <fmt/format.h>
+#include <fmt/ranges.h>  // allows fmt to format std::array, std::vector, etc.
+
 #include <any>
 #include <functional>
 #include <iostream>
@@ -26,8 +30,7 @@
 #include <typeinfo>
 #include <utility>
 
-#include "./arg.hpp"
-#include "./common.hpp"
+#include "./type_traits.hpp"
 
 namespace holoscan {
 
@@ -44,73 +47,6 @@ enum class ParameterFlag {
   kOptional = 1,
   /// The parameter is dynamic and might change at runtime.
   kDynamic = 2,
-};
-
-/**
- * @brief Class to wrap a parameter with std::any.
- */
-class ParameterWrapper {
- public:
-  ParameterWrapper() = default;
-
-  /**
-   * @brief Construct a new ParameterWrapper object.
-   *
-   * @tparam typeT The type of the parameter.
-   * @param param The parameter to wrap.
-   */
-  template <typename typeT>
-  explicit ParameterWrapper(Parameter<typeT>& param)
-      : type_(&typeid(typeT)),
-        arg_type_(ArgType::create<typeT>()),
-        value_(&param),
-        storage_ptr_(static_cast<void*>(&param)) {}
-
-  /**
-   * @brief Construct a new ParameterWrapper object.
-   *
-   * @param value The parameter to wrap.
-   * @param type The type of the parameter.
-   * @param arg_type The type of the parameter as an ArgType.
-   */
-  ParameterWrapper(std::any value, const std::type_info* type, const ArgType& arg_type)
-      : type_(type), arg_type_(arg_type), value_(std::move(value)) {}
-
-  /**
-   * @brief Get the type of the parameter.
-   *
-   * @return The type info of the parameter.
-   */
-  const std::type_info& type() const {
-    if (type_) { return *type_; }
-    return typeid(void);
-  }
-  /**
-   * @brief Get the type of the parameter as an ArgType.
-   *
-   * @return The type of the parameter as an ArgType.
-   */
-  const ArgType& arg_type() const { return arg_type_; }
-
-  /**
-   * @brief Get the value of the parameter.
-   *
-   * @return The reference to the value of the parameter.
-   */
-  std::any& value() { return value_; }
-
-  /**
-   * @brief Get the pointer to the parameter storage.
-   *
-   * @return The pointer to the parameter storage.
-   */
-  void* storage_ptr() const { return storage_ptr_; }
-
- private:
-  const std::type_info* type_ = nullptr;  ///< The element type of Parameter
-  ArgType arg_type_;                      ///< The type of the argument
-  std::any value_;                        ///< The value of the parameter
-  void* storage_ptr_ = nullptr;           ///< The pointer to the parameter storage
 };
 
 /**
@@ -133,6 +69,18 @@ class MetaParameter {
    * @param value The value of the parameter.
    */
   explicit MetaParameter(ValueT&& value) : value_(std::move(value)) {}
+  /**
+   * @brief Construct a new MetaParameter object
+   *
+   * @param value The value of the parameter.
+   * @param key The key (name) of the parameter.
+   * @param headline The headline of the parameter.
+   * @param description The description of the parameter.
+   * @param flag The flag of the parameter (default: ParameterFlag::kNone).
+   */
+  MetaParameter(const ValueT& value, const char* key, const char* headline, const char* description,
+                ParameterFlag flag)
+      : key_(key), headline_(headline), description_(description), flag_(flag), value_(value) {}
 
   /**
    * @brief Define the assignment operator.
@@ -289,6 +237,109 @@ class MetaParameter {
   ParameterFlag flag_ = ParameterFlag::kNone;
   std::optional<ValueT> value_;
   std::optional<ValueT> default_value_;
+};
+
+}  // namespace holoscan
+
+// ------------------------------------------------------------------------------------------------
+// holoscan::Parameter<T> format support for fmt::format
+//
+//   After defining the holoscan::Parameter<T> class, we need to specialize the fmt::formatter
+//   struct for the holoscan::Parameter<T> type to use it with fmt::format. Here, we specialize the
+//   fmt::formatter struct for the holoscan::Parameter<T> type before including the
+//   holoscan/logger/logger.hpp file.
+// ------------------------------------------------------------------------------------------------
+
+namespace fmt {
+
+template <typename typeT>
+struct formatter<holoscan::Parameter<typeT>> : formatter<typeT> {
+  template <typename FormatContext>
+  auto format(const holoscan::Parameter<typeT>& v, FormatContext& ctx) const {
+    return formatter<typeT>::format(const_cast<holoscan::Parameter<typeT>&>(v).get(), ctx);
+  }
+};
+
+}  // namespace fmt
+
+// Include the logger.hpp after the fmt::formatter specialization
+#include "holoscan/logger/logger.hpp"
+
+// ------------------------------------------------------------------------------------------------
+
+// Define ParameterWrapper class
+
+#include "./arg.hpp"
+
+namespace holoscan {
+
+/**
+ * @brief Class to wrap a parameter with std::any.
+ */
+class ParameterWrapper {
+ public:
+  ParameterWrapper() = default;
+
+  /**
+   * @brief Construct a new ParameterWrapper object.
+   *
+   * @tparam typeT The type of the parameter.
+   * @param param The parameter to wrap.
+   */
+  template <typename typeT>
+  explicit ParameterWrapper(Parameter<typeT>& param)
+      : type_(&typeid(typeT)),
+        arg_type_(ArgType::create<typeT>()),
+        value_(&param),
+        storage_ptr_(static_cast<void*>(&param)) {}
+
+  /**
+   * @brief Construct a new ParameterWrapper object.
+   *
+   * @param value The parameter to wrap.
+   * @param type The type of the parameter.
+   * @param arg_type The type of the parameter as an ArgType.
+   * @param storage_ptr
+   */
+  ParameterWrapper(std::any value, const std::type_info* type, const ArgType& arg_type,
+                   void* storage_ptr = nullptr)
+      : type_(type), arg_type_(arg_type), value_(std::move(value)), storage_ptr_(storage_ptr) {}
+
+  /**
+   * @brief Get the type of the parameter.
+   *
+   * @return The type info of the parameter.
+   */
+  const std::type_info& type() const {
+    if (type_) { return *type_; }
+    return typeid(void);
+  }
+  /**
+   * @brief Get the type of the parameter as an ArgType.
+   *
+   * @return The type of the parameter as an ArgType.
+   */
+  const ArgType& arg_type() const { return arg_type_; }
+
+  /**
+   * @brief Get the value of the parameter.
+   *
+   * @return The reference to the value of the parameter.
+   */
+  std::any& value() { return value_; }
+
+  /**
+   * @brief Get the pointer to the parameter storage.
+   *
+   * @return The pointer to the parameter storage.
+   */
+  void* storage_ptr() const { return storage_ptr_; }
+
+ private:
+  const std::type_info* type_ = nullptr;  ///< The element type of Parameter
+  ArgType arg_type_;                      ///< The type of the argument
+  std::any value_;                        ///< The value of the parameter
+  void* storage_ptr_ = nullptr;           ///< The pointer to the parameter storage
 };
 
 }  // namespace holoscan

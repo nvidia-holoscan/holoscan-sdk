@@ -21,6 +21,7 @@
 #include <gxf/core/gxf.h>
 
 #include <iostream>
+#include <string>
 #include <utility>
 
 #include "../executors/gxf/gxf_parameter_adaptor.hpp"
@@ -31,6 +32,11 @@ namespace holoscan::ops {
 
 class GXFOperator : public holoscan::Operator {
  public:
+  /**
+   * @brief Construct a new GXFOperator object.
+   *
+   * @param args The arguments to be passed to the operator.
+   */
   HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
   explicit GXFOperator(ArgT&& arg, ArgsT&&... args)
       : Operator(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {
@@ -172,8 +178,22 @@ class GXFOperator : public holoscan::Operator {
   }
 
  protected:
+  /**
+   * This method is invoked by 'GXFExecutor::initialize_operator(Operator* op)' during
+   * the initialization of the operator.
+   * By overriding this method, additional setup tasks are performed for the operator, including:
+   * - Initializing the `spec_` object with the codelet's parameters.
+   *
+   * @return The codelet component id corresponding to GXF codelet.
+   */
   gxf_uid_t add_codelet_to_graph_entity() override;
 
+  /**
+   * This method is invoked at the end of 'GXFExecutor::initialize_operator(Operator* op)' during
+   * the initialization of the operator.
+   * By overriding this method, we can modify how GXF Codelet's parameters are set from the
+   * arguments.
+   */
   void set_parameters() override;
 
   /**
@@ -226,9 +246,12 @@ class GXFOperator : public holoscan::Operator {
         });
   }
 
-  gxf_context_t gxf_context_ = nullptr;  ///< The GXF context.
-  gxf_uid_t gxf_eid_ = 0;                ///< GXF entity ID
-  gxf_uid_t gxf_cid_ = 0;                ///< The GXF component ID.
+  gxf_context_t gxf_context_ = nullptr;                       ///< The GXF context.
+  gxf_uid_t gxf_eid_ = 0;                                     ///< GXF entity ID
+  gxf_uid_t gxf_cid_ = 0;                                     ///< The GXF component ID.
+  nvidia::gxf::Handle<nvidia::gxf::Codelet> codelet_handle_;  ///< The codelet handle.
+  /// The GXF type name (used for GXFCodeletOp)
+  std::string gxf_typename_ = "unknown_gxf_typename";
 };
 
 }  // namespace holoscan::ops

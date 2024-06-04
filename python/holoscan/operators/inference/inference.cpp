@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -73,12 +74,13 @@ class PyInferenceOp : public InferenceOp {
   using InferenceOp::InferenceOp;
 
   // Define a constructor that fully initializes the object.
-  PyInferenceOp(Fragment* fragment, const std::string& backend,
+  PyInferenceOp(Fragment* fragment, const py::args& args, const std::string& backend,
                 std::shared_ptr<::holoscan::Allocator> allocator,
                 py::dict inference_map,      // InferenceOp::DataVecMap
                 py::dict model_path_map,     // InferenceOp::DataMap
                 py::dict pre_processor_map,  // InferenceOp::DataVecMap
                 py::dict device_map,         // InferenceOp::DataMap
+                py::dict temporal_map,       // InferenceOp::DataMap
                 py::dict backend_map,        // InferenceOp::DataMap
                 const std::vector<std::string>& in_tensor_names,
                 const std::vector<std::string>& out_tensor_names, bool infer_on_cpu = false,
@@ -101,6 +103,7 @@ class PyInferenceOp : public InferenceOp {
                             Arg{"enable_fp16", enable_fp16},
                             Arg{"is_engine_path", is_engine_path}}) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
 
@@ -126,6 +129,12 @@ class PyInferenceOp : public InferenceOp {
       }
     }
 
+    py::dict temporal_map_infer = temporal_map.cast<py::dict>();
+    for (auto& [key, value] : temporal_map_infer) { temporal_map_infer[key] = py::str(value); }
+
+    py::dict device_map_infer = device_map.cast<py::dict>();
+    for (auto& [key, value] : device_map_infer) { device_map_infer[key] = py::str(value); }
+
     // convert from Python dict to InferenceOp::DataVecMap
     auto inference_map_datavecmap = _dict_to_inference_datavecmap(inference_map_dict);
     this->add_arg(Arg("inference_map", inference_map_datavecmap));
@@ -133,8 +142,11 @@ class PyInferenceOp : public InferenceOp {
     auto model_path_datamap = _dict_to_inference_datamap(model_path_map.cast<py::dict>());
     this->add_arg(Arg("model_path_map", model_path_datamap));
 
-    auto device_datamap = _dict_to_inference_datamap(device_map.cast<py::dict>());
+    auto device_datamap = _dict_to_inference_datamap(device_map_infer);
     this->add_arg(Arg("device_map", device_datamap));
+
+    auto temporal_datamap = _dict_to_inference_datamap(temporal_map_infer);
+    this->add_arg(Arg("temporal_map", temporal_datamap));
 
     auto backend_datamap = _dict_to_inference_datamap(backend_map.cast<py::dict>());
     this->add_arg(Arg("backend_map", backend_datamap));
@@ -152,28 +164,20 @@ class PyInferenceOp : public InferenceOp {
 
 PYBIND11_MODULE(_inference, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK InferenceOp Python Bindings
+        ----------------------------------------
         .. currentmodule:: _inference
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<InferenceOp, PyInferenceOp, Operator, std::shared_ptr<InferenceOp>> inference_op(
       m, "InferenceOp", doc::InferenceOp::doc_InferenceOp);
 
   inference_op
       .def(py::init<Fragment*,
+                    const py::args&,
                     const std::string&,
                     std::shared_ptr<::holoscan::Allocator>,
+                    py::dict,
                     py::dict,
                     py::dict,
                     py::dict,
@@ -197,6 +201,7 @@ PYBIND11_MODULE(_inference, m) {
            "model_path_map"_a,
            "pre_processor_map"_a,
            "device_map"_a = py::dict(),
+           "temporal_map"_a = py::dict(),
            "backend_map"_a = py::dict(),
            "in_tensor_names"_a = std::vector<std::string>{},
            "out_tensor_names"_a = std::vector<std::string>{},

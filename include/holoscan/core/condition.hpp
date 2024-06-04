@@ -35,12 +35,13 @@
 #include "./gxf/gxf_component.hpp"
 #include "./gxf/gxf_utils.hpp"
 
-#define HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                                \
-  template <typename ArgT,                                                                   \
-            typename... ArgsT,                                                               \
-            typename = std::enable_if_t<!std::is_base_of_v<Condition, std::decay_t<ArgT>> && \
-                                        (std::is_same_v<Arg, std::decay_t<ArgT>> ||          \
-                                         std::is_same_v<ArgList, std::decay_t<ArgT>>)>>
+#define HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                                     \
+  template <typename ArgT,                                                                        \
+            typename... ArgsT,                                                                    \
+            typename =                                                                            \
+                std::enable_if_t<!std::is_base_of_v<::holoscan::Condition, std::decay_t<ArgT>> && \
+                                 (std::is_same_v<::holoscan::Arg, std::decay_t<ArgT>> ||          \
+                                  std::is_same_v<::holoscan::ArgList, std::decay_t<ArgT>>)>>
 
 /**
  * @brief Forward the arguments to the super class.
@@ -98,6 +99,7 @@ namespace holoscan {
 // Forward declarations
 class Operator;
 
+// Note: Update `IOSpec::to_yaml_node()` if you add new condition types
 enum class ConditionType {
   kNone,              ///< No condition
   kMessageAvailable,  ///< Default for input port (nvidia::gxf::MessageAvailableSchedulingTerm)

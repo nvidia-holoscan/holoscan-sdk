@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,6 @@
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include <X11/Xlib.h>
 #include <stdlib.h>
 
 #include <holoviz/holoviz.hpp>
@@ -27,25 +26,41 @@
 namespace viz = holoscan::viz;
 
 TEST(Init, GLFWWindow) {
-  Display* display = XOpenDisplay(NULL);
-  if (!display) {
-    GTEST_SKIP() << "X11 server is not running or DISPLAY variable is not set, skipping test.";
+  if (glfwInit() == GLFW_FALSE) {
+    const char* description;
+    int code = glfwGetError(&description);
+    ASSERT_EQ(code, GLFW_PLATFORM_UNAVAILABLE)
+        << "Expected `GLFW_PLATFORM_UNAVAILABLE` but got `" << code << "`: `" << description << "`";
+    GTEST_SKIP() << "No display server available, skipping test." << description;
   }
 
-  EXPECT_EQ(glfwInit(), GLFW_TRUE);
+  if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
+    // No longer works after statically linking with glfw after
+    // https://gitlab-master.nvidia.com/holoscan/holoscan-sdk/-/merge_requests/2143.
+    // Error:
+    // Reason: GLFW maintains a global variable with state, when statically linking the GLFW library
+    //         binaries (such as the Holoviz shared lib and this test binary) there are different
+    //         global variables per binary.
+    GTEST_SKIP() << "With Wayland and statically linked GLFW creating the GLFW window outside of "
+                    "Holoviz is not supported.";
+  }
+
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   GLFWwindow* const window = glfwCreateWindow(128, 64, "Holoviz test", NULL, NULL);
 
-  EXPECT_NO_THROW(viz::Init(window));
+  ASSERT_NO_THROW(viz::Init(window));
   EXPECT_FALSE(viz::WindowShouldClose());
   EXPECT_FALSE(viz::WindowIsMinimized());
   EXPECT_NO_THROW(viz::Shutdown());
 }
 
 TEST(Init, CreateWindow) {
-  Display* display = XOpenDisplay(NULL);
-  if (!display) {
-    GTEST_SKIP() << "X11 server is not running or DISPLAY variable is not set, skipping test.";
+  if (glfwInit() == GLFW_FALSE) {
+    const char* description;
+    int code = glfwGetError(&description);
+    ASSERT_EQ(code, GLFW_PLATFORM_UNAVAILABLE)
+        << "Expected `GLFW_PLATFORM_UNAVAILABLE` but got `" << code << "`: `" << description << "`";
+    GTEST_SKIP() << "No display server available, skipping test." << description;
   }
 
   EXPECT_NO_THROW(viz::Init(128, 64, "Holoviz test"));
@@ -55,9 +70,12 @@ TEST(Init, CreateWindow) {
 }
 
 TEST(Init, Fullscreen) {
-  Display* display = XOpenDisplay(NULL);
-  if (!display) {
-    GTEST_SKIP() << "X11 server is not running or DISPLAY variable is not set, skipping test.";
+  if (glfwInit() == GLFW_FALSE) {
+    const char* description;
+    int code = glfwGetError(&description);
+    ASSERT_EQ(code, GLFW_PLATFORM_UNAVAILABLE)
+        << "Expected `GLFW_PLATFORM_UNAVAILABLE` but got `" << code << "`: `" << description << "`";
+    GTEST_SKIP() << "No display server available, skipping test." << description;
   }
 
   // There is an issue when setting a mode with lower resolution than the current mode, in

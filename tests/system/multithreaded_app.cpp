@@ -34,8 +34,11 @@ class PingMultithreadApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::PingTensorTxOp>(
-        "tx", Arg("rows", 64), Arg("columns", 32), make_condition<CountCondition>(NUM_ITER));
+    auto tx = make_operator<ops::PingTensorTxOp>("tx",
+                                                 Arg("rows", 64),
+                                                 Arg("columns", 32),
+                                                 Arg("storage_type", storage_type_),
+                                                 make_condition<CountCondition>(NUM_ITER));
 
     for (int index = 1; index <= NUM_RX; ++index) {
       const auto rx_name = fmt::format("rx{}", index);
@@ -43,6 +46,11 @@ class PingMultithreadApp : public holoscan::Application {
       add_flow(tx, rx);
     }
   }
+
+  void set_storage_type(const std::string& storage_type) { storage_type_ = storage_type; }
+
+ private:
+  std::string storage_type_ = std::string("device");
 };
 
 TEST(MultithreadedApp, TestSendingTensorToMultipleOperators) {
@@ -70,13 +78,11 @@ TEST(MultithreadedApp, TestSendingTensorToMultipleOperators) {
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("null data") == std::string::npos);
   for (int i = 1; i < NUM_RX; ++i) {
-    EXPECT_TRUE(log_output.find(fmt::format(
-                    "Rx message value - name:rx{}, data[0]:{}, nbytes:2048", i, NUM_ITER)) !=
+    EXPECT_TRUE(log_output.find(fmt::format("Rx message value - name:rx{}, data[0]:", i)) !=
                 std::string::npos);
   }
   // Check that the last rx operator received the expected value and print the log if it didn't
-  EXPECT_TRUE(log_output.find(fmt::format(
-                  "Rx message value - name:rx{}, data[0]:{}, nbytes:2048", NUM_RX, NUM_ITER)) !=
+  EXPECT_TRUE(log_output.find(fmt::format("Rx message value - name:rx{}, data[0]:", NUM_RX)) !=
               std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";

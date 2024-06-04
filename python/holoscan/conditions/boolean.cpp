@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,7 +69,7 @@ void init_boolean(py::module_& m) {
            "fragment"_a,
            "enable_tick"_a = true,
            "name"_a = "noname_boolean_condition"s,
-           doc::BooleanCondition::doc_BooleanCondition_python)
+           doc::BooleanCondition::doc_BooleanCondition)
       .def_property_readonly(
           "gxf_typename", &BooleanCondition::gxf_typename, doc::BooleanCondition::doc_gxf_typename)
       .def("enable_tick", &BooleanCondition::enable_tick, doc::BooleanCondition::doc_enable_tick)

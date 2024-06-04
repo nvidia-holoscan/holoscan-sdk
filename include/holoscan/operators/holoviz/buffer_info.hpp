@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,14 +31,14 @@ struct BufferInfo {
   /**
    * Initialize with tensor
    *
-   * @returns error code
+   * @return error code
    */
   gxf_result_t init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor);
 
   /**
    * Initialize with video buffer
    *
-   * @returns error code
+   * @return error code
    */
   gxf_result_t init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video);
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,7 @@
 #include <holoinfer_constants.hpp>
 #include <holoinfer_utils.hpp>
 
+#include <holoscan/core/analytics/data_exporter.hpp>
 #include <process/transforms/generate_boxes.hpp>
 
 namespace holoscan {
@@ -67,7 +68,7 @@ class DataProcessor {
    * operation.
    * @param config_path Path to the processing configuration settings
    *
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
 
@@ -81,7 +82,7 @@ class DataProcessor {
    * @param processed_data_map Output data map, that will be populated
    * @param output_tensors Tensor names to be populated in the out_data_map
    * @param custom_strings Strings to display for custom print operations
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus process_operation(const std::string& operation, const std::vector<int>& in_dims,
                                 const void* in_data, std::vector<int64_t>& processed_dims,
@@ -98,7 +99,7 @@ class DataProcessor {
    * @param indims Map with key as tensor name and value as dimension of the input tensor
    * @param processed_data Output data map, that will be populated
    * @param processed_dims Dimension of the output tensor, is populated during the processing
-   * @returns InferStatus with appropriate code and message
+   * @return InferStatus with appropriate code and message
    */
   InferStatus process_transform(const std::string& transform, const std::string& key,
                                 const std::map<std::string, void*>& indata,
@@ -161,6 +162,20 @@ class DataProcessor {
                                                  const void* in_data,
                                                  const std::vector<std::string>& custom_strings);
 
+  /**
+   * @brief Export binary classification results in the input buffer to CSV file using Data Exporter
+   *        API.
+   *
+   * @param in_dims Dimension of the input tensor
+   * @param in_data Input data buffer
+   * @param custom_strings The comma separated list of strings containing information for
+   *                       the output CSV file. It should include application name as a first string
+   *                       required for the Data Exporter API and column names.
+   */
+  InferStatus export_binary_classification_to_csv(const std::vector<int>& in_dims,
+                                                  const void* in_data,
+                                                  const std::vector<std::string>& custom_strings);
+
  private:
   /// Map defining supported operations by DataProcessor Class.
   /// Keyword in this map must be used exactly by the user in configuration.
@@ -186,6 +201,11 @@ class DataProcessor {
       {"print", holoinfer_data_processor::h_HOST},
       {"print_int32", holoinfer_data_processor::h_HOST},
       {"print_custom_binary_classification", holoinfer_data_processor::h_HOST}};
+
+  /// Map defining supported formats by DataProcessor Class to export results using Data Exporter
+  /// API.
+  inline static const std::map<std::string, holoinfer_data_processor> supported_export_operations_{
+      {"export_binary_classification_to_csv", holoinfer_data_processor::h_HOST}};
 
   /// Mapped function call for the function pointer of max_per_channel_scaled
   processor_FP max_per_channel_scaled_fp_ =
@@ -216,6 +236,14 @@ class DataProcessor {
         return print_custom_binary_classification(in_dims, in_data, custom_strings);
       };
 
+  /// Mapped function call for the function pointer of exporting binary classification
+  /// results to the CSV file using the Data Exporter API.
+  processor_FP export_binary_classification_to_csv_fp_ =
+      [this](auto& in_dims, const void* in_data, std::vector<int64_t>& out_dims, DataMap& out_data,
+             auto& output_tensors, auto& custom_strings) {
+        return export_binary_classification_to_csv(in_dims, in_data, custom_strings);
+      };
+
   /// Mapped function call for the function pointer of print int32
   processor_FP print_results_i32_fp_ = [this](auto& in_dims, const void* in_data,
                                               std::vector<int64_t>& out_dims, DataMap& out_data,
@@ -229,7 +257,8 @@ class DataProcessor {
       {"scale_intensity_cpu", scale_intensity_cpu_fp_},
       {"print", print_results_fp_},
       {"print_int32", print_results_i32_fp_},
-      {"print_custom_binary_classification", print_custom_binary_classification_fp_}};
+      {"print_custom_binary_classification", print_custom_binary_classification_fp_},
+      {"export_binary_classification_to_csv", export_binary_classification_to_csv_fp_}};
 
   /// Mapped function call for the function pointer of generate_boxes
   transforms_FP generate_boxes_fp_ = [this](const std::string& key,
@@ -245,6 +274,9 @@ class DataProcessor {
 
   /// Configuration path
   std::string config_path_ = {};
+
+  /// Data exporter
+  std::unique_ptr<DataExporter> data_exporter_ = nullptr;
 };
 }  // namespace inference
 }  // namespace holoscan

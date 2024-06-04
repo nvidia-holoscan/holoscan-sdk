@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +48,7 @@ class OperatorSpec : public ComponentSpec {
    *
    * @return The reference to the input specifications of this operator.
    */
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& inputs() { return inputs_; }
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs() { return inputs_; }
 
   /**
    * @brief Define an input specification for this operator.
@@ -70,7 +70,7 @@ class OperatorSpec : public ComponentSpec {
    */
   template <typename DataT>
   IOSpec& input(std::string name) {
-    auto spec = std::make_unique<IOSpec>(this, name, IOSpec::IOType::kInput, &typeid(DataT));
+    auto spec = std::make_shared<IOSpec>(this, name, IOSpec::IOType::kInput, &typeid(DataT));
     auto [iter, is_exist] = inputs_.insert_or_assign(name, std::move(spec));
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Input port '{}' already exists", name); }
     return *(iter->second.get());
@@ -81,7 +81,7 @@ class OperatorSpec : public ComponentSpec {
    *
    * @return The reference to the output specifications of this operator.
    */
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>>& outputs() { return outputs_; }
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs() { return outputs_; }
 
   /**
    * @brief Define an output specification for this operator.
@@ -103,7 +103,7 @@ class OperatorSpec : public ComponentSpec {
    */
   template <typename DataT>
   IOSpec& output(std::string name) {
-    auto spec = std::make_unique<IOSpec>(this, name, IOSpec::IOType::kOutput, &typeid(DataT));
+    auto spec = std::make_shared<IOSpec>(this, name, IOSpec::IOType::kOutput, &typeid(DataT));
     auto [iter, is_exist] = outputs_.insert_or_assign(name, std::move(spec));
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Output port '{}' already exists", name); }
     return *(iter->second.get());
@@ -262,8 +262,8 @@ class OperatorSpec : public ComponentSpec {
   YAML::Node to_yaml_node() const override;
 
  protected:
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>> inputs_;   ///< Input specs
-  std::unordered_map<std::string, std::unique_ptr<IOSpec>> outputs_;  ///< Outputs specs
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>> inputs_;   ///< Input specs
+  std::unordered_map<std::string, std::shared_ptr<IOSpec>> outputs_;  ///< Outputs specs
 };
 
 }  // namespace holoscan

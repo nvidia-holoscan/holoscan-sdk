@@ -91,16 +91,17 @@ See details and usage instructions on [NGC][container].
 ````
 ````{tab-item} Debian package
 
-- **IGX Orin**: Ensure the [compute stack is pre-installed](https://docs.nvidia.com/igx-orin/user-guide/latest/base-os.html#installing-the-compute-stack).
-- **Jetson**: Install the latest [CUDA keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) for `ubuntu2204/arm64`.
-- **GH200**: Install the latest [CUDA keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) for `ubuntu2204/sbsa`.
-- **x86_64**: Install the latest [CUDA keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) for `ubuntu2204/x86_64`.
-
-Then, install the holoscan SDK:
+Try the following to install the holoscan SDK:
 ```sh
 sudo apt update
 sudo apt install holoscan
 ```
+
+If `holoscan` is not found, try the following before repeating the steps above:
+- **IGX Orin**: Ensure the [compute stack is properly installed](https://docs.nvidia.com/igx-orin/user-guide/latest/base-os.html#installing-the-compute-stack) which should configure the L4T repository source. If you still cannot install the Holoscan SDK, use the [`arm64-sbsa` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=arm64-sbsa&Compilation=Native&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
+- **Jetson**: Ensure [JetPack is properly installed](https://developer.nvidia.com/embedded/jetpack) which should configure the L4T repository source.  If you still cannot install the Holoscan SDK, use the [`aarch64-jetson` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=aarch64-jetson&Compilation=Native&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
+- **GH200**: Use the [`arm64-sbsa` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=arm64-sbsa&Compilation=Native&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
+- **x86_64**: Use the [`x86_64` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
 
 :::{note}
 To leverage the python module included in the debian package (instead of installing the python wheel), include the path below to your python path. For example:
@@ -166,7 +167,7 @@ For x86_64, ensure that the [CUDA Runtime is installed](https://developer.nvidia
 [^3]: NPP 12 needed for the FormatConverter and BayerDemosaic operators. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^4]: TensorRT 8.6.1+ and cuDNN needed for the Inference operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^5]: Vulkan 1.3.204+ loader needed for the HoloViz operator (+ libegl1 for headless rendering). Already installed on NVIDIA developer kits with IGX Software and JetPack.
-[^6]: V4L2 1.22+ needed for the V4L2 operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.
+[^6]: V4L2 1.22+ needed for the V4L2 operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.  V4L2 also requires libjpeg.
 [^7]: Torch support requires LibTorch 2.1+, TorchVision 0.16+, OpenBLAS 0.3.20+, OpenMPI (aarch64 only), MKL 2021.1.1 (x86_64 only), libpng and libjpeg.
 [^8]: To install LibTorch and TorchVision, either build them from source, download our [pre-built packages](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/), or copy them from the holoscan container (in `/opt`).
 [^9]: ONNXRuntime 1.15.1+ needed for the Inference operator. Note that ONNX models are also supported through the TensoRT backend of the Inference Operator.
@@ -185,4 +186,4 @@ We only recommend building the SDK from source if you need to build it with debu
 
 ### Looking for a light runtime container image?
 
-The current Holoscan container on NGC has a large size due to including all the dependencies for each of the built-in operators, but also because of the development tools and libraries that are included. Follow the [instructions on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk#runtime-container) to build a runtime container without these development packages. This page also includes detailed documentation to assist you in only including runtime dependencies your Holoscan application might need.
+The current Holoscan container on NGC has a large size due to including all the dependencies for each of the built-in operators, but also because of the development tools and libraries that are included. Follow the [instructions on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/DEVELOP.md#runtime-container) to build a runtime container without these development packages. This page also includes detailed documentation to assist you in only including runtime dependencies your Holoscan application might need.

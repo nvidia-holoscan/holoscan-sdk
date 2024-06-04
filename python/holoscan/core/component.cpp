@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <list>
 
 #include "component_pydoc.hpp"
 #include "holoscan/core/arg.hpp"
@@ -31,6 +32,55 @@ using pybind11::literals::operator""_a;
 namespace py = pybind11;
 
 namespace holoscan {
+
+class PyComponentSpec : public ComponentSpec {
+ public:
+  /* Inherit the constructors */
+  using ComponentSpec::ComponentSpec;
+
+  // Override the constructor to get the py::object for the Python class
+  explicit PyComponentSpec(Fragment* fragment = nullptr, py::object op = py::none())
+      : ComponentSpec(fragment), py_op_(op) {}
+
+  // TOIMPROVE: Should we parse headline and description from kwargs or just
+  //            add them to the function signature?
+  void py_param(const std::string& name, const py::object& default_value, const ParameterFlag& flag,
+                const py::kwargs& kwargs) {
+    using std::string_literals::operator""s;
+
+    bool is_receivers = false;
+    std::string headline{""s};
+    std::string description{""s};
+    for (const auto& [name, value] : kwargs) {
+      std::string param_name = name.cast<std::string>();
+      if (param_name == "headline") {
+        headline = value.cast<std::string>();
+      } else if (param_name == "description") {
+        description = value.cast<std::string>();
+      } else {
+        throw std::runtime_error("unsupported kwarg: "s + param_name);
+      }
+    }
+
+    // Create parameter object
+    py_params_.emplace_back(py_op());
+
+    // Register parameter
+    auto& parameter = py_params_.back();
+    param(parameter, name.c_str(), headline.c_str(), description.c_str(), default_value, flag);
+  }
+
+  py::object py_op() const { return py_op_; }
+
+  std::list<Parameter<py::object>>& py_params() { return py_params_; }
+
+ private:
+  py::object py_op_ = py::none();
+  // NOTE: we use std::list instead of std::vector because we register the address of Parameter<T>
+  // object to the GXF framework. The address of a std::vector element may change when the vector is
+  // resized.
+  std::list<Parameter<py::object>> py_params_;
+};
 
 class PyComponentBase : public ComponentBase {
  public:
@@ -71,6 +121,25 @@ void init_component(py::module_& m) {
           // use py::object and obj.cast to avoid a segfault if object has not been initialized
           [](const ComponentSpec& spec) { return spec.description(); },
           R"doc(Return repr(self).)doc");
+
+  py::enum_<ParameterFlag>(m, "ParameterFlag", doc::ParameterFlag::doc_ParameterFlag)
+      .value("NONE", ParameterFlag::kNone)
+      .value("OPTIONAL", ParameterFlag::kOptional)
+      .value("DYNAMIC", ParameterFlag::kDynamic);
+
+  py::class_<PyComponentSpec, ComponentSpec, std::shared_ptr<PyComponentSpec>>(
+      m, "PyComponentSpec", R"doc(Operator specification class.)doc")
+      .def(py::init<Fragment*, py::object>(),
+           "fragment"_a,
+           "op"_a = py::none(),
+           doc::ComponentSpec::doc_ComponentSpec)
+      .def("param",
+           &PyComponentSpec::py_param,
+           "Register parameter",
+           "name"_a,
+           "default_value"_a = py::none(),
+           "flag"_a = ParameterFlag::kNone,
+           doc::ComponentSpec::doc_param);
 
   py::class_<ComponentBase, PyComponentBase, std::shared_ptr<ComponentBase>>(
       m, "ComponentBase", doc::Component::doc_Component)

@@ -40,14 +40,14 @@ namespace holoscan::ops {
  * ==Named Inputs==
  *
  * - **in_tensor** : `nvidia::gxf::Tensor`
- *   - Expects a message containing a 32-bit floating point tensor with name
+ *   - Expects a message containing a 32-bit floating point device tensor with name
  *     `in_tensor_name`. The expected data layout of this tensor is HWC, NCHW or NHWC format as
- *     specified via `data_format`.
+ *     specified via `data_format`. If batch dimension, N, is present it should be size 1.
  *
  * ==Named Outputs==
  *
  * - **out_tensor** : `nvidia::gxf::Tensor`
- *  - Emits a message containing a tensor named "out_tensor" that contains the segmentation
+ *  - Emits a message containing a device tensor named "out_tensor" that contains the segmentation
  *    labels. This tensor will have unsigned 8-bit integer data type and shape (H, W, 1).
  *
  * ==Parameters==
@@ -58,6 +58,11 @@ namespace holoscan::ops {
  * - **data_format**: Data format of network output. Optional (default: `"hwc"`).
  * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams.
  *   Optional (default: `nullptr`).
+ *
+ * ==Device Memory Requirements==
+ *
+ * When used with a `BlockMemoryPool`, this operator requires only a single device memory
+ * block (`storage_type` = 1) of size `height * width` bytes.
  */
 class SegmentationPostprocessorOp : public Operator {
  public:

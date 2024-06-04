@@ -2,10 +2,6 @@
 
 [NVIDIA Holoscan](https://developer.nvidia.com/holoscan-sdk) is the AI sensor processing platform that combines hardware systems for low-latency sensor and network connectivity, optimized libraries for data processing and AI, and core microservices to run streaming, imaging, and other applications, from embedded to edge to cloud. It can be used to build streaming AI pipelines for a variety of domains, including Medical Devices, High Performance Computing at the Edge, Industrial Inspection and more.
 
-:::{note}
-In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). As Holoscan has grown, its potential to serve other areas has become apparent. With version 0.4.0, we're proud to announce that the Holoscan SDK is now officially built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Note that some of the content of the SDK (sample applications) or the documentation might still appear to be healthcare-specific pending additional updates. Going forward, domain specific content will be hosted on the [HoloHub](https://nvidia-holoscan.github.io/holohub) repository.
-:::
-
 The Holoscan SDK assists developers by providing:
 
 1. **Various installation strategies**
@@ -46,3 +42,7 @@ The Holoscan SDK documentation is composed of:
 - This user guide, in a [webpage](https://docs.nvidia.com/holoscan/sdk-user-guide/) or [PDF](https://developer.nvidia.com/downloads/holoscan-sdk-user-guide) format
 - Build and run instructions specific to each {ref}`installation strategy<clara_holoscan_setup>`
 - [Release notes](https://github.com/nvidia-holoscan/holoscan-sdk/releases) on Github
+
+:::{note}
+In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). Starting with version 0.4.0, the Holoscan SDK is built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Domain specific content will be hosted on the [HoloHub](https://nvidia-holoscan.github.io/holohub) repository.
+:::

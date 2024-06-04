@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,7 +91,7 @@ void init_periodic(py::module_& m) {
            "fragment"_a,
            "recess_period"_a,
            "name"_a = "noname_periodic_condition"s,
-           doc::PeriodicCondition::doc_PeriodicCondition_python)
+           doc::PeriodicCondition::doc_PeriodicCondition)
       .def_property_readonly("gxf_typename",
                              &PeriodicCondition::gxf_typename,
                              doc::PeriodicCondition::doc_gxf_typename)

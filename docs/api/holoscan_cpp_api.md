@@ -37,11 +37,13 @@
 
 - {ref}`exhale_define_operator_8hpp_1ab2c635a927962650e72a33623f2f9ca1`
 - {ref}`exhale_define_operator_8hpp_1af59d84ffa537c4b1186e2a1ae2be30ad`
+- {ref}`exhale_define_gxf__codelet_8hpp_1adb58640018e9787efd52475fc95a958e`
 
 ### Resource Definition
 
 - {ref}`exhale_define_resource_8hpp_1a4c671dac9ff91b8ef6f9b5a5a168941f`
 - {ref}`exhale_define_resource_8hpp_1a94bcc7c12f51de26c6873cf1e7be9ea9`
+- {ref}`exhale_define_gxf__component__resource_8hpp_1a269b593e54aca3766ff5b26f780f3e35`
 
 ### Condition Definition
 
@@ -102,6 +104,7 @@
 - {ref}`exhale_class_classholoscan_1_1ops_1_1AsyncPingTxOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1BayerDemosaicOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1FormatConverterOp`
+- {ref}`exhale_class_classholoscan_1_1ops_1_1GXFCodeletOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1HolovizOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1InferenceOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1InferenceProcessorOp`
@@ -144,6 +147,7 @@
 - {ref}`exhale_class_classholoscan_1_1CudaStreamPool`
 - {ref}`exhale_class_classholoscan_1_1DoubleBufferReceiver`
 - {ref}`exhale_class_classholoscan_1_1DoubleBufferTransmitter`
+- {ref}`exhale_class_classholoscan_1_1GXFComponentResource`
 - {ref}`exhale_class_classholoscan_1_1ManualClock`
 - {ref}`exhale_class_classholoscan_1_1RealtimeClock`
 - {ref}`exhale_class_classholoscan_1_1Receiver`
@@ -172,6 +176,10 @@
 
 - {ref}`exhale_class_classholoscan_1_1Message`
 
+### Analytics
+
+- {ref}`exhale_class_classholoscan_1_1CsvDataExporter`
+- {ref}`exhale_class_classholoscan_1_1DataExporter`
 
 ### Domain Objects
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,6 @@ include(GNUInstallDirs)
 include(GenHeaderFromBinaryFile)
 
 find_package(CUDAToolkit REQUIRED)
-find_package(X11 REQUIRED)
 find_package(Vulkan REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED)
@@ -58,6 +57,7 @@ target_sources(${PROJECT_NAME}
         glfw_window.cpp
         headless_window.cpp
         holoviz.cpp
+        window.cpp
 
         cuda/convert.cu
         cuda/cuda_service.cpp

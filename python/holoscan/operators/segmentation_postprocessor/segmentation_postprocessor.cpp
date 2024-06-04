@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 
+#include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
@@ -56,7 +57,7 @@ class PySegmentationPostprocessorOp : public SegmentationPostprocessorOp {
 
   // Define a constructor that fully initializes the object.
   PySegmentationPostprocessorOp(
-      Fragment* fragment, std::shared_ptr<::holoscan::Allocator> allocator,
+      Fragment* fragment, const py::args& args, std::shared_ptr<::holoscan::Allocator> allocator,
       const std::string& in_tensor_name = "", const std::string& network_output_type = "softmax"s,
       const std::string& data_format = "hwc"s,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
@@ -66,6 +67,7 @@ class PySegmentationPostprocessorOp : public SegmentationPostprocessorOp {
                                             Arg{"data_format", data_format},
                                             Arg{"allocator", allocator}}) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -77,20 +79,10 @@ class PySegmentationPostprocessorOp : public SegmentationPostprocessorOp {
 
 PYBIND11_MODULE(_segmentation_postprocessor, m) {
   m.doc() = R"pbdoc(
-        Holoscan SDK Python Bindings
-        ---------------------------------------
+        Holoscan SDK SegmentationPostprocessorOp Bindings
+        -------------------------------------------------
         .. currentmodule:: _segmentation_postprocessor
-        .. autosummary::
-           :toctree: _generate
-           add
-           subtract
     )pbdoc";
-
-#ifdef VERSION_INFO
-  m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
-#else
-  m.attr("__version__") = "dev";
-#endif
 
   py::class_<SegmentationPostprocessorOp,
              PySegmentationPostprocessorOp,
@@ -100,6 +92,7 @@ PYBIND11_MODULE(_segmentation_postprocessor, m) {
       "SegmentationPostprocessorOp",
       doc::SegmentationPostprocessorOp::doc_SegmentationPostprocessorOp)
       .def(py::init<Fragment*,
+                    const py::args&,
                     std::shared_ptr<::holoscan::Allocator>,
                     const std::string&,
                     const std::string&,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,12 +54,12 @@ class Context : public NonCopyable {
   ~Context();
 
   /**
-   * @returns the context instance current to this thread, nullptr if none is current
+   * @return the context instance current to this thread, nullptr if none is current
    */
   static Context* get_current();
 
   /**
-   * @returns the context instance, create one if none is current
+   * @return the context instance, create one if none is current
    */
   static Context& get();
 
@@ -89,7 +89,8 @@ class Context : public NonCopyable {
    * Initialize the context and create a exclusive window with the given properties.
    *
    * @param display_name  name of the display, this can either be the EDID name as displayed
-   *                      in the NVIDIA Settings, or the output name used by xrandr,
+   *                      in the NVIDIA Settings, or the output name provided by `xrandr` or
+   *                      `hwinfo --monitor`.
    *                      if nullptr then the first display is selected.
    * @param width         desired width, ignored if 0
    * @param height        desired height, ignored if 0
@@ -119,7 +120,7 @@ class Context : public NonCopyable {
   void set_cuda_stream(CUstream stream);
 
   /**
-   * @returns the currently active cuda stream
+   * @return the currently active cuda stream
    */
   CUstream get_cuda_stream() const;
 
@@ -180,17 +181,17 @@ class Context : public NonCopyable {
                         CUdeviceptr device_ptr, size_t row_pitch = 0);
 
   /**
-   * @returns the active layer
+   * @return the active layer
    */
   Layer* get_active_layer() const;
 
   /**
-   * @returns the active image layer
+   * @return the active image layer
    */
   ImageLayer* get_active_image_layer() const;
 
   /**
-   * @returns the active geometry layer
+   * @return the active geometry layer
    */
   GeometryLayer* get_active_geometry_layer() const;
 

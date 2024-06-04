@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_AJA_SOURCE_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_AJA_SOURCE_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_AJA_SOURCE_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_AJA_SOURCE_PYDOC_HPP
 
 #include <string>
 
@@ -95,4 +95,4 @@ and uses a light-weight initialization.
 
 }  // namespace holoscan::doc::AJASourceOp
 
-#endif /* HOLOSCAN_OPERATORS_AJA_SOURCE_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_AJA_SOURCE_PYDOC_HPP */

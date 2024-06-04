@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2018-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 //--------------------------------------------------------------------
@@ -101,6 +101,7 @@ void CameraManipulator::updateAnim()
   {
     m_current   = m_goal;
     m_anim_done = true;
+    update();
     return;
   }
 

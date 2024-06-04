@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,7 +37,7 @@ target_sources(${PROJECT_NAME}
     PRIVATE
         camera_pose_test.cpp
         geometry_layer_test.cpp
-        headless_fixture.cpp
+        test_fixture.cpp
         im_gui_layer_test.cpp
         image_layer_test.cpp
         init_test.cpp
@@ -64,7 +64,6 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         glfw
         Vulkan::Vulkan
-        X11::X11
         holoscan::viz
         holoscan::viz::imgui
         GTest::gtest_main

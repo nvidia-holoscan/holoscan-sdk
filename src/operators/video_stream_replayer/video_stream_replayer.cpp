@@ -89,7 +89,7 @@ void VideoStreamReplayerOp::setup(OperatorSpec& spec) {
 }
 
 void VideoStreamReplayerOp::initialize() {
-  // Set up prerequisite parameters before calling GXFOperator::initialize()
+  // Set up prerequisite parameters before calling Operator::initialize()
   auto frag = fragment();
   auto entity_serializer =
       frag->make_resource<holoscan::StdEntitySerializer>("replayer__std_entity_serializer");

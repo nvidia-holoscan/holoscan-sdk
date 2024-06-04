@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_SEGMENTATION_POSTPROCESSOR_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_SEGMENTATION_POSTPROCESSOR_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_SEGMENTATION_POSTPROCESSOR_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_SEGMENTATION_POSTPROCESSOR_PYDOC_HPP
 
 #include <string>
 
@@ -31,15 +31,20 @@ Operator carrying out post-processing operations on segmentation outputs.
 **==Named Inputs==**
 
     in_tensor : nvidia::gxf::Tensor
-        Expects a message containing a 32-bit floating point tensor with name ``in_tensor_name``.
-        The expected data layout of this tensor is HWC, NCHW or NHWC format as specified via
-        ``data_format``.
+        Expects a message containing a 32-bit floating point device tensor with name
+        ``in_tensor_name``. The expected data layout of this tensor is HWC, NCHW or NHWC format as
+        specified via ``data_format``.
 
 **==Named Outputs==**
 
     out_tensor : nvidia::gxf::Tensor
-        Emits a message containing a tensor named "out_tensor" that contains the segmentation
+        Emits a message containing a device tensor named "out_tensor" that contains the segmentation
         labels. This tensor will have unsigned 8-bit integer data type and shape (H, W, 1).
+
+**==Device Memory Requirements==**
+
+    When used with a ``holoscan.resources.BlockMemoryPool``, this operator requires only a single
+    device memory block (``storage_type=1``) of size ``height * width`` bytes.
 
 Parameters
 ----------
@@ -78,4 +83,4 @@ spec : holoscan.core.OperatorSpec
 
 }  // namespace holoscan::doc::SegmentationPostprocessorOp
 
-#endif /* HOLOSCAN_OPERATORS_SEGMENTATION_POSTPROCESSOR_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_SEGMENTATION_POSTPROCESSOR_PYDOC_HPP */

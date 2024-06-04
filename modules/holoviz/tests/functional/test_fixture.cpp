@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,14 @@
  * limitations under the License.
  */
 
-#include "headless_fixture.hpp"
+#include "test_fixture.hpp"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
+
+#define GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -51,19 +55,33 @@ void Fill(void* data, size_t elements, float min, float max) {
   }
 }
 
-void TestHeadless::SetUp() {
-  ASSERT_NO_THROW(viz::Init(width_, height_, "Holoviz test", viz::InitFlags::HEADLESS));
+void TestBase::SetUp() {
+  if (~(init_flags_ & viz::InitFlags::HEADLESS)) {
+    if (glfwInit() == GLFW_FALSE) {
+      const char* description;
+      int code = glfwGetError(&description);
+      ASSERT_EQ(code, GLFW_PLATFORM_UNAVAILABLE) << "Expected `GLFW_PLATFORM_UNAVAILABLE` but got `"
+                                                 << code << "`: `" << description << "`";
+      GTEST_SKIP() << "No display server available, skipping test." << description;
+    }
+  }
+
+  ASSERT_NO_THROW(viz::Init(width_, height_, "Holoviz test", init_flags_));
+  initialized_ = true;
 }
 
-void TestHeadless::TearDown() {
-  ASSERT_NO_THROW(viz::Shutdown());
+void TestBase::TearDown() {
+  if (initialized_) {
+    ASSERT_NO_THROW(viz::Shutdown());
+    initialized_ = false;
+  }
 }
 
-void TestHeadless::SetCUDADevice(uint32_t device_ordinal) {
+void TestBase::SetCUDADevice(uint32_t device_ordinal) {
   device_ordinal_ = device_ordinal;
 }
 
-void TestHeadless::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
+void TestBase::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
   std::srand(rand_seed);
 
   uint32_t channels;
@@ -183,7 +201,7 @@ void TestHeadless::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
   }
 }
 
-void TestHeadless::ReadColorData(std::vector<uint8_t>& color_data) {
+void TestBase::ReadColorData(std::vector<uint8_t>& color_data) {
   const size_t data_size = width_ * height_ * sizeof(uint8_t) * 4;
 
   viz::CudaService cuda_service(device_ordinal_);
@@ -206,7 +224,7 @@ void TestHeadless::ReadColorData(std::vector<uint8_t>& color_data) {
   ASSERT_EQ(cuMemcpyDtoH(color_data.data(), device_ptr.get(), color_data.size()), CUDA_SUCCESS);
 }
 
-void TestHeadless::ReadDepthData(std::vector<float>& depth_data) {
+void TestBase::ReadDepthData(std::vector<float>& depth_data) {
   const size_t data_size = width_ * height_ * sizeof(float);
 
   viz::CudaService cuda_service(device_ordinal_);
@@ -246,7 +264,7 @@ static std::string BuildFileName(const std::string& end) {
   return file_name;
 }
 
-bool TestHeadless::CompareColorResult() {
+bool TestBase::CompareColorResult() {
   const uint32_t components = color_data_.size() / (width_ * height_);
   if ((components != 1) && (components != 3) && (components != 4)) {
     EXPECT_TRUE(false) << "Can compare R8_UNORM, R8G8B8_UNORM or R8G8B8A8_UNORM data only";
@@ -277,7 +295,7 @@ bool TestHeadless::CompareColorResult() {
   return true;
 }
 
-bool TestHeadless::CompareDepthResult() {
+bool TestBase::CompareDepthResult() {
   if (depth_data_.size() != width_ * height_ * sizeof(float)) {
     EXPECT_TRUE(false) << "Can compare D32_SFLOAT data only";
     return false;
@@ -317,7 +335,7 @@ Compare these images with the `_fail` images. Update or add the CRC values of th
 accordingly.
 )";
 
-bool TestHeadless::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
+bool TestBase::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
   std::vector<uint8_t> read_data;
   ReadColorData(read_data);
 
@@ -352,7 +370,7 @@ bool TestHeadless::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
   return passed;
 }
 
-bool TestHeadless::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
+bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
   std::vector<float> read_data;
   ReadDepthData(read_data);
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -394,7 +394,7 @@ main() {
                 c_echo nocolor "docker run --runtime nvidia \\"
                 c_echo nocolor "           --gpus all \\"
                 c_echo nocolor "           -it \\"
-                c_echo nocolor "           -e NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility,display \\"
+                c_echo nocolor "           -e NVIDIA_DRIVER_CAPABILITIES=all \\"
                 c_echo nocolor "           -e DISPLAY=\$DISPLAY \\"
                 c_echo nocolor "           -v /tmp/.X11-unix:/tmp/.X11-unix \\"
                 c_echo nocolor "           -v \${MY-INPUT-DATA}:/var/holoscan/input \\"

@@ -28,30 +28,6 @@
 
 namespace holoscan::ops {
 
-class CameraPoseRxOp : public Operator {
- public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(CameraPoseRxOp)
-
-  CameraPoseRxOp() = default;
-
-  void setup(OperatorSpec& spec) override;
-
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override;
-
- private:
-  size_t count_ = 0;
-};
-
-void CameraPoseRxOp::setup(OperatorSpec& spec) {
-  spec.input<int>("in");
-}
-
-void CameraPoseRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
-  auto value = op_input.receive<std::shared_ptr<std::array<float, 16>>>("in").value();
-  if (count_ == 0) { HOLOSCAN_LOG_INFO("Received camera pose: {}", *value); }
-  count_++;
-}
-
 /**
  * Example of an operator generating geometric primitives to be displayed by the HolovizOp
  *
@@ -334,18 +310,12 @@ class HolovizGeometryApp : public holoscan::Application {
     auto visualizer = make_operator<ops::HolovizOp>("holoviz",
                                                     Arg("width", 854u),
                                                     Arg("height", 480u),
-                                                    Arg("tensors", input_spec),
-                                                    Arg("enable_camera_pose_output", true));
-
-    // Set enable_camera_pose_output to true, so can create a receiver for the pose information.
-    // This example prints the pose information (but only for the first received frame).
-    auto camera_pose_rx = make_operator<ops::CameraPoseRxOp>("rx");
+                                                    Arg("tensors", input_spec));
 
     // Define the workflow: source -> holoviz
     add_flow(source, visualizer, {{"outputs", "receivers"}});
     add_flow(source, visualizer, {{"output_specs", "input_specs"}});
     add_flow(replayer, visualizer, {{"output", "receivers"}});
-    add_flow(visualizer, camera_pose_rx, {{"camera_pose_output", "in"}});
   }
 
  private:
