@@ -24,6 +24,7 @@
 #include <memory>
 #include <queue>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "dl_converter.hpp"
@@ -212,7 +213,9 @@ LazyDLManagedTensorDeleter::LazyDLManagedTensorDeleter() {
 }
 
 LazyDLManagedTensorDeleter::~LazyDLManagedTensorDeleter() {
-  release();
+  try {
+    release();
+  } catch (const std::exception& e) {}  // ignore potential fmt::v8::format_error
 }
 
 void LazyDLManagedTensorDeleter::add(DLManagedTensor* dl_managed_tensor_ptr) {
@@ -283,7 +286,10 @@ void LazyDLManagedTensorDeleter::release() {
       std::this_thread::yield();
     }
     HOLOSCAN_LOG_DEBUG("LazyDLManagedTensorDeleter thread stopped");
-    s_stop = false;
+    {
+      std::lock_guard<std::mutex> lock(s_mutex);
+      s_stop = false;
+    }
   }
 }
 
@@ -594,7 +600,7 @@ py::capsule PyTensor::dlpack(const py::object& obj, py::object stream) {
   // Do not copy 'obj' or a shared pointer here in the lambda expression's initializer, otherwise
   // the refcount of it will be increased by 1 and prevent the object from being destructed. Use a
   // raw pointer here instead.
-  return py_dlpack(tensor.get(), stream);
+  return py_dlpack(tensor.get(), std::move(stream));
 }
 
 py::tuple PyTensor::dlpack_device(const py::object& obj) {

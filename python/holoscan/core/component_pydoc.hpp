@@ -99,14 +99,12 @@ flag: holoscan.core.ParameterFlag, optional
 
 Notes
 -----
-This method is intended to be called within the `setup` method of an Operator.
+This method is intended to be called within the `setup` method of a Component, Condition or
+Resource.
 
-In general, for native Python operators, it is not necessary to call `param` to register a
-parameter with the class. Instead, one can just directly add parameters to the Python operator
+In general, for native Python resources, it is not necessary to call `param` to register a
+parameter with the class. Instead, one can just directly add parameters to the Python resource
 class (e.g. For example, directly assigning ``self.param_name = value`` in __init__.py).
-
-The one case which cannot be implemented without a call to `param` is adding a multi-receiver port
-to an operator via a parameter with ``kind="receivers"`` set.
 )doc")
 
 }  // namespace ComponentSpec

@@ -35,6 +35,7 @@
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/conditions/gxf/periodic.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
+#include "holoscan/core/conditions/gxf/expiring_message.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/graph.hpp"
@@ -207,6 +208,19 @@ TEST(ConditionClasses, TestMessageAvailableCondition) {
   EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
+TEST(ConditionClasses, TestExpiringMessageAvailableCondition) {
+  Fragment F;
+  const std::string name{"expiring-message-available-condition"};
+  ArgList arglist{Arg{"min_size", 1L}, Arg{"front_stage_max_size", 2L}};
+  auto condition = F.make_condition<ExpiringMessageAvailableCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition),
+            typeid(std::make_shared<ExpiringMessageAvailableCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::ExpiringMessageAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
 TEST(ConditionClasses, TestMessageAvailableConditionDefaultConstructor) {
   Fragment F;
   auto condition = F.make_condition<MessageAvailableCondition>();
@@ -351,7 +365,8 @@ TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithArg) {
   const GxfEntityCreateInfo entity_create_info = {"dummy_entity", GXF_ENTITY_CREATE_PROGRAM_BIT};
   gxf_uid_t eid = 0;
   gxf_result_t code;
-  GxfCreateEntity(context, &entity_create_info, &eid);
+  code = GxfCreateEntity(context, &entity_create_info, &eid);
+  ASSERT_EQ(code, GXF_SUCCESS);
 
   std::vector<std::shared_ptr<PeriodicCondition>> conditions;
   for (auto& pair : pairs) {

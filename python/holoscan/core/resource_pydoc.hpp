@@ -95,6 +95,13 @@ PYDOC(description, R"doc(
 YAML formatted string describing the resource.
 )doc")
 
+PYDOC(resource_type, R"doc(
+Resource type.
+
+`holoscan.core.Resource.ResourceType` enum representing the type of
+the operator. The two types currently implemented are NATIVE and GXF.
+)doc")
+
 }  // namespace Resource
 
 }  // namespace holoscan::doc

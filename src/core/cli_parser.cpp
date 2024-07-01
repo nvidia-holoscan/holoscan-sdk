@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "CLI/Config.hpp"
@@ -30,7 +31,7 @@ namespace holoscan {
 
 void CLIParser::initialize(std::string app_description, std::string app_version) {
   // Set the application description and version.
-  app_.description(app_description);
+  app_.description(std::move(app_description));
   app_.set_version_flag("--version", app_version, "Show the version of the application.");
 
   if (!is_initialized_) {

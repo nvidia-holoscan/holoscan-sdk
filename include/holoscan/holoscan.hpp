@@ -51,23 +51,24 @@
 #include "./core/network_contexts/gxf/ucx_context.hpp"
 
 // Resources
-#include "./core/resources/gxf/clock.hpp"
 #include "./core/resources/gxf/block_memory_pool.hpp"
-#include "./core/resources/gxf/manual_clock.hpp"
+#include "./core/resources/gxf/clock.hpp"
+#include "./core/resources/gxf/cuda_stream_pool.hpp"
 #include "./core/resources/gxf/double_buffer_receiver.hpp"
 #include "./core/resources/gxf/double_buffer_transmitter.hpp"
+#include "./core/resources/gxf/gxf_component_resource.hpp"
+#include "./core/resources/gxf/manual_clock.hpp"
 #include "./core/resources/gxf/realtime_clock.hpp"
-#include "./core/resources/gxf/cuda_stream_pool.hpp"
 #include "./core/resources/gxf/serialization_buffer.hpp"
 #include "./core/resources/gxf/std_component_serializer.hpp"
 #include "./core/resources/gxf/std_entity_serializer.hpp"
-#include "./core/resources/gxf/unbounded_allocator.hpp"
 #include "./core/resources/gxf/ucx_component_serializer.hpp"
 #include "./core/resources/gxf/ucx_entity_serializer.hpp"
 #include "./core/resources/gxf/ucx_holoscan_component_serializer.hpp"
 #include "./core/resources/gxf/ucx_receiver.hpp"
 #include "./core/resources/gxf/ucx_serialization_buffer.hpp"
 #include "./core/resources/gxf/ucx_transmitter.hpp"
+#include "./core/resources/gxf/unbounded_allocator.hpp"
 
 // Schedulers
 #include "./core/schedulers/gxf/event_based_scheduler.hpp"

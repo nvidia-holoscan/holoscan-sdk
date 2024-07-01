@@ -39,6 +39,10 @@
 
 namespace holoscan {
 
+// To indicate that data is not available for the input port
+struct NoMessageType {};
+constexpr NoMessageType kNoReceivedMessage;
+
 static inline std::string get_well_formed_name(
     const char* name, const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_list) {
   std::string well_formed_name;
@@ -293,29 +297,13 @@ class InputContext {
       // If it is not a vector then try to get the input directly and convert for respective data
       // type for an input
       auto value = receive_impl(name);
-      // If the received data is nullptr, then check whether nullptr or empty holoscan::gxf::Entity
-      // can be sent
-      if (value.type() == typeid(nullptr_t)) {
-        HOLOSCAN_LOG_DEBUG("nullptr is received from the input port with name '{}'", name);
-        // If it is a shared pointer, or raw pointer then return nullptr because it might be a valid
-        // nullptr
-        if constexpr (holoscan::is_shared_ptr_v<DataT>) {
-          return nullptr;
-        } else if constexpr (std::is_pointer_v<DataT>) {
-          return nullptr;
-        }
-        // If it's holoscan::gxf::Entity then return an error message
-        if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) {
-          auto error_message = fmt::format(
-              "Null received in place of nvidia::gxf::Entity or derived type for input {}", name);
-          return make_unexpected<holoscan::RuntimeError>(
-              holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
-        } else if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
-          auto error_message = fmt::format(
-              "Null received in place of holoscan::TensorMap or derived type for input {}", name);
-          return make_unexpected<holoscan::RuntimeError>(
-              holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
-        }
+      // If no message is received, return an error message
+      if (value.type() == typeid(NoMessageType)) {
+        HOLOSCAN_LOG_DEBUG("No message is received from the input port with name '{}'", name);
+        auto error_message =
+            fmt::format("No message is received from the input port with name '{}'", name);
+        return make_unexpected<holoscan::RuntimeError>(
+            holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
       }
       try {
         // Check if the types of value and DataT are the same or not
@@ -323,6 +311,17 @@ class InputContext {
         DataT return_value = std::any_cast<DataT>(value);
         return return_value;
       } catch (const std::bad_any_cast& e) {
+        // If the received data is nullptr, check whether the sent value was nullptr
+        if (value.type() == typeid(nullptr_t)) {
+          HOLOSCAN_LOG_DEBUG("nullptr is received from the input port with name '{}'", name);
+          // If it is a shared pointer or raw pointer, then return nullptr
+          if constexpr (holoscan::is_shared_ptr_v<DataT>) {
+            return nullptr;
+          } else if constexpr (std::is_pointer_v<DataT>) {
+            return nullptr;
+          }
+        }
+
         // If it is of the type of holoscan::gxf::Entity then show a specific error message
         if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) {
           auto error_message = fmt::format(
@@ -504,11 +503,14 @@ class OutputContext {
    * @tparam DataT The type of the data to send.
    * @param data The shared pointer to the data.
    * @param name The name of the output port.
+   * @param acq_timestamp The time when the message is acquired. For instance, this would generally
+   *                      be the timestamp of the camera when it captures an image.
    */
   template <typename DataT, typename = std::enable_if_t<!holoscan::is_one_of_derived_v<
                                 DataT, nvidia::gxf::Entity, std::any>>>
-  void emit(std::shared_ptr<DataT>& data, const char* name = nullptr) {
-    emit_impl(data, name);
+  void emit(std::shared_ptr<DataT>& data, const char* name = nullptr,
+            const int64_t acq_timestamp = -1) {
+    emit_impl(data, name, OutputType::kSharedPointer, acq_timestamp);
   }
 
   /**
@@ -559,17 +561,19 @@ class OutputContext {
    * @tparam DataT The type of the data to send. It should be `holoscan::gxf::Entity`.
    * @param data The entity object to send (`holoscan::gxf::Entity`).
    * @param name The name of the output port.
+   * @param acq_timestamp The time when the message is acquired. For instance, this would generally
+   *                      be the timestamp of the camera when it captures an image.
    */
   template <typename DataT,
             typename = std::enable_if_t<holoscan::is_one_of_derived_v<DataT, nvidia::gxf::Entity>>>
-  void emit(DataT& data, const char* name = nullptr) {
+  void emit(DataT& data, const char* name = nullptr, const int64_t acq_timestamp = -1) {
     // if it is the same as nvidia::gxf::Entity then just pass it to emit_impl
     if constexpr (holoscan::is_one_of_v<DataT, nvidia::gxf::Entity>) {
-      emit_impl(data, name, OutputType::kGXFEntity);
+      emit_impl(data, name, OutputType::kGXFEntity, acq_timestamp);
     } else {
       // Convert it to nvidia::gxf::Entity and then pass it to emit_impl
       // Otherwise, we will lose the type information and cannot cast appropriately in emit_impl
-      emit_impl(nvidia::gxf::Entity(data), name, OutputType::kGXFEntity);
+      emit_impl(nvidia::gxf::Entity(data), name, OutputType::kGXFEntity, acq_timestamp);
     }
   }
 
@@ -621,17 +625,20 @@ class OutputContext {
    * (std::shared_ptr<T>) or the GXF Entity (holoscan::gxf::Entity) type.
    * @param data The entity object to send (as `std::any`).
    * @param name The name of the output port.
+   * @param acq_timestamp The time when the message is acquired. For instance, this would generally
+   *                      be the timestamp of the camera when it captures an image.
    */
   template <typename DataT,
             typename = std::enable_if_t<!holoscan::is_one_of_derived_v<DataT, nvidia::gxf::Entity>>>
-  void emit(DataT data, const char* name = nullptr) {
-    emit_impl(data, name, OutputType::kAny);
+  void emit(DataT data, const char* name = nullptr, const int64_t acq_timestamp = -1) {
+    emit_impl(std::move(data), name, OutputType::kAny, acq_timestamp);
   }
 
-  void emit(holoscan::TensorMap& data, const char* name = nullptr) {
+  void emit(holoscan::TensorMap& data, const char* name = nullptr,
+            const int64_t acq_timestamp = -1) {
     auto out_message = holoscan::gxf::Entity::New(execution_context_);
     for (auto& [key, tensor] : data) { out_message.add(tensor, key.c_str()); }
-    emit(out_message, name);
+    emit(out_message, name, acq_timestamp);
   }
 
  protected:
@@ -645,12 +652,10 @@ class OutputContext {
    * @param name The name of the output port.
    * @param out_type The type of the message data.
    */
-  virtual void emit_impl(std::any data, const char* name = nullptr,
-                         OutputType out_type = OutputType::kSharedPointer) {
-    (void)data;
-    (void)name;
-    (void)out_type;
-  }
+  virtual void emit_impl([[maybe_unused]] std::any data,
+                         [[maybe_unused]] const char* name = nullptr,
+                         [[maybe_unused]] OutputType out_type = OutputType::kSharedPointer,
+                         [[maybe_unused]] const int64_t acq_timestamp = -1) {}
 
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.

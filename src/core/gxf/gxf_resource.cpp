@@ -33,6 +33,12 @@
 namespace holoscan::gxf {
 
 GXFResource::GXFResource(const std::string& name, nvidia::gxf::Component* component) {
+  if (component == nullptr) {
+    std::string err_msg =
+        fmt::format("Component pointer is null. Cannot initialize GXFResource '{}'", name);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   id_ = component->cid();
   name_ = name;
   gxf_context_ = component->context();
@@ -178,7 +184,8 @@ bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
       // Create an EntityGroup to associate the GPUDevice with this resource
       std::string entity_group_name =
           fmt::format("{}_eid{}_dev_id{}_group", name(), gxf_eid_, device_id);
-      auto entity_group_gid = ::holoscan::gxf::add_entity_group(gxf_context_, entity_group_name);
+      auto entity_group_gid =
+          ::holoscan::gxf::add_entity_group(gxf_context_, std::move(entity_group_name));
 
       // Add GPUDevice component to the same entity as this resource
       // TODO (GXF4): requested an addResource method to handle nvidia::gxf::ResourceBase types

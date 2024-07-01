@@ -161,10 +161,15 @@ torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& i
     case holoinfer_datatype::h_Int32:
       return create_tensor_core<int32_t>(
           input_buffer, dims, torch::kI32, infer_device_, input_device_, cstream);
+    case holoinfer_datatype::h_Int64:
+      return create_tensor_core<int64_t>(
+          input_buffer, dims, torch::kI64, infer_device_, input_device_, cstream);
     case holoinfer_datatype::h_UInt8:
       return create_tensor_core<uint8_t>(
           input_buffer, dims, torch::kUInt8, infer_device_, input_device_, cstream);
     default: {
+      HOLOSCAN_LOG_INFO(
+          "Torch backend is supported with following data types: float, int8, int32, int64, uint8");
       HOLOSCAN_LOG_ERROR("Unsupported datatype in Torch backend tensor creation.");
       return torch::empty({0});
     }
@@ -281,7 +286,16 @@ InferStatus TorchInferImpl::transfer_to_output(
                                            infer_device_,
                                            output_device_,
                                            cstream);
+    case holoinfer_datatype::h_UInt8:
+      return transfer_from_tensor<uint8_t>(output_buffer[index],
+                                           out_torch_tensor,
+                                           output_dims_[index],
+                                           infer_device_,
+                                           output_device_,
+                                           cstream);
     default:
+      HOLOSCAN_LOG_INFO(
+          "Torch backend is supported with following data types: float, int8, int32, int64, uint8");
       return InferStatus(holoinfer_code::H_ERROR, "Unsupported datatype for transfer.");
   }
 }
@@ -541,7 +555,7 @@ InferStatus TorchInfer::do_inference(const std::vector<std::shared_ptr<DataBuffe
       }
       for (unsigned int a = 0; a < output_buffer.size(); a++) {
         torch::Tensor current_tensor = impl_->output_tensors_[a];
-        auto status = impl_->transfer_to_output(output_buffer, current_tensor, a);
+        auto status = impl_->transfer_to_output(output_buffer, std::move(current_tensor), a);
         HOLOSCAN_LOG_ERROR("Transfer of Tensor {} failed in inferece core.",
                            impl_->output_names_[a]);
         return status;

@@ -32,7 +32,7 @@ gxf_result_t AnnotatedDoubleBufferReceiver::receive_abi(gxf_uid_t* uid) {
 
   static gxf_tid_t message_label_tid = GxfTidNull();
   if (message_label_tid == GxfTidNull()) {
-    GxfComponentTypeId(context(), "holoscan::MessageLabel", &message_label_tid);
+    HOLOSCAN_GXF_CALL(GxfComponentTypeId(context(), "holoscan::MessageLabel", &message_label_tid));
   }
 
   if (gxf::has_component(context(), *uid, message_label_tid, "message_label")) {

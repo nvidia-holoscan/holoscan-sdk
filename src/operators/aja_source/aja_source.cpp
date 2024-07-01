@@ -461,7 +461,7 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
   nvidia::gxf::VideoBufferInfo info{width_,
                                     height_,
                                     video_type.value,
-                                    color_planes,
+                                    std::move(color_planes),
                                     nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR};
 
   if (enable_overlay_) {

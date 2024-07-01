@@ -25,13 +25,7 @@ namespace holoscan {
 
 AsynchronousCondition::AsynchronousCondition(const std::string& name,
                                              nvidia::gxf::AsynchronousSchedulingTerm* term)
-    : GXFCondition(name, term) {
-  if (term) {
-    // no parameters to configure for this condition type
-  } else {
-    HOLOSCAN_LOG_ERROR("AsynchronousCondition: term is null");
-  }
-}
+    : GXFCondition(name, term) {}
 
 nvidia::gxf::AsynchronousSchedulingTerm* AsynchronousCondition::get() const {
   return static_cast<nvidia::gxf::AsynchronousSchedulingTerm*>(gxf_cptr_);

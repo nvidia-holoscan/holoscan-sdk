@@ -100,7 +100,7 @@ PYBIND11_MODULE(_gxf_codelet, m) {
 
   py::class_<GXFCodeletOp, PyGXFCodeletOp, Operator, std::shared_ptr<GXFCodeletOp>>(
       m, "GXFCodeletOp", doc::GXFCodeletOp::doc_GXFCodeletOp)
-      .def(py::init<>(), doc::GXFCodeletOp::doc_GXFCodeletOp)
+      .def(py::init<>())
       .def(py::init<py::object,
                     Fragment*,
                     const std::string&,

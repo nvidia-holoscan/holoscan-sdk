@@ -25,11 +25,13 @@ from holoscan.conditions import (
     BooleanCondition,
     CountCondition,
     DownstreamMessageAffordableCondition,
+    ExpiringMessageAvailableCondition,
     MessageAvailableCondition,
     PeriodicCondition,
 )
 from holoscan.core import Application, Condition, ConditionType, Operator
 from holoscan.gxf import Entity, GXFCondition
+from holoscan.resources import RealtimeClock
 
 
 class TestBooleanCondition:
@@ -213,6 +215,41 @@ args:
 
     def test_positional_initialization(self, app):
         MessageAvailableCondition(app, 1, 4, "available")
+
+
+class TestExpiringMessageAvailableCondition:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "expiring_message"
+        cond = ExpiringMessageAvailableCondition(
+            fragment=app, name=name, max_batch_size=1, max_delay_ns=10
+        )
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, Condition)
+        assert cond.gxf_typename == "nvidia::gxf::ExpiringMessageAvailableSchedulingTerm"
+
+        # verify that name is as expected and that clock argument was automatically added
+        assert (
+            f"""
+name: {name}
+fragment: ""
+args:
+  - name: clock
+    type: std::shared_ptr<Resource>
+spec:
+"""
+            in repr(cond)
+        )
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization(self, app):
+        ExpiringMessageAvailableCondition(app, 1, 4)
+
+    def test_positional_initialization(self, app):
+        ExpiringMessageAvailableCondition(app, 1, 4, RealtimeClock(app, name="clock"), "expiring")
 
 
 class TestPeriodicCondition:

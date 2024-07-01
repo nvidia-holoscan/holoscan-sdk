@@ -89,7 +89,7 @@ class GXFExecutor : public holoscan::Executor {
   /**
    * @brief Set the context.
    *
-   * For GXF, GXFExtensionManager(gxf_extension_manager_) is initialized with the context.
+   * For GXF, GXFExtensionManager(extension_manager_) is initialized with the context.
    *
    * @param context The context.
    */
@@ -220,11 +220,8 @@ class GXFExecutor : public holoscan::Executor {
                                   ///< initializing a new operator if this is 0.
   gxf_uid_t op_cid_ = 0;  ///< The GXF component ID of the operator. Create new component for
                           ///< initializing a new operator if this is 0.
-  std::shared_ptr<GXFExtensionManager> gxf_extension_manager_;  ///< The GXF extension manager.
   nvidia::gxf::Extension* gxf_holoscan_extension_ = nullptr;    ///< The GXF holoscan extension.
 
-  /// The flag to indicate whether the extensions are loaded.
-  bool is_extensions_loaded_ = false;
   /// The flag to indicate whether the GXF graph is initialized.
   bool is_gxf_graph_initialized_ = false;
   /// The flag to indicate whether the GXF graph is activated.

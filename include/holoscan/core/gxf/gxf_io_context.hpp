@@ -97,7 +97,8 @@ class GXFOutputContext : public OutputContext {
 
  protected:
   void emit_impl(std::any data, const char* name = nullptr,
-                 OutputType out_type = OutputType::kSharedPointer) override;
+                 OutputType out_type = OutputType::kSharedPointer,
+                 const int64_t acq_timestamp = -1) override;
 };
 
 }  // namespace holoscan::gxf

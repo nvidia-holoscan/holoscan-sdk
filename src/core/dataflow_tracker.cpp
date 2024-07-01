@@ -24,6 +24,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/dataflow_tracker.hpp"
@@ -43,7 +44,7 @@ void DataFlowTracker::end_logging() {
   if (!logger_ofstream_.is_open()) return;
 
   // Write out the remaining messages from the log buffer and close ofstream
-  for (auto it : buffered_messages_) { logger_ofstream_ << it << "\n"; }
+  for (const auto& it : buffered_messages_) { logger_ofstream_ << it << "\n"; }
   logger_ofstream_.close();
 }
 
@@ -51,9 +52,9 @@ void DataFlowTracker::print() const {
   std::cout << "Data Flow Tracking Results:\n";
   std::cout << "Total paths: " << all_path_metrics_.size() << "\n\n";
   int i = 0;
-  for (auto it : all_path_metrics_) {
+  for (const auto& it : all_path_metrics_) {
     std::cout << "Path " << ++i << ": " << it.first << "\n";
-    for (auto it2 : it.second->metrics) {
+    for (const auto& it2 : it.second->metrics) {
       std::cout << metricToString.at(it2.first) << ": " << it2.second << "\n";
     }
     std::cout << "\n";
@@ -61,7 +62,7 @@ void DataFlowTracker::print() const {
 
   std::cout << "Number of source messages [format: source operator->transmitter name: number of "
                "messages]:\n";
-  for (auto it : source_messages_) { std::cout << it.first << ": " << it.second << "\n"; }
+  for (const auto& it : source_messages_) { std::cout << it.first << ": " << it.second << "\n"; }
 
   std::cout.flush();  // flush standard output; otherwise output may not be printed
 }
@@ -153,7 +154,7 @@ int DataFlowTracker::get_num_paths() {
 std::vector<std::string> DataFlowTracker::get_path_strings() {
   std::vector<std::string> all_pathstrings;
   all_pathstrings.reserve(all_path_metrics_.size());
-  for (auto it : all_path_metrics_) { all_pathstrings.push_back(it.first); }
+  for (const auto& it : all_path_metrics_) { all_pathstrings.push_back(it.first); }
   return all_pathstrings;
 }
 
@@ -185,7 +186,8 @@ void DataFlowTracker::set_skip_latencies(int threshold) {
 void DataFlowTracker::enable_logging(std::string filename, uint64_t num_buffered_messages) {
   is_file_logging_enabled_ = true;
   this->num_buffered_messages_ = num_buffered_messages;
-  logger_filename_ = filename;
+  logger_filename_ = std::move(filename);
+  std::scoped_lock lock(buffered_messages_mutex_);
   buffered_messages_.reserve(this->num_buffered_messages_);
   logfile_messages_ = 0;
 }
@@ -193,18 +195,17 @@ void DataFlowTracker::enable_logging(std::string filename, uint64_t num_buffered
 void DataFlowTracker::write_to_logfile(std::string text) {
   if (!text.empty() && is_file_logging_enabled_) {
     if (!logger_ofstream_.is_open()) { logger_ofstream_.open(logger_filename_); }
-    buffered_messages_mutex_.lock();
+    std::scoped_lock lock(buffered_messages_mutex_);
     buffered_messages_.push_back(std::to_string(++logfile_messages_) + ":\n" + text);
     // When the vector's size is equal to buffered number of messages,
     // flush out the buffer to file
     // and clear the vector to re-reserve the memory
     if (buffered_messages_.size() == num_buffered_messages_) {
-      for (auto it : buffered_messages_) { logger_ofstream_ << it << "\n"; }
+      for (const auto& it : buffered_messages_) { logger_ofstream_ << it << "\n"; }
       logger_ofstream_ << std::flush;
       buffered_messages_.clear();
       buffered_messages_.reserve(num_buffered_messages_);
     }
-    buffered_messages_mutex_.unlock();
   }
 }
 

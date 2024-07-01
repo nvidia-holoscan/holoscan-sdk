@@ -88,9 +88,9 @@ holoscan::MessageLabel Operator::get_consolidated_input_label() {
 
   if (this->input_message_labels.size()) {
     // Flatten the message_paths in input_message_labels into a single MessageLabel
-    for (auto it : this->input_message_labels) {
+    for (auto& it : this->input_message_labels) {
       MessageLabel everyinput = it.second;
-      for (auto p : everyinput.paths()) { m.add_new_path(p); }
+      for (auto& p : everyinput.paths()) { m.add_new_path(p); }
     }
   } else {  // Root operator
     if (!this->is_root() && !this->is_user_defined_root()) {

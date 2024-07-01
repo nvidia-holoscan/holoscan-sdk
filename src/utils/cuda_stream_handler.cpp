@@ -34,7 +34,9 @@ CudaStreamHandler::~CudaStreamHandler() {
   for (auto&& event : cuda_events_) {
     const cudaError_t result = cudaEventDestroy(event);
     if (cudaSuccess != result) {
-      HOLOSCAN_LOG_ERROR("Failed to destroy CUDA event: %s", cudaGetErrorString(result));
+      try {
+        HOLOSCAN_LOG_ERROR("Failed to destroy CUDA event: %s", cudaGetErrorString(result));
+      } catch (std::exception& e) {}
     }
   }
   cuda_events_.clear();

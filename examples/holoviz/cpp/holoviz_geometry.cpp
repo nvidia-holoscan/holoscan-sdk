@@ -307,10 +307,8 @@ class HolovizGeometryApp : public holoscan::Application {
     label_coords_spec.text_ = {"label_1", "label_2"};
     label_coords_spec.priority_ = priority++;
 
-    auto visualizer = make_operator<ops::HolovizOp>("holoviz",
-                                                    Arg("width", 854u),
-                                                    Arg("height", 480u),
-                                                    Arg("tensors", input_spec));
+    auto visualizer = make_operator<ops::HolovizOp>(
+        "holoviz", Arg("width", 854u), Arg("height", 480u), Arg("tensors", input_spec));
 
     // Define the workflow: source -> holoviz
     add_flow(source, visualizer, {{"outputs", "receivers"}});
@@ -326,7 +324,7 @@ int main(int argc, char** argv) {
   // Parse args
   struct option long_options[] = {
       {"help", no_argument, 0, 'h'}, {"count", required_argument, 0, 'c'}, {0, 0, 0, 0}};
-  uint64_t count;
+  uint64_t count = 0;
   while (true) {
     int option_index = 0;
     const int c = getopt_long(argc, argv, "hc:", long_options, &option_index);

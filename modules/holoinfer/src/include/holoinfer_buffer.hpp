@@ -207,6 +207,7 @@ struct InferenceSpecs {
    * @param inference_map Map with model name as key, output tensor names in vector form as value
    * @param device_map Map with model name as key, GPU ID for inference as value
    * @param temporal_map Map with model name as key, frame number to skip for inference as value
+   * @param activation_map Map with key as model name and activation state for inference as value
    * @param is_engine_path Input path to model is trt engine
    * @param oncpu Perform inference on CPU
    * @param parallel_proc Perform parallel inference of multiple models
@@ -217,8 +218,9 @@ struct InferenceSpecs {
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
-                 const Mappings& temporal_map, bool is_engine_path, bool oncpu, bool parallel_proc,
-                 bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out)
+                 const Mappings& temporal_map, const Mappings& activation_map, bool is_engine_path,
+                 bool oncpu, bool parallel_proc, bool use_fp16, bool cuda_buffer_in,
+                 bool cuda_buffer_out)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
@@ -226,6 +228,7 @@ struct InferenceSpecs {
         inference_map_(inference_map),
         device_map_(device_map),
         temporal_map_(temporal_map),
+        activation_map_(activation_map),
         is_engine_path_(is_engine_path),
         oncuda_(!oncpu),
         parallel_processing_(parallel_proc),
@@ -257,6 +260,22 @@ struct InferenceSpecs {
    */
   Mappings get_temporal_map() const { return temporal_map_; }
 
+  /**
+   * @brief Get the Activation map
+   * @return Mappings data
+   */
+  Mappings get_activation_map() const { return activation_map_; }
+
+  /**
+   * @brief Set the Activation map
+   * @param activation_map Map that will be used to update the activation_map_ of specs.
+   */
+  void set_activation_map(const Mappings& activation_map) {
+    for (const auto& [key, value] : activation_map) {
+      if (activation_map_.find(key) != activation_map.end()) { activation_map_.at(key) = value; }
+    }
+  }
+
   /// @brief Backend type (for all models)
   std::string backend_type_{""};
 
@@ -277,6 +296,9 @@ struct InferenceSpecs {
 
   /// @brief Map with key as model name and frame number to skip for inference as value
   Mappings temporal_map_;
+
+  /// @brief Map with key as model name and activation state for inference as value
+  Mappings activation_map_;
 
   /// @brief Flag showing if input model path is path to engine files
   bool is_engine_path_ = false;

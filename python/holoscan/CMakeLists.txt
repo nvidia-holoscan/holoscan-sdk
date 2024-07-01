@@ -87,6 +87,15 @@ add_custom_target(holoscan-python-pyinit
 )
 add_dependencies(holoscan-python holoscan-python-pyinit)
 
+# custom target for top-level decorator.py file is copied
+set(CMAKE_PYBIND11_DECORATORS_PY_FILE ${CMAKE_CURRENT_LIST_DIR}/decorator.py)
+add_custom_target(holoscan-python-decorator
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PYBIND11_DECORATORS_PY_FILE}" "${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/"
+    DEPENDS "${CMAKE_PYBIND11_DECORATORS_PY_FILE}"
+)
+add_dependencies(holoscan-python holoscan-python-decorator)
+
+
 # copy Holoscan Python CLI module
 set(HOLOSCAN_PYTHON_CLI_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cli)
 add_custom_target(holoscan-python-cli
@@ -99,10 +108,6 @@ add_dependencies(holoscan-python holoscan-python-cli)
 add_subdirectory(cli)
 add_subdirectory(conditions)
 add_subdirectory(core)
-target_link_libraries(core_python
-    PRIVATE holoscan::core
-    PRIVATE AJA::ajantv2  # need this to parse NTV2Channel enum from kwargs
-)
 add_subdirectory(executors)
 add_subdirectory(graphs)
 add_subdirectory(gxf)

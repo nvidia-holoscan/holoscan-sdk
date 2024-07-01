@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -517,7 +517,7 @@ bool GPUResourceMonitor::bind_cuda_runtime_methods() {
   cudaDeviceGetPCIBusId =
       reinterpret_cast<cuda::cudaDeviceGetPCIBusId_t>(dlsym(cuda_handle_, "cudaDeviceGetPCIBusId"));
   // for cudaMemGetInfo method
-  cudaMemGetInfo = reinterpret_cast<cuda::cudaMemGetInfo_t>(dlsym(handle_, "cudaMemGetInfo"));
+  cudaMemGetInfo = reinterpret_cast<cuda::cudaMemGetInfo_t>(dlsym(cuda_handle_, "cudaMemGetInfo"));
 
   if (cudaGetErrorString == nullptr || cudaGetDeviceCount == nullptr ||
       cudaGetDeviceProperties == nullptr || cudaDeviceGetPCIBusId == nullptr ||
@@ -605,17 +605,19 @@ bool GPUResourceMonitor::init_cuda_runtime() {
   return true;
 }
 
-void GPUResourceMonitor::shutdown_nvml() {
+void GPUResourceMonitor::shutdown_nvml() noexcept {
   if (handle_) {
-    nvml::nvmlReturn_t result = nvmlShutdown();
-    if (result != 0) { HOLOSCAN_LOG_ERROR("Could not shutdown NVML"); }
+    if (nvmlShutdown) {
+      nvml::nvmlReturn_t result = nvmlShutdown();
+      if (result != 0) { HOLOSCAN_LOG_ERROR("Could not shutdown NVML"); }
+    }
     dlclose(handle_);
     handle_ = nullptr;
     is_cached_ = false;
   }
 }
 
-void GPUResourceMonitor::shutdown_cuda_runtime() {
+void GPUResourceMonitor::shutdown_cuda_runtime() noexcept {
   if (cuda_handle_) {
     dlclose(cuda_handle_);
     cuda_handle_ = nullptr;

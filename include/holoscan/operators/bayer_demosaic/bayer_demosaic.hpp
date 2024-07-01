@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_HPP
-#define HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_HPP
+#ifndef HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_BAYER_DEMOSAIC_HPP
+#define HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_BAYER_DEMOSAIC_HPP
 
 #include <npp.h>
 
@@ -123,8 +123,9 @@ class BayerDemosaicOp : public holoscan::Operator {
 
   NppStreamContext npp_stream_ctx_{};
 
-  NppiInterpolationMode npp_bayer_interp_mode_;
-  NppiBayerGridPosition npp_bayer_grid_pos_;
+  // defaults here will be overridden later by parameter defaults in setup method
+  NppiInterpolationMode npp_bayer_interp_mode_ = NPPI_INTER_UNDEFINED;
+  NppiBayerGridPosition npp_bayer_grid_pos_ = NPPI_BAYER_GBRG;
 
   nvidia::gxf::MemoryBuffer device_scratch_buffer_;
 
@@ -133,4 +134,4 @@ class BayerDemosaicOp : public holoscan::Operator {
 
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_HPP */
+#endif /* HOLOSCAN_OPERATORS_BAYER_DEMOSAIC_BAYER_DEMOSAIC_HPP */

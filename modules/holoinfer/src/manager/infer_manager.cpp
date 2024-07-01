@@ -227,9 +227,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       switch (current_backend) {
         case holoinfer_backend::h_trt: {
           if (inference_specs->use_fp16_ && inference_specs->is_engine_path_) {
-            status.set_message(
-                "WARNING: Engine files are the input, fp16 check/conversion is ignored");
-            status.display_message();
+            HOLOSCAN_LOG_WARN("Engine files are the input, fp16 check/conversion is ignored");
           }
           if (!inference_specs->oncuda_) {
             status.set_message("ERROR: TRT backend supports inference on GPU only");
@@ -320,6 +318,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           if (!new_torch_infer) {
             HOLOSCAN_LOG_ERROR(dlerror());
             status.set_message("Torch context setup failure.");
+            dlclose(handle);
             return status;
           }
           dlclose(handle);
@@ -681,9 +680,19 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
   return InferStatus();
 }
 
-InferStatus ManagerInfer::execute_inference(DataMap& permodel_preprocess_data,
-                                            DataMap& permodel_output_data) {
+InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs) {
   InferStatus status = InferStatus();
+
+  auto permodel_preprocess_data = inference_specs->data_per_tensor_;
+  auto permodel_output_data = inference_specs->output_per_model_;
+
+  if (permodel_preprocess_data.size() == 0) {
+    status.set_code(holoinfer_code::H_ERROR);
+    status.set_message("Inference manager, Error: Data map empty for inferencing");
+    return status;
+  }
+
+  auto activation_map = inference_specs->get_activation_map();
 
   if (frame_counter_++ == UINT_MAX - 1) { frame_counter_ = 0; }
 
@@ -701,8 +710,28 @@ InferStatus ManagerInfer::execute_inference(DataMap& permodel_preprocess_data,
   std::map<std::string, std::future<InferStatus>> inference_futures;
   s_time = std::chrono::steady_clock::now();
   for (const auto& [model_instance, _] : infer_param_) {
+    bool process_model = true;
+
+    if (activation_map.find(model_instance) != activation_map.end()) {
+      try {
+        auto activation_value = std::stoul(activation_map.at(model_instance));
+        HOLOSCAN_LOG_INFO("Activation value: {} for Model: {}", activation_value, model_instance);
+        if (activation_value > 1) {
+          HOLOSCAN_LOG_WARN("Activation map can have either a value of 0 or 1 for a model.");
+          HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
+        }
+        if (activation_value == 0) { process_model = false; }
+      } catch (std::invalid_argument const& ex) {
+        HOLOSCAN_LOG_WARN("Invalid argument in activation map: {}", ex.what());
+        HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
+      } catch (std::out_of_range const& ex) {
+        HOLOSCAN_LOG_WARN("Invalid range in activation map: {}", ex.what());
+        HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
+      }
+    }
+
     auto temporal_id = infer_param_.at(model_instance)->get_temporal_id();
-    if (frame_counter_ % temporal_id == 0) {
+    if (process_model && (frame_counter_ % temporal_id == 0)) {
       if (!parallel_processing_) {
         InferStatus infer_status =
             run_core_inference(model_instance, permodel_preprocess_data, permodel_output_data);
@@ -769,7 +798,7 @@ InferContext::InferContext() {
   } catch (const std::bad_alloc&) { throw; }
 }
 
-InferStatus InferContext::execute_inference(DataMap& data_map, DataMap& output_data_map) {
+InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs) {
   InferStatus status = InferStatus();
 
   if (g_managers.find(unique_id_) == g_managers.end()) {
@@ -781,12 +810,7 @@ InferStatus InferContext::execute_inference(DataMap& data_map, DataMap& output_d
   try {
     g_manager = g_managers.at(unique_id_);
 
-    if (data_map.size() == 0) {
-      status.set_code(holoinfer_code::H_ERROR);
-      status.set_message("Inference manager, Error: Data map empty for inferencing");
-      return status;
-    }
-    status = g_manager->execute_inference(data_map, output_data_map);
+    status = g_manager->execute_inference(inference_specs);
   } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
     status.set_message(std::string("Inference manager, Error in inference setup: ") + e.what());

@@ -104,6 +104,10 @@ void Fragment::config(std::shared_ptr<Config>& config) {
 }
 
 Config& Fragment::config() {
+  return *config_shared();
+}
+
+std::shared_ptr<Config> Fragment::config_shared() {
   if (!config_) {
     // If the application is executed with `--config` option or HOLOSCAN_CONFIG_PATH environment
     // variable, we take the config file from there.
@@ -112,7 +116,7 @@ Config& Fragment::config() {
       if (!config_path.empty() && config_path.size() > 0) {
         HOLOSCAN_LOG_DEBUG("Loading config from '{}' (through --config option)", config_path);
         config_ = make_config<Config>(config_path.c_str());
-        return *config_;
+        return config_;
       } else {
         const char* env_value = std::getenv("HOLOSCAN_CONFIG_PATH");
         if (env_value != nullptr && env_value[0] != '\0') {
@@ -120,24 +124,31 @@ Config& Fragment::config() {
               "Loading config from '{}' (through HOLOSCAN_CONFIG_PATH environment variable)",
               env_value);
           config_ = make_config<Config>(env_value);
-          return *config_;
+          return config_;
         }
       }
     }
-
     config_ = make_config<Config>();
   }
-  return *config_;
+  return config_;
 }
 
 OperatorGraph& Fragment::graph() {
+  return *graph_shared();
+}
+
+std::shared_ptr<OperatorGraph> Fragment::graph_shared() {
   if (!graph_) { graph_ = make_graph<OperatorFlowGraph>(); }
-  return *graph_;
+  return graph_;
 }
 
 Executor& Fragment::executor() {
+  return *executor_shared();
+}
+
+std::shared_ptr<Executor> Fragment::executor_shared() {
   if (!executor_) { executor_ = make_executor<gxf::GXFExecutor>(); }
-  return *executor_;
+  return executor_;
 }
 
 void Fragment::scheduler(const std::shared_ptr<Scheduler>& scheduler) {
@@ -484,8 +495,13 @@ void Fragment::compose_graph() {
     HOLOSCAN_LOG_DEBUG("The fragment({}) has already been composed. Skipping...", name());
     return;
   }
-  is_composed_ = true;
+
+  // Load extensions from the config file before composing the graph.
+  // (The GXFCodeletOp and GXFComponentResource classes are required to access the underlying GXF
+  //  types in the setup() method when composing a graph.)
+  load_extensions_from_config();
   compose();
+  is_composed_ = true;
 
   // Protect against the case where no add_operator or add_flow calls were made
   if (!graph_) {
@@ -505,7 +521,7 @@ FragmentPortMap Fragment::port_info() const {
     return fragment_port_info;
   }
   std::vector<OperatorNodeType> operators = graph_->get_nodes();
-  for (auto op : operators) {
+  for (auto& op : operators) {
     HOLOSCAN_LOG_TRACE("\toperator: {}", name_, op->name());
     OperatorSpec* op_spec = op->spec();
 
@@ -547,6 +563,14 @@ void Fragment::reset_graph_entities() {
   if (gxf_sch) { gxf_sch->reset_graph_entities(); }
   auto gxf_network_context = std::dynamic_pointer_cast<gxf::GXFNetworkContext>(network_context());
   if (gxf_network_context) { gxf_network_context->reset_graph_entities(); }
+}
+
+void Fragment::load_extensions_from_config() {
+  HOLOSCAN_LOG_INFO("Loading extensions from configs...");
+  // Load any extensions that may be present in the config file
+  for (const auto& yaml_node : config().yaml_nodes()) {
+    executor().extension_manager()->load_extensions_from_yaml(yaml_node);
+  }
 }
 
 }  // namespace holoscan

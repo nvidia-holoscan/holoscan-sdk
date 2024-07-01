@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,9 +119,9 @@ void SignalHandler::install_signal_handler_impl(int signal) {
     return;
   }
 
-  for (auto& [signal, handler] : old_signal_handlers_) {
-    HOLOSCAN_LOG_DEBUG("Installing signal handler for signal {}", signal);
-    sigaction(signal, &signal_handler_, nullptr);  // can ignore storing old handler
+  for (auto& [sig, handler] : old_signal_handlers_) {
+    HOLOSCAN_LOG_DEBUG("Installing signal handler for signal {}", sig);
+    sigaction(sig, &signal_handler_, nullptr);  // can ignore storing old handler
   }
 }
 

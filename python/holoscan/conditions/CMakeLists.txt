@@ -20,5 +20,6 @@ holoscan_pybind11_module(conditions
     count.cpp
     downstream_message_affordable.cpp
     message_available.cpp
+    expiring_message.cpp
     periodic.cpp
 )

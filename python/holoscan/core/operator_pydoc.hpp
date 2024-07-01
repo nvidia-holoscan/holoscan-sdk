@@ -189,6 +189,20 @@ PYDOC(resources, R"doc(
 Resources associated with the operator.
 )doc")
 
+PYDOC(resource, R"doc(
+Resources associated with the operator.
+
+Parameters
+----------
+name : str
+The name of the resource to retrieve
+
+Returns
+-------
+holoscan.core.Resource or None
+    The resource with the given name. If no resource with the given name is found, None is returned.
+)doc")
+
 PYDOC(add_arg_Arg, R"doc(
 Add an argument to the component.
 )doc")

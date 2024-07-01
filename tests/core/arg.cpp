@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,8 +29,12 @@
 #include <vector>
 
 #include "../config.hpp"
+#include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/io_spec.hpp"
+#include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/parameter.hpp"
+#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
 using namespace std::string_literals;
 
@@ -217,16 +221,26 @@ TEST(Arg, TestArgHandleType) {
   check_arg_types(A, ArgElementType::kHandle, ArgContainerType::kVector);
 }
 
-TEST(Arg, TestOtherEnums) {
-  // TODO: add parametrized test cases above for these.
+TEST(Arg, TestCondition) {
+  Fragment F;
+  auto bool_cond = F.make_condition<BooleanCondition>("boolean"s, Arg{"enable_tick", true});
+  Arg condition_arg{"bool cond", bool_cond};
+  check_arg_types(condition_arg, ArgElementType::kCondition, ArgContainerType::kNative);
+}
 
-  // For now, just check that enum entries exist for:
-  //     kIOSpec (holoscan::IOSpec*)
-  //     kCondition (std::shared_ptr<Condition>)
-  //     kResource (std::shared_ptr<Resource>)
-  ArgElementType T = ArgElementType::kIOSpec;
-  T = ArgElementType::kCondition;
-  T = ArgElementType::kResource;
+TEST(Arg, TestResource) {
+  Fragment F;
+  auto allocator = F.make_resource<UnboundedAllocator>("unbounded");
+  Arg resource_arg{"allocator", allocator};
+  check_arg_types(resource_arg, ArgElementType::kResource, ArgContainerType::kNative);
+}
+
+TEST(Arg, TestIOSpec) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec =
+      IOSpec(&op_spec, std::string("a"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+  Arg spec_arg{"iospec", &spec};
+  check_arg_types(spec_arg, ArgElementType::kIOSpec, ArgContainerType::kNative);
 }
 
 TEST(Arg, TestArgDescription) {

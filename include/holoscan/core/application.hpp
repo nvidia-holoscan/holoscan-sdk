@@ -28,11 +28,13 @@
 
 #include "./fragment.hpp"
 
-#include "./app_driver.hpp"
 #include "./app_worker.hpp"
 #include "./cli_parser.hpp"
 
 namespace holoscan {
+
+// forward declaration
+class AppDriver;
 
 /**
  * @brief Utility function to create an application.
@@ -343,7 +345,7 @@ class Application : public Fragment {
 
   CLIParser cli_parser_;           ///< The command line parser.
   std::vector<std::string> argv_;  ///< The command line arguments after processing flags.
-  std::unique_ptr<FragmentGraph> fragment_graph_;  ///< The fragment connection graph.
+  std::shared_ptr<FragmentGraph> fragment_graph_;  ///< The fragment connection graph.
 
   std::shared_ptr<AppDriver> app_driver_;  ///< The application driver.
   std::shared_ptr<AppWorker> app_worker_;  ///< The application worker.

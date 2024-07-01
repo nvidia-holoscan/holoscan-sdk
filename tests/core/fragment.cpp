@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,7 +84,7 @@ TEST(Fragment, TestFragmentConfig) {
   const std::string config_file = test_config.get_test_data_file("app_config.yaml");
   F.config(config_file);
 
-  Config C = F.config();
+  Config& C = F.config();
   ASSERT_TRUE(C.config_file() == config_file);
 
   ArgList args = F.from_config("format_converter_replayer"s);
@@ -112,7 +112,7 @@ TEST(Fragment, TestFragmentConfigNestedArgs) {
   const std::string config_file = test_config.get_test_data_file("app_config.yaml");
   F.config(config_file);
 
-  Config C = F.config();
+  Config& C = F.config();
   ASSERT_TRUE(C.config_file() == config_file);
 
   // can directly access a specific argument under the "aja" section
@@ -126,7 +126,7 @@ TEST(Fragment, TestFragmentConfigNestedArgs) {
 TEST(Fragment, TestConfigUninitializedWarning) {
   Fragment F;
 
-  Config C = F.config();
+  Config& C = F.config();
   EXPECT_EQ(C.config_file(), "");
 }
 
@@ -138,7 +138,7 @@ TEST(Fragment, TestFragmentFromConfigNonexistentKey) {
   const std::string config_file = test_config.get_test_data_file("app_config.yaml");
   F.config(config_file);
 
-  Config C = F.config();
+  Config& C = F.config();
   ASSERT_TRUE(C.config_file() == config_file);
   ArgList args = F.from_config("non-existent"s);
   EXPECT_EQ(args.size(), 0);
@@ -169,9 +169,9 @@ TEST(Fragment, TestFragmentGraph) {
   Fragment F;
 
   // First call to graph creates a FlowGraph object
-  // F.graph() returns a pointer to the abstract Graph base class so use
+  // F.graph() returns a reference to the abstract Graph base class so use
   // static_cast here
-  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
 }
 
 TEST(Fragment, TestAddOperator) {
@@ -181,9 +181,9 @@ TEST(Fragment, TestAddOperator) {
   F.add_operator(op);
 
   // First call to graph creates a FlowGraph object
-  // F.graph() returns a pointer to the abstract Graph base class so use
+  // F.graph() returns a reference to the abstract Graph base class so use
   // static_cast here
-  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
 
   // verify that the operator was added to the graph
   auto nodes = G.get_nodes();
@@ -212,9 +212,9 @@ TEST(Fragment, TestAddFlow) {
   F.add_flow(tx, rx, {{"out", "in"}});
 
   // First call to graph creates a FlowGraph object
-  // F.graph() returns a pointer to the abstract Graph base class so use
+  // F.graph() returns a reference to the abstract Graph base class so use
   // static_cast here
-  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
 
   // verify that the operators and edges were added to the graph
   auto nodes = G.get_nodes();
@@ -243,7 +243,7 @@ TEST(Fragment, TestOperatorOrder) {
   F.add_flow(tx, rx, {{"out", "in"}});
   F.add_flow(tx2, rx2, {{"out", "in"}});
 
-  OperatorFlowGraph G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
   auto order = G.get_nodes();
 
   const std::vector<std::string> expected_order = {"tx2", "tx", "rx", "rx2"};
@@ -256,7 +256,7 @@ TEST(Fragment, TestFragmentExecutor) {
   Fragment F;
 
   // First call to executor generates an Executor object
-  Executor E = F.executor();
+  Executor& E = F.executor();
 
   // this fragment is associated with the executor that was created
   EXPECT_EQ(E.fragment(), &F);
@@ -271,7 +271,6 @@ TEST(Fragment, TestFragmentMoveAssignment) {
   // can only move assign (copy assignment operator has been deleted)
   F = std::move(G);
   EXPECT_EQ(F.name(), "G");
-  EXPECT_EQ(G.name(), "");
 }
 
 // Fragment::make_condition is tested elsewhere in condition_classes.cpp

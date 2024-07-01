@@ -359,6 +359,29 @@ class TestAJASourceOp:
         assert "error" not in captured.err
         assert "warning" not in captured.err
 
+    def test_channel_kwarg_string_variant(self, app, config_file, capfd):
+        app.config(config_file)
+        name = "source"
+        op = AJASourceOp(
+            fragment=app,
+            name=name,
+            channel="NTV2_CHANNEL1",
+            width=1920,
+            height=1080,
+            rdma=True,
+            enable_overlay=False,
+            overlay_channel="NTV2_CHANNEL2",
+            overlay_rdma=True,
+        )
+        assert isinstance(op, _Operator)
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
     def test_initialization_from_yaml(self, app, config_file, capfd):
         app.config(config_file)
         name = "source"

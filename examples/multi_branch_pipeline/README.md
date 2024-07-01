@@ -49,7 +49,7 @@ For the C++ application, the scheduler to be used can be set via the `scheduler`
 
 ## Python API
 
-- `multi_branch_pipeline.py`: This example is the same as described for the C++ application above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default a polling-based multithread scheduler will be used, but if `--event-based` is specified, the event-based multithread scheduler will be used instead.
+- `multi_branch_pipeline.py`: This example is the same as described for the C++ application above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default a polling-based multithread scheduler will be used, but if `--event_based` is specified, the event-based multithread scheduler will be used instead.
 
 ### Build instructions
 

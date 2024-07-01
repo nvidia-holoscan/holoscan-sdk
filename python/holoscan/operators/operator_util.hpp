@@ -156,10 +156,10 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
       // Handle list of list and other sequence of sequence types.
       std::vector<std::vector<T>> v;
       v.reserve(static_cast<size_t>(py::len(seq)));
-      for (auto item : seq) {
+      for (const auto& item : seq) {
         std::vector<T> vv;
         vv.reserve(static_cast<size_t>(py::len(item)));
-        for (auto inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+        for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
         v.push_back(vv);
       }
       out = v;
@@ -176,7 +176,7 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
     if (py::isinstance<py::sequence>(first_item) && !py::isinstance<py::str>(first_item)) {
       // Handle list of list and other sequence of sequence types.
       YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-      for (auto item : seq) {
+      for (const auto& item : seq) {
         YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
         for (const auto& inner_item : item) {
           inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));

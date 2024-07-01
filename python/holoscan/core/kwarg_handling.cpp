@@ -29,7 +29,6 @@
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/resource.hpp"
-#include "holoscan/operators/aja_source/ntv2channel.hpp"
 #include "kwarg_handling.hpp"
 #include "kwarg_handling_pydoc.hpp"
 
@@ -106,7 +105,7 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
     out = yaml_node;
   } else if (obj.attr("ndim").cast<int>() == 2) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-    for (auto item : obj) {
+    for (const auto& item : obj) {
       YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
       for (const auto& inner_item : item) {
         inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
@@ -131,10 +130,10 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
       // Handle list of list and other sequence of sequence types.
       std::vector<std::vector<T>> v;
       v.reserve(static_cast<size_t>(py::len(seq)));
-      for (auto item : seq) {
+      for (const auto& item : seq) {
         std::vector<T> vv;
         vv.reserve(static_cast<size_t>(py::len(item)));
-        for (auto inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+        for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
         v.push_back(vv);
       }
       out = v;
@@ -143,7 +142,7 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
       std::vector<T> v;
       size_t length = py::len(seq);
       v.reserve(length);
-      for (auto item : seq) v.push_back(item.cast<T>());
+      for (const auto& item : seq) v.push_back(item.cast<T>());
       out = v;
     }
   } else {
@@ -151,7 +150,7 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
     if (py::isinstance<py::sequence>(first_item) && !py::isinstance<py::str>(first_item)) {
       // Handle list of list and other sequence of sequence types.
       YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-      for (auto item : seq) {
+      for (const auto& item : seq) {
         YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
         for (const auto& inner_item : item) {
           inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
@@ -266,11 +265,11 @@ py::object vector_arg_to_py_object(Arg& arg) {
 py::object yaml_node_to_py_object(YAML::Node node) {
   if (node.IsSequence()) {
     py::list list;
-    for (auto item : node) { list.append(yaml_node_to_py_object(item)); }
+    for (const auto& item : node) { list.append(yaml_node_to_py_object(item)); }
     return list;
   } else if (node.IsMap()) {
     py::dict dict;
-    for (auto item : node) {
+    for (const auto& item : node) {
       dict[py::str(item.first.as<std::string>())] = yaml_node_to_py_object(item.second);
     }
     return dict;
@@ -294,10 +293,6 @@ py::object yaml_node_to_py_object(YAML::Node node) {
     }
     // Check if it is a string.
     {
-      // special case for string -> AJASourceOp NTV2Channel enum
-      NTV2Channel aja_t;
-      if (YAML::convert<NTV2Channel>::decode(node, aja_t)) { return py::cast(aja_t); }
-
       std::string t;
       if (YAML::convert<std::string>::decode(node, t)) { return py::str(t); }
     }
@@ -428,7 +423,7 @@ ArgList kwargs_to_arglist(const py::kwargs& kwargs) {
   //       There is currently no option to choose conversion to kArray instead of kNative.
   ArgList arglist;
   if (kwargs) {
-    for (auto& [name, handle] : kwargs) {
+    for (const auto& [name, handle] : kwargs) {
       arglist.add(py_object_to_arg(handle.cast<py::object>(), name.cast<std::string>()));
     }
     /// .. do something with kwargs

@@ -15,8 +15,10 @@
  limitations under the License.
 """  # noqa: E501
 
-from holoscan.core import Resource
+from holoscan.core import ComponentSpec, Resource
+from holoscan.core import _Resource as ResourceBase
 from holoscan.gxf import GXFResource
+from holoscan.operators import PingTxOp
 from holoscan.resources import (
     Allocator,
     BlockMemoryPool,
@@ -54,7 +56,7 @@ class TestBlockMemoryPool:
         )
         assert isinstance(pool, Allocator)
         assert isinstance(pool, GXFResource)
-        assert isinstance(pool, Resource)
+        assert isinstance(pool, ResourceBase)
         assert pool.id == -1
         assert pool.gxf_typename == "nvidia::gxf::BlockMemoryPool"
 
@@ -74,7 +76,7 @@ class TestCudaStreamPool:
         pool = CudaStreamPool(fragment=app, name=name)
         assert isinstance(pool, Allocator)
         assert isinstance(pool, GXFResource)
-        assert isinstance(pool, Resource)
+        assert isinstance(pool, ResourceBase)
         assert pool.id == -1
         assert pool.gxf_typename == "nvidia::gxf::CudaStreamPool"
         assert f"name: {name}" in repr(pool)
@@ -96,7 +98,7 @@ class TestCudaStreamPool:
         )
         assert isinstance(pool, Allocator)
         assert isinstance(pool, GXFResource)
-        assert isinstance(pool, Resource)
+        assert isinstance(pool, ResourceBase)
         assert pool.id == -1
         assert pool.gxf_typename == "nvidia::gxf::CudaStreamPool"
         assert f"name: {name}" in repr(pool)
@@ -118,7 +120,7 @@ class TestUnboundedAllocator:
         )
         assert isinstance(alloc, Allocator)
         assert isinstance(alloc, GXFResource)
-        assert isinstance(alloc, Resource)
+        assert isinstance(alloc, ResourceBase)
         assert alloc.id == -1
         assert alloc.gxf_typename == "nvidia::gxf::UnboundedAllocator"
         assert f"name: {name}" in repr(alloc)
@@ -143,15 +145,18 @@ class TestStdDoubleBufferReceiver:
         )
         assert isinstance(r, Receiver)
         assert isinstance(r, GXFResource)
-        assert isinstance(r, Resource)
+        assert isinstance(r, ResourceBase)
         assert r.id == -1
         assert r.gxf_typename == "nvidia::gxf::DoubleBufferReceiver"
+        r.initialize()  # manually initialize so we can check resource_type
+        assert r.resource_type == Resource.ResourceType.GXF
         assert f"name: {name}" in repr(r)
 
-        # assert no warnings or errors logged
+        # assert no unexpected warnings or errors logged
         captured = capfd.readouterr()
         assert "error" not in captured.err
-        assert "warning" not in captured.err
+        # expect one warning due to manually calling initialize() above
+        assert captured.err.count("warning") < 2
 
     def test_default_initialization(self, app):
         DoubleBufferReceiver(app)
@@ -168,15 +173,18 @@ class TestStdDoubleBufferTransmitter:
         )
         assert isinstance(r, Transmitter)
         assert isinstance(r, GXFResource)
-        assert isinstance(r, Resource)
+        assert isinstance(r, ResourceBase)
         assert r.id == -1
         assert r.gxf_typename == "nvidia::gxf::DoubleBufferTransmitter"
+        r.initialize()  # manually initialize so we can check resource_type
+        assert r.resource_type == Resource.ResourceType.GXF
         assert f"name: {name}" in repr(r)
 
-        # assert no warnings or errors logged
+        # assert no unexpected warnings or errors logged
         captured = capfd.readouterr()
         assert "error" not in captured.err
-        assert "warning" not in captured.err
+        # expect one warning due to manually calling initialize() above
+        assert captured.err.count("warning") < 2
 
     def test_default_initialization(self, app):
         DoubleBufferTransmitter(app)
@@ -190,7 +198,7 @@ class TestStdComponentSerializer:
             name=name,
         )
         assert isinstance(r, GXFResource)
-        assert isinstance(r, Resource)
+        assert isinstance(r, ResourceBase)
         assert r.id == -1
         assert r.gxf_typename == "nvidia::gxf::StdComponentSerializer"
         assert f"name: {name}" in repr(r)
@@ -212,7 +220,7 @@ class TestStdEntitySerializer:
             name=name,
         )
         assert isinstance(r, GXFResource)
-        assert isinstance(r, Resource)
+        assert isinstance(r, ResourceBase)
         assert r.id == -1
         assert r.gxf_typename == "nvidia::gxf::StdEntitySerializer"
         assert f"name: {name}" in repr(r)
@@ -236,7 +244,7 @@ class TestManualClock:
         )
         assert isinstance(clk, Clock)
         assert isinstance(clk, GXFResource)
-        assert isinstance(clk, Resource)
+        assert isinstance(clk, ResourceBase)
         assert clk.id == -1
         assert clk.gxf_typename == "nvidia::gxf::ManualClock"
         assert f"name: {name}" in repr(clk)
@@ -262,7 +270,7 @@ class TestRealtimeClock:
         )
         assert isinstance(clk, Clock)
         assert isinstance(clk, GXFResource)
-        assert isinstance(clk, Resource)
+        assert isinstance(clk, ResourceBase)
         assert clk.id == -1
         assert clk.gxf_typename == "nvidia::gxf::RealtimeClock"
         assert f"name: {name}" in repr(clk)
@@ -286,7 +294,7 @@ class TestSerializationBuffer:
             name=name,
         )
         assert isinstance(res, GXFResource)
-        assert isinstance(res, Resource)
+        assert isinstance(res, ResourceBase)
         assert res.id == -1  # -1 because initialize() isn't called
         assert res.gxf_typename == "nvidia::gxf::SerializationBuffer"
         assert f"name: {name}" in repr(res)
@@ -307,7 +315,7 @@ class TestUcxSerializationBuffer:
             name=name,
         )
         assert isinstance(res, GXFResource)
-        assert isinstance(res, Resource)
+        assert isinstance(res, ResourceBase)
         assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxSerializationBuffer"
         assert f"name: {name}" in repr(res)
@@ -327,7 +335,7 @@ class TestUcxComponentSerializer:
             name=name,
         )
         assert isinstance(res, GXFResource)
-        assert isinstance(res, Resource)
+        assert isinstance(res, ResourceBase)
         assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxComponentSerializer"
         assert f"name: {name}" in repr(res)
@@ -347,7 +355,7 @@ class TestUcxHoloscanComponentSerializer:
             name=name,
         )
         assert isinstance(res, GXFResource)
-        assert isinstance(res, Resource)
+        assert isinstance(res, ResourceBase)
         assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxHoloscanComponentSerializer"
         assert f"name: {name}" in repr(res)
@@ -367,7 +375,7 @@ class TestUcxEntitySerializer:
             name=name,
         )
         assert isinstance(res, GXFResource)
-        assert isinstance(res, Resource)
+        assert isinstance(res, ResourceBase)
         assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxEntitySerializer"
         assert f"name: {name}" in repr(res)
@@ -397,7 +405,7 @@ class TestUcxReceiver:
             name=name,
         )
         assert isinstance(res, GXFResource)
-        assert isinstance(res, Resource)
+        assert isinstance(res, ResourceBase)
         assert isinstance(res, Receiver)
         assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxReceiver"
@@ -431,7 +439,7 @@ class TestUcxTransmitter:
             name=name,
         )
         assert isinstance(res, GXFResource)
-        assert isinstance(res, Resource)
+        assert isinstance(res, ResourceBase)
         assert isinstance(res, Transmitter)
         assert res.id == -1
         assert res.gxf_typename == "nvidia::gxf::UcxTransmitter"
@@ -441,3 +449,31 @@ class TestUcxTransmitter:
         captured = capfd.readouterr()
         assert "error" not in captured.err
         assert "warning" not in captured.err
+
+
+class DummyNativeResource(Resource):
+    def __init__(self, fragment, *args, **kwargs):
+        super().__init__(fragment, *args, **kwargs)
+
+    def setup(self, spec: ComponentSpec):
+        pass
+
+
+class TestNativeResource:
+    def test_native_resource_to_operator(self, app):
+        """Tests passing a native resource as a positional argument to an operator."""
+        tx = PingTxOp(
+            app,
+            DummyNativeResource(fragment=app, name="native_resource"),
+            name="tx",
+        )
+        tx.initialize()
+
+        # verify that the resource is included in the operator's description
+        resource_repr = """
+resources:
+  - id: -1
+    name: native_resource
+"""
+        assert resource_repr in tx.__repr__()
+        assert resource_repr in tx.description

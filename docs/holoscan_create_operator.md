@@ -419,7 +419,7 @@ class PingRxOp : public holoscan::ops::GXFOperator {
 The Holoscan SDK provides built-in data types called **{ref}`Domain Objects<api/holoscan_cpp_api:Domain Objects>`**, defined in the `include/holoscan/core/domain` directory. For example, the {cpp:class}`holoscan::Tensor` is a Domain Object class that is used to represent a multi-dimensional array of data, which can be used directly by `OperatorSpec`, `InputContext`, and `OutputContext`.
 
 :::{tip}
-This {cpp:class}`holoscan::Tensor` class is a wrapper around the {cpp:class}`~holoscan::DLManagedTensorCtx` struct holding a [DLManagedTensor](https://dmlc.github.io/dlpack/latest/c_api.html#_CPPv415DLManagedTensor) object. As such, it provides a primary interface to access Tensor data and is interoperable with other frameworks that support the [DLPack interface](https://dmlc.github.io/dlpack/latest/).
+This {cpp:class}`holoscan::Tensor` class is a wrapper around the {cpp:class}`~holoscan::DLManagedTensorContext` struct holding a [DLManagedTensor](https://dmlc.github.io/dlpack/latest/c_api.html#c.DLManagedTensor) object. As such, it provides a primary interface to access Tensor data and is interoperable with other frameworks that support the [DLPack interface](https://dmlc.github.io/dlpack/latest/).
 :::
 
 :::{warning}
@@ -800,9 +800,17 @@ There are no differences in CMake between using a GXF operator and [using a nati
 ### Interoperability between GXF and native C++ operators
 
 To support sending or receiving tensors to and from operators (both GXF and native C++ operators), the Holoscan SDK provides the C++ classes below:
-- A class template called {cpp:class}`holoscan::MyMap` which inherits from `std::unordered_map<std::string, std::shared_ptr<T>>`. The template parameter `T` can be any type, and it is used to specify the type of the `std::shared_ptr` objects stored in the map.
--
-A {cpp:class}`holoscan::TensorMap` class defined as a specialization of `holoscan::Map` for the {cpp:class}`holoscan::Tensor` type.
+- A class template called {cpp:class}`holoscan::Map` which inherits from `std::unordered_map<std::string, std::shared_ptr<T>>`. The template parameter `T` can be any type, and it is used to specify the type of the `std::shared_ptr` objects stored in the map.
+- A {cpp:class}`holoscan::TensorMap` class defined as a specialization of `holoscan::Map` for the {cpp:class}`holoscan::Tensor` type.
+
+When a message with a {cpp:class}`holoscan::TensorMap` is emitted from a native C++ operator,
+the message object is always converted to a {cpp:class}`holoscan::gxf::Entity` object and sent to the
+downstream operator.
+
+Then, if the sent GXF Entity object holds only Tensor object(s) as its components, the downstream operator can receive the message data as a {cpp:class}`holoscan::TensorMap` object instead of a {cpp:class}`holoscan::gxf::Entity` object.
+
+[{numref}`fig-holoscan-tensor-interoperability`](fig-holoscan-tensor-interoperability) shows the relationship between the {cpp:class}`holoscan::gxf::Entity` and {cpp:class}`nvidia::gxf:Entity` classes and the relationship
+between the {cpp:class}`holoscan::Tensor` and {cpp:class}`nvidia::gxf::Tensor` classes.
 
 :::{figure-md} fig-holoscan-tensor-interoperability
 :align: center
@@ -813,18 +821,27 @@ A {cpp:class}`holoscan::TensorMap` class defined as a specialization of `holosca
 Supporting Tensor Interoperability
 :::
 
-Consider the following example, where `GXFSendTensorOp` and `GXFReceiveTensorOp` are GXF operators, and where `ProcessTensorOp` is a C++ native operator:
+Both {cpp:class}`holoscan::gxf::Tensor` and {cpp:class}`nvidia::gxf::Tensor` are interoperable with each other because they are wrappers around the same underlying {cpp:class}`~holoscan::DLManagedTensorContext` struct holding a [DLManagedTensor](https://dmlc.github.io/dlpack/latest/c_api.html#c.DLManagedTensor) object.
+
+The `holoscan::TensorMap` class is used to store multiple tensors in a map, where each tensor is associated with a unique key. The `holoscan::TensorMap` class is used to pass multiple tensors between operators, and it is used in the same way as a `std::unordered_map<std::string, std::shared_ptr<holoscan::Tensor>>` object.
+
+Since both {cpp:class}`holoscan::TensorMap` and {cpp:class}`holoscan::gxf::Entity` objects hold tensors which are interoperable, the message data between GXF and native C++ operators are also interoperable.
+
+[{numref}`fig-tensor-interop-between-cpp-native-op-and-gxf-op`](fig-tensor-interop-between-cpp-native-op-and-gxf-op) illustrates the use of the `holoscan::TensorMap` class to pass multiple tensors between operators. The `GXFSendTensorOp` operator sends a `nvidia::gxf::Entity` object (containing a `nvidia::gxf::Tensor` object as a GXF component named "tensor") to the `ProcessTensorOp` operator, which processes the tensors and then forwards the processed tensors to the `GXFReceiveTensorOp` operator.
+
+Consider the following example, where `GXFSendTensorOp` and `GXFReceiveTensorOp` are GXF operators, and where `ProcessTensorOp` is a Holoscan native operator in C++:
 
 ```{digraph} interop
+:name: fig-tensor-interop-between-cpp-native-op-and-gxf-op
 :align: center
 :caption: The tensor interoperability between C++ native operator and GXF operator
 
     rankdir="LR"
     node [shape=record];
 
-    source [label="GXFSendTensorOp| |signal(out) : Tensor"];
+    source [label="GXFSendTensorOp| |signal(out) : gxf::Entity"];
     process [label="ProcessTensorOp| [in]in : TensorMap | out(out) : TensorMap "];
-    sink [label="GXFReceiveTensorOp| [in]signal : Tensor | "];
+    sink [label="GXFReceiveTensorOp| [in]signal : gxf::Entity | "];
 
     source->process [label="signal...in"]
     process->sink [label="out...signal"]
@@ -835,14 +852,14 @@ The following code shows how to implement `ProcessTensorOp`'s `compute()` method
 ```{code-block} cpp
 :caption: examples/tensor_interop/cpp/tensor_interop.cpp
 :linenos: true
-:lineno-start: 81
-:emphasize-lines: 4,6,20,21,24
+:lineno-start: 86
+:emphasize-lines: 4,6,8,12,17,22,23,26
 
-void compute(InputContext& op_input, OutputContext& op_output,
+  void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
     // The type of `in_message` is 'holoscan::TensorMap'.
     auto in_message = op_input.receive<holoscan::TensorMap>("in").value();
-    // the type of out_message is TensorMap
+    // The type of out_message is TensorMap
     TensorMap out_message;
 
     for (auto& [key, tensor] : in_message) {  // Process with 'tensor' here.
@@ -1488,3 +1505,8 @@ This would define
 
 To learn more about overriding connectors and/or conditions there is a [multi_branch_pipeline](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/multi_branch_pipeline) example which overrides default conditions to allow two branches of a pipeline to run at different frame rates. There is also an example of increasing the queue sizes available in [this Python queue policy test application](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_application_with_repeated_emit_on_same_port.py).
 
+### Using the Holoscan SDK with Other Libraries
+
+The Holoscan SDK enables seamless integration with various powerful, GPU-accelerated libraries to build efficient, high-performance pipelines.
+
+Please refer to the [Best Practices to Integrate External Libraries into Holoscan Pipelines](https://github.com/nvidia-holoscan/holohub/blob/main/tutorials/integrate_external_libs_into_pipeline/README.md) tutorial in the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository for detailed examples and more information on Holoscan's tensor interoperability and handling CUDA libraries in the pipeline. This includes [CUDA Python](https://github.com/NVIDIA/cuda-python), [CuPy](https://cupy.dev/), [MatX](https://github.com/NVIDIA/MatX) for C++, [cuCIM](https://github.com/rapidsai/cucim), [CV-CUDA](https://github.com/CVCUDA/CV-CUDA), and [OpenCV](https://opencv.org/) for integration into Holoscan applications.

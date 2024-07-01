@@ -31,7 +31,8 @@
 
 #include "./receive_tensor_gxf.hpp"
 #include "./send_tensor_gxf.hpp"
-#include "holoscan/core/resources/gxf/gxf_component_resource.hpp"
+// Include the following header files to use GXFCodeletOp and HOLOSCAN_WRAP_GXF_CODELET_AS_OPERATOR
+// macro.
 #include "holoscan/operators/gxf_codelet/gxf_codelet.hpp"
 
 #ifdef CUDA_TRY

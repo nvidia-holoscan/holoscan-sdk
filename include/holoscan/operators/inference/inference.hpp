@@ -69,8 +69,10 @@ namespace holoscan::ops {
  * - **pre_processor_map**: Pre processed data to model map.
  * - **device_map**: Mapping of model (`DataMap`) to GPU ID for inference. Optional.
  * - **backend_map**: Mapping of model (`DataMap`) to backend type for inference.
- * - **temporal_map**: Mapping of model (`DataMap`) to a frame delay for model inference. Optional.
  *   Backend options: `"trt"` or `"torch"`. Optional.
+ * - **temporal_map**: Mapping of model (`DataMap`) to a frame delay for model inference. Optional.
+ * - **activation_map**: Mapping of model (`DataMap`) to a activation state for model inference.
+ *   Optional.
  * - **in_tensor_names**: Input tensors (`std::vector<std::string>`). Optional.
  * - **out_tensor_names**: Output tensors (`std::vector<std::string>`). Optional.
  * - **infer_on_cpu**: Whether to run the computation on the CPU instead of GPU. Optional
@@ -150,6 +152,9 @@ class InferenceOp : public holoscan::Operator {
 
   /// @brief Map with key as model name and value as frame delay for model inference
   Parameter<DataMap> temporal_map_;
+
+  /// @brief Map with key as model name and value as an activation state for model inference
+  Parameter<DataMap> activation_map_;
 
   ///  @brief Input tensor names
   Parameter<std::vector<std::string>> in_tensor_names_;

@@ -119,7 +119,7 @@ class GXFComponentResource(_GXFComponentResource):
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
         _GXFComponentResource.__init__(self, self, fragment, *args, **kwargs)
         # Create a PyGXFComponentResourceSpec object and pass it to the C++ API
-        spec = ComponentSpec(fragment=self.fragment, op=self)
+        spec = ComponentSpec(fragment=self.fragment, component=self)
         self.spec = spec
         # Call setup method in the derived class
         self.setup(spec)

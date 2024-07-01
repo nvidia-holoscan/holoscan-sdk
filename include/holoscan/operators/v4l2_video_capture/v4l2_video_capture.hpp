@@ -89,6 +89,7 @@ namespace holoscan::ops {
  *   int64_t row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes / 256 + 1) * 256);
  *   return height_even * row_stride;
  * }
+ * ```
  */
 class V4L2VideoCaptureOp : public Operator {
  public:
@@ -133,12 +134,12 @@ class V4L2VideoCaptureOp : public Operator {
     void* ptr;
     size_t length;
   };
-  Buffer* buffers_;
+  Buffer* buffers_ = nullptr;
   int fd_ = -1;
 
-  uint32_t width_use_;
-  uint32_t height_use_;
-  uint32_t pixel_format_use_;
+  uint32_t width_use_{0};
+  uint32_t height_use_{0};
+  uint32_t pixel_format_use_{V4L2_PIX_FMT_RGBA32};
 };
 
 }  // namespace holoscan::ops

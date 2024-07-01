@@ -71,12 +71,11 @@ class ManagerInfer {
   /**
    * @brief Prepares and launches single/multiple inference
    *
-   * @param preprocess_data_map Input DataMap with model name as key and DataBuffer as value
-   * @param output_data_map Output DataMap with tensor name as key and DataBuffer as value
+   * @param inference_specs specifications for inference
    *
    * @return InferStatus with appropriate code and message
    */
-  InferStatus execute_inference(DataMap& preprocess_data_map, DataMap& output_data_map);
+  InferStatus execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs);
 
   /**
    * @brief Executes Core inference for a particular model and generates inferred data

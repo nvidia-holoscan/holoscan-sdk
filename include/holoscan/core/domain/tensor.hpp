@@ -43,7 +43,7 @@ using DLManagedMemoryBuffer = nvidia::gxf::DLManagedMemoryBuffer;
  *
  * The Tensor class is a wrapper around the DLManagedTensorContext struct that holds the
  * DLManagedTensor object.
- * (https://dmlc.github.io/dlpack/latest/c_api.html#_CPPv415DLManagedTensor).
+ * (https://dmlc.github.io/dlpack/latest/c_api.html#c.DLManagedTensor).
  *
  * This class provides a primary interface to access Tensor data and is interoperable with other
  * frameworks that support DLManagedTensor.

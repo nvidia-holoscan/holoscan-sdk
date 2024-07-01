@@ -66,7 +66,7 @@ class PyCountCondition : public CountCondition {
 void init_count(py::module_& m) {
   py::class_<CountCondition, PyCountCondition, gxf::GXFCondition, std::shared_ptr<CountCondition>>(
       m, "CountCondition", doc::CountCondition::doc_CountCondition)
-      .def(py::init<Fragment*, uint64_t, const std::string&>(),
+      .def(py::init<Fragment*, int64_t, const std::string&>(),
            "fragment"_a,
            "count"_a = 1L,
            "name"_a = "noname_count_condition"s,

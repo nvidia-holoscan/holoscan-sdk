@@ -40,6 +40,7 @@
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
+#include "holoscan/core/conditions/gxf/expiring_message.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/errors.hpp"
@@ -249,7 +250,7 @@ GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
     HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate(&context_));
     // }
     own_gxf_context_ = true;
-    gxf_extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
+    extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
     // Register extensions for holoscan (GXFWrapper codelet)
     register_extensions();
 
@@ -273,12 +274,22 @@ GXFExecutor::~GXFExecutor() {
   if (own_gxf_context_) {
     auto frag_name_display = fragment_->name();
     if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
-    HOLOSCAN_LOG_INFO("{}Destroying context", frag_name_display);
+    try {
+      HOLOSCAN_LOG_INFO("{}Destroying context", frag_name_display);
+    } catch (const std::exception& e) {}
 
     // Unregister signal handlers if any
-    SignalHandler::unregister_signal_handler(context_, SIGINT);
-    SignalHandler::unregister_signal_handler(context_, SIGTERM);
-    HOLOSCAN_GXF_CALL(GxfContextDestroy(context_));
+    try {
+      SignalHandler::unregister_signal_handler(context_, SIGINT);
+      SignalHandler::unregister_signal_handler(context_, SIGTERM);
+    } catch (const std::exception& e) {
+      try {
+        HOLOSCAN_LOG_ERROR("Failed to unregister signal handlers: {}", e.what());
+      } catch (const std::exception& e) {}
+    }
+    try {
+      HOLOSCAN_GXF_CALL(GxfContextDestroy(context_));
+    } catch (const std::exception& e) {}
   }
 
   // Delete GXF Holoscan Extension
@@ -310,10 +321,11 @@ void GXFExecutor::initialize_gxf_resources(
 void GXFExecutor::add_operator_to_entity_group(gxf_context_t context, gxf_uid_t entity_group_gid,
                                                std::shared_ptr<Operator> op) {
   auto graph_entity = op->graph_entity();
-  gxf_uid_t op_eid = graph_entity->eid();
   if (!graph_entity) {
     HOLOSCAN_LOG_ERROR("null GraphEntity found during add_operator_to_entity_group");
+    return;
   }
+  gxf_uid_t op_eid = graph_entity->eid();
   HOLOSCAN_LOG_DEBUG("Adding operator eid '{}' to entity group '{}'", op_eid, entity_group_gid);
   HOLOSCAN_GXF_CALL_FATAL(GxfUpdateEntityGroup(context, entity_group_gid, op_eid));
 }
@@ -348,11 +360,11 @@ void GXFExecutor::interrupt() {
 
 void GXFExecutor::context(void* context) {
   context_ = context;
-  gxf_extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
+  extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
 }
 
 std::shared_ptr<ExtensionManager> GXFExecutor::extension_manager() {
-  return gxf_extension_manager_;
+  return extension_manager_;
 }
 
 namespace {
@@ -578,6 +590,22 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
         message_available_condition->spec(std::move(rx_condition_spec));
         // Add to the same entity as the operator and initialize
         message_available_condition->add_to_graph_entity(op);
+        break;
+      }
+      case ConditionType::kExpiringMessageAvailable: {
+        std::shared_ptr<ExpiringMessageAvailableCondition> expiring_message_available_condition =
+            std::dynamic_pointer_cast<ExpiringMessageAvailableCondition>(condition);
+        // Note: GraphEntity::addSchedulingTerm requires a unique name here
+        std::string cond_name =
+            fmt::format("__{}_{}_cond_{}", op->name(), rx_name, condition_index);
+        expiring_message_available_condition->receiver(connector);
+        expiring_message_available_condition->name(cond_name);
+        expiring_message_available_condition->fragment(fragment);
+        auto rx_condition_spec = std::make_shared<ComponentSpec>(fragment);
+        expiring_message_available_condition->setup(*rx_condition_spec);
+        expiring_message_available_condition->spec(std::move(rx_condition_spec));
+        // Add to the same entity as the operator and initialize
+        expiring_message_available_condition->add_to_graph_entity(op);
         break;
       }
       case ConditionType::kNone:
@@ -866,7 +894,7 @@ void create_virtual_operators_and_connections(
     std::string source_address_str(source_address);
     auto [ip, _] = holoscan::CLIOptions::parse_address(source_address_str, "0.0.0.0", "0");
     // Convert port string 'port' to int32_t.
-    source_ip = ip;
+    source_ip = std::move(ip);
   }
 
   for (auto& [op, port_map] : connection_map) {
@@ -1052,7 +1080,6 @@ void GXFExecutor::connect_broadcast_to_previous_op(
 
         // Create a transmitter based on the prev_connector_type.
         switch (prev_connector_type) {
-          case IOSpec::ConnectorType::kDefault:
           case IOSpec::ConnectorType::kDoubleBuffer: {
             // We don't create a AnnotatedDoubleBufferTransmitter even if DFFT is on because
             // we don't want to annotate a message at the Broadcast component.
@@ -1685,17 +1712,6 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
   // multiple threads are setting up the graph.
   static std::mutex gxf_execution_mutex;
 
-  // Load extensions from config file only if not already loaded,
-  // to avoid unnecessary loading on multiple run() calls.
-  if (!is_extensions_loaded_) {
-    HOLOSCAN_LOG_INFO("Loading extensions from configs...");
-    // Load extensions from config file if exists.
-    for (const auto& yaml_node : fragment_->config().yaml_nodes()) {
-      gxf_extension_manager_->load_extensions_from_yaml(yaml_node);
-    }
-    is_extensions_loaded_ = true;
-  }
-
   {
     // Lock the GXF context for execution
     std::scoped_lock lock{gxf_execution_mutex};
@@ -1776,7 +1792,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       dfft_collector_ptr->data_flow_tracker(fragment_->data_flow_tracker());
 
       // Identify leaf and root operators and add to the DFFTCollector object
-      for (auto op : graph.get_nodes()) {
+      for (auto& op : graph.get_nodes()) {
         if (op->is_leaf()) {
           dfft_collector_ptr->add_leaf_op(op.get());
         } else if (op->is_root() || op->is_user_defined_root()) {
@@ -1794,8 +1810,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       network_context->gxf_eid(eid);
       network_context->initialize();
 
-      std::string entity_group_name = "network_entity_group";
-      auto entity_group_gid = ::holoscan::gxf::add_entity_group(context_, entity_group_name);
+      auto entity_group_gid = ::holoscan::gxf::add_entity_group(context_, "network_entity_group");
 
       int32_t gpu_id =
           static_cast<int32_t>(AppDriver::get_int_env_var("HOLOSCAN_UCX_DEVICE_ID", 0));
@@ -1834,7 +1849,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
           GxfUpdateEntityGroup(context, entity_group_gid, gxf_network_context->gxf_eid()));
 
       // Loop through all operators and add any operators with a UCX port to the entity group
-      auto operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
+      auto& operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
       for (auto& node : operator_graph.get_nodes()) {
         auto op_spec = node->spec();
         bool already_added = false;
@@ -1872,7 +1887,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
           "UCX-based connection found, but there is no NetworkContext."};
 
       // Raise an error if any operator has a UCX connector.
-      auto operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
+      auto& operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
       for (auto& node : operator_graph.get_nodes()) {
         if (node->has_ucx_connector()) { throw std::runtime_error(ucx_error_msg); }
       }
@@ -1912,8 +1927,8 @@ void GXFExecutor::run_gxf_graph() {
       HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
       SignalHandler::unregister_signal_handler(context, signum);
       // Register the global signal handler.
-      SignalHandler::register_global_signal_handler(signum, [](int signum) {
-        (void)signum;
+      SignalHandler::register_global_signal_handler(signum, [](int sig) {
+        (void)sig;
         HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
         exit(1);
       });
@@ -1977,18 +1992,19 @@ void GXFExecutor::register_extensions() {
 
   // Register the default GXF extensions
   for (auto& gxf_extension_file_name : kDefaultGXFExtensions) {
-    gxf_extension_manager_->load_extension(gxf_extension_file_name);
+    extension_manager_->load_extension(gxf_extension_file_name);
   }
 
   // Register the default Holoscan GXF extensions
   for (auto& gxf_extension_file_name : kDefaultHoloscanGXFExtensions) {
-    gxf_extension_manager_->load_extension(gxf_extension_file_name);
+    extension_manager_->load_extension(gxf_extension_file_name);
   }
 
   // Register the GXF extension that provides the native operators
   gxf_tid_t gxf_wrapper_tid{0xd4e7c16bcae741f8, 0xa5eb93731de9ccf6};
+  auto gxf_extension_manager = std::dynamic_pointer_cast<GXFExtensionManager>(extension_manager_);
 
-  if (!gxf_extension_manager_->is_extension_loaded(gxf_wrapper_tid)) {
+  if (gxf_extension_manager && !gxf_extension_manager->is_extension_loaded(gxf_wrapper_tid)) {
     GXFExtensionRegistrar extension_factory(
         context_,
         "HoloscanSdkInternalExtension",
@@ -2206,10 +2222,10 @@ void GXFExecutor::add_component_args_to_graph_entity(
     if (container_type == ArgContainerType::kNative) {
       if (element_type == ArgElementType::kCondition) {
         auto condition = std::any_cast<std::shared_ptr<Condition>>(arg.value());
-        add_condition_to_graph_entity(condition, graph_entity);
+        add_condition_to_graph_entity(std::move(condition), graph_entity);
       } else if (element_type == ArgElementType::kResource) {
         auto resource = std::any_cast<std::shared_ptr<Resource>>(arg.value());
-        add_resource_to_graph_entity(resource, graph_entity);
+        add_resource_to_graph_entity(std::move(resource), graph_entity);
       } else if (element_type == ArgElementType::kIOSpec) {
         auto io_spec = std::any_cast<IOSpec*>(arg.value());
         add_iospec_to_graph_entity(io_spec, graph_entity);

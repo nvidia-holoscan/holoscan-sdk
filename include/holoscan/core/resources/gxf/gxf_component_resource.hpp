@@ -74,7 +74,7 @@ namespace holoscan {
     explicit class_name(ArgT&& arg, ArgsT&&... args)                              \
         : ::holoscan::GXFComponentResource(gxf_typename, std::forward<ArgT>(arg), \
                                            std::forward<ArgsT>(args)...) {}       \
-    class_name() = default;                                                       \
+    class_name() : ::holoscan::GXFComponentResource(gxf_typename) {}              \
   };
 
 /**

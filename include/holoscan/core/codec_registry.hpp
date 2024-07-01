@@ -257,7 +257,7 @@ class CodecRegistry {
    * @param overwrite if true, any existing codec with matching codec_name will be overwritten.
    */
   template <typename typeT>
-  void add_codec(std::pair<SerializeFunc, DeserializeFunc> codec, const std::string& codec_name,
+  void add_codec(std::pair<SerializeFunc, DeserializeFunc>& codec, const std::string& codec_name,
                  bool overwrite = true) {
     auto index = std::type_index(typeid(typeT));
     add_codec(index, codec, codec_name, overwrite);
@@ -271,7 +271,7 @@ class CodecRegistry {
    * @param codec_name the name of the codec to add.
    * @param overwrite if true, any existing codec with matching codec_name will be overwritten.
    */
-  void add_codec(const std::type_index& index, std::pair<SerializeFunc, DeserializeFunc> codec,
+  void add_codec(const std::type_index& index, std::pair<SerializeFunc, DeserializeFunc>& codec,
                  const std::string& codec_name, bool overwrite = true) {
     auto name_search = name_to_index_map_.find(codec_name);
     if (name_search != name_to_index_map_.end()) {

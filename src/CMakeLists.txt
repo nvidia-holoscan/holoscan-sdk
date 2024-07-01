@@ -129,6 +129,7 @@ add_holoscan_library(core
     core/conditions/gxf/downstream_affordable.cpp
     core/conditions/gxf/periodic.cpp
     core/conditions/gxf/message_available.cpp
+    core/conditions/gxf/expiring_message.cpp
     core/config.cpp
     core/dataflow_tracker.cpp
     core/domain/tensor.cpp

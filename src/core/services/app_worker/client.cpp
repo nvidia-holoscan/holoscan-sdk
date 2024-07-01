@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +42,7 @@ AppWorkerClient::AppWorkerClient(const std::string& worker_address,
 
   // Assign the extracted IP to worker_ip_. We don't need to enclose IPv6 in brackets for this use
   // case.
-  worker_ip_ = extracted_ip;
+  worker_ip_ = std::move(extracted_ip);
 }
 
 const std::string& AppWorkerClient::ip_address() const {

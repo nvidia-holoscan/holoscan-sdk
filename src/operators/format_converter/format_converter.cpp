@@ -336,9 +336,10 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
     // If the buffer is in host memory, copy it to a device (GPU) buffer
     // as needed for the NPP resize/convert operations.
-    if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem) {
+    if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem ||
+        in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost) {
       uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(in_primitive_type);
-      size_t buffer_size = rows * columns * in_channels * element_size;
+      size_t buffer_size = static_cast<size_t>(rows) * columns * in_channels * element_size;
       if (buffer_size > device_scratch_buffer_->size()) {
         device_scratch_buffer_->resize(
             pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
@@ -403,9 +404,10 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
                       stride_string));
     }
 
-    if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem) {
+    if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem ||
+        in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost) {
       uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(in_primitive_type);
-      size_t buffer_size = rows * columns * in_channels * element_size;
+      size_t buffer_size = static_cast<size_t>(rows) * columns * in_channels * element_size;
 
       if (buffer_size > device_scratch_buffer_->size()) {
         device_scratch_buffer_->resize(
@@ -577,7 +579,7 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
     auto pool = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(frag->executor().context(),
                                                                     pool_->gxf_cid());
 
-    uint64_t buffer_size = resize_width * resize_height * channels;
+    uint64_t buffer_size = static_cast<uint64_t>(resize_width) * resize_height * channels;
     resize_buffer_->resize(pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
   }
 
@@ -752,7 +754,7 @@ void FormatConverterOp::convertTensorFormat(
         auto pool = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(frag->executor().context(),
                                                                         pool_->gxf_cid());
 
-        uint64_t buffer_size = rows * columns * 3;  // 4 channels -> 3 channels
+        uint64_t buffer_size = static_cast<size_t>(rows) * columns * 3;  // 4 channels -> 3 channels
         channel_buffer_->resize(pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
       }
 

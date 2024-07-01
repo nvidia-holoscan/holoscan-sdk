@@ -498,9 +498,9 @@ class HolovizOp : public Operator {
   std::vector<float> lut_;
   std::vector<InputSpec> initial_input_spec_;
   CudaStreamHandler cuda_stream_handler_;
-  bool render_buffer_input_enabled_;
-  bool render_buffer_output_enabled_;
-  bool camera_pose_output_enabled_;
+  bool render_buffer_input_enabled_ = false;
+  bool render_buffer_output_enabled_ = false;
+  bool camera_pose_output_enabled_ = false;
   bool is_first_tick_ = true;
 
   std::array<float, 3> camera_eye_cur_;      //< current camera eye position

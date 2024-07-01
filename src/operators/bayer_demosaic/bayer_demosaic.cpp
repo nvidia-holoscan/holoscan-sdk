@@ -101,6 +101,13 @@ void BayerDemosaicOp::initialize() {
   Operator::initialize();
 
   npp_bayer_interp_mode_ = static_cast<NppiInterpolationMode>(bayer_interp_mode_.get());
+  if (npp_bayer_interp_mode_ != NPPI_INTER_UNDEFINED) {
+    // according to NPP docs only NPPI_INTER_UNDEFINED is supported for Bayer demosaic
+    // https://docs.nvidia.com/cuda/archive/12.2.0/npp/group__image__color__debayer.html
+    throw std::runtime_error(fmt::format("Unsupported bayer_interp_mode: {}. Must be 0",
+                                         static_cast<int>(npp_bayer_interp_mode_)));
+  }
+
   npp_bayer_grid_pos_ = static_cast<NppiBayerGridPosition>(bayer_grid_pos_.get());
 }
 

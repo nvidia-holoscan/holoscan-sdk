@@ -165,10 +165,10 @@ void V4L2VideoCaptureOp::compute(InputContext& op_input, OutputContext& op_outpu
         buf.length,
         nvidia::gxf::MemoryStorageType::kHost,
         read_buf.ptr,
-        [buffer = buf, fd = fd_, device = device_](void*) mutable {
+        [buffer = buf, fd = fd_, &device_ = device_](void*) mutable {
           if (ioctl(fd, VIDIOC_QBUF, &buffer) < 0) {
-            throw std::runtime_error(
-                fmt::format("Failed to queue buffer {} on {}", buffer.index, device.get().c_str()));
+            throw std::runtime_error(fmt::format(
+                "Failed to queue buffer {} on {}", buffer.index, device_.get().c_str()));
           }
           return nvidia::gxf::Success;
         });
@@ -208,7 +208,9 @@ void V4L2VideoCaptureOp::v4l2_initialize() {
 
   struct v4l2_capability caps;
   CLEAR(caps);
-  ioctl(fd_, VIDIOC_QUERYCAP, &caps);
+  if (ioctl(fd_, VIDIOC_QUERYCAP, &caps)) {
+    throw std::runtime_error("ioctl VIDIOC_QUERYCAP failed");
+  }
   if (!(caps.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
     throw std::runtime_error("No V4l2 Video capture node");
   }

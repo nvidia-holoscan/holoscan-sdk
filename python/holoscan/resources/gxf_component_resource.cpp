@@ -93,7 +93,7 @@ void init_gxf_component_resource(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<GXFComponentResource>>(
       m, "GXFComponentResource", doc::GXFComponentResource::doc_GXFComponentResource)
-      .def(py::init<>(), doc::GXFComponentResource::doc_GXFComponentResource)
+      .def(py::init<>())
       .def(py::init<py::object,
                     Fragment*,
                     const std::string&,

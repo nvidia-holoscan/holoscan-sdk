@@ -20,6 +20,8 @@
 
 #include <pybind11/pybind11.h>
 
+#include <holoscan/logger/logger.hpp>
+
 namespace py = pybind11;
 
 namespace holoscan {
@@ -45,9 +47,25 @@ class GILGuardedPyObject {
 
   ~GILGuardedPyObject() {
     // Acquire GIL before destroying the PyObject
-    py::gil_scoped_acquire scope_guard;
-    py::handle handle = obj_.release();
-    if (handle) { handle.dec_ref(); }
+    try {
+      py::gil_scoped_acquire scope_guard;
+      py::handle handle = obj_.release();
+      if (handle) { handle.dec_ref(); }
+    } catch (py::error_already_set& eas) {
+      // Discard any Python error using Python APIs
+      // https://pybind11.readthedocs.io/en/stable/advanced/exceptions.html#handling-unraisable-exceptions
+      try {
+        // ignore potential runtime_error from release() call internal to discard_as_unraisable
+        eas.discard_as_unraisable(__func__);
+      } catch (...) {}
+    } catch (const std::exception& e) {
+      // catch and print info on any C++ exception raised in the destructor
+      try {
+        HOLOSCAN_LOG_ERROR("error in ~GILGuardedPyObject: {}", e.what());
+      } catch (...) {
+        // ignore any fmt::format exception thrown by HOLOSCAN_LOG_ERROR
+      }
+    }
   }
 
  private:

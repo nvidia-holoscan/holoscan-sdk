@@ -89,7 +89,7 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
 
   py::class_<BayerDemosaicOp, PyBayerDemosaicOp, Operator, std::shared_ptr<BayerDemosaicOp>>(
       m, "BayerDemosaicOp", doc::BayerDemosaicOp::doc_BayerDemosaicOp)
-      .def(py::init<>(), doc::BayerDemosaicOp::doc_BayerDemosaicOp)
+      .def(py::init<>())
       .def(py::init<Fragment*,
                     const py::args&,
                     std::shared_ptr<holoscan::Allocator>,

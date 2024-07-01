@@ -147,8 +147,8 @@ TEST_P(UcxMessageTypeParmeterizedTestFixture, TestUcxMessageSerializationApp) {
   if (message_type == MessageType::VEC_DOUBLE_LARGE) {
     // message is larger than kDefaultUcxSerializationBufferSize
     // set HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE to a value large enough to hold the data
-    const char* buffer_size = std::to_string(10 * 1024 * 1024).c_str();
-    setenv("HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE", buffer_size, 1);
+    std::string buffer_size = std::to_string(10 * 1024 * 1024);
+    setenv("HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE", buffer_size.c_str(), 1);
   }
 
   HOLOSCAN_LOG_INFO("Creating UcxMessageSerializationApp for type: {}",

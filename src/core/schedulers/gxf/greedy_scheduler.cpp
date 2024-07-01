@@ -74,7 +74,7 @@ void GreedyScheduler::initialize() {
   // Find if there is an argument for 'clock'
   auto has_clock = std::find_if(
       args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "clock"); });
-  // Create the BooleanCondition if there is no argument provided.
+  // Create the clock if there was no argument provided.
   if (has_clock == args().end()) {
     clock_ = frag->make_resource<holoscan::RealtimeClock>("greedy_scheduler__realtime_clock");
     clock_->gxf_cname(clock_->name().c_str());

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +60,10 @@ class Graph {
 
   Graph() = default;
   virtual ~Graph() = default;
+
+  // Delete the copy constructor and assignment operator to prevent copying.
+  Graph(const Graph&) = delete;
+  Graph& operator=(const Graph&) = delete;
 
   /**
    * @brief Add the node to the graph.

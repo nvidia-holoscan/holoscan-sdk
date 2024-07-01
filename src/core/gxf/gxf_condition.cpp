@@ -31,6 +31,12 @@
 namespace holoscan::gxf {
 
 GXFCondition::GXFCondition(const std::string& name, nvidia::gxf::SchedulingTerm* term) {
+  if (term == nullptr) {
+    std::string err_msg =
+        fmt::format("SchedulingTerm pointer is null. Cannot initialize GXFCondition '{}'", name);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   id_ = term->cid();
   name_ = name;
   gxf_context_ = term->context();

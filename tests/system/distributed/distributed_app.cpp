@@ -54,7 +54,8 @@ TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos) << "===LogMessage===\n"
+                                                                          << log_output;
 }
 
 TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsApp) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,8 +35,8 @@ TEST(Resource, TestResourceName) {
   EXPECT_EQ(R.name(), "");
 
   R.name("my_name");
-  Fragment* f;
-  R.fragment(f);
+  Fragment f;
+  R.fragment(&f);
 
   EXPECT_EQ(R.name(), "my_name");
 }
@@ -46,23 +46,23 @@ TEST(Resource, TestResourceFragment) {
   Resource R = Resource();
   EXPECT_EQ(R.fragment(), nullptr);
 
-  Fragment* f;
-  R.fragment(f);
-  EXPECT_EQ(R.fragment(), f);
+  Fragment f;
+  R.fragment(&f);
+  EXPECT_EQ(R.fragment(), &f);
 }
 
 TEST(Resource, TestResourceSpec) {
   // initialization
   Resource R = Resource();
-  Fragment* f;
+  Fragment f;
 
-  R.spec(std::make_shared<ComponentSpec>(f));
+  R.spec(std::make_shared<ComponentSpec>(&f));
 }
 
 TEST(Resource, TestResourceSpecFragmentNull) {
   // initialization
   Resource R = Resource();
-  Fragment* f;
+  Fragment f;
 
   // component spec can take in nullptr fragment
   R.spec(std::make_shared<ComponentSpec>());
@@ -71,18 +71,18 @@ TEST(Resource, TestResourceSpecFragmentNull) {
 TEST(Resource, TestResourceChainedAssignments) {
   // initialization
   Resource R;
-  Fragment *f1, *f2, *f3;
+  Fragment f1, f2, f3;
 
-  R.fragment(f1).name("name1");
-  EXPECT_EQ(R.fragment(), f1);
+  R.fragment(&f1).name("name1");
+  EXPECT_EQ(R.fragment(), &f1);
   EXPECT_EQ(R.name(), "name1");
 
-  R.name("name2").fragment(f2);
-  EXPECT_EQ(R.fragment(), f2);
+  R.name("name2").fragment(&f2);
+  EXPECT_EQ(R.fragment(), &f2);
   EXPECT_EQ(R.name(), "name2");
 
-  R.spec(std::make_shared<ComponentSpec>(f3)).name("name3").fragment(f3);
-  EXPECT_EQ(R.fragment(), f3);
+  R.spec(std::make_shared<ComponentSpec>(&f3)).name("name3").fragment(&f3);
+  EXPECT_EQ(R.fragment(), &f3);
   EXPECT_EQ(R.name(), "name3");
 }
 

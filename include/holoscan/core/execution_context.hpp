@@ -35,6 +35,8 @@ class ExecutionContext {
    */
   ExecutionContext() = default;
 
+  virtual ~ExecutionContext() = default;
+
   /**
    * @brief Get the input context.
    *

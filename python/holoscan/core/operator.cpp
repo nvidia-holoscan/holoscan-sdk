@@ -23,6 +23,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gil_guarded_pyobject.hpp"
@@ -124,6 +125,16 @@ void init_operator(py::module_& m) {
       .def_property_readonly("resources", &Operator::resources, doc::Operator::doc_resources)
       .def_property_readonly(
           "operator_type", &Operator::operator_type, doc::Operator::doc_operator_type)
+      .def(
+          "resource",
+          [](Operator& op, const py::str& name) -> std::optional<py::object> {
+            auto resources = op.resources();
+            auto res = resources.find(name);
+            if (res == resources.end()) { return py::none(); }
+            return py::cast(res->second);
+          },
+          "name"_a,
+          doc::Operator::doc_resource)
       .def("add_arg",
            py::overload_cast<const Arg&>(&Operator::add_arg),
            "arg"_a,
@@ -182,7 +193,7 @@ void init_operator(py::module_& m) {
 }
 
 PyOperatorSpec::PyOperatorSpec(Fragment* fragment, py::object op)
-    : OperatorSpec(fragment), py_op_(op) {}
+    : OperatorSpec(fragment), py_op_(std::move(op)) {}
 
 void PyOperatorSpec::py_param(const std::string& name, const py::object& default_value,
                               const ParameterFlag& flag, const py::kwargs& kwargs) {
@@ -191,8 +202,8 @@ void PyOperatorSpec::py_param(const std::string& name, const py::object& default
   bool is_receivers = false;
   std::string headline{""s};
   std::string description{""s};
-  for (const auto& [name, value] : kwargs) {
-    std::string param_name = name.cast<std::string>();
+  for (const auto& [kw_name, value] : kwargs) {
+    std::string param_name = kw_name.cast<std::string>();
     if (param_name == "headline") {
       headline = value.cast<std::string>();
     } else if (param_name == "description") {

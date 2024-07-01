@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,15 +15,10 @@
  * limitations under the License.
  */
 
-#include <gtest/gtest.h>
-
+#include <memory>
 #include <string>
 
 #include <holoscan/holoscan.hpp>
-
-#include "../config.hpp"
-
-static HoloscanTestConfig test_config;
 
 namespace holoscan {
 
@@ -88,26 +83,11 @@ class MinimalNativeResourceApp : public holoscan::Application {
   }
 };
 
-TEST(MinimalNativeResourceApp, TestMinimalNativeResourceApp) {
-  auto app = make_application<MinimalNativeResourceApp>();
+}  // namespace holoscan
 
-  const std::string config_file = test_config.get_test_data_file("minimal.yaml");
-  app->config(config_file);
-
-  // capture output so that we can check that the expected value is present
-  testing::internal::CaptureStderr();
-
+int main(int argc, char** argv) {
+  auto app = holoscan::make_application<holoscan::MinimalNativeResourceApp>();
   app->run();
 
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("string_native_resource.string_param: test_string") !=
-              std::string::npos)
-      << log_output;
-  EXPECT_TRUE(log_output.find("hardcoded_native_resource.string_param: hardcoded_string") !=
-              std::string::npos)
-      << log_output;
-  EXPECT_TRUE(log_output.find("empty_native_resource.string_param: ''") != std::string::npos)
-      << log_output;
+  return 0;
 }
-
-}  // namespace holoscan

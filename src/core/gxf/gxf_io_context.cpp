@@ -62,6 +62,10 @@ gxf_context_t GXFInputContext::gxf_context() const {
 bool GXFInputContext::empty_impl(const char* name) {
   std::string input_name = holoscan::get_well_formed_name(name, inputs_);
   auto it = inputs_.find(input_name);
+  if (it == inputs_.end()) {
+    HOLOSCAN_LOG_ERROR("The input port with name {} is not found", input_name);
+    return false;
+  }
   auto receiver = get_gxf_receiver(it->second);
   return receiver->size() == 0;
 }
@@ -118,7 +122,7 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
 
   auto entity = receiver->receive();
   if (!entity || entity.value().is_null()) {
-    return nullptr;  // to indicate that there is no data
+    return kNoReceivedMessage;  // to indicate that there is no data
   }
 
   auto message = entity.value().get<holoscan::Message>();
@@ -147,7 +151,8 @@ gxf_context_t GXFOutputContext::gxf_context() const {
   return nullptr;
 }
 
-void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out_type) {
+void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out_type,
+                                 const int64_t acq_timestamp) {
   std::string output_name = holoscan::get_well_formed_name(name, outputs_);
 
   auto it = outputs_.find(output_name);
@@ -217,7 +222,11 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       buffer.value()->set_value(data);
       // Publish the Entity object.
       // TODO(gbae): Check error message
-      static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity.value()));
+      if (acq_timestamp != -1) {
+        static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(gxf_entity.value(), acq_timestamp);
+      } else {
+        static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity.value()));
+      }
       break;
     }
     case OutputType::kGXFEntity: {
@@ -225,7 +234,11 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       try {
         auto gxf_entity = std::any_cast<nvidia::gxf::Entity>(data);
         // TODO(gbae): Check error message
-        static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity));
+        if (acq_timestamp != -1) {
+          static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(gxf_entity, acq_timestamp);
+        } else {
+          static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity));
+        }
       } catch (const std::bad_any_cast& e) {
         HOLOSCAN_LOG_ERROR("Unable to cast to gxf::Entity: {}", e.what());
       }

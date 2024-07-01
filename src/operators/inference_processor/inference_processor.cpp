@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/execution_context.hpp"
@@ -89,7 +90,7 @@ struct YAML::convert<holoscan::ops::InferenceProcessorOp::DataVecMap> {
             HOLOSCAN_LOG_INFO(
                 "Converting mappings for tensor {} to vector for backward compatibility.", key);
             std::string value = it->second.as<std::string>();
-            datavmap.insert(key, {value});
+            datavmap.insert(key, {std::move(value)});
           } break;
           case YAML::NodeType::Sequence: {
             std::vector<std::string> value = it->second.as<std::vector<std::string>>();

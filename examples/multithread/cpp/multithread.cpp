@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/holoscan.hpp"
@@ -75,7 +76,7 @@ class DelayOp : public Operator {
     }
     if (!silent) { HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value); }
     op_output.emit(new_value, "out_val");
-    op_output.emit(nm, "out_name");
+    op_output.emit(std::move(nm), "out_name");
   };
 
  private:
@@ -134,7 +135,7 @@ class App : public holoscan::Application {
     auto rx = make_operator<ops::PingRxOp>("rx", silent_);
     for (int i = 0; i < num_delays_; ++i) {
       std::string delay_name = fmt::format("mx{}", i);
-      auto del_op = make_operator<ops::DelayOp, std::string>(delay_name,
+      auto del_op = make_operator<ops::DelayOp, std::string>(std::move(delay_name),
                                                              Arg{"delay", delay_ + delay_step_ * i},
                                                              Arg{"increment", i},
                                                              Arg{"silent", silent_});

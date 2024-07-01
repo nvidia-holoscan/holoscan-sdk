@@ -98,6 +98,7 @@ namespace holoscan {
 
 // Forward declarations
 class Operator;
+class Resource;
 
 // Note: Update `IOSpec::to_yaml_node()` if you add new condition types
 enum class ConditionType {
@@ -109,6 +110,7 @@ enum class ConditionType {
   kBoolean,                      ///< nvidia::gxf::BooleanSchedulingTerm
   kPeriodic,                     ///< nvidia::gxf::PeriodicSchedulingTerm
   kAsynchronous,                 ///< nvidia::gxf::AsynchronousSchedulingTerm
+  kExpiringMessageAvailable,     ///< nvidia::gxf::ExpiringMessageAvailableSchedulingTerm
 };
 
 /**
@@ -197,6 +199,27 @@ class Condition : public Component {
   using Component::add_arg;
 
   /**
+   * @brief Add a resource to the condition.
+   *
+   * @param arg The resource to add.
+   */
+  void add_arg(const std::shared_ptr<Resource>& arg);
+
+  /**
+   * @brief Add a resource to the condition.
+   *
+   * @param arg The resource to add.
+   */
+  void add_arg(std::shared_ptr<Resource>&& arg);
+
+  /**
+   * @brief Get the resources of the condition.
+   *
+   * @return The resources of the condition.
+   */
+  std::unordered_map<std::string, std::shared_ptr<Resource>>& resources() { return resources_; }
+
+  /**
    * @brief Define the condition specification.
    *
    * @param spec The reference to the component specification.
@@ -217,6 +240,9 @@ class Condition : public Component {
   using Component::reset_graph_entities;
 
   bool is_initialized_ = false;  ///< Whether the condition is initialized.
+
+  std::unordered_map<std::string, std::shared_ptr<Resource>>
+      resources_;  ///< The resources used by the condition.
 };
 
 }  // namespace holoscan

@@ -292,6 +292,8 @@ load_extensions(context, exts)
 To be discoverable, paths to these shared libraries need to either be absolute, relative to your working directory, installed in the `lib/gxf_extensions` folder of the holoscan package, or listed under the `HOLOSCAN_LIB_PATH` or `LD_LIBRARY_PATH` environment variables.
 :::
 
+Please see other examples in the [system tests](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/tests/system/loading_gxf_extension.cpp) in the Holoscan SDK repository.
+
 (configuring-app-operators)=
 
 ### Configuring operators
@@ -510,6 +512,149 @@ def compose(self):
 ```
 ````
 
+
+(configuring-app-operator-native-resources)=
+
+#### Native resource creation
+
+The resources bundled with the SDK are wrapping an underlying GXF component. However, it is also possible to define a "native" resource without any need to create and wrap an underlying GXF component. Such a resource can also be passed conditionally to an operator in the same way as the resources created in the previous section.
+
+For example:
+
+`````{tab-set}
+````{tab-item} C++
+To create a native resource, implement a class that inherits from {cpp:class}`Resource <holoscan::Resource>`
+
+```{code-block} cpp
+namespace holoscan {
+
+class MyNativeResource : public holoscan::Resource {
+ public:
+  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(MyNativeResource, Resource)
+
+  MyNativeResource() = default;
+
+  // add any desired parameters in the setup method
+  // (a single string parameter is shown here for illustration)
+  void setup(ComponentSpec& spec) override {
+    spec.param(message_, "message", "Message string", "Message String", std::string("test message"));
+  }
+
+  // add any user-defined methods (these could be called from an Operator's compute method)
+  std::string message() { return message_.get(); }
+
+ private:
+  Parameter<std::string> message_;
+};
+}  // namespace: holoscan
+```
+
+The `setup` method can be used to define any parameters needed by the resource.
+
+This resource can be used with a C++ operator, just like any other resource. For example, an operator could have a parameter holding a shared pointer to `MyNativeResource` as below.
+
+```{code-block} cpp
+private:
+
+class MyOperator : public holoscan::Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(MyOperator)
+
+  MyOperator() = default;
+
+  void setup(OperatorSpec& spec) override {
+    spec.param(message_resource_, "message_resource", "message resource",
+               "resource printing a message");
+  }
+
+  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+    HOLOSCAN_LOG_TRACE("MyOp::compute()");
+
+    // get a resource based on its name (this assumes the app author named the resource "message_resource")
+    auto res = resource<MyNativeResource>("message_resource");
+    if (!res) {
+      throw std::runtime_error("resource named 'message_resource' not found!");
+    }
+
+    // call a method on the retrieved resource class
+    auto message = res->message();
+
+  };
+
+private:
+    Parameter<std::shared_ptr<holoscan::MyNativeResource> message_resource_;
+}
+```
+The `compute` method above demonstrates how the templated `resource` method can be used to retrieve a resource.
+
+
+and the resource could be created and passed via a named argument in the usual way
+```{code-block} cpp
+
+// example code for within Application::compose (or Fragment::compose)
+
+    auto message_resource = make_resource<holoscan::MyNativeResource>(
+        "message_resource", holoscan::Arg("message", "hello world");
+
+    auto my_op = std::make_operator<holoscan::ops::MyOperator>(
+        "my_op", holoscan::Arg("message_resource", message_resource));
+```
+
+As with GXF-based resources, it is also possible to pass a native resource as a positional argument to the operator constructor.
+
+For a concreate example of native resource use in a real application, see the [volume_rendering_xr application](https://github.com/nvidia-holoscan/holohub/blob/main/applications/volume_rendering_xr/main.cpp) on Holohub. This application uses a native [XrSession resource](https://github.com/nvidia-holoscan/holohub/blob/main/operators/XrFrameOp/xr_session.hpp) type which corresponds to a single OpenXR session. This single "session" resource can then be shared by both the `XrBeginFrameOp` and `XrEndFrameOp` operators.
+
+````
+````{tab-item} Python
+To create a native resource, implement a class that inherits from {py:class}`Resource <holoscan.core.Resource>`.
+
+```{code-block} python
+class MyNativeResource(Resource):
+    def __init__(self, fragment, message="test message", *args, **kwargs):
+        self.message = message
+        super().__init__(fragment, *args, **kwargs)
+
+    # Could optionally define Parameter as in C++ via spec.param as below.
+    # Here, we chose instead to pass message as an argument to __init__ above.
+    # def setup(self, spec: ComponentSpec):
+    #     spec.param("message", "test message")
+
+    # define a custom method
+    def message(self):
+        return self.message
+```
+
+The below shows how some custom operator could use such a resource in its compute method
+
+```{code-block} python
+class MyOperator(Operator):
+    def compute(self, op_input, op_output, context):
+        resource = self.resource("message_resource")
+        if resource is None:
+            raise ValueError("expected message resource not found")
+        assert isinstance(resource, MyNativeResource)
+
+        print(f"message = {resource.message()")
+```
+
+where this native resource could have been created and passed positionally to `MyOperator` as follows
+
+```{code-block} python
+
+# example code within Application.compose (or Fragment.compose)
+
+    message_resource = MyNativeResource(
+        fragment=self, message="hello world", name="message_resource")
+
+    # pass the native resource as a positional argument to MyOperator
+    my_op = MyOperator(fragment=self, message_resource)
+```
+````
+`````
+
+There is a minimal example of native resource use in the [examples/native](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/native/) folder.
+
+
 (configuring-app-scheduler)=
 
 ### Configuring the scheduler
@@ -518,14 +663,16 @@ The [scheduler](./components/schedulers.md) controls how the application schedul
 
 The default scheduler is a single-threaded [`GreedyScheduler`](./components/schedulers.md#greedy-scheduler). An application can be configured to use a different scheduler `Scheduler` ({cpp:class}`C++ <holoscan::Scheduler>`/{py:class}`Python <holoscan.core.Scheduler>`) or change the parameters from the default scheduler, using the `scheduler()` function ({cpp:func}`C++ <holoscan::Fragment::scheduler>`/{py:func}`Python <holoscan.core.Fragment.scheduler>`).
 
-For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](./components/schedulers.md#multithreadscheduler) or [`EventBasedScheduler`](./components/schedulers.md#eventbasedscheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute.
+For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](./components/schedulers.md#multithread-scheduler) or [`EventBasedScheduler`](./components/schedulers.md#event-based-scheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute.
 
 The code snippet belows shows how to set and configure a non-default scheduler:
 
 `````{tab-set}
 ````{tab-item} C++
+
 - We create an instance of a {ref}`holoscan::Scheduler <api/holoscan_cpp_api:schedulers>` derived class by using the {cpp:func}`~holoscan::Fragment::make_scheduler` function. Like operators, parameters can come from explicit {cpp:class}`~holoscan::Arg`s or {cpp:class}`~holoscan::ArgList`, or from a YAML configuration.
 - The {cpp:func}`~holoscan::Fragment::scheduler` method assigns the scheduler to be used by the application.
+
 ```{code-block} cpp
 :emphasize-lines: 2-7
 :name: holoscan-config-scheduler-cpp
@@ -539,10 +686,13 @@ auto scheduler = app->make_scheduler<holoscan::EventBasedScheduler>(
 app->scheduler(scheduler);
 app->run();
 ```
+
 ````
+
 ````{tab-item} Python
 - We create an instance of a `Scheduler` class in the {py:mod}`~holoscan.schedulers` module. Like operators, parameters can come from an explicit {py:class}`~holoscan.core.Arg` or {py:class}`~holoscan.core.ArgList`, or from a YAML configuration.
 - The {py:func}`~holoscan.core.Fragment.scheduler` method assigns the scheduler to be used by the application.
+
 ```{code-block} python
 :emphasize-lines: 2-8
 :name: holoscan-config-scheduler-python

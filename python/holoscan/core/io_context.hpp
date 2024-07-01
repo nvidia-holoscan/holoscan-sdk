@@ -66,7 +66,8 @@ class PyOutputContext : public gxf::GXFOutputContext {
                   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs,
                   py::object py_op);
 
-  void py_emit(py::object& data, const std::string& name, const std::string& emitter_name = "");
+  void py_emit(py::object& data, const std::string& name, const std::string& emitter_name = "",
+               const int64_t acq_timestamp = -1);
 
  private:
   py::object py_op_ = py::none();

@@ -81,6 +81,7 @@ class PyInferenceOp : public InferenceOp {
                 py::dict pre_processor_map,  // InferenceOp::DataVecMap
                 py::dict device_map,         // InferenceOp::DataMap
                 py::dict temporal_map,       // InferenceOp::DataMap
+                py::dict activation_map,     // InferenceOp::DataMap
                 py::dict backend_map,        // InferenceOp::DataMap
                 const std::vector<std::string>& in_tensor_names,
                 const std::vector<std::string>& out_tensor_names, bool infer_on_cpu = false,
@@ -130,10 +131,19 @@ class PyInferenceOp : public InferenceOp {
     }
 
     py::dict temporal_map_infer = temporal_map.cast<py::dict>();
-    for (auto& [key, value] : temporal_map_infer) { temporal_map_infer[key] = py::str(value); }
+    for (auto& [key, value] : temporal_map_infer) {
+      if (!py::isinstance<py::str>(value)) { temporal_map_infer[key] = py::str(value); }
+    }
+
+    py::dict activation_map_infer = activation_map.cast<py::dict>();
+    for (auto& [key, value] : activation_map_infer) {
+      if (!py::isinstance<py::str>(value)) { activation_map_infer[key] = py::str(value); }
+    }
 
     py::dict device_map_infer = device_map.cast<py::dict>();
-    for (auto& [key, value] : device_map_infer) { device_map_infer[key] = py::str(value); }
+    for (auto& [key, value] : device_map_infer) {
+      if (!py::isinstance<py::str>(value)) { device_map_infer[key] = py::str(value); }
+    }
 
     // convert from Python dict to InferenceOp::DataVecMap
     auto inference_map_datavecmap = _dict_to_inference_datavecmap(inference_map_dict);
@@ -147,6 +157,9 @@ class PyInferenceOp : public InferenceOp {
 
     auto temporal_datamap = _dict_to_inference_datamap(temporal_map_infer);
     this->add_arg(Arg("temporal_map", temporal_datamap));
+
+    auto activation_datamap = _dict_to_inference_datamap(activation_map_infer);
+    this->add_arg(Arg("activation_map", activation_datamap));
 
     auto backend_datamap = _dict_to_inference_datamap(backend_map.cast<py::dict>());
     this->add_arg(Arg("backend_map", backend_datamap));
@@ -183,6 +196,7 @@ PYBIND11_MODULE(_inference, m) {
                     py::dict,
                     py::dict,
                     py::dict,
+                    py::dict,
                     const std::vector<std::string>&,
                     const std::vector<std::string>&,
                     bool,
@@ -202,6 +216,7 @@ PYBIND11_MODULE(_inference, m) {
            "pre_processor_map"_a,
            "device_map"_a = py::dict(),
            "temporal_map"_a = py::dict(),
+           "activation_map"_a = py::dict(),
            "backend_map"_a = py::dict(),
            "in_tensor_names"_a = std::vector<std::string>{},
            "out_tensor_names"_a = std::vector<std::string>{},

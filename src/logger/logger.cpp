@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "common/logger/spdlog_logger.hpp"
 
@@ -89,7 +90,7 @@ void set_log_pattern(std::string pattern) {
   bool is_overridden_by_env = false;
 
   // https://spdlog.docsforge.com/v1.x/0.faq/#colors-do-not-appear-when-using-custom-format
-  Logger::set_pattern(pattern, &is_overridden_by_env);
+  Logger::set_pattern(std::move(pattern), &is_overridden_by_env);
 
   if (is_overridden_by_env) {
     const char* env_p = std::getenv("HOLOSCAN_LOG_FORMAT");
@@ -153,7 +154,7 @@ void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
   if (env_p) {
     std::string env_pattern;
     std::string log_pattern = env_p;
-    env_pattern = get_concrete_log_pattern(log_pattern);
+    env_pattern = get_concrete_log_pattern(std::move(log_pattern));
 
     if (is_overridden_by_env) { *is_overridden_by_env = true; }
 

@@ -48,7 +48,7 @@ class Params {
   std::string model_file_path_;
   std::string instance_name_;
   int device_id_;
-  unsigned int temporal_id_;
+  unsigned int temporal_id_ = 0;
   std::vector<std::string> in_tensor_names_;
   std::vector<std::string> out_tensor_names_;
 };

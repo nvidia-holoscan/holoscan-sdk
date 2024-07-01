@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -106,7 +106,19 @@ bool AppWorker::execute_fragments(
   }
 
   // Compose scheduled fragments
-  for (auto& fragment : scheduled_fragments) { fragment->compose_graph(); }
+  for (auto& fragment : scheduled_fragments) {
+    try {
+      fragment->compose_graph();
+    } catch (const std::exception& exception) {
+      HOLOSCAN_LOG_ERROR(
+          "Failed to compose fragment graph '{}': {}", fragment->name(), exception.what());
+      // Notify the worker server that the worker execution is finished with failure
+      termination_code_ = AppWorkerTerminationCode::kFailure;
+      submit_message(
+          WorkerMessage{AppWorker::WorkerMessageCode::kNotifyWorkerExecutionFinished, {}});
+      return false;
+    }
+  }
 
   // Add the UCX network context
   for (auto& fragment : scheduled_fragments) {

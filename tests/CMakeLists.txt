@@ -130,12 +130,12 @@ ConfigureTest(
   system/format_converter_op_apps.cpp
   system/jobstatistics_app.cpp
   system/holoviz_op_apps.cpp
+  system/loading_gxf_extension.cpp
   system/multithreaded_app.cpp
   system/native_async_operator_ping_app.cpp
   system/native_operator_minimal_app.cpp
   system/native_operator_multibroadcasts_app.cpp
   system/native_operator_ping_app.cpp
-  system/native_resource_minimal_app.cpp
   system/ping_rx_op.cpp
   system/ping_tensor_rx_op.cpp
   system/ping_tensor_tx_op.cpp
@@ -144,13 +144,14 @@ ConfigureTest(
 )
 target_link_libraries(SYSTEM_TEST
   PRIVATE
-  holoscan::ops::bayer_demosaic
   holoscan::ops::async_ping_rx
   holoscan::ops::async_ping_tx
+  holoscan::ops::bayer_demosaic
+  holoscan::ops::format_converter
+  holoscan::ops::gxf_codelet
+  holoscan::ops::holoviz
   holoscan::ops::ping_rx
   holoscan::ops::ping_tx
-  holoscan::ops::holoviz
-  holoscan::ops::format_converter
 )
 
 ConfigureTest(

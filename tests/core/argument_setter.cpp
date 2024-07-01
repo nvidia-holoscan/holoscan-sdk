@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,8 +33,12 @@ namespace holoscan {
 TEST(ArgumentSetter, TestArgumentSetterInstance) {
   ArgumentSetter instance = ArgumentSetter::get_instance();
 
+  // call static ensure_type method
   ArgumentSetter::ensure_type<float>;
-  // ArgumentSetter::ensure_type<std::complex<float>>;  // will fail to compile
+
+  // get the setter corresponding to float
+  float f = 1.0;
+  auto func = instance.get_argument_setter(typeid(f));
 }
 
 }  // namespace holoscan

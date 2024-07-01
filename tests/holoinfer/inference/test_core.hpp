@@ -71,6 +71,7 @@ class HoloInferTests {
   std::map<std::string, std::string> device_map = {{"model_1", "0"}, {"model_2", "0"}};
 
   std::map<std::string, std::string> temporal_map = {{"model_1", "1"}, {"model_2", "1"}};
+  std::map<std::string, std::string> activation_map = {{"model_1", "1"}, {"model_2", "1"}};
 
   std::map<std::string, std::string> backend_map;
 

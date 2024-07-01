@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +42,7 @@ class VirtualOperator : public holoscan::Operator {
   template <typename StringT,
             typename = std::enable_if_t<std::is_constructible_v<std::string, StringT>>>
   VirtualOperator(StringT port_name, IOSpec::ConnectorType connector_type, ArgList arg_list)
-      : port_name_(port_name), connector_type_(connector_type), arg_list_(arg_list) {
+      : port_name_(std::move(port_name)), connector_type_(connector_type), arg_list_(arg_list) {
     operator_type_ = OperatorType::kVirtual;
   }
 

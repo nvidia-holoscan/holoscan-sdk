@@ -17,7 +17,9 @@
 
 import pytest
 
-from holoscan.core import Component, Condition, Resource, _Operator
+from holoscan.core import Component, Condition
+from holoscan.core import _Operator as OperatorBase
+from holoscan.core import _Resource as ResourceBase
 from holoscan.gxf import (
     Entity,
     GXFComponent,
@@ -102,13 +104,13 @@ class TestGXFResource(TestGXFComponent):
     def test_type(self):
         r = GXFResource()
         assert isinstance(r, Component)
-        assert isinstance(r, Resource)
+        assert isinstance(r, ResourceBase)
         assert isinstance(r, GXFComponent)
 
-    def test_dynamic_attribute_not_allowed(self):
+    def test_dynamic_attribute_allowed(self):
+        # parent Resource class allows dynamic attributes
         obj = GXFResource()
-        with pytest.raises(AttributeError):
-            obj.custom_attribute = 5
+        obj.custom_attribute = 5
 
 
 class TestGXFInputContext:
@@ -166,7 +168,7 @@ class TestGXFOperator:
 
     def test_type(self):
         op = GXFOperator()
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
 
     def test_dynamic_attribute_allowed(self):
         obj = GXFOperator()

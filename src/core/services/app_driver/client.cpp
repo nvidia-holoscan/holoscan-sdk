@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,12 +50,13 @@ bool AppDriverClient::fragment_allocation(const std::string& worker_ip,
 
   // Creating AvailableSystemResource and adding it to the request
 
-  float cpu_memory = cpuinfo.memory_total / 1024 / 1024 / 1024;         /// convert to GiB
-  float cpu_shared_memory = cpuinfo.shared_memory_total / 1024 / 1024;  /// convert to MiB
+  float cpu_memory = cpuinfo.memory_total / 1024.0 / 1024.0 / 1024.0;       /// convert to GiB
+  float cpu_shared_memory = cpuinfo.shared_memory_total / 1024.0 / 1024.0;  /// convert to MiB
   float gpu_memory = std::numeric_limits<float>::max();
   // Calculate the minimum GPU memory among all GPUs
   for (const auto& gpu : gpuinfo) {
-    gpu_memory = std::min(gpu_memory, static_cast<float>(gpu.memory_total / 1024 / 1024 / 1024));
+    gpu_memory =
+        std::min(gpu_memory, static_cast<float>(gpu.memory_total / 1024.0 / 1024.0 / 1024.0));
   }
 
   // Format float value with one decimal place and convert it to string

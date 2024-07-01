@@ -18,10 +18,12 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <list>
 #include <memory>
 #include <string>
-#include <list>
+#include <utility>
 
+#include "component.hpp"
 #include "component_pydoc.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component.hpp"
@@ -33,78 +35,33 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-class PyComponentSpec : public ComponentSpec {
- public:
-  /* Inherit the constructors */
-  using ComponentSpec::ComponentSpec;
+// TOIMPROVE: Should we parse headline and description from kwargs or just
+//            add them to the function signature?
+void PyComponentSpec::py_param(const std::string& name, const py::object& default_value,
+                               const ParameterFlag& flag, const py::kwargs& kwargs) {
+  using std::string_literals::operator""s;
 
-  // Override the constructor to get the py::object for the Python class
-  explicit PyComponentSpec(Fragment* fragment = nullptr, py::object op = py::none())
-      : ComponentSpec(fragment), py_op_(op) {}
-
-  // TOIMPROVE: Should we parse headline and description from kwargs or just
-  //            add them to the function signature?
-  void py_param(const std::string& name, const py::object& default_value, const ParameterFlag& flag,
-                const py::kwargs& kwargs) {
-    using std::string_literals::operator""s;
-
-    bool is_receivers = false;
-    std::string headline{""s};
-    std::string description{""s};
-    for (const auto& [name, value] : kwargs) {
-      std::string param_name = name.cast<std::string>();
-      if (param_name == "headline") {
-        headline = value.cast<std::string>();
-      } else if (param_name == "description") {
-        description = value.cast<std::string>();
-      } else {
-        throw std::runtime_error("unsupported kwarg: "s + param_name);
-      }
+  bool is_receivers = false;
+  std::string headline{""s};
+  std::string description{""s};
+  for (const auto& [nm, value] : kwargs) {
+    std::string param_name = nm.cast<std::string>();
+    if (param_name == "headline") {
+      headline = value.cast<std::string>();
+    } else if (param_name == "description") {
+      description = value.cast<std::string>();
+    } else {
+      throw std::runtime_error("unsupported kwarg: "s + param_name);
     }
-
-    // Create parameter object
-    py_params_.emplace_back(py_op());
-
-    // Register parameter
-    auto& parameter = py_params_.back();
-    param(parameter, name.c_str(), headline.c_str(), description.c_str(), default_value, flag);
   }
 
-  py::object py_op() const { return py_op_; }
+  // Create parameter object
+  py_params_.emplace_back(py_component());
 
-  std::list<Parameter<py::object>>& py_params() { return py_params_; }
-
- private:
-  py::object py_op_ = py::none();
-  // NOTE: we use std::list instead of std::vector because we register the address of Parameter<T>
-  // object to the GXF framework. The address of a std::vector element may change when the vector is
-  // resized.
-  std::list<Parameter<py::object>> py_params_;
-};
-
-class PyComponentBase : public ComponentBase {
- public:
-  /* Inherit the constructors */
-  using ComponentBase::ComponentBase;
-
-  /* Trampolines (need one for each virtual function) */
-  void initialize() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, ComponentBase, initialize);
-  }
-};
-
-class PyComponent : public Component {
- public:
-  /* Inherit the constructors */
-  using Component::Component;
-
-  /* Trampolines (need one for each virtual function) */
-  void initialize() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Component, initialize);
-  }
-};
+  // Register parameter
+  auto& parameter = py_params_.back();
+  param(parameter, name.c_str(), headline.c_str(), description.c_str(), default_value, flag);
+}
 
 void init_component(py::module_& m) {
   py::class_<ComponentSpec, std::shared_ptr<ComponentSpec>>(
@@ -128,10 +85,10 @@ void init_component(py::module_& m) {
       .value("DYNAMIC", ParameterFlag::kDynamic);
 
   py::class_<PyComponentSpec, ComponentSpec, std::shared_ptr<PyComponentSpec>>(
-      m, "PyComponentSpec", R"doc(Operator specification class.)doc")
+      m, "PyComponentSpec", R"doc(Component specification class.)doc")
       .def(py::init<Fragment*, py::object>(),
            "fragment"_a,
-           "op"_a = py::none(),
+           "component"_a = py::none(),
            doc::ComponentSpec::doc_ComponentSpec)
       .def("param",
            &PyComponentSpec::py_param,

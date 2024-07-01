@@ -76,10 +76,10 @@ void init_fragment(py::module_& m) {
            "prefix"_a = "",
            doc::Fragment::doc_config_kwargs)
       .def("config", py::overload_cast<std::shared_ptr<Config>&>(&Fragment::config))
-      .def("config", py::overload_cast<>(&Fragment::config))
+      .def("config", &Fragment::config_shared)
       .def("config_keys", &Fragment::config_keys, doc::Fragment::doc_config_keys)
-      .def_property_readonly("graph", &Fragment::graph, doc::Fragment::doc_graph)
-      .def_property_readonly("executor", &Fragment::executor, doc::Fragment::doc_executor)
+      .def_property_readonly("graph", &Fragment::graph_shared, doc::Fragment::doc_graph)
+      .def_property_readonly("executor", &Fragment::executor_shared, doc::Fragment::doc_executor)
       .def(
           "from_config",
           [](Fragment& fragment, const std::string& key) {

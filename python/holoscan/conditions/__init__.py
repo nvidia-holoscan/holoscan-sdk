@@ -20,6 +20,7 @@
     holoscan.conditions.BooleanCondition
     holoscan.conditions.CountCondition
     holoscan.conditions.DownstreamMessageAffordableCondition
+    holoscan.conditions.ExpiringMessageAvailableCondition
     holoscan.conditions.MessageAvailableCondition
     holoscan.conditions.PeriodicCondition
 """
@@ -30,6 +31,7 @@ from ._conditions import (
     BooleanCondition,
     CountCondition,
     DownstreamMessageAffordableCondition,
+    ExpiringMessageAvailableCondition,
     MessageAvailableCondition,
     PeriodicCondition,
 )
@@ -40,6 +42,7 @@ __all__ = [
     "BooleanCondition",
     "CountCondition",
     "DownstreamMessageAffordableCondition",
+    "ExpiringMessageAvailableCondition",
     "MessageAvailableCondition",
     "PeriodicCondition",
 ]

@@ -110,7 +110,9 @@ bool GXFExtensionManager::load_extension(const std::string& file_name, bool no_e
                   HOLOSCAN_LOG_DEBUG("Trying extension {} found in search path {}",
                                      base_name.c_str(),
                                      candidate_parent_path.c_str());
-                  handle = dlopen(candidate_path.c_str(), RTLD_LAZY | RTLD_NODELETE);
+                  if (handle == nullptr) {
+                    handle = dlopen(candidate_path.c_str(), RTLD_LAZY | RTLD_NODELETE);
+                  }
                   if (handle != nullptr) {
                     HOLOSCAN_LOG_DEBUG("Loaded extension {} from search path '{}'",
                                        base_name.c_str(),

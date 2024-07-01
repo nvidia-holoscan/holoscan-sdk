@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <string>
+#include <utility>
 
 #include "gxf/core/expected.hpp"
 #include "gxf/serialization/entity_serializer.hpp"
@@ -109,14 +110,18 @@ VideoStreamRecorderOp::~VideoStreamRecorderOp() {
   nvidia::gxf::Expected<void> result = binary_file_stream_.close();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    HOLOSCAN_LOG_ERROR("Failed to close binary_file_stream_ with code: {}", code);
+    try {
+      HOLOSCAN_LOG_ERROR("Failed to close binary_file_stream_ with code: {}", code);
+    } catch (std::exception& e) {}
   }
 
   // Close index file stream
   result = index_file_stream_.close();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    HOLOSCAN_LOG_ERROR("Failed to close index_file_stream_ with code: {}", code);
+    try {
+      HOLOSCAN_LOG_ERROR("Failed to close index_file_stream_ with code: {}", code);
+    } catch (std::exception& e) {}
   }
 }
 
@@ -154,7 +159,7 @@ void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_ou
   auto entity_serializer = nvidia::gxf::Handle<nvidia::gxf::EntitySerializer>::Create(
       context.context(), vs_serializer->gxf_cid());
   nvidia::gxf::Expected<size_t> size =
-      entity_serializer.value()->serializeEntity(entity, &binary_file_stream_);
+      entity_serializer.value()->serializeEntity(std::move(entity), &binary_file_stream_);
   if (!size) {
     auto code = nvidia::gxf::ToResultCode(size);
     throw std::runtime_error(fmt::format("Failed to serialize entity with code {}", code));

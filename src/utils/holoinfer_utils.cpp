@@ -121,6 +121,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
     auto messages = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers").value();
     for (unsigned int i = 0; i < in_tensors.size(); ++i) {
       // nvidia::gxf::Handle<nvidia::gxf::Tensor> in_tensor;
+      HOLOSCAN_LOG_DEBUG("Extracting data from tensor {}", in_tensors[i]);
       std::shared_ptr<holoscan::Tensor> in_tensor;
       cudaStream_t cstream = 0;
       for (unsigned int j = 0; j < messages.size(); ++j) {
@@ -151,10 +152,10 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
       auto element_type = in_tensor_gxf.element_type();
       auto storage_type = in_tensor_gxf.storage_type();
 
-      if (!(storage_type != nvidia::gxf::MemoryStorageType::kHost ||
-            storage_type != nvidia::gxf::MemoryStorageType::kDevice)) {
-        return HoloInfer::report_error(module,
-                                       "Data extraction, memory not resident on CPU or GPU.");
+      if (storage_type != nvidia::gxf::MemoryStorageType::kHost &&
+          storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
+        return HoloInfer::report_error(
+            module, "Data extraction, memory not resident on CUDA pinned host memory or GPU.");
       }
       if (to != nvidia::gxf::MemoryStorageType::kHost &&
           to != nvidia::gxf::MemoryStorageType::kDevice) {
@@ -227,6 +228,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
                                          cstream);
           break;
         default: {
+          HOLOSCAN_LOG_INFO("Incoming tensors must be of type: float, int32, int64, int8, uint8");
           return HoloInfer::report_error(module,
                                          "Data extraction, data type not supported in extraction.");
         }
@@ -462,6 +464,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
           break;
         }
         default: {
+          HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and 4.");
           return HoloInfer::report_error(
               module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
         }
@@ -538,6 +541,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
           break;
         }
         default: {
+          HOLOSCAN_LOG_INFO("Outgoing tensors must be of type: float, int32, int64, int8, uint8");
           HOLOSCAN_LOG_ERROR("Unsupported data type in HoloInfer data transmission.");
           stat = GXF_FAILURE;
         }

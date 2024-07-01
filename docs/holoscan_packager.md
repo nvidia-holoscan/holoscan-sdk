@@ -95,6 +95,8 @@ The NGC container has the CLI installed already, no additional steps are require
 :::{tip}
 The packager feature is also illustrated in the [cli_packager](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/cli_packager) and
 [video_replayer_distributed](<https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/video_replayer_distributed>) examples.
+
+Additional arguments are required when launching the container to enable the packaging of Holoscan applications inside the NGC Holoscan container. Please see the [NGC Holoscan container](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan) page for additional details.
 :::
 
 1. Ensure to use the [HAP environment variables](./cli/hap.md#table-of-environment-variables) wherever possible when accessing data. For example:
@@ -224,6 +226,35 @@ The packager feature is also illustrated in the [cli_packager](https://github.co
    ```bash
    holoscan package --platform x64-workstation --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
    ```
+
+### Common Issues When Using Holoscan Packager
+
+#### DNS Name Resolution Error
+
+The Holoscan Packager may be unable to resolve hostnames in specific networking environments and may show errors similar to the following:
+
+```
+curl: (6) Could not resolve host: github.com.
+Failed to establish a new connection:: [Errno -3] Temporary failure in name solution...
+```
+
+To resolve these errors, edit the `/etc/docker/daemon.json` file to include `dns` and `dns-serach` fields as follows:
+
+```json
+{
+    "default-runtime": "nvidia",
+    "runtimes": {
+        "nvidia": {
+            "args": [],
+            "path": "nvidia-container-runtime"
+        }
+    },
+    "dns": ["IP-1", "IP-n"],
+    "dns-search": ["DNS-SERVER-1", "DNS-SERVER-n"]
+}
+```
+
+You may need to consult your IT team and replace `IP-x` and `DNS-SERVER-x` with the provided values.
 
 ## Run a packaged application
 

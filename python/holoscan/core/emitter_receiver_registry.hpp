@@ -50,10 +50,11 @@ namespace holoscan {
  */
 template <typename T>
 struct emitter_receiver {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     auto cpp_type = data.cast<T>();
     py::gil_scoped_release release;
-    op_output.emit<T>(cpp_type, name.c_str());
+    op_output.emit<T>(std::move(cpp_type), name.c_str(), acq_timestamp);
     return;
   }
 
@@ -67,10 +68,11 @@ struct emitter_receiver {
  */
 template <typename T>
 struct emitter_receiver<std::shared_ptr<T>> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     auto cpp_obj = std::make_shared<T>(data.cast<T>());
     py::gil_scoped_release release;
-    op_output.emit<std::shared_ptr<T>>(cpp_obj, name.c_str());
+    op_output.emit<std::shared_ptr<T>>(std::move(cpp_obj), name.c_str(), acq_timestamp);
     return;
   }
   static py::object receive(std::any result, const std::string& name, PyInputContext& op_input) {
@@ -90,7 +92,8 @@ class EmitterReceiverRegistry {
   /**
    * @brief Function type for emitting a data type
    */
-  using EmitFunc = std::function<void(py::object&, const std::string&, PyOutputContext& op_output)>;
+  using EmitFunc = std::function<void(py::object&, const std::string&, PyOutputContext& op_output,
+                                      const int64_t acq_timestamp)>;
 
   /**
    * @brief Function type for receiving a data type
@@ -105,7 +108,8 @@ class EmitterReceiverRegistry {
 
   inline static EmitFunc none_emit = []([[maybe_unused]] py::object& data,
                                         [[maybe_unused]] const std::string& name,
-                                        [[maybe_unused]] PyOutputContext& op_output) -> void {
+                                        [[maybe_unused]] PyOutputContext& op_output,
+                                        [[maybe_unused]] const int64_t acq_timestamp = -1) -> void {
     HOLOSCAN_LOG_ERROR(
         "Unable to emit message (op: '{}', port: '{}')", op_output.op()->name(), name);
     return;
@@ -138,13 +142,15 @@ class EmitterReceiverRegistry {
    * @param data The Python object corresponding to the data of typeT.
    * @param name The name of the entity emitted.
    * @param op_output The PyOutputContext used to emit the data.
+   * @param acq_timestamp The acquisition timestamp of the data.
    */
   template <typename typeT>
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     auto& instance = get_instance();
     const std::type_index index = std::type_index(typeid(typeT));
     const EmitFunc& func = instance.get_emitter(index);
-    return func(data, name, op_output);
+    return func(data, name, op_output, acq_timestamp);
   }
 
   /**

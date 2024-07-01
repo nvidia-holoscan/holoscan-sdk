@@ -18,7 +18,12 @@
 # We import cli, core and gxf to make sure they're available before other modules that rely on them
 from . import cli, core, gxf
 
-__all__ = ["as_tensor", "cli", "core", "gxf"]
+try:
+    from ._version import __version__
+except ImportError:
+    __version__ = "unknown version"
+
+__all__ = ["__version__", "as_tensor", "cli", "core", "gxf"]
 
 
 def as_tensor(obj):
@@ -92,6 +97,7 @@ as_tensor.__doc__ = core.Tensor.as_tensor.__doc__
 # Other modules are exposed to the public API but will only be lazily loaded
 _EXTRA_MODULES = [
     "conditions",
+    "decorator",
     "executors",
     "graphs",
     "logger",

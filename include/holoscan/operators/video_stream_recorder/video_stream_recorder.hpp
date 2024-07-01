@@ -75,7 +75,7 @@ class VideoStreamRecorderOp : public holoscan::Operator {
   // File stream for binary data
   nvidia::gxf::FileStream binary_file_stream_;
   // Offset into binary file
-  size_t binary_file_offset_;
+  size_t binary_file_offset_{0};
 };
 
 }  // namespace holoscan::ops

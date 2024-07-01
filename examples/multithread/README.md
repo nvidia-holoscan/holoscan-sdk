@@ -36,7 +36,7 @@ For the C++ application, the scheduler to be used can be set via the `scheduler`
 
 ## Python API
 
-- `multithread.py`: This example demonstrates how to configure and use a multi-threaded scheduler instead of the default single-threaded one. It involves three operators as described for the C++ API example described above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default a polling-based multithread scheduler will be used, but if `--event-based` is specified, the event-based multithread scheduler will be used instead.
+- `multithread.py`: This example demonstrates how to configure and use a multi-threaded scheduler instead of the default single-threaded one. It involves three operators as described for the C++ API example described above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default a polling-based multithread scheduler will be used, but if `--event_based` is specified, the event-based multithread scheduler will be used instead.
 
 ### Build instructions
 
@@ -49,5 +49,5 @@ First, go in your `build` or `install` directory (automatically done by `./run l
 Then, run the app with the options of your choice. For example, to use 8 worker threads to run 32 delay operators with delays ranging linearly from 0.2 to (0.2 + 0.05 * 31), one would set:
 
 ```bash
-python3 ./examples/multithread/python/multithread.py --threads 8 --num_delay_ops 32 --delay 0.2 --delay_step 0.05 --event-based
+python3 ./examples/multithread/python/multithread.py --threads 8 --num_delay_ops 32 --delay 0.2 --delay_step 0.05 --event_based
 ```

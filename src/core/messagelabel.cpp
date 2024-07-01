@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,7 +59,7 @@ void MessageLabel::print_all() {
 
 std::string MessageLabel::to_string() const {
   auto msg_buf = fmt::memory_buffer();
-  for (auto it : message_paths) {
+  for (auto& it : message_paths) {
     fmt::format_to(std::back_inserter(msg_buf), "{}", to_string(it));
   }
   return fmt::to_string(msg_buf);
@@ -67,7 +67,7 @@ std::string MessageLabel::to_string() const {
 
 std::string MessageLabel::to_string(MessageLabel::TimestampedPath path) {
   auto msg_buf = fmt::memory_buffer();
-  for (auto it : path) {
+  for (auto& it : path) {
     if (!it.operator_ptr) {
       HOLOSCAN_LOG_ERROR("MessageLabel::to_string - Operator pointer is null");
     } else {
@@ -132,7 +132,7 @@ MessageLabel::TimestampedPath MessageLabel::get_path(int index) {
 
 std::string MessageLabel::get_path_name(int index) {
   auto pathstring = fmt::memory_buffer();
-  for (auto oplabel : message_paths[index]) {
+  for (auto& oplabel : message_paths[index]) {
     if (!oplabel.operator_ptr) {
       HOLOSCAN_LOG_ERROR(
           "MessageLabel::get_path_name - Operator pointer is null. Path until now: {}.",

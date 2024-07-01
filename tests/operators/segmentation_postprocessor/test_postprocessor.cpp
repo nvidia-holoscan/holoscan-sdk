@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,14 +123,50 @@ static const uint8_t kArgmaxOutputData[] = {
     4, 1, 0, 2, 2, 1, 0, 3, 3, 4, 2, 2, 4, 0, 0, 0, 2, 4, 4, 2, 0, 0, 2, 2, 3, 0, 0, 2, 2, 2, 1, 3,
     2, 1, 0, 4, 3, 1, 0, 4, 2, 4, 4, 1, 4, 3, 3, 0, 4, 2, 4, 1, 1, 1, 3, 1, 4, 1, 3, 0, 2, 0};
 
-TEST(SegmentationPostprocessor, Argmax) {
-  holoscan::ops::segmentation_postprocessor::Shape shape;
-  shape.height = 19;
-  shape.width = 10;
-  shape.channels = 5;
 
+// The fixture for testing the Segmentation Postprocessor
+class SegmentationPostprocessorTest : public testing::Test {
+ protected:
+  void SetUp() override {
+    shape.height = 19;
+    shape.width = 10;
+    shape.channels = 5;
+
+     // Allocate device memory needed by the tests
+    cuda_status = cudaMalloc(reinterpret_cast<void**>(&device_input_data), input_data_size);
+    if (cuda_status == cudaSuccess) {
+      cuda_status = cudaMalloc(reinterpret_cast<void**>(&device_output_data), output_data_size);
+    }
+    // Copy input data to the device
+    if (cuda_status == cudaSuccess) {
+      cuda_status = cudaMemcpy(device_input_data, kArgmaxInputData, input_data_size,
+                               cudaMemcpyHostToDevice);
+    }
+  }
+
+  void TearDown() override {
+    // Free any device memory allocated during SetUp
+    if (device_input_data) {
+      cudaFree(device_input_data);
+    }
+    if (device_output_data) {
+      cudaFree(device_output_data);
+    }
+  }
+
+  // Any members defined here can be directly accessed from the test case
+  holoscan::ops::segmentation_postprocessor::Shape shape;
   const uint32_t input_data_size = sizeof(kArgmaxInputData);
   const uint32_t output_data_size = sizeof(kArgmaxOutputData);
+  cudaError_t cuda_status;
+  float* device_input_data = nullptr;
+  holoscan::ops::segmentation_postprocessor::output_type_t* device_output_data = nullptr;
+};
+
+
+TEST_F(SegmentationPostprocessorTest, Argmax) {
+  // check that no CUDA errors occurred during SetUp()
+  ASSERT_EQ(cudaSuccess, cuda_status);
 
   ASSERT_EQ(input_data_size, shape.height * shape.width * shape.channels * sizeof(float));
   ASSERT_EQ(output_data_size,
@@ -139,15 +175,6 @@ TEST(SegmentationPostprocessor, Argmax) {
 
   holoscan::ops::segmentation_postprocessor::output_type_t host_output_data[output_data_size] = {};
 
-  float* device_input_data = nullptr;
-  holoscan::ops::segmentation_postprocessor::output_type_t* device_output_data = nullptr;
-  ASSERT_EQ(cudaSuccess, cudaMalloc(reinterpret_cast<void**>(&device_input_data), input_data_size));
-  ASSERT_EQ(cudaSuccess,
-            cudaMalloc(reinterpret_cast<void**>(&device_output_data), output_data_size));
-
-  ASSERT_EQ(
-      cudaSuccess,
-      cudaMemcpy(device_input_data, kArgmaxInputData, input_data_size, cudaMemcpyHostToDevice));
   ASSERT_EQ(cudaSuccess, cudaMemset(device_output_data, 0, output_data_size));
 
   holoscan::ops::segmentation_postprocessor::cuda_postprocess(
@@ -160,9 +187,6 @@ TEST(SegmentationPostprocessor, Argmax) {
   ASSERT_EQ(
       cudaSuccess,
       cudaMemcpy(host_output_data, device_output_data, output_data_size, cudaMemcpyDeviceToHost));
-
-  ASSERT_EQ(cudaSuccess, cudaFree(device_input_data));
-  ASSERT_EQ(cudaSuccess, cudaFree(device_output_data));
 
   for (uint32_t i = 0; i < output_data_size / sizeof(host_output_data[0]); i++) {
     ASSERT_EQ(kArgmaxOutputData[i], host_output_data[i]) << "Failed at index: " << i;

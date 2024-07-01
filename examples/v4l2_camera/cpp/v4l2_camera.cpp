@@ -43,9 +43,9 @@ class App : public holoscan::Application {
 
     if (key_exists(from_config("source"), "width") && key_exists(from_config("source"), "height")) {
       // width and height given, use BlockMemoryPool (better latency)
-      const int width = from_config("source.width").as<int>();
-      const int height = from_config("source.height").as<int>();
-      const int n_channels = 4;
+      const uint64_t width = from_config("source.width").as<uint64_t>();
+      const uint64_t height = from_config("source.height").as<uint64_t>();
+      const uint8_t n_channels = 4;
       uint64_t block_size = width * height * n_channels;
       auto allocator = make_resource<BlockMemoryPool>("pool", 0, block_size, 1);
 

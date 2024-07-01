@@ -27,7 +27,6 @@ from holoscan.core import (
     ArgType,
     CLIOptions,
     Component,
-    ComponentSpec,
     Condition,
     ConditionType,
     Config,
@@ -48,6 +47,7 @@ from holoscan.core import (
     io_type_registry,
     py_object_to_arg,
 )
+from holoscan.core._core import ComponentSpec as ComponentSpecBase
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.core._core import ParameterFlag, PyOperatorSpec
 from holoscan.executors import GXFExecutor
@@ -192,14 +192,14 @@ class TestArgList:
             obj.custom_attribute = 5
 
 
-class TestComponentSpec:
+class TestComponentSpecBase:
     def test_init(self, fragment):
-        c = ComponentSpec(fragment)
+        c = ComponentSpecBase(fragment)
         assert c.params == {}
         assert c.fragment is fragment
 
     def test_dynamic_attribute_not_allowed(self, fragment):
-        obj = ComponentSpec(fragment)
+        obj = ComponentSpecBase(fragment)
         with pytest.raises(AttributeError):
             obj.custom_attribute = 5
 
@@ -268,7 +268,7 @@ class TestCondition:
         c.initialize()
 
     def test_setup(self, fragment):
-        spec = ComponentSpec(fragment=fragment)
+        spec = ComponentSpecBase(fragment=fragment)
         c = Condition()
         c.setup(spec)
 
@@ -280,55 +280,55 @@ class TestCondition:
 
 class TestResource:
     def test_init(self, fragment):
-        r = Resource()
+        r = Resource(fragment)
         assert r.name == ""
-        assert r.fragment is None
+        assert r.fragment is fragment
+        assert r.resource_type == Resource.ResourceType.NATIVE
 
-    def test_init_with_kwargs(self):
-        r = Resource(a=5, b=(13.7, 15.2), c="abcd")
+    def test_init_with_kwargs(self, fragment):
+        r = Resource(fragment, a=5, b=(13.7, 15.2), c="abcd")
         assert r.name == ""
-        assert r.fragment is None
+        assert r.fragment is fragment
         assert len(r.args) == 3
 
-    def test_init_with_name_and_kwargs(self):
+    def test_init_with_name_and_kwargs(self, fragment):
         # name provided by kwarg
-        r = Resource(name="r2", a=5, b=(13.7, 15.2), c="abcd")
+        r = Resource(fragment, name="r2", a=5, b=(13.7, 15.2), c="abcd")
         assert r.name == "r2"
-        assert r.fragment is None
+        assert r.fragment is fragment
         assert len(r.args) == 3
 
-    def test_name(self):
-        r = Resource()
+    def test_name(self, fragment):
+        r = Resource(fragment)
         r.name = "res1"
         assert r.name == "res1"
 
-        r = Resource(name="res3")
+        r = Resource(fragment, name="res3")
         assert r.name == "res3"
 
     def test_fragment(self, fragment):
-        r = Resource()
-        assert r.fragment is None
+        r = Resource(fragment)
+        assert r.fragment is fragment
         # not allowed to assign fragment
         with pytest.raises(AttributeError):
             r.fragment = fragment
 
-    def test_add_arg(self):
-        r = Resource()
+    def test_add_arg(self, fragment):
+        r = Resource(fragment)
         r.add_arg(Arg("a1"))
 
-    def test_initialize(self):
-        r = Resource()
+    def test_initialize(self, fragment):
+        r = Resource(fragment)
         r.initialize()
 
     def test_setup(self, fragment):
-        spec = ComponentSpec(fragment=fragment)
-        r = Resource()
+        spec = ComponentSpecBase(fragment=fragment)
+        r = Resource(fragment)
         r.setup(spec)
 
-    def test_dynamic_attribute_not_allowed(self):
-        obj = Resource()
-        with pytest.raises(AttributeError):
-            obj.custom_attribute = 5
+    def test_dynamic_attribute_allowed(self, fragment):
+        obj = Resource(fragment)
+        obj.custom_attribute = 5
 
 
 class TestOperatorSpecBase:
@@ -404,6 +404,61 @@ class TestOperatorSpecBase:
         assert iospec.name == "input_no_condition"
         assert iospec.io_type == IOSpec.IOType.INPUT
         assert isinstance(iospec.connector(), UcxReceiver)
+
+    def test_input_connector_and_condition(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = c.input("in").connector(
+            IOSpec.ConnectorType.DOUBLE_BUFFER,
+            capacity=5,
+            policy=1,
+        )
+        b = iospec.condition(
+            ConditionType.EXPIRING_MESSAGE_AVAILABLE,
+            max_batch_size=5,
+            max_delay_n=1_000_000_000,
+        )
+
+        assert iospec == b
+
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "in"
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert isinstance(iospec.connector(), DoubleBufferReceiver)
+
+        assert len(iospec.conditions) == 1
+        assert iospec.conditions[0][0] == ConditionType.EXPIRING_MESSAGE_AVAILABLE
+        assert iospec.conditions[0][1] is not None
+
+        assert c.inputs["in"] == iospec
+        assert len(c.inputs["in"].conditions) == 1
+
+    def test_input_condition_and_connector(self, fragment, capfd):
+        c = OperatorSpecBase(fragment)
+        iospec = (
+            c.input("in")
+            .condition(
+                ConditionType.EXPIRING_MESSAGE_AVAILABLE,
+                max_batch_size=5,
+                max_delay_n=1_000_000_000,
+            )
+            .connector(
+                IOSpec.ConnectorType.DOUBLE_BUFFER,
+                capacity=5,
+                policy=1,
+            )
+        )
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == "in"
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert isinstance(iospec.connector(), DoubleBufferReceiver)
+
+        assert len(iospec.conditions) == 1
+        assert iospec.conditions[0][0] == ConditionType.EXPIRING_MESSAGE_AVAILABLE
+        assert iospec.conditions[0][1] is not None
+
+        assert c.inputs["in"] == iospec
+
+        assert len(c.inputs["in"].conditions) == 1
 
     def test_output(self, fragment, capfd):
         c = OperatorSpecBase(fragment)

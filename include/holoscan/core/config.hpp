@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,8 +48,11 @@ class Config {
       HOLOSCAN_LOG_WARN("Config file '{}' doesn't exist", config_file);
     }
   }
-
   virtual ~Config() = default;
+
+  // Delete the copy constructor and assignment operator to prevent copying.
+  Config(const Config&) = delete;
+  Config& operator=(const Config&) = delete;
 
   /**
    * @brief Get the path to the configuration file.

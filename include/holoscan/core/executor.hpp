@@ -51,6 +51,10 @@ class Executor {
   explicit Executor(Fragment* fragment) : fragment_(fragment) {}
   virtual ~Executor() = default;
 
+  // Delete the copy constructor and assignment operator to prevent copying.
+  Executor(const Executor&) = delete;
+  Executor& operator=(const Executor&) = delete;
+
   /**
    * @brief Run the graph.
    *

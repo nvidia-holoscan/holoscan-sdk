@@ -17,7 +17,8 @@
 
 import pytest
 
-from holoscan.core import ComponentSpec, Scheduler
+from holoscan.core import Scheduler
+from holoscan.core._core import ComponentSpec as ComponentSpecBase
 from holoscan.gxf import GXFScheduler
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
@@ -28,9 +29,7 @@ class TestGreedyScheduler:
         scheduler = GreedyScheduler(app)
         assert isinstance(scheduler, GXFScheduler)
         assert isinstance(scheduler, Scheduler)
-        # The 'scheduler.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
-        # derives from PyComponentSpec, which inherits from ComponentSpec.
-        assert issubclass(ComponentSpec, type(scheduler.spec))
+        assert issubclass(ComponentSpecBase, type(scheduler.spec))
 
     @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803
@@ -83,9 +82,7 @@ class TestMultiThreadScheduler:
         scheduler = MultiThreadScheduler(app)
         assert isinstance(scheduler, GXFScheduler)
         assert isinstance(scheduler, Scheduler)
-        # The 'scheduler.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
-        # derives from PyComponentSpec, which inherits from ComponentSpec.
-        assert issubclass(ComponentSpec, type(scheduler.spec))
+        assert issubclass(ComponentSpecBase, type(scheduler.spec))
 
     @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803
@@ -146,9 +143,7 @@ class TestEventBasedScheduler:
         scheduler = EventBasedScheduler(app)
         assert isinstance(scheduler, GXFScheduler)
         assert isinstance(scheduler, Scheduler)
-        # The 'scheduler.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
-        # derives from PyComponentSpec, which inherits from ComponentSpec.
-        assert issubclass(ComponentSpec, type(scheduler.spec))
+        assert issubclass(ComponentSpecBase, type(scheduler.spec))
 
     @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803

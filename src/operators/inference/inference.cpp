@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/execution_context.hpp"
@@ -49,7 +50,7 @@ struct YAML::convert<holoscan::ops::InferenceOp::DataMap> {
       for (YAML::const_iterator it = node.begin(); it != node.end(); ++it) {
         std::string key = it->first.as<std::string>();
         std::string value = it->second.as<std::string>();
-        datamap.insert(key, value);
+        datamap.insert(key, std::move(value));
       }
     } catch (const std::exception& e) {
       HOLOSCAN_LOG_ERROR(e.what());
@@ -96,7 +97,7 @@ struct YAML::convert<holoscan::ops::InferenceOp::DataVecMap> {
                 key);
             HOLOSCAN_LOG_WARN("Single I/O per model supported in backward compatibility mode.");
             std::string value = it->second.as<std::string>();
-            datavmap.insert(key, {value});
+            datavmap.insert(key, {std::move(value)});
           } break;
           case YAML::NodeType::Sequence: {
             std::vector<std::string> value = it->second.as<std::vector<std::string>>();
@@ -138,6 +139,11 @@ void InferenceOp::setup(OperatorSpec& spec) {
              "temporal_map",
              "Model Keyword with associated frame execution delay",
              "Frame delay for model inference.",
+             DataMap());
+  spec.param(activation_map_,
+             "activation_map",
+             "Model Keyword with associated model inference activation",
+             "Activation of model inference (1 = active, 0 = inactive).",
              DataMap());
   spec.param(pre_processor_map_,
              "pre_processor_map",
@@ -199,6 +205,7 @@ void InferenceOp::start() {
                                                     inference_map_.get().get_map(),
                                                     device_map_.get().get_map(),
                                                     temporal_map_.get().get_map(),
+                                                    activation_map_.get().get_map(),
                                                     is_engine_path_.get(),
                                                     infer_on_cpu_.get(),
                                                     parallel_inference_.get(),
@@ -250,8 +257,10 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     // Execute inference and populate output buffer in inference specifications
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
-    auto status = holoscan_infer_context_->execute_inference(inference_specs_->data_per_tensor_,
-                                                             inference_specs_->output_per_model_);
+
+    inference_specs_->set_activation_map(activation_map_.get().get_map());
+
+    auto status = holoscan_infer_context_->execute_inference(inference_specs_);
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, "Inference Operator: Inference execution");
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {

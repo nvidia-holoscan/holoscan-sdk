@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -149,9 +149,9 @@ TEST(Application, TestAddFragment) {
   app->add_fragment(fragment);
 
   // First call to graph creates a FlowGraph object
-  // F.graph() returns a pointer to the abstract Graph base class so use
+  // F.graph() returns a reference to the abstract Graph base class so use
   // static_cast here
-  FragmentFlowGraph G = static_cast<FragmentFlowGraph&>(app->fragment_graph());
+  FragmentFlowGraph& G = static_cast<FragmentFlowGraph&>(app->fragment_graph());
 
   // verify that the operator was added to the graph
   auto nodes = G.get_nodes();
@@ -168,9 +168,9 @@ TEST(Application, TestAddFlow) {
   app->add_flow(fragment1, fragment2, {{"blur_image", "sharpen_image"}});
 
   // First call to graph creates a FlowGraph object
-  // F.graph() returns a pointer to the abstract Graph base class so use
+  // F.graph() returns a reference to the abstract Graph base class so use
   // static_cast here
-  FragmentFlowGraph G = static_cast<FragmentFlowGraph&>(app->fragment_graph());
+  FragmentFlowGraph& G = static_cast<FragmentFlowGraph&>(app->fragment_graph());
 
   // verify that the fragments and edges were added to the graph
   auto nodes = G.get_nodes();

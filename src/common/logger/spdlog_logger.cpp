@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace spdlog {
@@ -40,13 +41,13 @@ class ansicolor_file_sink : public ansicolor_sink<ConsoleMutex> {
 
 }  // namespace sinks
 
-static inline std::shared_ptr<logger> create_file_logger(std::string name, FILE* file) {
+static inline std::shared_ptr<logger> create_file_logger(const std::string name, FILE* file) {
   // Do not register to spdlog registry
   spdlog::details::registry::instance().set_automatic_registration(false);
 
   return spdlog::synchronous_factory::template create<
       spdlog::sinks::ansicolor_file_sink<spdlog::details::console_mutex>>(
-      name, file, spdlog::color_mode::automatic);
+      std::move(name), file, spdlog::color_mode::automatic);
 }
 
 }  // namespace spdlog

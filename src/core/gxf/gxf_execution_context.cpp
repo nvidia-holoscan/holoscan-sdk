@@ -19,6 +19,7 @@
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 
 #include <memory>
+#include <utility>
 
 #include "holoscan/core/gxf/gxf_operator.hpp"
 
@@ -36,7 +37,8 @@ GXFExecutionContext::GXFExecutionContext(gxf_context_t context, Operator* op) {
 GXFExecutionContext::GXFExecutionContext(gxf_context_t context,
                                          std::shared_ptr<GXFInputContext> gxf_input_context,
                                          std::shared_ptr<GXFOutputContext> gxf_output_context)
-    : gxf_input_context_(gxf_input_context), gxf_output_context_(gxf_output_context) {
+    : gxf_input_context_(std::move(gxf_input_context)),
+      gxf_output_context_(std::move(gxf_output_context)) {
   context_ = context;
 }
 

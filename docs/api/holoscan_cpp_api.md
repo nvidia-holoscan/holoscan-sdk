@@ -189,7 +189,7 @@
 
 - {ref}`exhale_class_classholoscan_1_1Tensor`
 - {ref}`exhale_class_classholoscan_1_1TensorMap`
-- {ref}`exhale_struct_structholoscan_1_1DLManagedTensorCtx`
+- {ref}`exhale_struct_structholoscan_1_1DLManagedTensorContext`
 - {ref}`exhale_class_classholoscan_1_1DLManagedMemoryBuffer`
 
 ##### Functions

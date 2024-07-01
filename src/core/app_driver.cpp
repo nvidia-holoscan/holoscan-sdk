@@ -255,8 +255,8 @@ void AppDriver::run() {
           HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
           SignalHandler::unregister_signal_handler(context, signum);
           // Register the global signal handler.
-          SignalHandler::register_global_signal_handler(signum, [](int signum) {
-            (void)signum;
+          SignalHandler::register_global_signal_handler(signum, [](int sig) {
+            (void)sig;
             HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
             exit(1);
           });
@@ -271,13 +271,13 @@ void AppDriver::run() {
         app_status_ = AppStatus::kError;
 
         // Stop the driver server
-        driver_server_->stop();
+        if (driver_server_) { driver_server_->stop(); }
         // Do not wait for the driver server to stop because it will block the main thread
       };
       SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
       SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
     }
-    driver_server_->wait();
+    if (driver_server_) { driver_server_->wait(); }
   }
 }
 
@@ -963,11 +963,11 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
     std::unordered_set<std::string> not_participated_workers(worker_addresses.begin(),
                                                              worker_addresses.end());
     for (auto& [fragment_name, worker_id] : schedule) { not_participated_workers.erase(worker_id); }
-    for (const auto& worker_address : not_participated_workers) {
-      HOLOSCAN_LOG_INFO("{}' does not participate in the schedule", worker_address);
-      auto& worker_client = driver_server_->connect_to_worker(worker_address);
+    for (const auto& worker_addr : not_participated_workers) {
+      HOLOSCAN_LOG_INFO("{}' does not participate in the schedule", worker_addr);
+      auto& worker_client = driver_server_->connect_to_worker(worker_addr);
       worker_client->terminate_worker(AppWorkerTerminationCode::kCancelled);
-      driver_server_->close_worker_connection(worker_address);
+      driver_server_->close_worker_connection(worker_addr);
     }
 
     auto& fragment_graph = app_->fragment_graph();
@@ -984,6 +984,7 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
     }
 
     // collect port information from each worker (must be before the collect_connections call)
+    bool is_port_info_collected = true;
     for (const auto& [worker_id, fragment_names] : id_to_fragment_names_vector) {
       auto& worker_client = driver_server_->connect_to_worker(worker_id);
 
@@ -995,11 +996,24 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
           HOLOSCAN_LOG_ERROR(
               "Failed to retrieve port info for all fragments scheduled on worker with id '{}'",
               worker_id);
+          is_port_info_collected = false;
           break;
         }
       }
       // Merge the collected port info into the app driver's port information map
       all_fragment_port_map_->merge(scheduled_fragments_port_info);
+    }
+    if (!is_port_info_collected) {
+      HOLOSCAN_LOG_ERROR("Unable to collect port information from workers");
+      // Terminate all worker and close all worker connections
+      terminate_all_workers(AppWorkerTerminationCode::kFailure);
+
+      // Set app status to error
+      app_status_ = AppStatus::kError;
+
+      // Stop the driver server
+      driver_server_->stop();
+      return;
     }
 
     // (populates index_to_port_map_, index_to_ip_map_, connection_map_, receiver_port_map_)

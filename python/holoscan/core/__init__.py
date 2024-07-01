@@ -90,8 +90,8 @@ from ._core import PyComponentSpec as ComponentSpec
 from ._core import PyRegistryContext as _RegistryContext
 from ._core import PyOperatorSpec as OperatorSpec
 from ._core import PyTensor as Tensor
+from ._core import Resource as _Resource
 from ._core import (
-    Resource,
     Scheduler,
     arg_to_py_object,
     arglist_to_kwargs,
@@ -301,6 +301,32 @@ class Operator(_Operator):
 # copy docstrings defined in core_pydoc.hpp
 Operator.__doc__ = _Operator.__doc__
 Operator.__init__.__doc__ = _Operator.__init__.__doc__
+
+
+class Resource(_Resource):
+    def __init__(self, fragment, *args, **kwargs):
+        if not isinstance(fragment, _Fragment):
+            raise ValueError(
+                "The first argument to an Resource's constructor must be the Fragment "
+                "(Application) to which it belongs."
+            )
+        # It is recommended to not use super()
+        # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
+        _Resource.__init__(self, self, fragment, *args, **kwargs)
+        # Create a PyComponentSpec object and pass it to the C++ API
+        spec = ComponentSpec(fragment=self.fragment, component=self)
+        self.spec = spec
+        # Call setup method in PyResource class
+        self.setup(spec)
+
+    def setup(self, spec: ComponentSpec):
+        """Default implementation of setup method."""
+        pass
+
+
+# copy docstrings defined in core_pydoc.hpp
+Resource.__doc__ = _Resource.__doc__
+Resource.__init__.__doc__ = _Resource.__init__.__doc__
 
 
 class Tracker:

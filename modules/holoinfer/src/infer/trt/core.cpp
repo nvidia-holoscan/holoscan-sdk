@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -165,7 +165,12 @@ bool TrtInfer::initialize_parameters() {
         holoinfer_type = holoinfer_datatype::h_Int8;
         break;
       }
+      case nvinfer1::DataType::kUINT8: {
+        holoinfer_type = holoinfer_datatype::h_UInt8;
+        break;
+      }
       default: {
+        HOLOSCAN_LOG_INFO("TensorRT backend supports float, int8, int32, uint8 data types.");
         HOLOSCAN_LOG_ERROR("Data type not supported.");
         return false;
       }
@@ -199,6 +204,7 @@ bool TrtInfer::initialize_parameters() {
             }
           } break;
           default: {
+            HOLOSCAN_LOG_INFO("All tensors must have dimension size between 2 and 4.");
             throw std::runtime_error("Dimension size not supported: " +
                                      std::to_string(dims.nbDims));
           }

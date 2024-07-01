@@ -77,8 +77,9 @@ class SegmentationPostprocessorOp : public Operator {
                ExecutionContext& context) override;
 
  private:
-  NetworkOutputType network_output_type_value_;
-  DataFormat data_format_value_;
+  // Defaults set here will be overridden by parameters defined in the setup method
+  NetworkOutputType network_output_type_value_ = NetworkOutputType::kSoftmax;
+  DataFormat data_format_value_ = DataFormat::kHWC;
 
   Parameter<holoscan::IOSpec*> in_;
   Parameter<holoscan::IOSpec*> out_;

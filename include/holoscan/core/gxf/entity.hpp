@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_GXF_ENTITY_HPP
 
 #include <memory>
+#include <utility>
 
 // Entity definition
 // Since it has code that causes a warning as an error, we disable it here.
@@ -47,7 +48,7 @@ class Entity : public nvidia::gxf::Entity {
  public:
   Entity() = default;
   explicit Entity(const nvidia::gxf::Entity& other) : nvidia::gxf::Entity(other) {}
-  explicit Entity(nvidia::gxf::Entity&& other) : nvidia::gxf::Entity(other) {}
+  explicit Entity(nvidia::gxf::Entity&& other) : nvidia::gxf::Entity(std::move(other)) {}
 
   // Creates a new entity
   static Entity New(ExecutionContext* context);
@@ -122,7 +123,7 @@ class Entity : public nvidia::gxf::Entity {
     auto handle = nvidia::gxf::Handle<nvidia::gxf::Tensor>::Create(context(), cid);
     nvidia::gxf::Tensor* tensor_ptr = handle->get();
 
-    // Copy the member data (std::shared_ptr<DLManagedTensorCtx>) from the Tensor to the
+    // Copy the member data (std::shared_ptr<DLManagedTensorContext>) from the Tensor to the
     // nvidia::gxf::Tensor
     *tensor_ptr = nvidia::gxf::Tensor(data->dl_ctx());
   }

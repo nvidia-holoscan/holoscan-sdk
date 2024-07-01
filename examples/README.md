@@ -72,6 +72,10 @@ The following examples illustrate the use of specific resource classes that can 
 
 * [**Clock**](resources/clock): demonstrate assignment of a user-configured clock to the Holoscan SDK scheduler and how its runtime methods can be accessed from an operator's compute method.
 
+## Decorator-based Python API
+
+* [**Python Functions as Operators**](python_decorator): demonstrates how to use a decorator to convert a Python function into an Operator.
+
 ## Visualization
 * [**Holoviz**](holoviz): display overlays of various geometric primitives
 

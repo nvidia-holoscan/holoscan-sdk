@@ -44,6 +44,12 @@ We appreciate community discussion and feedback in support of Holoscan platform 
 - Direct questions to the [NVIDIA Support Forum](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).
 - Enter SDK issues on the [SDK GitHub Issues board](https://github.com/nvidia-holoscan/holoscan-sdk/issues).
 
+## Contributing to Holoscan SDK
+
+Holoscan SDK is developed internally and released as open source software. We welcome community contributions
+and may include them in Holoscan SDK releases at our discretion. Please refer to the Holoscan SDK
+[Contributing Guide](/CONTRIBUTING.md) for more information.
+
 ## Additional Notes
 
 ### Relation to NVIDIA Clara

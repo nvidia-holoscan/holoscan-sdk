@@ -189,6 +189,13 @@ class Fragment {
   Config& config();
 
   /**
+   * @brief Get the shared pointer to the configuration of the fragment.
+   *
+   * @return The shared pointer to the configuration of the fragment.
+   */
+  std::shared_ptr<Config> config_shared();
+
+  /**
    * @brief Get the graph of the fragment.
    *
    * @return The reference to the graph of the fragment (`Graph` object.)
@@ -196,11 +203,25 @@ class Fragment {
   OperatorGraph& graph();
 
   /**
+   * @brief Get the shared pointer to the graph of the fragment.
+   *
+   * @return The shared pointer to the graph of the fragment.
+   */
+  std::shared_ptr<OperatorGraph> graph_shared();
+
+  /**
    * @brief Get the executor of the fragment.
    *
    * @return The reference to the executor of the fragment (`Executor` object.)
    */
   Executor& executor();
+
+  /**
+   * @brief Get the shared pointer to the executor of the fragment.
+   *
+   * @return The shared pointer to the executor of the fragment.
+   */
+  std::shared_ptr<Executor> executor_shared();
 
   /**
    * @brief Get the scheduler used by the executor
@@ -656,8 +677,8 @@ class Fragment {
   }
 
   template <typename GraphT>
-  std::unique_ptr<GraphT> make_graph() {
-    return std::make_unique<GraphT>();
+  std::shared_ptr<GraphT> make_graph() {
+    return std::make_shared<GraphT>();
   }
 
   template <typename ExecutorT>
@@ -666,12 +687,15 @@ class Fragment {
   }
 
   template <typename ExecutorT, typename... ArgsT>
-  std::unique_ptr<Executor> make_executor(ArgsT&&... args) {
-    return std::make_unique<ExecutorT>(std::forward<ArgsT>(args)...);
+  std::shared_ptr<Executor> make_executor(ArgsT&&... args) {
+    return std::make_shared<ExecutorT>(std::forward<ArgsT>(args)...);
   }
 
   /// Cleanup helper that will by called by GXFExecutor prior to GxfContextDestroy.
   void reset_graph_entities();
+
+  /// Load the GXF extensions specified in the configuration.
+  void load_extensions_from_config();
 
   // Note: Maintain the order of declarations (executor_ and graph_) to ensure proper destruction
   //       of the executor's context.
@@ -679,7 +703,7 @@ class Fragment {
   Application* app_ = nullptr;            ///< The application that this fragment belongs to.
   std::shared_ptr<Config> config_;        ///< The configuration of the fragment.
   std::shared_ptr<Executor> executor_;    ///< The executor for the fragment.
-  std::unique_ptr<OperatorGraph> graph_;  ///< The graph of the fragment.
+  std::shared_ptr<OperatorGraph> graph_;  ///< The graph of the fragment.
   std::shared_ptr<Scheduler> scheduler_;  ///< The scheduler used by the executor
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
   std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment

@@ -23,6 +23,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include <gxf/app/graph_entity.hpp>
 #include "../parameter.hpp"
@@ -55,7 +56,7 @@ class GXFComponent {
   std::shared_ptr<nvidia::gxf::GraphEntity> gxf_graph_entity() { return gxf_graph_entity_; }
 
   void gxf_graph_entity(std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
-    gxf_graph_entity_ = graph_entity;
+    gxf_graph_entity_ = std::move(graph_entity);
   }
 
   void* gxf_cptr() { return gxf_cptr_; }

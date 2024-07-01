@@ -117,6 +117,7 @@ void HoloInferTests::setup_specifications() {
                                                                  inference_map,
                                                                  device_map,
                                                                  temporal_map,
+                                                                 activation_map,
                                                                  is_engine_path,
                                                                  infer_on_cpu,
                                                                  parallel_inference,
@@ -145,7 +146,7 @@ HoloInfer::InferStatus HoloInferTests::prepare_for_inference() {
 
   auto status = create_specifications();
 
-  for (const auto td : in_tensor_dimensions) {
+  for (const auto& td : in_tensor_dimensions) {
     auto db = std::make_shared<HoloInfer::DataBuffer>();
     size_t buffer_size =
         std::accumulate(td.second.begin(), td.second.end(), 1, std::multiplies<size_t>());
@@ -163,8 +164,7 @@ HoloInfer::InferStatus HoloInferTests::do_inference() {
 
   try {
     if (!holoscan_infer_context_) { return status; }
-    return holoscan_infer_context_->execute_inference(inference_specs_->data_per_tensor_,
-                                                      inference_specs_->output_per_model_);
+    return holoscan_infer_context_->execute_inference(inference_specs_);
   } catch (...) {
     std::cout << "Exception occurred in inference.\n";
     return status;

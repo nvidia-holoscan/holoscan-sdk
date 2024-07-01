@@ -112,8 +112,8 @@ class AJASourceOp : public holoscan::Operator {
 
   // internal state
   CNTV2Card device_;
-  NTV2DeviceID device_id_;
-  NTV2VideoFormat video_format_;
+  NTV2DeviceID device_id_ = DEVICE_ID_NOTFOUND;
+  NTV2VideoFormat video_format_ = NTV2_FORMAT_1080p_6000_A;
   NTV2PixelFormat pixel_format_ = NTV2_FBF_ABGR;
   bool use_tsi_ = false;
   bool is_kona_hdmi_ = false;

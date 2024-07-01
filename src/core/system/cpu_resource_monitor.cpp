@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,8 +80,6 @@ static void get_proc_meminfo(uint64_t* stats) {
         break;
       case 3:
         matched = sscanf(line, "MemAvailable: %lu kB", &stats[2]);
-        break;
-      default:
         break;
     }
     if (matched != 1) {
@@ -184,9 +182,13 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
     cpu_info.memory_total = mem_info[0] * 1024;
     cpu_info.memory_free = mem_info[1] * 1024;
     cpu_info.memory_available = mem_info[2] * 1024;
-    cpu_info.memory_usage = static_cast<float>(1.0 - (static_cast<double>(mem_info[2]) /
-                                                      static_cast<double>(mem_info[0]))) *
-                            100.0f;
+    double memory_total = static_cast<double>(mem_info[0]);
+    if (memory_total <= 0) {
+      throw std::runtime_error(
+          fmt::format("Invalid cpu_info.memory_total value: {}", memory_total));
+    }
+    cpu_info.memory_usage =
+        static_cast<float>(1.0 - (static_cast<double>(mem_info[2]) / memory_total)) * 100.0f;
   }
 
   if (metric_flags & CPUMetricFlag::SHARED_MEMORY_USAGE) {

@@ -418,10 +418,11 @@ namespace holoscan {
  */
 template <>
 struct emitter_receiver<std::vector<holoscan::ops::HolovizOp::InputSpec>> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     auto input_spec = data.cast<std::vector<holoscan::ops::HolovizOp::InputSpec>>();
     py::gil_scoped_release release;
-    op_output.emit<std::vector<holoscan::ops::HolovizOp::InputSpec>>(input_spec, name.c_str());
+    op_output.emit<std::vector<holoscan::ops::HolovizOp::InputSpec>>(input_spec, name.c_str(), acq_timestamp);
     return;
   }
 
@@ -494,7 +495,7 @@ When creating Python bindings for an Operator on Holohub, the [pybind11_add_holo
 
 For types for which Pybind11's default casting between C++ and Python is adequate, it is not necessary to explicitly define the `emitter_receiver` class as shown in step 1. This is true because there are a couple of [default implementations](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v2.1.0/python/holoscan/core/emitter_receiver_registry.hpp) for `emitter_receiver<T>` and `emitter_receiver<std::shared_ptr<T>>` that already cover common cases. The default emitter_receiver works for the `std::vector<HolovizOp::InputSpec>` type shown above, which is why the code shown for illustration there is [not found within the operator's bindings](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/operators/holoviz/holoviz.cpp). In that case one could immediately implement `register_types` from step 2 without having to explicitly create an `emitter_receiver` class.
 
-An example where the default `emitter_receiver` would not work is the custom one defined by the SDK for `pybind11::dict`. In this case, to provide convenient emit of multiple tensors via passing a `dict[holoscan::Tensor]` to `op_output.emit` we have special handling of Python dictionaries. The dictionary is inspected and if all keys are strings and all values are tensor-like objects, a single C++ `nvidia::gxf::Entity` containing all of the tensors as an `nvidia::gxf::Tensor` is emitted. If the dictionary is not a tensor map, then it is just emitted as a shared pointer to the Python dict object. The `emitter_receiver` implementations used for the core SDK are defined in [emitter_receivers.hpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v2.1.0/python/holoscan/core/emitter_receivers.hpp). These can serve as a reference when creating new ones for additional types.
+An example where the default `emitter_receiver` would not work is the custom one defined by the SDK for `pybind11::dict`. In this case, to provide convenient emit of multiple tensors via passing a `dict[holoscan::Tensor]` to `op_output.emit` we have special handling of Python dictionaries. The dictionary is inspected and if all keys are strings and all values are tensor-like objects, a single C++ `nvidia::gxf::Entity` containing all of the tensors as an `nvidia::gxf::Tensor` is emitted. If the dictionary is not a tensor map, then it is just emitted as a shared pointer to the Python dict object. The `emitter_receiver` implementations used for the core SDK are defined in [emitter_receivers.hpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v2.2.0/python/holoscan/core/emitter_receivers.hpp). These can serve as a reference when creating new ones for additional types.
 
 #### Runtime behavior of emit and receive
 
@@ -523,7 +524,7 @@ Only types registered with the SDK can be specified by name in this third argume
 
 #### Table of types registered by the core SDK
 
-The list of types that are registered with the SDK's `EmitterReceiverRegistry` are given in the table below. 
+The list of types that are registered with the SDK's `EmitterReceiverRegistry` are given in the table below.
 
 C++ Type                                               | name in the EmitterReceiverRegistry
 -------------------------------------------------------|-------------------------------------------

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <utility>
 
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/logger/logger.hpp"
@@ -170,7 +171,7 @@ std::string AppDriverServiceImpl::parse_ip_from_peer(const std::string& peer) {
                                                    // for IPv6 addresses
                                            true);  // enclose IPv6 addresses in brackets
 
-  return ip;
+  return std::move(ip);
 }
 
 std::string AppDriverServiceImpl::parse_port_from_peer(const std::string& peer) {

@@ -162,7 +162,9 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
 
 TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
   const std::string name{"replayer"};
-  const std::string sample_data_path = std::string(std::getenv("HOLOSCAN_INPUT_PATH"));
+  auto in_path = std::getenv("HOLOSCAN_INPUT_PATH");
+  if (!in_path) { GTEST_SKIP() << "Skipping test due to undefined HOLOSCAN_INPUT_PATH env var"; }
+  const std::string sample_data_path = std::string(in_path);
   ArgList args{
       Arg{"directory", sample_data_path + "/racerx"s},
       Arg{"basename", "racerx"s},

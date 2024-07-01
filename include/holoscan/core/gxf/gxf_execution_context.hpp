@@ -52,6 +52,7 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
   GXFExecutionContext(gxf_context_t context, std::shared_ptr<GXFInputContext> gxf_input_context,
                       std::shared_ptr<GXFOutputContext> gxf_output_context);
 
+  ~GXFExecutionContext() override = default;
   /**
    * @brief Get the GXF input context.
    *

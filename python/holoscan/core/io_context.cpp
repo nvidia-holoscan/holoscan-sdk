@@ -152,7 +152,7 @@ py::object PyInputContext::py_receive(const std::string& name) {
   } else {
     auto maybe_result = receive<std::any>(name.c_str());
     if (!maybe_result.has_value()) {
-      HOLOSCAN_LOG_ERROR("Unable to receive input (std::any) with name '{}'", name);
+      HOLOSCAN_LOG_DEBUG("Unable to receive input (std::any) with name '{}'", name);
       return py::none();
     }
     auto result = maybe_result.value();
@@ -164,7 +164,7 @@ py::object PyInputContext::py_receive(const std::string& name) {
 }
 
 void PyOutputContext::py_emit(py::object& data, const std::string& name,
-                              const std::string& emitter_name) {
+                              const std::string& emitter_name, int64_t acq_timestamp) {
   // Note:: Issue 4206197
   // In the UcxTransmitter::sync_io_abi(), while popping an entity from the queue,
   // Runtime::GxfEntityRefCountDec() on the entity can be called (which locks 'ref_count_mutex_').
@@ -188,7 +188,7 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   if (!emitter_name.empty()) {
     HOLOSCAN_LOG_DEBUG("py_emit: emitting a {}", emitter_name);
     const auto& emit_func = registry.get_emitter(emitter_name);
-    emit_func(data, name, *this);
+    emit_func(data, name, *this, acq_timestamp);
     return;
   }
 
@@ -196,7 +196,7 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   if (py::isinstance<holoscan::PyEntity>(data)) {
     HOLOSCAN_LOG_DEBUG("py_emit: emitting a holoscan::PyEntity");
     const auto& emit_func = registry.get_emitter(typeid(holoscan::PyEntity));
-    emit_func(data, name, *this);
+    emit_func(data, name, *this, acq_timestamp);
     return;
   }
 
@@ -211,7 +211,7 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
             "py_emit: emitting a std::vector<holoscan::ops::HolovizOp::InputSpec> object");
         const auto& emit_func =
             registry.get_emitter(typeid(std::vector<holoscan::ops::HolovizOp::InputSpec>));
-        emit_func(data, name, *this);
+        emit_func(data, name, *this, acq_timestamp);
         return;
       }
     }
@@ -220,7 +220,7 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   // handle pybind11::dict separately from other Python types for special TensorMap treatment
   if (py::isinstance<py::dict>(data)) {
     const auto& emit_func = registry.get_emitter(typeid(pybind11::dict));
-    emit_func(data, name, *this);
+    emit_func(data, name, *this, acq_timestamp);
     return;
   }
 
@@ -259,7 +259,7 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   if (is_distributed_app && is_tensor_like(data)) {
     HOLOSCAN_LOG_DEBUG("py_emit: emitting a tensor-like object over a UCX connector");
     const auto& emit_func = registry.get_emitter(typeid(holoscan::Tensor));
-    emit_func(data, name, *this);
+    emit_func(data, name, *this, acq_timestamp);
     return;
   }
 
@@ -271,7 +271,7 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   // broadcast codelet was inserted.
   HOLOSCAN_LOG_DEBUG("py_emit: emitting a std::shared_ptr<GILGuardedPyObject>");
   const auto& emit_func = registry.get_emitter(typeid(std::shared_ptr<GILGuardedPyObject>));
-  emit_func(data, name, *this);
+  emit_func(data, name, *this, acq_timestamp);
   return;
 }
 
@@ -303,7 +303,12 @@ void init_io_context(py::module_& m) {
 
   py::class_<PyOutputContext, OutputContext, std::shared_ptr<PyOutputContext>>(
       m, "PyOutputContext", R"doc(Output context class.)doc")
-      .def("emit", &PyOutputContext::py_emit, "data"_a, "name"_a, "emitter_name"_a = "");
+      .def("emit",
+           &PyOutputContext::py_emit,
+           "data"_a,
+           "name"_a,
+           "emitter_name"_a = "",
+           "acq_timestamp"_a = -1);
 
   // register a cloudpickle-based serializer for Python objects
   register_py_object_codec();
@@ -352,11 +357,13 @@ void init_io_context(py::module_& m) {
 PyInputContext::PyInputContext(ExecutionContext* execution_context, Operator* op,
                                std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,
                                py::object py_op)
-    : gxf::GXFInputContext::GXFInputContext(execution_context, op, inputs), py_op_(py_op) {}
+    : gxf::GXFInputContext::GXFInputContext(execution_context, op, inputs),
+      py_op_(std::move(py_op)) {}
 
 PyOutputContext::PyOutputContext(ExecutionContext* execution_context, Operator* op,
                                  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs,
                                  py::object py_op)
-    : gxf::GXFOutputContext::GXFOutputContext(execution_context, op, outputs), py_op_(py_op) {}
+    : gxf::GXFOutputContext::GXFOutputContext(execution_context, op, outputs),
+      py_op_(std::move(py_op)) {}
 
 }  // namespace holoscan

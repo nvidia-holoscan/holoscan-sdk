@@ -73,6 +73,8 @@ device_map : dict[str, int], optional
     Mapping of model to GPU ID for inference.
 temporal_map : dict[str, int], optional
     Mapping of model to frame delay for inference.
+activation_map : dict[str, int], optional
+    Mapping of model to activation state for inference.
 backend_map : dict[str, str], optional
     Mapping of model to backend type for inference. Backend options: ``"trt"`` or ``"torch"``
 in_tensor_names : sequence of str, optional

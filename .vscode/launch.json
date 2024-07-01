@@ -157,7 +157,7 @@
             ]
         },
         {
-            "name": "(gdb) examples/conditions/asynchronous/cpp/ping_async",
+            "name": "(gdb) examples/conditions/asynchronous/cpp",
             "type": "cppdbg",
             "request": "launch",
             "program": "${command:cmake.buildDirectory}/examples/conditions/asynchronous/cpp/ping_async",
@@ -184,7 +184,98 @@
             ]
         },
         {
-            "name": "(gdb) examples/conditions/periodic/cpp/periodic_ping",
+            "name": "(gdb) examples/conditions/asynchronous/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/conditions/asynchronous/python/ping_async.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/conditions/expiring_message/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/conditions/expiring_message/cpp/ping_expiring_message",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "HOLOSCAN_LOG_FORMAT",
+                    "value": "long"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/conditions/expiring_message/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/conditions/expiring_message/python/ping_expiring_message.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "HOLOSCAN_LOG_FORMAT",
+                    "value": "long"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/conditions/periodic/cpp",
             "type": "cppdbg",
             "request": "launch",
             "program": "${command:cmake.buildDirectory}/examples/conditions/periodic/cpp/periodic_ping",

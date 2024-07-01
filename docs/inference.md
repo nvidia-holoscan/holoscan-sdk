@@ -93,6 +93,12 @@ Required parameters and related features available with the Holoscan Inference M
         - If the `temporal_map` is absent in the parameter set, all models are inferred for all the frames.
         - All models are not mandatory in the `temporal_map`.  The missing models are inferred per frame.
         - Temporal map based inferencing is supported for all backends.
+    - `activation_map`: Dynamic inferencing can be enabled with this parameter. It is populated in the parameter set and is updated at runtime.
+        - Each entry in `activation_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and activation state as the value. Activation state represents whether the model will be used for inferencing or not on a given frame. Any model(s) with a value of 1 will be active and will be used for inference, and any model(s) with a value of 0 will not run. The activation map must be initialized in the parameter set for all the models that need to be activated or deactivated dynamically.
+        - When the activation state is 0 for a particular model in the `activation_map`, the inference operator will not launch the inference for the model and will emits the last inferred result for the model.
+        - If the `activation_map` is absent in the parameter set, all of the models are inferred for all frames.
+        - All models are not mandatory in the `activation_map`.  The missing models are active on every frame.
+        - Activation map based dynamic inferencing is supported for all backends.
     - `backend_map`: Multiple backends can be used in the same application with this parameter.
         - Each entry in `backend_map` has a unique keyword representing the model (same as used in `model_path_map`), and the `backend` as the value.
         - A sample backend_map is shown below. In the example, model_1 uses the `tensorRT` backend, and model 2 and model 3 uses the `torch` backend for inference.

@@ -30,6 +30,7 @@ void init_count(py::module_&);
 void init_periodic(py::module_&);
 void init_downstream_message_affordable(py::module_&);
 void init_message_available(py::module_&);
+void init_expiring_message_available(py::module_&);
 
 PYBIND11_MODULE(_conditions, m) {
   m.doc() = R"pbdoc(
@@ -44,5 +45,6 @@ PYBIND11_MODULE(_conditions, m) {
   init_periodic(m);
   init_downstream_message_affordable(m);
   init_message_available(m);
+  init_expiring_message_available(m);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -138,6 +138,10 @@ holoinfer_datatype OnnxInferImpl::get_holoinfer_datatype(ONNXTensorElementDataTy
       return holoinfer_datatype::h_Int8;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
       return holoinfer_datatype::h_Int32;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+      return holoinfer_datatype::h_Int64;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      return holoinfer_datatype::h_UInt8;
     default:
       return holoinfer_datatype::h_Unsupported;
   }
@@ -244,7 +248,14 @@ Ort::Value OnnxInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& input
       return create_tensor_core<int8_t>(input_buffer, dims, memory_info_);
     case holoinfer_datatype::h_Int32:
       return create_tensor_core<int32_t>(input_buffer, dims, memory_info_);
+    case holoinfer_datatype::h_Int64:
+      return create_tensor_core<int64_t>(input_buffer, dims, memory_info_);
+    case holoinfer_datatype::h_UInt8:
+      return create_tensor_core<uint8_t>(input_buffer, dims, memory_info_);
     default: {
+      HOLOSCAN_LOG_INFO(
+          "Onnxruntime backend is supported with following data types: float, int8, int32, int64, "
+          "uint8");
       HOLOSCAN_LOG_ERROR("Unsupported datatype in Onnx backend tensor creation.");
       return Ort::Value(nullptr);
     }
@@ -268,8 +279,17 @@ void OnnxInferImpl::transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>&
     case holoinfer_datatype::h_Int32:
       transfer_to_host<int32_t>(output_buffer[index], output_tensors_[index], output_tensor_size);
       break;
+    case holoinfer_datatype::h_Int64:
+      transfer_to_host<int64_t>(output_buffer[index], output_tensors_[index], output_tensor_size);
+      break;
+    case holoinfer_datatype::h_UInt8:
+      transfer_to_host<uint8_t>(output_buffer[index], output_tensors_[index], output_tensor_size);
+      break;
     default:
-      throw std::runtime_error("Unsupported datatype");
+      HOLOSCAN_LOG_INFO(
+          "Onnxruntime backend is supported with following data types: float, int8, int32, int64, "
+          "uint8");
+      throw std::runtime_error("Unsupported datatype in output transfer with onnxrt backend.");
   }
 }
 

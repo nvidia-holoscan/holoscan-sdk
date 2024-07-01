@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -248,7 +248,7 @@ TEST(DataFlowTracker, GetPathStrings) {
 
   auto paths = tracker.get_path_strings();
 
-  for (auto path : paths) {
+  for (const auto& path : paths) {
     ASSERT_TRUE(std::find(path_strings.begin(), path_strings.end(), path) != path_strings.end());
   }
 }

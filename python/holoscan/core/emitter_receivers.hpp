@@ -26,6 +26,7 @@
 #include <memory>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "../gxf/entity.hpp"
@@ -158,10 +159,11 @@ py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
  */
 template <>
 struct emitter_receiver<holoscan::PyEntity> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     py::gil_scoped_release release;
     auto entity = gxf::Entity(static_cast<nvidia::gxf::Entity>(data.cast<holoscan::PyEntity>()));
-    op_output.emit<holoscan::gxf::Entity>(entity, name.c_str());
+    op_output.emit<holoscan::gxf::Entity>(entity, name.c_str(), acq_timestamp);
     return;
   }
   static py::object receive(std::any result, const std::string& name, PyInputContext& op_input) {
@@ -179,14 +181,15 @@ struct emitter_receiver<holoscan::PyEntity> {
  */
 template <>
 struct emitter_receiver<holoscan::gxf::Entity> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     // unused (emit type is holoscan::PyEntity, not holoscan::gxf:Entity)
     return;
   }
 
   static py::object receive(std::any result, const std::string& name, PyInputContext& op_input) {
     auto in_entity = std::any_cast<holoscan::gxf::Entity>(result);
-    return gxf_entity_to_py_object(in_entity);
+    return gxf_entity_to_py_object(std::move(in_entity));
   }
 };
 
@@ -209,7 +212,8 @@ struct emitter_receiver<holoscan::gxf::Entity> {
  */
 template <>
 struct emitter_receiver<holoscan::Tensor> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     HOLOSCAN_LOG_DEBUG("py_emit: tensor-like over UCX connector");
     // For tensor-like data, we should create an entity and transmit using the holoscan::Tensor
     // serializer. cloudpickle fails to serialize PyTensor and we want to avoid using it anyways
@@ -237,7 +241,7 @@ struct emitter_receiver<holoscan::Tensor> {
       py_entity.py_add(py_tensor_obj, "#holoscan: tensor");
     }
     py::gil_scoped_release release2;
-    op_output.emit<holoscan::gxf::Entity>(py_entity, name.c_str());
+    op_output.emit<holoscan::gxf::Entity>(py_entity, name.c_str(), acq_timestamp);
     return;
   }
   static py::object receive(std::any result, const std::string& name, PyInputContext& op_input) {
@@ -255,7 +259,8 @@ struct emitter_receiver<holoscan::Tensor> {
  */
 template <>
 struct emitter_receiver<pybind11::dict> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     bool is_tensormap = true;
     auto dict_obj = data.cast<py::dict>();
 
@@ -285,14 +290,15 @@ struct emitter_receiver<pybind11::dict> {
         py_entity.py_add(py_tensor_obj, key.c_str());
       }
       py::gil_scoped_release release2;
-      op_output.emit<holoscan::gxf::Entity>(py_entity, name.c_str());
+      op_output.emit<holoscan::gxf::Entity>(py_entity, name.c_str(), acq_timestamp);
       return;
     } else {
       // If the dict is not a TensorMap, pass it as a Python object
       HOLOSCAN_LOG_DEBUG("py_emit: dict, but not a tensormap");
       auto data_ptr = std::make_shared<GILGuardedPyObject>(data);
       py::gil_scoped_release release;
-      op_output.emit<std::shared_ptr<GILGuardedPyObject>>(data_ptr, name.c_str());
+      op_output.emit<std::shared_ptr<GILGuardedPyObject>>(
+          std::move(data_ptr), name.c_str(), acq_timestamp);
       return;
     }
   }
@@ -309,11 +315,13 @@ struct emitter_receiver<pybind11::dict> {
  */
 template <>
 struct emitter_receiver<std::shared_ptr<GILGuardedPyObject>> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     // Emit everything else as a Python object.
     auto data_ptr = std::make_shared<GILGuardedPyObject>(data);
     py::gil_scoped_release release;
-    op_output.emit<std::shared_ptr<GILGuardedPyObject>>(data_ptr, name.c_str());
+    op_output.emit<std::shared_ptr<GILGuardedPyObject>>(
+        std::move(data_ptr), name.c_str(), acq_timestamp);
     return;
   }
 
@@ -330,14 +338,15 @@ struct emitter_receiver<std::shared_ptr<GILGuardedPyObject>> {
  */
 template <>
 struct emitter_receiver<CloudPickleSerializedObject> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
     // use cloudpickle to serialize as a string
     py::module_ cloudpickle = py::module_::import("cloudpickle");
     py::bytes serialized = cloudpickle.attr("dumps")(data);
     py::gil_scoped_release release;
-    auto serialized_str = serialized.cast<std::string>();
-    CloudPickleSerializedObject serialized_obj{serialized_str};
-    op_output.emit<CloudPickleSerializedObject>(serialized_obj, name.c_str());
+    CloudPickleSerializedObject serialized_obj{serialized.cast<std::string>()};
+    op_output.emit<CloudPickleSerializedObject>(
+        std::move(serialized_obj), name.c_str(), acq_timestamp);
     return;
   }
 
@@ -356,8 +365,9 @@ struct emitter_receiver<CloudPickleSerializedObject> {
  */
 template <>
 struct emitter_receiver<nullptr_t> {
-  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output) {
-    op_output.emit<nullptr_t>(nullptr, name.c_str());
+  static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
+                   const int64_t acq_timestamp = -1) {
+    op_output.emit<nullptr_t>(nullptr, name.c_str(), acq_timestamp);
     return;
   }
   static py::object receive(std::any result, const std::string& name, PyInputContext& op_input) {

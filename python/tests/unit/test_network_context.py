@@ -15,7 +15,8 @@
  limitations under the License.
 """  # noqa: E501
 
-from holoscan.core import ComponentSpec, NetworkContext
+from holoscan.core import NetworkContext
+from holoscan.core._core import ComponentSpec as ComponentSpecBase
 from holoscan.gxf import GXFNetworkContext
 from holoscan.network_contexts import UcxContext
 from holoscan.resources import UcxEntitySerializer
@@ -26,9 +27,7 @@ class TestUcxContext:
         e = UcxContext(app)
         assert isinstance(e, GXFNetworkContext)
         assert isinstance(e, NetworkContext)
-        # The 'e.spec' is from the binder (ComponentSpec), and 'ComponentSpec' actually
-        # derives from PyComponentSpec, which inherits from ComponentSpec.
-        assert issubclass(ComponentSpec, type(e.spec))
+        assert issubclass(ComponentSpecBase, type(e.spec))
 
     def test_init_kwargs(self, app):
         entity_serializer = UcxEntitySerializer(

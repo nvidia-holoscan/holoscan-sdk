@@ -16,10 +16,13 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <variant>
 
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
@@ -39,6 +42,29 @@ namespace py = pybind11;
 
 namespace holoscan::ops {
 
+namespace {
+
+static std::unordered_map<std::string, NTV2Channel> const NTV2ChannelMapping = {
+    {"NTV2_CHANNEL1", NTV2Channel::NTV2_CHANNEL1},
+    {"NTV2_CHANNEL2", NTV2Channel::NTV2_CHANNEL2},
+    {"NTV2_CHANNEL3", NTV2Channel::NTV2_CHANNEL3},
+    {"NTV2_CHANNEL4", NTV2Channel::NTV2_CHANNEL4},
+    {"NTV2_CHANNEL5", NTV2Channel::NTV2_CHANNEL5},
+    {"NTV2_CHANNEL6", NTV2Channel::NTV2_CHANNEL6},
+    {"NTV2_CHANNEL7", NTV2Channel::NTV2_CHANNEL7},
+    {"NTV2_CHANNEL8", NTV2Channel::NTV2_CHANNEL8}};
+
+static NTV2Channel ToNTV2Channel(const std::string& value) {
+  auto it = NTV2ChannelMapping.find(value);
+  if (it != NTV2ChannelMapping.end()) {
+    return it->second;
+  } else {
+    return NTV2Channel::NTV2_CHANNEL_INVALID;
+  }
+}
+
+}  // namespace
+
 /* Trampoline class for handling Python kwargs
  *
  * These add a constructor that takes a Fragment for which to initialize the operator.
@@ -55,22 +81,31 @@ class PyAJASourceOp : public AJASourceOp {
   using AJASourceOp::AJASourceOp;
 
   // Define a constructor that fully initializes the object.
-  PyAJASourceOp(Fragment* fragment, const py::args& args, const std::string& device = "0"s,
-                NTV2Channel channel = NTV2Channel::NTV2_CHANNEL1, uint32_t width = 1920,
-                uint32_t height = 1080, uint32_t framerate = 60, bool rdma = false,
-                bool enable_overlay = false,
-                NTV2Channel overlay_channel = NTV2Channel::NTV2_CHANNEL2, bool overlay_rdma = true,
-                const std::string& name = "aja_source")
+  PyAJASourceOp(
+      Fragment* fragment, const py::args& args, const std::string& device = "0"s,
+      const std::variant<std::string, NTV2Channel> channel = NTV2Channel::NTV2_CHANNEL1,
+      uint32_t width = 1920, uint32_t height = 1080, uint32_t framerate = 60, bool rdma = false,
+      bool enable_overlay = false,
+      const std::variant<std::string, NTV2Channel> overlay_channel = NTV2Channel::NTV2_CHANNEL2,
+      bool overlay_rdma = true, const std::string& name = "aja_source")
       : AJASourceOp(ArgList{Arg{"device", device},
-                            Arg{"channel", channel},
                             Arg{"width", width},
                             Arg{"height", height},
                             Arg{"framerate", framerate},
                             Arg{"rdma", rdma},
                             Arg{"enable_overlay", enable_overlay},
-                            Arg{"overlay_channel", overlay_channel},
                             Arg{"overlay_rdma", overlay_rdma}}) {
     add_positional_condition_and_resource_args(this, args);
+    if (std::holds_alternative<std::string>(channel)) {
+      this->add_arg(Arg("channel", ToNTV2Channel(std::get<std::string>(channel))));
+    } else {
+      this->add_arg(Arg("channel", std::get<NTV2Channel>(channel)));
+    }
+    if (std::holds_alternative<std::string>(overlay_channel)) {
+      this->add_arg(Arg("overlay_channel", ToNTV2Channel(std::get<std::string>(overlay_channel))));
+    } else {
+      this->add_arg(Arg("overlay_channel", std::get<NTV2Channel>(overlay_channel)));
+    }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
@@ -104,13 +139,13 @@ PYBIND11_MODULE(_aja_source, m) {
       .def(py::init<Fragment*,
                     const py::args&,
                     const std::string&,
-                    NTV2Channel,
+                    const std::variant<std::string, NTV2Channel>,
                     uint32_t,
                     uint32_t,
                     uint32_t,
                     bool,
                     bool,
-                    NTV2Channel,
+                    const std::variant<std::string, NTV2Channel>,
                     bool,
                     const std::string&>(),
            "fragment"_a,

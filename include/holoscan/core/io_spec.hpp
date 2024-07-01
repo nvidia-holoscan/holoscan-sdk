@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,7 @@
 #include "./conditions/gxf/downstream_affordable.hpp"
 #include "./conditions/gxf/periodic.hpp"
 #include "./conditions/gxf/message_available.hpp"
+#include "./conditions/gxf/expiring_message.hpp"
 #include "./resources/gxf/double_buffer_receiver.hpp"
 #include "./resources/gxf/double_buffer_transmitter.hpp"
 #include "./resources/gxf/ucx_receiver.hpp"
@@ -172,6 +173,11 @@ class IOSpec {
         conditions_.emplace_back(
             type, std::make_shared<MessageAvailableCondition>(std::forward<ArgsT>(args)...));
         break;
+      case ConditionType::kExpiringMessageAvailable:
+        conditions_.emplace_back(
+            type,
+            std::make_shared<ExpiringMessageAvailableCondition>(std::forward<ArgsT>(args)...));
+        break;
       case ConditionType::kDownstreamMessageAffordable:
         conditions_.emplace_back(
             type,
@@ -199,7 +205,7 @@ class IOSpec {
    *
    * @param connector The connector (transmitter or receiver) of this input/output.
    */
-  void connector(std::shared_ptr<Resource> connector) { connector_ = connector; }
+  void connector(std::shared_ptr<Resource> connector) { connector_ = std::move(connector); }
 
   /**
    * @brief Add a connector (receiver/transmitter) to this input/output.

@@ -20,6 +20,7 @@
 #include <pybind11/pybind11.h>
 
 #include <memory>
+#include <utility>
 
 #include "execution_context_pydoc.hpp"
 #include "holoscan/core/execution_context.hpp"
@@ -45,7 +46,7 @@ PyExecutionContext::PyExecutionContext(gxf_context_t context,
                                        std::shared_ptr<PyOutputContext>& py_output_context,
                                        py::object op)
     : gxf::GXFExecutionContext(context, py_input_context, py_output_context),
-      py_op_(op),
+      py_op_(std::move(op)),
       py_input_context_(py_input_context),
       py_output_context_(py_output_context) {}
 

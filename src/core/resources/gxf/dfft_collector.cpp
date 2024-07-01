@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,10 @@
 namespace holoscan {
 
 gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gxf_result_t code) {
-  if (!data_flow_tracker_) { HOLOSCAN_LOG_ERROR("data_flow_tracker_ is null in DFFTCollector."); }
+  if (!data_flow_tracker_) {
+    HOLOSCAN_LOG_ERROR("data_flow_tracker_ is null in DFFTCollector.");
+    return GXF_FAILURE;
+  }
 
   // Get handle to entity
   auto entity = nvidia::gxf::Entity::Shared(context(), eid);
@@ -66,7 +69,7 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
 
   } else if (root_ops_.find(codelet_id) != root_ops_.end()) {
     holoscan::Operator* cur_op = root_ops_[codelet_id];
-    for (auto it : cur_op->num_published_messages_map()) {
+    for (auto& it : cur_op->num_published_messages_map()) {
       data_flow_tracker_->update_source_messages_number(it.first, it.second);
     }
   }

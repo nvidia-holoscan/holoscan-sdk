@@ -20,6 +20,7 @@ The following table shows various states of the scheduling status of an operator
 By default, operators are always `READY`, meaning they are scheduled to continuously execute their `compute()` method. To change that behavior, some condition classes can be passed to the constructor of an operator. There are various conditions currently supported in the Holoscan SDK:
 
 - MessageAvailableCondition
+- ExpiringMessageAvailableCondition
 - DownstreamMessageAffordableCondition
 - CountCondition
 - BooleanCondition
@@ -46,6 +47,14 @@ An optional parameter for this condition is `front_stage_max_size`, the maximum 
 If this parameter is set, the condition will only allow execution if the number of messages in the queue does not exceed this count.
 It can be used for operators which do not consume all messages from the queue.
 
+## ExpiringMessageAvailableCondition
+
+An operator associated with `ExpiringMessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::Ex[iringMessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.ExpiringMessageAvailableCondition>`) is executed when the first message received in the associated queue is expiring or when there are enough messages in the queue.
+This condition is associated with a specific input or output port of an operator through the `condition()` method on the return value (IOSpec) of the OperatorSpec's `input()` or `output()` method.
+
+The parameters ``max_batch_size`` and ``max_delay_ns`` dictate the maximum number of messages to be batched together and the maximum delay from first message to wait before executing the entity respectively.
+Please note that `ExpiringMessageAvailableCondition` requires that the input messages sent to any port using this condition must contain a timestamp. This means that the upstream operator has to emit using a timestamp .
+
 ## DownstreamMessageAffordableCondition
 
 The `DownstreamMessageAffordableCondition` ({cpp:class}`C++ <holoscan::gxf::DownstreamMessageAffordableCondition>`/{py:class}`Python <holoscan.conditions.DownstreamMessageAffordableCondition>`) condition specifies that an operator shall be executed if the input port of the downstream operator for a given output port can accept new messages.
@@ -57,6 +66,7 @@ The minimum number of messages that permits the execution of the operator is spe
 An operator associated with `CountCondition` ({cpp:class}`C++ <holoscan::gxf::CountCondition>`/{py:class}`Python <holoscan.conditions.CountCondition>`) is executed for a specific number of times specified using its `count` parameter.
 The scheduling status of the operator associated with this condition can either be in `READY` or `NEVER` state.
 The scheduling status reaches the `NEVER` state when the operator has been executed `count` number of times.
+The `count` parameter can be set to a negative value to indicate that the operator should be executed an infinite number of times (default: `1`).
 
 ## BooleanCondition
 

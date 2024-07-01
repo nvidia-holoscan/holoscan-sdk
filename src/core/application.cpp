@@ -330,8 +330,13 @@ void Application::compose_graph() {
     HOLOSCAN_LOG_DEBUG("The application({}) has already been composed. Skipping...", name());
     return;
   }
-  is_composed_ = true;
+
+  // Load extensions from the config file before composing the graph.
+  // (The GXFCodeletOp and GXFComponentResource classes are required to access the underlying GXF
+  //  types in the setup() method when composing a graph.)
+  load_extensions_from_config();
   compose();
+  is_composed_ = true;
 }
 
 void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& target_fragments) {

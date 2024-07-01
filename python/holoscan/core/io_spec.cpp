@@ -22,6 +22,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/io_spec.hpp"
@@ -56,31 +57,38 @@ void init_io_spec(py::module_& m) {
            "name"_a,
            "io_type"_a,
            doc::IOSpec::doc_IOSpec)
-      .def_property_readonly("name", &IOSpec::name, doc::IOSpec::doc_name)
+      .def_property_readonly(
+          "name", &IOSpec::name, doc::IOSpec::doc_name, py::return_value_policy::reference_internal)
       .def_property_readonly("io_type", &IOSpec::io_type, doc::IOSpec::doc_io_type)
       .def_property_readonly(
           "connector_type", &IOSpec::connector_type, doc::IOSpec::doc_connector_type)
-      .def_property_readonly("conditions", &IOSpec::conditions, doc::IOSpec::doc_conditions)
+      .def_property_readonly("conditions",
+                             &IOSpec::conditions,
+                             doc::IOSpec::doc_conditions,
+                             py::return_value_policy::reference_internal)
       .def(
           "condition",
-          [](IOSpec& io_spec, const ConditionType& kind, const py::kwargs& kwargs) {
+          // Note: The return type needs to be specified explicitly because pybind11 can't deduce it
+          [](IOSpec& io_spec, const ConditionType& kind, const py::kwargs& kwargs) -> IOSpec& {
             return io_spec.condition(kind, kwargs_to_arglist(kwargs));
           },
-          doc::IOSpec::doc_condition)
+          doc::IOSpec::doc_condition,
+          py::return_value_policy::reference_internal)
       // TODO: sphinx API doc build complains if more than one connector
       //       method has a docstring specified. For now just set the docstring for the
       //       first overload only and add information about the rest in the Notes section.
       .def(
           "connector",
-          [](IOSpec& io_spec, const IOSpec::ConnectorType& kind, const py::kwargs& kwargs) {
-            return io_spec.connector(kind, kwargs_to_arglist(kwargs));
-          },
-          doc::IOSpec::doc_connector)
+          // Note: The return type needs to be specified explicitly because pybind11 can't deduce it
+          [](IOSpec& io_spec, const IOSpec::ConnectorType& kind, const py::kwargs& kwargs)
+              -> IOSpec& { return io_spec.connector(kind, kwargs_to_arglist(kwargs)); },
+          doc::IOSpec::doc_connector,
+          py::return_value_policy::reference_internal)
       // using lambdas for overloaded connector methods because py::overload_cast didn't work
       .def("connector", [](IOSpec& io_spec) { return io_spec.connector(); })
       .def("connector",
            [](IOSpec& io_spec, std::shared_ptr<Resource> connector) {
-             return io_spec.connector(connector);
+             return io_spec.connector(std::move(connector));
            })
       .def("__repr__",
            // use py::object and obj.cast to avoid a segfault if object has not been initialized

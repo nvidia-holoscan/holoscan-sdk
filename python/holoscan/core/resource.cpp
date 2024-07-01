@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 
+#include "component.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component.hpp"
 #include "holoscan/core/component_spec.hpp"
@@ -42,8 +43,13 @@ class PyResource : public Resource {
 
   // Define a kwargs-based constructor that can create an ArgList
   // for passing on to the variadic-template based constructor.
-  PyResource(const py::args& args, const py::kwargs& kwargs) : Resource() {
+  PyResource(py::object resource, Fragment* fragment, const py::args& args,
+             const py::kwargs& kwargs)
+      : Resource() {
     using std::string_literals::operator""s;
+
+    py_resource_ = resource;
+    fragment_ = fragment;
 
     int n_fragments = 0;
     for (auto& item : args) {
@@ -81,6 +87,12 @@ class PyResource : public Resource {
     }
   }
 
+  // Override spec() method
+  std::shared_ptr<PyComponentSpec> py_shared_spec() {
+    auto spec_ptr = spec_shared();
+    return std::static_pointer_cast<PyComponentSpec>(spec_ptr);
+  }
+
   /* Trampolines (need one for each virtual function) */
   void initialize() override {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
@@ -90,12 +102,19 @@ class PyResource : public Resource {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(void, Resource, setup, spec);
   }
+
+ private:
+  py::object py_resource_ = py::none();
 };
 
 void init_resource(py::module_& m) {
-  py::class_<Resource, Component, PyResource, std::shared_ptr<Resource>>(
-      m, "Resource", doc::Resource::doc_Resource)
-      .def(py::init<const py::args&, const py::kwargs&>(), doc::Resource::doc_Resource_args_kwargs)
+  // note: added py::dynamic_attr() to allow dynamically adding attributes in a Python subclass
+  py::class_<Resource, Component, PyResource, std::shared_ptr<Resource>> resource_class(
+      m, "Resource", py::dynamic_attr(), doc::Resource::doc_Resource_args_kwargs);
+
+  resource_class
+      .def(py::init<py::object, Fragment*, const py::args&, const py::kwargs&>(),
+           doc::Resource::doc_Resource_args_kwargs)
       .def_property("name",
                     py::overload_cast<>(&Resource::name, py::const_),
                     (Resource & (Resource::*)(const std::string&)&)&Resource::name,
@@ -110,6 +129,8 @@ void init_resource(py::module_& m) {
            &Resource::initialize,
            doc::Resource::doc_initialize)  // note: virtual function
       .def_property_readonly("description", &Resource::description, doc::Resource::doc_description)
+      .def_property_readonly(
+          "resource_type", &Resource::resource_type, doc::Resource::doc_resource_type)
       .def(
           "__repr__",
           [](const py::object& obj) {
@@ -119,6 +140,10 @@ void init_resource(py::module_& m) {
             return std::string("<Resource: None>");
           },
           R"doc(Return repr(self).)doc");
+
+  py::enum_<Resource::ResourceType>(resource_class, "ResourceType")
+      .value("NATIVE", Resource::ResourceType::kNative)
+      .value("GXF", Resource::ResourceType::kGXF);
 }
 
 }  // namespace holoscan

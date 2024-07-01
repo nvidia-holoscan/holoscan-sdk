@@ -48,12 +48,11 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
    * Executes the inference
    * Toolkit supports one input per model, in float32 type
    *
-   * @param preprocess_data_map   Map of model names as key mapped to the preprocessed input data
-   * @param output_data_map       Map of tensor names as key mapped to the inferred data
+   * @param inference_specs   Pointer to inference specifications
    *
    * @return InferStatus with appropriate holoinfer_code and message.
    */
-  InferStatus execute_inference(DataMap& preprocess_data_map, DataMap& output_data_map);
+  InferStatus execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs);
 
   /**
    * Gets output dimension per model

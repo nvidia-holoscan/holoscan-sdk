@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -115,7 +115,7 @@ std::optional<bool> get_boolean_arg(std::vector<std::string> args, const std::st
 
 std::optional<int32_t> get_int32_arg(std::vector<std::string> args, const std::string& name) {
   auto loc = std::find(args.begin(), args.end(), name);
-  if ((loc != std::end(args)) && (loc++ != std::end(args))) {
+  if ((loc != std::end(args)) && (++loc != std::end(args))) {
     try {
       return std::stoi(*loc);
     } catch (std::exception& e) {
@@ -125,10 +125,9 @@ std::optional<int32_t> get_int32_arg(std::vector<std::string> args, const std::s
   }
   return {};
 }
-
 std::optional<int64_t> get_int64_arg(std::vector<std::string> args, const std::string& name) {
   auto loc = std::find(args.begin(), args.end(), name);
-  if ((loc != std::end(args)) && (loc++ != std::end(args))) {
+  if ((loc != std::end(args)) && (++loc != std::end(args))) {
     try {
       return std::stoll(*loc);
     } catch (std::exception& e) {
@@ -141,7 +140,7 @@ std::optional<int64_t> get_int64_arg(std::vector<std::string> args, const std::s
 
 std::optional<std::string> get_str_arg(std::vector<std::string> args, const std::string& name) {
   auto loc = std::find(args.begin(), args.end(), name);
-  if ((loc != std::end(args)) && (loc++ != std::end(args))) { return *loc; }
+  if ((loc != std::end(args)) && (++loc != std::end(args))) { return *loc; }
   return {};
 }
 
@@ -165,7 +164,7 @@ int main() {
   auto app = holoscan::make_application<App>();
 
   // Parse args that are defined for all applications.
-  auto& remaining_args = app->argv();
+  std::vector<std::string>& remaining_args = app->argv();
 
   // Parse any additional supported arguments
   bool tensor_on_gpu = get_boolean_arg(remaining_args, "--gpu").value_or(false);

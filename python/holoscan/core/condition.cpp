@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -98,7 +98,10 @@ void init_condition(py::module_& m) {
       .value("MESSAGE_AVAILABLE", ConditionType::kMessageAvailable)
       .value("DOWNSTREAM_MESSAGE_AFFORDABLE", ConditionType::kDownstreamMessageAffordable)
       .value("COUNT", ConditionType::kCount)
-      .value("BOOLEAN", ConditionType::kBoolean);
+      .value("BOOLEAN", ConditionType::kBoolean)
+      .value("PERIODIC", ConditionType::kPeriodic)
+      .value("ASYNCHRONOUS", ConditionType::kAsynchronous)
+      .value("EXPIRING_MESSAGE_AVAILABLE", ConditionType::kExpiringMessageAvailable);
 
   py::class_<Condition, Component, PyCondition, std::shared_ptr<Condition>>(
       m, "Condition", doc::Condition::doc_Condition)

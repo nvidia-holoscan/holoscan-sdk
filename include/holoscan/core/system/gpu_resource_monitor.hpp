@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -231,8 +231,8 @@ class GPUResourceMonitor {
   bool init_nvml();
   bool init_cuda_runtime();
 
-  void shutdown_nvml();
-  void shutdown_cuda_runtime();
+  void shutdown_nvml() noexcept;
+  void shutdown_cuda_runtime() noexcept;
 
   void* handle_ = nullptr;       ///< The handle of the GPU resource monitor
   void* cuda_handle_ = nullptr;  ///< The handle of the CUDA Runtime library
