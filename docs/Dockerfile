@@ -71,7 +71,7 @@ RUN python3 -m pip install --no-cache-dir \
 # HTML docs image that copies all the doc-specific packages
 # over to holoscan-sdk-build
 ################################################################
-FROM $BASE_IMAGE as docs-html
+FROM $BASE_IMAGE AS docs-html
 
 # Copy over installed denpendencies from docs-base
 COPY --from=docs-base /usr/bin/dot /usr/bin/dot
@@ -87,7 +87,7 @@ COPY --from=docs-base /lib/x86_64-linux-gnu/  /lib/x86_64-linux-gnu/
 # PDF docs image that installs pdf/latex dependencies to the base
 # docs image
 #################################################################
-FROM docs-base as docs-pdf
+FROM docs-base AS docs-pdf
 
 RUN apt-get update \
     && apt-get install -y \

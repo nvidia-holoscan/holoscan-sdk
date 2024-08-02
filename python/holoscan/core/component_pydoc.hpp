@@ -88,6 +88,10 @@ kind : str, optional
     currently ``kind="receivers"``, which can be used to create a parameter holding a vector of
     receivers. This effectively creates a multi-receiver input port to which any number of
     operators can be connected.
+    Since Holoscan SDK v2.3, users can define a multi-receiver input port using `spec.input()` with
+    `size=IOSpec.ANY_SIZE`, instead of using `spec.param()` with `kind="receivers"`. It is now
+    recommended to use this new `spec.input`-based approach and the old "receivers" parameter
+    approach should be considered deprecated.
 flag: holoscan.core.ParameterFlag, optional
     If provided, this is a flag that can be used to control the behavior of the parameter.
     By default, `ParameterFlag.NONE` is used.

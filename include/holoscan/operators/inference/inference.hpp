@@ -195,12 +195,6 @@ class InferenceOp : public holoscan::Operator {
   ///  Supported values: "trt" or "torch"
   Parameter<DataMap> backend_map_;
 
-  ///  @brief Vector of input receivers. Multiple receivers supported.
-  Parameter<std::vector<IOSpec*>> receivers_;
-
-  ///  @brief Output transmitter. Single transmitter supported.
-  Parameter<std::vector<IOSpec*>> transmitter_;
-
   // Internal state
 
   /// Pointer to inference context.

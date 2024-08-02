@@ -18,7 +18,7 @@
 import sys
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec
 from holoscan.schedulers import EventBasedScheduler, MultiThreadScheduler
 
 # The following example is extracted from the ping_vector example in the public/examples
@@ -106,7 +106,7 @@ class PingRxOp(Operator):
     def setup(self, spec: OperatorSpec):
         spec.input("in")
         spec.input("dup_in")
-        spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def initialize(self):
         print("Rx initialize")

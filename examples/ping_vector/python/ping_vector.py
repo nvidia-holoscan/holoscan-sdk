@@ -16,7 +16,7 @@
 """  # noqa: E501
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec
 
 
 class PingTxOp(Operator):
@@ -80,7 +80,11 @@ class PingRxOp(Operator):
     def setup(self, spec: OperatorSpec):
         spec.input("in")
         spec.input("dup_in")
-        spec.param("receivers", kind="receivers")
+        # # Since Holoscan SDK v2.3, users can define a multi-receiver input port using
+        # # 'spec.input()' with 'size=IOSpec.ANY_SIZE'.
+        # # The old way is to use 'spec.param()' with 'kind="receivers"'.
+        # spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         receiver_vector = op_input.receive("receivers")

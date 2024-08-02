@@ -12,7 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_subdirectory(aja_capture)
+if(HOLOSCAN_BUILD_AJA)
+  add_subdirectory(aja_capture)
+endif()
 add_subdirectory(bring_your_own_model)
 add_subdirectory(cli_packager)
 add_subdirectory(conditions)

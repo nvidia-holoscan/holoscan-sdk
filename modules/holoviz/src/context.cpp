@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,9 +21,11 @@
 
 #include <list>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <holoscan/logger/logger.hpp>
 #include <nvh/nvprint.hpp>
@@ -85,15 +87,21 @@ class Context::Impl {
   void setup() {
     im_gui_context_ = ImGui::CreateContext();
     vulkan_.reset(new Vulkan);
+    if (surface_format_.has_value()) {
+      vulkan_->set_surface_format(surface_format_.value());
+    }
+    vulkan_->set_present_mode(present_mode_);
     vulkan_->setup(window_.get(), font_path_, font_size_in_pixels_);
   }
 
   ImGuiContext* im_gui_context_ = nullptr;
 
   InitFlags flags_ = InitFlags::NONE;
+  std::optional<SurfaceFormat> surface_format_;
   CUstream cuda_stream_ = 0;
   std::string font_path_;
   float font_size_in_pixels_ = 0.f;
+  PresentMode present_mode_ = PresentMode::AUTO;
 
   std::unique_ptr<Window> window_;
 
@@ -176,11 +184,12 @@ void Context::init(GLFWwindow* window, InitFlags flags) {
   impl_->setup();
 }
 
-void Context::init(uint32_t width, uint32_t height, const char* title, InitFlags flags) {
+void Context::init(uint32_t width, uint32_t height, const char* title, InitFlags flags,
+                   const char* display_name) {
   if (flags & InitFlags::HEADLESS) {
     impl_->window_.reset(new HeadlessWindow(width, height, flags));
   } else {
-    impl_->window_.reset(new GLFWWindow(width, height, title, flags));
+    impl_->window_.reset(new GLFWWindow(width, height, title, flags, display_name));
   }
   impl_->flags_ = flags;
   impl_->setup();
@@ -193,10 +202,36 @@ void Context::init(const char* display_name, uint32_t width, uint32_t height, ui
   impl_->setup();
 }
 
+std::vector<SurfaceFormat> Context::get_surface_formats() const {
+  if (!impl_->vulkan_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+  return impl_->vulkan_->get_surface_formats();
+}
+
+void Context::set_surface_format(SurfaceFormat surface_format) {
+  impl_->surface_format_ = surface_format;
+  // update Vulkan surface format if Vulkan has already been initialized
+  if (impl_->vulkan_) { impl_->vulkan_->set_surface_format(impl_->surface_format_.value()); }
+}
+
 Window* Context::get_window() const {
   if (!impl_->window_) { throw std::runtime_error("There is no window set."); }
 
   return impl_->window_.get();
+}
+
+std::vector<PresentMode> Context::get_present_modes() const {
+  if (!impl_->vulkan_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+  return impl_->vulkan_->get_present_modes();
+}
+
+void Context::set_present_mode(PresentMode present_mode) {
+  impl_->present_mode_ = present_mode;
+  // update Vulkan present mode if Vulkan has already been initialized
+  if (impl_->vulkan_) { impl_->vulkan_->set_present_mode(impl_->present_mode_); }
 }
 
 void Context::set_cuda_stream(CUstream stream) {
@@ -216,6 +251,10 @@ void Context::set_font(const char* path, float size_in_pixels) {
 }
 
 void Context::begin() {
+  if (!impl_->window_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+
   impl_->imgui_new_frame_ = false;
   impl_->window_->begin();
 
@@ -224,6 +263,10 @@ void Context::begin() {
 }
 
 void Context::end() {
+  if (!impl_->window_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+
   impl_->window_->end();
 
   // end the transfer pass
@@ -309,6 +352,10 @@ void Context::end_layer() {
 
 void Context::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
                                CUdeviceptr device_ptr, size_t row_pitch) {
+  if (!impl_->vulkan_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+
   impl_->vulkan_->read_framebuffer(
       fmt, width, height, buffer_size, device_ptr, impl_->cuda_stream_, row_pitch);
 }

@@ -21,6 +21,7 @@ third_party_hw_setup
 ```{toctree}
 :maxdepth: 1
 :caption: Using the SDK
+:name: holoscan-user-overview
 
 holoscan_core
 holoscan_by_example
@@ -31,6 +32,7 @@ holoscan_create_operator
 holoscan_logging
 holoscan_debugging
 holoscan_create_operator_python_bindings
+holoscan_create_operator_via_decorator
 ```
 
 ```{toctree}

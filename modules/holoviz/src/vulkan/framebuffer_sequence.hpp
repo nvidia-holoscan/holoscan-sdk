@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_VULKAN_FRAMEBUFFER_SEQUENCE_HPP
-#define HOLOSCAN_VIZ_VULKAN_FRAMEBUFFER_SEQUENCE_HPP
+#ifndef MODULES_HOLOVIZ_SRC_VULKAN_FRAMEBUFFER_SEQUENCE_HPP
+#define MODULES_HOLOVIZ_SRC_VULKAN_FRAMEBUFFER_SEQUENCE_HPP
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -27,6 +28,9 @@
 #include <nvvk/context_vk.hpp>
 #include <nvvk/resourceallocator_vk.hpp>
 #include <nvvk/swapchain_vk.hpp>
+
+#include "../holoviz/present_mode.hpp"
+#include "../holoviz/surface_format.hpp"
 
 namespace holoscan::viz {
 
@@ -48,21 +52,38 @@ class FramebufferSequence {
    * @param physical_device physical device
    * @param queue queue
    * @param queue_family_index queue family index
+   * @param surface_format framebuffer surface format
    * @param surface surface, if set then use a swap chain to present to a display, else render
    *                offscreen
    */
-  void init(nvvk::ResourceAllocator* alloc, const vk::Device& device,
-            const vk::PhysicalDevice& physical_device, vk::Queue queue, uint32_t queue_family_index,
-            vk::SurfaceKHR surface);
+  void init(nvvk::ResourceAllocator* alloc, vk::Device device, vk::PhysicalDevice physical_device,
+            vk::Queue queue, uint32_t queue_family_index,
+            std::optional<SurfaceFormat> surface_format, vk::SurfaceKHR surface);
+
+  /**
+   * Get the supported surface formats.
+   *
+   * @returns supported surface formats
+   */
+  std::vector<SurfaceFormat> get_surface_formats() const;
+
+  /**
+   * Get the supported present modes.
+   *
+   * @returns supported present modes
+   */
+  std::vector<PresentMode> get_present_modes() const;
 
   /**
    * Update the framebuffer to the given size.
    *
    * @param width new framebuffer width
    * @param height new framebuffer height
+   * @param present_mode present mode
    * @param [out] dimensions actual dimensions, which may differ from the requested (optional)
    */
-  void update(uint32_t width, uint32_t height, vk::Extent2D* dimensions = nullptr);
+  void update(uint32_t width, uint32_t height, PresentMode present_mode,
+              vk::Extent2D* dimensions = nullptr);
 
   /**
    * Acquire the next image to render to
@@ -147,10 +168,13 @@ class FramebufferSequence {
 
  private:
   vk::Device device_;
+  vk::PhysicalDevice physical_device_;
   uint32_t queue_family_index_ = 0;
   nvvk::ResourceAllocator* alloc_ = nullptr;  ///< Allocator for color buffers
+  vk::SurfaceKHR surface_;
 
   vk::Format color_format_ = vk::Format::eUndefined;
+  vk::ColorSpaceKHR color_space_ = vk::ColorSpaceKHR::eSrgbNonlinear;
   vk::Format depth_format_ = vk::Format::eUndefined;
 
   uint32_t image_count_ = 0;
@@ -170,4 +194,4 @@ class FramebufferSequence {
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_VULKAN_FRAMEBUFFER_SEQUENCE_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_VULKAN_FRAMEBUFFER_SEQUENCE_HPP */

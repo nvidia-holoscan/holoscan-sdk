@@ -41,7 +41,9 @@
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 #include "common/assert.hpp"
 
+#ifdef HOLOSCAN_BUILD_AJA
 #include "holoscan/operators/aja_source/aja_source.hpp"
+#endif
 #include "holoscan/operators/async_ping_rx/async_ping_rx.hpp"
 #include "holoscan/operators/async_ping_tx/async_ping_tx.hpp"
 #include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
@@ -62,6 +64,7 @@ namespace holoscan {
 
 using OperatorClassesWithGXFContext = TestWithGXFContext;
 
+#ifdef HOLOSCAN_BUILD_AJA
 TEST_F(OperatorClassesWithGXFContext, TestAJASourceOpChannelFromYAML) {
   const std::string name{"aja-source"};
 
@@ -106,6 +109,7 @@ TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
 
   EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
+#endif
 
 TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
   const std::string name{"format_converter"};
@@ -324,7 +328,7 @@ TEST(Operator, TestNativeOperatorWithoutFragment) {
   EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
-TEST_F(OperatorClassesWithGXFContext, TestPingRxOpOp) {
+TEST_F(OperatorClassesWithGXFContext, TestPingRxOp) {
   const std::string name{"rx"};
 
   testing::internal::CaptureStderr();
@@ -336,7 +340,33 @@ TEST_F(OperatorClassesWithGXFContext, TestPingRxOpOp) {
   EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
-TEST_F(OperatorClassesWithGXFContext, TestPingTxOpOp) {
+TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataAttributes) {
+  const std::string name{"rx"};
+
+  testing::internal::CaptureStderr();
+
+  // defaults to disabled
+  EXPECT_FALSE(F.is_metadata_enabled());
+
+  // enable metadata on the fragment
+  F.is_metadata_enabled(true);
+  EXPECT_TRUE(F.is_metadata_enabled());
+
+  // add an operator
+  auto op = F.make_operator<ops::PingRxOp>(name);
+  EXPECT_EQ(op->name(), name);
+
+  // at construction metadata is disabled
+  EXPECT_FALSE(op->is_metadata_enabled());
+
+  // after initialize, operator metadata will be enabled if it was enabled on the Fragment
+  op->initialize();
+  EXPECT_TRUE(op->is_metadata_enabled());
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestPingTxOp) {
   const std::string name{"tx"};
 
   testing::internal::CaptureStderr();
@@ -360,7 +390,7 @@ TEST_F(OperatorClassesWithGXFContext, TestPingTxWithStringName) {
   EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
-TEST_F(OperatorClassesWithGXFContext, TestAsyncPingRxOpOp) {
+TEST_F(OperatorClassesWithGXFContext, TestAsyncPingRxOp) {
   const std::string name{"async_rx"};
 
   testing::internal::CaptureStderr();
@@ -372,7 +402,7 @@ TEST_F(OperatorClassesWithGXFContext, TestAsyncPingRxOpOp) {
   EXPECT_TRUE(log_output.find("error") == std::string::npos);
 }
 
-TEST_F(OperatorClassesWithGXFContext, TestAsyncPingTxOpOp) {
+TEST_F(OperatorClassesWithGXFContext, TestAsyncPingTxOp) {
   const std::string name{"async_tx"};
 
   testing::internal::CaptureStderr();

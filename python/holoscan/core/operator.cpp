@@ -54,11 +54,31 @@ void init_operator(py::module_& m) {
            py::overload_cast<>(&OperatorSpec::input<gxf::Entity>),
            doc::OperatorSpec::doc_input,
            py::return_value_policy::reference_internal)
-      .def("input",
-           py::overload_cast<std::string>(&OperatorSpec::input<gxf::Entity>),
-           "name"_a,
-           doc::OperatorSpec::doc_input_kwargs,
-           py::return_value_policy::reference_internal)
+      .def(
+          "input",
+          // Note: The return type needs to be specified explicitly because pybind11 can't deduce
+          //       it.
+          //       Otherwise, this method will return a new IOSpec object instead of a reference to
+          //       the existing one.
+          [](OperatorSpec& op, const std::string& name, py::object size) -> IOSpec& {
+            // Check if 'size' is an int and convert to IOSpec::IOSize if necessary
+            if (py::isinstance<py::int_>(size)) {
+              int size_int = size.cast<int>();
+              // Assuming IOSpec::IOSize can be constructed from an int
+              return op.input<gxf::Entity>(name, IOSpec::IOSize(size_int));
+            } else if (py::isinstance<IOSpec::IOSize>(size)) {
+              // Directly pass IOSpec::IOSize if 'size' is already the correct type
+              return op.input<gxf::Entity>(name, size.cast<IOSpec::IOSize>());
+            } else {
+              throw std::runtime_error(
+                  "Invalid type for 'size'. Expected 'int' or 'holoscan.core.IOSpec.IOSize'.");
+            }
+          },
+          "name"_a,
+          py::kw_only(),
+          "size"_a = IOSpec::kSizeOne,
+          doc::OperatorSpec::doc_input_kwargs,
+          py::return_value_policy::reference_internal)
       .def_property_readonly("inputs",
                              &OperatorSpec::inputs,
                              doc::OperatorSpec::doc_inputs,
@@ -223,10 +243,10 @@ void PyOperatorSpec::py_param(const std::string& name, const py::object& default
 
   if (is_receivers) {
     // Create receivers object
-    py_receivers_params_.emplace_back();
+    receivers_params_.emplace_back();
 
     // Register parameter
-    auto& parameter = py_receivers_params_.back();
+    auto& parameter = receivers_params_.back();
     param(parameter, name.c_str(), headline.c_str(), description.c_str(), {}, flag);
   } else {
     // Create parameter object
@@ -247,7 +267,7 @@ std::list<Parameter<py::object>>& PyOperatorSpec::py_params() {
 }
 
 std::list<Parameter<std::vector<IOSpec*>>>& PyOperatorSpec::py_receivers() {
-  return py_receivers_params_;
+  return receivers_params_;
 }
 
 // PyOperator

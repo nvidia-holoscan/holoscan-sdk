@@ -78,7 +78,6 @@ class PyOperatorSpec : public OperatorSpec {
   // object to the GXF framework. The address of a std::vector element may change when the vector is
   // resized.
   std::list<Parameter<py::object>> py_params_;
-  std::list<Parameter<std::vector<IOSpec*>>> py_receivers_params_;
 };
 
 class PyOperator : public Operator {

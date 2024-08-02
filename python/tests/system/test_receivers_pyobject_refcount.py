@@ -21,7 +21,7 @@ import sys
 import numpy as np
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec
 from holoscan.logger import LogLevel, set_log_level
 
 # define a custom class to represent data used in the app
@@ -83,7 +83,7 @@ class PingRxOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         REF_COUNT_RECORD.append(self.count)

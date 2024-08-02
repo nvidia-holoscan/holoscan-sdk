@@ -23,6 +23,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "holoscan/core/component.hpp"
 #include "holoscan/core/component_spec.hpp"
@@ -43,7 +44,7 @@ class PyComponentSpec : public ComponentSpec {
 
   // Override the constructor to get the py::object for the Python class
   explicit PyComponentSpec(Fragment* fragment = nullptr, py::object component = py::none())
-      : ComponentSpec(fragment), py_component_(component) {}
+      : ComponentSpec(fragment), py_component_(std::move(component)) {}
 
   void py_param(const std::string& name, const py::object& default_value, const ParameterFlag& flag,
                 const py::kwargs& kwargs);

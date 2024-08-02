@@ -49,14 +49,17 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 #    If `--fragments` is not specified, any fragment in the application will be chosen to run.
 # 1a. In the first machine (e.g. `10.2.34.56`):
 #    (add --gpu to transmit a GPU tensor instead of a host one)
-${APP_DIR}/ping_distributed --driver --worker --address 10.2.34.56:10000
+${APP_DIR}/ping_distributed --driver --worker --address 10.2.34.56:10000 --fragments fragment1
 # 1b. In the second machine:
-${APP_DIR}/ping_distributed --worker --address 10.2.34.56:10000
+${APP_DIR}/ping_distributed --worker --address 10.2.34.56:10000 --fragments fragment2
 
 # 2. The following command will start the distributed app in a single process
 #    (add --gpu to transmit a GPU tensor instead of a host one)
 ${APP_DIR}/ping_distributed
 ```
+
+Note that for this application "fragment1" sends the video frames and "fragment2" receives them (these fragment names were assigned during the `make_fragment` calls within the `App::compose` method for this app. In this case, "fragment2" has the receiver operator that logs messages to the terminal, so the process that runs that fragment will display the application output. We could omit the `--fragments` arguments altogether if we wanted to let holoscan automatically decide which nodes to run each fragment on. We chose to explicitly specify the fragments here so the user of the application knows which node to expect to see the output on.
+
 
 ## Python Run instructions
 
@@ -108,9 +111,9 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 #    If `--fragments` is not specified, any fragment in the application will be chosen to run.
 # 1a. In the first machine (e.g. `10.2.34.56`):
 #    (add --gpu to transmit a GPU tensor instead of a host one)
-python3 ${APP_DIR}/ping_distributed.py --driver --worker --address 10.2.34.56:10000
+python3 ${APP_DIR}/ping_distributed.py --driver --worker --address 10.2.34.56:10000 --fragments fragment1
 # 1b. In the second machine:
-python3 ${APP_DIR}/ping_distributed.py --worker --address 10.2.34.56:10000
+python3 ${APP_DIR}/ping_distributed.py --worker --address 10.2.34.56:10000 --fragments fragment2
 
 # 2. The following command will start the distributed app in a single process
 #    (add --gpu to transmit a GPU tensor instead of a host one)
@@ -118,3 +121,5 @@ python3 ${APP_DIR}/ping_distributed.py
 ```
 
 Add an additional `--gpu` to the command line to use a GPU tensor instead of a host one.
+
+Note that for this application "fragment1" sends the video frames and "fragment2" receives them (these fragment names were assigned during the `MyPingApp.compose` method for this application. In this case, "fragment2" has the receiver operator that logs messages to the terminal, so the process that runs that fragment will display the application output. We could omit the `--fragments` arguments altogether if we wanted to let holoscan automatically decide which nodes to run each fragment on. We chose to explicitly specify the fragments here so the user of the application knows which node to expect to see the output on.

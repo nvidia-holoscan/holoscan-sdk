@@ -50,6 +50,11 @@ Expected<void> UcxHoloscanComponentSerializer::configureSerializers() {
   result &= setSerializer<holoscan::Message>([this](void* component, Endpoint* endpoint) {
     return serializeHoloscanMessage(*static_cast<holoscan::Message*>(component), endpoint);
   });
+  result &=
+      setSerializer<holoscan::MetadataDictionary>([this](void* component, Endpoint* endpoint) {
+        return serializeMetadataDictionary(*static_cast<holoscan::MetadataDictionary*>(component),
+                                           endpoint);
+      });
   return result;
 }
 
@@ -59,7 +64,34 @@ Expected<void> UcxHoloscanComponentSerializer::configureDeserializers() {
     return deserializeHoloscanMessage(endpoint).assign_to(
         *static_cast<holoscan::Message*>(component));
   });
+  result &=
+      setDeserializer<holoscan::MetadataDictionary>([this](void* component, Endpoint* endpoint) {
+        return deserializeMetadataDictionary(endpoint).assign_to(
+            *static_cast<holoscan::MetadataDictionary*>(component));
+      });
   return result;
+}
+
+static inline Expected<size_t> serialize_string(const std::string& data, Endpoint* endpoint) {
+  holoscan::ContiguousDataHeader header;
+  header.size = data.size();
+  header.bytes_per_element = header.size > 0 ? sizeof(data[0]) : 1;
+  auto size = endpoint->writeTrivialType<holoscan::ContiguousDataHeader>(&header);
+  if (!size) { return ForwardError(size); }
+  auto size2 = endpoint->write(data.data(), header.size * header.bytes_per_element);
+  if (!size2) { return ForwardError(size2); }
+  return size.value() + size2.value();
+}
+
+static inline Expected<std::string> deserialize_string(Endpoint* endpoint) {
+  holoscan::ContiguousDataHeader header;
+  auto header_size = endpoint->readTrivialType<holoscan::ContiguousDataHeader>(&header);
+  if (!header_size) { return ForwardError(header_size); }
+  std::string data;
+  data.resize(header.size);
+  auto result = endpoint->read(data.data(), header.size * header.bytes_per_element);
+  if (!result) { return ForwardError(result); }
+  return data;
 }
 
 Expected<size_t> UcxHoloscanComponentSerializer::serializeHoloscanMessage(
@@ -77,16 +109,9 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeHoloscanMessage(
   std::string codec_name = maybe_name.value();
 
   // serialize the codec_name of the holoscan::Message codec to retrieve
-  holoscan::ContiguousDataHeader header;
-  header.size = codec_name.size();
-  header.bytes_per_element = header.size > 0 ? sizeof(codec_name[0]) : 1;
-  size_t total_size = 0;
-  auto maybe_size = endpoint->writeTrivialType<holoscan::ContiguousDataHeader>(&header);
+  auto maybe_size = serialize_string(codec_name, endpoint);
   if (!maybe_size) { return ForwardError(maybe_size); }
-  total_size += maybe_size.value();
-  maybe_size = endpoint->write(codec_name.data(), header.size * header.bytes_per_element);
-  if (!maybe_size) { return ForwardError(maybe_size); }
-  total_size += maybe_size.value();
+  auto total_size = maybe_size.value();
 
   // serialize the message contents
   auto serialize_func = registry.get_serializer(codec_name);
@@ -101,18 +126,63 @@ Expected<holoscan::Message> UcxHoloscanComponentSerializer::deserializeHoloscanM
   GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::deserializeHoloscanMessage");
 
   // deserialize the type_name of the holoscan::Message codec to retrieve
-  holoscan::ContiguousDataHeader header;
-  auto header_size = endpoint->readTrivialType<holoscan::ContiguousDataHeader>(&header);
-  if (!header_size) { return ForwardError(header_size); }
-  std::string codec_name;
-  codec_name.resize(header.size);
-  auto result = endpoint->read(codec_name.data(), header.size * header.bytes_per_element);
-  if (!result) { return ForwardError(result); }
+  auto maybe_codec_name = deserialize_string(endpoint);
+  if (!maybe_codec_name) { return ForwardError(maybe_codec_name); }
 
   // deserialize the message contents
   auto& registry = holoscan::CodecRegistry::get_instance();
-  auto deserialize_func = registry.get_deserializer(codec_name);
+  auto deserialize_func = registry.get_deserializer(maybe_codec_name.value());
   return deserialize_func(endpoint);
+}
+
+Expected<size_t> UcxHoloscanComponentSerializer::serializeMetadataDictionary(
+    const holoscan::MetadataDictionary& metadata, Endpoint* endpoint) {
+  GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::serializeMetadataDictionary");
+
+  // store the number of keys to expect
+  uint32_t num_items = static_cast<uint32_t>(metadata.size());
+  auto maybe_size = endpoint->writeTrivialType<uint32_t>(&num_items);
+  if (!maybe_size) { return ForwardError(maybe_size); }
+  size_t total_size = maybe_size.value();
+
+  // serialize all items in the dictionary
+  for (const auto& [key, value] : metadata) {
+    // serialize the key
+    auto maybe_size = serialize_string(key, endpoint);
+    if (!maybe_size) { return ForwardError(maybe_size); }
+    total_size += maybe_size.value();
+
+    // serialize the holoscan::Message value
+    maybe_size = serializeHoloscanMessage(*value, endpoint);
+    if (!maybe_size) { return ForwardError(maybe_size); }
+    total_size += maybe_size.value();
+  }
+  return total_size;
+}
+
+Expected<holoscan::MetadataDictionary>
+UcxHoloscanComponentSerializer::deserializeMetadataDictionary(Endpoint* endpoint) {
+  GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::deserializeMetadataDictionary");
+  holoscan::MetadataDictionary metadata{};
+
+  // determine the size of the dictionary
+  uint32_t num_items;
+  auto size = endpoint->readTrivialType<uint32_t>(&num_items);
+
+  // deserialize all items in the dictionary, storing them into metadata
+  for (size_t i = 0; i < num_items; i++) {
+    // deserialize the key
+    auto maybe_key = deserialize_string(endpoint);
+    if (!maybe_key) { return ForwardError(maybe_key); }
+
+    // deserialize the value
+    auto maybe_value = deserializeHoloscanMessage(endpoint);
+    if (!maybe_value) { return ForwardError(maybe_value); }
+
+    // store the deserialized item in the metadata dictionary
+    metadata.set(maybe_key.value(), std::make_shared<holoscan::Message>(maybe_value.value()));
+  }
+  return metadata;
 }
 
 }  // namespace gxf

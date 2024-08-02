@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,11 @@ class PingRxOp : public Operator {
   PingRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    // // Since Holoscan SDK v2.3, users can define a multi-receiver input port using 'spec.input()'
+    // // with 'IOSpec::kAnySize'.
+    // // The old way is to use 'spec.param()' with 'Parameter<std::vector<IOSpec*>> receivers_;'.
+    // spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    spec.input<std::vector<int>>("receivers", IOSpec::kAnySize);
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
@@ -88,7 +92,8 @@ class PingRxOp : public Operator {
   };
 
  private:
-  Parameter<std::vector<IOSpec*>> receivers_;
+  // // Since Holoscan SDK v2.3, the following line is no longer needed.
+  // Parameter<std::vector<IOSpec*>> receivers_;
   int count_ = 1;
 };
 

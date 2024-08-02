@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <cuda/cuda_service.hpp>
@@ -361,11 +362,13 @@ TEST_F(GeometryLayerWithFont, Text) {
 }
 
 // Fixture that initializes Holoviz
-class DepthMapRenderMode : public TestHeadless,
-                           public testing::WithParamInterface<viz::DepthMapRenderMode> {};
+class DepthMapRenderMode
+    : public TestHeadless,
+      public testing::WithParamInterface<std::tuple<viz::DepthMapRenderMode, viz::ImageFormat>> {};
 
 TEST_P(DepthMapRenderMode, DepthMap) {
-  const viz::DepthMapRenderMode depth_map_render_mode = GetParam();
+  const viz::DepthMapRenderMode depth_map_render_mode = std::get<0>(GetParam());
+  const viz::ImageFormat depth_fmt = std::get<1>(GetParam());
   const uint32_t map_width = 8;
   const uint32_t map_height = 8;
 
@@ -373,15 +376,47 @@ TEST_P(DepthMapRenderMode, DepthMap) {
   viz::CudaService cuda_service(0);
   viz::CudaService::ScopedPush cuda_context = cuda_service.PushContext();
 
+  uint32_t depth_component_size = 0;
+  switch (depth_fmt) {
+    case viz::ImageFormat::R8_UNORM:
+      depth_component_size = sizeof(uint8_t);
+      break;
+    case viz::ImageFormat::D32_SFLOAT:
+      depth_component_size = sizeof(uint32_t);
+      break;
+    default:
+      FAIL();
+  }
+
   viz::UniqueCUdeviceptr depth_ptr;
-  depth_ptr.reset([this] {
+  depth_ptr.reset([this, depth_component_size] {
     CUdeviceptr device_ptr;
-    EXPECT_EQ(cuMemAlloc(&device_ptr, map_width * map_height * sizeof(uint8_t)), CUDA_SUCCESS);
+    EXPECT_EQ(cuMemAlloc(&device_ptr, map_width * map_height * depth_component_size), CUDA_SUCCESS);
     return device_ptr;
   }());
-  std::vector<uint8_t> depth_data(map_width * map_height);
-  for (size_t index = 0; index < depth_data.size(); ++index) { depth_data[index] = index * 4; }
-  EXPECT_EQ(cuMemcpyHtoD(depth_ptr.get(), depth_data.data(), depth_data.size()), CUDA_SUCCESS);
+
+  switch (depth_fmt) {
+    case viz::ImageFormat::R8_UNORM: {
+      std::vector<uint8_t> depth_data(map_width * map_height);
+      for (size_t index = 0; index < depth_data.size(); ++index) { depth_data[index] = index * 4; }
+      EXPECT_EQ(cuMemcpyHtoD(
+                    depth_ptr.get(), depth_data.data(), depth_data.size() * depth_component_size),
+                CUDA_SUCCESS);
+      break;
+    }
+    case viz::ImageFormat::D32_SFLOAT: {
+      std::vector<float> depth_data(map_width * map_height);
+      for (size_t index = 0; index < depth_data.size(); ++index) {
+        depth_data[index] = index * 4 / 255.f;
+      }
+      EXPECT_EQ(cuMemcpyHtoD(
+                    depth_ptr.get(), depth_data.data(), depth_data.size() * depth_component_size),
+                CUDA_SUCCESS);
+      break;
+    }
+    default:
+      FAIL();
+  }
 
   viz::UniqueCUdeviceptr color_ptr;
   color_ptr.reset([this] {
@@ -417,7 +452,7 @@ TEST_P(DepthMapRenderMode, DepthMap) {
   EXPECT_NO_THROW(viz::DepthMap(depth_map_render_mode,
                                 map_width,
                                 map_height,
-                                viz::ImageFormat::R8_UNORM,
+                                depth_fmt,
                                 depth_ptr.get(),
                                 viz::ImageFormat::R8G8B8A8_UNORM,
                                 color_ptr.get()));
@@ -429,9 +464,11 @@ TEST_P(DepthMapRenderMode, DepthMap) {
 }
 
 INSTANTIATE_TEST_SUITE_P(GeometryLayer, DepthMapRenderMode,
-                         testing::Values(viz::DepthMapRenderMode::POINTS,
-                                         viz::DepthMapRenderMode::LINES,
-                                         viz::DepthMapRenderMode::TRIANGLES));
+                         testing::Combine(testing::Values(viz::DepthMapRenderMode::POINTS,
+                                                          viz::DepthMapRenderMode::LINES,
+                                                          viz::DepthMapRenderMode::TRIANGLES),
+                                          testing::Values(viz::ImageFormat::R8_UNORM,
+                                                          viz::ImageFormat::D32_SFLOAT)));
 
 TEST_F(GeometryLayer, Reuse) {
   std::vector<float> data{0.5f, 0.5f};

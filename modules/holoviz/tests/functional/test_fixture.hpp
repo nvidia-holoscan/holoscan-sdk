@@ -150,7 +150,7 @@ class TestHeadless : public TestBase {
 };
 
 /**
- * Fixture that initializes Holoviz in headless mode.
+ * Fixture that initializes Holoviz in windowed mode.
  */
 class TestWindow : public TestBase {
  public:

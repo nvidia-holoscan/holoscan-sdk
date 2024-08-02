@@ -111,8 +111,7 @@ void init_expiring_message_available(py::module_& m) {
            "max_batch_size"_a,
            "max_delay_ns"_a,
            "clock"_a = py::none(),
-           "name"_a = "noname_expiring_message_available_condition"s,
-           doc::ExpiringMessageAvailableCondition::doc_ExpiringMessageAvailableCondition)
+           "name"_a = "noname_expiring_message_available_condition"s)
       .def(py::init<Fragment*,
                     int64_t,
                     std::chrono::nanoseconds,

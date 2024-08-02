@@ -386,11 +386,28 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     new_input_labels.reserve(input_labels.size());
 
     for (auto& input_label : input_labels) {
-      if (op_inputs.find(input_label) == op_inputs.end()) {
-        if (op_inputs.size() == 1 && input_labels.size() == 1 && input_label == "") {
-          // Set the default input port label.
-          new_input_labels.push_back(op_inputs.begin()->first);
-          break;
+      auto op_input_iter = op_inputs.find(input_label);
+      bool is_receivers = false;
+      if (op_input_iter != op_inputs.end()) {
+        auto& op_input_iospec = op_input_iter->second;
+        if (op_input_iospec->queue_size() == static_cast<int64_t>(IOSpec::kAnySize)) {
+          is_receivers = true;
+        }
+      }
+
+      if (is_receivers || op_input_iter == op_inputs.end()) {
+        auto input_receivers_label = input_label;
+        if (!is_receivers && op_inputs.size() == 1 && input_labels.size() == 1 &&
+            input_label == "") {
+          // Set the default input port label if the downstream operator has only one input port,
+          // the input label is empty, and the queue size is not 'kAnySize'.
+          if (op_inputs.begin()->second->queue_size() != static_cast<int64_t>(IOSpec::kAnySize)) {
+            new_input_labels.push_back(op_inputs.begin()->first);
+            break;
+          } else {
+            // Set the input_receivers_label to the default input port label
+            input_receivers_label = op_inputs.begin()->first;
+          }
         }
 
         // Support for the case where the destination input port label points to the
@@ -401,8 +418,8 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
         // (with 'std::vector<holoscan::IOSpec*>' type) and create a new input port
         // with a specific label ('<parameter name>:<index>'. e.g, 'receivers:0').
         auto& downstream_op_params = downstream_op_spec->params();
-        if (downstream_op_params.find(input_label) != downstream_op_params.end()) {
-          auto& downstream_op_param = downstream_op_params.at(input_label);
+        if (downstream_op_params.find(input_receivers_label) != downstream_op_params.end()) {
+          auto& downstream_op_param = downstream_op_params.at(input_receivers_label);
           if (std::type_index(downstream_op_param.type()) ==
               std::type_index(typeid(std::vector<holoscan::IOSpec*>))) {
             const std::any& any_value = downstream_op_param.value();
@@ -413,12 +430,12 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
 
             // Create a new input port for this receivers parameter
             bool succeed = executor().add_receivers(
-                downstream_op, input_label, new_input_labels, iospec_vector);
+                downstream_op, input_receivers_label, new_input_labels, iospec_vector);
             if (!succeed) {
               HOLOSCAN_LOG_ERROR(
                   "Failed to add receivers to the downstream operator({}) with label '{}'",
                   downstream_op->name(),
-                  input_label);
+                  input_receivers_label);
               return;
             }
             continue;
@@ -429,7 +446,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
               "The downstream operator({}) does not have any input port but '{}' was "
               "specified in the port_map",
               downstream_op->name(),
-              input_label);
+              input_receivers_label);
           return;
         }
 
@@ -445,7 +462,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
             "The downstream operator({}) does not have an input port with label '{}'. It should "
             "be one of ({:.{}})",
             downstream_op->name(),
-            input_label,
+            input_receivers_label,
             msg_buf.data(),
             msg_buf.size());
         return;

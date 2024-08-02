@@ -20,7 +20,7 @@ import time
 from argparse import ArgumentParser
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec, Tracker
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec, Tracker
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 
@@ -90,8 +90,13 @@ class PingRxOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("names", kind="receivers")
-        spec.param("values", kind="receivers")
+        # # Since Holoscan SDK v2.3, users can define a multi-receiver input port using
+        # # 'spec.input()' with 'size=IOSpec.ANY_SIZE'.
+        # # The old way is to use 'spec.param()' with 'kind="receivers"'.
+        # spec.param("names", kind="receivers")
+        # spec.param("values", kind="receivers")
+        spec.input("names", size=IOSpec.ANY_SIZE)
+        spec.input("values", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         # In this case, nothing will be printed until all messages have

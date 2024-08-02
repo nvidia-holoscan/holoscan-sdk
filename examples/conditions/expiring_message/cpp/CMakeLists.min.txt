@@ -42,5 +42,5 @@ if(BUILD_TESTING)
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
           )
   set_tests_properties(EXAMPLE_CPP_PING_EXPIRING_MESSAGE_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Rx message received: Expiring message ping")
+                       PASS_REGULAR_EXPRESSION "Rx message received: ExpiringMessageAvailable ping: 8")
 endif()

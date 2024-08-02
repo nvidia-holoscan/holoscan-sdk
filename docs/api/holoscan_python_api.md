@@ -6,6 +6,7 @@
 
 python/holoscan_python_api_conditions
 python/holoscan_python_api_core
+python/holoscan_python_api_decorator
 python/holoscan_python_api_executors
 python/holoscan_python_api_graphs
 python/holoscan_python_api_gxf

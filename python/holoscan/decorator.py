@@ -14,13 +14,19 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """  # noqa: E501
+"""This module provides a decorator API for creating Python Operators
+
+.. autosummary::
+
+    holoscan.decorator.create_op
+    holoscan.decorator.Input
+    holoscan.decorator.Output
+"""
 
 import ast
 import inspect
 import textwrap
 from dataclasses import dataclass, field
-
-# Need Python 3.9 to use builtin tuple and dict directly instead of typing.Tuple, typing.Dict
 from typing import Any, Dict, Optional, Tuple, Union
 
 import cupy as cp
@@ -108,12 +114,13 @@ class Output:
     ----------
     name : str
         The name of the input port.
-    tensor_names: tuple(str) or None
+    tensor_names: str, tuple(str) or None
         If None, whatever Python object the func outputs is emitted on the output port. If a tuple
         of strings is provided it is assumed that the func returns a dictionary of tensors. The
         names in the tuple specify which tensors in the dict will be transmitted on the output
         port. There is no need to specify `tensor_names` if all tensors in a dict returned by the
-        function are to be transmitted.
+        function are to be transmitted. In the case of a single tensor name, a string can be
+        provided instead of a tuple.
     condition_type : holoscan.core.ConditionType, optional
         The condition type for the input port.
     condition_kwargs : dict[str, Any], optional
@@ -125,7 +132,7 @@ class Output:
     """
 
     name: str
-    tensor_names: Optional[Tuple[str]] = ()
+    tensor_names: Optional[Union[str, Tuple[str]]] = ()
     condition_type: Optional[ConditionType] = None
     condition_kwargs: Dict[str, Any] = field(default_factory=dict)
     connector_type: Optional[IOSpec.ConnectorType] = None
@@ -419,7 +426,9 @@ def create_op(
                     self.output_tensor_map = {}
                     for output_obj in self.output_objs:
                         output_obj.create_output(spec)
-                        self.output_tensor_map[output_obj.name] = output_obj.tensor_names
+                        if isinstance(output_obj.tensor_names, str):
+                            output_obj.tensor_names = (output_obj.tensor_names,)
+                        self.output_tensor_map[output_obj.name] = tuple(output_obj.tensor_names)
 
                 def compute(self, op_input, op_output, context):
                     for port_name, arg_map in self.input_mappings.items():

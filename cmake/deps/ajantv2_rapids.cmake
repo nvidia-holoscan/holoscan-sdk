@@ -34,6 +34,7 @@ rapids_cpm_find(ajantv2 17.0.1
     "AJANTV2_DISABLE_TOOLS ON"
     "AJA_INSTALL_HEADERS OFF"
     "AJA_INSTALL_SOURCES OFF"
+    "CMAKE_BUILD_TYPE Release"
     EXCLUDE_FROM_ALL
 )
 

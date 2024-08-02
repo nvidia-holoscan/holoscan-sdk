@@ -38,6 +38,11 @@ holoscan_pybind11_module(
     ../gxf/entity.cpp
 )
 
+# needed for the Holoviz InputSpec workaround in PyOutputContext::py_emit()
+target_link_libraries(core_python
+    PRIVATE holoscan::ops::holoviz
+)
+
 # Copy headers
 install(
     DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

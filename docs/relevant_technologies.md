@@ -33,7 +33,7 @@ For more information about GPUDirect RDMA, see the following:
 
 The Graph Execution Framework (GXF) is a core component of the Holoscan SDK that provides features to execute pipelines of various independent tasks with high performance by minimizing or removing the need to copy data across each block of work, and providing ways to optimize memory allocation.
 
-GXF will be mentioned in many places across this user guide, including a {ref}`dedicated section<gxf_details>` which provides more details.
+GXF will be mentioned in many places across this user guide, including a {ref}`dedicated section <gxf-user-guide>` which provides more details.
 
 (tensorrt)=
 ## TensorRT Optimized Inference

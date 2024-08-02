@@ -118,6 +118,12 @@ std::ostream& operator<<(std::ostream& os, const ImageFormat& format) {
     CASE(ImageFormat::D16_UNORM)
     CASE(ImageFormat::X8_D24_UNORM)
     CASE(ImageFormat::D32_SFLOAT)
+    CASE(ImageFormat::A2B10G10R10_UNORM_PACK32)
+    CASE(ImageFormat::A2R10G10B10_UNORM_PACK32)
+    CASE(ImageFormat::B8G8R8A8_UNORM)
+    CASE(ImageFormat::B8G8R8A8_SRGB)
+    CASE(ImageFormat::A8B8G8R8_UNORM_PACK32)
+    CASE(ImageFormat::A8B8G8R8_SRGB_PACK32)
     default:
       os.setstate(std::ios_base::failbit);
   }
@@ -169,6 +175,12 @@ TEST_P(ImageLayer, Image) {
     case viz::ImageFormat::R16G16B16A16_UNORM:
     case viz::ImageFormat::R16G16B16A16_SNORM:
     case viz::ImageFormat::R32G32B32A32_SFLOAT:
+    case viz::ImageFormat::A2B10G10R10_UNORM_PACK32:
+    case viz::ImageFormat::A2R10G10B10_UNORM_PACK32:
+    case viz::ImageFormat::B8G8R8A8_UNORM:
+    case viz::ImageFormat::B8G8R8A8_SRGB:
+    case viz::ImageFormat::A8B8G8R8_UNORM_PACK32:
+    case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
       convert_color = true;
       break;
     case viz::ImageFormat::D16_UNORM:
@@ -346,6 +358,12 @@ TEST_P(ImageLayer, Image) {
       case viz::ImageFormat::R8G8B8A8_SRGB:
       case viz::ImageFormat::R16G16B16A16_SNORM:
       case viz::ImageFormat::R16G16B16A16_UNORM:
+      case viz::ImageFormat::A2B10G10R10_UNORM_PACK32:
+      case viz::ImageFormat::A2R10G10B10_UNORM_PACK32:
+      case viz::ImageFormat::B8G8R8A8_UNORM:
+      case viz::ImageFormat::B8G8R8A8_SRGB:
+      case viz::ImageFormat::A8B8G8R8_UNORM_PACK32:
+      case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
         components = 4;
         break;
       default:
@@ -382,8 +400,36 @@ TEST_P(ImageLayer, Image) {
         case viz::ImageFormat::R8_SRGB:
         case viz::ImageFormat::R8G8B8_SRGB:
         case viz::ImageFormat::R8G8B8A8_SRGB:
+        case viz::ImageFormat::A8B8G8R8_UNORM_PACK32:
+        case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
           converted_data[index] = color_data_[index];
           break;
+        case viz::ImageFormat::B8G8R8A8_UNORM:
+        case viz::ImageFormat::B8G8R8A8_SRGB: {
+          const uint32_t component = index % 4;
+          converted_data[index] =
+              color_data_[index - component + ((component < 3) ? (2 - component) : component)];
+        } break;
+        case viz::ImageFormat::A2B10G10R10_UNORM_PACK32: {
+          const uint32_t value = reinterpret_cast<uint32_t*>(color_data_.data())[index / 4];
+          const uint32_t component = index % 4;
+          if (component == 3) {
+            converted_data[index] = uint8_t((float(value >> 30) / 3.f) * 255.f + 0.5f);
+          } else {
+            converted_data[index] =
+                uint8_t((float((value >> (component * 10)) & 0x3FF) / 1023.f) * 255.f + 0.5f);
+          }
+        } break;
+        case viz::ImageFormat::A2R10G10B10_UNORM_PACK32: {
+          const uint32_t value = reinterpret_cast<uint32_t*>(color_data_.data())[index / 4];
+          const uint32_t component = index % 4;
+          if (component == 3) {
+            converted_data[index] = uint8_t((float(value >> 30) / 3.f) * 255.f + 0.5f);
+          } else {
+            converted_data[index] =
+                uint8_t((float((value >> ((2 - component) * 10)) & 0x3FF) / 1023.f) * 255.f + 0.5f);
+          }
+        } break;
         default:
           ASSERT_TRUE(false) << "Unhandled color format in conversion";
           break;
@@ -395,6 +441,8 @@ TEST_P(ImageLayer, Image) {
       case viz::ImageFormat::R8_SRGB:
       case viz::ImageFormat::R8G8B8_SRGB:
       case viz::ImageFormat::R8G8B8A8_SRGB:
+      case viz::ImageFormat::B8G8R8A8_SRGB:
+      case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
         for (size_t index = 0; index < elements; index += components) {
           for (size_t component = 0; component < components; ++component) {
             float value = float(converted_data[index + component]) / 255.f;
@@ -489,7 +537,13 @@ INSTANTIATE_TEST_SUITE_P(
                                      viz::ImageFormat::R8G8B8A8_SNORM,
                                      viz::ImageFormat::R8G8B8A8_SRGB,
                                      viz::ImageFormat::R16G16B16A16_SNORM,
-                                     viz::ImageFormat::R16G16B16A16_UNORM)));
+                                     viz::ImageFormat::R16G16B16A16_UNORM,
+                                     viz::ImageFormat::A2B10G10R10_UNORM_PACK32,
+                                     viz::ImageFormat::A2R10G10B10_UNORM_PACK32,
+                                     viz::ImageFormat::B8G8R8A8_UNORM,
+                                     viz::ImageFormat::B8G8R8A8_SRGB,
+                                     viz::ImageFormat::A8B8G8R8_UNORM_PACK32,
+                                     viz::ImageFormat::A8B8G8R8_SRGB_PACK32)));
 
 // LUT tests
 INSTANTIATE_TEST_SUITE_P(

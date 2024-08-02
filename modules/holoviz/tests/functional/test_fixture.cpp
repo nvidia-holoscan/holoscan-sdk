@@ -56,7 +56,7 @@ void Fill(void* data, size_t elements, float min, float max) {
 }
 
 void TestBase::SetUp() {
-  if (~(init_flags_ & viz::InitFlags::HEADLESS)) {
+  if (!(init_flags_ & viz::InitFlags::HEADLESS)) {
     if (glfwInit() == GLFW_FALSE) {
       const char* description;
       int code = glfwGetError(&description);
@@ -154,6 +154,10 @@ void TestBase::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
       break;
     case viz::ImageFormat::R8G8B8A8_UNORM:
     case viz::ImageFormat::R8G8B8A8_SRGB:
+    case viz::ImageFormat::B8G8R8A8_UNORM:
+    case viz::ImageFormat::B8G8R8A8_SRGB:
+    case viz::ImageFormat::A8B8G8R8_UNORM_PACK32:
+    case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
       channels = 4;
       component_size = sizeof(uint8_t);
       color_data_.resize(width_ * height_ * channels * component_size);
@@ -195,6 +199,14 @@ void TestBase::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
       component_size = sizeof(float);
       depth_data_.resize(width_ * height_ * channels * component_size);
       Fill<float>(depth_data_.data(), width_ * height_, 0.f, std::numeric_limits<float>::max());
+      break;
+    case viz::ImageFormat::A2B10G10R10_UNORM_PACK32:
+    case viz::ImageFormat::A2R10G10B10_UNORM_PACK32:
+      channels = 1;
+      component_size = sizeof(uint32_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint32_t>(
+          color_data_.data(), width_ * height_, 0b1100'0000'0000'0000'0000'0000'0000'0000);
       break;
     default:
       ASSERT_TRUE(false) << "Unsupported image format " << static_cast<int>(format);

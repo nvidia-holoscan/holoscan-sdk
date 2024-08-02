@@ -22,7 +22,7 @@ import pytest
 from utils import remove_ignored_errors
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Fragment, Operator, OperatorSpec
+from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec
 from holoscan.operators.holoviz import HolovizOp
 
 with contextlib.suppress(ImportError):
@@ -231,7 +231,7 @@ class PingMessageReceiversRxOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")

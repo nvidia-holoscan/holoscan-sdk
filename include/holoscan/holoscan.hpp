@@ -31,6 +31,7 @@
 #include "./core/graph.hpp"
 #include "./core/io_context.hpp"
 #include "./core/message.hpp"
+#include "./core/metadata.hpp"
 #include "./core/network_context.hpp"
 #include "./core/operator.hpp"
 #include "./core/resource.hpp"

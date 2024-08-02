@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +41,27 @@ Enum representing the I/O specification type (input or output).
 }  // namespace IOType
 
 namespace IOSpec {
+
+namespace IOSize {
+
+//  Constructor
+PYDOC(IOSize, R"doc(
+I/O size class.
+
+Parameters
+----------
+size : int
+    The size of the input/output queue.
+)doc")
+
+PYDOC(size, R"doc(
+The size of the I/O size class.
+
+Returns
+-------
+size : int
+)doc")
+}  // namespace IOSize
 
 //  Constructor
 PYDOC(IOSpec, R"doc(
@@ -153,6 +174,20 @@ return ``None``.
 2.) A variant that takes a single `holoscan.core.Resource` corresponding to a transmitter or
 receiver as an argument. This sets the transmitter or receiver used by the `IOSpec` object.
 
+)doc")
+
+PYDOC(queue_size, R"doc(
+The size of the input/output queue.
+
+Notes
+-----
+This value is only used for initializing input ports. The queue size is set by the
+'OperatorSpec.input()' method or this property.
+If the queue size is set to 'any size' (IOSpec::kAnySize in C++ or IOSpec.ANY_SIZE in Python),
+the connector/condition settings will be ignored.
+If the queue size is set to other values, the default connector (DoubleBufferReceiver/UcxReceiver)
+and condition (MessageAvailableCondition) will use the queue size for initialization
+('capacity' for the connector and 'min_size' for the condition) if they are not set.
 )doc")
 
 }  // namespace IOSpec

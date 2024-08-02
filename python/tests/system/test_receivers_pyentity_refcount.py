@@ -24,7 +24,7 @@ import pytest
 
 import holoscan as hs
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec
 from holoscan.gxf import Entity
 from holoscan.logger import LogLevel, set_log_level
 
@@ -84,7 +84,7 @@ class PingRxOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         REF_COUNT_RECORD.append(self.count)

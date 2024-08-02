@@ -31,7 +31,9 @@ endfunction()
 # https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_versions.html#cpm-version-format
 rapids_cpm_init()
 
-superbuild_depend(ajantv2_rapids)
+if(HOLOSCAN_BUILD_AJA)
+  superbuild_depend(ajantv2_rapids)
+endif()
 superbuild_depend(cli11_rapids)
 superbuild_depend(cudatoolkit_rapids)
 superbuild_depend(dlpack_rapids)

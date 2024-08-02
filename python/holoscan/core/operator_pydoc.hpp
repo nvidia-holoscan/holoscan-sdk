@@ -61,6 +61,30 @@ Parameters
 ----------
 name : str
     The name of the input port.
+size : int | holoscan.core.IOSpec.IOSize
+    The size of the queue for the input port.
+    By default, `IOSpec.SIZE_ONE` (== `IOSpec.IOSize(1)`) is used.
+    If `IOSpec.ANY_SIZE` is used, it defines multiple receivers internally for the input port.
+    Otherwise, the size of the input queue is set to the specified value, and the message available
+    condition for the input port is set with `min_size` equal to the same value.
+
+    The following size constants are supported:
+    - ``IOSpec.ANY_SIZE``: Any size.
+    - ``IOSpec.PRECEDING_COUNT``: Number of preceding connections.
+    - ``IOSpec.SIZE_ONE``: The queue size is 1.
+
+    Please refer to the [Holoscan SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-python)
+    to see how to receive any number of inputs in Python.
+
+Notes
+-----
+The 'size' parameter is used for initializing the queue size of the input port.
+The queue size is set by this method or the 'IOSpec.queue_size' property.
+If the queue size is set to 'any size' (IOSpec::kAnySize in C++ or IOSpec.ANY_SIZE in Python),
+the connector/condition settings will be ignored.
+If the queue size is set to other values, the default connector (DoubleBufferReceiver/UcxReceiver)
+and condition (MessageAvailableCondition) will use the queue size for initialization
+('capacity' for the connector and 'min_size' for the condition) if they are not set.
 )doc")
 
 PYDOC(inputs, R"doc(
@@ -68,7 +92,7 @@ Return the reference of the input port map.
 )doc")
 
 PYDOC(output, R"doc(
-Add an outputput to the specification.
+Add an output to the specification.
 )doc")
 
 PYDOC(output_kwargs, R"doc(
@@ -106,6 +130,10 @@ kind : str, optional
     currently ``kind="receivers"``, which can be used to create a parameter holding a vector of
     receivers. This effectively creates a multi-receiver input port to which any number of
     operators can be connected.
+    Since Holoscan SDK v2.3, users can define a multi-receiver input port using `spec.input()` with
+    `size=IOSpec.ANY_SIZE`, instead of using `spec.param()` with `kind="receivers"`. It is now
+    recommended to use this new `spec.input`-based approach and the old "receivers" parameter
+    approach should be considered deprecated.
 flag: holoscan.core.ParameterFlag, optional
     If provided, this is a flag that can be used to control the behavior of the parameter.
     By default, `ParameterFlag.NONE` is used.

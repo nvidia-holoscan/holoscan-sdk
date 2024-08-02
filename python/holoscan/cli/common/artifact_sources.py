@@ -39,7 +39,7 @@ class ArtifactSources:
 
     def __init__(self) -> None:
         self._logger = logging.getLogger("common")
-        self._supported_holoscan_versions = ["2.0.0", "2.1.0", "2.2.0"]
+        self._supported_holoscan_versions = ["2.0.0", "2.1.0", "2.2.0", "2.3.0"]
 
     @property
     def holoscan_versions(self) -> List[str]:

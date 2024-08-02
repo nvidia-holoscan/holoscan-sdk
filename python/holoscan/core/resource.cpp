@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "component.hpp"
 #include "holoscan/core/arg.hpp"
@@ -48,7 +49,7 @@ class PyResource : public Resource {
       : Resource() {
     using std::string_literals::operator""s;
 
-    py_resource_ = resource;
+    py_resource_ = std::move(resource);
     fragment_ = fragment;
 
     int n_fragments = 0;

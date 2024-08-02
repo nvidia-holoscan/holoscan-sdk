@@ -24,6 +24,7 @@ set(HOLOSCAN_PACKAGE_NAME holoscan)
 option(BUILD_SHARED_LIBS "Build Shared Libraries" ON)
 option(HOLOSCAN_BUILD_LIBTORCH "Build support for the LibTorch backend" ON)
 option(HOLOSCAN_BUILD_ORT "Build support for the ONNX Runtime backend" ON)
+option(HOLOSCAN_BUILD_AJA "Build support for AJA" ON)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
 option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
 option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
@@ -183,7 +184,6 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     holoinfer
     infer_utils
     logger
-    op_aja
     op_async_ping_rx
     op_async_ping_tx
     op_bayer_demosaic
@@ -200,12 +200,14 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_v4l2
     spdlog_logger
 )
-
 if(HOLOSCAN_BUILD_LIBTORCH)
-    list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_torch)
+  list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_torch)
 endif()
 if(HOLOSCAN_BUILD_ORT)
     list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_ort)
+endif()
+if(HOLOSCAN_BUILD_AJA)
+  list(APPEND HOLOSCAN_INSTALL_TARGETS op_aja ajantv2)
 endif()
 
 # Add PUBLIC dependencies to our install target
@@ -214,8 +216,6 @@ endif()
 # headers in our nterface headers, using forward declaration or PIMPL
 list(APPEND HOLOSCAN_INSTALL_TARGETS
     yaml-cpp   # needed by holoscan::core
-    glfw       # needed by holoscan::viz
-    ajantv2    # needed by holoscan::ops::aja
 )
 
 # Copy library files
@@ -430,19 +430,6 @@ if(HOLOSCAN_BUILD_TESTS)
 
     # add Holoviz tests
     add_test(NAME HOLOVIZ_FUNCTIONAL_TEST COMMAND holoscan::viz::functionaltests)
-
-    # Set Environment variable to resolve memory allocation failure by loading TLS library
-    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
-        execute_process(COMMAND nvidia-smi --query-gpu=driver_version --format=csv,noheader OUTPUT_VARIABLE driver_version)
-        if(NOT ${driver_version} STREQUAL "")
-            string(STRIP ${driver_version} driver_version)
-            set(ldpath "LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libnvidia-tls.so.${driver_version}")
-            set_property(TEST HOLOVIZ_FUNCTIONAL_TEST PROPERTY ENVIRONMENT ${ldpath})
-        else()
-            message(WARNING "Could not retrieve driver version with nvidia-smi, can't set LD_PRELOAD for `HOLOVIZ_FUNCTIONAL_TEST`")
-        endif()
-    endif()
-
     add_test(NAME HOLOVIZ_UNIT_TEST COMMAND holoscan::viz::unittests)
 endif()
 

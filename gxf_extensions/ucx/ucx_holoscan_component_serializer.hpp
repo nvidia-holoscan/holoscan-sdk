@@ -26,6 +26,7 @@
 #include "gxf/std/tensor.hpp"
 #include "holoscan/core/codec_registry.hpp"
 #include "holoscan/core/message.hpp"
+#include "holoscan/core/metadata.hpp"
 
 namespace nvidia {
 namespace gxf {
@@ -48,6 +49,11 @@ class UcxHoloscanComponentSerializer : public ComponentSerializer {
   Expected<size_t> serializeHoloscanMessage(const holoscan::Message& message, Endpoint* endpoint);
   // Deserializes a holoscan::Message
   Expected<holoscan::Message> deserializeHoloscanMessage(Endpoint* endpoint);
+  // Serializes a holoscan::MetadataDictionary
+  Expected<size_t> serializeMetadataDictionary(const holoscan::MetadataDictionary& message,
+                                               Endpoint* endpoint);
+  // Deserializes a holoscan::MetadataDictionary
+  Expected<holoscan::MetadataDictionary> deserializeMetadataDictionary(Endpoint* endpoint);
 
   Parameter<Handle<Allocator>> allocator_;
 };

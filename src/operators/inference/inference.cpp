@@ -122,7 +122,9 @@ namespace holoscan::ops {
 void InferenceOp::setup(OperatorSpec& spec) {
   register_converter<DataMap>();
   register_converter<DataVecMap>();
-  auto& transmitter = spec.output<gxf::Entity>("transmitter");
+  spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
+  spec.output<gxf::Entity>("transmitter");
+
   spec.param(backend_, "backend", "Supported backend", "backend", {});
   spec.param(backend_map_, "backend_map", "Supported backend map", "", DataMap());
   spec.param(model_path_map_,
@@ -167,8 +169,6 @@ void InferenceOp::setup(OperatorSpec& spec) {
   spec.param(transmit_on_cuda_, "transmit_on_cuda", "Transmit message on CUDA", "", true);
 
   spec.param(parallel_inference_, "parallel_inference", "Parallel inference", "", true);
-  spec.param(receivers_, "receivers", "Receivers", "List of receivers", {});
-  spec.param(transmitter_, "transmitter", "Transmitter", "Transmitter", {&transmitter});
   cuda_stream_handler_.define_params(spec);
 }
 

@@ -39,7 +39,7 @@ operator.
 
 The built-in video stream replayer operator can be used to replay a video stream that has been encoded as gxf entities. You can use the `convert_video_to_gxf_entities.py` script (installed in `/opt/nvidia/holoscan/bin` or available [on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#convert_video_to_gxf_entitiespy)) to encode a video file as gxf entities for use by this operator.
 
-This operator processes the encoded file sequentially and supports realtime, faster than realtime, or slower than realtime playback of prerecorded data. The input data can optionally be repeated to loop forever or only for a specified count. For more details, see {ref}`operators-video-stream-replayer`.
+This operator processes the encoded file sequentially and supports realtime, faster than realtime, or slower than realtime playback of prerecorded data. The input data can optionally be repeated to loop forever or only for a specified count. For more details, see {cpp:class}`~holoscan::ops::VideoStreamReplayerOp`.
 
 We will use the replayer to read gxf entities from disk and send the frames downstream to the Holoviz operator.
 
@@ -60,9 +60,9 @@ workflow and operators.  For more complex workflows, it may be helpful to use th
 :::
 
 This example uses the following configuration file to configure the parameters for the replayer and Holoviz operators.  The full list of parameters can
-be found at {ref}`operators-video-stream-replayer` and {ref}`operators-holoviz`.
+be found at {cpp:class}`~holoscan::ops::VideoStreamReplayerOp` and {cpp:class}`~holoscan::ops::HolovizOp`.
 
-```
+```text
 %YAML 1.2
 replayer:
   directory: "../data/racerx"   # Path to gxf entity video data

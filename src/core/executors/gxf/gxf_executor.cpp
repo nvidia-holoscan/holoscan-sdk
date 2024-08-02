@@ -39,8 +39,8 @@
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
-#include "holoscan/core/conditions/gxf/message_available.hpp"
 #include "holoscan/core/conditions/gxf/expiring_message.hpp"
+#include "holoscan/core/conditions/gxf/message_available.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/errors.hpp"
@@ -114,7 +114,7 @@ static const std::vector<std::string> kDefaultGXFExtensions{
     "libgxf_cuda.so",
     "libgxf_multimedia.so",
     "libgxf_serialization.so",
-    "libgxf_ucx.so",  // UCXContext, UCXReceiver, UCXTransmitter, etc.
+    "libgxf_ucx.so",  // UcxContext, UcxReceiver, UcxTransmitter, etc.
 };
 
 static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
@@ -483,6 +483,48 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
     return;
   }
 
+  int64_t queue_size = io_spec->queue_size();
+  if (queue_size == static_cast<int64_t>(IOSpec::kAnySize)) {
+    // Do not create a receiver for this as we are using the parameterized receiver method.
+    return;
+  }
+
+  // If the queue size is 0 (IOSpec::kPrecedingCount), then we need to calculate the default queue
+  // size based on the number of preceding connections.
+  if (queue_size == static_cast<int64_t>(IOSpec::kPrecedingCount)) {
+    auto& flow_graph = fragment->graph();
+    auto node = flow_graph.find_node(op->name());
+    if (node) {
+      // Count the number of connections to this input port
+      int connection_count = 0;
+      auto prev_nodes = flow_graph.get_previous_nodes(node);
+      for (const auto& prev_node : prev_nodes) {
+        auto port_map = flow_graph.get_port_map(prev_node, node);
+        if (port_map.has_value()) {
+          const auto& port_map_val = port_map.value();
+          // Iterate over the set of target ports
+          for (const auto& [preceding_out_port_name, target_ports] : *port_map_val) {
+            // Count the number of connections to this input port.
+            connection_count += target_ports.count(rx_name);
+          }
+        }
+
+        // Set the queue size to the number of preceding connections
+        queue_size = connection_count;
+      }
+    } else {
+      HOLOSCAN_LOG_ERROR("Failed to find node for operator '{}'", op->name());
+      throw std::runtime_error(fmt::format("Failed to find node for operator '{}'", op->name()));
+    }
+  }
+
+  if (queue_size < 1) {
+    HOLOSCAN_LOG_ERROR(
+        "Invalid queue size: {} (op: '{}', input port: '{}')", queue_size, op->name(), rx_name);
+    throw std::runtime_error(fmt::format(
+        "Invalid queue size: {} (op: '{}', input port: '{}')", queue_size, op->name(), rx_name));
+  }
+
   auto connector = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
   if (connector && (connector->gxf_cptr() != nullptr)) {
     auto gxf_receiver = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(connector);
@@ -497,6 +539,8 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
       case IOSpec::ConnectorType::kDefault:
         HOLOSCAN_LOG_DEBUG("creating input port using DoubleBufferReceiver");
         rx_resource = std::make_shared<DoubleBufferReceiver>();
+        // Set the capacity of the DoubleBufferReceiver with the queue_size
+        rx_resource->add_arg(Arg("capacity", queue_size));
         if (fragment->data_flow_tracker()) {
           std::dynamic_pointer_cast<DoubleBufferReceiver>(rx_resource)->track();
         }
@@ -566,9 +610,10 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
 
   // Set the default scheduling term for this input
   if (io_spec->conditions().empty()) {
-    io_spec->condition(ConditionType::kMessageAvailable,
-                       Arg("receiver") = io_spec->connector(),
-                       Arg("min_size") = 1UL);
+    ArgList args;
+    args.add(Arg("min_size") = static_cast<uint64_t>(queue_size));
+    io_spec->condition(
+        ConditionType::kMessageAvailable, Arg("receiver") = io_spec->connector(), args);
   }
 
   // Initialize conditions for this input
@@ -874,11 +919,11 @@ ConnectionMapType generate_connection_map(
 /**
  * @brief Populate virtual_ops vector and add corresponding connections to fragment.
  *
- * When VirtualTransmitterOp is created, UCXTransmitter's 'local_address' is set by the environment
- * variable 'HOLOSCAN_UCX_SOURCE_ADDRESS' so that UCXTransmitter can create a UCX client endpoint
+ * When VirtualTransmitterOp is created, UcxTransmitter's 'local_address' is set by the environment
+ * variable 'HOLOSCAN_UCX_SOURCE_ADDRESS' so that UcxTransmitter can create a UCX client endpoint
  * using the local IP address.
  * HOLOSCAN_UCX_SOURCE_ADDRESS may or may not have a port number (`<ip>:<port>`), but the port
- * number would be ignored because there can be multiple UCXTransmitters in the fragments that are
+ * number would be ignored because there can be multiple UcxTransmitters in the fragments that are
  * running on the same node, so specifying the port number is error-prone.
  */
 void create_virtual_operators_and_connections(
@@ -905,11 +950,11 @@ void create_virtual_operators_and_connections(
 
         std::shared_ptr<ops::VirtualOperator> virtual_op;
         if (io_type == IOSpec::IOType::kOutput) {
-          // Update local_address and local_port of the UCXTransmitter based on
+          // Update local_address and local_port of the UcxTransmitter based on
           // the `source_address` from the environment variable
           // 'HOLOSCAN_UCX_SOURCE_ADDRESS' (issue 4233845).
           // The `source_port` would be ignored.
-          HOLOSCAN_LOG_DEBUG("Updating 'local_address' of the UCXTransmitter in '{}.{}' to '{}'",
+          HOLOSCAN_LOG_DEBUG("Updating 'local_address' of the UcxTransmitter in '{}.{}' to '{}'",
                              fragment->name(),
                              connection->name,
                              source_ip);
@@ -934,14 +979,17 @@ void create_virtual_operators_and_connections(
           fragment->add_flow(op, virtual_op, {{port_name, port_name}});
         } else {
           int param_index = -1;
-          // If we cannot find the port_name in the op's input, it means that
+          // If we cannot find the port_name in the op's input or IOSpec's queue size equals
+          // IOSpec::kAnySize, it means that
           // the port name is the parameter name and the parameter type is
           // 'std::vector<holoscan::IOSpec*>'.
           // In this case, we need to use the indexed input port name to avoid
           // name conflict ('<port name>:<index>').
           auto op_spec = op->spec();
           auto& op_spec_inputs = op_spec->inputs();
-          if (op_spec_inputs.find(port_name) == op_spec_inputs.end()) {
+          auto op_spec_input_it = op_spec_inputs.find(port_name);
+          if (op_spec_input_it == op_spec_inputs.end() ||
+              (op_spec_input_it->second->queue_size() == static_cast<int64_t>(IOSpec::kAnySize))) {
             auto& op_params = op_spec->params();
             const std::any& any_value = op_params[port_name].value();
             auto& param = *std::any_cast<Parameter<std::vector<holoscan::IOSpec*>>*>(any_value);
@@ -991,7 +1039,7 @@ void connect_ucx_transmitters_to_virtual_ops(
         auto& port_name = virtual_op->port_name();
 
         // Count connections from <operator name>.<port name> to the corresponding operators
-        // including virtual operators. This is used to determine if direct UCXTransmitter should be
+        // including virtual operators. This is used to determine if direct UcxTransmitter should be
         // created or not.
         int connection_count = 0;
         auto connected_ops = graph.get_next_nodes(last_transmitter_op);
@@ -2017,6 +2065,8 @@ void GXFExecutor::register_extensions() {
                                                   {0x61510ca06aa9493b, 0x8a777d0bf87476b7});
     extension_factory.add_type<holoscan::Tensor>("Holoscan's Tensor type",
                                                  {0xa5eb0ed57d7f4aa2, 0xb5865ccca0ef955c});
+    extension_factory.add_type<holoscan::MetadataDictionary>(
+        "Holoscan's MetadataDictionary type", {0x112607eb7b23407c, 0xb93fcd10ad8b2ba7});
 
     // Add a new type of Double Buffer Receiver and Transmitter
     extension_factory

@@ -10,8 +10,45 @@ As of this release, when these developer kits are flashed to leverage the dGPU, 
 We provide utilities to work around the second conflict:
 
 `````{tab-set}
-````{tab-item} IGX SW 1.0 DP
-An improved solution will be introduced alongside the IGX SW 1.0 GA release.
+````{tab-item} IGX SW 1.0
+Refer to the [IGX user guide](https://docs.nvidia.com/igx-orin/user-guide/latest/igpu-dgpu.html) to learn how to leverage the iGPU in containers while the IGX developer kit is flashed in dGPU mode.
+
+To leverage both GPUs in Holoscan, you can create separate applications running concurrently per the IGX documentation above, where the iGPU application must run in the Holoscan iGPU container, and the dGPU application can run bare metal or in the Holoscan dGPU container.
+
+You can also create a single distributed application that leverages both the iGPU and dGPU by executing separate fragments on the iGPU and on the dGPU.
+
+The example below shows the ping distributed application between the iGPU and dGPU using Holoscan containers:
+
+```bash
+COMMON_DOCKER_FLAGS="--rm -i --init --net=host
+--runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=all
+--cap-add CAP_SYS_PTRACE --ipc=host --ulimit memlock=-1 --ulimit stack=67108864
+"
+HOLOSCAN_VERSION=2.2.0
+HOLOSCAN_IMG="nvcr.io/nvidia/clara-holoscan/holoscan:v$HOLOSCAN_VERSION"
+HOLOSCAN_DGPU_IMG="$HOLOSCAN_IMG-dgpu"
+HOLOSCAN_IGPU_IMG="$HOLOSCAN_IMG-igpu"
+
+# Pull images
+docker pull $HOLOSCAN_DGPU_IMG
+docker pull $HOLOSCAN_IGPU_IMG
+
+# Run ping distributed (python) in dGPU container
+# - Making this one the `driver`, but could be igpu too
+# - Using & to not block the terminal to run igpu afterwards. Could run igpu in separate terminal instead.
+docker run \
+  $COMMON_DOCKER_FLAGS \
+  $HOLOSCAN_DGPU_IMG \
+  bash -c "python3 ./examples/ping_distributed/python/ping_distributed.py --gpu --worker --driver" &
+
+# Run ping distributed (c++) in iGPU container
+docker run \
+  $COMMON_DOCKER_FLAGS \
+  -e NVIDIA_VISIBLE_DEVICES=nvidia.com/igpu=0 \
+  $HOLOSCAN_IMG-igpu \
+  bash -c "./examples/ping_distributed/cpp/ping_distributed --gpu --worker"
+```
+
 ````
 ````{tab-item} HoloPack 1.2+
 The [L4T Compute Assist](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/l4t-compute-assist) is a container on NGC which isolates the iGPU stack in order to enable iGPU compute on the developer kits configured for dGPU. Other applications can run concurrently on the dGPU, natively or in another container.

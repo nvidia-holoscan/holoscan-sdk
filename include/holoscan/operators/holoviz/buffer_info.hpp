@@ -20,7 +20,8 @@
 
 #include <string>
 
-#include "holoviz/holoviz.hpp"  // holoviz module
+#include <holoviz/image_format.hpp>
+#include "holoscan/operators/holoviz/holoviz.hpp"
 
 #include "gxf/multimedia/video.hpp"
 
@@ -31,30 +32,46 @@ struct BufferInfo {
   /**
    * Initialize with tensor
    *
+   * @param tensor
+   * @param input_image_format if HolovizOp::ImageFormat::AUTO_DETECT then auto detect the image
+   * format, else use the provided image format
+   *
    * @return error code
    */
-  gxf_result_t init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor);
+  gxf_result_t init(
+      const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor,
+      HolovizOp::ImageFormat input_image_format = HolovizOp::ImageFormat::AUTO_DETECT);
 
   /**
    * Initialize with video buffer
    *
+   * @param tensor
+   * @param input_image_format if HolovizOp::ImageFormat::AUTO_DETECT then auto detect the image
+   * format, else use the provided image format
+   *
    * @return error code
    */
-  gxf_result_t init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video);
+  gxf_result_t init(
+      const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video,
+      HolovizOp::ImageFormat input_image_format = HolovizOp::ImageFormat::AUTO_DETECT);
 
-  uint32_t rank;
-  uint32_t components, width, height;
-  nvidia::gxf::PrimitiveType element_type;
-  viz::ImageFormat image_format = static_cast<viz::ImageFormat>(-1);
+  uint32_t rank = 0;
+  uint32_t components = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  nvidia::gxf::PrimitiveType element_type = nvidia::gxf::PrimitiveType::kCustom;
+  bool image_format_supported = false;
+  HolovizOp::ImageFormat image_format = HolovizOp::ImageFormat::AUTO_DETECT;
   viz::ComponentSwizzle component_swizzle[4] = {viz::ComponentSwizzle::IDENTITY,
-                                                viz::ComponentSwizzle::IDENTITY,
-                                                viz::ComponentSwizzle::IDENTITY,
-                                                viz::ComponentSwizzle::IDENTITY};
+                                                 viz::ComponentSwizzle::IDENTITY,
+                                                 viz::ComponentSwizzle::IDENTITY,
+                                                 viz::ComponentSwizzle::IDENTITY};
   std::string name;
-  const nvidia::byte* buffer_ptr;
-  nvidia::gxf::MemoryStorageType storage_type;
-  uint64_t bytes_size;
-  nvidia::gxf::Tensor::stride_array_t stride;
+  /// points to the memory owned by either a tensor or video buffer
+  const nvidia::byte* buffer_ptr = nullptr;
+  nvidia::gxf::MemoryStorageType storage_type = nvidia::gxf::MemoryStorageType::kHost;
+  uint64_t bytes_size = 0;
+  nvidia::gxf::Tensor::stride_array_t stride{};
 };
 
 }  // namespace holoscan::ops

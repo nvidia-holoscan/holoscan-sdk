@@ -1,0 +1,329 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "format_util.hpp"
+
+namespace holoscan::viz {
+
+void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* dst_channels,
+                 uint32_t* component_size) {
+  switch (format) {
+    case ImageFormat::R8_UINT:
+    case ImageFormat::R8_SINT:
+    case ImageFormat::R8_UNORM:
+    case ImageFormat::R8_SNORM:
+    case ImageFormat::R8_SRGB:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(uint8_t);
+      break;
+    case ImageFormat::R16_UINT:
+    case ImageFormat::R16_SINT:
+    case ImageFormat::R16_UNORM:
+    case ImageFormat::R16_SNORM:
+    case ImageFormat::R16_SFLOAT:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(uint16_t);
+      break;
+    case ImageFormat::R32_UINT:
+    case ImageFormat::R32_SINT:
+    // packed formats are treated as single component formats
+    case ImageFormat::A2B10G10R10_UNORM_PACK32:
+    case ImageFormat::A2R10G10B10_UNORM_PACK32:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(uint32_t);
+      break;
+    case ImageFormat::R32_SFLOAT:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(float);
+      break;
+    case ImageFormat::R8G8B8_UNORM:
+    case ImageFormat::R8G8B8_SNORM:
+    case ImageFormat::R8G8B8_SRGB:
+      *src_channels = 3u;
+      *dst_channels = 4u;
+      *component_size = sizeof(uint8_t);
+      break;
+    case ImageFormat::R8G8B8A8_UNORM:
+    case ImageFormat::R8G8B8A8_SNORM:
+    case ImageFormat::R8G8B8A8_SRGB:
+    case ImageFormat::B8G8R8A8_UNORM:
+    case ImageFormat::B8G8R8A8_SRGB:
+    case ImageFormat::A8B8G8R8_UNORM_PACK32:
+    case ImageFormat::A8B8G8R8_SRGB_PACK32:
+      *src_channels = *dst_channels = 4u;
+      *component_size = sizeof(uint8_t);
+      break;
+    case ImageFormat::R16G16B16A16_UNORM:
+    case ImageFormat::R16G16B16A16_SNORM:
+    case ImageFormat::R16G16B16A16_SFLOAT:
+      *src_channels = *dst_channels = 4u;
+      *component_size = sizeof(uint16_t);
+      break;
+    case ImageFormat::R32G32B32A32_SFLOAT:
+      *src_channels = *dst_channels = 4u;
+      *component_size = sizeof(float);
+      break;
+    case ImageFormat::D16_UNORM:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(uint16_t);
+      break;
+    case ImageFormat::X8_D24_UNORM:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(uint32_t);
+      break;
+    case ImageFormat::D32_SFLOAT:
+      *src_channels = *dst_channels = 1u;
+      *component_size = sizeof(uint32_t);
+      break;
+    default:
+      throw std::runtime_error("Unhandled image format.");
+  }
+}
+
+vk::Format to_vulkan_format(ImageFormat format) {
+  vk::Format vk_format;
+
+  switch (format) {
+    case ImageFormat::R8_UINT:
+      vk_format = vk::Format::eR8Uint;
+      break;
+    case ImageFormat::R8_SINT:
+      vk_format = vk::Format::eR8Sint;
+      break;
+    case ImageFormat::R8_UNORM:
+      vk_format = vk::Format::eR8Unorm;
+      break;
+    case ImageFormat::R8_SNORM:
+      vk_format = vk::Format::eR8Snorm;
+      break;
+    case ImageFormat::R8_SRGB:
+      vk_format = vk::Format::eR8Srgb;
+      break;
+    case ImageFormat::R16_UINT:
+      vk_format = vk::Format::eR16Uint;
+      break;
+    case ImageFormat::R16_SINT:
+      vk_format = vk::Format::eR16Sint;
+      break;
+    case ImageFormat::R16_UNORM:
+      vk_format = vk::Format::eR16Unorm;
+      break;
+    case ImageFormat::R16_SNORM:
+      vk_format = vk::Format::eR16Snorm;
+      break;
+    case ImageFormat::R16_SFLOAT:
+      vk_format = vk::Format::eR16Sfloat;
+      break;
+    case ImageFormat::R32_UINT:
+      vk_format = vk::Format::eR32Uint;
+      break;
+    case ImageFormat::R32_SINT:
+      vk_format = vk::Format::eR32Sint;
+      break;
+    case ImageFormat::R32_SFLOAT:
+      vk_format = vk::Format::eR32Sfloat;
+      break;
+    case ImageFormat::R8G8B8_UNORM:
+      // there is no rgb format in Vulkan, use rgba instead; data is converted on upload/download
+      vk_format = vk::Format::eR8G8B8A8Unorm;
+      break;
+    case ImageFormat::R8G8B8_SNORM:
+      // there is no rgb format in Vulkan, use rgba instead; data is converted on upload/download
+      vk_format = vk::Format::eR8G8B8A8Snorm;
+      break;
+    case ImageFormat::R8G8B8_SRGB:
+      // there is no rgb format in Vulkan, use rgba instead; data is converted on upload/download
+      vk_format = vk::Format::eR8G8B8A8Srgb;
+      break;
+    case ImageFormat::R8G8B8A8_UNORM:
+      vk_format = vk::Format::eR8G8B8A8Unorm;
+      break;
+    case ImageFormat::R8G8B8A8_SNORM:
+      vk_format = vk::Format::eR8G8B8A8Snorm;
+      break;
+    case ImageFormat::R8G8B8A8_SRGB:
+      vk_format = vk::Format::eR8G8B8A8Srgb;
+      break;
+    case ImageFormat::R16G16B16A16_UNORM:
+      vk_format = vk::Format::eR16G16B16A16Unorm;
+      break;
+    case ImageFormat::R16G16B16A16_SNORM:
+      vk_format = vk::Format::eR16G16B16A16Snorm;
+      break;
+    case ImageFormat::R16G16B16A16_SFLOAT:
+      vk_format = vk::Format::eR16G16B16A16Sfloat;
+      break;
+    case ImageFormat::R32G32B32A32_SFLOAT:
+      vk_format = vk::Format::eR32G32B32A32Sfloat;
+      break;
+    case ImageFormat::D16_UNORM:
+      vk_format = vk::Format::eD16Unorm;
+      break;
+    case ImageFormat::X8_D24_UNORM:
+      vk_format = vk::Format::eX8D24UnormPack32;
+      break;
+    case ImageFormat::D32_SFLOAT:
+      vk_format = vk::Format::eD32Sfloat;
+      break;
+    case ImageFormat::A2B10G10R10_UNORM_PACK32:
+      vk_format = vk::Format::eA2B10G10R10UnormPack32;
+      break;
+    case ImageFormat::A2R10G10B10_UNORM_PACK32:
+      vk_format = vk::Format::eA2R10G10B10UnormPack32;
+      break;
+    case ImageFormat::B8G8R8A8_UNORM:
+      vk_format = vk::Format::eB8G8R8A8Unorm;
+      break;
+    case ImageFormat::B8G8R8A8_SRGB:
+      vk_format = vk::Format::eB8G8R8A8Srgb;
+      break;
+    case ImageFormat::A8B8G8R8_UNORM_PACK32:
+      vk_format = vk::Format::eA8B8G8R8UnormPack32;
+      break;
+    case ImageFormat::A8B8G8R8_SRGB_PACK32:
+      vk_format = vk::Format::eA8B8G8R8SrgbPack32;
+      break;
+    default:
+      throw std::runtime_error("Unhandled image format.");
+  }
+
+  return vk_format;
+}
+
+std::optional<ImageFormat> to_image_format(vk::Format vk_format) {
+  std::optional<ImageFormat> image_format;
+
+  switch (vk_format) {
+    case vk::Format::eR8Uint:
+      image_format = ImageFormat::R8_UINT;
+      break;
+    case vk::Format::eR8Sint:
+      image_format = ImageFormat::R8_SINT;
+      break;
+    case vk::Format::eR8Unorm:
+      image_format = ImageFormat::R8_UNORM;
+      break;
+    case vk::Format::eR8Snorm:
+      image_format = ImageFormat::R8_SNORM;
+      break;
+    case vk::Format::eR8Srgb:
+      image_format = ImageFormat::R8_SRGB;
+      break;
+    case vk::Format::eR16Uint:
+      image_format = ImageFormat::R16_UINT;
+      break;
+    case vk::Format::eR16Sint:
+      image_format = ImageFormat::R16_SINT;
+      break;
+    case vk::Format::eR16Unorm:
+      image_format = ImageFormat::R16_UNORM;
+      break;
+    case vk::Format::eR16Snorm:
+      image_format = ImageFormat::R16_SNORM;
+      break;
+    case vk::Format::eR16Sfloat:
+      image_format = ImageFormat::R16_SFLOAT;
+      break;
+    case vk::Format::eR32Uint:
+      image_format = ImageFormat::R32_UINT;
+      break;
+    case vk::Format::eR32Sint:
+      image_format = ImageFormat::R32_SINT;
+      break;
+    case vk::Format::eR32Sfloat:
+      image_format = ImageFormat::R32_SFLOAT;
+      break;
+    case vk::Format::eR8G8B8A8Unorm:
+      image_format = ImageFormat::R8G8B8A8_UNORM;
+      break;
+    case vk::Format::eR8G8B8A8Snorm:
+      image_format = ImageFormat::R8G8B8A8_SNORM;
+      break;
+    case vk::Format::eR8G8B8A8Srgb:
+      image_format = ImageFormat::R8G8B8A8_SRGB;
+      break;
+    case vk::Format::eR16G16B16A16Unorm:
+      image_format = ImageFormat::R16G16B16A16_UNORM;
+      break;
+    case vk::Format::eR16G16B16A16Snorm:
+      image_format = ImageFormat::R16G16B16A16_SNORM;
+      break;
+    case vk::Format::eR16G16B16A16Sfloat:
+      image_format = ImageFormat::R16G16B16A16_SFLOAT;
+      break;
+    case vk::Format::eR32G32B32A32Sfloat:
+      image_format = ImageFormat::R32G32B32A32_SFLOAT;
+      break;
+    case vk::Format::eD16Unorm:
+      image_format = ImageFormat::D16_UNORM;
+      break;
+    case vk::Format::eX8D24UnormPack32:
+      image_format = ImageFormat::X8_D24_UNORM;
+      break;
+    case vk::Format::eD32Sfloat:
+      image_format = ImageFormat::D32_SFLOAT;
+      break;
+    case vk::Format::eA2B10G10R10UnormPack32:
+      image_format = ImageFormat::A2B10G10R10_UNORM_PACK32;
+      break;
+    case vk::Format::eA2R10G10B10UnormPack32:
+      image_format = ImageFormat::A2R10G10B10_UNORM_PACK32;
+      break;
+    case vk::Format::eB8G8R8A8Unorm:
+      image_format = ImageFormat::B8G8R8A8_UNORM;
+      break;
+    case vk::Format::eB8G8R8A8Srgb:
+      image_format = ImageFormat::B8G8R8A8_SRGB;
+      break;
+    case vk::Format::eA8B8G8R8UnormPack32:
+      image_format = ImageFormat::A8B8G8R8_UNORM_PACK32;
+      break;
+    case vk::Format::eA8B8G8R8SrgbPack32:
+      image_format = ImageFormat::A8B8G8R8_SRGB_PACK32;
+      break;    default:
+      break;
+  }
+
+  return image_format;
+}
+
+vk::ColorSpaceKHR to_vulkan_color_space(ColorSpace color_space) {
+  vk::ColorSpaceKHR vk_color_space;
+  switch (color_space) {
+    case ColorSpace::SRGB_NONLINEAR:
+      vk_color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
+      break;
+    case ColorSpace::EXTENDED_SRGB_LINEAR_EXT:
+      vk_color_space = vk::ColorSpaceKHR::eExtendedSrgbLinearEXT;
+      break;
+    case ColorSpace::BT2020_LINEAR:
+      vk_color_space = vk::ColorSpaceKHR::eBt2020LinearEXT;
+      break;
+    case ColorSpace::HDR10_ST2084:
+      vk_color_space = vk::ColorSpaceKHR::eHdr10St2084EXT;
+      break;
+    case ColorSpace::PASS_THROUGH:
+      vk_color_space = vk::ColorSpaceKHR::ePassThroughEXT;
+      break;
+    default:
+      throw std::runtime_error("Unhandled color space.");
+  }
+
+  return vk_color_space;
+}
+
+}  // namespace holoscan::viz

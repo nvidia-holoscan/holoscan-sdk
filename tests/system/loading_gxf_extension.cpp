@@ -149,7 +149,7 @@ TEST(Extensions, LoadFromConfigFile) {
 TEST(Extensions, LoadFromConfigFileAfterAccessingExecutor) {
   auto app = make_application<DummyApp>();
   // Access executor before calling config() or run() method to see if it works
-  app->executor().context();
+  app->executor();
 
   const std::string config_file = test_config.get_test_data_file("loading_gxf_extension.yaml");
   app->config(config_file);

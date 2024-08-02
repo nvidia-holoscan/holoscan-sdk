@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -169,6 +169,10 @@ struct codec<ops::HolovizOp::InputSpec> {
     if (!maybe_size) { forward_error(maybe_size); }
     total_size += maybe_size.value();
 
+    maybe_size = serialize_trivial_type<ops::HolovizOp::ImageFormat>(spec.image_format_, endpoint);
+    if (!maybe_size) { forward_error(maybe_size); }
+    total_size += maybe_size.value();
+
     maybe_size = codec<std::vector<float>>::serialize(spec.color_, endpoint);
     if (!maybe_size) { forward_error(maybe_size); }
     total_size += maybe_size.value();
@@ -215,6 +219,10 @@ struct codec<ops::HolovizOp::InputSpec> {
     auto priority = deserialize_trivial_type<int32_t>(endpoint);
     if (!priority) { forward_error(priority); }
     out.priority_ = priority.value();
+
+    auto image_format = deserialize_trivial_type<ops::HolovizOp::ImageFormat>(endpoint);
+    if (!image_format) { forward_error(image_format); }
+    out.image_format_ = image_format.value();
 
     auto color = codec<std::vector<float>>::deserialize(endpoint);
     if (!color) { forward_error(color); }

@@ -51,7 +51,7 @@ class PyInputContext : public gxf::GXFInputContext {
                  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,
                  py::object py_op);
 
-  py::object py_receive(const std::string& name);
+  py::object py_receive(const std::string& name, const std::string& kind);
 
  private:
   py::object py_op_ = py::none();

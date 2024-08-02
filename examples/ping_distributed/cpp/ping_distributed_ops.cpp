@@ -173,6 +173,8 @@ void PingTensorTxOp::compute(InputContext&, OutputContext& op_output, ExecutionC
   out_message.insert({tensor_name_.get().c_str(), holoscan_tensor});
 
   op_output.emit(out_message);
+
+  HOLOSCAN_LOG_INFO("Sent message {}", count_++);
 }
 
 void PingTensorRxOp::setup(OperatorSpec& spec) {
@@ -183,7 +185,7 @@ void PingTensorRxOp::compute(InputContext& op_input, OutputContext&, ExecutionCo
   auto in_message = op_input.receive<holoscan::TensorMap>("in").value();
   TensorMap out_message;
   for (auto& [key, tensor] : in_message) {  // Process with 'tensor' here.
-    HOLOSCAN_LOG_INFO("message {}: Tensor key: '{}', shape: ({})",
+    HOLOSCAN_LOG_INFO("Received message {}: Tensor key: '{}', shape: ({})",
                       count_++,
                       key,
                       fmt::join(tensor->shape(), ", "));

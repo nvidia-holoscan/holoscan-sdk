@@ -43,6 +43,8 @@ void Operator::initialize() {
       // (DFFT)
       this->set_op_backend();
     }
+    // enable metadata on a per-fragment basis
+    is_metadata_enabled_ = fragment_ptr->is_metadata_enabled();
   } else {
     HOLOSCAN_LOG_WARN("Operator::initialize() - Fragment is not set");
   }

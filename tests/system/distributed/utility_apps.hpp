@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef SYSTEM_UTILITY_APPS_HPP
-#define SYSTEM_UTILITY_APPS_HPP
+#ifndef SYSTEM_DISTRIBUTED_UTILITY_APPS_HPP
+#define SYSTEM_DISTRIBUTED_UTILITY_APPS_HPP
 
 #include <chrono>
 #include <memory>
@@ -161,7 +161,7 @@ class PingMultiReceiversParamRxOp : public Operator {
   PingMultiReceiversParamRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
@@ -174,7 +174,6 @@ class PingMultiReceiversParamRxOp : public Operator {
   };
 
  private:
-  Parameter<std::vector<IOSpec*>> receivers_;
   int count_ = 1;
 };
 
@@ -568,9 +567,9 @@ class TwoMultiInputsOutputsFragmentsApp2 : public holoscan::Application {
 };
 
 /**
- * @brief Test that UCXTransmitter/UCXReceiver works with MultiThreadedScheduler.
+ * @brief Test that UcxTransmitter/UcxReceiver works with MultiThreadedScheduler.
  *
- * UCXTransmitter/UCXReceiver doesn't work with GreedyScheduler with the following graph.
+ * UcxTransmitter/UcxReceiver doesn't work with GreedyScheduler with the following graph.
  *
  * - Fragment (fragment1)
  *   - Operator (op1)
@@ -583,7 +582,7 @@ class TwoMultiInputsOutputsFragmentsApp2 : public holoscan::Application {
  *       - in1
  *       - in2
  *
- * With the following graph connections, due to how UCXTransmitter/UCXReceiver works,
+ * With the following graph connections, due to how UcxTransmitter/UcxReceiver works,
  * UCX connections between op1 and op3 and between op2 and op3 are not established
  * (resulting in a deadlock).
  *
@@ -642,11 +641,11 @@ class UCXConnectionApp2 : public holoscan::Application {
 };
 
 /**
- * @brief The UCXLinearPipelineApp is an application class designed to test the UCXTransmitter and
- * UCXReceiver in a simple linear pipeline context.
+ * @brief The UCXLinearPipelineApp is an application class designed to test the UcxTransmitter and
+ * UcxReceiver in a simple linear pipeline context.
  *
  * The purpose of UCXLinearPipelineApp is to test the linear data flow within the holoscan
- * framework. It uses a UCXTransmitter and a UCXReceiver in a configuration where three fragments
+ * framework. It uses a UcxTransmitter and a UcxReceiver in a configuration where three fragments
  * are connected in a linear pipeline. The data flow from the transmitter in fragment1 through an
  * intermediary fragment2 to the receiver in fragment3.
  *
@@ -688,8 +687,8 @@ class UCXLinearPipelineApp : public holoscan::Application {
 /**
  * @brief An application class for testing broadcasting capabilities in a UCX context.
  *
- * The UCXBroadcastApp class is designed to simulate a broadcast scenario using UCXTransmitter and
- * UCXReceiver. It creates a data flow that starts with a single transmitter in one fragment
+ * The UCXBroadcastApp class is designed to simulate a broadcast scenario using UcxTransmitter and
+ * UcxReceiver. It creates a data flow that starts with a single transmitter in one fragment
  * (fragment1), passes through a broadcaster in a second fragment (fragment2), and then proceeds to
  * two separate receivers in two different fragments (fragment3 and fragment4). This models a
  * typical scenario where data from a single source is required by multiple destinations.
@@ -738,7 +737,7 @@ class UCXBroadcastApp : public holoscan::Application {
 /**
  * @brief Application class for testing broadcasting in a multi-receiver context.
  *
- * The UCXBroadCastMultiReceiverApp class is a test case for UCXTransmitter and UCXReceiver when
+ * The UCXBroadCastMultiReceiverApp class is a test case for UcxTransmitter and UcxReceiver when
  * used in a multi-receiver context. The topology is comprised of four fragments, where fragment1
  * serves as a broadcaster, fragment2 as a multi-receivers, fragment3 as a simple transmitter, and
  * fragment4 as a receiver. Unlike UCXConnectionApp, this class employs
@@ -791,4 +790,4 @@ class UCXBroadCastMultiReceiverApp : public holoscan::Application {
 
 }  // namespace holoscan
 
-#endif /* SYSTEM_UTILITY_APPS_HPP */
+#endif /* SYSTEM_DISTRIBUTED_UTILITY_APPS_HPP */

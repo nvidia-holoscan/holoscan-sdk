@@ -22,9 +22,12 @@
 
 #include <list>
 #include <memory>
+#include <vector>
 
 #include "holoviz/image_format.hpp"
 #include "holoviz/init_flags.hpp"
+#include "holoviz/present_mode.hpp"
+#include "holoviz/surface_format.hpp"
 #include "util/non_copyable.hpp"
 
 struct ImGuiContext;
@@ -79,11 +82,16 @@ class Context : public NonCopyable {
   /**
    * Initialize the context and create a window with the given properties.
    *
-   * @param width, height     window size
-   * @param title             window title
-   * @param flags             init flags
+   * @param width, height   window size
+   * @param title           window title
+   * @param flags           init flags
+   * @param display_name    if the `FULLSCREEN` init flag is specified, this is the name of the
+   *                        display to use for full screen mode. Use the output name provided by
+   *                        `xrandr` or `hwinfo --monitor`. If nullptr then the primary display is
+   *                        selected.
    */
-  void init(uint32_t width, uint32_t height, const char* title, InitFlags flags);
+  void init(uint32_t width, uint32_t height, const char* title, InitFlags flags,
+            const char* display_name = nullptr);
 
   /**
    * Initialize the context and create a exclusive window with the given properties.
@@ -102,6 +110,22 @@ class Context : public NonCopyable {
             InitFlags flags);
 
   /**
+   * Get the surface formats supported by the current window. Throws if no window is open.
+   *
+   * @returns supported surface formats
+   */
+  std::vector<SurfaceFormat> get_surface_formats() const;
+
+  /**
+   * Set the framebuffer surface format, do this before calling viz::Init().
+   *
+   * Default is 'B8G8R8A8_UNORM'.
+   *
+   * @param surface_format framebuffer surface format
+   */
+  void set_surface_format(SurfaceFormat surface_format);
+
+  /**
    * Get the window object.
    *
    * @return window object
@@ -109,10 +133,26 @@ class Context : public NonCopyable {
   Window* get_window() const;
 
   /**
+   * Get the supported present modes by the current window. Throws if no window is open.
+   *
+   * @returns supported present modes
+   */
+  std::vector<PresentMode> get_present_modes() const;
+
+  /**
+   * Set the present mode.
+   *
+   * The present mode can be changed any time.
+   *
+   * @param present_mode present mode
+   */
+  void set_present_mode(PresentMode present_mode);
+
+  /**
    * Set the Cuda stream used by Holoviz for Cuda operations.
    *
    * The default stream is 0, i.e. non-concurrent mode. All Cuda commands issued by Holoviz
-   * then provides the pointer  use that stream.
+   * then provides the pointer use that stream.
    * The stream can be changed any time.
    *
    * @param stream    Cuda stream to use

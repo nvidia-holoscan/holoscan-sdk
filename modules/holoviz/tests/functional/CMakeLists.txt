@@ -43,7 +43,10 @@ target_sources(${PROJECT_NAME}
         init_test.cpp
         instance_test.cpp
         layer_test.cpp
+        present_mode_test.cpp
         read_framebuffer_test.cpp
+        surface_format_test.cpp
+        vsync_test.cpp
 
         ../../src/cuda/cuda_service.cpp
     )

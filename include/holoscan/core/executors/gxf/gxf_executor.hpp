@@ -259,7 +259,7 @@ class GXFExecutor : public holoscan::Executor {
    *  `intialize_scheduler`.
    *
    * @param resources Unordered map of GXF resources.
-   * @param gxf_uid_t The entity to which the resources will be assigned.
+   * @param eid The entity to which the resources will be assigned.
    * @param graph_entity nvidia::gxf::GraphEntity pointer for the resources.
    *
    */

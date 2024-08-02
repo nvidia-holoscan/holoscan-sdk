@@ -32,6 +32,8 @@
 
 #include "../context.hpp"
 #include "../cuda/cuda_service.hpp"
+#include "../cuda/gen_depth_map.hpp"
+#include "../vulkan/buffer.hpp"
 #include "../vulkan/vulkan_app.hpp"
 
 namespace holoscan::viz {
@@ -121,13 +123,15 @@ class Text {
 class DepthMap {
  public:
   DepthMap(const Attributes& attributes, DepthMapRenderMode render_mode, uint32_t width,
-           uint32_t height, CUdeviceptr depth_device_ptr, CUdeviceptr color_device_ptr,
-           CUstream cuda_stream)
+           uint32_t height, ImageFormat depth_fmt, CUdeviceptr depth_device_ptr,
+           ImageFormat color_fmt, CUdeviceptr color_device_ptr, CUstream cuda_stream)
       : attributes_(attributes),
         render_mode_(render_mode),
         width_(width),
         height_(height),
+        depth_fmt_(depth_fmt),
         depth_device_ptr_(depth_device_ptr),
+        color_fmt_(color_fmt),
         color_device_ptr_(color_device_ptr),
         cuda_stream_(cuda_stream) {}
 
@@ -136,14 +140,17 @@ class DepthMap {
     // will be uploaded each frame. The *_device_ptr_ is updated in the can_be_reused() function
     // below.
     return ((attributes_ == rhs.attributes_) && (render_mode_ == rhs.render_mode_) &&
-            (width_ == rhs.width_) && (height_ == rhs.height_));
+            (width_ == rhs.width_) && (height_ == rhs.height_) && (depth_fmt_ == rhs.depth_fmt_) &&
+            (color_fmt_ == rhs.color_fmt_));
   }
 
   const Attributes attributes_;
   const DepthMapRenderMode render_mode_;
   const uint32_t width_;
   const uint32_t height_;
+  ImageFormat color_fmt_;
   CUdeviceptr color_device_ptr_;
+  ImageFormat depth_fmt_;
   CUdeviceptr depth_device_ptr_;
   CUstream cuda_stream_;
 
@@ -185,16 +192,16 @@ class GeometryLayer::Impl {
   float aspect_ratio_ = 1.f;
 
   size_t vertex_count_ = 0;
-  Vulkan::Buffer* vertex_buffer_ = nullptr;
+  Buffer* vertex_buffer_ = nullptr;
 
   std::unique_ptr<ImDrawList> text_draw_list_;
-  Vulkan::Buffer* text_vertex_buffer_ = nullptr;
-  Vulkan::Buffer* text_index_buffer_ = nullptr;
+  Buffer* text_vertex_buffer_ = nullptr;
+  Buffer* text_index_buffer_ = nullptr;
 
   size_t depth_map_vertex_count_ = 0;
-  Vulkan::Buffer* depth_map_vertex_buffer_ = nullptr;
-  Vulkan::Buffer* depth_map_index_buffer_ = nullptr;
-  Vulkan::Buffer* depth_map_color_buffer_ = nullptr;
+  Buffer* depth_map_vertex_buffer_ = nullptr;
+  Buffer* depth_map_index_buffer_ = nullptr;
+  Buffer* depth_map_color_buffer_ = nullptr;
 };
 
 GeometryLayer::GeometryLayer() : Layer(Type::Geometry), impl_(new GeometryLayer::Impl) {}
@@ -331,8 +338,9 @@ void GeometryLayer::depth_map(DepthMapRenderMode render_mode, uint32_t width, ui
   if ((width == 0) || (height == 0)) {
     throw std::invalid_argument("width or height should not be zero");
   }
-  if (depth_fmt != ImageFormat::R8_UNORM) {
-    throw std::invalid_argument("The depth format should be ImageFormat::R8_UNORM");
+  if (!(depth_fmt == ImageFormat::R8_UNORM || depth_fmt == ImageFormat::D32_SFLOAT)) {
+    throw std::invalid_argument(
+        "The depth format should be one of: ImageFormat::R8_UNORM, ImageFormat::D32_SFLOAT");
   }
   if (depth_device_ptr == 0) {
     throw std::invalid_argument("The depth device pointer should not be 0");
@@ -345,7 +353,9 @@ void GeometryLayer::depth_map(DepthMapRenderMode render_mode, uint32_t width, ui
                                   render_mode,
                                   width,
                                   height,
+                                  depth_fmt,
                                   depth_device_ptr,
+                                  color_fmt,
                                   color_device_ptr,
                                   Context::get().get_cuda_stream());
 }
@@ -559,62 +569,28 @@ void GeometryLayer::end(Vulkan* vulkan) {
 
       if (index_count) {
         // generate index data
-        std::unique_ptr<uint32_t> index_data(new uint32_t[index_count]);
-
-        uint32_t* dst = index_data.get();
-        for (auto&& depth_map : impl_->depth_maps_) {
-          depth_map.index_offset_ = dst - index_data.get();
-
-          switch (depth_map.render_mode_) {
-            case DepthMapRenderMode::LINES:
-              for (uint32_t y = 0; y < depth_map.height_ - 1; ++y) {
-                for (uint32_t x = 0; x < depth_map.width_ - 1; ++x) {
-                  const uint32_t i = (y * depth_map.width_) + x;
-                  dst[0] = i;
-                  dst[1] = i + 1;
-                  dst[2] = i;
-                  dst[3] = i + depth_map.width_;
-                  dst += 4;
-                }
-                // last column
-                const uint32_t i = (y * depth_map.width_) + depth_map.width_ - 1;
-                dst[0] = i;
-                dst[1] = i + depth_map.width_;
-                dst += 2;
-              }
-              // last row
-              for (uint32_t x = 0; x < depth_map.width_ - 1; ++x) {
-                const uint32_t i = ((depth_map.height_ - 1) * depth_map.width_) + x;
-                dst[0] = i;
-                dst[1] = i + 1;
-                dst += 2;
-              }
-              break;
-            case DepthMapRenderMode::TRIANGLES:
-              for (uint32_t y = 0; y < depth_map.height_ - 1; ++y) {
-                for (uint32_t x = 0; x < depth_map.width_ - 1; ++x) {
-                  const uint32_t i = (y * depth_map.width_) + x;
-                  dst[0] = i;
-                  dst[1] = i + 1;
-                  dst[2] = i + depth_map.width_;
-                  dst[3] = i + 1;
-                  dst[4] = i + depth_map.width_ + 1;
-                  dst[5] = i + depth_map.width_;
-                  dst += 6;
-                }
-              }
-              break;
-            default:
-              throw std::runtime_error("Unhandled render mode");
-          }
-        }
-        if ((dst - index_data.get()) != index_count) {
-          throw std::runtime_error("Index count mismatch.");
-        }
         impl_->depth_map_index_buffer_ =
-            vulkan->create_buffer(index_count * sizeof(uint32_t),
-                                  index_data.get(),
+            vulkan->create_buffer_for_cuda_interop(index_count * sizeof(uint32_t),
                                   vk::BufferUsageFlagBits::eIndexBuffer);
+
+        CudaService* const cuda_service = vulkan->get_cuda_service();
+        const CudaService::ScopedPush cuda_context = cuda_service->PushContext();
+
+        const CUstream stream = Context::get().get_cuda_stream();
+        impl_->depth_map_index_buffer_->begin_access_with_cuda(stream);
+
+        size_t offset = 0;
+        for (auto&& depth_map : impl_->depth_maps_) {
+          depth_map.index_offset_ = offset;
+          const CUdeviceptr dst = impl_->depth_map_index_buffer_->device_ptr_.get() + offset;
+          offset += GenDepthMapIndices(depth_map.render_mode_,
+                            depth_map.width_,
+                            depth_map.height_,
+                            dst,
+                            stream);
+        }
+        // indicate that the index buffer had been used by CUDA
+        impl_->depth_map_index_buffer_->end_access_with_cuda(stream);
       }
 
       if (has_color_buffer) {
@@ -624,52 +600,38 @@ void GeometryLayer::end(Vulkan* vulkan) {
       }
 
       impl_->depth_map_vertex_buffer_ =
-          vulkan->create_buffer(impl_->depth_map_vertex_count_ * 3 * sizeof(float),
-                                nullptr,
-                                vk::BufferUsageFlagBits::eVertexBuffer);
+          vulkan->create_buffer_for_cuda_interop(impl_->depth_map_vertex_count_ * 3 * sizeof(float),
+                                                 vk::BufferUsageFlagBits::eVertexBuffer);
     }
 
-    // generate and upload vertex data
-    std::unique_ptr<float> vertex_data(new float[impl_->depth_map_vertex_count_ * 3]);
-    float* dst = vertex_data.get();
+    // generate the vertex data
+    {
+      CudaService* const cuda_service = vulkan->get_cuda_service();
+      const CudaService::ScopedPush cuda_context = cuda_service->PushContext();
 
-    for (auto&& depth_map : impl_->depth_maps_) {
-      depth_map.vertex_offset_ = (dst - vertex_data.get()) / 3;
+      size_t offset = 0;
+      for (auto&& depth_map : impl_->depth_maps_) {
+        // select the stream to be used by CUDA operations
+        const CUstream stream = cuda_service->select_cuda_stream(depth_map.cuda_stream_);
 
-      // download the depth map data and create 3D position data for each depth value
-      /// @todo this is not optimal. It would be faster to use a vertex or geometry shader which
-      ///       directly fetches the depth data and generates primitive (geometry shader) or emits
-      ///       the 3D position vertex (vertex shader)
-      std::unique_ptr<uint8_t> host_data(new uint8_t[depth_map.width_ * depth_map.height_]);
-      CudaRTCheck(cudaMemcpyAsync(reinterpret_cast<void*>(host_data.get()),
-                                  reinterpret_cast<const void*>(depth_map.depth_device_ptr_),
-                                  depth_map.width_ * depth_map.height_ * sizeof(uint8_t),
-                                  cudaMemcpyDeviceToHost,
-                                  depth_map.cuda_stream_));
-      CudaRTCheck(cudaStreamSynchronize(depth_map.cuda_stream_));
+        impl_->depth_map_vertex_buffer_->begin_access_with_cuda(stream);
 
-      const uint8_t* src = host_data.get();
-      const float inv_width = 1.f / float(depth_map.width_);
-      const float inv_height = 1.f / float(depth_map.height_);
-      for (uint32_t y = 0; y < depth_map.height_; ++y) {
-        for (uint32_t x = 0; x < depth_map.width_; ++x) {
-          dst[0] = float(x) * inv_width - 0.5f;
-          dst[1] = float(y) * inv_height - 0.5f;
-          dst[2] = float(src[0]) / 255.f;
-          src += 1;
-          dst += 3;
-        }
+        depth_map.vertex_offset_ = offset;
+        const CUdeviceptr dst = impl_->depth_map_vertex_buffer_->device_ptr_.get() + offset;
+        GenDepthMapCoords(depth_map.depth_fmt_,
+                          depth_map.width_,
+                          depth_map.height_,
+                          depth_map.depth_device_ptr_,
+                          dst,
+                          stream);
+        offset += depth_map.width_ * depth_map.height_ * sizeof(float) * 3;
+
+        // indicate that the buffer had been used by CUDA
+        impl_->depth_map_vertex_buffer_->end_access_with_cuda(stream);
+
+        CudaService::sync_with_selected_stream(depth_map.cuda_stream_, stream);
       }
     }
-
-    if ((dst - vertex_data.get()) != impl_->depth_map_vertex_count_ * 3) {
-      throw std::runtime_error("Vertex data count mismatch.");
-    }
-
-    // upload vertex data
-    vulkan->upload_to_buffer(impl_->depth_map_vertex_count_ * 3 * sizeof(float),
-                             vertex_data.get(),
-                             impl_->depth_map_vertex_buffer_);
 
     // upload color data
     size_t offset = 0;
@@ -746,7 +708,7 @@ void GeometryLayer::render(Vulkan* vulkan) {
     // draw depth maps
     if (!impl_->depth_maps_.empty()) {
       for (auto&& depth_map : impl_->depth_maps_) {
-        std::vector<Vulkan::Buffer*> vertex_buffers;
+        std::vector<Buffer*> vertex_buffers;
         vertex_buffers.push_back(impl_->depth_map_vertex_buffer_);
         if (depth_map.color_device_ptr_) {
           vertex_buffers.push_back(impl_->depth_map_color_buffer_);

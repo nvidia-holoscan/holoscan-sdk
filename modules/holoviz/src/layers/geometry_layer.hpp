@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,10 +92,12 @@ class GeometryLayer : public Layer {
   /**
    * Render a depth map.
    *
+   * Supported depth formats are: R8_UNORM, D32_SFLOAT.
+   *
    * @param render_mode       depth map render mode
    * @param width             width of the depth map
    * @param height            height of the depth map
-   * @param depth_fmt         format of the depth map data (has to be ImageFormat::R8_UNORM)
+   * @param depth_fmt         format of the depth map data
    * @param depth_device_ptr  Cuda device memory pointer holding the depth data
    * @param color_fmt         format of the color data (has to be ImageFormat::R8G8B8A8_UNORM)
    * @param color_device_ptr  Cuda device memory pointer holding the color data (optional)

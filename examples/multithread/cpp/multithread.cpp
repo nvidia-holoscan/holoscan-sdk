@@ -92,10 +92,16 @@ class PingRxOp : public Operator {
   explicit PingRxOp(bool silent) : silent_(silent) {}
 
   void setup(OperatorSpec& spec) override {
-    spec.param(
-        names_, "names", "Input receivers for names", "List of input receivers for names.", {});
-    spec.param(
-        values_, "values", "Input receivers for values", "List of input receivers for values.", {});
+    // // Since Holoscan SDK v2.3, users can define a multi-receiver input port using 'spec.input()'
+    // // with 'IOSpec::kAnySize'.
+    // // The old way is to use 'spec.param()' with 'Parameter<std::vector<IOSpec*>> receivers_;'.
+    // spec.param(
+    //     names_, "names", "Input receivers for names", "List of input receivers for names.", {});
+    // spec.param(
+    //     values_, "values", "Input receivers for values", "List of input receivers for values.",
+    //     {});
+    spec.input<std::vector<std::string>>("names", IOSpec::kAnySize);
+    spec.input<std::vector<int>>("values", IOSpec::kAnySize);
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
@@ -113,8 +119,9 @@ class PingRxOp : public Operator {
   };
 
  private:
-  Parameter<std::vector<IOSpec*>> names_;
-  Parameter<std::vector<IOSpec*>> values_;
+  // // Since Holoscan SDK v2.3, the following lines are no longer needed.
+  // Parameter<std::vector<IOSpec*>> names_;
+  // Parameter<std::vector<IOSpec*>> values_;
   bool silent_ = false;
 };
 

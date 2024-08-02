@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,7 +37,6 @@ class PingTensorRxOp : public Operator {
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override;
 
  private:
-  Parameter<std::vector<IOSpec*>> receivers_;
   int count_ = 1;
   Parameter<std::string> tensor_name_;
 };

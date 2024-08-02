@@ -4,6 +4,7 @@ The units of work of Holoscan applications are implemented within Operators, as 
 
 ___
 
+(holoscan-operators=)
 ## Operators
 
 The operators below are defined under the `holoscan::ops` namespace for C++ and CMake, and under the `holoscan.operators` module in Python.

@@ -18,6 +18,7 @@
 
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/message.hpp"
+#include "holoscan/core/metadata.hpp"
 #include "operator_wrapper.hpp"
 
 GXF_EXT_FACTORY_BEGIN()
@@ -29,6 +30,8 @@ GXF_EXT_FACTORY_ADD_0(0x61510ca06aa9493b, 0x8a777d0bf87476b7, holoscan::Message,
                       "Holoscan message type");
 GXF_EXT_FACTORY_ADD_0(0xa5eb0ed57d7f4aa2, 0xb5865ccca0ef955c, holoscan::Tensor,
                       "Holoscan's Tensor type");
+GXF_EXT_FACTORY_ADD_0(0x112607eb7b23407c, 0xb93fcd10ad8b2ba7, holoscan::MetadataDictionary,
+                      "Holoscan's MetaDataDictionary type");
 
 // Register the wrapper codelet
 GXF_EXT_FACTORY_ADD(0x04f99794e01b4bd1, 0xb42653a2e6d07347, holoscan::gxf::OperatorWrapper,

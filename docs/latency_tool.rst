@@ -779,7 +779,7 @@ errors, the following steps may help resolve the issue.
 
 2. **Problem:** An error like the following is output:
 
-   .. code::
+   .. code:: text
 
       ERROR: The requested format (1920x1080 @ 60Hz) does not match
              the current display mode (1024x768 @ 60Hz)

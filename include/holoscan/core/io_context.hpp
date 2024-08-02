@@ -43,6 +43,10 @@ namespace holoscan {
 struct NoMessageType {};
 constexpr NoMessageType kNoReceivedMessage;
 
+// To indicate that type casting is not possible
+struct NoCastableType {};
+constexpr NoCastableType kNoTypeCastableMessage;
+
 static inline std::string get_well_formed_name(
     const char* name, const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_list) {
   std::string well_formed_name;
@@ -197,7 +201,8 @@ class InputContext {
       if (it == params.end()) {
         // the name is not a parameter, so it must be an input
         auto& inputs = op_->spec()->inputs();
-        if (inputs.find(std::string(name)) == inputs.end()) {
+        auto input_it = inputs.find(std::string(name));
+        if (input_it == inputs.end()) {
           auto error_message =
               fmt::format("Unable to find input parameter or input port with name '{}'", name);
           // Keep the debugging info on for development purposes
@@ -215,12 +220,42 @@ class InputContext {
               holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
         }
         try {
-          DataT result = std::any_cast<DataT>(value);
-          return result;
+          // Check if the user is trying to receive a vector of the original type
+          if constexpr (std::is_same_v<typename DataT::value_type, std::any>) {
+            std::vector<std::any> value_vector;
+            // Push the first value
+            value_vector.push_back(std::move(value));
+            value = receive_impl(name);
+            // Keep pushing the values until we reach a nullptr
+            while (value.type() != typeid(NoMessageType)) {
+              value_vector.push_back(std::move(value));
+              value = receive_impl(name);
+            }
+            return value_vector;
+          } else if (value.type() == typeid(typename holoscan::element_of_t<DataT>)) {
+            DataT value_vector;
+            // Push the first value
+            value_vector.push_back(
+                std::any_cast<typename holoscan::element_of_t<DataT>>(std::move(value)));
+            value = receive_impl(name);
+            // Keep pushing the values until we reach a nullptr
+            while (value.type() != typeid(NoMessageType)) {
+              value_vector.push_back(
+                  std::any_cast<typename holoscan::element_of_t<DataT>>(std::move(value)));
+              value = receive_impl(name);
+            }
+            return value_vector;
+          } else {
+            DataT result = std::any_cast<DataT>(value);
+            return result;
+          }
         } catch (const std::bad_any_cast& e) {
           auto error_message = fmt::format(
-              "Unable to cast input (DataT of type std::vector) with input name '{}' ({}).",
+              "Unable to cast the received data to the specified type ({}) for input '{}' of type "
+              "{}: {}",
+              nvidia::TypenameAsString<DataT>(),
               name,
+              value.type().name(),
               e.what());
           HOLOSCAN_LOG_DEBUG(error_message);
           return make_unexpected<holoscan::RuntimeError>(
@@ -264,11 +299,14 @@ class InputContext {
             input_vector.push_back(std::move(casted_value));
           }
         } catch (const std::bad_any_cast& e) {
-          auto error_message =
-              fmt::format("Unable to cast input (DataT::value_type) with name '{}:{}' ({}).",
-                          name,
-                          index,
-                          e.what());
+          auto error_message = fmt::format(
+              "Unable to cast the received data to the specified type ({}) for input '{}:{}' of "
+              "type {}: {}",
+              nvidia::TypenameAsString<DataT>(),
+              name,
+              index,
+              value.type().name(),
+              e.what());
           try {
             // An empty holoscan::gxf::Entity will be added to the vector.
             typename DataT::value_type placeholder;
@@ -297,87 +335,103 @@ class InputContext {
       // If it is not a vector then try to get the input directly and convert for respective data
       // type for an input
       auto value = receive_impl(name);
+      const std::type_info& value_type = value.type();
+      bool is_bad_any_cast = false;
+      std::string exception_message;
+
       // If no message is received, return an error message
-      if (value.type() == typeid(NoMessageType)) {
+      if (value_type == typeid(NoMessageType)) {
         HOLOSCAN_LOG_DEBUG("No message is received from the input port with name '{}'", name);
         auto error_message =
             fmt::format("No message is received from the input port with name '{}'", name);
         return make_unexpected<holoscan::RuntimeError>(
             holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
+      } else if (value_type == typeid(NoCastableType)) {
+        is_bad_any_cast = true;
       }
-      try {
-        // Check if the types of value and DataT are the same or not
-        if constexpr (std::is_same_v<DataT, std::any>) { return value; }
-        DataT return_value = std::any_cast<DataT>(value);
-        return return_value;
-      } catch (const std::bad_any_cast& e) {
-        // If the received data is nullptr, check whether the sent value was nullptr
-        if (value.type() == typeid(nullptr_t)) {
-          HOLOSCAN_LOG_DEBUG("nullptr is received from the input port with name '{}'", name);
-          // If it is a shared pointer or raw pointer, then return nullptr
-          if constexpr (holoscan::is_shared_ptr_v<DataT>) {
-            return nullptr;
-          } else if constexpr (std::is_pointer_v<DataT>) {
-            return nullptr;
-          }
+      if (!is_bad_any_cast) {
+        try {
+          // Check if the types of value and DataT are the same or not
+          if constexpr (std::is_same_v<DataT, std::any>) { return value; }
+          DataT return_value = std::any_cast<DataT>(value);
+          return return_value;
+        } catch (const std::bad_any_cast& e) {
+          exception_message = e.what();
+          is_bad_any_cast = true;
         }
+      }
 
-        // If it is of the type of holoscan::gxf::Entity then show a specific error message
-        if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) {
+      // Case when is_bad_any_cast is true
+
+      // If the received data is nullptr, check whether the sent value was nullptr
+      if (value_type == typeid(nullptr_t)) {
+        HOLOSCAN_LOG_DEBUG("nullptr is received from the input port with name '{}'", name);
+        // If it is a shared pointer or raw pointer, then return nullptr
+        if constexpr (holoscan::is_shared_ptr_v<DataT>) {
+          return nullptr;
+        } else if constexpr (std::is_pointer_v<DataT>) {
+          return nullptr;
+        }
+      }
+
+      // If it is of the type of holoscan::gxf::Entity then show a specific error message
+      if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) {
+        auto error_message = fmt::format(
+            "Unable to cast the received data to the specified type (holoscan::gxf::"
+            "Entity) for input {}: {}",
+            name,
+            exception_message);
+        HOLOSCAN_LOG_DEBUG(error_message);
+        return make_unexpected<holoscan::RuntimeError>(
+            holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
+      } else if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
+        TensorMap tensor_map;
+        try {
+          auto gxf_entity = std::any_cast<holoscan::gxf::Entity>(value);
+
+          auto components_expected = gxf_entity.findAll();
+          auto components = components_expected.value();
+          for (size_t i = 0; i < components.size(); i++) {
+            const auto component = components[i];
+            const auto component_name = component->name();
+            if (std::string(component_name).compare("metadata_") == 0) {
+              // Skip checking for Tensor as it's a MetadataDictionary object
+              continue;
+            }
+            if (std::string(component_name).compare("message_label") == 0) {
+              // Skip checking for Tensor as it's message label for DFFT
+              continue;
+            }
+            if (std::string(component_name).compare("cuda_stream_id_") == 0) {
+              // Skip checking for Tensor as it's a stream ID from CudaStreamHandler
+              continue;
+            }
+            std::shared_ptr<holoscan::Tensor> holoscan_tensor =
+                gxf_entity.get<holoscan::Tensor>(component_name);
+            if (holoscan_tensor) { tensor_map.insert({component_name, holoscan_tensor}); }
+          }
+        } catch (const std::bad_any_cast& e) {
           auto error_message = fmt::format(
-              "Unable to cast the received data to the specified type (holoscan::gxf::"
-              "Entity) for input {}: {}",
+              "Unable to cast the received data to the specified type (holoscan::TensorMap) for "
+              "input {}: {}",
               name,
               e.what());
           HOLOSCAN_LOG_DEBUG(error_message);
           return make_unexpected<holoscan::RuntimeError>(
               holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
-        } else if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
-          TensorMap tensor_map;
-          try {
-            auto gxf_entity = std::any_cast<holoscan::gxf::Entity>(value);
-
-            auto components_expected = gxf_entity.findAll();
-            auto components = components_expected.value();
-            for (size_t i = 0; i < components.size(); i++) {
-              const auto component = components[i];
-              const auto component_name = component->name();
-
-              if (std::string(component_name).compare("message_label") == 0) {
-                // Skip checking for Tensor as it's message label for DFFT
-                continue;
-              }
-              if (std::string(component_name).compare("cuda_stream_id_") == 0) {
-                // Skip checking for Tensor as it's a stream ID from CudaStreamHandler
-                continue;
-              }
-              std::shared_ptr<holoscan::Tensor> holoscan_tensor =
-                  gxf_entity.get<holoscan::Tensor>(component_name);
-              if (holoscan_tensor) { tensor_map.insert({component_name, holoscan_tensor}); }
-            }
-          } catch (const std::bad_any_cast& e) {
-            auto error_message = fmt::format(
-                "Unable to cast the received data to the specified type (holoscan::TensorMap) for "
-                "input {}: {}",
-                name,
-                e.what());
-            HOLOSCAN_LOG_DEBUG(error_message);
-            return make_unexpected<holoscan::RuntimeError>(
-                holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
-          }
-          return tensor_map;
         }
-        auto error_message = fmt::format(
-            "Unable to cast the received data to the specified type ({}) for input {} of type {}: "
-            "{}",
-            nvidia::TypenameAsString<DataT>(),
-            name,
-            value.type().name(),
-            e.what());
-        HOLOSCAN_LOG_DEBUG(error_message);
-        return make_unexpected<holoscan::RuntimeError>(
-            holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
+        return tensor_map;
       }
+      auto error_message = fmt::format(
+          "Unable to cast the received data to the specified type ({}) for input {} of type {}: "
+          "{}",
+          nvidia::TypenameAsString<DataT>(),
+          name,
+          value_type.name(),
+          exception_message);
+      HOLOSCAN_LOG_DEBUG(error_message);
+      return make_unexpected<holoscan::RuntimeError>(
+          holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str()));
     }
   }
 
@@ -651,6 +705,8 @@ class OutputContext {
    * @param data The data to send.
    * @param name The name of the output port.
    * @param out_type The type of the message data.
+   * @param acq_timestamp The timestamp to publish in the output message. The default value of -1
+   * does not publish a timestamp.
    */
   virtual void emit_impl([[maybe_unused]] std::any data,
                          [[maybe_unused]] const char* name = nullptr,

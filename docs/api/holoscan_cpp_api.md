@@ -88,6 +88,7 @@
 - {ref}`exhale_class_classholoscan_1_1InputContext`
 - {ref}`exhale_class_classholoscan_1_1IOSpec`
 - {ref}`exhale_class_classholoscan_1_1MessageLabel`
+- {ref}`exhale_class_classholoscan_1_1MetadataDictionary`
 - {ref}`exhale_class_classholoscan_1_1MetaParameter`
 - {ref}`exhale_class_classholoscan_1_1Operator`
 - {ref}`exhale_class_classholoscan_1_1OperatorSpec`
@@ -100,6 +101,7 @@
 ### Operators
 
 - {ref}`exhale_class_classholoscan_1_1ops_1_1AJASourceOp`
+- {ref}`exhale_struct_structYAML_1_1convert_3_01NTV2Channel_01_4`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1AsyncPingRxOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1AsyncPingTxOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1BayerDemosaicOp`
@@ -117,16 +119,15 @@
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1BufferInfo`
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1HolovizOp_1_1InputSpec`
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1HolovizOp_1_1InputSpec_1_1View`
+- {ref}`exhale_struct_structholoscan_1_1codec_3_01ops_1_1HolovizOp_1_1InputSpec_01_4`
+- {ref}`exhale_struct_structholoscan_1_1codec_3_01ops_1_1HolovizOp_1_1InputSpec_1_1View_01_4`
+- {ref}`exhale_struct_structholoscan_1_1codec_3_01std_1_1vector_3_01ops_1_1HolovizOp_1_1InputSpec_01_4_01_4`
+- {ref}`exhale_struct_structholoscan_1_1codec_3_01std_1_1vector_3_01ops_1_1HolovizOp_1_1InputSpec_1_1View_01_4_01_4`
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1InferenceOp_1_1DataMap`
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1InferenceOp_1_1DataVecMap`
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1InferenceProcessorOp_1_1DataMap`
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1InferenceProcessorOp_1_1DataVecMap`
 - {ref}`exhale_struct_structholoscan_1_1ops_1_1V4L2VideoCaptureOp_1_1Buffer`
-- {ref}`exhale_struct_structYAML_1_1convert_3_01NTV2Channel_01_4`
-- {ref}`exhale_struct_structholoscan_1_1codec_3_01ops_1_1HolovizOp_1_1InputSpec_01_4`
-- {ref}`exhale_struct_structholoscan_1_1codec_3_01ops_1_1HolovizOp_1_1InputSpec_1_1View_01_4`
-- {ref}`exhale_struct_structholoscan_1_1codec_3_01std_1_1vector_3_01ops_1_1HolovizOp_1_1InputSpec_01_4_01_4`
-- {ref}`exhale_struct_structholoscan_1_1codec_3_01std_1_1vector_3_01ops_1_1HolovizOp_1_1InputSpec_1_1View_01_4_01_4`
 
 ### GXF Components
 
@@ -189,8 +190,11 @@
 
 - {ref}`exhale_class_classholoscan_1_1Tensor`
 - {ref}`exhale_class_classholoscan_1_1TensorMap`
-- {ref}`exhale_struct_structholoscan_1_1DLManagedTensorContext`
-- {ref}`exhale_class_classholoscan_1_1DLManagedMemoryBuffer`
+
+##### Type Definitions
+
+- {ref}`exhale_typedef_tensor_8hpp_1afd6b2b681b22ddeaca73cd6a6232c5e1`
+- {ref}`exhale_typedef_tensor_8hpp_1ad758981759a8dd0f69b807ad98451af4`
 
 ##### Functions
 
@@ -214,13 +218,14 @@
 - {ref}`exhale_enum_dataflow__tracker_8hpp_1ad33aa68261c043b54c11a39337f5ec1f`
 - {ref}`exhale_enum_errors_8hpp_1a33ad7eb800d03ecad89d263d61891a21`
 - {ref}`exhale_enum_logger_8hpp_1aa521e133a102a486c72b613570749983`
+- {ref}`exhale_enum_metadata_8hpp_1acc04c5458cb739cced68ea01df97f7e4`
 - {ref}`exhale_enum_parameter_8hpp_1aa1004e0a8386455dbece91f902e656a9`
 - {ref}`exhale_enum_scheduler_8hpp_1ae182dbb0da5dc05fc4661bec4ee09dc5`
 
 ### Operator-Specific Enums
 
-- {ref}`exhale_enum_include_2holoscan_2operators_2format__converter_2format__converter_8hpp_1ac05fa06405b47ecc7d71b02d5256966c`
-- {ref}`exhale_enum_include_2holoscan_2operators_2format__converter_2format__converter_8hpp_1acee968a280efc1cd6985d571358cf36b`
+- {ref}`exhale_enum_format__converter_8hpp_1ac05fa06405b47ecc7d71b02d5256966c`
+- {ref}`exhale_enum_format__converter_8hpp_1acee968a280efc1cd6985d571358cf36b`
 
 ### Inference Module Enums
 
@@ -250,6 +255,8 @@
 - {ref}`exhale_function_logger_8hpp_1a87d3a6c0dc0d1186f82ed4b9666bd852`
 - {ref}`exhale_function_logger_8hpp_1a30f98b4f124293d8fe8493e6de2c06d0`
 - {ref}`exhale_function_logger_8hpp_1a8017df47ff9679f3805d1a0b7e6dfe94`
+- {ref}`exhale_function_gxf__io__context_8hpp_1a629d0779f82fee87ce6152b7ab62ee02`
+- {ref}`exhale_function_io__context_8hpp_1a24d0b14ea7aaf76c7505e5f3b707afc8`
 
 ## Typedefs
 
@@ -266,6 +273,7 @@
 - {ref}`exhale_typedef_graph_8hpp_1ae1a8c1bff7a3db3c062684612e1e050c`
 - {ref}`exhale_typedef_graph_8hpp_1ae5b60650556412963c694a9b15a81cc1`
 - {ref}`exhale_typedef_graph_8hpp_1afb2c17034d7e3e004a9131763e8f3d5f`
+- {ref}`exhale_typedef_metadata_8hpp_1a4fc913c666f8b7a1afc6b0d0f1e0aa8c`
 - {ref}`exhale_typedef_type__traits_8hpp_1a0d3f2b03e9f4324fd70e2cd5139fd1ec`
 - {ref}`exhale_typedef_type__traits_8hpp_1a101b19fbb6e8792e899bbd1fff211698`
 - {ref}`exhale_typedef_type__traits_8hpp_1a2e7271fe8cdf8230122ceb983228ec4e`
@@ -312,12 +320,13 @@
 - {ref}`exhale_variable_type__traits_8hpp_1ad7d7f0199299096140f9cfb74300d0de`
 - {ref}`exhale_variable_type__traits_8hpp_1af646bfc4bc70953fc1efc7bc3db459a5`
 - {ref}`exhale_variable_type__traits_8hpp_1af73fdd04b98b6ee3860a13bfe81229fb`
-- {ref}`exhale_variable_ucx__receiver_8hpp_1ad86e6465bc051d691c6e6f92ae0ccafe`
+- {ref}`exhale_variable_ucx__receiver_8hpp_1aef73979384b300f441fb9c0c9dec557e`
 - {ref}`exhale_variable_ucx__serialization__buffer_8hpp_1a562f8204ee23b5237632895651668eb8`
 
 ### Inference Module Variables
 
-- {ref}`exhale_variable_infer__manager_8hpp_1a4de612a9b562e15c3b767cccdee50b1e`
+- {ref}`exhale_variable_infer__manager_8hpp_1a25cde569b0d251fbd30765ec68766a0b`
+- {ref}`exhale_variable_infer__manager_8hpp_1a52921e7945bc7ee74cb281271e8fbeb4`
 - {ref}`exhale_variable_modules_2holoinfer_2src_2include_2holoinfer__utils_8hpp_1aed7f62ec8a46ab6cbe3334ac26c719c6`
 - {ref}`exhale_variable_process__manager_8hpp_1ab99c5b36d1bbf94cb7b4d231de096fdb`
 - {ref}`exhale_variable_utils_8hpp_1aba4496e4cd0c7966ca1730727c109373`

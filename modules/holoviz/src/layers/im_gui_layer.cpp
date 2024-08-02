@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,8 +31,8 @@ struct ImGuiLayer::Impl {
   const ImDrawData* draw_data_ = nullptr;
 
   Vulkan* vulkan_ = nullptr;
-  Vulkan::Buffer* vertex_buffer_ = nullptr;
-  Vulkan::Buffer* index_buffer_ = nullptr;
+  Buffer* vertex_buffer_ = nullptr;
+  Buffer* index_buffer_ = nullptr;
 };
 
 ImGuiLayer::ImGuiLayer() : Layer(Type::ImGui), impl_(new ImGuiLayer::Impl) {}

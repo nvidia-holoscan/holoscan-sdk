@@ -165,6 +165,9 @@ The core dump file can be debugged using GDB by executing `gdb <application> <co
 
 ```bash
 $ gdb ./examples/ping_simple/cpp/ping_simple coredump_ping_simple_2160275
+```
+gives
+```text
 GNU gdb (Ubuntu 12.1-0ubuntu1~22.04) 12.1
 Copyright (C) 2022 Free Software Foundation, Inc.
 License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
@@ -325,7 +328,7 @@ After switching, we can employ the `bt` command to examine the backtrace of this
 
 Under the backtrace of thread 13, you will find:
 
-```
+```text
 #8  <signal handler called>
 #9  holoscan::ops::PingTensorTxOp::compute (this=0x559716f26fa0, op_output=..., context=...) at ../examples/ping_distributed/cpp/ping_distributed_ops.cpp:129
 ```
@@ -373,7 +376,7 @@ python python/tests/system/test_pytracing.py pdb
 #   exit
 ```
 
-```
+```text
 This is an interactive session.
 Please type the following commands to check if the breakpoints are hit.
 
@@ -398,7 +401,7 @@ In such cases with multithreaded schedulers, consider using multithread-aware pr
 
 For further information, refer to the test case at [test_pytracing.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_pytracing.py).
 
-#### Using [pyinstrument]((https://github.com/joerick/pyinstrument))
+#### Using [pyinstrument](https://github.com/joerick/pyinstrument)
 
 pyinstrument is a call stack profiler for Python, designed to highlight performance bottlenecks in an easily understandable format directly in your terminal as the code executes.
 
@@ -410,7 +413,7 @@ pyinstrument python/tests/system/test_pytracing.py
 # pyinstrument python/tests/system/test_pytracing.py -s multithread
 ```
 
-```
+```text
 ...
 0.107 [root]  None
 ├─ 0.088 MainThread  <thread>:140079743820224
@@ -451,7 +454,7 @@ python -m pip install pprofile
 pprofile --include test_pytracing.py python/tests/system/test_pytracing.py -s multithread
 ```
 
-```
+```text
 Total duration: 0.972872s
 File: python/tests/system/test_pytracing.py
 File duration: 0.542628s (55.78%)
@@ -491,7 +494,7 @@ python python/tests/system/test_pytracing.py yappi | grep test_pytracing.py
 #python python/tests/system/test_pytracing.py yappi -s multithread | grep test_pytracing.py
 ```
 
-```
+```text
 ...
   test_pytracing.py main:153 1
   test_pytracing.py MyPingApp.compose:141 1
@@ -526,7 +529,7 @@ python -m cProfile python/tests/system/test_pytracing.py 2>&1 | grep test_pytrac
 #python python/tests/system/test_pytracing.py profile
 ```
 
-```
+```text
         1    0.001    0.001    0.107    0.107 test_pytracing.py:1(<module>)
         1    0.000    0.000    0.000    0.000 test_pytracing.py:104(setup)
         1    0.000    0.000    0.000    0.000 test_pytracing.py:109(initialize)
@@ -578,7 +581,7 @@ kernprof -lv python/tests/system/test_pytracing.py
 mv "$file.bak" "$file"
 ```
 
-```
+```text
 ...
 Wrote profile results to test_pytracing.py.lprof
 Timer unit: 1e-06 s

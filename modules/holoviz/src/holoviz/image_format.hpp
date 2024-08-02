@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_HOLOVIZ_IMAGE_FORMAT_HPP
-#define HOLOSCAN_VIZ_HOLOVIZ_IMAGE_FORMAT_HPP
+#ifndef MODULES_HOLOVIZ_SRC_HOLOVIZ_IMAGE_FORMAT_HPP
+#define MODULES_HOLOVIZ_SRC_HOLOVIZ_IMAGE_FORMAT_HPP
 
 #include <cstdint>
 
@@ -130,6 +130,47 @@ enum class ImageFormat {
                  ///  and, optionally, 8 bits that are unused
   D32_SFLOAT,    ///< specifies a one-component, 32-bit signed floating-point format that has
                  ///  32 bits in the depth component
+
+  A2B10G10R10_UNORM_PACK32,  ///< specifies a four-component, 32-bit packed unsigned normalized
+                             ///  format that has
+                             ///  a 2-bit A component in bits 30..31,
+                             ///  a 10-bit B component in bits 20..29,
+                             ///  a 10-bit G component in bits 10..19,
+                             ///  and a 10-bit R component in bits 0..9.
+
+  A2R10G10B10_UNORM_PACK32,  ///< specifies a four-component, 32-bit packed unsigned normalized
+                             ///  format that has
+                             ///  a 2-bit A component in bits 30..31,
+                             ///  a 10-bit R component in bits 20..29,
+                             ///  a 10-bit G component in bits 10..19,
+                             ///  and a 10-bit B component in bits 0..9.
+
+  B8G8R8A8_UNORM,  ///< specifies a four-component, 32-bit unsigned normalized format that has
+                   ///  a 8-bit B component in byte 0,
+                   ///  a 8-bit G component in byte 1,
+                   ///  a 8-bit R component in byte 2,
+                   ///  and a 8-bit A component in byte 3
+  B8G8R8A8_SRGB,   ///< specifies a four-component, 32-bit unsigned normalized format that has
+                   ///  a 8-bit B component stored with sRGB nonlinear encoding in byte 0,
+                   ///  a 8-bit G component stored with sRGB nonlinear encoding in byte 1,
+                   ///  a 8-bit R component stored with sRGB nonlinear encoding in byte 2,
+                   ///  and a 8-bit A component in byte 3
+
+  A8B8G8R8_UNORM_PACK32,  ///< specifies a four-component, 32-bit packed unsigned normalized format
+                          ///  that has
+                          ///  an 8-bit A component in bits 24..31,
+                          ///  an 8-bit B component in bits 16..23,
+                          ///  an 8-bit G component in bits 8..15,
+                          ///  and an 8-bit R component in bits 0..7.
+  A8B8G8R8_SRGB_PACK32,   ///< specifies a four-component, 32-bit packed unsigned normalized format
+                          ///  that has
+                          ///  an 8-bit A component in bits 24..31,
+                          ///  an 8-bit B component stored with sRGB nonlinear encoding in
+                          ///  bits 16..23,
+                          ///  an 8-bit G component stored with sRGB nonlinear encoding
+                          ///  in bits 8..15,
+                          ///  and an 8-bit R component stored with sRGB nonlinear
+                          ///  encoding in bits 0..7.
 };
 
 /**
@@ -156,4 +197,4 @@ enum class ComponentSwizzle {
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_HOLOVIZ_IMAGE_FORMAT_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_HOLOVIZ_IMAGE_FORMAT_HPP */

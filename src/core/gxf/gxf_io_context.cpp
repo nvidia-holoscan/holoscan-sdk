@@ -19,8 +19,8 @@
 
 #include <memory>
 #include <string>
-#include <utility>
 #include <unordered_map>
+#include <utility>
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
@@ -35,7 +35,15 @@ nvidia::gxf::Receiver* get_gxf_receiver(const std::shared_ptr<IOSpec>& input_spe
   auto connector = input_spec->connector();
   auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(connector);
   if (gxf_resource == nullptr) {
-    HOLOSCAN_LOG_ERROR("Invalid connector type");
+    if (input_spec->queue_size() == IOSpec::kAnySize) {
+      HOLOSCAN_LOG_ERROR(
+          "Unable to receive non-vector data from the input port '{}' with the queue size "
+          "'IOSpec::kAnySize'. Please call 'op_input.receive<std::vector<T>>()' instead of "
+          "'op_input.receive<T>()'.",
+          input_spec->name());
+    } else {
+      HOLOSCAN_LOG_ERROR("Invalid connector type for the input spec '{}'", input_spec->name());
+    }
     return nullptr;  // to cause a bad_any_cast
   }
 
@@ -67,6 +75,10 @@ bool GXFInputContext::empty_impl(const char* name) {
     return false;
   }
   auto receiver = get_gxf_receiver(it->second);
+  if (!receiver) {
+    HOLOSCAN_LOG_ERROR("Invalid receiver found for the input port with name {}", input_name);
+    return false;
+  }
   return receiver->size() == 0;
 }
 
@@ -84,7 +96,7 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
           op_->name(),
           inputs_.begin()->first,
           name);
-      return -1;  // to cause a bad_any_cast
+      return kNoTypeCastableMessage;  // to cause a bad_any_cast
     } else {
       if (inputs_.empty()) {
         HOLOSCAN_LOG_ERROR(
@@ -92,7 +104,7 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
             "receive() method",
             op_->name(),
             input_name);
-        return -1;  // to cause a bad_any_cast
+        return kNoTypeCastableMessage;  // to cause a bad_any_cast
       }
 
       auto msg_buf = fmt::memory_buffer();
@@ -111,18 +123,39 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
           input_name,
           msg_buf.data(),
           msg_buf.size());
-      return -1;  // to cause a bad_any_cast
+      return kNoTypeCastableMessage;  // to cause a bad_any_cast
     }
   }
 
   auto receiver = get_gxf_receiver(it->second);
   if (!receiver) {
-    return -1;  // to cause a bad_any_cast
+    return kNoTypeCastableMessage;  // to cause a bad_any_cast
   }
 
   auto entity = receiver->receive();
   if (!entity || entity.value().is_null()) {
     return kNoReceivedMessage;  // to indicate that there is no data
+  }
+
+  // Update operator metadata using any metadata found in the entity.
+  if (op_->is_metadata_enabled()) {
+    // Merge metadata from all input ports into the dynamic metadata of the operator
+    auto maybe_metadata = entity.value().get<holoscan::MetadataDictionary>("metadata_");
+    if (!maybe_metadata) {
+      // If the operator does not have any metadata it is expected that the MetadataDictionary
+      // component will not be present, so don't warn in this case.
+      HOLOSCAN_LOG_TRACE(
+          "No MetadataDictionary found for input '{}' on operator '{}'", input_name, op_->name());
+    } else {
+      auto metadata = maybe_metadata.value();
+      HOLOSCAN_LOG_TRACE("MetadataDictionary with size {} found for input '{}' of operator '{}'",
+                         metadata->size(),
+                         input_name,
+                         op_->name());
+      auto metadata_ptr = metadata.get();
+      // use update here to respect the Operator's MetadataPolicy
+      op_->metadata()->update(*metadata_ptr);
+    }
   }
 
   auto message = entity.value().get<holoscan::Message>();
@@ -149,6 +182,13 @@ GXFOutputContext::GXFOutputContext(
 gxf_context_t GXFOutputContext::gxf_context() const {
   if (execution_context_) { return execution_context_->context(); }
   return nullptr;
+}
+
+void GXFOutputContext::populate_output_metadata(nvidia::gxf::Handle<MetadataDictionary> metadata) {
+  // insert the operator's metadata into the provided (empty) metadata object
+  auto dynamic_metadata = op_->metadata();
+  metadata->insert(*dynamic_metadata);
+  HOLOSCAN_LOG_DEBUG("output context: op '{}' metadata.size() = {}", op_->name(), metadata->size());
 }
 
 void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out_type,
@@ -220,6 +260,12 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       auto buffer = gxf_entity.value().add<Message>();
       // Set the data to the value of the Message object.
       buffer.value()->set_value(data);
+
+      if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
+        auto metadata = gxf_entity.value().add<MetadataDictionary>("metadata_");
+        populate_output_metadata(metadata.value());
+      }
+
       // Publish the Entity object.
       // TODO(gbae): Check error message
       if (acq_timestamp != -1) {
@@ -233,6 +279,12 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       // Cast to an Entity object and publish it.
       try {
         auto gxf_entity = std::any_cast<nvidia::gxf::Entity>(data);
+
+        if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
+          auto metadata = gxf_entity.add<MetadataDictionary>("metadata_");
+          populate_output_metadata(metadata.value());
+        }
+
         // TODO(gbae): Check error message
         if (acq_timestamp != -1) {
           static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(gxf_entity, acq_timestamp);

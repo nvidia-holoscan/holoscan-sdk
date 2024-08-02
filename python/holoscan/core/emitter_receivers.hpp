@@ -36,7 +36,6 @@
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_context.hpp"
-#include "holoscan/operators/holoviz/holoviz.hpp"
 #include "io_context.hpp"
 #include "tensor.hpp"  // for PyTensor
 
@@ -132,6 +131,10 @@ py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
         auto component_name = component->name();
         if (std::string(component_name).compare("message_label") == 0) {
           // Skip checking for Tensor as it's the message label for flow tracking
+          continue;
+        }
+        if (std::string(component_name).compare("metadata_") == 0) {
+          // Skip checking for Tensor as it's a  MetadataDictionary object
           continue;
         }
         if (std::string(component_name).compare("cuda_stream_id_") == 0) {

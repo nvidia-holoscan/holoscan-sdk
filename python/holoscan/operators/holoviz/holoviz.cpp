@@ -83,11 +83,11 @@ class PyHolovizOp : public HolovizOp {
       std::vector<holoscan::IOSpec*> receivers = std::vector<holoscan::IOSpec*>(),
       const std::vector<HolovizOp::InputSpec>& tensors = std::vector<HolovizOp::InputSpec>(),
       const std::vector<std::vector<float>>& color_lut = std::vector<std::vector<float>>(),
-      const std::string& window_title = "Holoviz", const std::string& display_name = "DP-0",
+      const std::string& window_title = "Holoviz", const std::string& display_name = "",
       uint32_t width = 1920, uint32_t height = 1080, float framerate = 60.f,
       bool use_exclusive_display = false, bool fullscreen = false, bool headless = false,
-      bool enable_render_buffer_input = false, bool enable_render_buffer_output = false,
-      bool enable_camera_pose_output = false,
+      bool framebuffer_srgb = false, bool vsync = false, bool enable_render_buffer_input = false,
+      bool enable_render_buffer_output = false, bool enable_camera_pose_output = false,
       const std::string& camera_pose_output_type = "projection_matrix",
       const std::array<float, 3>& camera_eye = {0.f, 0.f, 1.f},
       const std::array<float, 3>& camera_look_at = {0.f, 0.f, 0.f},
@@ -104,6 +104,8 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"use_exclusive_display", use_exclusive_display},
                           Arg{"fullscreen", fullscreen},
                           Arg{"headless", headless},
+                          Arg{"framebuffer_srgb", framebuffer_srgb},
+                          Arg{"vsync", vsync},
                           Arg{"enable_render_buffer_input", enable_render_buffer_input},
                           Arg{"enable_render_buffer_output", enable_render_buffer_output},
                           Arg{"enable_camera_pose_output", enable_camera_pose_output},
@@ -154,6 +156,8 @@ PYBIND11_MODULE(_holoviz, m) {
                     bool,
                     bool,
                     bool,
+                    bool,
+                    bool,
                     const std::string&,
                     const std::array<float, 3>&,
                     const std::array<float, 3>&,
@@ -167,13 +171,15 @@ PYBIND11_MODULE(_holoviz, m) {
            "tensors"_a = std::vector<HolovizOp::InputSpec>(),
            "color_lut"_a = std::vector<std::vector<float>>(),
            "window_title"_a = "Holoviz",
-           "display_name"_a = "DP-0",
+           "display_name"_a = "",
            "width"_a = 1920,
            "height"_a = 1080,
            "framerate"_a = 60,
            "use_exclusive_display"_a = false,
            "fullscreen"_a = false,
            "headless"_a = false,
+           "framebuffer_srgb"_a = false,
+           "vsync"_a = false,
            "enable_render_buffer_input"_a = false,
            "enable_render_buffer_output"_a = false,
            "enable_camera_pose_output"_a = false,
@@ -207,6 +213,41 @@ PYBIND11_MODULE(_holoviz, m) {
       .value("LINE_STRIP_3D", HolovizOp::InputType::LINE_STRIP_3D)
       .value("TRIANGLES_3D", HolovizOp::InputType::TRIANGLES_3D);
 
+  py::enum_<HolovizOp::ImageFormat>(holoviz_op, "ImageFormat")
+      .value("AUTO_DETECT", HolovizOp::ImageFormat::AUTO_DETECT)
+      .value("R8_UINT", HolovizOp::ImageFormat::R8_UINT)
+      .value("R8_SINT", HolovizOp::ImageFormat::R8_SINT)
+      .value("R8_UNORM", HolovizOp::ImageFormat::R8_UNORM)
+      .value("R8_SNORM", HolovizOp::ImageFormat::R8_SNORM)
+      .value("R8_SRGB", HolovizOp::ImageFormat::R8_SRGB)
+      .value("R16_UINT", HolovizOp::ImageFormat::R16_UINT)
+      .value("R16_SINT", HolovizOp::ImageFormat::R16_SINT)
+      .value("R16_UNORM", HolovizOp::ImageFormat::R16_UNORM)
+      .value("R16_SNORM", HolovizOp::ImageFormat::R16_SNORM)
+      .value("R16_SFLOAT", HolovizOp::ImageFormat::R16_SFLOAT)
+      .value("R32_UINT", HolovizOp::ImageFormat::R32_UINT)
+      .value("R32_SINT", HolovizOp::ImageFormat::R32_SINT)
+      .value("R32_SFLOAT", HolovizOp::ImageFormat::R32_SFLOAT)
+      .value("R8G8B8_UNORM", HolovizOp::ImageFormat::R8G8B8_UNORM)
+      .value("R8G8B8_SNORM", HolovizOp::ImageFormat::R8G8B8_SNORM)
+      .value("R8G8B8_SRGB", HolovizOp::ImageFormat::R8G8B8_SRGB)
+      .value("R8G8B8A8_UNORM", HolovizOp::ImageFormat::R8G8B8A8_UNORM)
+      .value("R8G8B8A8_SNORM", HolovizOp::ImageFormat::R8G8B8A8_SNORM)
+      .value("R8G8B8A8_SRGB", HolovizOp::ImageFormat::R8G8B8A8_SRGB)
+      .value("R16G16B16A16_UNORM", HolovizOp::ImageFormat::R16G16B16A16_UNORM)
+      .value("R16G16B16A16_SNORM", HolovizOp::ImageFormat::R16G16B16A16_SNORM)
+      .value("R16G16B16A16_SFLOAT", HolovizOp::ImageFormat::R16G16B16A16_SFLOAT)
+      .value("R32G32B32A32_SFLOAT", HolovizOp::ImageFormat::R32G32B32A32_SFLOAT)
+      .value("D16_UNORM", HolovizOp::ImageFormat::D16_UNORM)
+      .value("X8_D24_UNORM", HolovizOp::ImageFormat::X8_D24_UNORM)
+      .value("D32_SFLOAT", HolovizOp::ImageFormat::D32_SFLOAT)
+      .value("A2B10G10R10_UNORM_PACK32", HolovizOp::ImageFormat::A2B10G10R10_UNORM_PACK32)
+      .value("A2R10G10B10_UNORM_PACK32", HolovizOp::ImageFormat::A2R10G10B10_UNORM_PACK32)
+      .value("B8G8R8A8_UNORM", HolovizOp::ImageFormat::B8G8R8A8_UNORM)
+      .value("B8G8R8A8_SRGB", HolovizOp::ImageFormat::B8G8R8A8_SRGB)
+      .value("A8B8G8R8_UNORM_PACK32", HolovizOp::ImageFormat::A8B8G8R8_UNORM_PACK32)
+      .value("A8B8G8R8_SRGB_PACK32", HolovizOp::ImageFormat::A8B8G8R8_SRGB_PACK32);
+
   py::enum_<HolovizOp::DepthMapRenderMode>(holoviz_op, "DepthMapRenderMode")
       .value("POINTS", HolovizOp::DepthMapRenderMode::POINTS)
       .value("LINES", HolovizOp::DepthMapRenderMode::LINES)
@@ -222,6 +263,7 @@ PYBIND11_MODULE(_holoviz, m) {
       .def_readwrite("color", &HolovizOp::InputSpec::color_)
       .def_readwrite("opacity", &HolovizOp::InputSpec::opacity_)
       .def_readwrite("priority", &HolovizOp::InputSpec::priority_)
+      .def_readwrite("image_format", &HolovizOp::InputSpec::image_format_)
       .def_readwrite("line_width", &HolovizOp::InputSpec::line_width_)
       .def_readwrite("point_size", &HolovizOp::InputSpec::point_size_)
       .def_readwrite("text", &HolovizOp::InputSpec::text_)

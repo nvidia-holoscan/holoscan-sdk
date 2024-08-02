@@ -159,7 +159,7 @@ Holoscan automatically checks `HOLOSCAN_LOG_LEVEL` environment variable and sets
 However, those log level settings are for Holoscan core or C++ operator (C++)'s logging message (such as `HOLOSCAN_LOG_INFO` macro), not for Python's logging. Users of the **Python API** should use the built-in [`logging`](https://docs.python.org/3/howto/logging.html) module to log messages.
 The user needs to configure the logger before use (`logging.basicConfig(level=logging.INFO)`):
 
-```
+```text
 >>> import logging
 >>> logger = logging.getLogger("main")
 >>> logger.info('hello')

@@ -19,7 +19,7 @@
 # SDK Build Image, used to copy installs
 ############################################################
 ARG BUILD_IMAGE
-FROM ${BUILD_IMAGE} as build
+FROM ${BUILD_IMAGE} AS build
 
 ############################################################
 # Base Image
@@ -42,7 +42,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=all
 # apps on ARM64 platforms and x86_64, apart from MKL that is
 # needed on x86_64 only for libtorch backend.
 ############################################################
-FROM base as runtime_cpp_no_mkl
+FROM base AS runtime_cpp_no_mkl
 
 # Install apt run dependencies
 #  libx* - X packages
@@ -168,7 +168,7 @@ WORKDIR $INSTALL_PATH
 # so Python must be installed. However, this stage does NOT
 # support running Python Holoscan apps.
 #############################################################
-FROM runtime_cpp_no_mkl as runtime_cpp_pip_mkl
+FROM runtime_cpp_no_mkl AS runtime_cpp_pip_mkl
 
 RUN apt-get update -y \
     && apt-get install --no-install-recommends -y \
@@ -197,9 +197,9 @@ RUN if [ $(uname -m) = "x86_64" ]; then \
 #############################################################
 # Runtime C++
 #############################################################
-FROM --platform=linux/arm64 runtime_cpp_no_mkl as runtime_cpp_arm64
-FROM --platform=linux/amd64 runtime_cpp_pip_mkl as runtime_cpp_amd64
-FROM runtime_cpp_${TARGETARCH} as runtime_cpp
+FROM --platform=linux/arm64 runtime_cpp_no_mkl AS runtime_cpp_arm64
+FROM --platform=linux/amd64 runtime_cpp_pip_mkl AS runtime_cpp_amd64
+FROM runtime_cpp_${TARGETARCH} AS runtime_cpp
 
 ############################################################
 # Runtime (C++ & Python)
@@ -207,7 +207,7 @@ FROM runtime_cpp_${TARGETARCH} as runtime_cpp
 # This stage adds Python dependencies to support both C++
 # and Python Holoscan applications.
 ############################################################
-FROM runtime_cpp_pip_mkl as runtime_cpp_py
+FROM runtime_cpp_pip_mkl AS runtime_cpp_py
 
 # Install pip run dependencies
 #  requirements

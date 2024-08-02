@@ -12,8 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-add_subdirectory(aja_source)
+if(HOLOSCAN_BUILD_AJA)
+  add_subdirectory(aja_source)
+endif()
 add_subdirectory(async_ping_rx)
 add_subdirectory(async_ping_tx)
 add_subdirectory(bayer_demosaic)

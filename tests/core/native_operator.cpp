@@ -61,7 +61,7 @@ class PingRxOp : public Operator {
   PingRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    spec.input<std::vector<std::vector<int>>>("receivers", IOSpec::kAnySize);
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
@@ -74,7 +74,6 @@ class PingRxOp : public Operator {
   };
 
  private:
-  Parameter<std::vector<IOSpec*>> receivers_;
   int count_ = 1;
 };
 }  // namespace ops

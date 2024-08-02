@@ -29,7 +29,7 @@ namespace holoscan::ops {
  * @brief Virtual operator.
  *
  * This class is used when connecting fragments with transmitters and receivers (such as
- * UCXTransmitter and UCXReceiver) that communicate with other fragments.
+ * UcxTransmitter and UcxReceiver) that communicate with other fragments.
  *
  * The input/output port of an operator in the fragment can be connected to this virtual operator so
  * that the internal graph initialization mechanism (such as implicit broadcasting or

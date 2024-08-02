@@ -43,7 +43,7 @@ The Emergent SDK depends on Rivermax SDK and the Mellanox OFED Network Drivers. 
 >sudo ./install_eSdk.sh no_mellanox
 >```
 
-Ensure the [ConnectX is properly configured](./set_up_gpudirect_rdma.md#configure-the-connectx-smartnic) to use it with the Emergent SDK.
+Ensure the [ConnectX is properly configured](./set_up_gpudirect_rdma.md#enabling-rdma-on-the-connectx-smartnic) to use it with the Emergent SDK.
 :::
 
 (testing-emergent-camera)=
@@ -61,7 +61,7 @@ under the eCapture section of EVT [Camera User's Manual](https://emergentvisiont
 
 >**Solution:**
 >- Make sure that the MLNX ConnectX SmartNIC is configured with the correct IP address. Follow
->  section [Configure the ConnectX SmartNIC](./set_up_gpudirect_rdma.md#configure-the-connectx-smartnic)
+>  section [Configure the ConnectX SmartNIC](./set_up_gpudirect_rdma.md#enabling-rdma-on-the-connectx-smartnic)
 
 2. **Problem:** The application fails to open the EVT camera.
 

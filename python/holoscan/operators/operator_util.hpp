@@ -96,7 +96,7 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
     out = yaml_node;
   } else if (obj.attr("ndim").cast<int>() == 2) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-    for (auto item : obj) {
+    for (auto& item : obj) {
       YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
       for (const auto& inner_item : item) {
         inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
@@ -168,7 +168,7 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
       std::vector<T> v;
       size_t length = py::len(seq);
       v.reserve(length);
-      for (auto item : seq) v.push_back(item.cast<T>());
+      for (const auto& item : seq) v.push_back(item.cast<T>());
       out = v;
     }
   } else {

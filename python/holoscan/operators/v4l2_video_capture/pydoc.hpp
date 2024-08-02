@@ -60,8 +60,8 @@ Use ``holoscan.operators.FormatConverterOp`` to move data from the host to a GPU
     def get_block_size(height, width):
         height_even = height + (height & 1)
         width_even = width + (width & 1)
-        row_bytes = width_even * 4;  # 4 bytes per pixel for 8-bit RGBA
-        row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes // 256 + 1) * 256)
+        row_bytes = width_even * 4  # 4 bytes per pixel for 8-bit RGBA
+        row_stride = row_bytes if (row_bytes % 256 == 0) else ((row_bytes // 256 + 1) * 256)
         return height_even * row_stride
 
 Parameters

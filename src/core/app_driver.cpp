@@ -725,7 +725,7 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
               IOSpec::IOType::kOutput,
               IOSpec::ConnectorType::kUCX,
               // Note: We don't need to consider 'local_address' and 'local_port' here because
-              //       the 'local_address' of UCXTransmitter (we don't care 'local_port') would be
+              //       the 'local_address' of UcxTransmitter (we don't care 'local_port') would be
               //       set by create_virtual_operators_and_connections() in the GXFExecutor during
               //       the fragment initialization (GXFExecutor::initialize_fragment()).
               ArgList({Arg("receiver_address", ucx_rx_ip),
@@ -786,10 +786,10 @@ void AppDriver::correct_connection_map() {
       for (auto& arg : connection->args) {
         if (arg.name() == "address" || arg.name() == "receiver_address") {
           if (connection->io_type == IOSpec::IOType::kInput) {
-            // For UCXReceiver, it always uses "0.0.0.0" as the IP address.
+            // For UcxReceiver, it always uses "0.0.0.0" as the IP address.
             arg = std::string("0.0.0.0");
           } else {
-            // UCXTransmitter requires the IP address of the receiver.
+            // UcxTransmitter requires the IP address of the receiver.
             auto ip_address = index_to_ip_map_[port_index];
             arg = ip_address;
           }

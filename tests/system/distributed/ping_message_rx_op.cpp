@@ -269,6 +269,16 @@ void PingMessageRxOp::compute(InputContext& op_input, OutputContext&, ExecutionC
       throw std::runtime_error("unsupported type");
     }
   }
+  if (is_metadata_enabled()) {
+    // validate the metadata (values were set by PingMessageTxOp)
+    auto meta = metadata();
+    valid_value &= meta->get<bool>("bool") == true;
+    valid_value &= meta->get<std::string>("string") == std::string("defg");
+    auto vec = meta->get<std::vector<float>>("vec");
+    valid_value &= vec[0] == 1.0;
+    valid_value &= vec[1] == 1.0;
+    valid_value &= vec[2] == 3.0;
+  }
   if (valid_value) {
     HOLOSCAN_LOG_INFO("Found expected value in deserialized message.");
   } else {

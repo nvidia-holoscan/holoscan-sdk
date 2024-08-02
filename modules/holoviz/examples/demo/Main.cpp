@@ -183,7 +183,7 @@ void tick() {
       // host memory
       switch (current_source) {
         case Source::HOST: {
-          const void* data;
+          const void* data = nullptr;
           switch (formats[current_format_index]) {
             case viz::ImageFormat::R8G8B8_UNORM:
               data = host_mem_r8g8b8.get();
@@ -191,12 +191,14 @@ void tick() {
             case viz::ImageFormat::R8G8B8A8_UNORM:
               data = host_mem_r8g8b8a8.get();
               break;
+            default:
+              throw std::runtime_error("Unhandled image format");
           }
           viz::ImageHost(width, height, formats[current_format_index], data);
           break;
         }
         case Source::DEVICE: {
-          CUdeviceptr device_ptr;
+          CUdeviceptr device_ptr = 0;
           switch (formats[current_format_index]) {
             case viz::ImageFormat::R8G8B8_UNORM:
               device_ptr = cu_device_mem_r8g8b8;
@@ -204,6 +206,8 @@ void tick() {
             case viz::ImageFormat::R8G8B8A8_UNORM:
               device_ptr = cu_device_mem_r8g8b8a8;
               break;
+            default:
+              throw std::runtime_error("Unhandled image format");
           }
           viz::ImageCudaDevice(width, height, formats[current_format_index], device_ptr);
           break;
@@ -388,7 +392,7 @@ void cleanupCuda() {
 void loadImage() {
   int components;
 
-  unsigned char* image_data = stbi_load("nv_logo.png",
+  stbi_uc* const image_data = stbi_load("nv_logo.png",
                                         reinterpret_cast<int*>(&width),
                                         reinterpret_cast<int*>(&height),
                                         &components,
@@ -458,13 +462,19 @@ int main(int argc, char** argv) {
   struct option long_options[] = {{"help", no_argument, 0, 'h'},
                                   {"bench", no_argument, 0, 'b'},
                                   {"headless", no_argument, 0, 'l'},
+                                  {"fullscreen", no_argument, 0, 'f'},
+                                  {"exclusive_display", no_argument, 0, 'e'},
                                   {"display", required_argument, 0, 'd'},
+                                  {"present_mode", required_argument, 0, 'd'},
                                   {0, 0, 0, 0}};
+  bool fullscreen = false;
+  bool exclusive_display = false;
   std::string display_name;
+  viz::PresentMode present_mode = viz::PresentMode::AUTO;
   // parse options
   while (true) {
     int option_index = 0;
-    const int c = getopt_long(argc, argv, "hbld:", long_options, &option_index);
+    const int c = getopt_long(argc, argv, "hblfed:p:", long_options, &option_index);
 
     if (c == -1) { break; }
 
@@ -473,11 +483,15 @@ int main(int argc, char** argv) {
       case 'h':
         std::cout << "Usage: " << argv[0] << " [options]" << std::endl
                   << "Options:" << std::endl
-                  << "  -h, --help     display this information" << std::endl
-                  << "  -b, --bench    benchmark mode" << std::endl
-                  << "  -l, --headless headless mode" << std::endl
-                  << "  -d, --display  name of the display to use in exclusive mode"
-                     " (either EDID, `xrandr` or `hwinfo --monitor` name)"
+                  << "  -h, --help               display this information" << std::endl
+                  << "  -b, --bench              benchmark mode" << std::endl
+                  << "  -l, --headless           headless mode" << std::endl
+                  << "  -f, --fullscreen         fullscreen mode" << std::endl
+                  << "  -e, --exclusive_display  exclusive display mode" << std::endl
+                  << "  -d, --display NAME       name of the display to use in exclusive display "
+                     "or fullscreen mode (either EDID, `xrandr` or `hwinfo --monitor` name)"
+                  << "  -p, --present_mode MODE  determines how the rendered result will be "
+                     "presented on the screen (`auto`, `fifo`, `immediate` or `mailbox`)"
                   << std::endl;
         return EXIT_SUCCESS;
 
@@ -491,86 +505,121 @@ int main(int argc, char** argv) {
         headless_mode = true;
         show_ui = false;
         break;
+      case 'f':
+        fullscreen = true;
+        break;
+      case 'e':
+        exclusive_display = true;
+        break;
       case 'd':
         display_name = argument;
         break;
+      case 'p': {
+        std::string lower_case_argument;
+        std::transform(argument.begin(),
+                       argument.end(),
+                       std::back_inserter(lower_case_argument),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (lower_case_argument == "auto") {
+          present_mode = viz::PresentMode::AUTO;
+        } else if (lower_case_argument == "fifo") {
+          present_mode = viz::PresentMode::FIFO;
+        } else if (lower_case_argument == "immediate") {
+          present_mode = viz::PresentMode::IMMEDIATE;
+        } else if (lower_case_argument == "mailbox") {
+          present_mode = viz::PresentMode::MAILBOX;
+        } else {
+          throw std::runtime_error("Unhandled present mode");
+        }
+      } break;
       default:
-        throw std::runtime_error("Unhandled option ");
+        throw std::runtime_error("Unhandled option");
     }
   }
 
-  initCuda();
-  loadImage();
+  try {
+    initCuda();
+    loadImage();
 
-  // set the Cuda stream to be used by Holoviz
-  viz::SetCudaStream(CU_STREAM_PER_THREAD);
+    // set the Cuda stream to be used by Holoviz
+    viz::SetCudaStream(CU_STREAM_PER_THREAD);
+    viz::SetPresentMode(present_mode);
 
-  uint32_t display_width, display_height;
+    uint32_t display_width, display_height;
 
-  // setup the window
-  if (!display_name.empty()) {
-    display_width = width;
-    display_height = height;
-    viz::Init(display_name.c_str());
-  } else {
-    viz::InitFlags flags = viz::InitFlags::NONE;
+    // setup the window
+    if (exclusive_display) {
+      display_width = width;
+      display_height = height;
+      viz::Init(display_name.c_str(), width, height);
+    } else {
+      viz::InitFlags flags = viz::InitFlags::NONE;
 
-    if (headless_mode) { flags = viz::InitFlags::HEADLESS; }
+      if (headless_mode) { flags = viz::InitFlags::HEADLESS; }
+      if (fullscreen) { flags = viz::InitFlags::FULLSCREEN; }
 
-    display_width = 1024;
-    display_height = uint32_t(static_cast<float>(height) / static_cast<float>(width) * 1024.f);
-    viz::Init(display_width, display_height, "Holoviz Example", flags);
-  }
+      display_width = 1024;
+      display_height = uint32_t(static_cast<float>(height) / static_cast<float>(width) * 1024.f);
+      viz::Init(display_width,
+                display_height,
+                "Holoviz Example",
+                flags,
+                display_name.empty() ? nullptr : display_name.c_str());
+    }
 
-  if (benchmark_mode) {
-    for (auto source : {Source::DEVICE, Source::HOST}) {
-      current_source = source;
-      for (auto format_index : {2, 1, 0}) {
-        current_format_index = format_index;
-        start = std::chrono::steady_clock::time_point();
-        do { tick(); } while (elapsed.count() < 2000);
-        std::cout << current_source << " " << format_items[current_format_index] << " "
-                  << float(iterations) / (float(elapsed.count()) / 1000.f) << " fps" << std::endl;
+    if (benchmark_mode) {
+      for (auto source : {Source::DEVICE, Source::HOST}) {
+        current_source = source;
+        for (auto format_index : {2, 1, 0}) {
+          current_format_index = format_index;
+          start = std::chrono::steady_clock::time_point();
+          do { tick(); } while (elapsed.count() < 2000);
+          std::cout << current_source << " " << format_items[current_format_index] << " "
+                    << float(iterations) / (float(elapsed.count()) / 1000.f) << " fps" << std::endl;
+        }
+      }
+    } else if (headless_mode) {
+      tick();
+
+      // allocate a cuda buffer to hold the framebuffer data
+      const size_t data_size = display_width * display_height * 4 * sizeof(uint8_t);
+      CUdeviceptr read_buffer;
+      if (cuMemAlloc(&read_buffer, data_size) != CUDA_SUCCESS) {
+        throw std::runtime_error("cuMemAlloc failed.");
+      }
+
+      // read back the framebuffer
+      viz::ReadFramebuffer(
+          viz::ImageFormat::R8G8B8A8_UNORM, display_width, display_height, data_size, read_buffer);
+
+      std::vector<uint8_t> data(data_size);
+      if (cuMemcpyDtoHAsync(data.data(), read_buffer, data_size, CU_STREAM_PER_THREAD) !=
+          CUDA_SUCCESS) {
+        throw std::runtime_error("cuMemcpyDtoHAsync failed.");
+      }
+      if (cuStreamSynchronize(CU_STREAM_PER_THREAD) != CUDA_SUCCESS) {
+        throw std::runtime_error("cuStreamSynchronize failed.");
+      }
+
+      // write to a file
+      const char* filename = "framebuffer.png";
+      std::cout << "Writing image to " << filename << "." << std::endl;
+      stbi_write_png("framebuffer.png", display_width, display_height, 4, data.data(), 0);
+
+      if (cuMemFree(read_buffer) != CUDA_SUCCESS) { throw std::runtime_error("cuMemFree failed."); }
+    } else {
+      while (!viz::WindowShouldClose()) {
+        if (!viz::WindowIsMinimized()) { tick(); }
       }
     }
-  } else if (headless_mode) {
-    tick();
 
-    // allocate a cuda buffer to hold the framebuffer data
-    const size_t data_size = display_width * display_height * 4 * sizeof(uint8_t);
-    CUdeviceptr read_buffer;
-    if (cuMemAlloc(&read_buffer, data_size) != CUDA_SUCCESS) {
-      throw std::runtime_error("cuMemAlloc failed.");
-    }
+    viz::Shutdown();
 
-    // read back the framebuffer
-    viz::ReadFramebuffer(
-        viz::ImageFormat::R8G8B8A8_UNORM, display_width, display_height, data_size, read_buffer);
-
-    std::vector<uint8_t> data(data_size);
-    if (cuMemcpyDtoHAsync(data.data(), read_buffer, data_size, CU_STREAM_PER_THREAD) !=
-        CUDA_SUCCESS) {
-      throw std::runtime_error("cuMemcpyDtoHAsync failed.");
-    }
-    if (cuStreamSynchronize(CU_STREAM_PER_THREAD) != CUDA_SUCCESS) {
-      throw std::runtime_error("cuStreamSynchronize failed.");
-    }
-
-    // write to a file
-    const char* filename = "framebuffer.png";
-    std::cout << "Writing image to " << filename << "." << std::endl;
-    stbi_write_png("framebuffer.png", display_width, display_height, 4, data.data(), 0);
-
-    if (cuMemFree(read_buffer) != CUDA_SUCCESS) { throw std::runtime_error("cuMemFree failed."); }
-  } else {
-    while (!viz::WindowShouldClose()) {
-      if (!viz::WindowIsMinimized()) { tick(); }
-    }
+    cleanupCuda();
+  } catch (std::exception& e) {
+    std::cerr << e.what() << std::endl;
+    return EXIT_FAILURE;
   }
-
-  viz::Shutdown();
-
-  cleanupCuda();
 
   return EXIT_SUCCESS;
 }

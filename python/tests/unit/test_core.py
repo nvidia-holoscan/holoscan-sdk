@@ -52,7 +52,6 @@ from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.core._core import ParameterFlag, PyOperatorSpec
 from holoscan.executors import GXFExecutor
 from holoscan.graphs import FlowGraph, OperatorFlowGraph
-from holoscan.operators.aja_source import NTV2Channel  # noqa: F401 (needed to parse AJA 'channel')
 from holoscan.resources import (
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
@@ -343,6 +342,7 @@ class TestOperatorSpecBase:
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "__iospec_input"
         assert iospec.io_type == IOSpec.IOType.INPUT
+        assert iospec.queue_size == int(IOSpec.IOSize(1))
 
         iospec2 = c.input("input2")
         assert iospec2.name == "input2"
@@ -459,6 +459,40 @@ class TestOperatorSpecBase:
         assert c.inputs["in"] == iospec
 
         assert len(c.inputs["in"].conditions) == 1
+
+    @pytest.mark.parametrize(
+        "spec_args,spec_kwargs,expected_name,expected_size",
+        [
+            ([], {}, "__iospec_input", 1),
+            (["receivers"], dict(size=IOSpec.SIZE_ONE), "receivers", 1),
+            (["receivers"], dict(size=IOSpec.ANY_SIZE), "receivers", int(IOSpec.ANY_SIZE)),
+            (
+                ["receivers"],
+                dict(size=IOSpec.PRECEDING_COUNT),
+                "receivers",
+                int(IOSpec.PRECEDING_COUNT),
+            ),
+            (["receivers"], dict(size=5), "receivers", 5),
+            (["receivers"], dict(size=IOSpec.IOSize(3)), "receivers", 3),
+            (["receivers"], dict(size=IOSpec.IOSize(-3)), "receivers", -3),
+        ],
+    )
+    def test_input_queue_size(
+        self, fragment, capfd, spec_args, spec_kwargs, expected_name, expected_size
+    ):
+        c = OperatorSpecBase(fragment)
+        iospec = c.input(*spec_args, **spec_kwargs)
+        assert isinstance(iospec, IOSpec)
+        assert iospec.name == expected_name
+        assert iospec.io_type == IOSpec.IOType.INPUT
+        assert iospec.queue_size == expected_size
+
+        # Calling a second time with the same name will log an error to the
+        # console.
+        c.input(expected_name)
+        captured = capfd.readouterr()
+        assert "error" in captured.err
+        assert "already exists" in captured.err
 
     def test_output(self, fragment, capfd):
         c = OperatorSpecBase(fragment)
@@ -965,6 +999,11 @@ class TestIOSpec:
         assert io_spec.io_type == io_type
         assert io_spec.connector() is None
         assert io_spec.conditions == []
+        assert io_spec.queue_size == 1
+
+        io_spec.queue_size = 5
+        assert io_spec.queue_size == 5
+        io_spec.queue_size = int(IOSpec.SIZE_ONE)
 
         repr_str = repr(io_spec)
         if name == "output":

@@ -145,6 +145,29 @@ struct _type_info<Parameter<std::array<T, N>>> {
 template <typename T>
 using type_info = _type_info<std::decay_t<T>>;
 
+// element_of/element_of_t
+
+template <typename T>
+struct _element_of {
+  using type = void;
+};
+
+template <typename T>
+struct _element_of<std::vector<T>> {
+  using type = std::decay_t<T>;
+};
+
+template <typename T, std::size_t N>
+struct _element_of<std::array<T, N>> {
+  using type = std::decay_t<T>;
+};
+
+template <typename T>
+using element_of = _element_of<std::decay_t<T>>;
+
+template <typename T>
+using element_of_t = typename _element_of<std::decay_t<T>>::type;
+
 // remove_pointer/remove_pointer_t
 // (This implementation removes both std::shared_ptr and raw pointers.)
 

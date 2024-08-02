@@ -99,6 +99,9 @@ class GXFOutputContext : public OutputContext {
   void emit_impl(std::any data, const char* name = nullptr,
                  OutputType out_type = OutputType::kSharedPointer,
                  const int64_t acq_timestamp = -1) override;
+
+ private:
+  void populate_output_metadata(nvidia::gxf::Handle<MetadataDictionary> metadata);
 };
 
 }  // namespace holoscan::gxf

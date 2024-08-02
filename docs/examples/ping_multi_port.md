@@ -78,7 +78,7 @@ The `HOLOSCAN_LOG_<LEVEL>()` macros can be used for logging with fmtlib syntax (
 :name: holoscan-one-operator-workflow-python
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec
 
 class ValueData:
     """Example of a custom Python class"""
@@ -105,13 +105,14 @@ After defining our custom `ValueData` class, we configure our operators' ports t
 
 This is the first operator - `PingTxOp` - sending `ValueData` objects on two ports, `out1` and `out2`:
 
+<!-- Note that NVIDIA's public user guide doesn't seem to support the `lineno-start` tag, such as `:lineno-start: 75` in the code block, so we are removing it. -->
+
 `````{tab-set}
 ````{tab-item} C++
 ```{code-block} cpp
 :linenos: true
-:lineno-start: 18
 :emphasize-lines: 10, 11, 16, 19
-:name: holoscan-ping-custom-op-app-cpp
+:name: holoscan-ping-multi-port-app-cpp
 
 namespace holoscan::ops {
 
@@ -136,11 +137,11 @@ class PingTxOp : public Operator {
   int index_ = 1;
 };
 ```
-- We configure the output ports with the `ValueData` type on lines `27` and `28` using `spec.output<std::shared_ptr<ValueData>>()`. Therefore, the data type for the output ports is an object to a shared pointer to a `ValueData` object.
-- The values are then sent out using `op_output.emit()` on lines `33` and `36`. The port name is required since there is more than one port on this operator.
+- We configure the output ports with the `ValueData` type on lines `10` and `11` using `spec.output<std::shared_ptr<ValueData>>()`. Therefore, the data type for the output ports is an object to a shared pointer to a `ValueData` object.
+- The values are then sent out using `op_output.emit()` on lines `16` and `19`. The port name is required since there is more than one port on this operator.
 
 :::{note}
-Data types of the output ports are shared pointers (`std::shared_ptr`), hence the call to `std::make_shared<ValueData>(...)` on lines `32` and `35`.
+Data types of the output ports are shared pointers (`std::shared_ptr`), hence the call to `std::make_shared<ValueData>(...)` on lines `15` and `18`.
 :::
 
 ````
@@ -148,9 +149,8 @@ Data types of the output ports are shared pointers (`std::shared_ptr`), hence th
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:lineno-start: 19
-:emphasize-lines: 17, 18, 23, 27
-:name: holoscan-ping-custom-op-app-python
+:emphasize-lines: 18-19, 24, 28
+:name: holoscan-ping-multi-port-app-python
 
 class PingTxOp(Operator):
     """Simple transmitter operator.
@@ -165,6 +165,7 @@ class PingTxOp(Operator):
 
     def __init__(self, fragment, *args, **kwargs):
         self.index = 1
+        # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
@@ -180,8 +181,8 @@ class PingTxOp(Operator):
         self.index += 1
         op_output.emit(value2, "out2")
 ```
-- We configure the output ports on lines `35` and `36` using `spec.output()`. There is no need to reference the type (`ValueData`) in Python.
-- The values are then sent out using `op_output.emit()` on lines `41` and `45`.
+- We configure the output ports on lines `18` and `19` using `spec.output()`. There is no need to reference the type (`ValueData`) in Python.
+- The values are then sent out using `op_output.emit()` on lines `24` and `28`.
 ````
 `````
 
@@ -191,9 +192,8 @@ We then configure the middle operator - `PingMxOp` - to receive that data on por
 ````{tab-item} C++
 ```{code-block} cpp
 :linenos: true
-:lineno-start: 40
-:emphasize-lines: 8, 9, 16, 17
-:name: holoscan-ping-custom-op-app-cpp
+:emphasize-lines: 8-9, 16-17
+:name: holoscan-ping-multi-port-app-cpp
 
 class PingMxOp : public Operator {
  public:
@@ -231,16 +231,15 @@ class PingMxOp : public Operator {
   Parameter<int> multiplier_;
 };
 ```
-- We configure the input ports with the `std::shared_ptr<ValueData>` type on lines `47` and `48` using `spec.input<std::shared_ptr<ValueData>>()`.
-- The values are received using `op_input.receive()` on lines `55` and `56` using the port names. The received values are of type `std::shared_ptr<ValueData>` as mentioned in the templated `receive()` method.
+- We configure the input ports with the `std::shared_ptr<ValueData>` type on lines `8` and `9` using `spec.input<std::shared_ptr<ValueData>>()`.
+- The values are received using `op_input.receive()` on lines `16` and `17` using the port names. The received values are of type `std::shared_ptr<ValueData>` as mentioned in the templated `receive()` method.
 ````
 
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:lineno-start: 46
-:emphasize-lines: 16, 17, 23, 24
-:name: holoscan-ping-custom-op-app-python
+:emphasize-lines: 18-19, 25-26
+:name: holoscan-ping-multi-port-app-python
 
 class PingMxOp(Operator):
     """Example of an operator modifying data.
@@ -254,6 +253,8 @@ class PingMxOp(Operator):
 
     def __init__(self, fragment, *args, **kwargs):
         self.count = 1
+
+        # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
@@ -280,7 +281,7 @@ class PingMxOp(Operator):
         op_output.emit(value2, "out2")
 ```
 Sending messages of arbitrary data types is pretty straightforward in Python.
-The code to define the operator input ports (lines `61-62`), and to receive them (lines `68, 69`) did
+The code to define the operator input ports (lines `18-19`), and to receive them (lines `25-26`) did
 not change when we went from passing `int` to `ValueData` objects.
 ````
 `````
@@ -296,9 +297,8 @@ In this workflow, `PingRxOp` has a single input port - `receivers` - that is con
 ````{tab-item} C++
 ```{code-block} cpp
 :linenos: true
-:lineno-start: 75
-:emphasize-lines: 8, 12-13, 22
-:name: holoscan-ping-custom-op-app-cpp
+:emphasize-lines: 12, 16-17
+:name: holoscan-ping-multi-port-app-cpp
 
 class PingRxOp : public Operator {
  public:
@@ -307,7 +307,11 @@ class PingRxOp : public Operator {
   PingRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    // // Since Holoscan SDK v2.3, users can define a multi-receiver input port using 'spec.input()'
+    // // with 'IOSpec::kAnySize'.
+    // // The old way is to use 'spec.param()' with 'Parameter<std::vector<IOSpec*>> receivers_;'.
+    // spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    spec.input<std::vector<std::shared_ptr<ValueData>>>("receivers", IOSpec::kAnySize);
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
@@ -321,23 +325,23 @@ class PingRxOp : public Operator {
   };
 
  private:
-  Parameter<std::vector<IOSpec*>> receivers_;
+  // // Since Holoscan SDK v2.3, the following line is no longer needed.
+  // Parameter<std::vector<IOSpec*>> receivers_;
   int count_ = 1;
 };
-
-}  // namespace holoscan::ops
 ```
-- In the operator's `setup()` method, we define a parameter `receivers` (line `82`) that is tied to the private data member `receivers_` (line `96`) of type `Parameter<std::vector<IOSpec*>>`.
+- In the operator's `setup()` method, we define an input port `receivers` (line `12`) with `holoscan::IOSpec::kAnySize` to allow any number of upstream ports to connect to it.
 - The values are retrieved using `op_input.receive<std::vector<std::shared_ptr<ValueData>>>(...)`.
-- `value_vector`'s type is `std::vector<std::shared_ptr<ValueData>>` (lines `86-87`).
+- The type of `value_vector` is `std::vector<std::shared_ptr<ValueData>>` (lines `16-17`).
+
+Please see {ref}`retrieving-any-number-of-inputs-cpp` for more information on how to retrieve any number of inputs in C++.
 ````
 
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:lineno-start: 82
-:emphasize-lines: 16, 19
-:name: holoscan-ping-custom-op-app-python
+:emphasize-lines: 21, 24
+:name: holoscan-ping-multi-port-app-python
 
 class PingRxOp(Operator):
     """Simple receiver operator.
@@ -351,10 +355,15 @@ class PingRxOp(Operator):
 
     def __init__(self, fragment, *args, **kwargs):
         self.count = 1
+        # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        # # Since Holoscan SDK v2.3, users can define a multi-receiver input port using
+        # # 'spec.input()' with 'size=IOSpec.ANY_SIZE'.
+        # # The old way is to use 'spec.param()' with 'kind="receivers"'.
+        # spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")
@@ -364,8 +373,10 @@ class PingRxOp(Operator):
         print(f"Rx message value2: {values[1].data}")
 ```
 - In Python, a port that can be connected to multiple upstream ports is created by
- defining a parameter and setting the argument `kind="receivers"` (line `97`).
-- The call to `receive()` returns a tuple of `ValueData` objects (line `100`).
+  defining an input port and setting the argument `size=IOSpec.ANY_SIZE` (line `21`).
+- The call to `receive()` returns a tuple of `ValueData` objects (line `24`).
+
+Please see {ref}`retrieving-any-number-of-inputs-python` for more information on how to retrieve any number of inputs in Python.
 ````
 `````
 
@@ -375,9 +386,8 @@ The rest of the code creates the application, operators, and defines the workflo
 ````{tab-item} C++
 ```{code-block} cpp
 :linenos: true
-:lineno-start: 100
 :emphasize-lines: 12, 13
-:name: holoscan-ping-custom-op-app-cpp
+:name: holoscan-ping-multi-port-app-cpp
 
 class MyPingApp : public holoscan::Application {
  public:
@@ -409,7 +419,7 @@ int main(int argc, char** argv) {
 :linenos: true
 :lineno-start: 105
 :emphasize-lines: 9, 10
-:name: holoscan-ping-custom-op-app-python
+:name: holoscan-ping-multi-port-app-python
 
 class MyPingApp(Application):
     def compose(self):
@@ -444,40 +454,36 @@ if __name__ == "__main__":
 Running the application should give you output similar to the following in your terminal.
 
 ```
-[info] [gxf_executor.cpp:222] Creating context
-[info] [gxf_executor.cpp:1531] Loading extensions from configs...
-[info] [gxf_executor.cpp:1673] Activating Graph...
-[info] [gxf_executor.cpp:1703] Running Graph...
-[info] [gxf_executor.cpp:1705] Waiting for completion...
-[info] [gxf_executor.cpp:1706] Graph execution waiting. Fragment:
-[info] [greedy_scheduler.cpp:195] Scheduling 3 entities
+[info] [fragment.cpp:586] Loading extensions from configs...
+[info] [gxf_executor.cpp:249] Creating context
+[info] [gxf_executor.cpp:1960] Activating Graph...
+[info] [gxf_executor.cpp:1992] Running Graph...
+[info] [greedy_scheduler.cpp:191] Scheduling 3 entities
+[info] [gxf_executor.cpp:1994] Waiting for completion...
 [info] [ping_multi_port.cpp:80] Middle message received (count: 1)
 [info] [ping_multi_port.cpp:82] Middle message value1: 1
 [info] [ping_multi_port.cpp:83] Middle message value2: 2
-[info] [ping_multi_port.cpp:112] Rx message received (count: 1, size: 2)
-[info] [ping_multi_port.cpp:114] Rx message value1: 3
-[info] [ping_multi_port.cpp:115] Rx message value2: 6
+[info] [ping_multi_port.cpp:116] Rx message received (count: 1, size: 2)
+[info] [ping_multi_port.cpp:118] Rx message value1: 3
+[info] [ping_multi_port.cpp:119] Rx message value2: 6
 [info] [ping_multi_port.cpp:80] Middle message received (count: 2)
 [info] [ping_multi_port.cpp:82] Middle message value1: 3
 [info] [ping_multi_port.cpp:83] Middle message value2: 4
-[info] [ping_multi_port.cpp:112] Rx message received (count: 2, size: 2)
-[info] [ping_multi_port.cpp:114] Rx message value1: 9
-[info] [ping_multi_port.cpp:115] Rx message value2: 12
+[info] [ping_multi_port.cpp:116] Rx message received (count: 2, size: 2)
+[info] [ping_multi_port.cpp:118] Rx message value1: 9
+[info] [ping_multi_port.cpp:119] Rx message value2: 12
 ...
-[info] [ping_multi_port.cpp:114] Rx message value1: 51
-[info] [ping_multi_port.cpp:115] Rx message value2: 54
 [info] [ping_multi_port.cpp:80] Middle message received (count: 10)
 [info] [ping_multi_port.cpp:82] Middle message value1: 19
 [info] [ping_multi_port.cpp:83] Middle message value2: 20
-[info] [ping_multi_port.cpp:112] Rx message received (count: 10, size: 2)
-[info] [ping_multi_port.cpp:114] Rx message value1: 57
-[info] [ping_multi_port.cpp:115] Rx message value2: 60
-[info] [greedy_scheduler.cpp:374] Scheduler stopped: Some entities are waiting for execution, but there are no periodic or async entities to get out of the deadlock.
-[info] [greedy_scheduler.cpp:403] Scheduler finished.
-[info] [gxf_executor.cpp:1714] Graph execution deactivating. Fragment:
-[info] [gxf_executor.cpp:1715] Deactivating Graph...
-[info] [gxf_executor.cpp:1718] Graph execution finished. Fragment:
-[info] [gxf_executor.cpp:241] Destroying context
+[info] [ping_multi_port.cpp:116] Rx message received (count: 10, size: 2)
+[info] [ping_multi_port.cpp:118] Rx message value1: 57
+[info] [ping_multi_port.cpp:119] Rx message value2: 60
+[info] [greedy_scheduler.cpp:372] Scheduler stopped: Some entities are waiting for execution, but there are no periodic or async entities to get out of the deadlock.
+[info] [greedy_scheduler.cpp:401] Scheduler finished.
+[info] [gxf_executor.cpp:1997] Deactivating Graph...
+[info] [gxf_executor.cpp:2005] Graph execution finished.
+[info] [gxf_executor.cpp:278] Destroying context
 ```
 
 :::{note}

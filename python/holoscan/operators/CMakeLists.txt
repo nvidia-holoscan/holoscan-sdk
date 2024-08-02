@@ -14,7 +14,9 @@
 # limitations under the License.
 
 # operator submodules
-add_subdirectory(aja_source)
+if(HOLOSCAN_BUILD_AJA)
+  add_subdirectory(aja_source)
+endif()
 add_subdirectory(bayer_demosaic)
 add_subdirectory(format_converter)
 add_subdirectory(gxf_codelet)
@@ -28,15 +30,12 @@ add_subdirectory(v4l2_video_capture)
 add_subdirectory(video_stream_recorder)
 add_subdirectory(video_stream_replayer)
 
-# custom target to copy __init__.py file
-set(INIT_FILE_IN ${CMAKE_CURRENT_LIST_DIR}/__init__.py)
+if(HOLOSCAN_BUILD_AJA)
+  set(AJASOURCEOp_autosummary "holoscan.operators.AJASourceOp")
+  set(AJASource_operator_module "\"aja_source\": [\"AJASourceOp\", \"NTV2Channel\"],")
+endif()
+
 file(RELATIVE_PATH relative_dest_path ${CMAKE_CURRENT_BINARY_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR})
 set(INIT_FILE_OUT ${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/${relative_dest_path}/__init__.py)
-add_custom_target(operators_python_init
-    COMMAND ${CMAKE_COMMAND} -E copy "${INIT_FILE_IN}" "${INIT_FILE_OUT}"
-    DEPENDS "${INIT_FILE_IN}"
-    BYPRODUCTS "${INIT_FILE_OUT}"
-)
-add_dependencies(holoscan-python operators_python_init)
-unset(INIT_FILE_IN)
+configure_file(__init__.py.in ${INIT_FILE_OUT})
 unset(INIT_FILE_OUT)

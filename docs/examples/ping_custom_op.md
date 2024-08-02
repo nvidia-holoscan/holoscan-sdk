@@ -146,12 +146,13 @@ class PingMxOp(Operator):
 `````
 Now that the custom operator has been defined, we create the application, operators, and define the workflow.
 
+<!-- Note that NVIDIA's public user guide doesn't seem to support the `lineno-start` tag, such as `:lineno-start: 35` in the code block, so we are removing it. -->
+
 `````{tab-set}
 ````{tab-item} C++
 ```{code-block} cpp
 :linenos: true
-:lineno-start: 35
-:emphasize-lines: 7
+:emphasize-lines: 7, 11-12
 :name: holoscan-ping-custom-op-app-cpp
 
 class MyPingApp : public holoscan::Application {
@@ -176,15 +177,14 @@ int main(int argc, char** argv) {
   return 0;
 }
 ```
-- The tx, mx, and rx operators are created in the `compose()` method on lines `40-42`.
-- The custom mx operator is created in exactly the same way with `make_operator()` (line `41`) as the built-in operators, and configured with a "multiplier" parameter initialized to 3 which overrides the parameter's default value of 2 (line `16`).
-- The workflow is defined by connecting tx to mx, and mx to rx using `add_flow()` on lines `45-46`.
+- The tx, mx, and rx operators are created in the `compose()` method on lines `6-8`.
+- The custom mx operator is created in exactly the same way with `make_operator()` (line `7`) as the built-in operators, and configured with a "multiplier" parameter initialized to 3 which overrides the parameter's default value of 2 (in the `setup()` method).
+- The workflow is defined by connecting tx to mx, and mx to rx using `add_flow()` on lines `11-12`.
 ````
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:lineno-start: 29
-:emphasize-lines: 5
+:emphasize-lines: 5, 9-10
 :name: holoscan-ping-custom-op-app-python
 
 class MyPingApp(Application):
@@ -207,9 +207,9 @@ def main():
 if __name__ == "__main__":
     main()
 ```
-- The tx, mx, and rx operators are created in the `compose()` method on lines `32-34`.
-- The custom mx operator is created in exactly the same way as the built-in operators (line `33`), and configured with a "multiplier" parameter initialized to 3 which overrides the parameter's default value of 2 (line `19`).
-- The workflow is defined by connecting tx to mx, and mx to rx using `add_flow()` on lines `37-38`.
+- The tx, mx, and rx operators are created in the `compose()` method on lines `4-6`.
+- The custom mx operator is created in exactly the same way as the built-in operators (line `5`), and configured with a "multiplier" parameter initialized to 3 which overrides the parameter's default value of 2 (in the `setup()` method).
+- The workflow is defined by connecting tx to mx, and mx to rx using `add_flow()` on lines `9-10`.
 ````
 `````
 

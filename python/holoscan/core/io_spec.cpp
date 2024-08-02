@@ -51,6 +51,19 @@ void init_io_spec(py::module_& m) {
       .value("DOUBLE_BUFFER", IOSpec::ConnectorType::kDoubleBuffer)
       .value("UCX", IOSpec::ConnectorType::kUCX);
 
+  py::class_<IOSpec::IOSize, std::shared_ptr<IOSpec::IOSize>>(
+      iospec, "IOSize", doc::IOSpec::IOSize::doc_IOSize)
+      .def(py::init<int64_t>(), "size"_a)
+      .def_property("size",
+                    py::overload_cast<>(&IOSpec::IOSize::size, py::const_),
+                    py::overload_cast<int64_t>(&IOSpec::IOSize::size),
+                    doc::IOSpec::IOSize::doc_size)
+      // Define int conversion from IOSize
+      .def("__int__",
+           [](const IOSpec::IOSize& io_size) { return static_cast<int>(io_size.size()); })
+      .def("__repr__",
+           [](const IOSpec::IOSize& io_size) { return fmt::format("IOSize({})", io_size.size()); });
+
   iospec
       .def(py::init<OperatorSpec*, const std::string&, IOSpec::IOType>(),
            "op_spec"_a,
@@ -90,8 +103,23 @@ void init_io_spec(py::module_& m) {
            [](IOSpec& io_spec, std::shared_ptr<Resource> connector) {
              return io_spec.connector(std::move(connector));
            })
+      .def_property("queue_size",
+                    py::overload_cast<>(&IOSpec::queue_size, py::const_),
+                    py::overload_cast<int64_t>(&IOSpec::queue_size),
+                    doc::IOSpec::doc_queue_size)
       .def("__repr__",
            // use py::object and obj.cast to avoid a segfault if object has not been initialized
            [](const IOSpec& iospec) { return iospec.description(); });
+
+  // Define IOSize constants in IOSpec module
+  iospec
+      .def_property_readonly_static(
+          "ANY_SIZE", [](py::object) { return IOSpec::kAnySize; }, "Any size")
+      .def_property_readonly_static(
+          "PRECEDING_COUNT",
+          [](py::object) { return IOSpec::kPrecedingCount; },
+          "Number of preceding connections")
+      .def_property_readonly_static(
+          "SIZE_ONE", [](py::object) { return IOSpec::kSizeOne; }, "Size one");
 }
 }  // namespace holoscan

@@ -103,15 +103,53 @@ static void register_py_object_codec() {
       "std::shared_ptr<GILGuardedPyObject>"s);
 }
 
-py::object PyInputContext::py_receive(const std::string& name) {
+py::object PyInputContext::py_receive(const std::string& name, const std::string& kind) {
   auto py_op = py_op_.cast<PyOperator*>();
   auto py_op_spec = py_op->py_shared_spec();
 
+  bool should_return_tuple = false;
   bool is_receivers = false;
   for (const auto& receivers : py_op_spec->py_receivers()) {
-    if (receivers.key() == name) { is_receivers = true; }
+    if (receivers.key() == name) {
+      is_receivers = true;
+      should_return_tuple = true;
+    }
   }
-  if (is_receivers) {
+
+  // If 'kind' is provided, override the default behavior.
+  if (!kind.empty()) {
+    if (kind == "single") {
+      if (is_receivers) {
+        HOLOSCAN_LOG_ERROR(
+            "Invalid kind '{}' for receive() method, cannot be 'single' for the input port with "
+            "'IOSpec.ANY_SIZE'",
+            kind);
+        throw std::runtime_error(fmt::format(
+            "Invalid kind '{}' for receive() method, cannot be 'single' for the input port with "
+            "'IOSpec.ANY_SIZE'",
+            kind));
+      }
+      should_return_tuple = false;
+    } else if (kind == "multi") {
+      should_return_tuple = true;
+    } else {
+      HOLOSCAN_LOG_ERROR("Invalid kind '{}' for receive() method, must be 'single' or 'multi'",
+                         kind);
+      throw std::runtime_error(
+          fmt::format("Invalid kind '{}' for receive() method, must be 'single' or 'multi'", kind));
+    }
+  } else {
+    // If the 'queue_size' equals IOSpec.PRECEDING_COUNT (0) or 'queue_size > 1', returns a tuple.
+    if (!should_return_tuple) {
+      auto input_spec = py_op_spec->inputs().find(name);
+      if (input_spec != py_op_spec->inputs().end()) {
+        auto queue_size = input_spec->second->queue_size();
+        if (queue_size == IOSpec::kPrecedingCount || queue_size > 1) { should_return_tuple = true; }
+      }
+    }
+  }
+
+  if (should_return_tuple) {
     auto maybe_any_result = receive<std::vector<std::any>>(name.c_str());
     if (!maybe_any_result.has_value()) {
       HOLOSCAN_LOG_ERROR("Unable to receive input (std::vector<std::any>) with name '{}'", name);
@@ -299,7 +337,12 @@ void init_io_context(py::module_& m) {
 
   py::class_<PyInputContext, InputContext, std::shared_ptr<PyInputContext>>(
       m, "PyInputContext", R"doc(Input context class.)doc")
-      .def("receive", &PyInputContext::py_receive, "name"_a);
+      .def("receive",
+           &PyInputContext::py_receive,
+           "name"_a,
+           py::kw_only(),
+           "kind"_a = "",
+           doc::InputContext::doc_receive);
 
   py::class_<PyOutputContext, OutputContext, std::shared_ptr<PyOutputContext>>(
       m, "PyOutputContext", R"doc(Output context class.)doc")
@@ -308,7 +351,8 @@ void init_io_context(py::module_& m) {
            "data"_a,
            "name"_a,
            "emitter_name"_a = "",
-           "acq_timestamp"_a = -1);
+           "acq_timestamp"_a = -1,
+           doc::OutputContext::doc_emit);
 
   // register a cloudpickle-based serializer for Python objects
   register_py_object_codec();

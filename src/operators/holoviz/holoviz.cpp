@@ -116,6 +116,74 @@ static std::string inputTypeToString(holoscan::ops::HolovizOp::InputType input_t
   return "invalid";
 }
 
+/// table to convert image format to string
+static const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 31>
+    kImageFormatToStr{
+        {{holoscan::ops::HolovizOp::ImageFormat::AUTO_DETECT, "auto_detect"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8_UINT, "r8_uint"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8_SINT, "r8_sint"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8_UNORM, "r8_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8_SNORM, "r8_snorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8_SRGB, "r8_srgb"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16_UINT, "r16_uint"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16_SINT, "r16_sint"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16_UNORM, "r16_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16_SNORM, "r16_snorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16_SFLOAT, "r16_sfloat"},
+         {holoscan::ops::HolovizOp::ImageFormat::R32_UINT, "r32_uint"},
+         {holoscan::ops::HolovizOp::ImageFormat::R32_SINT, "r32_sint"},
+         {holoscan::ops::HolovizOp::ImageFormat::R32_SFLOAT, "r32_sfloat"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8G8B8_UNORM, "r8g8b8_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8G8B8_SNORM, "r8g8b8_snorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8G8B8_SRGB, "r8g8b8_srgb"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8G8B8A8_UNORM, "r8g8b8a8_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8G8B8A8_SNORM, "r8g8b8a8_snorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R8G8B8A8_SRGB, "r8g8b8a8_srgb"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16G16B16A16_UNORM, "r16g16b16a16_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16G16B16A16_SNORM, "r16g16b16a16_snorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16G16B16A16_SFLOAT, "r16g16b16a16_sfloat"},
+         {holoscan::ops::HolovizOp::ImageFormat::R32G32B32A32_SFLOAT, "r32g32b32a32_sfloat"},
+         {holoscan::ops::HolovizOp::ImageFormat::A2B10G10R10_UNORM_PACK32,
+          "a2b10g10r10_unorm_pack32"},
+         {holoscan::ops::HolovizOp::ImageFormat::A2R10G10B10_UNORM_PACK32,
+          "a2r10g10b10_unorm_pack32"},
+         {holoscan::ops::HolovizOp::ImageFormat::B8G8R8A8_UNORM, "b8g8r8a8_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::B8G8R8A8_SRGB, "b8g8r8a8_srgb"},
+         {holoscan::ops::HolovizOp::ImageFormat::A8B8G8R8_UNORM_PACK32, "a8b8g8r8_unorm_pack32"},
+         {holoscan::ops::HolovizOp::ImageFormat::A8B8G8R8_SRGB_PACK32, "a8b8g8r8_srgb_pack32"}}};
+
+/**
+ * Convert a string to a image format enum
+ *
+ * @param string image format string
+ * @return image format enum
+ */
+static nvidia::gxf::Expected<holoscan::ops::HolovizOp::ImageFormat> imageFormatFromString(
+    const std::string& string) {
+  const auto it = std::find_if(std::cbegin(kImageFormatToStr),
+                               std::cend(kImageFormatToStr),
+                               [&string](const auto& v) { return v.second == string; });
+  if (it != std::cend(kImageFormatToStr)) { return it->first; }
+
+  HOLOSCAN_LOG_ERROR("Unsupported image format '{}'", string);
+  return nvidia::gxf::Unexpected{GXF_FAILURE};
+}
+
+/**
+ * Convert a image format enum to a string
+ *
+ * @param input_type image format enum
+ * @return image format string
+ */
+static std::string imageFormatToString(holoscan::ops::HolovizOp::ImageFormat image_format) {
+  const auto it = std::find_if(std::cbegin(kImageFormatToStr),
+                               std::cend(kImageFormatToStr),
+                               [&image_format](const auto& v) { return v.first == image_format; });
+  if (it != std::cend(kImageFormatToStr)) { return it->second; }
+
+  return "invalid";
+}
+
 /// table to convert depth map render mode to string
 static const std::array<std::pair<holoscan::ops::HolovizOp::DepthMapRenderMode, std::string>, 3>
     kDepthMapRenderModeToStr{
@@ -228,6 +296,11 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
     node["opacity"] = std::to_string(input_spec.opacity_);
     node["priority"] = std::to_string(input_spec.priority_);
     switch (input_spec.type_) {
+      case holoscan::ops::HolovizOp::InputType::COLOR:
+      case holoscan::ops::HolovizOp::InputType::COLOR_LUT:
+      case holoscan::ops::HolovizOp::InputType::DEPTH_MAP_COLOR:
+        node["image_format"] = imageFormatToString(input_spec.image_format_);
+        break;
       case holoscan::ops::HolovizOp::InputType::POINTS:
       case holoscan::ops::HolovizOp::InputType::LINES:
       case holoscan::ops::HolovizOp::InputType::LINE_STRIP:
@@ -274,6 +347,15 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
       input_spec.opacity_ = node["opacity"].as<float>(input_spec.opacity_);
       input_spec.priority_ = node["priority"].as<int32_t>(input_spec.priority_);
       switch (input_spec.type_) {
+        case holoscan::ops::HolovizOp::InputType::COLOR:
+        case holoscan::ops::HolovizOp::InputType::COLOR_LUT:
+        case holoscan::ops::HolovizOp::InputType::DEPTH_MAP_COLOR:
+          if (node["image_format"]) {
+            const auto maybe_image_format =
+                imageFormatFromString(node["image_format"].as<std::string>());
+            if (maybe_image_format) { input_spec.image_format_ = maybe_image_format.value(); }
+          }
+          break;
         case holoscan::ops::HolovizOp::InputType::LINES:
         case holoscan::ops::HolovizOp::InputType::LINE_STRIP:
         case holoscan::ops::HolovizOp::InputType::TRIANGLES:
@@ -372,12 +454,14 @@ void HolovizOp::setup(OperatorSpec& spec) {
   constexpr uint32_t DEFAULT_HEIGHT = 1080;
   constexpr float DEFAULT_FRAMERATE = 60.f;
   static const std::string DEFAULT_WINDOW_TITLE("Holoviz");
-  static const std::string DEFAULT_DISPLAY_NAME("DP-0");
+  static const std::string DEFAULT_DISPLAY_NAME("");
   constexpr bool DEFAULT_EXCLUSIVE_DISPLAY = false;
   constexpr bool DEFAULT_FULLSCREEN = false;
   constexpr bool DEFAULT_HEADLESS = false;
+  constexpr bool DEFAULT_FRAMEBUFFER_SRGB = false;
+  constexpr bool DEFAULT_VSYNC = false;
 
-  spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+  spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
 
   spec.input<std::any>("input_specs").condition(ConditionType::kNone);
   spec.input<std::array<float, 3>>("camera_eye_input").condition(ConditionType::kNone);
@@ -430,22 +514,24 @@ void HolovizOp::setup(OperatorSpec& spec) {
       display_name_,
       "display_name",
       "Display name",
-      "In exclusive mode, name of display to use as shown with `xrandr` or `hwinfo --monitor`.",
+      "In exclusive display or fullscreen mode, name of display to use as shown with `xrandr` or "
+      "`hwinfo --monitor`.",
       DEFAULT_DISPLAY_NAME);
   spec.param(width_,
              "width",
              "Width",
-             "Window width or display resolution width if in exclusive or fullscreen mode.",
+             "Window width or display resolution width if in exclusive display or fullscreen mode.",
              DEFAULT_WIDTH);
   spec.param(height_,
              "height",
              "Height",
-             "Window height or display resolution height if in exclusive or fullscreen mode.",
+             "Window height or display resolution height if in exclusive display or fullscreen "
+             "mode.",
              DEFAULT_HEIGHT);
   spec.param(framerate_,
              "framerate",
              "Framerate",
-             "Display framerate in Hz if in exclusive mode.",
+             "Display framerate in Hz if in exclusive display mode.",
              DEFAULT_FRAMERATE);
   spec.param(use_exclusive_display_,
              "use_exclusive_display",
@@ -463,6 +549,18 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Enable headless mode. No window is opened, the render buffer is output to "
              "`render_buffer_output`.",
              DEFAULT_HEADLESS);
+  spec.param(framebuffer_srgb_,
+             "framebuffer_srgb",
+             "Framebuffer SRGB",
+             "Enable SRGB framebuffer. If set to true, the operator will use an sRGB framebuffer "
+             "for rendering. If set to false, the operator will use a linear framebuffer.",
+             DEFAULT_FRAMEBUFFER_SRGB);
+  spec.param(vsync_,
+             "vsync",
+             "Vertical Sync",
+             "Enable vertical sync. If set to true the operator waits for the next vertical "
+             "blanking period of the display to update the current image.",
+             DEFAULT_VSYNC);
   spec.param(window_close_scheduling_term_,
              "window_close_scheduling_term",
              "WindowCloseSchedulingTerm",
@@ -651,7 +749,7 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
                                          inputTypeToString(input_spec.type_),
                                          buffer_info.rank));
   }
-  if (buffer_info.image_format == static_cast<viz::ImageFormat>(-1)) {
+  if (buffer_info.image_format == ImageFormat::AUTO_DETECT) {
     std::runtime_error(
         fmt::format("Color image: element type {} and channel count {} not supported",
                     static_cast<int>(buffer_info.element_type),
@@ -675,24 +773,24 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
 
     // when using a LUT, the unorm formats are handled as single channel int formats
     switch (buffer_info.image_format) {
-      case viz::ImageFormat::R8_UNORM:
+      case ImageFormat::R8_UNORM:
         image_format = viz::ImageFormat::R8_UINT;
         break;
-      case viz::ImageFormat::R8_SNORM:
+      case ImageFormat::R8_SNORM:
         image_format = viz::ImageFormat::R8_SINT;
         break;
-      case viz::ImageFormat::R16_UNORM:
+      case ImageFormat::R16_UNORM:
         image_format = viz::ImageFormat::R16_UINT;
         break;
-      case viz::ImageFormat::R16_SNORM:
+      case ImageFormat::R16_SNORM:
         image_format = viz::ImageFormat::R16_SINT;
         break;
       default:
-        image_format = buffer_info.image_format;
+        image_format = viz::ImageFormat(buffer_info.image_format);
         break;
     }
   } else {
-    image_format = buffer_info.image_format;
+    image_format = viz::ImageFormat(buffer_info.image_format);
   }
 
   // start an image layer
@@ -713,8 +811,11 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
   if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
     // if it's the device convert to `CUDeviceptr`
     const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
-    viz::ImageCudaDevice(
-        buffer_info.width, buffer_info.height, image_format, cu_buffer_ptr, buffer_info.stride[0]);
+    viz::ImageCudaDevice(buffer_info.width,
+                         buffer_info.height,
+                         image_format,
+                         cu_buffer_ptr,
+                         buffer_info.stride[0]);
   } else {
     // convert to void * if using the system/host
     const auto host_buffer_ptr = reinterpret_cast<const void*>(buffer_info.buffer_ptr);
@@ -886,8 +987,9 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         // oval primitive, an oval primitive is defined by the center coordinate and the axis
         // sizes (xi, yi, sxi, syi)
         if ((buffer_info.components < 2) || (buffer_info.components > 4)) {
-          throw std::runtime_error(fmt::format(
-              "Expected two, three or four values per oval, but got '{}'", buffer_info.components));
+          throw std::runtime_error(
+              fmt::format("Expected two, three or four values per oval, but got '{}'",
+                          buffer_info.components));
         }
         topology = viz::PrimitiveTopology::OVAL_LIST;
         primitive_count = coordinates;
@@ -1007,16 +1109,34 @@ void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
                       buffer_info_depth_map.width,
                       buffer_info_depth_map.height));
     }
-    if (buffer_info_depth_map_color.image_format == static_cast<viz::ImageFormat>(-1)) {
-      std::runtime_error(
+    if (buffer_info_depth_map_color.image_format == ImageFormat::AUTO_DETECT) {
+      throw std::runtime_error(
           fmt::format("Depth map color: element type {} and channel count {} not supported",
                       static_cast<int>(buffer_info_depth_map_color.element_type),
                       buffer_info_depth_map_color.components));
     }
-    depth_map_color_fmt = buffer_info_depth_map_color.image_format;
+    depth_map_color_fmt = viz::ImageFormat(buffer_info_depth_map_color.image_format);
 
     depth_map_color_device_ptr =
         reinterpret_cast<CUdeviceptr>(buffer_info_depth_map_color.buffer_ptr);
+  }
+
+  viz::ImageFormat depth_format;
+  switch (buffer_info_depth_map.image_format) {
+    case ImageFormat::R8_UNORM:
+      depth_format = viz::ImageFormat::R8_UNORM;
+      break;
+    case ImageFormat::R32_SFLOAT:
+      // if the input is a tensor the image format is auto detected as a single channel color
+      // format, convert to a depth format
+      depth_format = viz::ImageFormat::D32_SFLOAT;
+      break;
+    case ImageFormat::D32_SFLOAT:
+      depth_format = viz::ImageFormat::D32_SFLOAT;
+      break;
+    default:
+      throw std::runtime_error(fmt::format("Depth map: depth image format {} not supported",
+                                           int(buffer_info_depth_map.image_format)));
   }
 
   viz::DepthMapRenderMode depth_map_render_mode;
@@ -1044,7 +1164,7 @@ void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
   viz::DepthMap(depth_map_render_mode,
                 buffer_info_depth_map.width,
                 buffer_info_depth_map.height,
-                viz::ImageFormat::R8_UNORM,
+                depth_format,
                 cu_buffer_ptr,
                 depth_map_color_fmt,
                 depth_map_color_device_ptr);
@@ -1089,6 +1209,11 @@ void HolovizOp::start() {
   // make the instance current
   ScopedPushInstance scoped_instance(instance_);
 
+  if (framebuffer_srgb_) {
+    viz::SetSurfaceFormat({viz::ImageFormat::B8G8R8A8_SRGB, viz::ColorSpace::SRGB_NONLINEAR});
+  }
+  if (vsync_) { viz::SetPresentMode(viz::PresentMode::FIFO); }
+
   // initialize Holoviz
   viz::InitFlags init_flags = viz::InitFlags::NONE;
   if (fullscreen_ && headless_) {
@@ -1101,7 +1226,11 @@ void HolovizOp::start() {
     viz::Init(
         display_name_.get().c_str(), width_, height_, uint32_t(framerate_ * 1000.f), init_flags);
   } else {
-    viz::Init(width_, height_, window_title_.get().c_str(), init_flags);
+    viz::Init(width_,
+              height_,
+              window_title_.get().c_str(),
+              init_flags,
+              display_name_.get().empty() ? nullptr : display_name_.get().c_str());
   }
 
   // initialize the camera with the provided parameters
@@ -1306,10 +1435,18 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
     BufferInfo buffer_info;
     gxf_result_t result;
     if (maybe_input_tensor) {
-      result = buffer_info.init(maybe_input_tensor.value());
+      result = buffer_info.init(maybe_input_tensor.value(), input_spec.image_format_);
     } else {
-      result = buffer_info.init(maybe_input_video.value());
+      result = buffer_info.init(maybe_input_video.value(), input_spec.image_format_);
     }
+
+    // update the input spec image format when auto detecting and we detected a format so the user
+    // can see the detected format in the console
+    if ((input_spec.image_format_ == ImageFormat::AUTO_DETECT) &&
+        (buffer_info.image_format != ImageFormat::AUTO_DETECT)) {
+      input_spec.image_format_ = buffer_info.image_format;
+    }
+
     if (result != GXF_SUCCESS) {
       throw std::runtime_error(fmt::format("Unsupported buffer format tensor/video buffer '{}'",
                                            input_spec.tensor_name_));
@@ -1353,12 +1490,14 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
       case InputType::DEPTH_MAP: {
         // 2D depth map
-        if (buffer_info.element_type != nvidia::gxf::PrimitiveType::kUnsigned8) {
-          throw std::runtime_error(fmt::format(
-              "Expected gxf::PrimitiveType::kUnsigned8 element type for tensor '{}', but got "
-              "element type {}",
-              buffer_info.name,
-              static_cast<int>(buffer_info.element_type)));
+        if ((buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat32) &&
+            (buffer_info.element_type != nvidia::gxf::PrimitiveType::kUnsigned8)) {
+          throw std::runtime_error(
+              fmt::format("Expected gxf::PrimitiveType::kUnsigned8 or gxf::PrimitiveType::kFloat32 "
+                          "element type for tensor '{}', but got "
+                          "element type {}",
+                          buffer_info.name,
+                          static_cast<int>(buffer_info.element_type)));
         }
         if (buffer_info.storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
           throw std::runtime_error(

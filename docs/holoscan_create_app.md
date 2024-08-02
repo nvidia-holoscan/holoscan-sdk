@@ -1042,3 +1042,112 @@ You can then run your application by running `python3 my_app.py`.
 :::{note}
 Given a CMake project, a pre-built executable, or a python application, you can also use the [Holoscan CLI](./cli/cli.md) to [package and run your Holoscan application](./holoscan_packager.md) in a OCI-compliant container image.
 :::
+
+## Dynamic Application Metadata
+
+As of Holoscan v2.3 it is possible to send metadata alongside the data emitted from an operator's output ports. This metadata can then be used and/or modified by any downstream operators. Currently this feature is only available for C++ applications, but will also be available to Python applications in a future release. The subsections below describe how this feature can be enabled and used.
+
+### Enabling application metadata
+
+Currently the metadata feature is disabled by default and must be explicitly enabled as shown in the code block below
+
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+app = holoscan::make_application<MyApplication>();
+
+// Enable metadata feature before calling app->run() or app->run_async()
+app->is_metadata_enabled(true);
+
+app->run();
+```
+````
+`````
+
+### Understanding Metadata Flow
+
+Each operator in the workflow has an associated {cpp:class}`~holoscan::MetadataDictionary` object. At the start of each operator's {cpp:func}`~holoscan::Operator::compute` call this metadata dictionary will be empty (i.e. metadata does not persist from previous compute calls). When any call to {cpp:class}`~holoscan::InputContext::receive` data is made, any metadata also found in the input message will be merged into the operator's local metadata dictionary. The operator's compute method can then read, append to or remove metadata as explained in the next section. Whenever the operator emits data via a call to {cpp:class}`~holoscan::OutputContext::emit` the current status of the operator's metadata dictionary will be transmitted on that port alonside the data passed via the first argument to the emit call. Any downstream operators will then receive this metadata via their input ports.
+
+### Working With Metadata from Operator::compute
+
+Within the operator's {cpp:func}`~holoscan::Operator::compute` method, the {cpp:func}`~holoscan::Operator::metadata` method can be called to get a shared pointer to the {cpp:class}`~holoscan::MetadataDictionary` of the operator. The metadata dictionary provides a similar API to a `std::unordered_map` (C++) where the keys are strings (`std::string` for C++) and the values can store any object type (via a C++ {cpp:type}`~holoscan::MetadataObject` holding a `std::any`). Templated {cpp:func}`~holoscan::MetadataObject::get` and {cpp:func}`~holoscan::MetadataObject::set` method are provided as demonstrated below to allow directly setting values of a given type without having to explicitly work with the internal {cpp:type}`~holoscan::MetadataObject` type.
+
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+
+// Receiving from a port updates operator metadata with any metadata found on the port
+auto input_tensors = op_input.receive<TensorMap>("in");
+
+// Get a reference to the shared metadata dictionary
+auto& meta = metadata();
+
+// Retrieve existing values.
+// Use get<Type> to automatically cast the `std::any` contained within the `holsocan::Message`
+auto name = meta->get<std::string>("patient_name");
+auto age = meta->get<int>("age");
+
+// Get also provides a two-argument version where a default value to be assigned is given by
+// the second argument. The type of the default value should match the expected type of the value.
+auto flag = meta->get("flag", false);
+
+// Add a new value (if a key already exists, the value will be updated according to the
+// operator's metadata_policy).
+std::vector<float> spacing{1.0, 1.0, 3.0};
+meta->set("pixel_spacing"s, spacing);
+
+// Remove a value
+meta->erase("patient_name")
+
+// ... Some processing to produce output `data` could go here ...
+
+// Current state of `meta` will automatically be emitted along with `data` in the call below
+op_output.emit(data, "output1");
+
+// Can clear all items
+meta->clear();
+
+// Any emit call after this point would not transmit a metadata object
+op_output.emit(data, "output2");
+```
+````
+`````
+
+See the {cpp:class}`~holoscan::MetadataDictionary` API docs for all available methods. Most of these like `begin()` and `end()` iterators and the `find()` method match the corresponding methods of `std::unordered_map`.
+
+#### Metadata Update Policies
+
+The operator class also has a {cpp:func}`~holoscan::Operator::metadata_policy` method that can be used to set a {cpp:func}`~holoscan::MetadataPolicy` to use when handling duplicate metadata keys across multiple input ports of the operator. The available options are:
+- "update" (`MetadataPolicy::kUpdate`): replace any existing key from a prior `receive` call with one present in a subsequent `receive` call.
+- "reject" (`MetadataPolicy::kReject`): Reject the new key/value pair when a key already exists due to a prior `receive` call.
+- "raise" (`MetadataPolicy::kRaise`): Throw a `std::runtime_error` if a duplicate key is encountered. This is the default policy.
+
+The metadata policy would typically be set during {cpp:func}`~holoscan::Application::compose` as in the following example:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+
+// Example for setting metadata policy from Application::compose()
+my_op = make_operator<MyOperator>("my_op");
+my_op->metadata_policy(holoscan::MetadataPolicy::kRaise);
+
+```
+````
+`````
+The policy only applies to the operator on which it was set.
+
+### Use of Metadata in Distributed Applications
+
+Sending metadata between two fragments of a distributed application is supported, but there are a couple of aspects to be aware of.
+
+1. Sending metadata over the network requires serialization and deserialization of the metadata keys and values. The value types supported for this are the same as for data emitted over output ports (see the table in the section on {ref}`object serialization<object-serialization>`). The only exception is that {cpp:class}`~holoscan::Tensor` and {cpp:func}`~holoscan::TensorMap` values cannot be sent as metadata values between fragments. Any {ref}`custom codecs<object-serialization>` registered for the SDK will automatically also be available for serialization of metadata values.
+2. There is a practical size limit of several kilobytes in the amount of metadata that can be transmitted between fragments. This is because metadata is currently sent along with other entity header information in the UCX header, which has fixed size limit (the metadata is stored along with other header information within the size limit defined by the `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` {ref}`environment variable<holoscan-distributed-env>`).
+
+The above restrictions only apply to metadata sent **between** fragments. Within a fragment there is no size limit on metadata (aside from system memory limits) and no serialization or deserialization step is needed.
+
+### Current limitations
+
+1. The current metadata API is only fully supported for native holoscan Operators and is not currently supported by operators that wrap a GXF codelet (i.e. inheriting from {cpp:class}`~holoscan::GXFOperator` or created via {cpp:class}`~holoscan::ops::GXFCodeletOp`). Aside from `GXFCodeletOp`, the built-in operators provided under the `holoscan::ops` namespace are all native operators, so the feature will work with these. Currently none of these built-in opereators add their own metadata, but any metadata received on input ports will automatically be passed on to their output ports (as long as `app->is_metadata_enabled(true)` was set to enable the metadata feature).

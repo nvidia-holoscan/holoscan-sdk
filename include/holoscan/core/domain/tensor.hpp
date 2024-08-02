@@ -62,7 +62,8 @@ class Tensor {
   /**
    * @brief Construct a new Tensor from an existing DLManagedTensor pointer.
    *
-   * @param ctx A pointer to the DLManagedTensor to be used in Tensor construction.
+   * @param dl_managed_tensor_ptr A pointer to the DLManagedTensor to be used in Tensor
+   * construction.
    */
   explicit Tensor(DLManagedTensor* dl_managed_tensor_ptr);
 

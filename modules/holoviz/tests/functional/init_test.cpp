@@ -35,12 +35,6 @@ TEST(Init, GLFWWindow) {
   }
 
   if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
-    // No longer works after statically linking with glfw after
-    // https://gitlab-master.nvidia.com/holoscan/holoscan-sdk/-/merge_requests/2143.
-    // Error:
-    // Reason: GLFW maintains a global variable with state, when statically linking the GLFW library
-    //         binaries (such as the Holoviz shared lib and this test binary) there are different
-    //         global variables per binary.
     GTEST_SKIP() << "With Wayland and statically linked GLFW creating the GLFW window outside of "
                     "Holoviz is not supported.";
   }
@@ -139,5 +133,13 @@ TEST(Init, Errors) {
   // should thrown when specifying an invalid font file
   EXPECT_NO_THROW(viz::SetFont("NonExistingFile.ttf", 12.f));
   EXPECT_THROW(viz::Init(128, 64, "Holoviz test", viz::InitFlags::HEADLESS), std::runtime_error);
+  EXPECT_NO_THROW(viz::Shutdown());
+
+  // should throw when there is no window
+  EXPECT_THROW(viz::Begin(), std::runtime_error);
+  EXPECT_THROW(viz::End(), std::runtime_error);
+  EXPECT_THROW(
+      viz::ReadFramebuffer(viz::ImageFormat::R8G8B8A8_UNORM, 1, 1, 1 * 1 * 4 * sizeof(uint8_t), 0),
+      std::runtime_error);
   EXPECT_NO_THROW(viz::Shutdown());
 }

@@ -46,9 +46,14 @@ class VideoReplayerApp(Application):
 
     - VideoStreamReplayerOp
     - HolovizOp
+    - invert (created via decorator API)
+    - tensor_info (created via decorator API)
 
-    The VideoStreamReplayerOp reads a video file and sends the frames to the HolovizOp.
-    The HolovizOp displays the frames.
+    `VideoStreamReplayerOp` reads a video file and sends the frames to the HolovizOp.
+    The `invert` operator inverts the color map (the 8-bit `value` in each color channel is
+    set to `255 - value`).
+    The `tensor_info` operator prints information about the tensors shape and data type.
+    `HolovizOp` displays the frames.
     """
 
     def compose(self):

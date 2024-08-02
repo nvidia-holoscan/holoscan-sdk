@@ -113,7 +113,8 @@ struct YAML::convert<holoscan::ops::InferenceProcessorOp::DataVecMap> {
 namespace holoscan::ops {
 
 void InferenceProcessorOp::setup(OperatorSpec& spec) {
-  auto& transmitter = spec.output<gxf::Entity>("transmitter");
+  spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
+  spec.output<gxf::Entity>("transmitter");
 
   spec.param(process_operations_,
              "process_operations",
@@ -132,8 +133,6 @@ void InferenceProcessorOp::setup(OperatorSpec& spec) {
   spec.param(output_on_cuda_, "output_on_cuda", "Output buffer on CUDA", "", false);
   spec.param(transmit_on_cuda_, "transmit_on_cuda", "Transmit message on CUDA", "", false);
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
-  spec.param(receivers_, "receivers", "Receivers", "List of receivers", {});
-  spec.param(transmitter_, "transmitter", "Transmitter", "Transmitter", {&transmitter});
   cuda_stream_handler_.define_params(spec);
 }
 

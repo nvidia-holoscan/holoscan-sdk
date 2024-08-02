@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
-#define HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
+#ifndef MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
+#define MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP
 
 /**
  * \file
@@ -89,7 +89,9 @@ viz::Shutdown();
 #include "holoviz/depth_map_render_mode.hpp"
 #include "holoviz/image_format.hpp"
 #include "holoviz/init_flags.hpp"
+#include "holoviz/present_mode.hpp"
 #include "holoviz/primitive_topology.hpp"
+#include "holoviz/surface_format.hpp"
 
 // forward declaration of external types
 typedef struct GLFWwindow GLFWwindow;
@@ -124,6 +126,13 @@ InstanceHandle GetCurrent();
 /**
  * Initialize Holoviz using an existing GLFW window.
  *
+ * Note that this functionality is not supported when using the Wayland display server protocol and
+ * statically linking GLFW.
+ * Reason: GLFW maintains a global variable with state when using Wayland. When statically linking
+ * the GLFW library binaries (which is the default for the Holoviz library) there are different
+ * global for the app binary, which creates the GLFW windon and the Holobiz binary, which is trying
+ * to use it. This results in a segfault.
+ *
  * @param window    GLFW window
  * @param flags     init flags
  */
@@ -138,8 +147,12 @@ void Init(GLFWwindow* window, InitFlags flags = InitFlags::NONE);
  * @param height    desired height
  * @param title     window title
  * @param flags     init flags
+ * @param display_name  if the `FULLSCREEN` init flag is specified, this is the name of the display
+ *                      to use for full screen mode. Use the output name provided by `xrandr` or
+ *                      `hwinfo --monitor`. If nullptr then the primary display is selected.
  */
-void Init(uint32_t width, uint32_t height, const char* title, InitFlags flags = InitFlags::NONE);
+void Init(uint32_t width, uint32_t height, const char* title, InitFlags flags = InitFlags::NONE,
+          const char* display_name = nullptr);
 
 /**
  * Initialize Holoviz to use a display in exclusive mode.
@@ -166,6 +179,49 @@ void Init(const char* displayName, uint32_t width = 0, uint32_t height = 0,
           uint32_t refreshRate = 0, InitFlags flags = InitFlags::NONE);
 
 /**
+ * Get the supported present modes.
+ *
+ * `viz::Init()` has to be called before since the present modes depend on the window.
+ *
+ * If `present_modes` is nullptr, then the number of present modes supported for the current window
+ * is returned in `present_mode_count`. Otherwise, `present_mode_count` must point to a variable set
+ * by the application to the number of elements in the `present_modes` array, and on return the
+ * variable is overwritten with the number of values actually written to `present_modes`. If the
+ * value of `present_mode_count` is less than the number of presentation modes supported, at most
+ * `present_mode_count` values will be written,
+ *
+ * @param present_mode_count number of presentation modes available or queried
+ * @param present_modes either nullptr or a pointer to an array of PresentMode values
+ */
+void GetPresentModes(uint32_t* present_mode_count, PresentMode* present_modes);
+
+/**
+ * Get the supported surface formats.
+ *
+ * `viz::Init()` has to be called before since the surface formats depend on the window.
+ *
+ * If `surface_formats` is nullptr, then the number of surface formats supported for the current
+ * window is returned in `surface_format_count`. Otherwise, `surface_format_count` must point to a
+ * variable set by the application to the number of elements in the `surface_formats` array, and on
+ * return the variable is overwritten with the number of values actually written to
+ * `surface_formats`. If the value of `surface_format_count` is less than the number of surface
+ * formats supported, at most `surface_format_count` values will be written,
+ *
+ * @param surface_format_count number of surface formats available or queried
+ * @param surface_formats either nullptr or a pointer to an array of SurfaceFormat values
+ */
+void GetSurfaceFormats(uint32_t* surface_format_count, SurfaceFormat* surface_formats);
+
+/**
+ * Set the framebuffer surface format, do this before calling viz::Init().
+ *
+ * Default is 'B8G8R8A8_UNORM'.
+ *
+ * @param surface_format framebuffer surface format
+ */
+void SetSurfaceFormat(SurfaceFormat surface_format);
+
+/**
  * Set the font used to render text, do this before calling viz::Init().
  *
  * The font is converted to bitmaps, these bitmaps are scaled to the final size when rendering.
@@ -174,6 +230,17 @@ void Init(const char* displayName, uint32_t width = 0, uint32_t height = 0,
  * @param size_in_pixels size of the font bitmaps
  */
 void SetFont(const char* path, float size_in_pixels);
+
+/**
+ * Set the present mode.
+ *
+ * The present mode determines how the rendered result will be presented on the screen.
+ *
+ * Default is 'PresentMode::AUTO'.
+ *
+ * @param present_mode present mode
+ */
+void SetPresentMode(PresentMode present_mode);
 
 /**
  * Set the CUDA stream used by Holoviz for CUDA operations.
@@ -398,11 +465,12 @@ void Text(float x, float y, float size, const char* text);
  * Depth maps are rectangular 2D arrays where each element represents a depth value. The data is
  * rendered as a 3D object using points, lines or triangles.
  * Additionally a 2D array with a color value for each point in the grid can be specified.
+ * Supported depth formats are: R8_UNORM, D32_SFLOAT.
  *
  * @param render_mode       depth map render mode
  * @param width             width of the depth map
  * @param height            height of the depth map
- * @param depth_fmt         format of the depth map data (has to be ImageFormat::R8_UNORM)
+ * @param depth_fmt         format of the depth map data
  * @param depth_device_ptr  CUDA device memory pointer holding the depth data
  * @param color_fmt         format of the color data (has to be ImageFormat::R8G8B8A8_UNORM)
  * @param color_device_ptr  CUDA device memory pointer holding the color data (optional)
@@ -469,7 +537,8 @@ void EndLayer();
  *
  * Can only be called outside of Begin()/End().
  *
- * @param fmt           image format, currently only R8G8B8A8_UNORM and D32_SFLOAT are supported
+ * @param fmt           image format, currently only R8G8B8A8_UNORM, R8G8B8A8_SRGB and D32_SFLOAT
+ *                      are supported
  * @param width, height width and height of the region to read back, will be limited to the
  *                      framebuffer size if the framebuffer is smaller than that
  * @param buffer_size   size of the storage buffer in bytes
@@ -531,4 +600,4 @@ void GetCameraPose(float (&rotation)[9], float (&translation)[3]);
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_HOLOVIZ_HOLOVIZ_HPP */

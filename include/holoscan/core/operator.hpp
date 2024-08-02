@@ -37,6 +37,7 @@
 #include "./condition.hpp"
 #include "./forward_def.hpp"
 #include "./messagelabel.hpp"
+#include "./metadata.hpp"
 #include "./operator_spec.hpp"
 #include "./resource.hpp"
 
@@ -565,6 +566,49 @@ class Operator : public ComponentBase {
    */
   std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity() { return graph_entity_; }
 
+  /**
+   * @brief Get a shared pointer to the dynamic metadata of this operator.
+   *
+   *
+   * Note: currently this metadata dictionary is only active if explicitly enabled for the
+   * application by setting `Fragment::is_metadata_enabled(true)`. When metadata is disabled
+   * the dictionary will not be populated by receive calls and will not be emitted on emit calls.
+   *
+   * This metadata dictionary is always empty at the start of each compute call. It is populated
+   * by metadata received on input ports during `InputContext::receive()` calls and can be
+   * modified as desired by the operator during the compute call. Any metadata corresponding to this
+   * object will be sent on the output ports by any `OutputContext::emit()` calls.
+   *
+   * @returns The metadata dictionary for this operator.
+   */
+  std::shared_ptr<MetadataDictionary> metadata() { return dynamic_metadata_; }
+
+  /**
+   * @brief Get the metadata update policy used by this operator.
+   *
+   * @returns The metadata update policy used by this operator.
+   */
+  bool is_metadata_enabled() { return is_metadata_enabled_; }
+
+  /**
+   * @brief Get the metadata update policy used by this operator.
+   *
+   * @returns The metadata update policy used by this operator.
+   */
+  MetadataPolicy metadata_policy() const { return dynamic_metadata_->policy(); }
+
+  /**
+   * @brief Set the metadata update policy used by this operator.
+   *
+   * The metadata policy determines how metadata is merged across multiple receive calls:
+   *    - `MetadataPolicy::kUpdate`: Update the existing value when a key already exists (default).
+   *    - `MetadataPolicy::kReject`: Do not modify the existing value if a key already exists.
+   *    - `MetadataPolicy::kRaise`: Raise an exception if a key already exists.
+   *
+   * @param policy The metadata update policy to be used by this operator.
+   */
+  void metadata_policy(MetadataPolicy policy) { dynamic_metadata_->policy(policy); }
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -582,7 +626,7 @@ class Operator : public ComponentBase {
   /**
    * @brief This function creates a GraphEntity corresponding to the operator
    * @param context The GXF context.
-   * @param name The name of the entity to create.
+   * @param entity_prefix prefix to add to the operator's name when creating the GraphEntity.
    * @return The GXF entity eid corresponding to the graph entity.
    */
   gxf_uid_t initialize_graph_entity(void* context, const std::string& entity_prefix = "");
@@ -748,6 +792,12 @@ class Operator : public ComponentBase {
 
   /// The backend Codelet or other codebase pointer. It is used for DFFT.
   void* op_backend_ptr = nullptr;
+
+  std::shared_ptr<MetadataDictionary> dynamic_metadata_ =
+      std::make_shared<MetadataDictionary>();  ///< The metadata dictionary for the operator.
+  bool is_metadata_enabled_ = false;           ///< Flag to enable metadata for the operator.
+  MetadataPolicy metadata_policy_ = MetadataPolicy::kRaise;  ///< The metadata policy for the
+                                                             ///< operator.
 };
 
 }  // namespace holoscan

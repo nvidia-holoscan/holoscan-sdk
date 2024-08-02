@@ -28,21 +28,21 @@
 #include <utility>
 #include <vector>
 
+#include "./common.hpp"
 #include "./condition.hpp"
 #include "./conditions/gxf/asynchronous.hpp"
 #include "./conditions/gxf/boolean.hpp"
 #include "./conditions/gxf/count.hpp"
 #include "./conditions/gxf/downstream_affordable.hpp"
-#include "./conditions/gxf/periodic.hpp"
-#include "./conditions/gxf/message_available.hpp"
 #include "./conditions/gxf/expiring_message.hpp"
+#include "./conditions/gxf/message_available.hpp"
+#include "./conditions/gxf/periodic.hpp"
+#include "./gxf/entity.hpp"
+#include "./resource.hpp"
 #include "./resources/gxf/double_buffer_receiver.hpp"
 #include "./resources/gxf/double_buffer_transmitter.hpp"
 #include "./resources/gxf/ucx_receiver.hpp"
 #include "./resources/gxf/ucx_transmitter.hpp"
-#include "./resource.hpp"
-#include "./gxf/entity.hpp"
-#include "./common.hpp"
 
 namespace holoscan {
 
@@ -62,6 +62,48 @@ class IOSpec {
   enum class IOType { kInput, kOutput };
 
   /**
+   * @brief Input/Output size.
+   */
+  class IOSize {
+   public:
+    /**
+     * @brief Construct a new IOSize object.
+     *
+     * @param size The size of the input/output.
+     */
+    explicit IOSize(int64_t size = 0) : size_(size) {}
+
+    /**
+     * @brief Set the size of the input/output.
+     *
+     * @param size The new size of the input/output.
+     */
+    void size(int64_t size) { size_ = size; }
+
+    /**
+     * @brief Get the size of the input/output.
+     *
+     * @return The size of the input/output.
+     */
+    int64_t size() const { return size_; }
+
+    /**
+     * @brief Cast the IOSize to int64_t.
+     *
+     * @return The size of the input/output.
+     */
+    operator int64_t() const { return size_; }
+
+   private:
+    int64_t size_;
+  };
+
+  // Define the static constants for the IOSize class.
+  inline static const IOSize kAnySize = IOSize{-1};        ///< Any size
+  inline static const IOSize kPrecedingCount = IOSize{0};  ///< # of preceding connections
+  inline static const IOSize kSizeOne = IOSize{1};         ///< Size one
+
+  /**
    * @brief Connector type. Determines the type of Receiver (when IOType is kInput) or Transmitter
    *        (when IOType is kOutput) class used.
    */
@@ -73,32 +115,13 @@ class IOSpec {
    * @param op_spec The pointer to the operator specification that contains this input/output.
    * @param name The name of this input/output.
    * @param io_type The type of this input/output.
-   */
-  IOSpec(OperatorSpec* op_spec, const std::string& name, IOType io_type)
-      : op_spec_(op_spec),
-        name_(name),
-        io_type_(io_type),
-        typeinfo_(&typeid(holoscan::gxf::Entity)) {
-    // Operator::parse_port_name requires that "." is not allowed in the IOSPec name
-    if (name.find(".") != std::string::npos) {
-      throw std::invalid_argument(fmt::format(
-          "The . character is reserved and cannot be used in the port (IOSpec) name ('{}').",
-          name));
-    }
-    name_ = name;
-  }
-
-  /**
-   * @brief Construct a new IOSpec object.
-   *
-   * @param op_spec The pointer to the operator specification that contains this input/output.
-   * @param name The name of this input/output.
-   * @param io_type The type of this input/output.
    * @param typeinfo The type info of the data of this input/output.
+   * @param size The size of the input/output queue.
    */
   IOSpec(OperatorSpec* op_spec, const std::string& name, IOType io_type,
-         const std::type_info* typeinfo)
-      : op_spec_(op_spec), io_type_(io_type), typeinfo_(typeinfo) {
+         const std::type_info* typeinfo = &typeid(holoscan::gxf::Entity),
+         IOSpec::IOSize size = IOSpec::kSizeOne)
+      : op_spec_(op_spec), io_type_(io_type), typeinfo_(typeinfo), queue_size_(size) {
     // Operator::parse_port_name requires that "." is not allowed in the IOSPec name
     if (name.find(".") != std::string::npos) {
       throw std::invalid_argument(fmt::format(
@@ -190,6 +213,17 @@ class IOSpec {
         HOLOSCAN_LOG_ERROR("Unsupported condition type for IOSpec: {}", static_cast<int>(type));
         break;
     }
+
+    if (queue_size_ == kAnySize) {
+      HOLOSCAN_LOG_WARN(
+          "The queue size is currently set to 'any size' (IOSpec::kAnySize in C++ or "
+          "IOSpec.ANY_SIZE in Python) "
+          "for receivers that don't support condition changes. Please set the queue size "
+          "explicitly when calling the input() method in setup() if you want to use the ordinary "
+          "input port with the condition (input port: {}).",
+          name_);
+    }
+
     return *this;
   }
 
@@ -227,6 +261,7 @@ class IOSpec {
     switch (type) {
       case ConnectorType::kDefault:
         // default receiver or transmitter will be created in GXFExecutor::run instead
+        connector_.reset();
         break;
       case ConnectorType::kDoubleBuffer:
         if (io_type_ == IOType::kInput) {
@@ -246,6 +281,52 @@ class IOSpec {
         HOLOSCAN_LOG_ERROR("Unknown connector type {}", static_cast<int>(type));
         break;
     }
+
+    if (queue_size_ == kAnySize) {
+      HOLOSCAN_LOG_WARN(
+          "The queue size is currently set to 'any size' (IOSpec::kAnySize in C++ or "
+          "IOSpec.ANY_SIZE in Python) "
+          "for receivers that don't support connector changes. Please set the queue size "
+          "explicitly when calling the input() method in setup() if you want to use the ordinary "
+          "input port with the condition (input port: {}).",
+          name_);
+    }
+    return *this;
+  }
+
+  /**
+   * @brief Get the queue size of the input/output port.
+   *
+   * Note: This value is only used for initializing input ports. 'queue_size_' is set by the
+   *       'OperatorSpec::input()' method or the 'IOSpec::queue_size(int64_t)' method. If the queue
+   *       size is set to 'any size' (IOSpec::kAnySize in C++ or IOSpec.ANY_SIZE in Python),
+   *       the connector/condition settings will be ignored.
+   *       If the queue size is set to other values, the default connector
+   *       (DoubleBufferReceiver/UcxReceiver) and condition (MessageAvailableCondition) will use
+   *       the queue size for initialization ('capacity' for the connector and 'min_size' for
+   *       the condition) if they are not set.
+   *
+   * @return The queue size of the input/output port.
+   */
+  int64_t queue_size() const { return queue_size_.size(); }
+
+  /**
+   * @brief Set the queue size of the input/output port.
+   *
+   * Note: This value is only used for initializing input ports. 'queue_size_' is set by the
+   *       'OperatorSpec::input()' method or this method. If the queue
+   *       size is set to 'any size' (IOSpec::kAnySize in C++ or IOSpec.ANY_SIZE in Python),
+   *       the connector/condition settings will be ignored.
+   *       If the queue size is set to other values, the default connector
+   *       (DoubleBufferReceiver/UcxReceiver) and condition (MessageAvailableCondition) will use
+   *       the queue size for initialization ('capacity' for the connector and 'min_size' for
+   *       the condition) if they are not set.
+   *
+   * @param size The queue size of the input/output port.
+   * @return The reference to this IOSpec.
+   */
+  IOSpec& queue_size(int64_t size) {
+    queue_size_.size(size);
     return *this;
   }
 
@@ -272,6 +353,7 @@ class IOSpec {
   std::shared_ptr<Resource> connector_;
   std::vector<std::pair<ConditionType, std::shared_ptr<Condition>>> conditions_;
   ConnectorType connector_type_ = ConnectorType::kDefault;
+  IOSize queue_size_ = kSizeOne;
 };
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -126,6 +126,10 @@ public:
 
   bool subAllocate(uint32_t size, uint32_t align, uint32_t& outOffset, uint32_t& outAligned, uint32_t& outSize)
   {
+    if (align == 0) {
+      return false;
+    }
+
     uint32_t alignRest    = align - 1;
     uint32_t sizeReserved = size;
 #if(defined(NV_X86) || defined(NV_X64)) && defined(_MSC_VER)

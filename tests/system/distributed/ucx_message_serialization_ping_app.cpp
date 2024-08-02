@@ -66,6 +66,7 @@ TEST_P(MessageTypeParmeterizedTestFixture, TestMessageSerializationApp) {
             << message_type_name_map.at(message_type) << std::endl;
 
   auto app = make_application<MessageSerializationApp>(message_type);
+  app->is_metadata_enabled(true);
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
@@ -130,7 +131,9 @@ class UcxMessageSerializationApp : public holoscan::Application {
     using namespace holoscan;
 
     auto tx_fragment = make_fragment<TxFragment>("tx_fragment", type_);
+    tx_fragment->is_metadata_enabled(true);
     auto rx_fragment = make_fragment<RxFragment>("rx_fragment", type_);
+    rx_fragment->is_metadata_enabled(true);
 
     add_flow(tx_fragment, rx_fragment, {{"tx", "rx"}});
   }

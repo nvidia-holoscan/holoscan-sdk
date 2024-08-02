@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -38,8 +39,8 @@
 
 namespace viz = holoscan::viz;
 
-uint32_t width;
-uint32_t height;
+uint32_t map_width = 0;
+uint32_t map_height = 0;
 uint32_t frame_index = 0;
 
 std::vector<uint32_t> palette{0xFF000000, 0xFF7F7F7F, 0xFFFFFFFF};
@@ -56,6 +57,11 @@ enum class RenderMode { POINTS, LINES, TRIANGLES, DEPTH };
 static const char* render_mode_items[]{"Points", "Lines", "Triangles", "Depth"};
 RenderMode current_render_mode = RenderMode::TRIANGLES;
 
+static const char* format_items[]{"R8_UNORM", "D32_SFLOAT"};
+static viz::ImageFormat formats[]{viz::ImageFormat::R8_UNORM, viz::ImageFormat::D32_SFLOAT};
+uint32_t current_format_index = 0;
+
+bool show_ui = true;
 bool unlimited_fps = false;
 float fps = 15.f;
 int color_index = 0;
@@ -69,7 +75,8 @@ std::vector<CUdeviceptr> color_mems;
 
 void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* width, int* height,
                int* components, bool convert_to_intensity) {
-  const unsigned char* image_data =
+  const void* image_data = nullptr;
+  stbi_uc* const file_image_data =
       stbi_load(filename.c_str(), width, height, components, convert_to_intensity ? 0 : 4);
   if (!image_data) { throw std::runtime_error("Loading image failed."); }
 
@@ -77,7 +84,7 @@ void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* wid
   if ((*components != 1) && (convert_to_intensity)) {
     tmp_image_data.reserve(*width * *height);
     for (int index = 0; index < *width * *height; ++index) {
-      const uint8_t* src = &image_data[index * *components];
+      const uint8_t* src = &file_image_data[index * *components];
       tmp_image_data.push_back(static_cast<uint8_t>(0.2126f * static_cast<float>(src[0]) +
                                                     0.7152f * static_cast<float>(src[1]) +
                                                     0.0722f * static_cast<float>(src[2]) + 0.5f));
@@ -85,6 +92,7 @@ void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* wid
     image_data = tmp_image_data.data();
     *components = 1;
   } else {
+    image_data = file_image_data;
     *components = 4;
   }
 
@@ -94,6 +102,8 @@ void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* wid
   if (cuMemcpyHtoD(*cu_device_mem, image_data, *width * *height * *components) != CUDA_SUCCESS) {
     throw std::runtime_error("cuMemcpyHtoD failed.");
   }
+
+  stbi_image_free(file_image_data);
 }
 
 void freeSourceData() {
@@ -122,10 +132,10 @@ void loadSourceData(const char* depth_dir, const char* color_dir) {
     std::cout << "\rReading depth image " << file_name << std::flush;
     loadImage(file_name, &cu_device_mem, &cur_width, &cur_height, &cur_components, true);
     if (first) {
-      width = cur_width;
-      height = cur_height;
+      map_width = cur_width;
+      map_height = cur_height;
       first = false;
-    } else if ((cur_width != width) || (cur_height != height) || (cur_components != 1)) {
+    } else if ((cur_width != map_width) || (cur_height != map_height) || (cur_components != 1)) {
       throw std::runtime_error("Inconsistent depth image sequence");
     }
     depth_mems.push_back(cu_device_mem);
@@ -142,10 +152,10 @@ void loadSourceData(const char* depth_dir, const char* color_dir) {
     std::cout << "\rReading color image " << file_name << std::flush;
     loadImage(file_name, &cu_device_mem, &cur_width, &cur_height, &cur_components, false);
     if (first) {
-      width = cur_width;
-      height = cur_height;
+      map_width = cur_width;
+      map_height = cur_height;
       first = false;
-    } else if ((cur_width != width) || (cur_height != height) || (cur_components != 4)) {
+    } else if ((cur_width != map_width) || (cur_height != map_height) || (cur_components != 4)) {
       throw std::runtime_error("Inconsistent color image sequence");
     }
     color_mems.push_back(cu_device_mem);
@@ -153,16 +163,35 @@ void loadSourceData(const char* depth_dir, const char* color_dir) {
   std::cout << std::endl;
 }
 
-void generateSourceData(uint32_t frame_index) {
+void generateSourceData() {
   const uint32_t images = 100;
   CUdeviceptr cu_device_mem;
 
-  width = 64;
-  height = 64;
+  if (map_width == 0) { map_width = 512; }
+  if (map_height == 0) { map_height = 512; }
+
+  size_t element_size;
+  std::function<void(void*, size_t, float)> write_depth;
+  switch (formats[current_format_index]) {
+    case viz::ImageFormat::R8_UNORM:
+      element_size = sizeof(uint8_t);
+      write_depth = [](void* data, size_t index, float value) {
+        reinterpret_cast<uint8_t*>(data)[index] = value * 63.f;
+      };
+      break;
+    case viz::ImageFormat::D32_SFLOAT:
+      element_size = sizeof(float);
+      write_depth = [](void* data, size_t index, float value) {
+        reinterpret_cast<float*>(data)[index] = value / 4.f;
+      };
+      break;
+    default:
+      throw std::runtime_error("Unhandled format");
+  }
 
   if (depth_mems.empty()) {
     for (uint32_t index = 0; index < images; ++index) {
-      if (cuMemAlloc(&cu_device_mem, width * height * sizeof(uint8_t)) != CUDA_SUCCESS) {
+      if (cuMemAlloc(&cu_device_mem, map_width * map_height * element_size) != CUDA_SUCCESS) {
         throw std::runtime_error("cuMemAlloc failed.");
       }
       depth_mems.push_back(cu_device_mem);
@@ -170,32 +199,33 @@ void generateSourceData(uint32_t frame_index) {
   }
   if (color_mems.empty()) {
     for (uint32_t index = 0; index < images; ++index) {
-      if (cuMemAlloc(&cu_device_mem, width * height * sizeof(uint32_t)) != CUDA_SUCCESS) {
+      if (cuMemAlloc(&cu_device_mem, map_width * map_height * sizeof(uint32_t)) != CUDA_SUCCESS) {
         throw std::runtime_error("cuMemAlloc failed.");
       }
       color_mems.push_back(cu_device_mem);
     }
   }
 
-  std::vector<uint8_t> depth_data(width * height);
-  std::vector<uint32_t> color_data(width * height);
+  auto depth_data = std::make_unique<uint8_t[]>(map_width * map_height * element_size);
+  std::vector<uint32_t> color_data(map_width * map_height);
   for (uint32_t index = 0; index < images; ++index) {
-    const float offset = float(frame_index) / float(images);
+    const float offset = float(index) / float(images);
 
-    for (uint32_t y = 0; y < height; ++y) {
-      for (uint32_t x = 0; x < width; ++x) {
-        const uint8_t depth = (std::sin((float(x) / float(width)) * 3.14f * 4.f) *
-                                   std::cos((float(y) / float(height)) * 3.14f * 3.f) +
-                               1.f) *
-                              offset * 63.f;
+    for (uint32_t y = 0; y < map_height; ++y) {
+      for (uint32_t x = 0; x < map_width; ++x) {
+        const float depth = (std::sin((float(x) / float(map_width)) * 3.14f * 4.f) *
+                                 std::cos((float(y) / float(map_height)) * 3.14f * 3.f) +
+                             1.f) *
+                            offset;
 
-        depth_data[y * width + x] = depth;
-        color_data[y * width + x] = depth | ((depth << (8 + (x & 1))) & 0xFF00) |
-                                    ((depth << (16 + (y & 1) * 2)) & 0xFF0000) | 0xFF204060;
+        write_depth(depth_data.get(), y * map_width + x, depth);
+        const uint8_t color = depth * 63.f;
+        color_data[y * map_width + x] = color | ((color << (8 + (x & 1))) & 0xFF00) |
+                                        ((color << (16 + (y & 1) * 2)) & 0xFF0000) | 0xFF204060;
       }
     }
 
-    if (cuMemcpyHtoD(depth_mems[index], depth_data.data(), depth_data.size() * sizeof(uint8_t)) !=
+    if (cuMemcpyHtoD(depth_mems[index], depth_data.get(), map_width * map_height * element_size) !=
         CUDA_SUCCESS) {
       throw std::runtime_error("cuMemcpyHtoD failed.");
     }
@@ -210,64 +240,73 @@ void generateSourceData(uint32_t frame_index) {
 void tick() {
   viz::Begin();
 
-  // UI
-  viz::BeginImGuiLayer();
-
-  viz::LayerPriority(11);
-
-  ImGui::Begin("Options", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-
   bool regenerate = depth_mems.empty();
-  regenerate |= ImGui::Combo("Source Mode",
-                             reinterpret_cast<int*>(&current_source_mode),
-                             source_mode_items,
-                             IM_ARRAYSIZE(source_mode_items));
+  if (show_ui) {
+    // UI
+    viz::BeginImGuiLayer();
 
-  if (current_source_mode == SourceMode::FILES) {
-    ImGui::InputText("Depth Dir", depth_dir, sizeof(depth_dir));
-    ImGui::InputText("Color Dir", color_dir, sizeof(color_dir));
-    regenerate |= ImGui::Button("Load");
+    viz::LayerPriority(11);
+
+    ImGui::Begin("Options", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+    regenerate |= ImGui::Combo("Source Mode",
+                               reinterpret_cast<int*>(&current_source_mode),
+                               source_mode_items,
+                               IM_ARRAYSIZE(source_mode_items));
+
+    if (current_source_mode == SourceMode::FILES) {
+      ImGui::InputText("Depth Dir", depth_dir, sizeof(depth_dir));
+      ImGui::InputText("Color Dir", color_dir, sizeof(color_dir));
+      regenerate |= ImGui::Button("Load");
+    } else if (current_source_mode == SourceMode::GENERATED) {
+      regenerate |= ImGui::Combo("Format",
+                                 reinterpret_cast<int*>(&current_format_index),
+                                 format_items,
+                                 IM_ARRAYSIZE(format_items));
+    }
+
+    ImGui::Separator();
+    ImGui::Combo("Render Mode",
+                 reinterpret_cast<int*>(&current_render_mode),
+                 render_mode_items,
+                 IM_ARRAYSIZE(render_mode_items));
+
+    switch (current_render_mode) {
+      case RenderMode::DEPTH:
+        if (formats[current_format_index] == viz::ImageFormat::R8_UNORM) {
+          if (ImGui::Button("+")) {
+            palette.push_back(static_cast<uint32_t>(std::rand()) | 0xFF000000);
+          }
+          ImGui::SameLine();
+          if (ImGui::Button("-") && (palette.size() > 1)) { palette.pop_back(); }
+          ImGui::SliderInt("LUT index", &color_index, 0, palette.size() - 1);
+
+          {
+            uint32_t& item = palette[color_index];
+            float color[]{(item & 0xFF) / 255.f,
+                          ((item >> 8) & 0xFF) / 255.f,
+                          ((item >> 16) & 0xFF) / 255.f,
+                          ((item >> 24) & 0xFF) / 255.f};
+            ImGui::ColorEdit4("##color", color, ImGuiColorEditFlags_DefaultOptions_);
+            item = static_cast<uint32_t>((color[0] * 255.f) + 0.5f) +
+                   (static_cast<uint32_t>((color[1] * 255.f) + 0.5f) << 8) +
+                   (static_cast<uint32_t>((color[2] * 255.f) + 0.5f) << 16) +
+                   (static_cast<uint32_t>((color[3] * 255.f) + 0.5f) << 24);
+          }
+        }
+        break;
+      case RenderMode::LINES:
+        ImGui::SliderFloat("Line width", &line_width, 1.f, 20.f);
+        break;
+      case RenderMode::POINTS:
+        ImGui::SliderFloat("Point size", &point_size, 1.f, 20.f);
+        break;
+    }
+
+    ImGui::End();
+
+    viz::EndLayer();
   }
-
-  ImGui::Separator();
-  ImGui::Combo("Render Mode",
-               reinterpret_cast<int*>(&current_render_mode),
-               render_mode_items,
-               IM_ARRAYSIZE(render_mode_items));
-
-  switch (current_render_mode) {
-    case RenderMode::DEPTH:
-      if (ImGui::Button("+")) {
-        palette.push_back(static_cast<uint32_t>(std::rand()) | 0xFF000000);
-      }
-      ImGui::SameLine();
-      if (ImGui::Button("-") && (palette.size() > 1)) { palette.pop_back(); }
-      ImGui::SliderInt("LUT index", &color_index, 0, palette.size() - 1);
-
-      {
-        uint32_t& item = palette[color_index];
-        float color[]{(item & 0xFF) / 255.f,
-                      ((item >> 8) & 0xFF) / 255.f,
-                      ((item >> 16) & 0xFF) / 255.f,
-                      ((item >> 24) & 0xFF) / 255.f};
-        ImGui::ColorEdit4("##color", color, ImGuiColorEditFlags_DefaultOptions_);
-        item = static_cast<uint32_t>((color[0] * 255.f) + 0.5f) +
-               (static_cast<uint32_t>((color[1] * 255.f) + 0.5f) << 8) +
-               (static_cast<uint32_t>((color[2] * 255.f) + 0.5f) << 16) +
-               (static_cast<uint32_t>((color[3] * 255.f) + 0.5f) << 24);
-      }
-      break;
-    case RenderMode::LINES:
-      ImGui::SliderFloat("Line width", &line_width, 1.f, 20.f);
-      break;
-    case RenderMode::POINTS:
-      ImGui::SliderFloat("Point size", &point_size, 1.f, 20.f);
-      break;
-  }
-
-  ImGui::End();
-
-  viz::EndLayer();
 
   // regenerate source data if needed
   if (regenerate) {
@@ -279,11 +318,9 @@ void tick() {
         loadSourceData(depth_dir, color_dir);
         break;
       case SourceMode::GENERATED:
-        generateSourceData(frame_index);
+        generateSourceData();
         break;
     }
-  } else if (current_source_mode == SourceMode::GENERATED) {
-    generateSourceData(frame_index);
   }
 
   if (!depth_mems.empty()) {
@@ -291,14 +328,30 @@ void tick() {
       case RenderMode::DEPTH:
         viz::BeginImageLayer();
 
-        // Image with LUT
-        viz::LUT(palette.size(),
-                 viz::ImageFormat::R8G8B8A8_UNORM,
-                 palette.size() * sizeof(uint32_t),
-                 palette.data(),
-                 true);
+        switch (formats[current_format_index]) {
+          case viz::ImageFormat::R8_UNORM:
+            // Image with LUT
+            viz::LUT(palette.size(),
+                     viz::ImageFormat::R8G8B8A8_UNORM,
+                     palette.size() * sizeof(uint32_t),
+                     palette.data(),
+                     true);
 
-        viz::ImageCudaDevice(width, height, viz::ImageFormat::R8_UNORM, depth_mems[frame_index]);
+            viz::ImageCudaDevice(
+                map_width, map_height, viz::ImageFormat::R8_UNORM, depth_mems[frame_index]);
+            break;
+          case viz::ImageFormat::D32_SFLOAT:
+            // draw as intensity image
+            viz::ImageComponentMapping(viz::ComponentSwizzle::R,
+                                       viz::ComponentSwizzle::R,
+                                       viz::ComponentSwizzle::R,
+                                       viz::ComponentSwizzle::ONE);
+            viz::ImageCudaDevice(
+                map_width, map_height, viz::ImageFormat::R32_SFLOAT, depth_mems[frame_index]);
+            break;
+          default:
+            throw std::runtime_error("Unhandled format");
+        }
 
         viz::EndLayer();
         break;
@@ -324,9 +377,9 @@ void tick() {
             throw std::runtime_error("Unhandled mode.");
         }
         viz::DepthMap(render_mode,
-                      width,
-                      height,
-                      viz::ImageFormat::R8_UNORM,
+                      map_width,
+                      map_height,
+                      formats[current_format_index],
                       depth_mems[frame_index],
                       viz::ImageFormat::R8G8B8A8_UNORM,
                       color_mems.size() > frame_index ? color_mems[frame_index] : 0);
@@ -369,15 +422,20 @@ void cleanupCuda() {
 }
 
 int main(int argc, char** argv) {
+  bool benchmark_mode = false;
+  bool headless_mode = false;
+
   struct option long_options[] = {{"help", no_argument, 0, 'h'},
                                   {"depth_dir", required_argument, 0, 'd'},
                                   {"color_dir", required_argument, 0, 'c'},
+                                  {"bench", no_argument, 0, 'b'},
+                                  {"headless", no_argument, 0, 'l'},
                                   {0, 0, 0, 0}};
 
   // parse options
   while (true) {
     int option_index = 0;
-    const int c = getopt_long(argc, argv, "hd:c:", long_options, &option_index);
+    const int c = getopt_long(argc, argv, "hd:c:bl", long_options, &option_index);
 
     if (c == -1) { break; }
 
@@ -388,9 +446,18 @@ int main(int argc, char** argv) {
                   << "Options:" << std::endl
                   << "  -d DIR, --depth_dir DIR  directory to load depth images from" << std::endl
                   << "  -c DIR, --color_dir DIR  directory to load color images from" << std::endl
+                  << "  -b, --bench              benchmark mode" << std::endl
+                  << "  -l, --headless           headless mode" << std::endl
                   << "  -h, --help               display this information" << std::endl
                   << std::endl;
         return EXIT_SUCCESS;
+      case 'b':
+        benchmark_mode = true;
+        show_ui = false;
+        break;
+      case 'l':
+        headless_mode = true;
+        break;
       case 'd':
         std::strncpy(depth_dir, argument.c_str(), sizeof(depth_dir));
         break;
@@ -402,22 +469,61 @@ int main(int argc, char** argv) {
     }
   }
 
-  initCuda();
+  try {
+    initCuda();
 
-  viz::Init(1024, 768, "Holoviz Depth Render Example");
+    viz::InitFlags flags = viz::InitFlags::NONE;
 
-  while (!viz::WindowShouldClose()) {
-    if (!viz::WindowIsMinimized()) {
-      tick();
-      if (!unlimited_fps) {
-        std::this_thread::sleep_for(std::chrono::duration<float, std::milli>(1000.f / fps));
+    if (headless_mode) { flags = viz::InitFlags::HEADLESS; }
+
+    viz::Init(1024, 768, "Holoviz Depth Render Example", flags);
+
+    if (benchmark_mode) {
+      for (auto size : {64, 512}) {
+        map_width = map_height = size;
+        for (auto format_index : {0, 1}) {
+          current_format_index = format_index;
+          freeSourceData();
+
+          for (auto render_mode :
+               {RenderMode::DEPTH, RenderMode::POINTS, RenderMode::LINES, RenderMode::TRIANGLES}) {
+            current_render_mode = render_mode;
+
+            std::chrono::milliseconds elapsed;
+            uint32_t iterations = 0;
+            const auto start = std::chrono::steady_clock::now();
+            do {
+              tick();
+              elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - start);
+              ++iterations;
+            } while (elapsed.count() < 2000);
+
+            std::cout << size << " " << format_items[current_format_index] << " "
+                      << render_mode_items[int(current_render_mode)] << " "
+                      << float(iterations) / (float(elapsed.count()) / 1000.f) << " fps"
+                      << std::endl;
+          }
+        }
+      }
+    } else {
+      while (!viz::WindowShouldClose()) {
+        if (!viz::WindowIsMinimized()) {
+          tick();
+          if (!unlimited_fps) {
+            std::this_thread::sleep_for(std::chrono::duration<float, std::milli>(1000.f / fps));
+          }
+        }
       }
     }
+
+    viz::Shutdown();
+
+    cleanupCuda();
+  } catch (std::exception& e) {
+    std::cerr << e.what();
+    return EXIT_FAILURE;
   }
-
-  viz::Shutdown();
-
-  cleanupCuda();
 
   return EXIT_SUCCESS;
 }

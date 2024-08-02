@@ -16,7 +16,7 @@
 
 .. autosummary::
 
-    holoscan.operators.AJASourceOp
+    @AJASOURCEOp_autosummary@
     holoscan.operators.BayerDemosaicOp
     holoscan.operators.FormatConverterOp
     holoscan.operators.GXFCodeletOp
@@ -33,7 +33,7 @@
 
 # Define operator modules and classes for lazy loading
 _OPERATOR_MODULES = {
-    "aja_source": ["AJASourceOp", "NTV2Channel"],
+    @AJASource_operator_module@
     "bayer_demosaic": ["BayerDemosaicOp"],
     "format_converter": ["FormatConverterOp"],
     "gxf_codelet": ["GXFCodeletOp"],

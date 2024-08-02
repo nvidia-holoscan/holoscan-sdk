@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,7 @@
 # limitations under the License.
 
 ARG HOLOSCAN_BUILD_IMAGE
-FROM ${HOLOSCAN_BUILD_IMAGE} as holoscan-vscode
+FROM ${HOLOSCAN_BUILD_IMAGE} AS holoscan-vscode
 
 ############################################################
 # VSCode devcontainer-compatible Dockerfile

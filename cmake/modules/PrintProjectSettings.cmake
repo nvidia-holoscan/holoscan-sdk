@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +46,7 @@ message(STATUS "CMAKE_FIND_ROOT_PATH             : ${CMAKE_FIND_ROOT_PATH}")
 message(STATUS "CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: ${CMAKE_FIND_ROOT_PATH_MODE_INCLUDE}")
 message(STATUS "")
 message(STATUS "BUILD_SHARED_LIBS                : ${BUILD_SHARED_LIBS}")
+message(STATUS "HOLOSCAN_BUILD_AJA               : ${HOLOSCAN_BUILD_AJA}")
 message(STATUS "HOLOSCAN_BUILD_EXAMPLES          : ${HOLOSCAN_BUILD_EXAMPLES}")
 message(STATUS "HOLOSCAN_BUILD_TESTS             : ${HOLOSCAN_BUILD_TESTS}")
 message(STATUS "HOLOSCAN_USE_CCACHE              : ${HOLOSCAN_USE_CCACHE}")

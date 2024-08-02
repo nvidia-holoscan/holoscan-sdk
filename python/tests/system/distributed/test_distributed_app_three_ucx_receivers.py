@@ -19,11 +19,12 @@
 # import os
 
 import numpy as np
+import pytest
 from env_wrapper import env_var_context
 from utils import remove_ignored_errors
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Fragment, Operator, OperatorSpec
+from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec
 
 # # Uncomment the following line to use the real HolovizOp and VideoStreamReplayerOp operators
 # from holoscan.operators import HolovizOp, VideoStreamReplayerOp
@@ -95,12 +96,16 @@ class RectangleOp(Operator):
 
 
 class DummyHolovizOp(Operator):
-    def __init__(self, fragment, *args, **kwargs):
+    def __init__(self, fragment, *args, use_new_receivers=True, **kwargs):
         self._count = 0
+        self.use_new_receivers = use_new_receivers
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        if self.use_new_receivers:
+            spec.input("receivers", size=IOSpec.ANY_SIZE)
+        else:
+            spec.param("receivers", kind="receivers")
 
     def compute(self, op_input, op_output, context):
         value = op_input.receive("receivers")
@@ -124,8 +129,12 @@ class Fragment1(Fragment):
 
 
 class Fragment2(Fragment):
+    def __init__(self, *args, use_new_receivers=True, **kwargs):
+        self.use_new_receivers = use_new_receivers
+        super().__init__(*args, **kwargs)
+
     def compose(self):
-        visualizer = DummyHolovizOp(self, name="holoviz")
+        visualizer = DummyHolovizOp(self, use_new_receivers=self.use_new_receivers, name="holoviz")
         # # Replace the above line with the following line to use the real HolovizOp
         # visualizer = HolovizOp(self, name="holoviz", **self.kwargs("holoviz"))
 
@@ -146,10 +155,14 @@ class DistributedVideoReplayerApp(Application):
     The HolovizOp displays the frames.
     """
 
+    def __init__(self, *args, use_new_receivers=True, **kwargs):
+        self.use_new_receivers = use_new_receivers
+        super().__init__(*args, **kwargs)
+
     def compose(self):
         # Define the fragments
         fragment1 = Fragment1(self, name="fragment1")
-        fragment2 = Fragment2(self, name="fragment2")
+        fragment2 = Fragment2(self, use_new_receivers=self.use_new_receivers, name="fragment2")
 
         # Define the workflow
         self.add_flow(fragment1, fragment2, {("replayer.output", "holoviz.receivers")})
@@ -161,7 +174,7 @@ class DistributedVideoReplayerApp(Application):
 NUM_MSGS = 100
 
 
-def launch_app():
+def launch_app(use_new_receivers=True):
     env_var_settings = {
         # set the recession period to 5 ms to reduce debug messages
         ("HOLOSCAN_CHECK_RECESSION_PERIOD_MS", "5"),
@@ -173,7 +186,7 @@ def launch_app():
     }
 
     with env_var_context(env_var_settings):
-        app = DistributedVideoReplayerApp()
+        app = DistributedVideoReplayerApp(use_new_receivers=use_new_receivers)
 
         # # Uncomment the following line to use the real HolovizOp and VideoStreamReplayerOp
         # # operators
@@ -184,10 +197,11 @@ def launch_app():
         app.run()
 
 
-def test_distributed_app_three_ucx_receivers(capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_distributed_app_three_ucx_receivers(use_new_receivers, capfd):
     global NUM_MSGS
 
-    launch_app()
+    launch_app(use_new_receivers=use_new_receivers)
 
     # assert that no errors were logged
     captured = capfd.readouterr()

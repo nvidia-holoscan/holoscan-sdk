@@ -636,7 +636,7 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
       }
       break;
     default:
-      HOLOSCAN_LOG_ERROR("Unsupported input primitive type for resizing image (%d, %d)",
+      HOLOSCAN_LOG_ERROR("Unsupported input primitive type for resizing image ({}, {})",
                          channels,
                          static_cast<int32_t>(primitive_type));
       return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr);

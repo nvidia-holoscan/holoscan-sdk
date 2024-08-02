@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_VULKAN_VULKAN_HPP
-#define HOLOSCAN_VIZ_VULKAN_VULKAN_HPP
+#ifndef MODULES_HOLOVIZ_SRC_VULKAN_VULKAN_APP_HPP
+#define MODULES_HOLOVIZ_SRC_VULKAN_VULKAN_APP_HPP
 
 #include <cuda.h>
 #include <nvmath/nvmath_types.h>
@@ -30,11 +30,16 @@
 #include <vector>
 
 #include "../holoviz/image_format.hpp"
+#include "../holoviz/present_mode.hpp"
+#include "../holoviz/surface_format.hpp"
 #include "../window.hpp"
 
 namespace holoscan::viz {
 
 class Layer;
+class Texture;  ///< texture object
+class Buffer;   ///< buffer object
+class CudaService;
 
 /**
  * The class is responsible for all operations regarding Vulkan.
@@ -51,9 +56,6 @@ class Vulkan {
    */
   ~Vulkan();
 
-  class Texture;  ///< texture object
-  class Buffer;   ///< buffer object
-
   /**
    * Setup Vulkan using the given window.
    *
@@ -67,6 +69,43 @@ class Vulkan {
    * @return the window used by Vulkan
    */
   Window* get_window() const;
+
+  /**
+   * @return the CUDA service (created to use the same device as Vulkan)
+   */
+  CudaService* get_cuda_service() const;
+
+  /**
+   * Get the supported surface formats.
+   *
+   * @returns supported surface formats
+   */
+  std::vector<SurfaceFormat> get_surface_formats() const;
+
+  /**
+   * Set the surface format.
+   *
+   * The surface format can be changed any time.
+   *
+   * @param surface_format surface format
+   */
+  void set_surface_format(SurfaceFormat surface_format);
+
+  /**
+   * Get the supported present modes.
+   *
+   * @returns supported present modes
+   */
+  std::vector<PresentMode> get_present_modes() const;
+
+  /**
+   * Set the present mode.
+   *
+   * The present mode can be changed any time.
+   *
+   * @param present_mode present mode
+   */
+  void set_present_mode(PresentMode present_mode);
 
   /**
    * Begin the transfer pass. This creates a transfer job and a command buffer.
@@ -196,10 +235,10 @@ class Vulkan {
    * @param device_ptr  CUDA device memory
    * @param buffer      buffer to be updated
    * @param dst_offset  offset in buffer to copy to
-   * @param stream      CUDA stream
+   * @param ext_stream  CUDA stream to use for operations
    */
   void upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer, size_t dst_offset,
-                        CUstream stream);
+                        CUstream ext_stream);
 
   /**
    * Upload data from host memory to a buffer created with ::CreateBuffer
@@ -311,4 +350,4 @@ class Vulkan {
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_VULKAN_VULKAN_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_VULKAN_VULKAN_APP_HPP */

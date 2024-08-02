@@ -53,7 +53,7 @@ class GenerateAndDemosaicFragment : public holoscan::Fragment {
         Arg("bayer_grid_pos", 2),
         Arg("interpolation_mode", 0),
         // The pool size is set to 10 to prevent memory allocation errors during testing.
-        // Additional memory pool may be required as UCXTransmitter sends data asynchronously
+        // Additional memory pool may be required as UcxTransmitter sends data asynchronously
         // without checking the receiver's queue.
         Arg("pool", make_resource<BlockMemoryPool>("pool", 1, rows * columns * channels, 10)),
         Arg("cuda_stream_pool", cuda_stream_pool)};

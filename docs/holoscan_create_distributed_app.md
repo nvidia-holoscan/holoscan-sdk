@@ -230,6 +230,8 @@ Given a CMake project, a pre-built executable, or a python application, you can 
 
 ### Environment Variables for Distributed Applications
 
+(holoscan-distributed-env)=
+
 #### Holoscan SDK environment variables.
 
 You can set environment variables to modify the default actions of services and the scheduler when executing a distributed application.
@@ -254,7 +256,7 @@ You can set environment variables to modify the default actions of services and 
 
 - **HOLOSCAN_UCX_PORTS** : This defines the preferred port numbers for the SDK when specific ports for UCX communication need to be predetermined, such as in a Kubernetes environment. If the distributed application requires three ports (UCX receivers) and the environment variable is unset, the SDK chooses three unused ports sequentially from the range 10000~32767. Specifying a value, for example, `HOLOSCAN_UCX_PORTS=10000`, results in the selection of ports 10000, 10001, and 10002. Multiple starting values can be comma-separated. The system increments from the last provided port if more ports are needed. Any unused specified ports are ignored.
 
-- **HOLOSCAN_UCX_SOURCE_ADDRESS** : This environment variable specifies the local IP address (source) for the UCX connection. This variable is especially beneficial when a node has multiple network interfaces, enabling the user to determine which one should be utilized for establishing a UCX client (UCXTransmitter). If it is not explicitly specified, the default address is set to `0.0.0.0`, representing any available interface.
+- **HOLOSCAN_UCX_SOURCE_ADDRESS** : This environment variable specifies the local IP address (source) for the UCX connection. This variable is especially beneficial when a node has multiple network interfaces, enabling the user to determine which one should be utilized for establishing a UCX client (UcxTransmitter). If it is not explicitly specified, the default address is set to `0.0.0.0`, representing any available interface.
 
 #### UCX-specific environment variables
 Transmission of data between fragments of a multi-fragment application is done via the [Unified Communications X (UCX)](https://openucx.readthedocs.io) library, a point-to-point communication framework designed to utilize the best available hardware resources (shared memory, TCP, GPUDirect RDMA, etc). UCX has many parameters that can be controlled via environment variables. A few that are particularly relevant to Holoscan SDK distributed applications are listed below:
@@ -456,7 +458,7 @@ struct codec<Coordinate> {
 }  // namespace holoscan
 ```
 
-where the first argument to `serialize` is a const reference to the type to be serialized and the return value is an {cpp:class}`~holoscan::expected` containing the number of bytes that were serialized. The `deserialize` method returns an {cpp:class}`~holoscan::expected` containing the deserialized object. The {cpp:class}`~holoscan::Endpoint` class is a base class representing the serialization endpoint (For distributed applications, the actual endpoint class used is {cpp:class}`~holoscan::UcxSerializationBuffer`).
+where the first argument to `serialize` is a const reference to the type to be serialized and the return value is an {cpp:type}`~holoscan::expected` containing the number of bytes that were serialized. The `deserialize` method returns an {cpp:type}`~holoscan::expected` containing the deserialized object. The {cpp:class}`~holoscan::Endpoint` class is a base class representing the serialization endpoint (For distributed applications, the actual endpoint class used is {cpp:class}`~holoscan::UcxSerializationBuffer`).
 
 The helper functions `serialize_trivial_type` (`deserialize_trivial_type`) can be used to serialize (deserialize) any plain-old-data (POD) type. Specifically, POD types can be serialized by just copying `sizeof(Type)` bytes to/from the endpoint. The {cpp:func}`~holoscan::Endpoint::read_trivial_type` and `~holoscan::Endpoint::write_trivial_type` methods could be used directly instead.
 

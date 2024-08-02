@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,8 @@ class PingTensorTxOp : public holoscan::Operator {
   Parameter<int32_t> channels_;
   Parameter<std::string> data_type_;
   Parameter<std::string> tensor_name_;
+
+  size_t count_{1};
 };
 
 class PingTensorRxOp : public holoscan::Operator {

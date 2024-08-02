@@ -283,8 +283,9 @@ ImGUI is a static library and has no stable API. Therefore the application and H
 
 A depth map is a single channel 2d array where each element represents a depth value. The data is rendered as a 3d object using points, lines or triangles. The color for the elements can also be specified.
 
-Supported format for the depth map:
+Supported formats for the depth map:
 - 8-bit unsigned normalized format that has a single 8-bit depth component
+- 32-bit signed float format that has a single 32-bit depth component
 
 Supported format for the depth color map:
 - 32-bit unsigned normalized format that has an 8-bit R component in byte 0, an 8-bit G component in byte 1,
@@ -489,6 +490,23 @@ The rendered color or depth buffer can be read back using {func}`viz::ReadFrameb
 ````
 `````
 
+## sRGB
+
+The sRGB color space is supported for both images and the framebuffer. By default Holoviz is using a linear encoded framebuffer.
+
+`````{tab-set}
+````{tab-item} Operator
+To switch the framebuffer color format set the `framebuffer_srgb` parameter to `true`.
+
+To use sRGB encoded images set the `image_format` field of  the `InputSpec` structure to a sRGB image format.
+````
+````{tab-item} Module
+Use the {func}`viz::SetSurfaceFormat()` to set the framebuffer surface format to a sRGB color format.
+
+To use sRGB encoded images set the `fmt` parameter of {func}`viz::ImageCudaDevice()`, {func}`viz::ImageCudaArray()` or {func}`viz::ImageHost()` to a sRGB image format.
+````
+`````
+
 ## Holoviz operator
 
 ### Class documentation
@@ -558,7 +576,7 @@ Holoviz example app
 
 ### API
 
-[Holoviz module API](generated/namespace_holoscan__viz.rst)
+{ref}`namespace_holoscan__viz`
 
 ### Examples
 

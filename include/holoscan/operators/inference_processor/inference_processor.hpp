@@ -152,12 +152,6 @@ class InferenceProcessorOp : public holoscan::Operator {
   ///  Supported value: False
   Parameter<bool> transmit_on_cuda_;
 
-  ///  @brief Vector of input receivers. Multiple receivers supported.
-  Parameter<std::vector<IOSpec*>> receivers_;
-
-  ///  @brief Output transmitter. Single transmitter supported.
-  Parameter<std::vector<IOSpec*>> transmitter_;
-
   void conditional_disable_output_port(const std::string& name);
 
   // Internal state

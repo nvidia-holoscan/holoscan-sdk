@@ -91,8 +91,9 @@ def test_generator_and_class_decorator_app(capfd):
 
 @create_op(
     outputs=(
+        # intentionally test both tuple[str] and str for `tensor_names` argument
         Output("x", tensor_names=("x",)),
-        Output("waveform", tensor_names=("waveform",)),
+        Output("waveform", tensor_names="waveform"),
     ),
 )
 def dual_tensor_generate(x_shape=(128, 64), waveform_shape=(512,)):

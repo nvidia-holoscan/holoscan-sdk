@@ -316,7 +316,7 @@ class Application : public Fragment {
    * @brief Set the scheduler for fragments object.
    *
    * Set scheduler for each fragment to use multi-thread scheduler by default because
-   * UCXTransmitter/UCXReceiver doesn't work with GreedyScheduler with the following graph.
+   * UcxTransmitter/UcxReceiver doesn't work with GreedyScheduler with the following graph.
    *
    * - Fragment (fragment1)
    *   - Operator (op1)
@@ -329,7 +329,7 @@ class Application : public Fragment {
    *       - in1
    *       - in2
    *
-   * With the following graph connections, due to how UCXTransmitter/UCXReceiver works,
+   * With the following graph connections, due to how UcxTransmitter/UcxReceiver works,
    * UCX connections between op1 and op3 and between op2 and op3 are not established
    * (resulting in a deadlock).
    *

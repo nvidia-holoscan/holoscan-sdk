@@ -66,7 +66,7 @@ This constructor will allow providing a Pythonic experience for creating the ope
   ```
 
   uses a helper function defined in [operator_util.hpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/operator_util.hpp) to add any {py:class}`~holoscan.core.Condition` or {py:class}`~holoscan.core.Resource` arguments found in the list of positional arguments.
-- The other arguments all correspond to the various parameters ({cpp:class}`holoscan::Parameter`) that are defined for the C++ `ToolTrackingPostProcessorOp` class.
+- The other arguments all correspond to the various parameters ({cpp:type}`holoscan::Parameter`) that are defined for the C++ `ToolTrackingPostProcessorOp` class.
   - All other parameters except `cuda_stream_pool` are passed directly in the argument list to the parent `ToolTrackingPostProcessorOp` class. The parameters present on the C++ operator can be seen in its header [here](https://github.com/grlee77/holohub/blob/3adbba16baafb5958950b261a0d6521f7544cfeb/operators/tool_tracking_postprocessor/tool_tracking_postprocessor.hpp#L46-L52) with default values taken from the `setup` method of the source file [here](https://github.com/grlee77/holohub/blob/3adbba16baafb5958950b261a0d6521f7544cfeb/operators/tool_tracking_postprocessor/tool_tracking_postprocessor.cpp#L77-L89). Note that {cpp:class}`CudaStreamHandler` is a utility that will add a parameter of type `Parameter<std::shared_ptr<CudaStreamPool>>`.
   - The `cuda_stream_pool` argument is only conditionally added if it was not `nullptr` (Python's `None`). This is done via
     ```cpp
@@ -136,7 +136,7 @@ PYBIND11_MODULE(_tool_tracking_postprocessor, m) {
 
 
 :::{note}
-- If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND_11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` as [covered above](#pybind11-module_name_warning).
+- If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND_11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` as {ref}`covered below <pybind11-module_name_warning>`).
 - If you are implementing the python wrapping in a standalone CMake project,the `<module_name>` passed to `PYBIND_11_MODULE` **must** match the name of the module passed to the [pybind11-add-module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) CMake function.
 
 Using a mismatched name in `PYBIND_11_MODULE` will result in failure to import the module from Python.

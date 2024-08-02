@@ -155,6 +155,7 @@ add_holoscan_library(core
     core/gxf/gxf_wrapper.cpp
     core/io_spec.cpp
     core/messagelabel.cpp
+    core/metadata.cpp
     core/network_context.cpp
     core/network_contexts/gxf/ucx_context.cpp
     core/operator.cpp

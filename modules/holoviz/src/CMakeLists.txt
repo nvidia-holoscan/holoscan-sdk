@@ -61,13 +61,18 @@ target_sources(${PROJECT_NAME}
 
         cuda/convert.cu
         cuda/cuda_service.cpp
+        cuda/gen_depth_map.cu
 
         layers/geometry_layer.cpp
         layers/image_layer.cpp
         layers/im_gui_layer.cpp
         layers/layer.cpp
 
+        vulkan/buffer.cpp
+        vulkan/format_util.cpp
         vulkan/framebuffer_sequence.cpp
+        vulkan/resource.cpp
+        vulkan/texture.cpp
         vulkan/vulkan_app.cpp
 
         ${GLSL_SOURCE_FILES}
@@ -76,6 +81,8 @@ target_sources(${PROJECT_NAME}
 target_compile_definitions(${PROJECT_NAME}
     PRIVATE
         VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
+        # prevent the GLFW header from including the OpenGL header
+        GLFW_INCLUDE_NONE
     )
 
 target_include_directories(${PROJECT_NAME}

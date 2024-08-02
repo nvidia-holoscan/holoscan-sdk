@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOVIZ_SRC_CUDA_CUDA_SERVICE_HPP
-#define HOLOVIZ_SRC_CUDA_CUDA_SERVICE_HPP
+#ifndef MODULES_HOLOVIZ_SRC_CUDA_CUDA_SERVICE_HPP
+#define MODULES_HOLOVIZ_SRC_CUDA_CUDA_SERVICE_HPP
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -151,6 +151,25 @@ class CudaService {
    */
   ScopedPush PushContext(CUcontext context);
 
+  /**
+   * Given an external stream, return a stream which should be used to execute CUDA operations on
+   * the GPU the CudaContext uses.
+   * The returned stream might be identical to the stream passed in or a different stream when
+   * the stream passed in is on a different GPU than the CudaContext.
+   *
+   * @param ext_stream external stream
+   * @return CUstream stream to use
+   */
+  CUstream select_cuda_stream(CUstream ext_stream);
+
+  /**
+   * Synchronize external stream with selected stream
+   *
+   * @param ext_stream external stream
+   * @param selected_stream selected stream
+   */
+  static void sync_with_selected_stream(CUstream ext_stream, CUstream selected_stream);
+
  private:
   struct Impl;
   std::shared_ptr<Impl> impl_;
@@ -158,4 +177,4 @@ class CudaService {
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOVIZ_SRC_CUDA_CUDA_SERVICE_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_CUDA_CUDA_SERVICE_HPP */

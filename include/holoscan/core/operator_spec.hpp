@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_OPERATOR_SPEC_HPP
 
 #include <iostream>
+#include <list>
 #include <memory>
 #include <string>
 #include <typeinfo>
@@ -64,13 +65,34 @@ class OperatorSpec : public ComponentSpec {
   /**
    * @brief Define an input specification for this operator.
    *
+   * Note: The 'size' parameter is used for initializing the queue size of the input port. The
+   *       queue size can be set by this method or by the 'IOSpec::queue_size(int64_t)' method.
+   *       If the queue size is set to 'any size' (IOSpec::kAnySize in C++ or IOSpec.ANY_SIZE
+   *       in Python), the connector/condition settings will be ignored.
+   *       If the queue size is set to other values, the default connector
+   *       (DoubleBufferReceiver/UcxReceiver) and condition (MessageAvailableCondition) will use
+   *       the queue size for initialization ('capacity' for the connector and 'min_size' for
+   *       the condition) if they are not set.
+   *       Please refer to the [Holoscan SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-c)
+   *       to see how to receive any number of inputs in C++.
+   *
    * @tparam DataT The type of the input data.
    * @param name The name of the input specification.
+   * @param size The size of the queue for the input port.
    * @return The reference to the input specification.
    */
   template <typename DataT>
-  IOSpec& input(std::string name) {
-    auto spec = std::make_shared<IOSpec>(this, name, IOSpec::IOType::kInput, &typeid(DataT));
+  IOSpec& input(std::string name, IOSpec::IOSize size = IOSpec::kSizeOne) {
+    if (size == IOSpec::kAnySize) {
+      // Create receivers object
+      receivers_params_.emplace_back();
+
+      // Register parameter
+      auto& parameter = receivers_params_.back();
+      param(parameter, name.c_str(), "", "", {}, ParameterFlag::kNone);
+    }
+
+    auto spec = std::make_shared<IOSpec>(this, name, IOSpec::IOType::kInput, &typeid(DataT), size);
     auto [iter, is_exist] = inputs_.insert_or_assign(name, std::move(spec));
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Input port '{}' already exists", name); }
     return *(iter->second.get());
@@ -264,6 +286,9 @@ class OperatorSpec : public ComponentSpec {
  protected:
   std::unordered_map<std::string, std::shared_ptr<IOSpec>> inputs_;   ///< Input specs
   std::unordered_map<std::string, std::shared_ptr<IOSpec>> outputs_;  ///< Outputs specs
+
+  /// Container for receivers parameters
+  std::list<Parameter<std::vector<IOSpec*>>> receivers_params_;
 };
 
 }  // namespace holoscan

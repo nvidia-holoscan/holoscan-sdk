@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,9 +71,11 @@ class Message {
   std::any value() const { return value_; }
 
   /**
-   * @brief Get the value object as a specific type.
+   * @brief Get the value object as a shared_ptr to a specific type.
    *
-   * @tparam ValueT The type of the value to be returned.
+   * This method can only be used when the std::any value is a shared pointer to the specified type.
+   *
+   * @tparam ValueT The type of the value to be returned in the shared pointer.
    * @return The value wrapped by the message.
    */
   template <typename ValueT>
@@ -81,7 +83,7 @@ class Message {
     try {
       return std::any_cast<std::shared_ptr<ValueT>>(value_);
     } catch (const std::bad_any_cast& e) {
-      HOLOSCAN_LOG_ERROR("The message doesn't have a value of type '{}': {}",
+      HOLOSCAN_LOG_ERROR("The message doesn't have a shared pointer of type '{}': {}",
                          typeid(std::decay_t<ValueT>).name(),
                          e.what());
       return nullptr;

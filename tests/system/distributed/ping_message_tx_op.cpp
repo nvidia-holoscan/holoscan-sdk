@@ -91,6 +91,14 @@ void PingMessageTxOp::setup(OperatorSpec& spec) {
 void PingMessageTxOp::compute(InputContext&, OutputContext& op_output, ExecutionContext&) {
   // NOTE: Values in PingMessageTxOp::compute and PingMessageRxOp::compute must remain consistent.
   //       If any value is changed here, please make the corresponding change in PingMessageRxOp.
+
+  // store metadata with a few types
+  // (value serialization uses the same codecs as for holoscan::Message, so just test a few here)
+  auto meta = metadata();
+  meta->set("bool", true);
+  meta->set("string", std::string("defg"));
+  meta->set("vec", std::vector<float>{1.0, 1.0, 3.0});
+
   switch (type_) {
     case MessageType::BOOL: {
       bool value = true;

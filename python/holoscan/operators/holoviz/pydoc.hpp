@@ -81,8 +81,8 @@ This is a Vulkan-based visualizer.
     def get_block_size(height, width):
         height_even = height + (height & 1)
         width_even = width + (width & 1)
-        row_bytes = width_even * 4;  # 4 bytes per pixel for 8-bit RGBA
-        row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes // 256 + 1) * 256)
+        row_bytes = width_even * 4  # 4 bytes per pixel for 8-bit RGBA
+        row_stride = row_bytes if (row_bytes % 256 == 0) else ((row_bytes // 256 + 1) * 256)
         return height_even * row_stride
 
 Parameters
@@ -103,16 +103,16 @@ color_lut : list of list of float, optional
 window_title : str, optional
     Title on window canvas. Default value is ``"Holoviz"``.
 display_name : str, optional
-    In exclusive mode, name of display to use as shown with `xrandr` or `hwinfo --monitor`. Default
-    value is ``"DP-0"``.
+    In exclusive display or fullscreen mode, name of display to use as shown with `xrandr` or
+    `hwinfo --monitor`. Default value is ``""``.
 width : int, optional
-    Window width or display resolution width if in exclusive or fullscreen mode. Default value is
-    ``1920``.
+    Window width or display resolution width if in exclusive display or fullscreen mode. Default
+    value is ``1920``.
 height : int, optional
-    Window height or display resolution width if in exclusive or fullscreen mode. Default value is
-    ``1080``.
+    Window height or display resolution width if in exclusive display or fullscreen mode. Default
+    value is ``1080``.
 framerate : float, optional
-    Display framerate in Hz if in exclusive mode. Default value is ``60.0``.
+    Display framerate in Hz if in exclusive display mode. Default value is ``60.0``.
 use_exclusive_display : bool, optional
     Enable exclusive display. Default value is ``False``.
 fullscreen : bool, optional
@@ -120,6 +120,14 @@ fullscreen : bool, optional
 headless : bool, optional
     Enable headless mode. No window is opened, the render buffer is output to
     port ``render_buffer_output``. Default value is ``False``.
+framebuffer_srgb : bool, optional
+    Enable sRGB framebuffer. If set to true, the operator will use an sRGB framebuffer for
+    rendering. If set to false, the operator will use a linear framebuffer.
+    Default value is ``False``.
+vsync : bool, optional
+    Enable vertical sync. If set to true the operator waits for the next vertical blanking period
+    of the display to update the current image.
+    Default value is ``False``.
 enable_render_buffer_input : bool, optional
     If ``True``, an additional input port, named ``"render_buffer_input"`` is added to the
     operator. Default value is ``False``.
@@ -209,8 +217,10 @@ The details of the dictionary is as follows:
       string, text strings are defined by InputSpec member **text**.
     - **depth_map**: single channel 2d array where each element represents a depth value.
       The data is rendered as a 3d object using points, lines or triangles. The color for
-      the elements can be specified through ``depth_map_color``. Supported format: 8-bit
-      unsigned normalized format that has a single 8-bit depth component.
+      the elements can be specified through ``depth_map_color``.
+      Supported formats for the depth map:
+        - 8-bit unsigned normalized format that has a single 8-bit depth component
+        - 32-bit signed float format that has a single 32-bit depth component
     - **depth_map_color**: RGBA 2d image, same size as the depth map. One color value for
       each element of the depth map grid. Supported format: 32-bit unsigned normalized
       format that has an 8-bit R component in byte 0, an 8-bit G component in byte 1, an
@@ -223,6 +233,11 @@ The details of the dictionary is as follows:
     values are rendered on top of layers with lower priority values (default: ``0``)
 
   - type: ``int``
+
+- **image_format**: color image format, used if `type` is `color`, `color_lut` or
+    `depth_map_color`. (default: `auto_detect`).
+  - type: ``str``
+
 - **color**: RGBA color of rendered geometry (default: ``[1.f, 1.f, 1.f, 1.f]``)
 
   - type: ``List[float]``
@@ -247,26 +262,65 @@ The details of the dictionary is as follows:
 
 1. Displaying Color Images
 
-   Image data can either be on host or device (GPU). Multiple image formats are supported
+   Image data can either be on host or device (GPU). For tensors the image format is derived from
+   the component count and component type if `image_format` is `auto_detect` (the default). These
+   image formats are supported in auto detect mode
 
-   - R 8 bit unsigned
-   - R 16 bit unsigned
-   - R 16 bit float
-   - R 32 bit unsigned
-   - R 32 bit float
-   - RGB 8 bit unsigned
-   - BGR 8 bit unsigned
-   - RGBA 8 bit unsigned
-   - BGRA 8 bit unsigned
-   - RGBA 16 bit unsigned
-   - RGBA 16 bit float
+   - gray 8 bit signed normalized
+   - gray 8 bit unsigned normalized
+   - gray 16 bit signed normalized
+   - gray 16 bit unsigned normalized
+   - gray 32 bit signed normalized
+   - gray 32 bit unsigned normalized
+   - gray 32 bit float
+   - RGB 8 bit signed normalized
+   - RGB 8 bit unsigned normalized
+   - RGBA 8 bit signed normalized
+   - RGBA 8 bit unsigned normalized
+   - RGBA 16 bit signed normalized
+   - RGBA 16 bit unsigned normalized
    - RGBA 32 bit float
+
+   Additionally the `image_format` can be set to these values
+
+   - `"r8_uint"`
+   - `"r8_sint"`
+   - `"r8_unorm"`
+   - `"r8_snorm"`
+   - `"r8_srgb"`
+   - `"r16_uint"`
+   - `"r16_sint"`
+   - `"r16_unorm"`
+   - `"r16_snorm"`
+   - `"r16_sfloat"`
+   - `"r32_uint"`
+   - `"r32_sint"`
+   - `"r32_sfloat"`
+   - `"r8g8b8_unorm"`
+   - `"r8g8b8_snorm"`
+   - `"r8g8b8_snorm"`
+   - `"r8g8b8a8_unorm"`
+   - `"r8g8b8a8_snorm"`
+   - `"r8g8b8a8_srgb"`
+   - `"r16g16b16a16_unorm"`
+   - `"r16g16b16a16_snorm"`
+   - `"r16g16b16a16_sfloat"`
+   - `"r32g32b32a32_sfloat"`
+   - `"a2b10g10r10_unorm_pack32"`
+   - `"a2r10g10b10_unorm_pack32"`
+   - `"b8g8r8a8_unorm"`
+   - `"b8g8r8a8_srgb"`
+   - `"a8b8g8r8_unorm_pack32"`
+   - `"a8b8g8r8_srgb_pack32"`
 
    When the ``type`` parameter is set to ``color_lut`` the final color is looked up using the values
    from the ``color_lut`` parameter. For color lookups these image formats are supported
 
+   - R 8 bit signed
    - R 8 bit unsigned
+   - R 16 bit signed
    - R 16 bit unsigned
+   - R 32 bit signed
    - R 32 bit unsigned
 
 2. Drawing Geometry
@@ -392,6 +446,9 @@ opacity : float
 priority : int
     Layer priority, determines the render order. Layers with higher priority values are rendered
     on top of layers with lower priority.
+image_format : holoscan.operators.HolovizOp.ImageFormat
+    Color image format, used if `type` is `HolovizOp.InputType.COLORR`,
+    `HolovizOp.InputType.COLOR_LUT` or `HolovizOp.InputType.DEPTH_MAP_COLOR`.
 color : 4-tuple of float
     RGBA values in range [0.0, 1.0] for rendered geometry.
 line_width : float

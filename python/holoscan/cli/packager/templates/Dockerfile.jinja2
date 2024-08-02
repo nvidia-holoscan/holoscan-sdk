@@ -16,7 +16,7 @@
 #}
 
 {% if application_type == 'CppCMake' %}
-FROM {{ build_image }} as builder
+FROM {{ build_image }} AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
@@ -108,9 +108,9 @@ RUN apt-get update \
 
 RUN groupadd -f -g $GID $UNAME
 RUN useradd -rm -d /home/$UNAME -s /bin/bash -g $GID -G sudo -u $UID $UNAME
-RUN chown -R holoscan {{ working_dir }} 
-RUN chown -R holoscan {{ full_input_path }} 
-RUN chown -R holoscan {{ full_output_path }} 
+RUN chown -R holoscan {{ working_dir }}
+RUN chown -R holoscan {{ full_input_path }}
+RUN chown -R holoscan {{ full_output_path }}
 
 # Set the working directory
 WORKDIR {{ working_dir }}
@@ -155,7 +155,7 @@ RUN pip install holoscan=={{ holoscan_sdk_version }}
 # Use embedded Holoscan SDK
 {# no op here #}
     {% endif %}
-{% else %} 
+{% else %}
 # MONAI Deploy
 
     {% if custom_monai_deploy_sdk %}

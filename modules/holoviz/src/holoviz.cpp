@@ -19,7 +19,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <iostream>
+#include <vector>
 
 #include "context.hpp"
 #include "layers/geometry_layer.hpp"
@@ -32,8 +34,9 @@ void Init(GLFWwindow* window, InitFlags flags) {
   Context::get().init(window, flags);
 }
 
-void Init(uint32_t width, uint32_t height, const char* title, InitFlags flags) {
-  Context::get().init(width, height, title, flags);
+void Init(uint32_t width, uint32_t height, const char* title, InitFlags flags,
+          const char* display_name) {
+  Context::get().init(width, height, title, flags, display_name);
 }
 
 void Init(const char* displayName, uint32_t width, uint32_t height, uint32_t refreshRate,
@@ -54,8 +57,60 @@ InstanceHandle GetCurrent() {
   return Context::get_current();
 }
 
+void GetPresentModes(uint32_t* present_mode_count, PresentMode* present_modes) {
+  if (!present_mode_count) {
+    throw std::invalid_argument("`present_mode_count` must be a valid pointer.");
+  }
+  const std::vector<PresentMode> supported_present_modes = Context::get().get_present_modes();
+
+  if (*present_mode_count == 0) {
+    *present_mode_count = supported_present_modes.size();
+  } else {
+    if (!present_modes) {
+      throw std::invalid_argument(
+          "`present_modes` must be a valid pointer if the value referenced by `present_mode_count` "
+          "is not 0.");
+    }
+    *present_mode_count = std::min((size_t)*present_mode_count, supported_present_modes.size());
+    for (uint32_t index = 0; index < *present_mode_count; ++index) {
+      present_modes[index] = supported_present_modes[index];
+    }
+  }
+}
+
+void SetPresentMode(PresentMode present_mode) {
+  Context::get().set_present_mode(present_mode);
+}
+
 void SetCudaStream(CUstream stream) {
   Context::get().set_cuda_stream(stream);
+}
+
+void GetSurfaceFormats(uint32_t* surface_format_count, SurfaceFormat* surface_formats) {
+  if (!surface_format_count) {
+    throw std::invalid_argument("`surface_format_count` must be a valid pointer.");
+  }
+  const std::vector<SurfaceFormat> supported_surface_formats = Context::get().get_surface_formats();
+
+  if (*surface_format_count == 0) {
+    *surface_format_count = supported_surface_formats.size();
+  } else {
+    if (!surface_formats) {
+      throw std::invalid_argument(
+          "`surface_formats` must be a valid pointer if the value referenced by "
+          "`surface_format_count` "
+          "is not 0.");
+    }
+    *surface_format_count =
+        std::min((size_t)*surface_format_count, supported_surface_formats.size());
+    for (uint32_t index = 0; index < *surface_format_count; ++index) {
+      surface_formats[index] = supported_surface_formats[index];
+    }
+  }
+}
+
+void SetSurfaceFormat(SurfaceFormat surface_format) {
+  Context::get().set_surface_format(surface_format);
 }
 
 void SetFont(const char* path, float size_in_pixels) {

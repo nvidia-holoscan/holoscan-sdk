@@ -37,9 +37,11 @@ fragment : holoscan.core.Fragment
     The fragment the condition will be associated with
 max_batch_size : int
     The maximum number of messages to be batched together.
-max_delay_ns: int
-    Maximum delay in nano seconds.
-    The maximum delay from first message to wait before submitting workload anyway.
+max_delay_ns: int or datetime.timedelta
+    The maximum delay to wait from the time of the first message before submitting the workload
+    anyway. If an int is provided, the value must be in nanoseconds. Any provided
+    `datetime.timedelta` value will be converted internally to the corresponding number of
+    nanoseconds to wait.
 clock : holoscan.resources.Clock or None, optional
     The clock used by the scheduler to define the flow of time. If None, a default-constructed
     `holoscan.resources.RealtimeClock` will be used.

@@ -52,6 +52,7 @@ class IOSpec;
 class Logger;
 class Message;
 class MessageLabel;
+class MetadataDictionary;
 class Operator;
 class OperatorSpec;
 class OperatorTimestampLabel;

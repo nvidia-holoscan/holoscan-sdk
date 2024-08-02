@@ -63,6 +63,7 @@ ignore = [
 # (For API documentation, the __init__.py files need sphinx autosummary commands in the first
 #  triple quote comment block, so the copyright header is commented as individual lines)
 "python/holoscan/**/__init__.py" = ["E501"]
+"python/holoscan/decorator.py" = ["E402"]
 "scripts/gxf_entity_codec.py" = ["N815"]  # allow mixed-case enum names in this utility script
 
 [tool.ruff.isort]

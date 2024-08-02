@@ -139,11 +139,12 @@ class BYOMApp(Application):
 
 Next, we look at the operators and their parameters defined in the application yaml file.
 
+<!-- Note that NVIDIA's public user guide doesn't seem to support the `lineno-start` tag, such as `:lineno-start: 43` in the code block, so we are removing it. -->
+
 `````{tab-set}
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:lineno-start: 43
 :emphasize-lines: 2, 8, 12, 20
 :name: holoscan-one-operator-workflow-python
 
@@ -172,12 +173,12 @@ Next, we look at the operators and their parameters defined in the application y
 
         viz = HolovizOp(self, name="viz", **self.kwargs("viz"))
 ```
-- An instance of the `UnboundedAllocator` resource class is created (line `44`) and used by subsequent operators for
+- An instance of the `UnboundedAllocator` resource class is created (line `2`) and used by subsequent operators for
 memory allocation.  This allocator allocates memory dynamically on the host as needed.  For applications where latency
 becomes an issue, there is the `BlockMemoryPool` allocator.
-- The preprocessor operator (line `50`) takes care of converting the input video from the source video to a format that can be used by the AI model.
-- The inference operator (line `54`) feeds the output from the preprocessor to the AI model to perform inference.
-- The postprocessor operator (line `62`) postprocesses the output from the inference operator before passing it downstream to the visualizer.
+- The preprocessor operator (line `8`) takes care of converting the input video from the source video to a format that can be used by the AI model.
+- The inference operator (line `12`) feeds the output from the preprocessor to the AI model to perform inference.
+- The postprocessor operator (line `20`) postprocesses the output from the inference operator before passing it downstream to the visualizer.
 Here, the segmentation postprocessor checks the probabilities output from the model to determine which class is most likely and emits this class index.
 This is then used by the `Holoviz` operator to create a segmentation mask overlay.
 ````
@@ -247,7 +248,6 @@ Finally, we define the application and workflow.
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:lineno-start: 67
 :emphasize-lines: 2-6
 
         # Define the workflow
@@ -279,8 +279,8 @@ if __name__ == "__main__":
     config_file = os.path.join(os.path.dirname(__file__), "byom.yaml")
     main(config_file=config_file, data=args.data)
 ```
-- The `add_flow()` on line `66` defines the first branch to display the original video.
-- The `add_flow()` commands from line `67-70` defines the second branch to display the segmentation mask overlay.
+- The `add_flow()` on line `2` defines the first branch to display the original video.
+- The `add_flow()` commands from line `3-6` defines the second branch to display the segmentation mask overlay.
 ````
 `````
 
@@ -296,7 +296,6 @@ We will need to modify the python and yaml files to change our application to th
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:lineno-start: 1
 :emphasize-lines: 20-23, 25
 
 class BYOMApp(Application):
@@ -407,7 +406,7 @@ Ultrasound Segmentation
 
 :::{note}
 If you run the byom.py application without modification and are using the debian installation, you may run into the following error message:
-```log
+```text
 [error] Error in Inference Manager ... TRT Inference: failed to build TRT engine file.
 ```
 In this case, modifying the write permissions for the model directory should help (use with caution):

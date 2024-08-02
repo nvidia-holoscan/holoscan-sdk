@@ -25,18 +25,18 @@
 #include <utility>
 #include <vector>
 
+#include "../utils.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/config.hpp"
-#include "holoscan/core/graph.hpp"
-#include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/graph.hpp"
+#include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/parameter.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
-#include "../utils.hpp"
 
 namespace holoscan {
 
@@ -52,6 +52,7 @@ TEST(IOSpec, TestIOSpecInitialize) {
   EXPECT_EQ(spec.name(), "a");
   EXPECT_EQ(spec.io_type(), IOSpec::IOType::kInput);
   EXPECT_EQ(spec.typeinfo(), &typeid(holoscan::gxf::Entity));
+  EXPECT_EQ(spec.queue_size(), 1);
 
   // kOutput
   IOSpec out_spec{
@@ -297,6 +298,20 @@ TEST(IOSpec, TestIOSpecConnectorUcxTransmitter) {
   EXPECT_EQ(std::string(transmitter->gxf_typename()), std::string("nvidia::gxf::UcxTransmitter"));
 }
 
+TEST(IOSpec, TestIOSpecQueueSize) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec = IOSpec(
+      &op_spec, std::string("receivers"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+
+  EXPECT_EQ(spec.queue_size(), 1);
+
+  spec.queue_size(0);
+  EXPECT_EQ(spec.queue_size(), 0);
+
+  spec.queue_size(-7);
+  EXPECT_EQ(spec.queue_size(), -7);
+}
+
 TEST_F(IOSpecWithGXFContext, TestIOSpecDescription) {
   F.name("fragment1");
   OperatorSpec op_spec = OperatorSpec(&F);
@@ -363,8 +378,9 @@ conditions:
 TEST(IOSpec, TestIOSpecInvalidPortName) {
   // "." character is not allowed in IOSPec names
   OperatorSpec op_spec = OperatorSpec();
-  EXPECT_THROW({ IOSpec spec = IOSpec(&op_spec, std::string("a.b"), IOSpec::IOType::kInput); },
-               std::invalid_argument);
+  EXPECT_THROW(
+      { IOSpec spec = IOSpec(&op_spec, std::string("a.b"), IOSpec::IOType::kInput); },
+      std::invalid_argument);
 
   EXPECT_THROW(
       {

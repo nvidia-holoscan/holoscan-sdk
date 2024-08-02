@@ -20,7 +20,6 @@
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
-#include <unordered_map>
 #include <complex>
 #include <cstdint>
 #include <string>
@@ -29,10 +28,12 @@
 
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/parameter.hpp"
 #include "holoscan/core/gxf/entity.hpp"
+#include "holoscan/core/parameter.hpp"
+// clang-format off
 #include "holoscan/core/operator_spec.hpp"  // must be before argument_setter import
 #include "holoscan/core/argument_setter.hpp"
+// clang-format on
 
 namespace holoscan {
 
@@ -48,8 +49,49 @@ TEST(OperatorSpec, TestOperatorSpecInput) {
   // check size
   EXPECT_EQ(spec.inputs().size(), 1);
 
+  // check queue size
+  EXPECT_EQ(spec.inputs()["a"]->queue_size(), IOSpec::kSizeOne);
+
   // duplicate name
   spec.input<gxf::Entity>("a");
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("already exists") != std::string::npos);
+}
+
+struct OperatorSpecTestParam {
+  std::string name;
+  IOSpec::IOSize size;
+};
+
+class OperatorSpecTest : public ::testing::TestWithParam<OperatorSpecTestParam> {};
+
+INSTANTIATE_TEST_SUITE_P(OperatorSpecTests, OperatorSpecTest,
+                         ::testing::Values(OperatorSpecTestParam{"receivers", IOSpec::kSizeOne},
+                                           OperatorSpecTestParam{"receivers", IOSpec::kAnySize},
+                                           OperatorSpecTestParam{"receivers",
+                                                                 IOSpec::kPrecedingCount},
+                                           OperatorSpecTestParam{"receivers", IOSpec::IOSize(3)},
+                                           OperatorSpecTestParam{"receivers", IOSpec::IOSize(-2)}));
+
+TEST_P(OperatorSpecTest, TestOperatorSpecInputSize) {
+  auto param = GetParam();
+
+  testing::internal::CaptureStderr();
+
+  OperatorSpec spec = OperatorSpec();
+  spec.input<gxf::Entity>(param.name, param.size);
+
+  // check if key exists
+  EXPECT_TRUE(spec.inputs().find(param.name) != spec.inputs().end());
+
+  // check size
+  EXPECT_EQ(spec.inputs().size(), 1);
+
+  // check queue size
+  EXPECT_EQ(spec.inputs()[param.name]->queue_size(), param.size);
+
+  // duplicate name
+  spec.input<gxf::Entity>(param.name);
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("already exists") != std::string::npos);
 }

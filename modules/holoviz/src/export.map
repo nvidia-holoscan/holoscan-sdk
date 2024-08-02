@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,12 +22,18 @@
             "holoscan::viz::GetCurrent()";
 
             "holoscan::viz::Init(GLFWwindow*, holoscan::viz::InitFlags)";
-            "holoscan::viz::Init(unsigned int, unsigned int, char const*, holoscan::viz::InitFlags)";
+            "holoscan::viz::Init(unsigned int, unsigned int, char const*, holoscan::viz::InitFlags, char const*)";
             "holoscan::viz::Init(char const*, unsigned int, unsigned int, unsigned int, holoscan::viz::InitFlags)";
 
             "holoscan::viz::g_im_gui_context";
 
             "holoscan::viz::SetCudaStream(CUstream_st*)";
+
+            "holoscan::viz::GetPresentModes(unsigned int*, holoscan::viz::PresentMode*)";
+            "holoscan::viz::SetPresentMode(holoscan::viz::PresentMode)";
+
+            "holoscan::viz::GetSurfaceFormats(unsigned int*, holoscan::viz::SurfaceFormat*)";
+            "holoscan::viz::SetSurfaceFormat(holoscan::viz::SurfaceFormat)";
 
             "holoscan::viz::SetFont(char const*, float)";
 

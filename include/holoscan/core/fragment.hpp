@@ -592,6 +592,12 @@ class Fragment {
    * creates input ports (`receivers:0` and `receivers:1`) implicitly and connects them (and adds
    * the references of the input ports to the `receivers` vector).
    *
+   * Since Holoscan SDK v2.3, users can define a multi-receiver input port using `spec.input()`
+   * with `IOSpec::kAnySize` instead of using `spec.param()`
+   * with `Parameter<std::vector<IOSpec*>> receivers_;`. It is now recommended to use this
+   * new `spec.input`-based approach and the old "receivers" parameter approach should be
+   * considered deprecated.
+   *
    * @param upstream_op The upstream operator.
    * @param downstream_op The downstream operator.
    * @param port_pairs The port pairs. The first element of the pair is the port of the upstream
@@ -666,6 +672,9 @@ class Fragment {
    */
   FragmentPortMap port_info() const;
 
+  bool is_metadata_enabled() const { return is_metadata_enabled_; }
+  void is_metadata_enabled(bool enabled) { is_metadata_enabled_ = enabled; }
+
  protected:
   friend class Application;  // to access 'scheduler_' in Application
   friend class AppDriver;
@@ -708,6 +717,7 @@ class Fragment {
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
   std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment
   bool is_composed_ = false;                            ///< Whether the graph is composed or not.
+  bool is_metadata_enabled_ = false;                    ///< Whether metadata is enabled or not.
 };
 
 }  // namespace holoscan

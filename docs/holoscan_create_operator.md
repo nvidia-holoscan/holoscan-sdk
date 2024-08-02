@@ -104,7 +104,7 @@ To create a custom operator in C++ it is necessary to create a subclass of
 :caption: examples/ping_multi_port/cpp/ping_multi_port.cpp
 :linenos: true
 :lineno-start: 21
-:emphasize-lines: 35-36,55,59,77,87,91-92,101,112-113
+:emphasize-lines: 33-34,53,57,75,85-89,93-94,103-104,116-117
 :name: ping-multi-port-cpp
 
 #include "holoscan/holoscan.hpp"
@@ -115,9 +115,7 @@ class ValueData {
   explicit ValueData(int value) : data_(value) {
     HOLOSCAN_LOG_TRACE("ValueData::ValueData(): {}", data_);
   }
-  ~ValueData() {
-    HOLOSCAN_LOG_TRACE("ValueData::~ValueData(): {}", data_);
-  }
+  ~ValueData() { HOLOSCAN_LOG_TRACE("ValueData::~ValueData(): {}", data_); }
 
   void data(int value) { data_ = value; }
 
@@ -147,14 +145,14 @@ class PingTxOp : public Operator {
     auto value2 = std::make_shared<ValueData>(index_++);
     op_output.emit(value2, "out2");
   };
-  int index_ = 0;
+  int index_ = 1;
 };
 
-class PingMiddleOp : public Operator {
+class PingMxOp : public Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingMiddleOp)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingMxOp)
 
-  PingMiddleOp() = default;
+  PingMxOp() = default;
 
   void setup(OperatorSpec& spec) override {
     spec.input<std::shared_ptr<ValueData>>("in1");
@@ -193,7 +191,11 @@ class PingRxOp : public Operator {
   PingRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    // // Since Holoscan SDK v2.3, users can define a multi-receiver input port using 'spec.input()'
+    // // with 'IOSpec::kAnySize'.
+    // // The old way is to use 'spec.param()' with 'Parameter<std::vector<IOSpec*>> receivers_;'.
+    // spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    spec.input<std::vector<std::shared_ptr<ValueData>>>("receivers", IOSpec::kAnySize);
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
@@ -207,21 +209,24 @@ class PingRxOp : public Operator {
   };
 
  private:
-  Parameter<std::vector<IOSpec*>> receivers_;
+  // // Since Holoscan SDK v2.3, the following line is no longer needed.
+  // Parameter<std::vector<IOSpec*>> receivers_;
   int count_ = 1;
 };
 
 }  // namespace holoscan::ops
 
-class App : public holoscan::Application {
+class MyPingApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
 
+    // Define the tx, mx, rx operators, allowing the tx operator to execute 10 times
     auto tx = make_operator<ops::PingTxOp>("tx", make_condition<CountCondition>(10));
-    auto mx = make_operator<ops::PingMiddleOp>("mx", Arg("multiplier", 3));
+    auto mx = make_operator<ops::PingMxOp>("mx", Arg("multiplier", 3));
     auto rx = make_operator<ops::PingRxOp>("rx");
 
+    // Define the workflow
     add_flow(tx, mx, {{"out1", "in1"}, {"out2", "in2"}});
     add_flow(mx, rx, {{"out1", "receivers"}, {"out2", "receivers"}});
   }
@@ -235,11 +240,9 @@ int main(int argc, char** argv) {
 }
 ```
 
-**Code Snippet:** [**examples/native_operator/cpp/app_config.yaml**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.4.0/examples/native_operator/cpp/app_config.yaml)
-
 In this application, three operators are created: `PingTxOp`, `PingMxOp`, and `PingRxOp`
 
-  1. The `PingTxOp` operator is a source operator that emits two values every time it is invoked. The values are emitted on two different output ports, `out1` (for even integers) and `out2` (for odd integers).
+  1. The `PingTxOp` operator is a source operator that emits two values every time it is invoked. The values are emitted on two different output ports, `out1` (for odd integers) and `out2` (for even integers).
   2. The `PingMxOp` operator is a middle operator that receives two values from the `PingTxOp` operator and emits two values on two different output ports. The values are multiplied by the `multiplier` parameter.
   3. The `PingRxOp` operator is a sink operator that receives two values from the `PingMxOp` operator. The values are received on a single input, `receivers`, which is a vector of input ports. The `PingRxOp` operator receives the values in the order they are emitted by the `PingMxOp` operator.
 
@@ -293,12 +296,12 @@ By default, the {cpp:class}`holoscan::MessageAvailableCondition` and {cpp:class}
     spec.input<std::shared_ptr<ValueData>>("in");
     // Above statement is equivalent to:
     //   spec.input<std::shared_ptr<ValueData>>("in")
-    //       .condition(ConditionType::kMessageAvailable, Arg("min_size") = 1);
+    //       .condition(ConditionType::kMessageAvailable, Arg("min_size") = static_cast<uint64_t>(1));
 
     spec.output<std::shared_ptr<ValueData>>("out");
     // Above statement is equivalent to:
     //   spec.output<std::shared_ptr<ValueData>>("out")
-    //       .condition(ConditionType::kDownstreamMessageAffordable, Arg("min_size") = 1);
+    //       .condition(ConditionType::kDownstreamMessageAffordable, Arg("min_size") = static_cast<uint64_t>(1));
     ...
   }
 ```
@@ -324,118 +327,193 @@ The {cpp:func}`~holoscan::InputContext::receive` method of the {cpp:class}`~holo
 object can be used to access different types of input data within the
 {cpp:func}`~holoscan::Operator::compute` method of your operator class, where its template argument
 (`DataT`) is the data type of the input. This method takes the name of the input port as an argument
-(which can be omitted if your operator has a single input port), and returns the input data. If
-input data is not available, the method returns an object of the `holoscan::RuntimeError` class which
-contains an error message describing the reason for the failure. The `holoscan::RuntimeError` class
-is a derived class of `std::runtime_error` and supports accessing more error information,
-for example, with {cpp:func}`~holoscan::RuntimeError::what` method.
+(which can be omitted if your operator has a single input port), and returns the input data.
+If input data is not available, the method returns an object of the `holoscan::expected<std::shared_ptr<ValueData>, holoscan::RuntimeError>` type.
+The `holoscan::expected<T, E>` class template is used to represent expected objects, which can either hold a value of type `T` or an error of type `E`.
+The expected object is used to return and propagate errors in a more structured way than using error codes or exceptions.
+In this case, the expected object can hold either a `std::shared_ptr<ValueData>` object or a {cpp:class}`holoscan::RuntimeError` class that contains an error message describing the reason for the failure.
+
+The `holoscan::RuntimeError` class is a derived class of `std::runtime_error` and supports accessing more error information, for example, with the {cpp:func}`~holoscan::RuntimeError::what` method.
 
 In the example code fragment below, the `PingRxOp` operator receives input on a port called "in"
-with data type `ValueData`. The {cpp:func}`~holoscan::InputContext::receive` method is used to
-access the input data. The `value` is checked to be valid or not with the `if` condition. If `value`
-is of `holoscan::RuntimeError` type, then `if` condition will be false. Otherwise, the `data()`
-method of the `ValueData` class is called to get the value of the input data.
+with data type `std::shared_ptr<ValueData>`. The {cpp:func}`~holoscan::InputContext::receive` method is used to
+access the input data.
+The `maybe_value` is checked to be valid or not with the `if` condition. If there is an error in the input data, the error message is logged and the operator throws the error.
+If the input data is valid, we can access the reference of the input data using the `value()` method of the `expected` object.
+To avoid copying the input data (or creating another shared pointer), the reference of the input data is stored in the `value` variable (using `auto& value = maybe_value.value()`).
+The `data()` method of the `ValueData` class is then called to get the value of the input data.
 
 ```cpp
 // ...
 
-class PingRxOp : public holoscan::ops::GXFOperator {
+class PingRxOp : public holoscan::Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(PingRxOp, holoscan::ops::GXFOperator)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingRxOp)
   PingRxOp() = default;
-  void setup(OperatorSpec& spec) override {
-    spec.input<ValueData>("in");
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<std::shared_ptr<ValueData>>("in");
   }
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    // The type of `value` is `ValueData`
-    auto value = op_input.receive<ValueData>("in");
-    if (value){
-      HOLOSCAN_LOG_INFO("Message received (value: {})", value.data());
+
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
+               holoscan::ExecutionContext&) override {
+    auto maybe_value = op_input.receive<std::shared_ptr<ValueData>>("in");
+
+    if (!maybe_value) {
+      HOLOSCAN_LOG_ERROR("Failed to receive message - {}", maybe_value.error().what());
+      // [error] Failed to receive message - InputContext receive() Error: No message is received from the input port with name 'in'
+      throw maybe_value.error(); // or `return;`
     }
+
+    auto& value = maybe_value.value();
+    HOLOSCAN_LOG_INFO("Message received (value: {})", value->data());
   }
 };
 ```
 
-For GXF Entity objects ({cpp:class}`holoscan::gxf::Entity` wraps underlying GXF `nvidia::gxf::Entity` class), the {cpp:func}`~holoscan::InputContext::receive` method will return the GXF Entity object for the input of the specified name. In the example below, the PingRxOp operator receives input on a port called "in" with data type {cpp:class}`holoscan::gxf::Entity`.
+Internally, message passing in Holoscan is implemented using the {cpp:class}`~holoscan::Message` class, which wraps a `std::any` object and provides a type-safe interface to access the input data. The `std::any` class is a type-safe container for single values of any type and is used to store the input and output data of operators. The `std::any` class is part of the C++ standard library and is defined in the `any` header file.
 
-```cpp
-// ...
+Since the Holoscan SDK uses GXF as an execution engine, the `holoscan::Message` object is also encapsulated in a `nvidia::gxf::Entity` object when passing data among Holoscan native operators and GXF operators. This ensures that the data is compatible with the GXF framework.
 
-class PingRxOp : public holoscan::ops::GXFOperator {
- public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(PingRxOp, holoscan::ops::GXFOperator)
-  PingRxOp() = default;
-  void setup(OperatorSpec& spec) override {
-    spec.input<holoscan::gxf::Entity>("in");
-  }
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    // The type of `in_entity` is 'holoscan::gxf::Entity'.
-    auto in_entity = op_input.receive<holoscan::gxf::Entity>("in");
-    if (in_entity) {
-      // Process with `in_entity`.
-      // ...
-    }
-  }
-};
-```
-
-For objects of type `std::any`, the {cpp:func}`~holoscan::InputContext::receive` method will return a `std::any` object containing the input of the specified name. In the example below, the `PingRxOp` operator receives input on a port called "in" with data type `std::any`. The `type()` method of the `std::any` object is used to determine the actual type of the input data, and the `std::any_cast<T>()` function is used to retrieve the value of the input data.
-
-```cpp
-// ...
-
-class PingRxOp : public holoscan::ops::GXFOperator {
- public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(PingRxOp, holoscan::ops::GXFOperator)
-  PingRxOp() = default;
-  void setup(OperatorSpec& spec) override {
-    spec.input<std::any>("in");
-  }
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    // The type of `in_any` is 'std::any'.
-    auto in_any = op_input.receive<std::any>("in");
-    auto& in_any_type = in_any.type();
-
-    if (in_any_type == typeid(holoscan::gxf::Entity)) {
-      auto in_entity = std::any_cast<holoscan::gxf::Entity>(in_any);
-      // Process with `in_entity`.
-      // ...
-    } else if (in_any_type == typeid(std::shared_ptr<ValueData>)) {
-      auto in_message = std::any_cast<std::shared_ptr<ValueData>>(in_any);
-      // Process with `in_message`.
-      // ...
-    } else if (in_any_type == typeid(nullptr_t)) {
-      // No message is available.
-    } else {
-      HOLOSCAN_LOG_ERROR("Invalid message type: {}", in_any_type.name());
-      return;
-    }
-  }
-};
-```
+If the input data is expected to be from a GXF operator or a tensor (in both cases, the data is an instance of `nvidia::gxf::Entity`), the `holoscan::gxf::Entity` class can be used in the template argument of the `receive` method to access the input data. The `holoscan::gxf::Entity` class is a wrapper around the `nvidia::gxf::Entity` class (which is like a dictionary object) and provides a way to get a tensor and to add a tensor to the entity.
 
 (holoscan-tensor-cpp)=
 
-The Holoscan SDK provides built-in data types called **{ref}`Domain Objects<api/holoscan_cpp_api:Domain Objects>`**, defined in the `include/holoscan/core/domain` directory. For example, the {cpp:class}`holoscan::Tensor` is a Domain Object class that is used to represent a multi-dimensional array of data, which can be used directly by `OperatorSpec`, `InputContext`, and `OutputContext`.
+The Holoscan SDK provides built-in data types called **{ref}`Domain Objects<api/holoscan_cpp_api:Domain Objects>`**, defined in the `include/holoscan/core/domain` directory. For example, the {cpp:class}`holoscan::Tensor` is a Domain Object class that represents a multi-dimensional array of data, which is interoperable with the underlying GXF class (`nvidia::gxf::Tensor`). The `holoscan::Tensor` class provides methods to access the tensor data, shape, and other properties. Passing {cpp:class}`holoscan::Tensor` objects to/from {ref}`GXF operators<wrap-gxf-codelet-as-operator>` is supported.
 
 :::{tip}
-This {cpp:class}`holoscan::Tensor` class is a wrapper around the {cpp:class}`~holoscan::DLManagedTensorContext` struct holding a [DLManagedTensor](https://dmlc.github.io/dlpack/latest/c_api.html#c.DLManagedTensor) object. As such, it provides a primary interface to access Tensor data and is interoperable with other frameworks that support the [DLPack interface](https://dmlc.github.io/dlpack/latest/).
+The {cpp:class}`holoscan::Tensor` class is a wrapper around the {cpp:type}`~holoscan::DLManagedTensorContext` struct holding a [DLManagedTensor](https://dmlc.github.io/dlpack/latest/c_api.html#c.DLManagedTensor) object. As such, it provides a primary interface to access tensor data and is interoperable with other frameworks that support the [DLPack interface](https://dmlc.github.io/dlpack/latest/).
+
+See the {ref}`interoperability section<interoperability-with-gxf-operators-cpp>` for more details.
 :::
 
-:::{warning}
-Passing {cpp:class}`holoscan::Tensor` objects to/from {ref}`GXF operators<wrap-gxf-codelet-as-operator>` directly is not supported. Instead, they need to be passed through {cpp:class}`holoscan::gxf::Entity` objects. See the {ref}`interoperability section<interoperability-with-gxf-operators-cpp>` for more details.
-:::
+In the example below, the TensorRx operator receives input on a port called "in" with data type {cpp:class}`holoscan::gxf::Entity`.
 
+
+```cpp
+// ...
+
+class TensorRxOp : public holoscan::Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(TensorRxOp)
+  TensorRxOp() = default;
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<holoscan::gxf::Entity>("in");
+  }
+
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
+               holoscan::ExecutionContext&) override {
+    // Type of 'maybe_entity' is holoscan::expected<holoscan::gxf::Entity, holoscan::RuntimeError>
+    auto maybe_entity = op_input.receive<holoscan::gxf::Entity>("in");
+    if (maybe_entity) {
+      auto& entity = maybe_entity.value();  // holoscan::gxf::Entity&
+      // Get a tensor from the entity if it exists.
+      // Can pass a tensor name as an argument to get a specific tensor.
+      auto tensor = entity.get<holoscan::Tensor>();  // std::shared_ptr<holoscan::Tensor>
+      if (tensor) {
+        HOLOSCAN_LOG_INFO("tensor nbytes: {}", tensor->nbytes());
+      }
+    }
+  }
+};
+```
+
+If the entity contains a tensor, the `get` method of the `holoscan::gxf::Entity` class can be used to retrieve the tensor. The `get` method returns a `std::shared_ptr<holoscan::Tensor>` object, which can be used to access the tensor data. The `nbytes` method of the `holoscan::Tensor` class is used to get the number of bytes in the tensor.
+
+By using the {cpp:class}`holoscan::TensorMap` class, which stores a map of tensor names to tensors (`std::unordered_map<std::string, std::shared_ptr<holoscan::Tensor>>`), the code that receives an entity object containing one or more tensor objects can be updated to receive a `holoscan::TensorMap` object instead of a `holoscan::gxf::Entity` object. The `holoscan::TensorMap` class provides a way to access the tensor data by name, using a `std::unordered_map`-like interface.
+
+```cpp
+// ...
+
+class TensorRxOp : public holoscan::Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(TensorRxOp)
+  TensorRxOp() = default;
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<holoscan::TensorMap>("in");
+  }
+
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
+               holoscan::ExecutionContext&) override {
+    // Type of 'maybe_entity' is holoscan::expected<holoscan::TensorMap, holoscan::RuntimeError>
+    auto maybe_tensor_map = op_input.receive<holoscan::TensorMap>("in");
+    if (maybe_tensor_map) {
+      auto& tensor_map = maybe_tensor_map.value();  // holoscan::TensorMap&
+      for (const auto& [name, tensor] : tensor_map) {
+        HOLOSCAN_LOG_INFO("tensor name: {}", name);
+        HOLOSCAN_LOG_INFO("tensor nbytes: {}", tensor->nbytes());
+      }
+    }
+  }
+};
+```
+
+In the above example, the `TensorRxOp` operator receives input on a port called "in" with data type `holoscan::TensorMap`. The `receive` method of the `InputContext` object is used to access the input data. The `receive` method returns an `expected` object that can hold either a `holoscan::TensorMap` object or a `holoscan::RuntimeError` object. The `holoscan::TensorMap` class is a wrapper around the `std::unordered_map<std::string, std::shared_ptr<holoscan::Tensor>>` class and provides a way to access the tensor data. The `nbytes` method of the `holoscan::Tensor` class is used to get the number of bytes in the tensor.
+
+If the type [std::any](https://en.cppreference.com/w/cpp/utility/any) is used for the template argument of the `receive` method, the {cpp:func}`~holoscan::InputContext::receive` method will return a `std::any` object containing the input of the specified name. In the example below, the `PingRxOp` operator receives input on a port called "in" with data type `std::any`. The `type()` method of the `std::any` object is used to determine the actual type of the input data, and the [std::any_cast<T>()](https://en.cppreference.com/w/cpp/utility/any/any_cast) function is used to retrieve the value of the input data.
+
+```cpp
+// ...
+
+class AnyRxOp : public holoscan::Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(AnyRxOp, holoscan::ops::GXFOperator)
+  AnyRxOp() = default;
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<std::any>("in");
+  }
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&, holoscan::ExecutionContext&) override {
+    auto maybe_any = op_input.receive<std::any>("in");
+    if (!maybe_any) {
+      HOLOSCAN_LOG_ERROR("Failed to receive message - {}", maybe_any.error().what());
+      return;
+    }
+
+    auto& in_any = maybe_any.value();
+    const auto& in_any_type = in_any.type();
+
+    try {
+      if (in_any_type == typeid(holoscan::gxf::Entity)) {
+        auto in_entity = std::any_cast<holoscan::gxf::Entity>(in_any);
+        auto tensor = in_entity.get<holoscan::Tensor>();  // std::shared_ptr<holoscan::Tensor>
+        if (tensor) {
+          HOLOSCAN_LOG_INFO("tensor nbytes: {}", tensor->nbytes());
+        }
+      } else if (in_any_type == typeid(std::shared_ptr<ValueData>)) {
+        auto in_value = std::any_cast<std::shared_ptr<ValueData>>(in_any);
+        HOLOSCAN_LOG_INFO("Received value: {}", in_value->data());
+      } else {
+        HOLOSCAN_LOG_ERROR("Invalid message type: {}", in_any_type.name());
+      }
+    } catch (const std::bad_any_cast& e) {
+      HOLOSCAN_LOG_ERROR("Failed to cast message - {}", e.what());
+    }
+  }
+};
+```
+
+(retrieving-any-number-of-inputs-cpp)=
 #### Receiving any number of inputs (C++)
 
-Instead of assigning a specific number of input ports, it may be desired to have the ability to receive any number of objects on a port in certain situations.
-This can be done by defining Parameter with `std::vector<IOSpec*>>` (`Parameter<std::vector<IOSpec*>> receivers_`) and calling `spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});` as done for `PingRxOp` in the {ref}`native operator ping example <ping-multi-port-cpp>`.
+Instead of assigning a specific number of input ports, it may be preferable to allow the ability to receive any number of objects on a port in certain situations.
+
+##### Using `IOSpec::kAnySize` for variable input handling
+
+One way to achieve this is to define a multi-receiver input port by calling `spec.input<std::vector<T>>("port_name", IOSpec::kAnySize)` with `IOSpec::kAnySize` as the second argument in the `setup()` method of the operator, where `T` is the type of the input data (as done for `PingRxOp` in the {ref}`native operator ping example <ping-multi-port-cpp>`).
+
+```cpp
+  void setup(OperatorSpec& spec) override {
+    spec.input<std::vector<std::shared_ptr<ValueData>>>("receivers", IOSpec::kAnySize);
+  }
+```
 
 ```{code-block} cpp
 :caption: examples/ping_multi_port/cpp/ping_multi_port.cpp
 :linenos: true
 :lineno-start: 98
-:emphasize-lines: 8,12,21,37
+:emphasize-lines: 8-12,16-17,26-27,45
 
 class PingRxOp : public Operator {
  public:
@@ -444,11 +522,16 @@ class PingRxOp : public Operator {
   PingRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    // // Since Holoscan SDK v2.3, users can define a multi-receiver input port using 'spec.input()'
+    // // with 'IOSpec::kAnySize'.
+    // // The old way is to use 'spec.param()' with 'Parameter<std::vector<IOSpec*>> receivers_;'.
+    // spec.param(receivers_, "receivers", "Input Receivers", "List of input receivers.", {});
+    spec.input<std::vector<std::shared_ptr<ValueData>>>("receivers", IOSpec::kAnySize);
   }
 
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    auto value_vector = op_input.receive<std::vector<ValueData>>("receivers");
+    auto value_vector =
+        op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
 
     HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: {})", count_++, value_vector.size());
 
@@ -457,36 +540,214 @@ class PingRxOp : public Operator {
   };
 
  private:
-  Parameter<std::vector<IOSpec*>> receivers_;
+  // // Since Holoscan SDK v2.3, the following line is no longer needed.
+  // Parameter<std::vector<IOSpec*>> receivers_;
   int count_ = 1;
 };
 
 }  // namespace holoscan::ops
 
-class App : public holoscan::Application {
+class MyPingApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
 
+    // Define the tx, mx, rx operators, allowing the tx operator to execute 10 times
     auto tx = make_operator<ops::PingTxOp>("tx", make_condition<CountCondition>(10));
-    auto mx = make_operator<ops::PingMiddleOp>("mx", Arg("multiplier", 3));
+    auto mx = make_operator<ops::PingMxOp>("mx", Arg("multiplier", 3));
     auto rx = make_operator<ops::PingRxOp>("rx");
 
+    // Define the workflow
     add_flow(tx, mx, {{"out1", "in1"}, {"out2", "in2"}});
     add_flow(mx, rx, {{"out1", "receivers"}, {"out2", "receivers"}});
   }
 };
 ```
 
-Then, once the following configuration is provided in the `compose()` method, the `PingRxOp` will receive two inputs on the `receivers` port.
+Then, once the following configuration is provided in the `compose()` method,
 
 ```cpp
-134: add_flow(mx, rx, {{"out1", "receivers"}, {"out2", "receivers"}});
+    add_flow(mx, rx, {{"out1", "receivers"}, {"out2", "receivers"}});
 ```
 
-By using a parameter (`receivers`) with `std::vector<holoscan::IOSpec*>` type, the framework
-creates input ports (`receivers:0` and `receivers:1`) implicitly and connects them (and adds
-the references of the input ports to the `receivers` vector).
+the `PingRxOp` will receive two inputs on the `receivers` port in the `compute()` method:
+
+```cpp
+    auto value_vector =
+        op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
+```
+
+:::{tip}
+When an input port is defined with `IOSpec::kAnySize`, the framework creates a new input port for each input object received on the port. The input ports are named using the format `<port_name>:<index>`, where `<port_name>` is the name of the input port and `<index>` is the index of the input object received on the port. For example, if the `receivers` port receives two input objects, the input ports will be named `receivers:0` and `receivers:1`.
+
+The framework internally creates a parameter (`receivers`) with the type `std::vector<holoscan::IOSpec*>`, implicitly creates input ports (`receivers:0` and `receivers:1`), and connects them (adding references of the input ports to the `receivers` vector). This way, when the `receive()` method is called, the framework can return the input data from the corresponding input ports as a vector.
+
+```
+auto value_vector =
+        op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
+```
+If you add `HOLOSCAN_LOG_INFO(rx->description());` at the end of the `compose()` method, you will see the description of the `PingRxOp` operator as shown below:
+
+```yaml
+id: -1
+name: rx
+fragment: ""
+args:
+  []
+type: kNative
+conditions:
+  []
+resources:
+  []
+spec:
+  fragment: ""
+  params:
+    - name: receivers
+      type: std::vector<holoscan::IOSpec*>
+      description: ""
+      flag: kNone
+  inputs:
+    - name: receivers:1
+      io_type: kInput
+      typeinfo_name: N8holoscan3gxf6EntityE
+      connector_type: kDefault
+      conditions:
+        []
+    - name: receivers:0
+      io_type: kInput
+      typeinfo_name: N8holoscan3gxf6EntityE
+      connector_type: kDefault
+      conditions:
+        []
+    - name: receivers
+      io_type: kInput
+      typeinfo_name: St6vectorISt10shared_ptrI9ValueDataESaIS2_EE
+      connector_type: kDefault
+      conditions:
+        []
+  outputs:
+    []
+```
+:::
+
+
+##### Configuring input port queue size and message batch condition
+
+If you want to receive multiple objects on a port and process them in batches, you can increase the queue size of the input port and set the `min_size` parameter of the `MessageAvailableCondition` condition to the desired batch size. This can be done by calling the `connector()` and `condition()` methods with the desired arguments, using the batch size as the `capacity` and `min_size` parameters, respectively.
+
+Setting `min_size` to `N` will ensure that the operator receives `N` objects before the `compute()` method is called.
+
+```cpp
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<std::shared_ptr<ValueData>>("receivers")
+        .connector(holoscan::IOSpec::ConnectorType::kDoubleBuffer,
+                   holoscan::Arg("capacity", static_cast<uint64_t>(2)))
+        .condition(holoscan::ConditionType::kMessageAvailable,
+                   holoscan::Arg("min_size", static_cast<uint64_t>(2)));
+  }
+```
+
+Then, the `receive()` method can be called with the `receivers` port name to receive input data in batches.
+
+```cpp
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
+               holoscan::ExecutionContext&) override {
+    std::vector<std::shared_ptr<ValueData>> value_vector;
+    auto maybe_value = op_input.receive<std::shared_ptr<ValueData>>("receivers");
+    while (maybe_value) {
+      value_vector.push_back(maybe_value.value());
+      maybe_value = op_input.receive<std::shared_ptr<ValueData>>("receivers");
+    }
+
+    HOLOSCAN_LOG_INFO("Rx message received (size: {})", value_vector.size());
+  }
+```
+
+In the above example, the operator receives input on a port called "receivers" with a queue size of 2 and a `min_size` of 2. The `receive()` method is called in a loop to receive the input data in batches of 2. Since the operator does not know the number of objects to be received in advance, the `receive()` method is called in a loop until it returns an error. The input data is stored in a vector, and the size of the vector is logged after all the input data is received.
+
+To simplify the above code, the Holoscan SDK provides a `IOSpec::kPrecedingCount` constant as a second argument to the OperatorSpec's `input()` method to specify the number of preceding connections to the input port (in this case, the number of connections to the `receivers` port is 2) as the batch size. This can be used to receive the input data in batches without the need to call the `receive()` method in a loop.
+
+```cpp
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<std::vector<std::shared_ptr<ValueData>>>("receivers", holoscan::IOSpec::kPrecedingCount);
+  }
+```
+
+Then, the `receive()` method can be called with the `receivers` port name to receive the input data in batches.
+
+```cpp
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
+               holoscan::ExecutionContext&) override {
+    auto value_vector =
+        op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
+
+    HOLOSCAN_LOG_INFO("Rx message received (size: {})", value_vector.size());
+
+    HOLOSCAN_LOG_INFO("Rx message value1: {}", value_vector[0]->data());
+    HOLOSCAN_LOG_INFO("Rx message value2: {}", value_vector[1]->data());
+  }
+```
+
+In the above example, the operator receives input on a port called "receivers" with a batch size of 2. The `receive()` method is called with the `receivers` port name to receive the input data in batches of 2. The input data is stored in a vector, and the size of the vector is logged after all the input data has been received.
+
+If you want to use a specific batch size, you can use `holoscan::IOSpec::IOSize(int64_t)` instead of `holoscan::IOSpec::kPrecedingCount` to specify the batch size. Using IOSize in this way is equivalent to the more verbose `condition()` and `connector()` calls to update the `capacity` and `min_size` arguments shown near the start of this section.
+
+The main reason to use `condition()` or `connector()` methods instead of the shorter `IOSize` is if additional parameter changes, such as the queue policy, need to be made. See more details on the use of the `condition()` and `connector()` methods in the advanced topics section below ({ref}`further-customizing-inputs-and-outputs`).
+
+```cpp
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<std::vector<std::shared_ptr<ValueData>>>("receivers", holoscan::IOSpec::IOSize(2));
+  }
+```
+
+If you want to receive the input data one by one, you can call the `receive()` method without using the `std::vector<T>` template argument.
+
+```cpp
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
+               holoscan::ExecutionContext&) override {
+    while (true) {
+      auto maybe_value = op_input.receive<std::shared_ptr<ValueData>>("receivers");
+      if (!maybe_value) { break; }
+      auto& value = maybe_value.value();
+      // Process the input data
+      HOLOSCAN_LOG_INFO("Rx message received (value: {})", value->data());
+    }
+  }
+```
+
+The above code will receive input data one by one from the `receivers` port. The `receive()` method is called in a loop until it returns an error. The input data is stored in a variable, and the value of the input data is logged.
+
+:::{note}
+This approach (receiving the input data one by one) is not applicable for the `holoscan::IOSpec::kAnySize` case. With the `holoscan::IOSpec::kAnySize` argument, the framework creates a new input port for each input object received on the port internally. Each implicit input port (named using the format `<port_name>:<index>`) is associated with a `MessageAvailableCondition` condition that has a `min_size` of `1`. Therefore, the `receive()` method needs to be called with the `std::vector<T>` template argument to receive the input data in batches at once.
+
+If you really need to receive the input data one by one for `holoscan::IOSpec::kAnySize` case (though it is not recommended), you can receive the input data from each implicit input port (named `<port_name>:<index>`) one by one using the `receive()` method without the `std::vector<T>` template argument. (e.g., `op_input.receive<std::shared_ptr<ValueData>>("receivers:0")`, `op_input.receive<std::shared_ptr<ValueData>>("receivers:1")`, etc.).
+To avoid the error message (such as `The operator does not have an input port with label 'receivers:X'`) when calling the `receive()` method for the implicit input port, you need to calculate the number of connections to the `receivers` port in advance and call the `receive()` method for each implicit input port accordingly.
+
+```cpp
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
+               holoscan::ExecutionContext&) override {
+    int input_count = spec()->inputs().size() - 1;  // -1 to exclude the 'receivers' input port
+    for (int i = 0; i < input_count; i++) {
+      auto maybe_value =
+          op_input.receive<std::shared_ptr<ValueData>>(fmt::format("receivers:{}", i).c_str());
+      if (!maybe_value) { break; }
+      auto& value = maybe_value.value();
+      // Process the input data
+      HOLOSCAN_LOG_INFO("Rx message received (value: {})", value->data());
+    }
+  }
+```
+:::
+
+:::{attention}
+Using `IOSpec::kPrecedingCount` or `IOSpec::IOSize(int64_t)` appears to show the same behavior as `IOSpec::kAnySize` in the above example. However, the difference is that since `IOSpec::kPrecedingCount` or `IOSpec::IOSize(int64_t)` doesn't use separate `MessageAvailableCondition` conditions for each (internal) input port, it is not guaranteed that the operator will receive the input data in order.
+
+This means the operator may receive the input data in a different order than the order in which the connections are made in the `compose()` method. Additionally, with the multithread scheduler, it is not guaranteed that the operator will receive the input data from each of the connections uniformly. The operator may receive more input data from one connection than from another.
+
+If the order of the input data is important, it is recommended to use `IOSpec::kAnySize` and call the `receive()` method with the `std::vector<T>` template argument to receive the input data in batches at once.
+:::
+
+Please see the [C++ system test cases](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/tests/system/multi_receiver_operator_ping_app.cpp) for more examples of receiving multiple inputs in C++ operators.
 
 #### Building your C++ operator
 
@@ -649,7 +910,7 @@ void MyRecorderOp::setup(OperatorSpec& spec) {
   // Above is same with the following two lines (a default condition is assigned to the input port if not specified):
   //
   //   auto& input = spec.input<holoscan::gxf::Entity>("input")
-  //                     .condition(ConditionType::kMessageAvailable, Arg("min_size") = 1);
+  //                     .condition(ConditionType::kMessageAvailable, Arg("min_size") = static_cast<uint64_t>(1));
 
   spec.param(receiver_, "receiver", "Entity receiver", "Receiver channel to log", &input);
   spec.param(my_serializer_,
@@ -714,7 +975,7 @@ In the same way, if we had a `Transmitter` GXF component, we would have the foll
   // Above is same with the following two lines (a default condition is assigned to the output port if not specified):
   //
   //   auto& output = spec.output<holoscan::gxf::Entity>("output")
-  //                      .condition(ConditionType::kDownstreamMessageAffordable, Arg("min_size") = 1);
+  //                      .condition(ConditionType::kDownstreamMessageAffordable, Arg("min_size") = static_cast<uint64_t>(1));
 ```
 
 #### Initializing the operator
@@ -809,7 +1070,7 @@ downstream operator.
 
 Then, if the sent GXF Entity object holds only Tensor object(s) as its components, the downstream operator can receive the message data as a {cpp:class}`holoscan::TensorMap` object instead of a {cpp:class}`holoscan::gxf::Entity` object.
 
-[{numref}`fig-holoscan-tensor-interoperability`](fig-holoscan-tensor-interoperability) shows the relationship between the {cpp:class}`holoscan::gxf::Entity` and {cpp:class}`nvidia::gxf:Entity` classes and the relationship
+[{numref}`fig-holoscan-tensor-interoperability`](fig-holoscan-tensor-interoperability) shows the relationship between the {cpp:class}`holoscan::gxf::Entity` and {cpp:class}`nvidia::gxf::Entity` classes and the relationship
 between the {cpp:class}`holoscan::Tensor` and {cpp:class}`nvidia::gxf::Tensor` classes.
 
 :::{figure-md} fig-holoscan-tensor-interoperability
@@ -821,7 +1082,7 @@ between the {cpp:class}`holoscan::Tensor` and {cpp:class}`nvidia::gxf::Tensor` c
 Supporting Tensor Interoperability
 :::
 
-Both {cpp:class}`holoscan::gxf::Tensor` and {cpp:class}`nvidia::gxf::Tensor` are interoperable with each other because they are wrappers around the same underlying {cpp:class}`~holoscan::DLManagedTensorContext` struct holding a [DLManagedTensor](https://dmlc.github.io/dlpack/latest/c_api.html#c.DLManagedTensor) object.
+Both {cpp:class}`holoscan::gxf::Tensor` and {cpp:class}`nvidia::gxf::Tensor` are interoperable with each other because they are wrappers around the same underlying {cpp:type}`~holoscan::DLManagedTensorContext` struct holding a [DLManagedTensor](https://dmlc.github.io/dlpack/latest/c_api.html#c.DLManagedTensor) object.
 
 The `holoscan::TensorMap` class is used to store multiple tensors in a map, where each tensor is associated with a unique key. The `holoscan::TensorMap` class is used to pass multiple tensors between operators, and it is used in the same way as a `std::unordered_map<std::string, std::shared_ptr<holoscan::Tensor>>` object.
 
@@ -979,7 +1240,7 @@ class MyOp(Operator):
     def stop(self):
         pass
 ```
-#### `setup` method vs `initialize` vs `__init__`
+#### `setup()` method vs `initialize()` vs `__init__()`
 
 The {py:class}`~holoscan.core.Operator.setup` method aims to get the "operator's spec" by providing {py:class}`~holoscan.core.OperatorSpec` object as a spec param. When {py:class}`~holoscan.core.Operator.__init__`  is called, it calls C++'s {cpp:func}`Operator::spec <holoscan::Operator::spec>` method (and also sets {py:class}`self.spec <holoscan.core.Operator.spec>` class member), and calls {py:class}`setup <holoscan.core.Operator.setup>` method so that Operator's {py:class}`~holoscan.core.Operator.spec` property holds the operator's specification. (See the [source code](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/core/__init__.py#:~:text=class%20Operator) for more details.)
 
@@ -1206,7 +1467,7 @@ def setup(self, spec: OperatorSpec):
     spec.param("unit_area", False)
 ```
 
-Other `kwargs` properties can also be passed to `spec.param` such as `headline`, `description` (used by GXF applications), or `kind` (used when {ref}`receiving-any-nbr-of-inputs-python`).
+Other `kwargs` properties can also be passed to `spec.param`, such as `headline`, `description` (used by GXF applications), or `kind` (used when {ref}`retrieving-any-number-of-inputs-python`, which is deprecated since v2.3.0).
 :::
 
 :::{note}
@@ -1275,21 +1536,29 @@ In both cases, it will return `None` if there is no message available on the inp
             # Do something with msg
 ```
 
-(receiving-any-nbr-of-inputs-python)=
-
+(retrieving-any-number-of-inputs-python)=
 #### Receiving any number of inputs (Python)
 
-Instead of assigning a specific number of input ports, it may be desired to have the ability to receive any number of objects on a port in certain situations.
-This can be done by calling ``spec.param(port_name, kind='receivers')`` as done for `PingRxOp` in the native
-operator ping example located at `examples/native_operator/python/ping.py`:
+Instead of assigning a specific number of input ports, it may be preferable to allow the ability to receive any number of objects on a port in certain situations.
 
-**Code Snippet:** [**examples/native_operator/python/ping.py**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.4.0/examples/native_operator/python/ping.py)
+##### Using `IOSpec.ANY_SIZE` for variable input handling
+
+One way to achieve this is to define a multi-receiver input port by calling `spec.input("port_name", IOSpec.ANY_SIZE)` with `IOSpec.ANY_SIZE` as the second argument in the `setup()` method of the operator (as done for `PingRxOp` in the {ref}`native operator ping example <ping-multi-port-python>`).
+
+
+```python
+    def setup(self, spec: OperatorSpec):
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
+```
+
+**Code Snippet:** [**examples/ping_multi_port/python/ping_multi_port.py**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_multi_port/python/ping_multi_port.py)
 
 ```{code-block} python
-:caption: examples/native_operator/python/ping.py
+:caption: examples/ping_multi_port/python/ping_multi_port.py
 :linenos: true
-:lineno-start: 124
-:name: ping-native-python
+:lineno-start: 113
+:emphasize-lines: 17-21,24,43
+:name: ping-multi-port-python
 
 class PingRxOp(Operator):
     """Simple receiver operator.
@@ -1307,7 +1576,11 @@ class PingRxOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        # # Since Holoscan SDK v2.3, users can define a multi-receiver input port using
+        # # 'spec.input()' with 'size=IOSpec.ANY_SIZE'.
+        # # The old way is to use 'spec.param()' with 'kind="receivers"'.
+        # spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")
@@ -1315,19 +1588,191 @@ class PingRxOp(Operator):
         self.count += 1
         print(f"Rx message value1: {values[0].data}")
         print(f"Rx message value2: {values[1].data}")
-```
 
-and in the `compose` method of the application, two parameters are connected to this "receivers"
-port:
 
-```py
+# Now define a simple application using the operators defined above
+
+
+class MyPingApp(Application):
+    def compose(self):
+        # Define the tx, mx, rx operators, allowing the tx operator to execute 10 times
+        tx = PingTxOp(self, CountCondition(self, 10), name="tx")
+        mx = PingMxOp(self, name="mx", multiplier=3)
+        rx = PingRxOp(self, name="rx")
+
+        # Define the workflow
+        self.add_flow(tx, mx, {("out1", "in1"), ("out2", "in2")})
         self.add_flow(mx, rx, {("out1", "receivers"), ("out2", "receivers")})
 ```
 
-This line connects both the `out1` and `out2` ports of operator `mx` to the `receivers` port of
-operator `rx`.
+Then, once the following configuration is provided in the `compose()` method,
 
-Here, `values` as returned by ``op_input.receive("receivers")`` will be a tuple of python objects.
+```python
+    self.add_flow(mx, rx, {("out1", "receivers"), ("out2", "receivers")})
+```
+
+the `PingRxOp` will receive two inputs on the `receivers` port in the `compute()` method:
+
+```python
+    values = op_input.receive("receivers")
+```
+
+:::{tip}
+
+When an input port is defined with `IOSpec.ANY_SIZE`, the framework creates a new input port for each input object received on the port. The input ports are named using the format `<port_name>:<index>`, where `<port_name>` is the name of the input port and `<index>` is the index of the input object received on the port. For example, if the `receivers` port receives two input objects, the input ports will be named `receivers:0` and `receivers:1`.
+
+The framework internally creates a parameter (`receivers`) with the type `std::vector<holoscan::IOSpec*>`, implicitly creates input ports (`receivers:0` and `receivers:1`), and connects them (adding references of the input ports to the `receivers` vector). This way, when the `receive()` method is called, the framework can return the input data from the corresponding input ports as a tuple.
+
+```python
+    values = op_input.receive("receivers")
+```
+
+If you add `print(rx.description)` at the end of the `compose()` method, you will see the description of the `PingRxOp` operator as shown below:
+
+```yaml
+id: -1
+name: rx
+fragment: ""
+args:
+  []
+type: kNative
+conditions:
+  []
+resources:
+  []
+spec:
+  fragment: ""
+  params:
+    - name: receivers
+      type: std::vector<holoscan::IOSpec*>
+      description: ""
+      flag: kNone
+  inputs:
+    - name: receivers:1
+      io_type: kInput
+      typeinfo_name: N8holoscan3gxf6EntityE
+      connector_type: kDefault
+      conditions:
+        []
+    - name: receivers:0
+      io_type: kInput
+      typeinfo_name: N8holoscan3gxf6EntityE
+      connector_type: kDefault
+      conditions:
+        []
+    - name: receivers
+      io_type: kInput
+      typeinfo_name: N8holoscan3gxf6EntityE
+      connector_type: kDefault
+      conditions:
+        []
+  outputs:
+    []
+```
+:::
+
+
+##### Configuring input port queue size and message batch condition
+
+If you want to receive multiple objects on a port and process them in batches, you can increase the queue size of the input port and set the `min_size` parameter of the `MessageAvailableCondition` condition to the desired batch size. This can be done by calling the `connector()` and `condition()` methods with the desired arguments, using the batch size as the `capacity` and `min_size` parameters, respectively.
+
+Setting `min_size` to `N` will ensure that the operator receives `N` objects before the `compute()` method is called.
+
+```python
+    def setup(self, spec: OperatorSpec):
+        spec.input("receivers").connector(IOSpec.ConnectorType.DOUBLE_BUFFER, capacity=2).condition(
+            ConditionType.MESSAGE_AVAILABLE, min_size=2
+        )
+```
+
+Then, the `receive()` method can be called with the `receivers` port name to receive input data in batches.
+
+```python
+    def compute(self, op_input, op_output, context):
+        values = []
+        value = op_input.receive("receivers")
+        while value:
+            values.append(value)
+            value = op_input.receive("receivers")
+
+        print(f"Rx message received (size: {len(values)})")
+```
+
+In the above example, the operator receives input on a port called "receivers" with a queue size of 2 and a `min_size` of 2. The `receive()` method is called in a loop to receive the input data in batches of 2. Since the operator does not know the number of objects to be received in advance, the `receive()` method is called in a loop until it returns a `None` value. The input data is stored in a list, and the size of the list is logged after all the input data is received.
+
+To simplify the above code, the Holoscan SDK provides a `IOSpec.PRECEDING_COUNT` constant as a second argument to the `spec.input()` method to specify the number of preceding connections to the input port (in this case, the number of connections to the `receivers` port is 2) as the batch size. This can be used to receive the input data in batches without the need to call the `receive()` method in a loop.
+
+```python
+    def setup(self, spec: OperatorSpec):
+        spec.input("receivers", size=IOSpec.PRECEDING_COUNT)
+```
+
+Then, the `receive()` method can be called with the `receivers` port name to receive the input data in batches.
+
+```python
+    def compute(self, op_input, op_output, context):
+        values = op_input.receive("receivers")
+
+        print(f"Rx message received (size: {len(values)})")
+
+        print(f"Rx message value1: {values[0].data}")
+        print(f"Rx message value2: {values[1].data}")
+
+```
+
+In the above example, the operator receives input on a port called "receivers" with a batch size of 2. The `receive()` method is called with the `receivers` port name to receive the input data in batches of 2. The input data is stored in a tuple, and the size of the tuple is logged after all the input data has been received.
+
+If you want to use a specific batch size, you can use `holoscan.IOSpec.IOSize(size : int)` instead of `holoscan.IOSpec.PRECEDING_COUNT` to specify the batch size. Using `IOSize` in this way is equivalent to the more verbose `condition()` and `connector()` calls to update the `capacity` and `min_size` arguments shown near the start of this section.
+
+The main reason to use `condition()` or `connector()` methods instead of the shorter `IOSize` is if additional parameter changes, such as the queue policy, need to be made. See more details on the use of the `condition()` and `connector()` methods in the advanced topics section below ({ref}`further-customizing-inputs-and-outputs`).
+
+```python
+    def setup(self, spec: OperatorSpec):
+        spec.input("receivers", size=IOSpec.IOSize(2))
+```
+
+If you want to receive the input data one by one, you can call the `receive()` method with the `kind="single"` argument.
+
+```python
+    def compute(self, op_input, op_output, context):
+        while True:
+            value = op_input.receive("receivers", kind="single")
+            if value is None:
+                break
+            # Process the input data
+            print(f"Rx message received (value: {value.data})")
+```
+
+The above code will receive the input data one by one from the `receivers` port. The `receive()` method is called in a loop until it returns a `None` value.
+The input data is stored in a variable, and the value of the input data is logged.
+
+:::{note}
+This approach (receiving the input data one by one) is not applicable for the `IOSpec.ANY_SIZE` case. With the `IOSpec.ANY_SIZE` argument, the framework creates a new input port for each input object received internally. Each implicit input port (named using the format `<port_name>:<index>`) is associated with a `MessageAvailableCondition` condition that has a `min_size` of `1`. Therefore, the `receive()` method **cannot** be called with the `kind="single"` keyword argument to receive the input data one by one. Instead, it can be called without any `kind` argument or with the `kind="multi"` argument for the `IOSpec.ANY_SIZE` case.
+
+If you really need to receive the input data one by one for `IOSpec.ANY_SIZE` case (though it is not recommended), you can receive the input data from each implicit input port (named `<port_name>:<index>`) one by one using the `receive()` method without the `kind` argument. (e.g., `op_input.receive("receivers:0")`, `op_input.receive("receivers:1")`, etc.).
+To avoid the error message (such as `The operator does not have an input port with label 'receivers:X'`) when calling the `receive()` method for the implicit input port, you need to calculate the number of connections to the `receivers` port in advance and call the `receive()` method for each implicit input port accordingly.
+
+```python
+    def compute(self, op_input, op_output, context):
+        input_count = len(self.spec.inputs) - 1  # -1 to exclude the 'receivers' input port
+        for i in range(input_count):
+            value = op_input.receive(f"receivers:{i}")
+            if value is None:
+                break
+            # Process the input data
+            print(f"Rx message received (value: {value.data})")
+```
+:::
+
+:::{attention}
+Using `IOSpec.PRECEDING_COUNT` or `IOSpec.IOSize(2)` appears to show the same behavior as `IOSpec.ANY_SIZE` in the above example. However, the difference is that since `IOSpec.PRECEDING_COUNT` or `IOSpec.IOSize(2)` doesn't use separate `MessageAvailableCondition` conditions for each (internal) input port, it is not guaranteed that the operator will receive the input data in order.
+
+This means the operator may receive the input data in a different order than the order in which the connections are made in the `compose()` method. Additionally, with the multithread scheduler, it is not guaranteed that the operator will receive the input data from each of the connections uniformly. The operator may receive more input data from one connection than from another.
+
+If the order of the input data is important, it is recommended to use `IOSpec.ANY_SIZE` and call the `receive()` method to receive the input data in batches at once.
+:::
+
+Please see the [Python system test cases](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_application_multi_receiver_ping.py) for more examples of receiving multiple inputs in Python operators.
 
 (python-wrapped-operators)=
 ### Python wrapping of a C++ operator
@@ -1443,8 +1888,13 @@ There is a special serialization code for tensor types for emit/receive of tenso
 This avoids NumPy or CuPy arrays being serialized to a string via cloudpickle so that they can efficiently be transmitted and the same type is returned again on the opposite side. Worth mentioning is that ,if the type emitted was e.g. a PyTorch host/device tensor on emit, the received value will be a numpy/cupy array since ANY object implementing the interfaces returns those types.
 :::
 
+### Automated operator class creation
+
+Holoscan also provides a `holoscan.decorator` module which provides ways to autogenerate Operators by adding decorators to an existing function or class. Please see the separate section on {ref}`operator creation via holoscan.decorator.create_op <holoscan-operator-from-decorator>`.
+
 ## Advanced Topics
 
+(further-customizing-inputs-and-outputs)=
 ### Further customizing inputs and outputs
 
 This section complements the information above on basic input and output port configuration given separately in the C++ and Python operator creation guides. The concepts described here are the same for either the C++ or Python APIs.

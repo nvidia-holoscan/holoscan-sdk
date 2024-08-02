@@ -95,9 +95,9 @@ struct ImageLayer::Impl {
 
   // internal state
   Vulkan* vulkan_ = nullptr;
-  Vulkan::Texture* texture_ = nullptr;
-  Vulkan::Texture* depth_texture_ = nullptr;
-  Vulkan::Texture* lut_texture_ = nullptr;
+  Texture* texture_ = nullptr;
+  Texture* depth_texture_ = nullptr;
+  Texture* lut_texture_ = nullptr;
 };
 
 ImageLayer::ImageLayer() : Layer(Type::Image), impl_(new ImageLayer::Impl) {}

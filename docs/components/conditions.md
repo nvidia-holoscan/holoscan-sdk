@@ -17,7 +17,7 @@ The following table shows various states of the scheduling status of an operator
 - Operators are naturally unscheduled from execution when their scheduling status reaches `NEVER` state.
 :::
 
-By default, operators are always `READY`, meaning they are scheduled to continuously execute their `compute()` method. To change that behavior, some condition classes can be passed to the constructor of an operator. There are various conditions currently supported in the Holoscan SDK:
+By default, operators are always `READY`, meaning they are scheduled to continuously execute their `compute()` method. To change that behavior, some condition classes can be assigned to an operator. There are various conditions currently supported in the Holoscan SDK:
 
 - MessageAvailableCondition
 - ExpiringMessageAvailableCondition
@@ -27,8 +27,10 @@ By default, operators are always `READY`, meaning they are scheduled to continuo
 - PeriodicCondition
 - AsynchronousCondition
 
+These conditions fall under various types as detailed below. Often, conditions are explicitly added to an operator by the application author, but it should also be noted that unless the default is overridden a `MessageAvailableCondition` is automatically added for each of an operator's input ports and a `DownstreamMessageAffordableCondition` is automatically added for each of it's output ports. 
+
 :::{note}
-Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{py:mod}`Python <holoscan.conditions>`).
+Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{py:mod}`Python <holoscan.conditions>`.
 :::
 
 **Conditions are AND-combined**
@@ -36,6 +38,26 @@ Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{p
 An Operator can be associated with multiple conditions which define its execution behavior. Conditions are AND combined to describe
 the current state of an operator. For an operator to be executed by the scheduler, all the conditions must be in `READY` state and
 conversely, the operator is unscheduled from execution whenever any one of the scheduling terms reaches `NEVER` state. The priority of various states during AND combine follows the order `NEVER`, `WAIT_EVENT`, `WAIT`, `WAIT_TIME`, and `READY`.
+
+## Condition Types
+
+The following table gives a rough categorization of the available condition types to help better understand their purpose and how they are assigned. More detailed descriptions of the individual conditions are given in the following sections.
+
+|           Condition Name             |  Classification  |   Associated With   |
+|--------------------------------------|------------------|---------------------|
+| MessageAvailableCondition            |  message-driven  | single input port   |
+| ExpiringMessageAvailableCondition    |  message-driven  | single input port   |
+| DownstreamMessageAffordableCondition |  message-driven  | single output port  |
+| PeriodicCondition                    |   clock-driven   | operator as a whole |
+| CountCondition                       |      other       | operator as a whole |
+| BooleanCondition                     | execution-driven | operator as a whole |
+| AsynchronousCondition                | execution-driven | operator as a whole |
+
+Here, the various message-driven conditions are associated with an input port (receiver) or output port (transmitter). Message-driven conditions are typically assigned via the `IOSpec::condition` method ({cpp:func}`C++ <holoscan::IOSPec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method. All other condition types are typically passed as either a positional or keyword argument during operator construction in the application's `compose` method (i.e. passed to {cpp:func}`~holoscan::Fragment::make_operator` in C++ or the operator class's constructor in Python). Once these conditions are assigned, they automatically enforce the associated criteria for that transmitter/receiver as part of the conditions controlling whether the operator will call `compute`. Due to the AND combination of conditions discussed above, all ports must meet their associated conditions in order for an operator to call `compute`.
+
+The `PeriodicCondition` is clock-driven. It automatically takes effect based on timing from it's associated clock. The `CountCondition` is another condition type that automatically takes effect, stopping execution of an operator after a specified count is reached.
+
+The conditions that are marked as execution-driven, by contrast, require an application or operator thread to explicitly trigger a change in the condition. For example, the built-in `HolovizOp` operator's `compute` method implements logic to update an associated `BooleanCondition` to disable the operator when a user closes the display window. Similarly, the `AsynchronousCondition` requires some thread to emit events to trigger an update of its state. 
 
 ## MessageAvailableCondition
 
@@ -49,7 +71,7 @@ It can be used for operators which do not consume all messages from the queue.
 
 ## ExpiringMessageAvailableCondition
 
-An operator associated with `ExpiringMessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::Ex[iringMessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.ExpiringMessageAvailableCondition>`) is executed when the first message received in the associated queue is expiring or when there are enough messages in the queue.
+An operator associated with `ExpiringMessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::ExpiringMessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.ExpiringMessageAvailableCondition>`) is executed when the first message received in the associated queue is expiring or when there are enough messages in the queue.
 This condition is associated with a specific input or output port of an operator through the `condition()` method on the return value (IOSpec) of the OperatorSpec's `input()` or `output()` method.
 
 The parameters ``max_batch_size`` and ``max_delay_ns`` dictate the maximum number of messages to be batched together and the maximum delay from first message to wait before executing the entity respectively.

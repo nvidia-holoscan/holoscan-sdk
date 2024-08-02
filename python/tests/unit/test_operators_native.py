@@ -16,19 +16,26 @@ limitations under the License.
 """  # noqa: E501
 
 import os
+from contextlib import suppress
 
 import pytest
 
+import holoscan.operators
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Arg, Operator, OperatorSpec, Tensor, _Operator
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.gxf import Entity
-from holoscan.operators.aja_source import AJASourceOp, NTV2Channel
+
+# Import AJA if possible
+with suppress(ImportError):
+    from holoscan.operators.aja_source import AJASourceOp, NTV2Channel
+
 from holoscan.operators.bayer_demosaic import BayerDemosaicOp
 from holoscan.operators.format_converter import FormatConverterOp
 from holoscan.operators.holoviz import (
     HolovizOp,
     _holoviz_str_to_depth_map_render_mode,
+    _holoviz_str_to_image_format,
     _holoviz_str_to_input_type,
 )
 from holoscan.operators.inference import InferenceOp
@@ -334,8 +341,7 @@ class TestTensor:
 
 
 # Test cases for specific bundled native operators
-
-
+@pytest.mark.skipif(not hasattr(holoscan.operators, "AJASourceOp"), reason="AJA not built")
 class TestAJASourceOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
@@ -556,6 +562,48 @@ def test_holoviz_input_types(type_str):
 
 
 @pytest.mark.parametrize(
+    "image_format_str",
+    [
+        "auto_detect",
+        "r8_uint",
+        "r8_sint",
+        "r8_unorm",
+        "r8_snorm",
+        "r8_srgb",
+        "r16_uint",
+        "r16_sint",
+        "r16_unorm",
+        "r16_snorm",
+        "r16_sfloat",
+        "r32_uint",
+        "r32_sint",
+        "r32_sfloat",
+        "r8g8b8_unorm",
+        "r8g8b8_snorm",
+        "r8g8b8_srgb",
+        "r8g8b8a8_unorm",
+        "r8g8b8a8_snorm",
+        "r8g8b8a8_srgb",
+        "r16g16b16a16_unorm",
+        "r16g16b16a16_snorm",
+        "r16g16b16a16_sfloat",
+        "r32g32b32a32_sfloat",
+        "d16_unorm",
+        "x8_d24_unorm",
+        "d32_sfloat",
+        "a2b10g10r10_unorm_pack32",
+        "a2r10g10b10_unorm_pack32",
+        "b8g8r8a8_unorm",
+        "b8g8r8a8_srgb",
+        "a8b8g8r8_unorm_pack32",
+        "a8b8g8r8_srgb_pack32",
+    ],
+)
+def test_holoviz_image_formats(image_format_str):
+    assert isinstance(_holoviz_str_to_image_format[image_format_str], HolovizOp.ImageFormat)
+
+
+@pytest.mark.parametrize(
     "depth_type_str",
     [
         "points",
@@ -591,6 +639,14 @@ class TestHolovizOpInputSpec:
         assert priority >= 0
 
         spec.priority = 5
+
+    def test_image_format(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        image_format = spec.image_format
+        assert image_format == HolovizOp.ImageFormat.AUTO_DETECT
+
+        spec.image_format = HolovizOp.ImageFormat.R8G8B8A8_SRGB
 
     def test_color(self):
         spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.TRIANGLES_3D)
@@ -765,6 +821,12 @@ class TestHolovizOp:
                 color=[1.0, 1.0, 1.0, 0.0],
                 invalid_key=None,
             ),
+            # unrecognized image format
+            dict(
+                name="scaled_coords",
+                type="color",
+                image_format="invalid",
+            ),
         ],
     )
     def test_invalid_tensors(self, tensor, app):
@@ -782,9 +844,10 @@ class TestHolovizOp:
 
 
 class HolovizDepthMapSourceOp(Operator):
-    def __init__(self, fragment, width, height, *args, **kwargs):
+    def __init__(self, fragment, width, height, depth_data_type, *args, **kwargs):
         self.width = width
         self.height = height
+        self.depth_data_type = depth_data_type
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
@@ -793,7 +856,7 @@ class HolovizDepthMapSourceOp(Operator):
     def compute(self, op_input, op_output, context):
         import cupy as cp
 
-        depth_map = np.empty((self.height, self.width, 1), dtype=np.uint8)
+        depth_map = np.empty((self.height, self.width, 1), dtype=self.depth_data_type)
         index = 0
         for y in range(self.height):
             for x in range(self.width):
@@ -820,6 +883,10 @@ class HolovizDepthMapSinkOp(Operator):
 
 
 class MyHolovizDepthMapApp(Application):
+    def __init__(self, depth_data_type, *args, **kwargs):
+        self.depth_data_type = depth_data_type
+        super().__init__(*args, **kwargs)
+
     def compose(self):
         depth_map_width = 8
         depth_map_height = 4
@@ -828,7 +895,12 @@ class MyHolovizDepthMapApp(Application):
         render_height = 32
 
         source = HolovizDepthMapSourceOp(
-            self, depth_map_width, depth_map_height, CountCondition(self, 1), name="source"
+            self,
+            depth_map_width,
+            depth_map_height,
+            self.depth_data_type,
+            CountCondition(self, 1),
+            name="source",
         )
 
         alloc = UnboundedAllocator(
@@ -859,9 +931,10 @@ class MyHolovizDepthMapApp(Application):
         self.add_flow(holoviz, sink, {("render_buffer_output", "")})
 
 
-def test_holoviz_depth_map_app(capfd):
+@pytest.mark.parametrize("depth_data_type", [np.uint8, np.float32])
+def test_holoviz_depth_map_app(capfd, depth_data_type):
     pytest.importorskip("cupy")
-    app = MyHolovizDepthMapApp()
+    app = MyHolovizDepthMapApp(depth_data_type)
     app.run()
 
     # assert no errors logged

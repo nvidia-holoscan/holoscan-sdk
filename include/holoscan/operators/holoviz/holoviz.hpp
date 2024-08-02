@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
-#define INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#ifndef HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#define HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
 
 #include <array>
 #include <memory>
@@ -31,6 +31,8 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/utils/cuda_stream_handler.hpp"
+
+#include <holoviz/image_format.hpp>
 
 namespace holoscan::viz {
 
@@ -145,8 +147,10 @@ struct BufferInfo;
  *           string, text strings are defined by InputSpec member **text**.
  *         - **depth_map**: single channel 2d array where each element represents a depth value.
  *           The data is rendered as a 3d object using points, lines or triangles. The color for
- *           the elements can be specified through `depth_map_color`. Supported format: 8-bit
- *           unsigned normalized format that has a single 8-bit depth component.
+ *           the elements can be specified through `depth_map_color`.
+ *           Supported formats for the depth map:
+ *            - 8-bit unsigned normalized format that has a single 8-bit depth component
+ *            - 32-bit signed float format that has a single 32-bit depth component
  *         - **depth_map_color**: RGBA 2d image, same size as the depth map. One color value for
  *           each element of the depth map grid. Supported format: 32-bit unsigned normalized
  *           format that has an 8-bit R component in byte 0, an 8-bit G component in byte 1, an
@@ -157,13 +161,16 @@ struct BufferInfo;
  *     - **priority**: layer priority, determines the render order, layers with higher priority
  *         values are rendered on top of layers with lower priority values (default: `0`)
  *       - type: `int32_t`
+ *     - **image_format**: color image format, used if `type` is `color`, `color_lut` or
+ *         `depth_map_color`. (default: `auto_detect`).
+ *       - type: `std::string`
  *     - **color**: RGBA color of rendered geometry (default: `[1.f, 1.f, 1.f, 1.f]`)
  *       - type: `std::vector<float>`
  *     - **line_width**: line width for geometry made of lines (default: `1.0`)
  *       - type: `float`
  *     - **point_size**: point size for geometry made of points (default: `1.0`)
  *       - type: `float`
- *     - **text**: array of text strings, used when `type` is text. (default: `[]`)
+ *     - **text**: array of text strings, used when `type` is `text`. (default: `[]`)
  *       - type: `std::vector<std::string>`
  *     - **depth_map_render_mode**: depth map render mode (default: `points`)
  *       - type: `std::string`
@@ -176,23 +183,29 @@ struct BufferInfo;
  *   - type: `std::vector<std::vector<float>>`
  * - **window_title**: Title on window canvas (default: `"Holoviz"`)
  *   - type: `std::string`
- * - **display_name**: In exclusive mode, name of display to use as shown with `xrandr`
- *   or `hwinfo --monitor` (default: `DP-0`)
+ * - **display_name**: In exclusive display or fullscreen mode, name of display to use as shown
+ *   with `xrandr` or `hwinfo --monitor` (default: ``)
  *   - type: `std::string`
- * - **width**: Window width or display resolution width if in exclusive or fullscreen mode
+ * - **width**: Window width or display resolution width if in exclusive display or fullscreen mode
  *   (default: `1920`)
  *   - type: `uint32_t`
- * - **height**: Window height or display resolution height if in exclusive or fullscreen mode
- *   (default: `1080`)
+ * - **height**: Window height or display resolution height if in exclusive display or fullscreen
+ *   mode (default: `1080`)
  *   - type: `uint32_t`
- * - **framerate**: Display framerate if in exclusive mode (default: `60`)
+ * - **framerate**: Display framerate if in exclusive display mode (default: `60`)
  *   - type: `uint32_t`
- * - **use_exclusive_display**: Enable exclusive display (default: `false`)
+ * - **use_exclusive_display**: Enable exclusive display mode (default: `false`)
  *   - type: `bool`
  * - **fullscreen**: Enable fullscreen window (default: `false`)
  *   - type: `bool`
  * - **headless**: Enable headless mode. No window is opened, the render buffer is output to
  *   `render_buffer_output`. (default: `false`)
+ *   - type: `bool`
+ * - **framebuffer_srgb**: Enable sRGB framebuffer. If set to true, the operator will use an sRGB
+ *   framebuffer for rendering. If set to false, the operator will use a linear framebuffer.
+ *   (default: `false`)
+ * - **vsync**: Enable vertical sync. If set to true the operator waits for the next vertical
+ *   blanking period of the display to update the current image. (default: `false`)
  *   - type: `bool`
  * - **window_close_scheduling_term**: BooleanSchedulingTerm to stop the codelet from ticking
  *   when the window is closed
@@ -375,6 +388,168 @@ class HolovizOp : public Operator {
   };
 
   /**
+   * Image formats.
+   *
+   * {component format}_{numeric format}
+   *
+   * - component format
+   *   - indicates the size in bits of the R, G, B and A components if present
+   * - numeric format
+   *   - UNORM - unsigned normalize values, range [0, 1]
+   *   - SNORM - signed normalized values, range [-1,1]
+   *   - UINT - unsigned integer values, range [0,2n-1]
+   *   - SINT - signed integer values, range [-2n-1,2n-1-1]
+   *   - SFLOAT - signed floating-point numbers
+   *   - SRGB - the R, G, and B components are unsigned normalized values that
+   *            represent values using sRGB nonlinear encoding, while the A
+   *            component (if one exists) is a regular unsigned normalized value
+   *
+   * Note: this needs to match the viz::ImageFormat enum (except the AUTO_DETECT value).
+   */
+  enum class ImageFormat {
+    R8_UINT,   ///< specifies a one-component, 8-bit unsigned integer format that has
+               ///  a single 8-bit R component
+    R8_SINT,   ///< specifies a one-component, 8-bit signed integer format that has
+               ///  a single 8-bit R component
+    R8_UNORM,  ///< specifies a one-component, 8-bit unsigned normalized format that has
+               ///  a single 8-bit R component
+    R8_SNORM,  ///< specifies a one-component, 8-bit signed normalized format that has
+               ///  a single 8-bit R component
+    R8_SRGB,   ///< specifies a one-component, 8-bit unsigned normalized format that has
+               ///  a single 8-bit R component stored with sRGB nonlinear encoding
+
+    R16_UINT,    ///< specifies a one-component, 16-bit unsigned integer format that has
+                 ///  a single 16-bit R component
+    R16_SINT,    ///< specifies a one-component, 16-bit signed integer format that has
+                 ///  a single 16-bit R component
+    R16_UNORM,   ///< specifies a one-component, 16-bit unsigned normalized format that has
+                 ///  a single 16-bit R component
+    R16_SNORM,   ///< specifies a one-component, 16-bit signed normalized format that has
+                 ///  a single 16-bit R component
+    R16_SFLOAT,  ///< specifies a one-component, 16-bit signed floating-point format that has
+                 ///  a single 16-bit R component
+
+    R32_UINT,    ///< specifies a one-component, 16-bit unsigned integer format that has
+                 ///  a single 16-bit R component
+    R32_SINT,    ///< specifies a one-component, 16-bit signed integer format that has
+                 ///  a single 16-bit R component
+    R32_SFLOAT,  ///< specifies a one-component, 32-bit signed floating-point format that has
+                 ///  a single 32-bit R component
+
+    R8G8B8_UNORM,  ///< specifies a three-component, 24-bit unsigned normalized format that has
+                   ///  a 8-bit R component in byte 0,
+                   ///  a 8-bit G component in byte 1,
+                   ///  and a 8-bit B component in byte 2
+    R8G8B8_SNORM,  ///< specifies a three-component, 24-bit signed normalized format that has
+                   ///  a 8-bit R component in byte 0,
+                   ///  a 8-bit G component in byte 1,
+                   ///  and a 8-bit B component in byte 2
+    R8G8B8_SRGB,   ///< specifies a three-component, 24-bit unsigned normalized format that has
+                   ///  a 8-bit R component stored with sRGB nonlinear encoding in byte 0,
+                   ///  a 8-bit G component stored with sRGB nonlinear encoding in byte 1,
+                   ///  and a 8-bit B component stored with sRGB nonlinear encoding in byte 2
+
+    R8G8B8A8_UNORM,  ///< specifies a four-component, 32-bit unsigned normalized format that has
+                     ///  a 8-bit R component in byte 0,
+                     ///  a 8-bit G component in byte 1,
+                     ///  a 8-bit B component in byte 2,
+                     ///  and a 8-bit A component in byte 3
+    R8G8B8A8_SNORM,  ///< specifies a four-component, 32-bit signed normalized format that has
+                     ///  a 8-bit R component in byte 0,
+                     ///  a 8-bit G component in byte 1,
+                     ///  a 8-bit B component in byte 2,
+                     ///  and a 8-bit A component in byte 3
+    R8G8B8A8_SRGB,   ///< specifies a four-component, 32-bit unsigned normalized format that has
+                     ///  a 8-bit R component stored with sRGB nonlinear encoding in byte 0,
+                     ///  a 8-bit G component stored with sRGB nonlinear encoding in byte 1,
+                     ///  a 8-bit B component stored with sRGB nonlinear encoding in byte 2,
+                     ///  and a 8-bit A component in byte 3
+
+    R16G16B16A16_UNORM,   ///< specifies a four-component,
+                          ///  64-bit unsigned normalized format that has
+                          ///  a 16-bit R component in bytes 0..1,
+                          ///  a 16-bit G component in bytes 2..3,
+                          ///  a 16-bit B component in bytes 4..5,
+                          ///  and a 16-bit A component in bytes 6..7
+    R16G16B16A16_SNORM,   ///< specifies a four-component,
+                          ///  64-bit signed normalized format that has
+                          ///  a 16-bit R component in bytes 0..1,
+                          ///  a 16-bit G component in bytes 2..3,
+                          ///  a 16-bit B component in bytes 4..5,
+                          ///  and a 16-bit A component in bytes 6..7
+    R16G16B16A16_SFLOAT,  ///< specifies a four-component,
+                          ///  64-bit signed floating-point format that has
+                          ///  a 16-bit R component in bytes 0..1,
+                          ///  a 16-bit G component in bytes 2..3,
+                          ///  a 16-bit B component in bytes 4..5,
+                          ///  and a 16-bit A component in bytes 6..7
+    R32G32B32A32_SFLOAT,  ///< specifies a four-component,
+                          ///  128-bit signed floating-point format that has
+                          ///  a 32-bit R component in bytes 0..3,
+                          ///  a 32-bit G component in bytes 4..7,
+                          ///  a 32-bit B component in bytes 8..11,
+                          ///  and a 32-bit A component in bytes 12..15
+
+    D16_UNORM,     ///< specifies a one-component, 16-bit unsigned normalized format that has
+                   ///  a single 16-bit depth component
+    X8_D24_UNORM,  ///< specifies a two-component, 32-bit format that has
+                   ///  24 unsigned normalized bits in the depth component,
+                   ///  and, optionally, 8 bits that are unused
+    D32_SFLOAT,    ///< specifies a one-component, 32-bit signed floating-point format that has
+                   ///  32 bits in the depth component
+
+    A2B10G10R10_UNORM_PACK32,  ///< specifies a four-component, 32-bit packed unsigned normalized
+                               ///  format that has
+                               ///  a 2-bit A component in bits 30..31,
+                               ///  a 10-bit B component in bits 20..29,
+                               ///  a 10-bit G component in bits 10..19,
+                               ///  and a 10-bit R component in bits 0..9.
+
+    A2R10G10B10_UNORM_PACK32,  ///< specifies a four-component, 32-bit packed unsigned normalized
+                               ///  format that has
+                               ///  a 2-bit A component in bits 30..31,
+                               ///  a 10-bit R component in bits 20..29,
+                               ///  a 10-bit G component in bits 10..19,
+                               ///  and a 10-bit B component in bits 0..9.
+
+    B8G8R8A8_UNORM,  ///< specifies a four-component, 32-bit unsigned normalized format that has
+                     ///  a 8-bit B component in byte 0,
+                     ///  a 8-bit G component in byte 1,
+                     ///  a 8-bit R component in byte 2,
+                     ///  and a 8-bit A component in byte 3
+    B8G8R8A8_SRGB,   ///< specifies a four-component, 32-bit unsigned normalized format that has
+                     ///  a 8-bit B component stored with sRGB nonlinear encoding in byte 0,
+                     ///  a 8-bit G component stored with sRGB nonlinear encoding in byte 1,
+                     ///  a 8-bit R component stored with sRGB nonlinear encoding in byte 2,
+                     ///  and a 8-bit A component in byte 3
+
+    A8B8G8R8_UNORM_PACK32,  ///< specifies a four-component, 32-bit packed unsigned normalized
+                            ///< format
+                            ///  that has
+                            ///  an 8-bit A component in bits 24..31,
+                            ///  an 8-bit B component in bits 16..23,
+                            ///  an 8-bit G component in bits 8..15,
+                            ///  and an 8-bit R component in bits 0..7.
+    A8B8G8R8_SRGB_PACK32,  ///< specifies a four-component, 32-bit packed unsigned normalized format
+                           ///  that has
+                           ///  an 8-bit A component in bits 24..31,
+                           ///  an 8-bit B component stored with sRGB nonlinear encoding in
+                           ///  bits 16..23,
+                           ///  an 8-bit G component stored with sRGB nonlinear encoding
+                           ///  in bits 8..15,
+                           ///  and an 8-bit R component stored with sRGB nonlinear
+                           ///  encoding in bits 0..7.
+
+    AUTO_DETECT = -1  ///< Auto detect the image format. If the input is a video buffer the format
+                      ///  of the video buffer is used, if the input is a tensor then the format
+                      ///  depends on the component count
+                      ///   - one component : gray level image
+                      ///   - three components : RGB image
+                      ///   - four components : RGBA image
+                      ///  and the component type.
+  };
+
+  /**
    * Depth map render mode.
    */
   enum class DepthMapRenderMode {
@@ -407,15 +582,16 @@ class HolovizOp : public Operator {
      */
     std::string description() const;
 
-    std::string tensor_name_;              ///< name of the tensor containing the input data
+    std::string tensor_name_;  ///< name of the tensor/video buffer containing the input data
     InputType type_ = InputType::UNKNOWN;  ///< input type
     float opacity_ = 1.f;  ///< layer opacity, 1.0 is fully opaque, 0.0 is fully transparent
     int32_t priority_ =
         0;  ///< layer priority, determines the render order, layers with higher priority values are
             ///< rendered on top of layers with lower priority values
-    std::vector<float> color_{1.f, 1.f, 1.f, 1.f};  ///< color of rendered geometry
-    float line_width_ = 1.f;                        ///< line width for geometry made of lines
-    float point_size_ = 1.f;                        ///< point size for geometry made of points
+    ImageFormat image_format_ = ImageFormat::AUTO_DETECT;  ///< image format
+    std::vector<float> color_{1.f, 1.f, 1.f, 1.f};         ///< color of rendered geometry
+    float line_width_ = 1.f;         ///< line width for geometry made of lines
+    float point_size_ = 1.f;         ///< point size for geometry made of points
     std::vector<std::string> text_;  ///< array of text strings, used when type_ is TEXT.
     DepthMapRenderMode depth_map_render_mode_ =
         DepthMapRenderMode::POINTS;  ///< depth map render mode, used if type_ is
@@ -467,8 +643,6 @@ class HolovizOp : public Operator {
                         InputSpec* const input_spec_depth_map_color,
                         const BufferInfo& buffer_info_depth_map_color);
 
-  Parameter<std::vector<holoscan::IOSpec*>> receivers_;
-
   Parameter<holoscan::IOSpec*> render_buffer_input_;
   Parameter<holoscan::IOSpec*> render_buffer_output_;
   Parameter<holoscan::IOSpec*> camera_pose_output_;
@@ -485,6 +659,8 @@ class HolovizOp : public Operator {
   Parameter<bool> use_exclusive_display_;
   Parameter<bool> fullscreen_;
   Parameter<bool> headless_;
+  Parameter<bool> framebuffer_srgb_;
+  Parameter<bool> vsync_;
   Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
   Parameter<std::shared_ptr<Allocator>> allocator_;
   Parameter<std::string> font_path_;
@@ -509,4 +685,4 @@ class HolovizOp : public Operator {
 };
 }  // namespace holoscan::ops
 
-#endif /* INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */

@@ -54,6 +54,7 @@ class GXFExtensionRegistrar {
    *
    * @param context The pointer to the GXF context.
    * @param extension_name The name of the extension.
+   * @param extension_description A description of the extension.
    * @param tid The type ID of the extension to use.
    */
   explicit GXFExtensionRegistrar(gxf_context_t context, const char* extension_name,
@@ -214,6 +215,7 @@ class GXFExtensionRegistrar {
    *
    * @param context The pointer to the GXF context.
    * @param extension_name The name of the extension.
+   * @param extension_description The description of the extension.
    * @param tid The type ID of the extension to use.
    */
   void reset(gxf_context_t context, const char* extension_name,

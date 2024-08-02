@@ -155,13 +155,13 @@ An optional version number of the application. When specified, it overrides the 
 
 ### `[--base-image BASE_IMAGE]`
 
-Optionally specifies the base container image for building packaged application. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a base image to use from NGC.
+Optionally specifies the base container image for building packaged application. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a base image to use from [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
 
 (#cli-package-build-image)=
 
 ### `[--build-image BUILD_IMAGE]`
 
-Optionally specifies the build container image for building C++ applications. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a build image to use from NGC.
+Optionally specifies the build container image for building C++ applications. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a build image to use from [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
 
 (#cli-package-build-cache)=
 
@@ -265,10 +265,4 @@ It is recommended to use the default value of `1000` when packaging an applicati
 
 ### `[--gid GID]`
 
-Optional *group ID* to be associated with the user created with `--username` with default of `1000`.
-
-(#cli-package-source)=
-
-### `[--source PATH|URL]`
-
-Overrides the default manifest file source. This value can be a local file path or a HTTPS url.
+Optional *group ID* to be associated with the user created with `--username` with default of `1000`

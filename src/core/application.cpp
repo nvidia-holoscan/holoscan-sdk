@@ -383,9 +383,9 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
     switch (scheduler_setting) {
       case SchedulerType::kDefault:
         // Override the existing scheduler to use the proper deadlock timeout value so that
-        // the scheduler allows some time for the operator having UCXReceiver to receive input
+        // the scheduler allows some time for the operator having UcxReceiver to receive input
         // messages from the remote operators. This is necessary because the scheduler would stop
-        // immediately when no input messages from UCXReceiver are received.
+        // immediately when no input messages from UcxReceiver are received.
         scheduler->add_arg(holoscan::Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout));
         break;
       case SchedulerType::kGreedy:

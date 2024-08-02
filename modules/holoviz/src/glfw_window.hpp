@@ -47,8 +47,13 @@ class GLFWWindow : public Window {
    * @param width, height     window size
    * @param title             window tile
    * @param flags             init flags
+   * @param display_name  name of the display, this can either be the EDID name as displayed
+   *                      in the NVIDIA Settings, or the output name provided by `xrandr` or
+   *                      `hwinfo --monitor`.
+   *                      if nullptr then the primary display is selected.
    */
-  GLFWWindow(uint32_t width, uint32_t height, const char* title, InitFlags flags);
+  GLFWWindow(uint32_t width, uint32_t height, const char* title, InitFlags flags,
+             const char* display_name);
 
   /**
    * Delete the standard constructor, always need parameters to construct.

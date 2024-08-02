@@ -37,6 +37,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
   target_link_libraries(${CMAKE_TEST_NAME}
     PRIVATE
     holoscan::core
+    holoscan::ops::holoviz
     holoscan::ops::ping_rx
     holoscan::ops::ping_tx
     GTest::gmock_main
@@ -77,6 +78,7 @@ ConfigureTest(
   core/io_spec.cpp
   core/logger.cpp
   core/message.cpp
+  core/metadata.cpp
   core/operator_spec.cpp
   core/parameter.cpp
   core/resource.cpp
@@ -101,7 +103,6 @@ ConfigureTest(OPERATORS_CLASSES_TEST
 )
 target_link_libraries(OPERATORS_CLASSES_TEST
   PRIVATE
-  holoscan::ops::aja
   holoscan::ops::async_ping_rx
   holoscan::ops::async_ping_tx
   holoscan::ops::bayer_demosaic
@@ -117,6 +118,11 @@ target_link_libraries(OPERATORS_CLASSES_TEST
   holoscan::ops::video_stream_replayer
 )
 
+if(HOLOSCAN_BUILD_AJA)
+  target_link_libraries(OPERATORS_CLASSES_TEST PRIVATE holoscan::ops::aja)
+  target_compile_definitions(OPERATORS_CLASSES_TEST PRIVATE HOLOSCAN_BUILD_AJA)
+endif()
+
 add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 
 # ##################################################################################################
@@ -131,11 +137,13 @@ ConfigureTest(
   system/jobstatistics_app.cpp
   system/holoviz_op_apps.cpp
   system/loading_gxf_extension.cpp
+  system/multi_receiver_operator_ping_app.cpp
   system/multithreaded_app.cpp
   system/native_async_operator_ping_app.cpp
   system/native_operator_minimal_app.cpp
   system/native_operator_multibroadcasts_app.cpp
   system/native_operator_ping_app.cpp
+  system/operator_metadata_apps.cpp
   system/ping_rx_op.cpp
   system/ping_tensor_rx_op.cpp
   system/ping_tensor_tx_op.cpp

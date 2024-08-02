@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -253,7 +253,7 @@ bool Context::initInstance(const ContextCreateInfo& info)
     {
       LOGI("___________________________\n");
       LOGI("Available Instance Layers :\n");
-      for(auto it : layerProperties)
+      for(auto &&it : layerProperties)
       {
         LOGI("%s (v. %d.%d.%d %x) : %s\n", it.layerName, VK_VERSION_MAJOR(it.specVersion),
              VK_VERSION_MINOR(it.specVersion), VK_VERSION_PATCH(it.specVersion), it.implementationVersion, it.description);
@@ -1060,14 +1060,14 @@ std::vector<uint32_t> Context::getCompatibleDevices(const ContextCreateInfo& inf
   }
   if(info.verboseCompatibleDevices)
   {
-    LOGI("Physical devices found : ", compatible);
+    LOGI("Physical devices found : ");
     if(compatible > 0)
     {
       LOGI("%d\n", compatible);
     }
     else
     {
-      LOGI("OMG... NONE !!\n", compatible);
+      LOGI("OMG... NONE !!\n");
     }
   }
 

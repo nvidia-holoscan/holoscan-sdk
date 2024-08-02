@@ -20,7 +20,7 @@ import datetime
 import pytest
 
 from holoscan.conditions import CountCondition, PeriodicCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec
 from holoscan.resources import RealtimeClock
 from holoscan.schedulers import GreedyScheduler
 
@@ -99,7 +99,7 @@ class PingRxOp(Operator):
         super().__init__(*args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        spec.input("receivers", size=IOSpec.ANY_SIZE)
 
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")

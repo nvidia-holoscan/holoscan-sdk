@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -547,7 +547,7 @@ const char* ShaderModuleManager::getCode(ShaderModuleID idx, size_t* len) const
 {
   return m_shadermodules[idx].definition.content.c_str();
 }
-const size_t ShaderModuleManager::getCodeLen(ShaderModuleID idx) const
+size_t ShaderModuleManager::getCodeLen(ShaderModuleID idx) const
 {
   return m_shadermodules[idx].definition.content.size();
 }

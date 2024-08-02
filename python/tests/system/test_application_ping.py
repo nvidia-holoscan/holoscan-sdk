@@ -22,7 +22,7 @@ import time
 import pytest
 
 from holoscan.conditions import CountCondition, PeriodicCondition
-from holoscan.core import Application, Operator, OperatorSpec, Tracker
+from holoscan.core import Application, IOSpec, Operator, OperatorSpec, Tracker
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import GreedyScheduler
 
@@ -95,13 +95,17 @@ class PingMiddleOp(Operator):
 
 
 class PingRxOp(Operator):
-    def __init__(self, fragment, *args, **kwargs):
+    def __init__(self, fragment, *args, use_new_receivers=True, **kwargs):
         self.count = 1
+        self.use_new_receivers = use_new_receivers
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.param("receivers", kind="receivers")
+        if self.use_new_receivers:
+            spec.input("receivers", size=IOSpec.ANY_SIZE)
+        else:
+            spec.param("receivers", kind="receivers")
 
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")
@@ -111,10 +115,19 @@ class PingRxOp(Operator):
 
 
 class MyPingApp(Application):
-    def __init__(self, *args, count=10, period=None, explicitly_set_connectors=False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        count=10,
+        period=None,
+        explicitly_set_connectors=False,
+        use_new_receivers=True,
+        **kwargs,
+    ):
         self.count = count
         self.period = period
         self.explicitly_set_connectors = explicitly_set_connectors
+        self.use_new_receivers = use_new_receivers
         super().__init__(*args, **kwargs)
 
     def compose(self):
@@ -129,7 +142,7 @@ class MyPingApp(Application):
             name="tx",
         )
         mx = PingMiddleOp(self, self.from_config("mx"), name="mx")
-        rx = PingRxOp(self, name="rx")
+        rx = PingRxOp(self, use_new_receivers=self.use_new_receivers, name="rx")
         self.add_flow(tx, mx, {("out1", "in1"), ("out2", "in2")})
         self.add_flow(mx, rx, {("out1", "receivers"), ("out2", "receivers")})
 
@@ -143,9 +156,10 @@ def file_contains_string(filename, string):
         return False
 
 
-def test_my_ping_app(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app(ping_config_file, use_new_receivers, capfd):
     count = 10
-    app = MyPingApp(count=count)
+    app = MyPingApp(count=count, use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
     app.run()
 
@@ -156,9 +170,12 @@ def test_my_ping_app(ping_config_file, capfd):
     assert f"received message {count + 1}" not in captured.out
 
 
-def test_my_ping_app_periodic_manual_clock(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_periodic_manual_clock(ping_config_file, use_new_receivers, capfd):
     count = 10
-    app = MyPingApp(count=count, period=datetime.timedelta(seconds=1))
+    app = MyPingApp(
+        count=count, period=datetime.timedelta(seconds=1), use_new_receivers=use_new_receivers
+    )
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=ManualClock(app)))
@@ -175,9 +192,14 @@ def test_my_ping_app_periodic_manual_clock(ping_config_file, capfd):
     assert f"received message {count + 1}" not in captured.out
 
 
-def test_my_ping_app_periodic_realtime_clock(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_periodic_realtime_clock(ping_config_file, use_new_receivers, capfd):
     count = 10
-    app = MyPingApp(count=count, period=datetime.timedelta(milliseconds=100))
+    app = MyPingApp(
+        count=count,
+        period=datetime.timedelta(milliseconds=100),
+        use_new_receivers=use_new_receivers,
+    )
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=RealtimeClock(app)))
@@ -193,9 +215,14 @@ def test_my_ping_app_periodic_realtime_clock(ping_config_file, capfd):
     assert f"received message {count + 1}" not in captured.out
 
 
-def test_my_ping_app_periodic_scaled_realtime_clock(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_periodic_scaled_realtime_clock(ping_config_file, use_new_receivers, capfd):
     count = 10
-    app = MyPingApp(count=count, period=datetime.timedelta(milliseconds=100))
+    app = MyPingApp(
+        count=count,
+        period=datetime.timedelta(milliseconds=100),
+        use_new_receivers=use_new_receivers,
+    )
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=RealtimeClock(app, initial_time_scale=5.0)))
@@ -211,9 +238,14 @@ def test_my_ping_app_periodic_scaled_realtime_clock(ping_config_file, capfd):
     assert f"received message {count + 1}" not in captured.out
 
 
-def test_my_ping_app_periodic_scaled_realtime_clock2(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_periodic_scaled_realtime_clock2(ping_config_file, use_new_receivers, capfd):
     count = 10
-    app = MyPingApp(count=count, period=datetime.timedelta(milliseconds=100))
+    app = MyPingApp(
+        count=count,
+        period=datetime.timedelta(milliseconds=100),
+        use_new_receivers=use_new_receivers,
+    )
     app.config(ping_config_file)
     tstart = time.time()
     app.scheduler(GreedyScheduler(app, clock=RealtimeClock(app, initial_time_scale=0.5)))
@@ -229,8 +261,9 @@ def test_my_ping_app_periodic_scaled_realtime_clock2(ping_config_file, capfd):
     assert f"received message {count + 1}" not in captured.out
 
 
-def test_my_ping_app_graph_get_operators(ping_config_file):
-    app = MyPingApp()
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_graph_get_operators(ping_config_file, use_new_receivers):
+    app = MyPingApp(use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
 
     # prior to calling compose the list of operators will be empty
@@ -244,8 +277,9 @@ def test_my_ping_app_graph_get_operators(ping_config_file):
     assert set(op.name for op in graph.get_nodes()) == {"tx", "mx", "rx"}
 
 
-def test_my_ping_app_graph_get_root_operators(ping_config_file):
-    app = MyPingApp()
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_graph_get_root_operators(ping_config_file, use_new_receivers):
+    app = MyPingApp(use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
     app.compose()
     graph = app.graph
@@ -256,8 +290,9 @@ def test_my_ping_app_graph_get_root_operators(ping_config_file):
     assert root_ops[0].name == "tx"
 
 
-def test_my_ping_app_graph_get_next_nodes(ping_config_file):
-    app = MyPingApp()
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_graph_get_next_nodes(ping_config_file, use_new_receivers):
+    app = MyPingApp(use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
     app.compose()
     graph = app.graph
@@ -268,8 +303,9 @@ def test_my_ping_app_graph_get_next_nodes(ping_config_file):
     assert not graph.get_next_nodes(operator_dict["rx"])
 
 
-def test_my_ping_app_graph_get_previous_nodes(ping_config_file):
-    app = MyPingApp()
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_graph_get_previous_nodes(ping_config_file, use_new_receivers):
+    app = MyPingApp(use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
     app.compose()
     graph = app.graph
@@ -280,8 +316,9 @@ def test_my_ping_app_graph_get_previous_nodes(ping_config_file):
     assert not graph.get_previous_nodes(operator_dict["tx"])
 
 
-def test_my_ping_app_graph_is_root_is_leaf(ping_config_file):
-    app = MyPingApp()
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_ping_app_graph_is_root_is_leaf(ping_config_file, use_new_receivers):
+    app = MyPingApp(use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
     app.compose()
     graph = app.graph
@@ -297,9 +334,10 @@ def test_my_ping_app_graph_is_root_is_leaf(ping_config_file):
     assert app.graph.is_leaf(operator_dict["rx"])
 
 
-def test_my_tracker_app(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_tracker_app(ping_config_file, use_new_receivers, capfd):
     count = 10
-    app = MyPingApp(count=count)
+    app = MyPingApp(count=count, use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
     tracker = app.track()
     app.run()
@@ -312,11 +350,12 @@ def test_my_tracker_app(ping_config_file, capfd):
     assert f"received message {count + 1}" not in captured.out
 
 
-def test_my_tracker_logging_app(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_tracker_logging_app(ping_config_file, use_new_receivers, capfd):
     count = 10
     filename = "logfile1.log"
 
-    app = MyPingApp(count=count)
+    app = MyPingApp(count=count, use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
     tracker = app.track()
     tracker.enable_logging(filename)
@@ -336,12 +375,10 @@ def test_my_tracker_logging_app(ping_config_file, capfd):
     assert f"tx->out2: {count}" in captured.out
 
 
-# This test is intentionally not marked as slow to ensure every
-# run of python-api test will loop an app a few times to try and catch
-# intermittent seg faults
-def test_my_tracker_context_manager_app(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_tracker_context_manager_app(ping_config_file, use_new_receivers, capfd):
     for _ in range(1000):
-        app = MyPingApp()
+        app = MyPingApp(use_new_receivers=use_new_receivers)
         app.config(ping_config_file)
 
         with Tracker(app) as tracker:
@@ -354,11 +391,12 @@ def test_my_tracker_context_manager_app(ping_config_file, capfd):
             capfd.readouterr()
 
 
-def test_my_tracker_context_manager_logging_app(ping_config_file, capfd):
+@pytest.mark.parametrize("use_new_receivers", [True, False])
+def test_my_tracker_context_manager_logging_app(ping_config_file, use_new_receivers, capfd):
     count = 10
     filename = "logfile2.log"
 
-    app = MyPingApp(count=count)
+    app = MyPingApp(count=count, use_new_receivers=use_new_receivers)
     app.config(ping_config_file)
 
     with Tracker(app, filename=filename) as tracker:

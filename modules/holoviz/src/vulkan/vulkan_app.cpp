@@ -41,6 +41,8 @@
 #include <utility>
 #include <vector>
 
+#include "resource.hpp"
+
 #include "../cuda/convert.hpp"
 #include "../cuda/cuda_service.hpp"
 
@@ -51,9 +53,6 @@
 #include <holoscan/logger/logger.hpp>
 #include <nvh/fileoperations.hpp>
 
-// nvvk is including glfw, add this define to prevent the GLFW header from including the OpenGL
-// header
-#define GLFW_INCLUDE_NONE 1
 #include <nvvk/commands_vk.hpp>
 #include <nvvk/context_vk.hpp>
 #include <nvvk/descriptorsets_vk.hpp>
@@ -64,456 +63,15 @@
 #include <nvvk/resourceallocator_vk.hpp>
 
 #include "../layers/layer.hpp"
+
+#include "buffer.hpp"
+#include "format_util.hpp"
 #include "framebuffer_sequence.hpp"
+#include "texture.hpp"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace holoscan::viz {
-
-static void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* dst_channels,
-                        uint32_t* component_size) {
-  switch (format) {
-    case ImageFormat::R8_UINT:
-    case ImageFormat::R8_SINT:
-    case ImageFormat::R8_UNORM:
-    case ImageFormat::R8_SNORM:
-    case ImageFormat::R8_SRGB:
-      *src_channels = *dst_channels = 1u;
-      *component_size = sizeof(uint8_t);
-      break;
-    case ImageFormat::R16_UINT:
-    case ImageFormat::R16_SINT:
-    case ImageFormat::R16_UNORM:
-    case ImageFormat::R16_SNORM:
-    case ImageFormat::R16_SFLOAT:
-      *src_channels = *dst_channels = 1u;
-      *component_size = sizeof(uint16_t);
-      break;
-    case ImageFormat::R32_UINT:
-    case ImageFormat::R32_SINT:
-      *src_channels = *dst_channels = 1u;
-      *component_size = sizeof(uint32_t);
-      break;
-    case ImageFormat::R32_SFLOAT:
-      *src_channels = *dst_channels = 1u;
-      *component_size = sizeof(float);
-      break;
-    case ImageFormat::R8G8B8_UNORM:
-    case ImageFormat::R8G8B8_SNORM:
-    case ImageFormat::R8G8B8_SRGB:
-      *src_channels = 3u;
-      *dst_channels = 4u;
-      *component_size = sizeof(uint8_t);
-      break;
-    case ImageFormat::R8G8B8A8_UNORM:
-    case ImageFormat::R8G8B8A8_SNORM:
-    case ImageFormat::R8G8B8A8_SRGB:
-      *src_channels = *dst_channels = 4u;
-      *component_size = sizeof(uint8_t);
-      break;
-    case ImageFormat::R16G16B16A16_UNORM:
-    case ImageFormat::R16G16B16A16_SNORM:
-    case ImageFormat::R16G16B16A16_SFLOAT:
-      *src_channels = *dst_channels = 4u;
-      *component_size = sizeof(uint16_t);
-      break;
-    case ImageFormat::R32G32B32A32_SFLOAT:
-      *src_channels = *dst_channels = 4u;
-      *component_size = sizeof(float);
-      break;
-    case ImageFormat::D16_UNORM:
-      *src_channels = *dst_channels = 1u;
-      *component_size = sizeof(uint16_t);
-      break;
-    case ImageFormat::X8_D24_UNORM:
-      *src_channels = *dst_channels = 1u;
-      *component_size = sizeof(uint32_t);
-      break;
-    case ImageFormat::D32_SFLOAT:
-      *src_channels = *dst_channels = 1u;
-      *component_size = sizeof(uint32_t);
-      break;
-    default:
-      throw std::runtime_error("Unhandled image format.");
-  }
-}
-
-static vk::Format to_vulkan_format(ImageFormat format) {
-  vk::Format vk_format;
-
-  switch (format) {
-    case ImageFormat::R8_UINT:
-      vk_format = vk::Format::eR8Uint;
-      break;
-    case ImageFormat::R8_SINT:
-      vk_format = vk::Format::eR8Sint;
-      break;
-    case ImageFormat::R8_UNORM:
-      vk_format = vk::Format::eR8Unorm;
-      break;
-    case ImageFormat::R8_SNORM:
-      vk_format = vk::Format::eR8Snorm;
-      break;
-    case ImageFormat::R8_SRGB:
-      vk_format = vk::Format::eR8Srgb;
-      break;
-    case ImageFormat::R16_UINT:
-      vk_format = vk::Format::eR16Uint;
-      break;
-    case ImageFormat::R16_SINT:
-      vk_format = vk::Format::eR16Sint;
-      break;
-    case ImageFormat::R16_UNORM:
-      vk_format = vk::Format::eR16Unorm;
-      break;
-    case ImageFormat::R16_SNORM:
-      vk_format = vk::Format::eR16Snorm;
-      break;
-    case ImageFormat::R16_SFLOAT:
-      vk_format = vk::Format::eR16Sfloat;
-      break;
-    case ImageFormat::R32_UINT:
-      vk_format = vk::Format::eR32Uint;
-      break;
-    case ImageFormat::R32_SINT:
-      vk_format = vk::Format::eR32Sint;
-      break;
-    case ImageFormat::R32_SFLOAT:
-      vk_format = vk::Format::eR32Sfloat;
-      break;
-    case ImageFormat::R8G8B8_UNORM:
-      vk_format = vk::Format::eR8G8B8A8Unorm;
-      break;
-    case ImageFormat::R8G8B8_SNORM:
-      vk_format = vk::Format::eR8G8B8A8Snorm;
-      break;
-    case ImageFormat::R8G8B8_SRGB:
-      vk_format = vk::Format::eR8G8B8A8Srgb;
-      break;
-    case ImageFormat::R8G8B8A8_UNORM:
-      vk_format = vk::Format::eR8G8B8A8Unorm;
-      break;
-    case ImageFormat::R8G8B8A8_SNORM:
-      vk_format = vk::Format::eR8G8B8A8Snorm;
-      break;
-    case ImageFormat::R8G8B8A8_SRGB:
-      vk_format = vk::Format::eR8G8B8A8Srgb;
-      break;
-    case ImageFormat::R16G16B16A16_UNORM:
-      vk_format = vk::Format::eR16G16B16A16Unorm;
-      break;
-    case ImageFormat::R16G16B16A16_SNORM:
-      vk_format = vk::Format::eR16G16B16A16Snorm;
-      break;
-    case ImageFormat::R16G16B16A16_SFLOAT:
-      vk_format = vk::Format::eR16G16B16A16Sfloat;
-      break;
-    case ImageFormat::R32G32B32A32_SFLOAT:
-      vk_format = vk::Format::eR32G32B32A32Sfloat;
-      break;
-    case ImageFormat::D16_UNORM:
-      vk_format = vk::Format::eD16Unorm;
-      break;
-    case ImageFormat::X8_D24_UNORM:
-      vk_format = vk::Format::eX8D24UnormPack32;
-      break;
-    case ImageFormat::D32_SFLOAT:
-      vk_format = vk::Format::eD32Sfloat;
-      break;
-    default:
-      throw std::runtime_error("Unhandled image format.");
-  }
-
-  return vk_format;
-}
-
-/// Resource base class. Can be shared between CUDA and Vulkan. Access to the resource is
-/// synchronized with semaphores.
-class Resource {
- public:
-  explicit Resource(vk::Device* device, nvvk::ResourceAllocator* alloc)
-      : device_(device), alloc_(alloc) {}
-  Resource() = delete;
-  ~Resource() { destroy(); }
-
-  /**
-   * Synchronize access to the resource before using it with Vulkan
-   *
-   * @param batch_submission command buffer to use for synchronization
-   */
-  void access_with_vulkan(nvvk::BatchSubmission& batch_submission) {
-    if (external_mem_) {
-      if (state_ == AccessState::CUDA) {
-        // enqueue the semaphore signalled by CUDA to be waited on by rendering
-        batch_submission.enqueueWait(cuda_access_wait_semaphore_.get(),
-                                     vk::PipelineStageFlagBits::eAllCommands);
-      }
-
-      // also signal the render semapore which will be waited on by CUDA
-      batch_submission.enqueueSignal(vulkan_access_signal_semaphore_.get());
-      state_ = AccessState::VULKAN;
-    }
-  }
-
-  /**
-   * Start accessing the resource with CUDA
-   *
-   * @param stream CUDA stream to use for synchronization
-   */
-  void begin_access_with_cuda(CUstream stream) {
-    if (state_ == AccessState::VULKAN) {
-      CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS ext_wait_params{};
-      const CUexternalSemaphore external_wait_semaphore = vulkan_access_wait_semaphore_.get();
-      CudaCheck(
-          cuWaitExternalSemaphoresAsync(&external_wait_semaphore, &ext_wait_params, 1, stream));
-      state_ = AccessState::UNKNOWN;
-    }
-  }
-
-  /**
-   * End of resource access from CUDA
-   *
-   * @param stream CUDA stream to use for synchronization
-   */
-  void end_access_with_cuda(CUstream stream) {
-    // signal the semaphore for the CUDA operation on the buffer
-    CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS ext_signal_params{};
-    const CUexternalSemaphore external_signal_semaphore = cuda_access_signal_semaphore_.get();
-    CudaCheck(
-        cuSignalExternalSemaphoresAsync(&external_signal_semaphore, &ext_signal_params, 1, stream));
-    state_ = AccessState::CUDA;
-  }
-
-  /// access state
-  enum class AccessState {
-    /// not accessed yet
-    UNKNOWN,
-    /// last accessed by CUDA
-    CUDA,
-    /// last accessed by VULKAN
-    VULKAN
-  };
-  AccessState state_ = AccessState::UNKNOWN;
-
-  UniqueCUexternalMemory external_mem_;
-
-  /// this semaphore is used to synchronize CUDA operations on the texture, it's signaled by CUDA
-  /// after accessing the texture (for upload) and waited on by Vulkan before accessing (rendering)
-  vk::UniqueSemaphore cuda_access_wait_semaphore_;
-  UniqueCUexternalSemaphore cuda_access_signal_semaphore_;
-
-  /// this semaphore is used to synchronize Vulkan operations on the texture, it's signaled by
-  /// Vulkan after accessing the texture (for rendering) and waited on by CUDA before accessing
-  /// (upload)
-  vk::UniqueSemaphore vulkan_access_signal_semaphore_;
-  UniqueCUexternalSemaphore vulkan_access_wait_semaphore_;
-
-  /// last usage of the texture, need to sync before destroying memory
-  vk::Fence fence_ = nullptr;
-
- protected:
-  vk::Device* const device_;
-  nvvk::ResourceAllocator* const alloc_;
-
-  CudaService* cuda_service_ = nullptr;
-
-  void destroy() {
-    if (fence_) {
-      // if the resource had been tagged with a fence, wait for it before freeing the memory
-      const vk::Result result = device_->waitForFences(fence_, true, 100'000'000);
-      if (result != vk::Result::eSuccess) {
-        HOLOSCAN_LOG_WARN("Waiting for texture fence failed with {}", vk::to_string(result));
-      }
-      fence_ = nullptr;
-    }
-
-    // check if this resource had been imported to CUDA
-    if (external_mem_) {
-      const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
-
-      external_mem_.reset();
-      cuda_access_signal_semaphore_.reset();
-      vulkan_access_wait_semaphore_.reset();
-
-      cuda_access_wait_semaphore_.reset();
-      vulkan_access_signal_semaphore_.reset();
-    }
-  }
-
-  void import_to_cuda(const std::unique_ptr<CudaService>& cuda_service,
-                      const nvvk::MemAllocator::MemInfo& mem_info) {
-    cuda_service_ = cuda_service.get();
-
-    vk::MemoryGetFdInfoKHR memory_get_fd_info;
-    memory_get_fd_info.memory = mem_info.memory;
-    memory_get_fd_info.handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
-    UniqueValue<int, decltype(&close), &close> file_handle;
-    file_handle.reset(device_->getMemoryFdKHR(memory_get_fd_info));
-
-    CUDA_EXTERNAL_MEMORY_HANDLE_DESC memory_handle_desc{};
-    memory_handle_desc.type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD;
-    memory_handle_desc.handle.fd = file_handle.get();
-    memory_handle_desc.size = mem_info.offset + mem_info.size;
-
-    external_mem_.reset([&memory_handle_desc] {
-      CUexternalMemory external_mem;
-      CudaCheck(cuImportExternalMemory(&external_mem, &memory_handle_desc));
-      return external_mem;
-    }());
-    // don't need to close the file handle if it had been successfully imported
-    file_handle.release();
-
-    // create the semaphores, one for waiting after CUDA access and one for signalling
-    // Vulkan access
-    vk::StructureChain<vk::SemaphoreCreateInfo, vk::ExportSemaphoreCreateInfoKHR> chain;
-    vk::SemaphoreCreateInfo& semaphore_create_info = chain.get<vk::SemaphoreCreateInfo>();
-    chain.get<vk::ExportSemaphoreCreateInfoKHR>().handleTypes =
-        vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
-    cuda_access_wait_semaphore_ = device_->createSemaphoreUnique(semaphore_create_info);
-    vulkan_access_signal_semaphore_ = device_->createSemaphoreUnique(semaphore_create_info);
-
-    // import the semaphore to CUDA
-    cuda_access_signal_semaphore_ = import_semaphore_to_cuda(cuda_access_wait_semaphore_.get());
-    vulkan_access_wait_semaphore_ = import_semaphore_to_cuda(vulkan_access_signal_semaphore_.get());
-  }
-
- private:
-  UniqueCUexternalSemaphore import_semaphore_to_cuda(vk::Semaphore semaphore) {
-    vk::SemaphoreGetFdInfoKHR semaphore_get_fd_info;
-    semaphore_get_fd_info.semaphore = semaphore;
-    semaphore_get_fd_info.handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
-
-    UniqueValue<int, decltype(&close), &close> file_handle;
-    file_handle.reset(device_->getSemaphoreFdKHR(semaphore_get_fd_info));
-
-    CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC semaphore_handle_desc{};
-    semaphore_handle_desc.type = CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD;
-    semaphore_handle_desc.handle.fd = file_handle.get();
-
-    UniqueCUexternalSemaphore cuda_semaphore;
-    cuda_semaphore.reset([&semaphore_handle_desc] {
-      CUexternalSemaphore ext_semaphore;
-      CudaCheck(cuImportExternalSemaphore(&ext_semaphore, &semaphore_handle_desc));
-      return ext_semaphore;
-    }());
-
-    // don't need to close the file handle if it had been successfully imported
-    file_handle.release();
-
-    return cuda_semaphore;
-  }
-};
-
-struct Vulkan::Texture : public Resource {
-  explicit Texture(vk::Device* device, nvvk::ResourceAllocator* alloc, uint32_t width,
-                   uint32_t height, ImageFormat format)
-      : Resource(device, alloc), width_(width), height_(height), format_(format) {}
-  Texture() = delete;
-
-  void import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
-    const CudaService::ScopedPush cuda_context = cuda_service->PushContext();
-
-    const nvvk::MemAllocator::MemInfo mem_info =
-        alloc_->getMemoryAllocator()->getMemoryInfo(texture_.memHandle);
-
-    // call the base class for creating the external mem and the semaphores
-    Resource::import_to_cuda(cuda_service, mem_info);
-
-    uint32_t src_channels, dst_channels, component_size;
-    format_info(format_, &src_channels, &dst_channels, &component_size);
-
-    CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC mipmapped_array_desc{};
-    mipmapped_array_desc.arrayDesc.Width = width_;
-    mipmapped_array_desc.arrayDesc.Height = height_;
-    mipmapped_array_desc.arrayDesc.Depth = 0;
-    switch (component_size) {
-      case 1:
-        mipmapped_array_desc.arrayDesc.Format = CU_AD_FORMAT_UNSIGNED_INT8;
-        break;
-      case 2:
-        mipmapped_array_desc.arrayDesc.Format = CU_AD_FORMAT_UNSIGNED_INT16;
-        break;
-      case 4:
-        mipmapped_array_desc.arrayDesc.Format = CU_AD_FORMAT_UNSIGNED_INT32;
-        break;
-      default:
-        throw std::runtime_error("Unhandled component size");
-    }
-    mipmapped_array_desc.arrayDesc.NumChannels = dst_channels;
-    mipmapped_array_desc.arrayDesc.Flags = CUDA_ARRAY3D_SURFACE_LDST;
-
-    mipmapped_array_desc.numLevels = 1;
-    mipmapped_array_desc.offset = mem_info.offset;
-
-    mipmap_.reset([external_mem = external_mem_.get(), &mipmapped_array_desc] {
-      CUmipmappedArray mipmaped_array;
-      CudaCheck(cuExternalMemoryGetMappedMipmappedArray(
-          &mipmaped_array, external_mem, &mipmapped_array_desc));
-      return mipmaped_array;
-    }());
-  }
-
-  ~Texture() {
-    destroy();
-
-    // check if this texture had been imported to CUDA
-    if (mipmap_) {
-      const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
-      mipmap_.reset();
-    }
-    alloc_->destroy(texture_);
-  }
-
-  const uint32_t width_;
-  const uint32_t height_;
-  const ImageFormat format_;
-
-  nvvk::Texture texture_{};
-  UniqueCUmipmappedArray mipmap_;
-};
-
-class Vulkan::Buffer : public Resource {
- public:
-  explicit Buffer(vk::Device* device, nvvk::ResourceAllocator* alloc, size_t size)
-      : Resource(device, alloc), size_(size) {}
-  Buffer() = delete;
-
-  ~Buffer() {
-    destroy();
-
-    // check if this buffer had been imported to CUDA
-    if (device_ptr_) {
-      const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
-      device_ptr_.reset();
-    }
-    alloc_->destroy(buffer_);
-  }
-
-  void import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
-    const CudaService::ScopedPush cuda_context = cuda_service->PushContext();
-
-    const nvvk::MemAllocator::MemInfo mem_info =
-        alloc_->getMemoryAllocator()->getMemoryInfo(buffer_.memHandle);
-
-    // call the base class for creating the external mem and the semaphores
-    Resource::import_to_cuda(cuda_service, mem_info);
-
-    CUDA_EXTERNAL_MEMORY_BUFFER_DESC buffer_desc{};
-    buffer_desc.size = size_;
-    buffer_desc.offset = mem_info.offset;
-
-    device_ptr_.reset([external_mem = external_mem_.get(), &buffer_desc] {
-      CUdeviceptr device_ptr;
-      CudaCheck(cuExternalMemoryGetMappedBuffer(&device_ptr, external_mem, &buffer_desc));
-      return device_ptr;
-    }());
-  }
-
-  const size_t size_;
-
-  nvvk::Buffer buffer_{};
-  UniqueCUdeviceptr device_ptr_;
-};
 
 class Vulkan::Impl {
  public:
@@ -523,6 +81,12 @@ class Vulkan::Impl {
   void setup(Window* window, const std::string& font_path, float font_size_in_pixels);
 
   Window* get_window() const;
+  CudaService* get_cuda_service() const;
+  std::vector<SurfaceFormat> get_surface_formats() const;
+  std::vector<PresentMode> get_present_modes() const;
+
+  void set_surface_format(SurfaceFormat surface_format);
+  void set_present_mode(PresentMode present_mode);
 
   void begin_transfer_pass();
   void end_transfer_pass();
@@ -532,7 +96,7 @@ class Vulkan::Impl {
 
   void prepare_frame();
   void submit_frame();
-  uint32_t get_active_image_index() const { return fb_sequence_.get_active_image_index(); }
+  uint32_t get_active_image_index() const { return fb_sequence_->get_active_image_index(); }
   const std::vector<vk::UniqueCommandBuffer>& get_command_buffers() { return command_buffers_; }
 
   void set_viewport(float x, float y, float width, float height);
@@ -549,7 +113,8 @@ class Vulkan::Impl {
   void upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture);
 
   Buffer* create_buffer_for_cuda_interop(size_t data_size, vk::BufferUsageFlags usage);
-  Buffer* create_buffer(size_t data_size, vk::BufferUsageFlags usage, const void* data = nullptr);
+  Buffer* create_buffer(size_t data_size, vk::BufferUsageFlags usage,
+                        bool export_allocation = false, const void* data = nullptr);
 
   void upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer, size_t dst_offset,
                         CUstream stream);
@@ -613,13 +178,11 @@ class Vulkan::Impl {
       const std::vector<vk::VertexInputAttributeDescription>& attribute_descriptions,
       bool depth_write_enable = true);
 
-  CUstream select_cuda_stream(CUstream stream);
-  void sync_with_selected_stream(CUstream ext_stream, CUstream selected_stream);
-
   Window* window_ = nullptr;
+  std::optional<SurfaceFormat> surface_format_;
+  PresentMode present_mode_ = PresentMode::AUTO;
 
   std::unique_ptr<CudaService> cuda_service_;
-  UniqueCUstream cuda_stream_;
 
   /**
    * NVVK objects don't use destructors but init()/deinit(). To maintain the destructor calling
@@ -634,6 +197,7 @@ class Vulkan::Impl {
         if (vertex_buffer_.buffer) { alloc_.destroy(vertex_buffer_); }
         if (read_transfer_cmd_pool_initialized_) { read_transfer_cmd_pool_.deinit(); }
         if (transfer_cmd_pool_initialized_) { transfer_cmd_pool_.deinit(); }
+        if (export_alloc_dedicated_initialized_) { export_alloc_dedicated_.deinit(); }
         if (export_alloc_initialized_) { export_alloc_.deinit(); }
         if (alloc_initialized_) { alloc_.deinit(); }
         vk_ctx_.deinit();
@@ -651,6 +215,9 @@ class Vulkan::Impl {
     /// Allocator for allocations which can be exported
     nvvk::ExportResourceAllocator export_alloc_;
     bool export_alloc_initialized_ = false;
+    /// Allocator for dedicated allocations which can be exported
+    nvvk::ExportResourceAllocatorDedicated export_alloc_dedicated_;
+    bool export_alloc_dedicated_initialized_ = false;
 
     nvvk::BatchSubmission batch_submission_;
 
@@ -676,7 +243,7 @@ class Vulkan::Impl {
   vk::UniqueDescriptorPool im_gui_desc_pool_;
 
   /// Drawing/Surface
-  FramebufferSequence fb_sequence_;
+  std::unique_ptr<FramebufferSequence> fb_sequence_;
   /// All framebuffers, correspond to the Swapchain
   std::vector<vk::UniqueFramebuffer> framebuffers_;
   /// Command buffer per nb element in Swapchain
@@ -718,7 +285,7 @@ class Vulkan::Impl {
 
   enum ReadTransferType { COLOR, DEPTH, COUNT };
   std::array<TransferJob, ReadTransferType::COUNT> read_transfer_jobs_{};
-  std::array<std::unique_ptr<Vulkan::Buffer>, ReadTransferType::COUNT> read_transfer_buffers_;
+  std::array<std::unique_ptr<Buffer>, ReadTransferType::COUNT> read_transfer_buffers_;
 
   vk::UniquePipelineLayout image_pipeline_layout_;
   vk::UniquePipelineLayout geometry_pipeline_layout_;
@@ -853,13 +420,6 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
               properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID.end(),
               cuda_uuid.bytes);
     cuda_service_ = std::make_unique<CudaService>(cuda_uuid);
-
-    const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
-    cuda_stream_.reset([] {
-      CUstream stream;
-      CudaCheck(cuStreamCreate(&stream, CU_STREAM_DEFAULT));
-      return stream;
-    }());
   }
 
   // Initialize device-specific function pointers function pointers
@@ -882,6 +442,8 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   nvvk_.alloc_initialized_ = true;
   nvvk_.export_alloc_.init(device_, physical_device_, nvvk_.alloc_.getMemoryAllocator());
   nvvk_.export_alloc_initialized_ = true;
+  nvvk_.export_alloc_dedicated_.init(device_, physical_device_);
+  nvvk_.export_alloc_dedicated_initialized_ = true;
 
   create_framebuffer_sequence();
   create_render_pass();
@@ -1154,6 +716,49 @@ Window* Vulkan::Impl::get_window() const {
   return window_;
 }
 
+CudaService* Vulkan::Impl::get_cuda_service() const {
+  return cuda_service_.get();
+}
+
+std::vector<SurfaceFormat> Vulkan::Impl::get_surface_formats() const {
+  return fb_sequence_->get_surface_formats();
+}
+
+void Vulkan::Impl::set_surface_format(SurfaceFormat surface_format) {
+  if (!surface_format_.has_value() ||
+      (surface_format.image_format_ != surface_format_.value().image_format_) ||
+      (surface_format.color_space_ != surface_format_.value().color_space_)) {
+    surface_format_ = surface_format;
+    if (fb_sequence_) {
+      // recreate the framebuffer sequence and all dependent structures
+      create_framebuffer_sequence();
+      create_render_pass();
+      create_frame_buffers();
+    }
+  }
+}
+
+std::vector<PresentMode> Vulkan::Impl::get_present_modes() const {
+  return fb_sequence_->get_present_modes();
+}
+
+void Vulkan::Impl::set_present_mode(PresentMode present_mode) {
+  if (present_mode != present_mode_) {
+    present_mode_ = present_mode;
+    if (fb_sequence_) {
+      fb_sequence_->update(size_.width, size_.height, present_mode_, &size_);
+      {
+        const vk::CommandBuffer cmd_buffer = create_temp_cmd_buffer();
+        fb_sequence_->cmd_update_barriers(cmd_buffer);  // Make them presentable
+        submit_temp_cmd_buffer(cmd_buffer);
+      }
+
+      // Recreating other resources
+      create_frame_buffers();
+    }
+  }
+}
+
 void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_pixels) {
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;  // Avoiding the INI file
@@ -1180,7 +785,7 @@ void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_
   init_info.DescriptorPool = im_gui_desc_pool_.get();
   init_info.Subpass = 0;
   init_info.MinImageCount = 2;
-  init_info.ImageCount = static_cast<int>(fb_sequence_.get_image_count());
+  init_info.ImageCount = static_cast<int>(fb_sequence_->get_image_count());
   init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
   init_info.CheckVkResultFn = nullptr;
   init_info.Allocator = nullptr;
@@ -1333,7 +938,7 @@ void Vulkan::Impl::cleanup_transfer_jobs() {
 
         it->fence_triggered_ = true;
       } else if (result != vk::Result::eNotReady) {
-        vk::resultCheck(result, "Failed to get upload fence status");
+        vk::throwResultException(result, "Failed to get upload fence status");
       }
     }
 
@@ -1351,7 +956,7 @@ void Vulkan::Impl::cleanup_transfer_jobs() {
           it = next;
           continue;
         } else if (result != vk::Result::eNotReady) {
-          vk::resultCheck(result, "Failed to get frame fence status");
+          vk::throwResultException(result, "Failed to get frame fence status");
         }
       } else {
         // this is a stale transfer buffer (no end_transfer_pass()?), remove it
@@ -1369,7 +974,7 @@ void Vulkan::Impl::prepare_frame() {
   }
 
   // Acquire the next image from the framebuffer sequence
-  fb_sequence_.acquire();
+  fb_sequence_->acquire();
 
   // Use a fence to wait until the command buffer has finished execution before using it again
   const uint32_t image_index = get_active_image_index();
@@ -1382,7 +987,7 @@ void Vulkan::Impl::prepare_frame() {
   if (result != vk::Result::eSuccess) {
     // This allows Aftermath to do things and exit below
     usleep(1000);
-    vk::resultCheck(result, "Failed to wait for frame fences");
+    vk::throwResultException(result, "Failed to wait for frame fences");
     exit(-1);
   }
 
@@ -1405,37 +1010,41 @@ void Vulkan::Impl::submit_frame() {
   nvvk_.batch_submission_.enqueue(command_buffers_[image_index].get());
 
   // wait for the previous frame's semaphore
-  if (fb_sequence_.get_active_read_semaphore()) {
-    nvvk_.batch_submission_.enqueueWait(fb_sequence_.get_active_read_semaphore(),
+  if (fb_sequence_->get_active_read_semaphore()) {
+    nvvk_.batch_submission_.enqueueWait(fb_sequence_->get_active_read_semaphore(),
                                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
   }
   // and signal this frames semaphore on completion
-  nvvk_.batch_submission_.enqueueSignal(fb_sequence_.get_active_written_semaphore());
+  nvvk_.batch_submission_.enqueueSignal(fb_sequence_->get_active_written_semaphore());
 
   const vk::Result result =
       vk::Result(nvvk_.batch_submission_.execute(wait_fences_[image_index].get(), 0b0000'0001));
-  vk::resultCheck(result, "Failed to execute bach submission");
+  if (result != vk::Result::eSuccess) {
+    vk::throwResultException(result, "Failed to execute bach submission");
+  }
 
   // Presenting frame
-  fb_sequence_.present(queue_gct_);
+  fb_sequence_->present(queue_gct_);
 }
 
 void Vulkan::Impl::create_framebuffer_sequence() {
   window_->get_framebuffer_size(&size_.width, &size_.height);
 
-  fb_sequence_.init(&nvvk_.alloc_,
+  fb_sequence_.reset(new FramebufferSequence);
+  fb_sequence_->init(&nvvk_.alloc_,
                     device_,
                     physical_device_,
                     queue_gct_,
                     nvvk_.vk_ctx_.m_queueGCT.familyIndex,
+                    surface_format_,
                     surface_.get());
 
-  fb_sequence_.update(size_.width, size_.height, &size_);
+  fb_sequence_->update(size_.width, size_.height, present_mode_, &size_);
 
   // Create Synchronization Primitives
   vk::FenceCreateInfo fence_create_info;
   fence_create_info.flags = vk::FenceCreateFlagBits::eSignaled;
-  for (uint32_t index = 0; index < fb_sequence_.get_image_count(); ++index) {
+  for (uint32_t index = 0; index < fb_sequence_->get_image_count(); ++index) {
     wait_fences_.push_back(device_.createFenceUnique(fence_create_info));
   }
 
@@ -1443,12 +1052,12 @@ void Vulkan::Impl::create_framebuffer_sequence() {
   // so for static usage without having to rebuild them each frame, we use one per frame buffer
   vk::CommandBufferAllocateInfo allocate_info;
   allocate_info.commandPool = cmd_pool_.get();
-  allocate_info.commandBufferCount = fb_sequence_.get_image_count();
+  allocate_info.commandBufferCount = fb_sequence_->get_image_count();
   allocate_info.level = vk::CommandBufferLevel::ePrimary;
   command_buffers_ = device_.allocateCommandBuffersUnique(allocate_info);
 
   const vk::CommandBuffer cmd_buffer = create_temp_cmd_buffer();
-  fb_sequence_.cmd_update_barriers(cmd_buffer);
+  fb_sequence_->cmd_update_barriers(cmd_buffer);
   submit_temp_cmd_buffer(cmd_buffer);
 
 #ifdef _DEBUG
@@ -1468,14 +1077,14 @@ void Vulkan::Impl::create_render_pass() {
 
   std::array<vk::AttachmentDescription, 2> attachments;
   // Color attachment
-  attachments[0].format = fb_sequence_.get_color_format();
+  attachments[0].format = fb_sequence_->get_color_format();
   attachments[0].loadOp = vk::AttachmentLoadOp::eClear;
   attachments[0].finalLayout =
       surface_ ? vk::ImageLayout::ePresentSrcKHR : vk::ImageLayout::eColorAttachmentOptimal;
   attachments[0].samples = vk::SampleCountFlagBits::e1;
 
   // Depth attachment
-  attachments[1].format = fb_sequence_.get_depth_format();
+  attachments[1].format = fb_sequence_->get_depth_format();
   attachments[1].loadOp = vk::AttachmentLoadOp::eClear;
   attachments[1].finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
   attachments[1].samples = vk::SampleCountFlagBits::e1;
@@ -1538,9 +1147,9 @@ void Vulkan::Impl::create_frame_buffers() {
   framebuffer_create_info.pAttachments = attachments.data();
 
   // Create frame buffers for every swap chain image
-  for (uint32_t i = 0; i < fb_sequence_.get_image_count(); i++) {
-    attachments[0] = fb_sequence_.get_color_image_view(i);
-    attachments[1] = fb_sequence_.get_depth_image_view(i);
+  for (uint32_t i = 0; i < fb_sequence_->get_image_count(); i++) {
+    attachments[0] = fb_sequence_->get_color_image_view(i);
+    attachments[1] = fb_sequence_->get_depth_image_view(i);
     framebuffers_.push_back(device_.createFramebufferUnique(framebuffer_create_info));
   }
 
@@ -1570,10 +1179,10 @@ void Vulkan::Impl::on_framebuffer_size(int w, int h) {
   queue_gct_.waitIdle();
 
   // Request new swapchain image size
-  fb_sequence_.update(w, h, &size_);
+  fb_sequence_->update(w, h, present_mode_, &size_);
   {
     const vk::CommandBuffer cmd_buffer = create_temp_cmd_buffer();
-    fb_sequence_.cmd_update_barriers(cmd_buffer);  // Make them presentable
+    fb_sequence_->cmd_update_barriers(cmd_buffer);  // Make them presentable
     submit_temp_cmd_buffer(cmd_buffer);
   }
 
@@ -1684,67 +1293,10 @@ vk::UniquePipeline Vulkan::Impl::create_pipeline(
   return device_.createGraphicsPipelineUnique(pipeline_cache_.get(), generator.createInfo).value;
 }
 
-CUstream Vulkan::Impl::select_cuda_stream(CUstream stream) {
-  // on single GPU or with special streams we can use the provided stream
-  if (!cuda_service_->IsMultiGPU() || (stream == 0) || (stream == CU_STREAM_LEGACY) ||
-      (stream == CU_STREAM_PER_THREAD)) {
-    return stream;
-  }
-
-  // On MGPU we need to use the internal stream
-
-  // Synchronize with the external stream by recording an event and synchronizing our internal
-  // stream with the event
-  UniqueCUevent event;
-
-  // When recording an event, the event needs to be created with the same context it's recorded
-  // with. Therefore get the context from the stream passed in.
-  CUcontext stream_context;
-  CudaCheck(cuStreamGetCtx(stream, &stream_context));
-
-  {
-    // make the stream context current
-    const CudaService::ScopedPush pushed_stream_context =
-        cuda_service_->PushContext(stream_context);
-
-    // and create the event with the stream context
-    event.reset([] {
-      CUevent event;
-      CudaCheck(cuEventCreate(&event, CU_EVENT_DISABLE_TIMING));
-      return event;
-    }());
-
-    CudaCheck(cuEventRecord(event.get(), stream));
-  }
-
-  // no wait on the event on the internal CUDA stream
-  CudaCheck(cuStreamWaitEvent(cuda_stream_.get(), event.get(), CU_EVENT_WAIT_DEFAULT));
-
-  return cuda_stream_.get();
-}
-
-void Vulkan::Impl::sync_with_selected_stream(CUstream ext_stream, CUstream selected_stream) {
-  // nothing to do if the external stream had been selected
-  if (ext_stream == selected_stream) { return; }
-
-  // synchronize the external stream with our selected stream, this time we don't need to get
-  // the stream context since we record the event on our internal stream.
-  UniqueCUevent event;
-  event.reset([] {
-    CUevent event;
-    CudaCheck(cuEventCreate(&event, CU_EVENT_DISABLE_TIMING));
-    return event;
-  }());
-
-  CudaCheck(cuEventRecord(event.get(), selected_stream));
-  CudaCheck(cuStreamWaitEvent(ext_stream, event.get(), CU_EVENT_WAIT_DEFAULT));
-}
-
-Vulkan::Texture* Vulkan::Impl::create_texture(uint32_t width, uint32_t height, ImageFormat format,
-                                              size_t data_size, const void* data,
-                                              const vk::ComponentMapping& component_mapping,
-                                              vk::Filter filter, bool normalized,
-                                              bool export_allocation) {
+Texture* Vulkan::Impl::create_texture(uint32_t width, uint32_t height, ImageFormat format,
+                                      size_t data_size, const void* data,
+                                      const vk::ComponentMapping& component_mapping,
+                                      vk::Filter filter, bool normalized, bool export_allocation) {
   if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to create_texture() need to be enclosed by "
@@ -1777,7 +1329,7 @@ Vulkan::Texture* Vulkan::Impl::create_texture(uint32_t width, uint32_t height, I
 
   // create the texture
   std::unique_ptr<Texture> texture =
-      std::make_unique<Texture>(&device_, allocator, width, height, format);
+      std::make_unique<Texture>(device_, allocator, width, height, format);
 
   // create the Vulkan texture
   vk::SamplerCreateInfo sampler_create_info;
@@ -1828,7 +1380,7 @@ void Vulkan::Impl::set_viewport(float x, float y, float width, float height) {
   cmd_buf.setScissor(0, scissor);
 }
 
-Vulkan::Texture* Vulkan::Impl::create_texture_for_cuda_interop(
+Texture* Vulkan::Impl::create_texture_for_cuda_interop(
     uint32_t width, uint32_t height, ImageFormat format,
     const vk::ComponentMapping& component_mapping, vk::Filter filter, bool normalized) {
   if (transfer_jobs_.empty()) {
@@ -1864,7 +1416,7 @@ void Vulkan::Impl::upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, T
   const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
 
   // select the stream to be used by CUDA operations
-  const CUstream stream = select_cuda_stream(ext_stream);
+  const CUstream stream = cuda_service_->select_cuda_stream(ext_stream);
 
   // start accessing the texture with CUDA
   texture->begin_access_with_cuda(stream);
@@ -1943,7 +1495,7 @@ void Vulkan::Impl::upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, T
   // indicate that the texture had been used by CUDA
   texture->end_access_with_cuda(stream);
 
-  sync_with_selected_stream(ext_stream, stream);
+  CudaService::sync_with_selected_stream(ext_stream, stream);
 }
 
 void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture) {
@@ -2051,9 +1603,20 @@ void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Tex
   // always synchronized to the render command buffer submission.
 }
 
-Vulkan::Buffer* Vulkan::Impl::create_buffer(size_t data_size, vk::BufferUsageFlags usage,
-                                            const void* data) {
-  std::unique_ptr<Buffer> buffer(new Buffer(&device_, &nvvk_.alloc_, data_size));
+Buffer* Vulkan::Impl::create_buffer(size_t data_size, vk::BufferUsageFlags usage,
+                                    bool export_allocation, const void* data) {
+  nvvk::ResourceAllocator* allocator;
+  if (export_allocation) {
+    /// @TODO Use the dedicted allocator. Without it there is corruption with the depth map
+    ///       rendering sample, looks like the vertex attribute cache is not flushed. With the
+    ///       dedicated allocator the offset of the memory is always 0. Maybe the offset is not
+    ///       handled correctly by the CUDA/Vulkan driver when invalidating caches.
+    allocator = &nvvk_.export_alloc_dedicated_;
+  } else {
+    allocator = &nvvk_.alloc_;
+  }
+
+  std::unique_ptr<Buffer> buffer(new Buffer(device_, allocator, data_size));
   if (data) {
     if (transfer_jobs_.empty()) {
       throw std::runtime_error(
@@ -2061,20 +1624,19 @@ Vulkan::Buffer* Vulkan::Impl::create_buffer(size_t data_size, vk::BufferUsageFla
           "enclosed by begin_transfer_pass() and end_transfer_pass()");
     }
 
-    buffer->buffer_ = nvvk_.alloc_.createBuffer(
+    buffer->buffer_ = allocator->createBuffer(
         transfer_jobs_.back().cmd_buffer_, static_cast<vk::DeviceSize>(data_size), data, usage);
   } else {
-    buffer->buffer_ = nvvk_.alloc_.createBuffer(
+    buffer->buffer_ = allocator->createBuffer(
         static_cast<vk::DeviceSize>(data_size), usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
   }
 
   return buffer.release();
 }
 
-Vulkan::Buffer* Vulkan::Impl::create_buffer_for_cuda_interop(size_t data_size,
-                                                             vk::BufferUsageFlags usage) {
-  std::unique_ptr<Vulkan::Buffer> buffer;
-  buffer.reset(create_buffer(data_size, usage));
+Buffer* Vulkan::Impl::create_buffer_for_cuda_interop(size_t data_size, vk::BufferUsageFlags usage) {
+  std::unique_ptr<Buffer> buffer;
+  buffer.reset(create_buffer(data_size, usage, true /*export_allocation*/));
 
   // import buffer to CUDA
   buffer->import_to_cuda(cuda_service_);
@@ -2083,7 +1645,7 @@ Vulkan::Buffer* Vulkan::Impl::create_buffer_for_cuda_interop(size_t data_size,
 }
 
 void Vulkan::Impl::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer,
-                                    size_t dst_offset, CUstream stream) {
+                                    size_t dst_offset, CUstream ext_stream) {
   if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to upload_to_buffer() need to be enclosed by "
@@ -2094,36 +1656,10 @@ void Vulkan::Impl::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Bu
     throw std::runtime_error("Buffer had not been imported to CUDA, can't upload data.");
   }
 
-#if 1
-  /// @brief @TODO workaround for uploading from device memory: download to host and then upload.
-  ///  When uploading using cuMemcpy the data is corrupted, probably vertex cache.
-  ///  - tried memory barrier before rendering:
-  ///      vk::MemoryBarrier memory_barrier;
-  ///      memory_barrier.srcAccessMask = vk::AccessFlagBits::eMemoryWrite;
-  ///      memory_barrier.dstAccessMask = vk::AccessFlagBits::eVertexAttributeRead;
-  ///      cmd_buf.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-  ///                              vk::PipelineStageFlagBits::eVertexInput,
-  ///                              vk::DependencyFlags(),
-  ///                              memory_barrier,
-  ///                              nullptr,
-  ///                              nullptr);
-  ///    with added self-dependency subpass
-  ///      // self-dependency
-  ///      subpass_dependencies[1].srcSubpass = 0;
-  ///      subpass_dependencies[1].dstSubpass = 0;
-  ///      subpass_dependencies[1].srcStageMask = vk::PipelineStageFlagBits::eTopOfPipe;
-  ///      subpass_dependencies[1].dstStageMask = vk::PipelineStageFlagBits::eVertexInput;
-  ///      subpass_dependencies[1].srcAccessMask = vk::AccessFlagBits::eMemoryWrite;
-  ///      subpass_dependencies[1].dstAccessMask = vk::AccessFlagBits::eVertexAttributeRead;
-  ///      subpass_dependencies[1].dependencyFlags = vk::DependencyFlags();
-  ///  - tried CUDA and vulkan syncs
-  std::unique_ptr<uint8_t> host_data(new uint8_t[data_size]);
-  CudaCheck(
-      cuMemcpyDtoHAsync(reinterpret_cast<void*>(host_data.get()), device_ptr, data_size, stream));
-  CudaCheck(cuStreamSynchronize(stream));
-  upload_to_buffer(data_size, reinterpret_cast<const void*>(host_data.get()), buffer);
-#else
   const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
+
+  // select the stream to be used by CUDA operations
+  const CUstream stream = cuda_service_->select_cuda_stream(ext_stream);
 
   // start accessing the buffer with CUDA
   buffer->begin_access_with_cuda(stream);
@@ -2131,9 +1667,10 @@ void Vulkan::Impl::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Bu
   CudaCheck(
       cuMemcpyDtoDAsync(buffer->device_ptr_.get() + dst_offset, device_ptr, data_size, stream));
 
-  // indicate that the texture had been used by CUDA
+  // indicate that the buffer had been used by CUDA
   buffer->end_access_with_cuda(stream);
-#endif
+
+  CudaService::sync_with_selected_stream(ext_stream, stream);
 }
 
 void Vulkan::Impl::upload_to_buffer(size_t data_size, const void* data, const Buffer* buffer) {
@@ -2146,7 +1683,7 @@ void Vulkan::Impl::upload_to_buffer(size_t data_size, const void* data, const Bu
   const vk::CommandBuffer cmd_buf = transfer_jobs_.back().cmd_buffer_;
   nvvk::StagingMemoryManager* const staging = nvvk_.alloc_.getStaging();
 
-  nvvk_.alloc_.getStaging()->cmdToBuffer(cmd_buf, buffer->buffer_.buffer, 0, data_size, data);
+  staging->cmdToBuffer(cmd_buf, buffer->buffer_.buffer, 0, data_size, data);
 }
 
 void Vulkan::Impl::draw_texture(Texture* texture, Texture* depth_texture, Texture* lut,
@@ -2236,6 +1773,10 @@ void Vulkan::Impl::draw(vk::PrimitiveTopology topology, uint32_t count, uint32_t
                         const std::array<float, 4>& color, float point_size, float line_width,
                         const nvmath::mat4f& view_matrix) {
   const vk::CommandBuffer cmd_buf = command_buffers_[get_active_image_index()].get();
+
+  for (auto&& vertex_buffer : vertex_buffers) {
+    vertex_buffer->access_with_vulkan(nvvk_.batch_submission_);
+  }
 
   switch (topology) {
     case vk::PrimitiveTopology::ePointList:
@@ -2461,17 +2002,18 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
 
   switch (fmt) {
     case ImageFormat::R8G8B8A8_UNORM:
+    case ImageFormat::R8G8B8A8_SRGB:
       transfer_type = ReadTransferType::COLOR;
-      image = fb_sequence_.get_active_color_image();
-      image_format = fb_sequence_.get_color_format();
+      image = fb_sequence_->get_active_color_image();
+      image_format = fb_sequence_->get_color_format();
       image_aspect = vk::ImageAspectFlagBits::eColor;
       image_layout =
           surface_ ? vk::ImageLayout::ePresentSrcKHR : vk::ImageLayout::eColorAttachmentOptimal;
       break;
     case ImageFormat::D32_SFLOAT:
       transfer_type = ReadTransferType::DEPTH;
-      image = fb_sequence_.get_active_depth_image();
-      image_format = fb_sequence_.get_depth_format();
+      image = fb_sequence_->get_active_depth_image();
+      image_format = fb_sequence_->get_depth_format();
       image_aspect = vk::ImageAspectFlagBits::eDepth;
       image_layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
       break;
@@ -2500,7 +2042,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
     read_transfer_buffers_[transfer_type].reset(
         create_buffer_for_cuda_interop(src_data_size, vk::BufferUsageFlagBits::eTransferDst));
   }
-  Vulkan::Buffer* read_transfer_buffer = read_transfer_buffers_[transfer_type].get();
+  Buffer* read_transfer_buffer = read_transfer_buffers_[transfer_type].get();
 
   // create a fence for the job, or wait on the previous job's fence if already created
   if (!read_job.fence_) {
@@ -2514,7 +2056,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
     if (result != vk::Result::eSuccess) {
       // This allows Aftermath to do things and exit below
       usleep(1000);
-      vk::resultCheck(result, "Failed to wait for frame fences");
+      vk::throwResultException(result, "Failed to wait for frame fences");
       exit(-1);
     }
 
@@ -2569,21 +2111,25 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
   // submit the command buffer
   const vk::Result result =
       vk::Result(nvvk_.batch_submission_.execute(read_job.fence_.get(), 0b0000'0001));
-  vk::resultCheck(result, "Failed to execute bach submission");
+  if (result != vk::Result::eSuccess) {
+    vk::throwResultException(result, "Failed to execute bach submission");
+  }
 
   // copy the buffer to CUDA memory
   {
     const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
 
     // select the stream to be used by CUDA operations
-    const CUstream stream = select_cuda_stream(ext_stream);
+    const CUstream stream = cuda_service_->select_cuda_stream(ext_stream);
     const size_t dst_pitch = row_pitch ? row_pitch : width * dst_channels * component_size;
 
     // synchronize with the Vulkan copy
     read_transfer_buffer->begin_access_with_cuda(stream);
 
-    if ((image_format == vk::Format::eB8G8R8A8Unorm) &&
-        (out_vk_format == vk::Format::eR8G8B8A8Unorm)) {
+    if (((image_format == vk::Format::eB8G8R8A8Unorm) &&
+         (out_vk_format == vk::Format::eR8G8B8A8Unorm)) ||
+        ((image_format == vk::Format::eB8G8R8A8Srgb) &&
+         (out_vk_format == vk::Format::eR8G8B8A8Srgb))) {
       // if the destination CUDA memory is on a different device, allocate temporary memory, convert
       // from the read transfer buffer memory to the temporary memory and copy from temporary memory
       // to destination memory
@@ -2640,7 +2186,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
 
     read_transfer_buffer->end_access_with_cuda(stream);
 
-    sync_with_selected_stream(ext_stream, stream);
+    CudaService::sync_with_selected_stream(ext_stream, stream);
   }
 }
 
@@ -2654,6 +2200,26 @@ void Vulkan::setup(Window* window, const std::string& font_path, float font_size
 
 Window* Vulkan::get_window() const {
   return impl_->get_window();
+}
+
+CudaService* Vulkan::get_cuda_service() const {
+  return impl_->get_cuda_service();
+}
+
+std::vector<SurfaceFormat> Vulkan::get_surface_formats() const {
+  return impl_->get_surface_formats();
+}
+
+void Vulkan::set_surface_format(SurfaceFormat surface_format) {
+  impl_->set_surface_format(surface_format);
+}
+
+std::vector<PresentMode> Vulkan::get_present_modes() const {
+  return impl_->get_present_modes();
+}
+
+void Vulkan::set_present_mode(PresentMode present_mode) {
+  impl_->set_present_mode(present_mode);
 }
 
 void Vulkan::begin_transfer_pass() {
@@ -2680,17 +2246,18 @@ void Vulkan::set_viewport(float x, float y, float width, float height) {
   impl_->set_viewport(x, y, width, height);
 }
 
-Vulkan::Texture* Vulkan::create_texture_for_cuda_interop(
-    uint32_t width, uint32_t height, ImageFormat format,
-    const vk::ComponentMapping& component_mapping, vk::Filter filter, bool normalized) {
+Texture* Vulkan::create_texture_for_cuda_interop(uint32_t width, uint32_t height,
+                                                 ImageFormat format,
+                                                 const vk::ComponentMapping& component_mapping,
+                                                 vk::Filter filter, bool normalized) {
   return impl_->create_texture_for_cuda_interop(
       width, height, format, component_mapping, filter, normalized);
 }
 
-Vulkan::Texture* Vulkan::create_texture(uint32_t width, uint32_t height, ImageFormat format,
-                                        size_t data_size, const void* data,
-                                        const vk::ComponentMapping& component_mapping,
-                                        vk::Filter filter, bool normalized) {
+Texture* Vulkan::create_texture(uint32_t width, uint32_t height, ImageFormat format,
+                                size_t data_size, const void* data,
+                                const vk::ComponentMapping& component_mapping, vk::Filter filter,
+                                bool normalized) {
   return impl_->create_texture(width,
                                height,
                                format,
@@ -2715,13 +2282,11 @@ void Vulkan::upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* 
   impl_->upload_to_texture(host_ptr, row_pitch, texture);
 }
 
-Vulkan::Buffer* Vulkan::create_buffer(size_t data_size, const void* data,
-                                      vk::BufferUsageFlags usage) {
-  return impl_->create_buffer(data_size, usage, data);
+Buffer* Vulkan::create_buffer(size_t data_size, const void* data, vk::BufferUsageFlags usage) {
+  return impl_->create_buffer(data_size, usage, false, data);
 }
 
-Vulkan::Buffer* Vulkan::create_buffer_for_cuda_interop(size_t data_size,
-                                                       vk::BufferUsageFlags usage) {
+Buffer* Vulkan::create_buffer_for_cuda_interop(size_t data_size, vk::BufferUsageFlags usage) {
   return impl_->create_buffer_for_cuda_interop(data_size, usage);
 }
 

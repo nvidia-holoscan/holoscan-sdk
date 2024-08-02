@@ -35,7 +35,7 @@ CudaStreamHandler::~CudaStreamHandler() {
     const cudaError_t result = cudaEventDestroy(event);
     if (cudaSuccess != result) {
       try {
-        HOLOSCAN_LOG_ERROR("Failed to destroy CUDA event: %s", cudaGetErrorString(result));
+        HOLOSCAN_LOG_ERROR("Failed to destroy CUDA event: {}", cudaGetErrorString(result));
       } catch (std::exception& e) {}
     }
   }
@@ -121,7 +121,7 @@ gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
           cudaEvent_t cuda_event;
           result = cudaEventCreateWithFlags(&cuda_event, cudaEventDisableTiming);
           if (cudaSuccess != result) {
-            HOLOSCAN_LOG_ERROR("Failed to create input CUDA event: %s", cudaGetErrorString(result));
+            HOLOSCAN_LOG_ERROR("Failed to create input CUDA event: {}", cudaGetErrorString(result));
             return GXF_FAILURE;
           }
           cuda_events_.push_back(cuda_event);
@@ -131,13 +131,13 @@ gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
 
         result = cudaEventRecord(*event_it, cuda_stream);
         if (cudaSuccess != result) {
-          HOLOSCAN_LOG_ERROR("Failed to record event for message stream: %s",
+          HOLOSCAN_LOG_ERROR("Failed to record event for message stream: {}",
                              cudaGetErrorString(result));
           return GXF_FAILURE;
         }
         result = cudaStreamWaitEvent(cuda_stream_handle_->stream().value(), *event_it);
         if (cudaSuccess != result) {
-          HOLOSCAN_LOG_ERROR("Failed to record wait on message event: %s",
+          HOLOSCAN_LOG_ERROR("Failed to record wait on message event: {}",
                              cudaGetErrorString(result));
           return GXF_FAILURE;
         }

@@ -351,7 +351,9 @@ rivermax_sdk=$DOWNLOAD_PATH/1.31.10
 
       ```bash
          $ sudo ./generic_sender -l 10.0.0.1 -d 10.0.0.2 -p 5001 -y 1462 -k 8192 -z 500 -v
-         ...
+      ```
+      which gives
+      ```text
          +#############################################
          | Sender index: 0
          | Thread ID: 0x7fa1ffb1c0
