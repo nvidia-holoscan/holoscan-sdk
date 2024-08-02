@@ -97,18 +97,78 @@ sudo apt update
 sudo apt install holoscan
 ```
 
-If `holoscan` is not found, try the following before repeating the steps above:
+:::{attention}
+This will not install dependencies needed for the Torch nor ONNXRuntime inference backends. To do so, install transitive dependencies by adding the `--install-suggests` flag to `apt install holoscan`, and refer to the support matrix below for links to install libtorch and onnxruntime.
+:::
+
+#### Troubleshooting
+
+**If `holoscan` is not found with apt:**
+
+```txt
+E: Unable to locate package holoscan
+```
+
+Try the following before repeating the installation steps above:
+
 - **IGX Orin**: Ensure the [compute stack is properly installed](https://docs.nvidia.com/igx-orin/user-guide/latest/base-os.html#installing-the-compute-stack) which should configure the L4T repository source. If you still cannot install the Holoscan SDK, use the [`arm64-sbsa` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=arm64-sbsa&Compilation=Native&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
 - **Jetson**: Ensure [JetPack is properly installed](https://developer.nvidia.com/embedded/jetpack) which should configure the L4T repository source.  If you still cannot install the Holoscan SDK, use the [`aarch64-jetson` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=aarch64-jetson&Compilation=Native&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
 - **GH200**: Use the [`arm64-sbsa` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=arm64-sbsa&Compilation=Native&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
 - **x86_64**: Use the [`x86_64` installer](https://developer.nvidia.com/holoscan-downloads?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network) from the CUDA repository.
 
-:::{note}
-To leverage the python module included in the debian package (instead of installing the python wheel), include the path below to your python path. For example:
+---
+
+**If you get missing CUDA libraries at runtime like below:**
+
+```log
+ImportError: libcudart.so.12: cannot open shared object file: No such file or directory
+```
+
+This could happen if your system has multiple CUDA Toolkit component versions installed. Find the path of the missing CUDA library (`libcudart.so.12` here) using `find /usr/local/cuda* -name libcudart.so.12` and select that path in `sudo update-alternatives --config cuda`. If that library is not found, or other cuda toolkit libraries become missing afterwards, you could try a clean reinstall of the full CUDA Toolkit:
+
+```bash
+sudo apt update && sudo apt install -y cuda-toolkit-12-2
+```
+
+---
+
+**If you get missing CUDA headers at compile time like below:**
+
+```cmake
+the link interface contains: CUDA::nppidei but the target was not found. [...] fatal error: npp.h: No such file or directory
+```
+
+Generally the same issue as above due from mixing CUDA Toolkit component versions in your environment. Confirm the path of the missing CUDA header (`npp.h` here) with `find /usr/local/cuda-* -name npp.h` and follow the same instructions as above.
+
+---
+
+**If you get missing TensorRT libraries at runtime like below:**
+
+```
+Error: libnvinfer.so.8: cannot open shared object file: No such file or directory
+...
+Error: libnvonnxparser.so.8: cannot open shared object file: No such file or directory
+```
+
+This could happen if your system has a different major version installed than version 8. Try to reinstall TensorRT 8 with:
+
+```bash
+sudo apt update && sudo apt install -y libnvinfer-bin="8.6.*"
+```
+
+---
+
+**If you cannot import the holoscan Python module:**
+
+```sh
+ModuleNotFoundError: No module named 'holoscan'
+```
+
+To leverage the python module included in the debian package (instead of installing the python wheel), include the path below to your python path:
+
 ```sh
 export PYTHONPATH="/opt/nvidia/holoscan/python/lib"
 ```
-:::
 
 ````
 ````{tab-item} Python wheel
