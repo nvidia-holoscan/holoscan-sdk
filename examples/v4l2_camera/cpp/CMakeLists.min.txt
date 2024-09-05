@@ -34,9 +34,9 @@ target_link_libraries(v4l2_camera
 
 # Copy config file
 add_custom_target(v4l2_camera_yaml
-  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "v4l2_camera.yaml"
-  BYPRODUCTS "v4l2_camera.yaml"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml" "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera_yuv.yaml" ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS "v4l2_camera.yaml" "v4l2_camera_yuv.yaml"
+  BYPRODUCTS "v4l2_camera.yaml" "v4l2_camera_yuv.yaml"
 )
 
 add_dependencies(v4l2_camera v4l2_camera_yaml)
@@ -44,14 +44,8 @@ add_dependencies(v4l2_camera v4l2_camera_yaml)
 # Testing
 option(HOLOSCAN_BUILD_V4L2_TESTS "Build tests for V4L2 loopback" OFF)
 if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
-  # Assumes that the v4l2 video loopback is mounted on /dev/video3.  This allows us to create a
-  # a virtual video device and stream data from an mp4 file without the need for a physical
-  # video input device. To setup v4l2 video loopback, refer to the "Use with V4L2 Loopback Devices"
-  # section of the README file for this example
-  file(READ ${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml CONFIG_STRING)
-  string(REPLACE "device: \"/dev/video0\"" "device: \"/dev/video3\"" CONFIG_STRING "${CONFIG_STRING}")
-  set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_v4l2_camera_config.yaml)
-  file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
+  # Assumes that the v4l2 video loopback has already been mounted and the yaml files have been
+  # updated to use the virtual loopback device.
 
   # Modify testcase to only run 10 frames
   add_custom_command(OUTPUT v4l2_camera_test.cpp
@@ -75,12 +69,17 @@ if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
   add_dependencies(v4l2_camera_test racerx_data)
 
   add_test(NAME EXAMPLE_CPP_V4L2_CAMERA_TEST
-           COMMAND bash -c "ffmpeg -stream_loop -1 -re -i ${CMAKE_SOURCE_DIR}/data/racerx/racerx-small.mp4 \
-                                    -pix_fmt yuyv422 -f v4l2 /dev/video3 &  sleep 5; \
-                           ${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera_test ${CONFIG_FILE}; echo 'Done'; kill %1"
+           COMMAND "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera_test"
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
           )
   set_tests_properties(EXAMPLE_CPP_V4L2_CAMERA_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "Application has finished running")
-endif()
 
+  add_test(NAME EXAMPLE_CPP_V4L2_YUV_CAMERA_TEST
+           COMMAND "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera_test" v4l2_camera_yuv.yaml
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  set_tests_properties(EXAMPLE_CPP_V4L2_YUV_CAMERA_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "Application has finished running")
+
+endif()

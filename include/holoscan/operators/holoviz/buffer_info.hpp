@@ -19,6 +19,7 @@
 #define INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_BUFFER_INFO_HPP
 
 #include <string>
+#include <vector>
 
 #include <holoviz/image_format.hpp>
 #include "holoscan/operators/holoviz/holoviz.hpp"
@@ -60,18 +61,24 @@ struct BufferInfo {
   uint32_t width = 0;
   uint32_t height = 0;
   nvidia::gxf::PrimitiveType element_type = nvidia::gxf::PrimitiveType::kCustom;
-  bool image_format_supported = false;
   HolovizOp::ImageFormat image_format = HolovizOp::ImageFormat::AUTO_DETECT;
   viz::ComponentSwizzle component_swizzle[4] = {viz::ComponentSwizzle::IDENTITY,
-                                                 viz::ComponentSwizzle::IDENTITY,
-                                                 viz::ComponentSwizzle::IDENTITY,
-                                                 viz::ComponentSwizzle::IDENTITY};
+                                                viz::ComponentSwizzle::IDENTITY,
+                                                viz::ComponentSwizzle::IDENTITY,
+                                                viz::ComponentSwizzle::IDENTITY};
   std::string name;
   /// points to the memory owned by either a tensor or video buffer
   const nvidia::byte* buffer_ptr = nullptr;
   nvidia::gxf::MemoryStorageType storage_type = nvidia::gxf::MemoryStorageType::kHost;
   uint64_t bytes_size = 0;
   nvidia::gxf::Tensor::stride_array_t stride{};
+
+  /// plane information
+  std::vector<nvidia::gxf::ColorPlane> color_planes;
+
+  HolovizOp::YuvModelConversion yuv_model_conversion =
+      HolovizOp::YuvModelConversion::YUV_601;
+  HolovizOp::YuvRange yuv_range = HolovizOp::YuvRange::ITU_FULL;
 };
 
 }  // namespace holoscan::ops

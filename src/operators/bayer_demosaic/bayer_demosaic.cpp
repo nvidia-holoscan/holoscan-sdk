@@ -33,20 +33,7 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-
-#define CUDA_TRY(stmt)                                                                     \
-  ({                                                                                       \
-    cudaError_t _holoscan_cuda_err = stmt;                                                 \
-    if (cudaSuccess != _holoscan_cuda_err) {                                               \
-      GXF_LOG_ERROR("CUDA Runtime call %s in line %d of file %s failed with '%s' (%d).\n", \
-                    #stmt,                                                                 \
-                    __LINE__,                                                              \
-                    __FILE__,                                                              \
-                    cudaGetErrorString(_holoscan_cuda_err),                                \
-                    _holoscan_cuda_err);                                                   \
-    }                                                                                      \
-    _holoscan_cuda_err;                                                                    \
-  })
+#include "holoscan/utils/cuda_macros.hpp"
 
 namespace holoscan::ops {
 
@@ -201,10 +188,10 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
         }
       }
 
-      CUDA_TRY(cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
-                          static_cast<const void*>(frame->pointer()),
-                          buffer_size,
-                          cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL(cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
+                                    static_cast<const void*>(frame->pointer()),
+                                    buffer_size,
+                                    cudaMemcpyHostToDevice));
       input_data_ptr = device_scratch_buffer_.pointer();
     }
   } else {
@@ -221,11 +208,38 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
     // cast Holoscan::Tensor to nvidia::gxf::Tensor so attribute access code can remain as-is
     nvidia::gxf::Tensor in_tensor_gxf{in_tensor->dl_ctx()};
     auto in_rank = in_tensor_gxf.rank();
-    if (in_rank != 3) {
+    in_shape = in_tensor_gxf.shape();
+    if (in_rank < 2 || in_rank > 3) {
+      throw std::runtime_error(fmt::format(
+          "Input tensor has {} dimensions. Expected a tensor with two (HW) or three (HWC) "
+          "dimensions corresponding to a 1 channel 8-bit or 16-bit unsigned packed CFA grayscale "
+          "Bayer pattern.",
+          in_rank));
+    } else {
+      if (in_rank == 3) {
+        in_channels = in_shape.dimension(2);
+        if (in_channels != 1) {
+          throw std::runtime_error(fmt::format(
+              "For 3D HWC input, the number of channels, C, must be 1. Detected {} channels.",
+              in_channels));
+        }
+      } else {
+        in_channels = 1;
+      }
+    }
+    rows = in_shape.dimension(0);
+    if (rows % 2 != 0) {
       throw std::runtime_error(
-          fmt::format("Input tensor has {} dimensions. Expected a tensor with 3 dimensions "
-                      "(corresponding to an RGB or RGBA image).",
-                      in_rank));
+          fmt::format("Input tensor must have an even number of rows corresponding to a packed "
+                      "CFA grayscale Bayer pattern. Detected {} rows.",
+                      rows));
+    }
+    columns = in_shape.dimension(1);
+    if (columns % 2 != 0) {
+      throw std::runtime_error(
+          fmt::format("Input tensor must have an even number of columns corresponding to a packed "
+                      "CFA grayscale Bayer pattern. Detected {} columns.",
+                      columns));
     }
 
     DLDevice dev = in_tensor->device();
@@ -264,10 +278,10 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
         }
       }
 
-      CUDA_TRY(cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
-                          static_cast<const void*>(in_tensor_gxf.pointer()),
-                          buffer_size,
-                          cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL(cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
+                                    static_cast<const void*>(in_tensor_gxf.pointer()),
+                                    buffer_size,
+                                    cudaMemcpyHostToDevice));
       input_data_ptr = device_scratch_buffer_.pointer();
     } else {
       input_data_ptr = in_tensor_gxf.pointer();
@@ -277,10 +291,6 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
       // This should never happen, but just in case...
       HOLOSCAN_LOG_ERROR("Unable to get tensor data pointer. nullptr returned.");
     }
-    in_shape = in_tensor_gxf.shape();
-    rows = in_shape.dimension(0);
-    columns = in_shape.dimension(1);
-    in_channels = in_shape.dimension(2);
     element_type = in_tensor_gxf.element_type();
     element_size = nvidia::gxf::PrimitiveTypeSize(element_type);
     input_memory_type = in_tensor_gxf.storage_type();

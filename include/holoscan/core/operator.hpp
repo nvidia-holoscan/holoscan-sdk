@@ -584,9 +584,9 @@ class Operator : public ComponentBase {
   std::shared_ptr<MetadataDictionary> metadata() { return dynamic_metadata_; }
 
   /**
-   * @brief Get the metadata update policy used by this operator.
+   * @brief Determine if metadata is enabled for the fragment this operator belongs to.
    *
-   * @returns The metadata update policy used by this operator.
+   * @returns Boolean indicating if metadata is enabled.
    */
   bool is_metadata_enabled() { return is_metadata_enabled_; }
 
@@ -777,6 +777,8 @@ class Operator : public ComponentBase {
       resources_;                                           ///< The resources used by the operator.
   std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity_;  ///< GXF graph entity corresponding to
                                                             ///< the Operator
+
+  bool is_initialized_ = false;  ///< Whether the operator is initialized.
 
  private:
   ///  Set the operator codelet or any other backend codebase.

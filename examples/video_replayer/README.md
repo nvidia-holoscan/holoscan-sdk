@@ -8,6 +8,15 @@ The video frames need to have been converted to a gxf entity format to use as in
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/video_replayer.html) for step-by-step documentation of this example.*
 
+#### Note on error logged by the application
+Note that it is currently expected that this application logs the following error during shutdown
+
+```text
+[error] [ucx_context.cpp:466] Connection dropped with status -25 (Connection reset by remote peer)
+```
+
+This will be logged by the worker that is running "fragment2" after "fragment1" has sent all messages. It is caused by fragment 1 starting to shutdown after its last message has been sent, resulting in severing of connections from fragment 2 receivers to fragment 1 transmitters.
+
 ## Data
 
 The following dataset is used by this example:

@@ -124,6 +124,16 @@ std::ostream& operator<<(std::ostream& os, const ImageFormat& format) {
     CASE(ImageFormat::B8G8R8A8_SRGB)
     CASE(ImageFormat::A8B8G8R8_UNORM_PACK32)
     CASE(ImageFormat::A8B8G8R8_SRGB_PACK32)
+    CASE(ImageFormat::Y8U8Y8V8_422_UNORM)
+    CASE(ImageFormat::U8Y8V8Y8_422_UNORM)
+    CASE(ImageFormat::Y8_U8V8_2PLANE_420_UNORM)
+    CASE(ImageFormat::Y8_U8V8_2PLANE_422_UNORM)
+    CASE(ImageFormat::Y8_U8_V8_3PLANE_420_UNORM)
+    CASE(ImageFormat::Y8_U8_V8_3PLANE_422_UNORM)
+    CASE(ImageFormat::Y16_U16V16_2PLANE_420_UNORM)
+    CASE(ImageFormat::Y16_U16V16_2PLANE_422_UNORM)
+    CASE(ImageFormat::Y16_U16_V16_3PLANE_420_UNORM)
+    CASE(ImageFormat::Y16_U16_V16_3PLANE_422_UNORM)
     default:
       os.setstate(std::ios_base::failbit);
   }
@@ -136,13 +146,16 @@ std::ostream& operator<<(std::ostream& os, const ImageFormat& format) {
 
 class ImageLayer
     : public TestHeadless,
-      public testing::WithParamInterface<std::tuple<Source, Reuse, UseLut, viz::ImageFormat>> {};
+      public testing::WithParamInterface<std::tuple<Source, Reuse, UseLut, viz::ImageFormat,
+                                                    viz::YuvModelConversion, viz::YuvRange>> {};
 
 TEST_P(ImageLayer, Image) {
   const Source source = std::get<0>(GetParam());
   const bool reuse = std::get<1>(GetParam()) == Reuse::ENABLE;
   const UseLut use_lut = std::get<2>(GetParam());
   const viz::ImageFormat image_format = std::get<3>(GetParam());
+  const viz::YuvModelConversion yuv_model_conversion = std::get<4>(GetParam());
+  const viz::YuvRange yuv_range = std::get<5>(GetParam());
 
   if (use_lut == UseLut::ENABLE_WITH_NORMALIZE) {
     GTEST_SKIP() << "LUT with normalize tests not working yet, reference image generation needs to "
@@ -151,6 +164,10 @@ TEST_P(ImageLayer, Image) {
 
   bool use_depth = false;
   bool convert_color = false;
+  bool is_yuv = false;
+  uintptr_t offset_plane_1 = 0;
+  uintptr_t offset_plane_2 = 0;
+  std::vector<uint8_t> converted_data;
 
   switch (image_format) {
     case viz::ImageFormat::R8_UINT:
@@ -183,6 +200,55 @@ TEST_P(ImageLayer, Image) {
     case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
       convert_color = true;
       break;
+    case viz::ImageFormat::Y8U8Y8V8_422_UNORM:
+    case viz::ImageFormat::U8Y8V8Y8_422_UNORM:
+      is_yuv = true;
+      converted_data.resize((width_ * height_ * 1 + (width_ / 2) * height_ * 2) * sizeof(uint8_t));
+      break;
+    case viz::ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint8_t);
+      converted_data.resize(offset_plane_1 + ((width_ / 2) * (height_ / 2) * 2) * sizeof(uint8_t));
+      break;
+    case viz::ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint8_t);
+      converted_data.resize(offset_plane_1 + ((width_ / 2) * height_ * 2) * sizeof(uint8_t));
+      break;
+    case viz::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint8_t);
+      offset_plane_2 = offset_plane_1 + (width_ / 2) * (height_ / 2) * sizeof(uint8_t);
+      converted_data.resize(offset_plane_2 + ((width_ / 2) * (height_ / 2)) * sizeof(uint8_t));
+      break;
+    case viz::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint8_t);
+      offset_plane_2 = offset_plane_1 + (width_ / 2) * height_ * sizeof(uint8_t);
+      converted_data.resize(offset_plane_2 + ((width_ / 2) * height_) * sizeof(uint8_t));
+      break;
+    case viz::ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint16_t);
+      converted_data.resize(offset_plane_1 + ((width_ / 2) * (height_ / 2) * 2) * sizeof(uint16_t));
+      break;
+    case viz::ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint16_t);
+      converted_data.resize(offset_plane_1 + ((width_ / 2) * height_ * 2) * sizeof(uint16_t));
+      break;
+    case viz::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint16_t);
+      offset_plane_2 = offset_plane_1 + (width_ / 2) * (height_ / 2) * sizeof(uint16_t);
+      converted_data.resize(offset_plane_2 + ((width_ / 2) * (height_ / 2)) * sizeof(uint16_t));
+      break;
+    case viz::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+      is_yuv = true;
+      offset_plane_1 = width_ * height_ * sizeof(uint16_t);
+      offset_plane_2 = offset_plane_1 + (width_ / 2) * height_ * sizeof(uint16_t);
+      converted_data.resize(offset_plane_2 + ((width_ / 2) * height_) * sizeof(uint16_t));
+      break;
     case viz::ImageFormat::D16_UNORM:
     case viz::ImageFormat::X8_D24_UNORM:
     case viz::ImageFormat::D32_SFLOAT:
@@ -196,11 +262,197 @@ TEST_P(ImageLayer, Image) {
   }
 
   viz::ImageFormat color_format, depth_format;
+
   if (use_depth) {
     color_format = viz::ImageFormat::R8G8B8A8_UNORM;
     depth_format = image_format;
     SetupData(color_format);
     SetupData(depth_format);
+  } else if (is_yuv) {
+    // Skip test on iGPU, there is a Vulkan driver issue. The test fails on the first run only, the
+    // second run (within the same container) passes. The Vulkan driver has a shader cache, if the
+    // shader for the YUV format exists, the test passes, if the shader is not in the cache it
+    // fails.
+    CUdevice device = 0;
+    ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
+    int is_integrated = false;
+    ASSERT_EQ(cuDeviceGetAttribute(&is_integrated, CU_DEVICE_ATTRIBUTE_INTEGRATED, device),
+              CUDA_SUCCESS);
+    if (is_integrated) { GTEST_SKIP() << "YUV tests fail on integrated devices, test skipped"; }
+
+    color_format = image_format;
+
+    // create a smooth RGB pattern so we don't need to deal with linear chroma filtering when
+    // calculating the expected result
+    color_data_.resize(width_ * height_ * 3);
+    for (uint32_t y = 0; y < height_; ++y) {
+      for (uint32_t x = 0; x < width_; ++x) {
+        color_data_[y * (width_ * 3) + x * 3 + 0] = x;
+        color_data_[y * (width_ * 3) + x * 3 + 1] = y;
+        color_data_[y * (width_ * 3) + x * 3 + 2] = 255 - x;
+      }
+    }
+    // convert to YUV
+    for (uint32_t y = 0; y < height_; ++y) {
+      for (uint32_t x = 0; x < width_; ++x) {
+        // RGB -> YUV conversion
+        const float r = color_data_[y * (width_ * 3) + x * 3 + 0] / 255.f;
+        const float g = color_data_[y * (width_ * 3) + x * 3 + 1] / 255.f;
+        const float b = color_data_[y * (width_ * 3) + x * 3 + 2] / 255.f;
+        float Kr, Kg, Kb;
+        switch (yuv_model_conversion) {
+          case viz::YuvModelConversion::YUV_601:
+            Kr = 0.299f;
+            Kb = 0.114f;
+            break;
+          case viz::YuvModelConversion::YUV_709:
+            Kb = 0.0722f;
+            Kr = 0.2126f;
+            break;
+          case viz::YuvModelConversion::YUV_2020:
+            Kb = 0.0593f;
+            Kr = 0.2627f;
+            break;
+          default:
+            ASSERT_TRUE(false) << "Unhandled yuv model conversion";
+            break;
+        }
+        // since Kr + Kg + Kb = 1.f, calculate Kg
+        Kg = 1.f - Kb - Kr;
+
+        float luma = Kr * r + Kg * g + Kb * b;  // 0 ... 1
+        float u = (b - luma) / (1.f - Kb);      // -1 ... 1
+        float v = (r - luma) / (1.f - Kr);      // -1 ... 1
+
+        switch (yuv_range) {
+          case viz::YuvRange::ITU_FULL:
+            u = u * 0.5f + 0.5f;
+            v = v * 0.5f + 0.5f;
+            break;
+          case viz::YuvRange::ITU_NARROW:
+            luma = 16.f / 255.f + luma * (219.f / 255.f);
+            u = 128.f / 255.f + u * 0.5f * (224.f / 255.f);
+            v = 128.f / 255.f + v * 0.5f * (224.f / 255.f);
+            break;
+          default:
+            ASSERT_TRUE(false) << "Unhandled yuv range";
+            break;
+        }
+
+        switch (image_format) {
+          case viz::ImageFormat::Y8U8Y8V8_422_UNORM:
+            converted_data[y * (width_ * 2) + x * 2] = uint8_t(luma * 255.f + 0.5f);
+            if ((x & 1) == 0) {
+              converted_data[y * (width_ * 2) + (x * 2) + 1] = uint8_t(u * 255.f + 0.5f);
+              converted_data[y * (width_ * 2) + (x * 2) + 3] = uint8_t(v * 255.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::U8Y8V8Y8_422_UNORM:
+            converted_data[y * (width_ * 2) + (x * 2) + 1] = uint8_t(luma * 255.f + 0.5f);
+            if ((x & 1) == 0) {
+              converted_data[y * (width_ * 2) + (x * 2) + 0] = uint8_t(u * 255.f + 0.5f);
+              converted_data[y * (width_ * 2) + (x * 2) + 2] = uint8_t(v * 255.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            if (((x & 1) == 0) && ((y & 1) == 0)) {
+              converted_data[offset_plane_1 + ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 0] =
+                  uint8_t(u * 255.f + 0.5f);
+              converted_data[offset_plane_1 + ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 1] =
+                  uint8_t(v * 255.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            if ((x & 1) == 0) {
+              converted_data[offset_plane_1 + (y * (width_ / 2) + (x / 2)) * 2 + 0] =
+                  uint8_t(u * 255.f + 0.5f);
+              converted_data[offset_plane_1 + (y * (width_ / 2) + (x / 2)) * 2 + 1] =
+                  uint8_t(v * 255.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            if (((x & 1) == 0) && ((y & 1) == 0)) {
+              converted_data[offset_plane_1 + (y / 2) * (width_ / 2) + (x / 2)] =
+                  uint8_t(u * 255.f + 0.5f);
+              converted_data[offset_plane_2 + (y / 2) * (width_ / 2) + (x / 2)] =
+                  uint8_t(v * 255.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            if ((x & 1) == 0) {
+              converted_data[offset_plane_1 + y * (width_ / 2) + (x / 2)] =
+                  uint8_t(u * 255.f + 0.5f);
+              converted_data[offset_plane_2 + y * (width_ / 2) + (x / 2)] =
+                  uint8_t(v * 255.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+            reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
+                uint16_t(luma * 65535.f + 0.5f);
+            if (((x & 1) == 0) && ((y & 1) == 0)) {
+              reinterpret_cast<uint16_t*>(
+                  converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
+                                         ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 0] =
+                  uint16_t(u * 65535.f + 0.5f);
+              reinterpret_cast<uint16_t*>(
+                  converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
+                                         ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 1] =
+                  uint16_t(v * 65535.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+            reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
+                uint16_t(luma * 65535.f + 0.5f);
+            if ((x & 1) == 0) {
+              reinterpret_cast<uint16_t*>(
+                  converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
+                                         (y * (width_ / 2) + (x / 2)) * 2 + 0] =
+                  uint16_t(u * 65535.f + 0.5f);
+              reinterpret_cast<uint16_t*>(
+                  converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
+                                         (y * (width_ / 2) + (x / 2)) * 2 + 1] =
+                  uint16_t(v * 65535.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+            reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
+                uint16_t(luma * 65535.f + 0.5f);
+            if (((x & 1) == 0) && ((y & 1) == 0)) {
+              reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
+                                                                 (y / 2) * (width_ / 2) + (x / 2)] =
+                  uint16_t(u * 65535.f + 0.5f);
+              reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_2 / sizeof(uint16_t) +
+                                                                 (y / 2) * (width_ / 2) + (x / 2)] =
+                  uint16_t(v * 65535.f + 0.5f);
+            }
+            break;
+          case viz::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+            reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
+                uint16_t(luma * 65535.f + 0.5f);
+            if ((x & 1) == 0) {
+              reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
+                                                                 y * (width_ / 2) + (x / 2)] =
+                  uint16_t(u * 65535.f + 0.5f);
+              reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_2 / sizeof(uint16_t) +
+                                                                 y * (width_ / 2) + (x / 2)] =
+                  uint16_t(v * 65535.f + 0.5f);
+            }
+            break;
+          default:
+            ASSERT_TRUE(false) << "Unhandled image format";
+            break;
+        }
+      }
+    }
+    // use YUV as source and RGB as reference
+    std::swap(color_data_, converted_data);
+
+    depth_format = viz::ImageFormat::D32_SFLOAT;
+    depth_data_ = std::vector<float>(width_ * height_ * 1 * sizeof(float), 0.f);
   } else {
     color_format = image_format;
     depth_format = viz::ImageFormat::D32_SFLOAT;
@@ -209,7 +461,6 @@ TEST_P(ImageLayer, Image) {
   }
 
   std::vector<uint32_t> lut;
-  std::vector<uint8_t> converted_data;
 
   viz::CudaService::ScopedPush cuda_context;
   viz::UniqueCUdeviceptr color_device_ptr;
@@ -466,6 +717,11 @@ TEST_P(ImageLayer, Image) {
 
     EXPECT_NO_THROW(viz::BeginImageLayer());
 
+    if (is_yuv) {
+      EXPECT_NO_THROW(viz::ImageYuvModelConversion(yuv_model_conversion));
+      EXPECT_NO_THROW(viz::ImageYuvRange(yuv_range));
+    }
+
     if (use_lut != UseLut::DISABLE) {
       EXPECT_NO_THROW(viz::LUT(lut_size_,
                                viz::ImageFormat::R8G8B8A8_UNORM,
@@ -476,12 +732,28 @@ TEST_P(ImageLayer, Image) {
 
     switch (source) {
       case Source::HOST:
-        EXPECT_NO_THROW(viz::ImageHost(
-            width_, height_, color_format, reinterpret_cast<void*>(color_data_.data())));
+        EXPECT_NO_THROW(
+            viz::ImageHost(width_,
+                           height_,
+                           color_format,
+                           reinterpret_cast<void*>(color_data_.data()),
+                           0,
+                           offset_plane_1 ? color_data_.data() + offset_plane_1 : nullptr,
+                           0,
+                           offset_plane_2 ? color_data_.data() + offset_plane_2 : nullptr,
+                           0));
         break;
       case Source::CUDA_DEVICE:
         EXPECT_NO_THROW(
-            viz::ImageCudaDevice(width_, height_, color_format, color_device_ptr.get()));
+            viz::ImageCudaDevice(width_,
+                                 height_,
+                                 color_format,
+                                 color_device_ptr.get(),
+                                 0,
+                                 offset_plane_1 ? color_device_ptr.get() + offset_plane_1 : 0,
+                                 0,
+                                 offset_plane_2 ? color_device_ptr.get() + offset_plane_2 : 0,
+                                 0));
         break;
       default:
         EXPECT_TRUE(false) << "Unhandled source type";
@@ -509,7 +781,8 @@ TEST_P(ImageLayer, Image) {
 
   if (converted_data.size() != 0) {
     std::swap(color_data_, converted_data);
-    CompareColorResult();
+    // YUV data requires a higher absolute error because of conversion between color spaces
+    CompareColorResult(is_yuv ? 4 : 1);
     std::swap(converted_data, color_data_);
   } else {
     CompareColorResult();
@@ -523,27 +796,47 @@ INSTANTIATE_TEST_SUITE_P(ImageLayerSource, ImageLayer,
                          testing::Combine(testing::Values(Source::HOST, Source::CUDA_DEVICE),
                                           testing::Values(Reuse::DISABLE, Reuse::ENABLE),
                                           testing::Values(UseLut::DISABLE),
-                                          testing::Values(viz::ImageFormat::R8G8B8A8_UNORM)));
+                                          testing::Values(viz::ImageFormat::R8G8B8A8_UNORM),
+                                          testing::Values(viz::YuvModelConversion::YUV_601),
+                                          testing::Values(viz::YuvRange::ITU_FULL)));
 
-// native color formats
+// native RGB color formats
 INSTANTIATE_TEST_SUITE_P(
     ImageLayerFormat, ImageLayer,
-    testing::Combine(testing::Values(Source::CUDA_DEVICE), testing::Values(Reuse::DISABLE),
-                     testing::Values(UseLut::DISABLE),
-                     testing::Values(viz::ImageFormat::R8_UNORM, viz::ImageFormat::R8_SNORM,
-                                     viz::ImageFormat::R8_SRGB, viz::ImageFormat::R16_UNORM,
-                                     viz::ImageFormat::R16_SNORM, viz::ImageFormat::R32_SFLOAT,
-                                     viz::ImageFormat::R8G8B8A8_UNORM,
-                                     viz::ImageFormat::R8G8B8A8_SNORM,
-                                     viz::ImageFormat::R8G8B8A8_SRGB,
-                                     viz::ImageFormat::R16G16B16A16_SNORM,
-                                     viz::ImageFormat::R16G16B16A16_UNORM,
-                                     viz::ImageFormat::A2B10G10R10_UNORM_PACK32,
-                                     viz::ImageFormat::A2R10G10B10_UNORM_PACK32,
-                                     viz::ImageFormat::B8G8R8A8_UNORM,
-                                     viz::ImageFormat::B8G8R8A8_SRGB,
-                                     viz::ImageFormat::A8B8G8R8_UNORM_PACK32,
-                                     viz::ImageFormat::A8B8G8R8_SRGB_PACK32)));
+    testing::Combine(
+        testing::Values(Source::CUDA_DEVICE, Source::HOST), testing::Values(Reuse::DISABLE),
+        testing::Values(UseLut::DISABLE),
+        testing::Values(
+            viz::ImageFormat::R8_UNORM, viz::ImageFormat::R8_SNORM, viz::ImageFormat::R8_SRGB,
+            viz::ImageFormat::R16_UNORM, viz::ImageFormat::R16_SNORM, viz::ImageFormat::R32_SFLOAT,
+            viz::ImageFormat::R8G8B8A8_UNORM, viz::ImageFormat::R8G8B8A8_SNORM,
+            viz::ImageFormat::R8G8B8A8_SRGB, viz::ImageFormat::R16G16B16A16_SNORM,
+            viz::ImageFormat::R16G16B16A16_UNORM, viz::ImageFormat::A2B10G10R10_UNORM_PACK32,
+            viz::ImageFormat::A2R10G10B10_UNORM_PACK32, viz::ImageFormat::B8G8R8A8_UNORM,
+            viz::ImageFormat::B8G8R8A8_SRGB, viz::ImageFormat::A8B8G8R8_UNORM_PACK32,
+            viz::ImageFormat::A8B8G8R8_SRGB_PACK32),
+        testing::Values(viz::YuvModelConversion::YUV_601),
+        testing::Values(viz::YuvRange::ITU_FULL)));
+
+// native YUV color formats
+INSTANTIATE_TEST_SUITE_P(
+    ImageLayerFormatYUV, ImageLayer,
+    testing::Combine(testing::Values(Source::CUDA_DEVICE, Source::HOST),
+                     testing::Values(Reuse::DISABLE), testing::Values(UseLut::DISABLE),
+                     testing::Values(viz::ImageFormat::Y8U8Y8V8_422_UNORM,
+                                     viz::ImageFormat::U8Y8V8Y8_422_UNORM,
+                                     viz::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+                                     viz::ImageFormat::Y8_U8V8_2PLANE_422_UNORM,
+                                     viz::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+                                     viz::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM,
+                                     viz::ImageFormat::Y16_U16V16_2PLANE_420_UNORM,
+                                     viz::ImageFormat::Y16_U16V16_2PLANE_422_UNORM,
+                                     viz::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM,
+                                     viz::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM),
+                     testing::Values(viz::YuvModelConversion::YUV_601,
+                                     viz::YuvModelConversion::YUV_709,
+                                     viz::YuvModelConversion::YUV_2020),
+                     testing::Values(viz::YuvRange::ITU_FULL, viz::YuvRange::ITU_NARROW)));
 
 // LUT tests
 INSTANTIATE_TEST_SUITE_P(
@@ -552,7 +845,9 @@ INSTANTIATE_TEST_SUITE_P(
                      testing::Values(UseLut::ENABLE),
                      testing::Values(viz::ImageFormat::R8_UINT, viz::ImageFormat::R8_SINT,
                                      viz::ImageFormat::R16_UINT, viz::ImageFormat::R16_SINT,
-                                     viz::ImageFormat::R32_UINT, viz::ImageFormat::R32_SINT)));
+                                     viz::ImageFormat::R32_UINT, viz::ImageFormat::R32_SINT),
+                     testing::Values(viz::YuvModelConversion::YUV_601),
+                     testing::Values(viz::YuvRange::ITU_FULL)));
 
 // LUT with normalize tests
 INSTANTIATE_TEST_SUITE_P(
@@ -564,7 +859,9 @@ INSTANTIATE_TEST_SUITE_P(
                                      viz::ImageFormat::R16_UINT, viz::ImageFormat::R16_SINT,
                                      viz::ImageFormat::R16_UNORM, viz::ImageFormat::R16_SNORM,
                                      viz::ImageFormat::R32_UINT, viz::ImageFormat::R32_SINT,
-                                     viz::ImageFormat::R16_SFLOAT, viz::ImageFormat::R32_SFLOAT)));
+                                     viz::ImageFormat::R16_SFLOAT, viz::ImageFormat::R32_SFLOAT),
+                     testing::Values(viz::YuvModelConversion::YUV_601),
+                     testing::Values(viz::YuvRange::ITU_FULL)));
 
 // RGB is non-native, converted by CUDA kernel or host code
 INSTANTIATE_TEST_SUITE_P(ImageLayerConvert, ImageLayer,
@@ -573,14 +870,18 @@ INSTANTIATE_TEST_SUITE_P(ImageLayerConvert, ImageLayer,
                                           testing::Values(UseLut::DISABLE),
                                           testing::Values(viz::ImageFormat::R8G8B8_UNORM,
                                                           viz::ImageFormat::R8G8B8_SNORM,
-                                                          viz::ImageFormat::R8G8B8_SRGB)));
+                                                          viz::ImageFormat::R8G8B8_SRGB),
+                                          testing::Values(viz::YuvModelConversion::YUV_601),
+                                          testing::Values(viz::YuvRange::ITU_FULL)));
 
 // depth format tests
 INSTANTIATE_TEST_SUITE_P(ImageLayerDepth, ImageLayer,
                          testing::Combine(testing::Values(Source::HOST, Source::CUDA_DEVICE),
                                           testing::Values(Reuse::DISABLE, Reuse::ENABLE),
                                           testing::Values(UseLut::DISABLE),
-                                          testing::Values(viz::ImageFormat::D32_SFLOAT)));
+                                          testing::Values(viz::ImageFormat::D32_SFLOAT),
+                                          testing::Values(viz::YuvModelConversion::YUV_601),
+                                          testing::Values(viz::YuvRange::ITU_FULL)));
 
 TEST_F(ImageLayer, ImageCudaArray) {
   constexpr viz::ImageFormat kFormat = viz::ImageFormat::R8G8B8A8_UNORM;
@@ -693,6 +994,11 @@ TEST_F(ImageLayer, Errors) {
                                           viz::ComponentSwizzle::IDENTITY,
                                           viz::ComponentSwizzle::IDENTITY),
                std::runtime_error);
+  EXPECT_THROW(viz::ImageYuvModelConversion(viz::YuvModelConversion::YUV_601), std::runtime_error);
+  EXPECT_THROW(viz::ImageYuvRange(viz::YuvRange::ITU_FULL), std::runtime_error);
+  EXPECT_THROW(viz::ImageChromaLocation(viz::ChromaLocation::COSITED_EVEN,
+                                        viz::ChromaLocation::COSITED_EVEN),
+               std::runtime_error);
 
   // it's an error to call BeginImageLayer again without calling EndLayer
   EXPECT_NO_THROW(viz::BeginImageLayer());
@@ -712,6 +1018,11 @@ TEST_F(ImageLayer, Errors) {
                                           viz::ComponentSwizzle::IDENTITY,
                                           viz::ComponentSwizzle::IDENTITY,
                                           viz::ComponentSwizzle::IDENTITY),
+               std::runtime_error);
+  EXPECT_THROW(viz::ImageYuvModelConversion(viz::YuvModelConversion::YUV_601), std::runtime_error);
+  EXPECT_THROW(viz::ImageYuvRange(viz::YuvRange::ITU_FULL), std::runtime_error);
+  EXPECT_THROW(viz::ImageChromaLocation(viz::ChromaLocation::COSITED_EVEN,
+                                        viz::ChromaLocation::COSITED_EVEN),
                std::runtime_error);
   EXPECT_NO_THROW(viz::EndLayer());
 

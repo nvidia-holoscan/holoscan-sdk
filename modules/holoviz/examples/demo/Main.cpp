@@ -25,6 +25,7 @@
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <memory>
@@ -39,9 +40,12 @@ namespace viz = holoscan::viz;
 enum class Source { HOST, DEVICE, ARRAY };
 static const char* source_items[]{"Host", "Device", "Array"};
 
-static const char* format_items[]{"R8_UINT", "R8G8B8_UNORM", "R8G8B8A8_UNORM"};
-static viz::ImageFormat formats[]{
-    viz::ImageFormat::R8_UINT, viz::ImageFormat::R8G8B8_UNORM, viz::ImageFormat::R8G8B8A8_UNORM};
+static const char* format_items[]{
+    "R8_UINT", "R8G8B8_UNORM", "R8G8B8A8_UNORM", "Y8_U8V8_2PLANE_420_UNORM"};
+static viz::ImageFormat formats[]{viz::ImageFormat::R8_UINT,
+                                  viz::ImageFormat::R8G8B8_UNORM,
+                                  viz::ImageFormat::R8G8B8A8_UNORM,
+                                  viz::ImageFormat::Y8_U8V8_2PLANE_420_UNORM};
 
 // define the '<<' operators to get a nice output
 #define CASE(VALUE)            \
@@ -91,18 +95,16 @@ std::chrono::milliseconds elapsed;
 uint32_t iterations = 0;
 float fps = 0.f;
 
-// memory
-std::unique_ptr<uint8_t> host_mem_r8;
-std::unique_ptr<uint8_t> host_mem_r8g8b8;
-std::unique_ptr<uint8_t> host_mem_r8g8b8a8;
-
-std::vector<uint32_t> palette;
-
 // cuda
 CUcontext cuda_context = nullptr;
-CUdeviceptr cu_device_mem_r8 = 0;
-CUdeviceptr cu_device_mem_r8g8b8 = 0;
-CUdeviceptr cu_device_mem_r8g8b8a8 = 0;
+
+// source data
+struct SourceData {
+  std::array<std::unique_ptr<uint8_t>, 3> host_mems;
+  std::array<CUdeviceptr, 3> cu_device_mems;
+};
+std::array<SourceData, IM_ARRAYSIZE(formats)> source_data;
+std::vector<uint32_t> palette;
 
 void tick() {
   if (start.time_since_epoch().count() == 0) {
@@ -176,55 +178,34 @@ void tick() {
     viz::LayerOpacity(image_layer_opacity);
     viz::LayerPriority(image_layer_priority);
 
-    if ((formats[current_format_index] == viz::ImageFormat::R8G8B8_UNORM) ||
-        (formats[current_format_index] == viz::ImageFormat::R8G8B8A8_UNORM)) {
-      // Color image
-
-      // host memory
-      switch (current_source) {
-        case Source::HOST: {
-          const void* data = nullptr;
-          switch (formats[current_format_index]) {
-            case viz::ImageFormat::R8G8B8_UNORM:
-              data = host_mem_r8g8b8.get();
-              break;
-            case viz::ImageFormat::R8G8B8A8_UNORM:
-              data = host_mem_r8g8b8a8.get();
-              break;
-            default:
-              throw std::runtime_error("Unhandled image format");
-          }
-          viz::ImageHost(width, height, formats[current_format_index], data);
-          break;
-        }
-        case Source::DEVICE: {
-          CUdeviceptr device_ptr = 0;
-          switch (formats[current_format_index]) {
-            case viz::ImageFormat::R8G8B8_UNORM:
-              device_ptr = cu_device_mem_r8g8b8;
-              break;
-            case viz::ImageFormat::R8G8B8A8_UNORM:
-              device_ptr = cu_device_mem_r8g8b8a8;
-              break;
-            default:
-              throw std::runtime_error("Unhandled image format");
-          }
-          viz::ImageCudaDevice(width, height, formats[current_format_index], device_ptr);
-          break;
-        }
-      }
-    } else {
+    if (formats[current_format_index] == viz::ImageFormat::R8_UINT) {
       // Image with LUT
       viz::LUT(palette.size(),
                viz::ImageFormat::R8G8B8A8_UNORM,
                palette.size() * sizeof(uint32_t),
                palette.data());
+    }
 
-      if (current_source == Source::DEVICE) {
-        viz::ImageCudaDevice(width, height, formats[current_format_index], cu_device_mem_r8);
-      } else {
-        viz::ImageHost(width, height, formats[current_format_index], host_mem_r8.get());
-      }
+    if (current_source == Source::DEVICE) {
+      viz::ImageCudaDevice(width,
+                           height,
+                           formats[current_format_index],
+                           source_data[current_format_index].cu_device_mems[0],
+                           0,
+                           source_data[current_format_index].cu_device_mems[1],
+                           0,
+                           source_data[current_format_index].cu_device_mems[2],
+                           0);
+    } else {
+      viz::ImageHost(width,
+                     height,
+                     formats[current_format_index],
+                     source_data[current_format_index].host_mems[0].get(),
+                     0,
+                     source_data[current_format_index].host_mems[1].get(),
+                     0,
+                     source_data[current_format_index].host_mems[2].get(),
+                     0);
     }
 
     viz::EndLayer();
@@ -362,19 +343,13 @@ void initCuda() {
 }
 
 void cleanupCuda() {
-  if (cu_device_mem_r8) {
-    if (cuMemFree(cu_device_mem_r8) != CUDA_SUCCESS) {
-      throw std::runtime_error("cuMemFree failed.");
-    }
-  }
-  if (cu_device_mem_r8g8b8) {
-    if (cuMemFree(cu_device_mem_r8g8b8) != CUDA_SUCCESS) {
-      throw std::runtime_error("cuMemFree failed.");
-    }
-  }
-  if (cu_device_mem_r8g8b8a8) {
-    if (cuMemFree(cu_device_mem_r8g8b8a8) != CUDA_SUCCESS) {
-      throw std::runtime_error("cuMemFree failed.");
+  for (auto&& source : source_data) {
+    for (auto&& cu_device_mem : source.cu_device_mems) {
+      if (cu_device_mem) {
+        if (cuMemFree(cu_device_mem) != CUDA_SUCCESS) {
+          throw std::runtime_error("cuMemFree failed.");
+        }
+      }
     }
   }
   if (cuda_context) {
@@ -399,61 +374,107 @@ void loadImage() {
                                         0);
   if (!image_data) { throw std::runtime_error("Loading image failed."); }
 
+  const uint32_t row_pitch = width * components;
+
+  // for YUV textures width and height must be a multiple of 2
+  width &= ~1;
+  height &= ~1;
+
   // allocate and set host memory
-  host_mem_r8.reset(new uint8_t[width * height]);
-  host_mem_r8g8b8.reset(new uint8_t[width * height * 3]);
-  host_mem_r8g8b8a8.reset(new uint8_t[width * height * 4]);
+  source_data[0].host_mems[0].reset(new uint8_t[width * height]);
+  source_data[1].host_mems[0].reset(new uint8_t[width * height * 3]);
+  source_data[2].host_mems[0].reset(new uint8_t[width * height * 4]);
+  source_data[3].host_mems[0].reset(new uint8_t[width * height]);
+  source_data[3].host_mems[1].reset(new uint8_t[(width / 2) * (height / 2) * 2]);
 
-  uint8_t const* src = image_data;
+  uint8_t* dst_r8 = source_data[0].host_mems[0].get();
+  uint8_t* dst_r8g8b8 = source_data[1].host_mems[0].get();
+  uint8_t* dst_r8g8b8a8 = source_data[2].host_mems[0].get();
+  uint8_t* dst_y8 = source_data[3].host_mems[0].get();
+  uint8_t* dst_u8v8 = source_data[3].host_mems[1].get();
+  for (uint32_t y = 0; y < height; ++y) {
+    uint8_t const* src = &image_data[y * row_pitch];
+    for (uint32_t x = 0; x < width; ++x) {
+      const uint8_t r = src[0];
+      const uint8_t g = src[1];
+      const uint8_t b = src[2];
 
-  uint8_t* dst_r8 = host_mem_r8.get();
-  uint8_t* dst_r8g8b8a8 = host_mem_r8g8b8a8.get();
-  uint8_t* dst_r8g8b8 = host_mem_r8g8b8.get();
-  for (uint32_t i = 0; i < width * height; ++i) {
-    dst_r8g8b8[0] = src[0];
-    dst_r8g8b8[1] = src[1];
-    dst_r8g8b8[2] = src[2];
-    dst_r8g8b8 += 3;
+      dst_r8g8b8[0] = r;
+      dst_r8g8b8[1] = g;
+      dst_r8g8b8[2] = b;
+      dst_r8g8b8 += 3;
 
-    dst_r8g8b8a8[0] = src[0];
-    dst_r8g8b8a8[1] = src[1];
-    dst_r8g8b8a8[2] = src[2];
-    dst_r8g8b8a8[3] = (components == 4) ? src[3] : 0xFF;
-    const uint32_t pixel = *reinterpret_cast<uint32_t*>(dst_r8g8b8a8);
-    dst_r8g8b8a8 += 4;
+      dst_r8g8b8a8[0] = r;
+      dst_r8g8b8a8[1] = g;
+      dst_r8g8b8a8[2] = b;
+      dst_r8g8b8a8[3] = (components == 4) ? src[3] : 0xFF;
+      const uint32_t pixel = *reinterpret_cast<uint32_t*>(dst_r8g8b8a8);
+      dst_r8g8b8a8 += 4;
 
-    std::vector<uint32_t>::iterator it = std::find(palette.begin(), palette.end(), pixel);
-    if (it == palette.end()) {
-      palette.push_back(pixel);
-      it = --palette.end();
+      std::vector<uint32_t>::iterator it = std::find(palette.begin(), palette.end(), pixel);
+      if (it == palette.end()) {
+        palette.push_back(pixel);
+        it = --palette.end();
+      }
+      dst_r8[0] = std::distance(palette.begin(), it);
+      dst_r8 += 1;
+
+      // BT.601 full range RGB -> YUV
+      dst_y8[0] = (0.f + (0.299f * r) + (0.587f * g) + (0.114 * b)) + 0.5f;
+      dst_y8 += 1;
+
+      if (!(x & 1) && !(y & 1)) {
+        dst_u8v8[0] = (128.f - (0.168736f * r) - (0.331264f * g) + (0.5f * b)) + 0.5f;
+        dst_u8v8[1] = (128.f + (0.5f * r) - (0.418688f * g) - (0.081312f * b)) + 0.5f;
+        dst_u8v8 += 2;
+      }
+
+      src += components;
     }
-    dst_r8[0] = std::distance(palette.begin(), it);
-    dst_r8 += 1;
-
-    src += components;
   }
 
   stbi_image_free(image_data);
 
   // allocate and set device memory
-  if (cuMemAlloc(&cu_device_mem_r8, width * height) != CUDA_SUCCESS) {
+  if (cuMemAlloc(&source_data[0].cu_device_mems[0], width * height) != CUDA_SUCCESS) {
     throw std::runtime_error("cuMemAlloc failed.");
   }
-  if (cuMemcpyHtoD(cu_device_mem_r8, host_mem_r8.get(), width * height) != CUDA_SUCCESS) {
+  if (cuMemcpyHtoD(source_data[0].cu_device_mems[0],
+                   source_data[0].host_mems[0].get(),
+                   width * height) != CUDA_SUCCESS) {
     throw std::runtime_error("cuMemcpyHtoD failed.");
   }
-  if (cuMemAlloc(&cu_device_mem_r8g8b8, width * height * 3) != CUDA_SUCCESS) {
+  if (cuMemAlloc(&source_data[1].cu_device_mems[0], width * height * 3) != CUDA_SUCCESS) {
     throw std::runtime_error("cuMemAlloc failed.");
   }
-  if (cuMemcpyHtoD(cu_device_mem_r8g8b8, host_mem_r8g8b8.get(), width * height * 3) !=
-      CUDA_SUCCESS) {
+  if (cuMemcpyHtoD(source_data[1].cu_device_mems[0],
+                   source_data[1].host_mems[0].get(),
+                   width * height * 3) != CUDA_SUCCESS) {
     throw std::runtime_error("cuMemcpyHtoD failed.");
   }
-  if (cuMemAlloc(&cu_device_mem_r8g8b8a8, width * height * 4) != CUDA_SUCCESS) {
+  if (cuMemAlloc(&source_data[2].cu_device_mems[0], width * height * 4) != CUDA_SUCCESS) {
     throw std::runtime_error("cuMemAlloc failed.");
   }
-  if (cuMemcpyHtoD(cu_device_mem_r8g8b8a8, host_mem_r8g8b8a8.get(), width * height * 4) !=
+  if (cuMemcpyHtoD(source_data[2].cu_device_mems[0],
+                   source_data[2].host_mems[0].get(),
+                   width * height * 4) != CUDA_SUCCESS) {
+    throw std::runtime_error("cuMemcpyHtoD failed.");
+  }
+  if (cuMemAlloc(&source_data[3].cu_device_mems[0], width * height) != CUDA_SUCCESS) {
+    throw std::runtime_error("cuMemAlloc failed.");
+  }
+  if (cuMemcpyHtoD(source_data[3].cu_device_mems[0],
+                   source_data[3].host_mems[0].get(),
+                   width * height) != CUDA_SUCCESS) {
+    throw std::runtime_error("cuMemcpyHtoD failed.");
+  }
+  if (cuMemAlloc(&source_data[3].cu_device_mems[1], (width / 2) * (height / 2) * 2) !=
       CUDA_SUCCESS) {
+    throw std::runtime_error("cuMemAlloc failed.");
+  }
+  if (cuMemcpyHtoD(source_data[3].cu_device_mems[1],
+                   source_data[3].host_mems[1].get(),
+                   (width / 2) * (height / 2) * 2) != CUDA_SUCCESS) {
     throw std::runtime_error("cuMemcpyHtoD failed.");
   }
 }
@@ -570,8 +591,8 @@ int main(int argc, char** argv) {
     if (benchmark_mode) {
       for (auto source : {Source::DEVICE, Source::HOST}) {
         current_source = source;
-        for (auto format_index : {2, 1, 0}) {
-          current_format_index = format_index;
+        for (current_format_index = 0; current_format_index < IM_ARRAYSIZE(format_items);
+             ++current_format_index) {
           start = std::chrono::steady_clock::time_point();
           do { tick(); } while (elapsed.count() < 2000);
           std::cout << current_source << " " << format_items[current_format_index] << " "

@@ -64,6 +64,16 @@ component_and_swizzle(HolovizOp::ImageFormat image_format) {
     case HolovizOp::ImageFormat::R8G8B8_UNORM:
     case HolovizOp::ImageFormat::R8G8B8_SNORM:
     case HolovizOp::ImageFormat::R8G8B8_SRGB:
+    case HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM:
+    case HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM:
+    case HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+    case HolovizOp::ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+    case HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+    case HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+    case HolovizOp::ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+    case HolovizOp::ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+    case HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+    case HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
       components = 3;
       component_swizzle[0] = viz::ComponentSwizzle::IDENTITY;
       component_swizzle[1] = viz::ComponentSwizzle::IDENTITY;
@@ -347,6 +357,64 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer
     }
 
     if (image_format == HolovizOp::ImageFormat::AUTO_DETECT) {
+      struct YuvFormat {
+        nvidia::gxf::VideoFormat color_format_;
+        HolovizOp::ImageFormat format_;
+        HolovizOp::YuvModelConversion yuv_model_conversion_;
+        HolovizOp::YuvRange yuv_range_;
+      };
+      constexpr YuvFormat kYuvVideoToHolovizFormats[] = {
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420,
+          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_601,
+          HolovizOp::YuvRange::ITU_NARROW},
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_ER,
+          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_601,
+          HolovizOp::YuvRange::ITU_FULL},
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_709,
+          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_709,
+          HolovizOp::YuvRange::ITU_NARROW},
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_709_ER,
+          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_709,
+          HolovizOp::YuvRange::ITU_FULL},
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12,
+          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_601,
+          HolovizOp::YuvRange::ITU_NARROW},
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_ER,
+          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_601,
+          HolovizOp::YuvRange::ITU_FULL},
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709,
+          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_709,
+          HolovizOp::YuvRange::ITU_NARROW},
+          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709_ER,
+          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+          HolovizOp::YuvModelConversion::YUV_709,
+          HolovizOp::YuvRange::ITU_FULL},
+      };
+
+      for (auto&& format : kYuvVideoToHolovizFormats) {
+        if (format.color_format_ == buffer_info.color_format) {
+          element_type = nvidia::gxf::PrimitiveType::kUnsigned8;
+          components = 3;
+          image_format = format.format_;
+          component_swizzle[0] = viz::ComponentSwizzle::IDENTITY;
+          component_swizzle[1] = viz::ComponentSwizzle::IDENTITY;
+          component_swizzle[2] = viz::ComponentSwizzle::IDENTITY;
+          component_swizzle[3] = viz::ComponentSwizzle::ONE;
+          yuv_model_conversion = format.yuv_model_conversion_;
+          yuv_range = format.yuv_range_;
+          break;
+        }
+      }
+    }
+
+    if (image_format == HolovizOp::ImageFormat::AUTO_DETECT) {
       HOLOSCAN_LOG_ERROR("Video buffer '{}': unsupported input format: '{}'\n",
                          video.name(),
                          static_cast<int64_t>(buffer_info.color_format));
@@ -372,6 +440,8 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer
   stride[0] = buffer_info.color_planes[0].stride;
   stride[1] = components;
   stride[2] = PrimitiveTypeSize(element_type);
+
+  color_planes = buffer_info.color_planes;
 
   return GXF_SUCCESS;
 }

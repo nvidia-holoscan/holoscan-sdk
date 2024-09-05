@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -408,8 +408,12 @@ TEST(Graphs, TestFlowTrackingForCycleWithSource) {
   tracker.print();
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("OneOut,TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos);
-  EXPECT_TRUE(log_output.find("TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneOut,TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, TestFlowTrackingForMiddleCycle) {
@@ -426,10 +430,18 @@ TEST(Graphs, TestFlowTrackingForMiddleCycle) {
   tracker.print();
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("OneOut,TwoInOneOut,OneInOneOut,PingRx") != std::string::npos);
-  EXPECT_TRUE(log_output.find("OneOut,TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos);
-  EXPECT_TRUE(log_output.find("TwoInOneOut,OneInOneOut,PingRx") != std::string::npos);
-  EXPECT_TRUE(log_output.find("TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneOut,TwoInOneOut,OneInOneOut,PingRx") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("OneOut,TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("TwoInOneOut,OneInOneOut,PingRx") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("TwoInOneOut,OneInOneOut,TwoInOneOut") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, TestFlowTrackingForCycleWithLeaf) {
@@ -446,8 +458,12 @@ TEST(Graphs, TestFlowTrackingForCycleWithLeaf) {
   tracker.print();
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("root,middle,leaf") != std::string::npos);
-  EXPECT_TRUE(log_output.find("root,middle,root") != std::string::npos);
+  EXPECT_TRUE(log_output.find("root,middle,leaf") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("root,middle,root") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, TestFlowTrackingForTwoRootsOneCycle) {
@@ -465,8 +481,12 @@ TEST(Graphs, TestFlowTrackingForTwoRootsOneCycle) {
 
   std::string log_output = testing::internal::GetCapturedStdout();
   EXPECT_TRUE(log_output.find("middle2,last,middle2") != std::string::npos);
-  EXPECT_TRUE(log_output.find("root1,middle1,middle2,last,middle2") != std::string::npos);
-  EXPECT_TRUE(log_output.find("root2,middle2,last,middle2") != std::string::npos);
+  EXPECT_TRUE(log_output.find("root1,middle1,middle2,last,middle2") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("root2,middle2,last,middle2") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, TestFlowTrackingForTwoCyclesVariant1) {
@@ -483,8 +503,12 @@ TEST(Graphs, TestFlowTrackingForTwoCyclesVariant1) {
   tracker.print();
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("middle,end,middle") != std::string::npos);
-  EXPECT_TRUE(log_output.find("middle,start,middle") != std::string::npos);
+  EXPECT_TRUE(log_output.find("middle,end,middle") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("middle,start,middle") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, TestFlowTrackingForTwoCyclesVariant2) {
@@ -501,15 +525,23 @@ TEST(Graphs, TestFlowTrackingForTwoCyclesVariant2) {
   tracker.print();
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("middle,end,middle") != std::string::npos);
-  EXPECT_TRUE(log_output.find("middle,start,middle") != std::string::npos);
+  EXPECT_TRUE(log_output.find("middle,end,middle") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("middle,start,middle") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
   // The following two paths have only two messages even though 5 messages are sent from the start
   // This is because no more than 2 messages could travel the following two loops.
   // The origin of the rest of the messages become middle node and they travel in the above two
   // loops.
-  EXPECT_TRUE(log_output.find("start,middle,end,middle") != std::string::npos);
-  EXPECT_TRUE(log_output.find("start,middle,start") != std::string::npos);
+  EXPECT_TRUE(log_output.find("start,middle,end,middle") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("start,middle,start") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

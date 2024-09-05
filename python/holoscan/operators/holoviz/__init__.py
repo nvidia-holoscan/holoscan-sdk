@@ -81,12 +81,38 @@ _holoviz_str_to_image_format = {
     "b8g8r8a8_srgb": _HolovizOp.ImageFormat.B8G8R8A8_SRGB,
     "a8b8g8r8_unorm_pack32": _HolovizOp.ImageFormat.A8B8G8R8_UNORM_PACK32,
     "a8b8g8r8_srgb_pack32": _HolovizOp.ImageFormat.A8B8G8R8_SRGB_PACK32,
+    "y8u8y8v8_422_unorm": _HolovizOp.ImageFormat.Y8U8Y8V8_422_UNORM,
+    "u8y8v8y8_422_unorm": _HolovizOp.ImageFormat.U8Y8V8Y8_422_UNORM,
+    "y8_u8v8_2plane_420_unorm": _HolovizOp.ImageFormat.Y8_U8V8_2PLANE_420_UNORM,
+    "y8_u8v8_2plane_422_unorm": _HolovizOp.ImageFormat.Y8_U8V8_2PLANE_422_UNORM,
+    "y8_u8_v8_3plane_420_unorm": _HolovizOp.ImageFormat.Y8_U8_V8_3PLANE_420_UNORM,
+    "y8_u8_v8_3plane_422_unorm": _HolovizOp.ImageFormat.Y8_U8_V8_3PLANE_422_UNORM,
+    "y16_u16v16_2plane_420_unorm": _HolovizOp.ImageFormat.Y16_U16V16_2PLANE_420_UNORM,
+    "y16_u16v16_2plane_422_unorm": _HolovizOp.ImageFormat.Y16_U16V16_2PLANE_422_UNORM,
+    "y16_u16_v16_3plane_420_unorm": _HolovizOp.ImageFormat.Y16_U16_V16_3PLANE_420_UNORM,
+    "y16_u16_v16_3plane_422_unorm": _HolovizOp.ImageFormat.Y16_U16_V16_3PLANE_422_UNORM,
 }
 
 _holoviz_str_to_depth_map_render_mode = {
     "points": _HolovizOp.DepthMapRenderMode.POINTS,
     "lines": _HolovizOp.DepthMapRenderMode.LINES,
     "triangles": _HolovizOp.DepthMapRenderMode.TRIANGLES,
+}
+
+_holoviz_str_to_yuv_model_conversion = {
+    "yuv_601": _HolovizOp.YuvModelConversion.YUV_601,
+    "yuv_709": _HolovizOp.YuvModelConversion.YUV_709,
+    "yuv_2020": _HolovizOp.YuvModelConversion.YUV_2020,
+}
+
+_holoviz_str_to_yuv_range = {
+    "itu_full": _HolovizOp.YuvRange.ITU_FULL,
+    "itu_narrow": _HolovizOp.YuvRange.ITU_NARROW,
+}
+
+_holoviz_str_to_chroma_location = {
+    "cosited_even": _HolovizOp.ChromaLocation.COSITED_EVEN,
+    "midpoint": _HolovizOp.ChromaLocation.MIDPOINT,
 }
 
 
@@ -172,6 +198,10 @@ class HolovizOp(_HolovizOp):
                 "line_width",
                 "point_size",
                 "text",
+                "yuv_model_conversion",
+                "yuv_range",
+                "x_chroma_location",
+                "y_chroma_location",
                 "depth_map_render_mode",
                 "views",
             }
@@ -221,6 +251,7 @@ class HolovizOp(_HolovizOp):
             else:
                 text = []
             ispec.text = tensor.get("text", text)
+
             if "depth_map_render_mode" in tensor:
                 depth_map_render_mode = tensor["depth_map_render_mode"]
                 if isinstance(depth_map_render_mode, str):
@@ -241,6 +272,82 @@ class HolovizOp(_HolovizOp):
             else:
                 depth_map_render_mode = _HolovizOp.DepthMapRenderMode.POINTS
             ispec.depth_map_render_mode = depth_map_render_mode
+
+            if "yuv_model_conversion" in tensor:
+                yuv_model_conversion = tensor["yuv_model_conversion"]
+                if isinstance(yuv_model_conversion, str):
+                    yuv_model_conversion.lower()
+                    if yuv_model_conversion not in _holoviz_str_to_yuv_model_conversion:
+                        raise ValueError(
+                            f"unrecognized yuv_model_conversion name: {yuv_model_conversion}"
+                        )
+                    yuv_model_conversion = _holoviz_str_to_yuv_model_conversion[
+                        yuv_model_conversion
+                    ]
+                elif not isinstance(input_type, _HolovizOp.YuvModelConversion):
+                    raise ValueError(
+                        "value corresponding to key 'yuv_model_conversion' must be either a "
+                        "HolovizOp.YuvModelConversion object or one of the following "
+                        f"strings: {tuple(_holoviz_str_to_yuv_model_conversion.keys())}"
+                    )
+            else:
+                yuv_model_conversion = _HolovizOp.YuvModelConversion.YUV_601
+            ispec.yuv_model_conversion = yuv_model_conversion
+
+            if "yuv_range" in tensor:
+                yuv_range = tensor["yuv_range"]
+                if isinstance(yuv_range, str):
+                    yuv_range.lower()
+                    if yuv_range not in _holoviz_str_to_yuv_range:
+                        raise ValueError(f"unrecognized yuv_range name: {yuv_range}")
+                    yuv_range = _holoviz_str_to_yuv_range[yuv_range]
+                elif not isinstance(input_type, _HolovizOp.YuvRange):
+                    raise ValueError(
+                        "value corresponding to key 'yuv_range' must be either a "
+                        "HolovizOp.YuvRange object or one of the following "
+                        f"strings: {tuple(_holoviz_str_to_yuv_range.keys())}"
+                    )
+            else:
+                yuv_range = _HolovizOp.YuvRange.ITU_FULL
+            ispec.yuv_range = yuv_range
+
+            if "x_chroma_location" in tensor:
+                x_chroma_location = tensor["x_chroma_location"]
+                if isinstance(x_chroma_location, str):
+                    x_chroma_location.lower()
+                    if x_chroma_location not in _holoviz_str_to_chroma_location:
+                        raise ValueError(
+                            f"unrecognized x_chroma_location name: {x_chroma_location}"
+                        )
+                    x_chroma_location = _holoviz_str_to_chroma_location[x_chroma_location]
+                elif not isinstance(input_type, _HolovizOp.ChromaLocation):
+                    raise ValueError(
+                        "value corresponding to key 'x_chroma_location' must be either a "
+                        "HolovizOp.ChromaLocation object or one of the following "
+                        f"strings: {tuple(_holoviz_str_to_chroma_location.keys())}"
+                    )
+            else:
+                x_chroma_location = _HolovizOp.ChromaLocation.COSITED_EVEN
+            ispec.x_chroma_location = x_chroma_location
+
+            if "y_chroma_location" in tensor:
+                y_chroma_location = tensor["y_chroma_location"]
+                if isinstance(y_chroma_location, str):
+                    y_chroma_location.lower()
+                    if y_chroma_location not in _holoviz_str_to_chroma_location:
+                        raise ValueError(
+                            f"unrecognized y_chroma_location name: {y_chroma_location}"
+                        )
+                    y_chroma_location = _holoviz_str_to_chroma_location[y_chroma_location]
+                elif not isinstance(input_type, _HolovizOp.ChromaLocation):
+                    raise ValueError(
+                        "value corresponding to key 'y_chroma_location' must be either a "
+                        "HolovizOp.ChromaLocation object or one of the following "
+                        f"strings: {tuple(_holoviz_str_to_chroma_location.keys())}"
+                    )
+            else:
+                y_chroma_location = _HolovizOp.ChromaLocation.COSITED_EVEN
+            ispec.y_chroma_location = y_chroma_location
 
             ispec.views = tensor.get("views", [])
 

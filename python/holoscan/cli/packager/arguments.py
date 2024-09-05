@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import logging
@@ -69,13 +69,14 @@ class PackagingArguments:
         self.build_parameters.uid = args.uid
         self.build_parameters.gid = args.gid
         self.build_parameters.build_cache = args.build_cache
-        self.build_parameters.config_file = args.config
+        self.build_parameters.app_config_file_path = args.config
         self.build_parameters.timeout = args.timeout if args.timeout else DefaultValues.TIMEOUT
         self.build_parameters.docs = args.docs if args.docs else None
         self.build_parameters.application = args.application
         self.build_parameters.no_cache = args.no_cache
         self.build_parameters.tarball_output = args.output
         self.build_parameters.cmake_args = args.cmake_args
+        self.build_parameters.includes = args.includes
 
         models = Models()
         platform = Platform(self._artifact_sources)

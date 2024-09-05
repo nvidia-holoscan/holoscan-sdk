@@ -168,7 +168,8 @@ py::object PyInputContext::py_receive(const std::string& name, const std::string
     int counter = 0;
     try {
       for (auto& any_item : any_result) {
-        if (any_item.type() == typeid(nullptr_t)) {
+        auto& item_type = any_item.type();
+        if (item_type == typeid(kNoReceivedMessage) || item_type == typeid(nullptr_t)) {
           // add None to the tuple
           PyTuple_SET_ITEM(result_tuple.ptr(), counter++, py::none().release().ptr());
           continue;

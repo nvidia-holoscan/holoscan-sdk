@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "holoscan/core/arg.hpp"
 #include "holoscan/core/metadata.hpp"
 
 #include "dummy_classes.hpp"
@@ -70,6 +71,29 @@ TEST(MetadataObject, TestSharedPtrAny) {
   // equivalent to use any_cast to shared_ptr<T> on the value
   auto val2 = std::any_cast<std::shared_ptr<DummyIntClass>>(metadata_shared.value());
   EXPECT_EQ(*val, *val2);
+}
+
+TEST(MetadataObject, TestArgConversion) {
+  std::vector<float> vec{1.0, 2.0, 4.0};
+  MetadataObject obj{vec};
+  EXPECT_EQ(typeid(vec), obj.value().type());
+
+  // can assign MetadataObject.value() to Arg
+  Arg a{"v"};
+  // need any_cast here if we want ArgType enums to be set correctly
+  a = std::any_cast<std::vector<float>>(obj.value());
+  auto arg_type = a.arg_type();
+  EXPECT_EQ(arg_type.element_type(), ArgElementType::kFloat32);
+  EXPECT_EQ(arg_type.container_type(), ArgContainerType::kVector);
+
+  // // can pass Arg.value() to MetadataObject.set_value() without std::any_cast
+  MetadataObject obj2;
+  obj2.set_value(a.value());
+  EXPECT_EQ(typeid(vec), obj2.value().type());
+  auto vec2 = std::any_cast<std::vector<float>>(obj2.value());
+  EXPECT_EQ(vec[0], vec2[0]);
+  EXPECT_EQ(vec[1], vec2[1]);
+  EXPECT_EQ(vec[2], vec2[2]);
 }
 
 TEST(MetadataDictionary, TestConstructor) {
@@ -163,13 +187,10 @@ TEST(MetadataDictionary, TestMetadataPolicy) {
   MetadataDictionary d{};
 
   d.set("patient name", "John Doe"s);
-  EXPECT_EQ(d.policy(), MetadataPolicy::kUpdate);
-  EXPECT_EQ(d.get<std::string>("patient name"), "John Doe"s);
+  EXPECT_EQ(d.policy(), MetadataPolicy::kRaise);
 
   // raise if new value is provided for existing key
-  d.policy(MetadataPolicy::kRaise);
   EXPECT_THROW(d.set("patient name", "Mr. Smith"s), std::runtime_error);
-  EXPECT_EQ(d.policy(), MetadataPolicy::kRaise);
 
   // reject new value
   d.policy(MetadataPolicy::kReject);

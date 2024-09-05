@@ -138,61 +138,58 @@ PYBIND11_MODULE(_holoviz, m) {
 
   py::class_<HolovizOp, PyHolovizOp, Operator, std::shared_ptr<HolovizOp>> holoviz_op(
       m, "HolovizOp", doc::HolovizOp::doc_HolovizOp);
-  holoviz_op
-      .def(py::init<Fragment*,
-                    const py::args&,
-                    std::shared_ptr<::holoscan::Allocator>,
-                    std::vector<holoscan::IOSpec*>,
-                    const std::vector<HolovizOp::InputSpec>&,
-                    const std::vector<std::vector<float>>&,
-                    const std::string&,
-                    const std::string&,
-                    uint32_t,
-                    uint32_t,
-                    uint32_t,
-                    bool,
-                    bool,
-                    bool,
-                    bool,
-                    bool,
-                    bool,
-                    bool,
-                    bool,
-                    const std::string&,
-                    const std::array<float, 3>&,
-                    const std::array<float, 3>&,
-                    const std::array<float, 3>&,
-                    const std::string&,
-                    std::shared_ptr<holoscan::CudaStreamPool>,
-                    const std::string&>(),
-           "fragment"_a,
-           "allocator"_a,
-           "receivers"_a = std::vector<holoscan::IOSpec*>(),
-           "tensors"_a = std::vector<HolovizOp::InputSpec>(),
-           "color_lut"_a = std::vector<std::vector<float>>(),
-           "window_title"_a = "Holoviz",
-           "display_name"_a = "",
-           "width"_a = 1920,
-           "height"_a = 1080,
-           "framerate"_a = 60,
-           "use_exclusive_display"_a = false,
-           "fullscreen"_a = false,
-           "headless"_a = false,
-           "framebuffer_srgb"_a = false,
-           "vsync"_a = false,
-           "enable_render_buffer_input"_a = false,
-           "enable_render_buffer_output"_a = false,
-           "enable_camera_pose_output"_a = false,
-           "camera_pose_output_type"_a = "projection_matrix",
-           "camera_eye"_a = std::array<float, 3>{0.f, 0.f, 1.f},
-           "camera_look_at"_a = std::array<float, 3>{0.f, 0.f, 0.f},
-           "camera_up"_a = std::array<float, 3>{0.f, 1.f, 1.f},
-           "font_path"_a = "",
-           "cuda_stream_pool"_a = py::none(),
-           "name"_a = "holoviz_op"s,
-           doc::HolovizOp::doc_HolovizOp)
-      .def("initialize", &HolovizOp::initialize, doc::HolovizOp::doc_initialize)
-      .def("setup", &HolovizOp::setup, "spec"_a, doc::HolovizOp::doc_setup);
+  holoviz_op.def(py::init<Fragment*,
+                          const py::args&,
+                          std::shared_ptr<::holoscan::Allocator>,
+                          std::vector<holoscan::IOSpec*>,
+                          const std::vector<HolovizOp::InputSpec>&,
+                          const std::vector<std::vector<float>>&,
+                          const std::string&,
+                          const std::string&,
+                          uint32_t,
+                          uint32_t,
+                          uint32_t,
+                          bool,
+                          bool,
+                          bool,
+                          bool,
+                          bool,
+                          bool,
+                          bool,
+                          bool,
+                          const std::string&,
+                          const std::array<float, 3>&,
+                          const std::array<float, 3>&,
+                          const std::array<float, 3>&,
+                          const std::string&,
+                          std::shared_ptr<holoscan::CudaStreamPool>,
+                          const std::string&>(),
+                 "fragment"_a,
+                 "allocator"_a,
+                 "receivers"_a = std::vector<holoscan::IOSpec*>(),
+                 "tensors"_a = std::vector<HolovizOp::InputSpec>(),
+                 "color_lut"_a = std::vector<std::vector<float>>(),
+                 "window_title"_a = "Holoviz",
+                 "display_name"_a = "",
+                 "width"_a = 1920,
+                 "height"_a = 1080,
+                 "framerate"_a = 60,
+                 "use_exclusive_display"_a = false,
+                 "fullscreen"_a = false,
+                 "headless"_a = false,
+                 "framebuffer_srgb"_a = false,
+                 "vsync"_a = false,
+                 "enable_render_buffer_input"_a = false,
+                 "enable_render_buffer_output"_a = false,
+                 "enable_camera_pose_output"_a = false,
+                 "camera_pose_output_type"_a = "projection_matrix",
+                 "camera_eye"_a = std::array<float, 3>{0.f, 0.f, 1.f},
+                 "camera_look_at"_a = std::array<float, 3>{0.f, 0.f, 0.f},
+                 "camera_up"_a = std::array<float, 3>{0.f, 1.f, 1.f},
+                 "font_path"_a = "",
+                 "cuda_stream_pool"_a = py::none(),
+                 "name"_a = "holoviz_op"s,
+                 doc::HolovizOp::doc_HolovizOp);
 
   py::enum_<HolovizOp::InputType>(holoviz_op, "InputType")
       .value("UNKNOWN", HolovizOp::InputType::UNKNOWN)
@@ -246,7 +243,30 @@ PYBIND11_MODULE(_holoviz, m) {
       .value("B8G8R8A8_UNORM", HolovizOp::ImageFormat::B8G8R8A8_UNORM)
       .value("B8G8R8A8_SRGB", HolovizOp::ImageFormat::B8G8R8A8_SRGB)
       .value("A8B8G8R8_UNORM_PACK32", HolovizOp::ImageFormat::A8B8G8R8_UNORM_PACK32)
-      .value("A8B8G8R8_SRGB_PACK32", HolovizOp::ImageFormat::A8B8G8R8_SRGB_PACK32);
+      .value("A8B8G8R8_SRGB_PACK32", HolovizOp::ImageFormat::A8B8G8R8_SRGB_PACK32)
+      .value("Y8U8Y8V8_422_UNORM", HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM)
+      .value("U8Y8V8Y8_422_UNORM", HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM)
+      .value("Y8_U8V8_2PLANE_420_UNORM", HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM)
+      .value("Y8_U8V8_2PLANE_422_UNORM", HolovizOp::ImageFormat::Y8_U8V8_2PLANE_422_UNORM)
+      .value("Y8_U8_V8_3PLANE_420_UNORM", HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM)
+      .value("Y8_U8_V8_3PLANE_422_UNORM", HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM)
+      .value("Y16_U16V16_2PLANE_420_UNORM", HolovizOp::ImageFormat::Y16_U16V16_2PLANE_420_UNORM)
+      .value("Y16_U16V16_2PLANE_422_UNORM", HolovizOp::ImageFormat::Y16_U16V16_2PLANE_422_UNORM)
+      .value("Y16_U16_V16_3PLANE_420_UNORM", HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM)
+      .value("Y16_U16_V16_3PLANE_422_UNORM", HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM);
+
+  py::enum_<HolovizOp::YuvModelConversion>(holoviz_op, "YuvModelConversion")
+      .value("YUV_601", HolovizOp::YuvModelConversion::YUV_601)
+      .value("YUV_709", HolovizOp::YuvModelConversion::YUV_709)
+      .value("YUV_2020", HolovizOp::YuvModelConversion::YUV_2020);
+
+  py::enum_<HolovizOp::YuvRange>(holoviz_op, "YuvRange")
+      .value("ITU_FULL", HolovizOp::YuvRange::ITU_FULL)
+      .value("ITU_NARROW", HolovizOp::YuvRange::ITU_NARROW);
+
+  py::enum_<HolovizOp::ChromaLocation>(holoviz_op, "ChromaLocation")
+      .value("COSITED_EVEN", HolovizOp::ChromaLocation::COSITED_EVEN)
+      .value("MIDPOINT", HolovizOp::ChromaLocation::MIDPOINT);
 
   py::enum_<HolovizOp::DepthMapRenderMode>(holoviz_op, "DepthMapRenderMode")
       .value("POINTS", HolovizOp::DepthMapRenderMode::POINTS)
@@ -267,6 +287,10 @@ PYBIND11_MODULE(_holoviz, m) {
       .def_readwrite("line_width", &HolovizOp::InputSpec::line_width_)
       .def_readwrite("point_size", &HolovizOp::InputSpec::point_size_)
       .def_readwrite("text", &HolovizOp::InputSpec::text_)
+      .def_readwrite("yuv_model_conversion", &HolovizOp::InputSpec::yuv_model_conversion_)
+      .def_readwrite("yuv_range", &HolovizOp::InputSpec::yuv_range_)
+      .def_readwrite("x_chroma_location", &HolovizOp::InputSpec::x_chroma_location_)
+      .def_readwrite("y_chroma_location", &HolovizOp::InputSpec::y_chroma_location_)
       .def_readwrite("depth_map_render_mode", &HolovizOp::InputSpec::depth_map_render_mode_)
       .def_readwrite("views", &HolovizOp::InputSpec::views_)
       .def("description",

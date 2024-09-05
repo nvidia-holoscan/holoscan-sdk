@@ -45,12 +45,22 @@ nvidia::gxf::StdEntitySerializer* StdEntitySerializer::get() const {
 void StdEntitySerializer::initialize() {
   // Set up prerequisite parameters before calling GXFOperator::initialize()
   auto frag = fragment();
-  auto component_serializer =
-      frag->make_resource<holoscan::StdComponentSerializer>("std_component_serializer");
-  component_serializer->gxf_cname(component_serializer->name().c_str());
-  if (gxf_eid_ != 0) { component_serializer->gxf_eid(gxf_eid_); }
-  add_arg(Arg("component_serializers") =
-              std::vector<std::shared_ptr<Resource>>{component_serializer});
+
+  auto has_component_serializers = std::find_if(args().begin(), args().end(), [](const auto& arg) {
+    return (arg.name() == "component_serializers");
+  });
+  if (has_component_serializers == args().end()) {
+    HOLOSCAN_LOG_TRACE(
+        "StdEntitySerializer: component_serializers argument not found, using default.");
+    auto component_serializer =
+        frag->make_resource<holoscan::StdComponentSerializer>("std_component_serializer");
+    component_serializer->gxf_cname(component_serializer->name().c_str());
+    if (gxf_eid_ != 0) { component_serializer->gxf_eid(gxf_eid_); }
+    add_arg(Arg("component_serializers") =
+                std::vector<std::shared_ptr<Resource>>{component_serializer});
+  } else {
+    HOLOSCAN_LOG_TRACE("StdEntitySerializer: component_serializers argument found");
+  }
 
   GXFResource::initialize();
 }

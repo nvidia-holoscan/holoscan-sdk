@@ -33,6 +33,7 @@
 #include "holoscan/core/expected.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/entity.hpp"
+#include "holoscan/core/metadata.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
@@ -145,6 +146,15 @@ void init_operator(py::module_& m) {
       .def_property_readonly("resources", &Operator::resources, doc::Operator::doc_resources)
       .def_property_readonly(
           "operator_type", &Operator::operator_type, doc::Operator::doc_operator_type)
+      .def_property_readonly(
+          "metadata", py::overload_cast<>(&Operator::metadata), doc::Operator::doc_metadata)
+      .def_property_readonly("is_metadata_enabled",
+                             py::overload_cast<>(&Operator::is_metadata_enabled),
+                             doc::Operator::doc_is_metadata_enabled)
+      .def_property("metadata_policy",
+                    py::overload_cast<>(&Operator::metadata_policy, py::const_),
+                    py::overload_cast<MetadataPolicy>(&Operator::metadata_policy),
+                    doc::Operator::doc_metadata_policy)
       .def(
           "resource",
           [](Operator& op, const py::str& name) -> std::optional<py::object> {
@@ -573,13 +583,21 @@ void PyOperator::initialize() {
   // Get the initialize method of the Python Operator class and call it
   py::gil_scoped_acquire scope_guard;
 
+  // Call the parent class's `initialize()` method to set up the operator arguments so that
+  // parameters can be accessed in the `initialize()` method of the Python Operator class.
+  //
+  // In C++, this call is made in the `initialize()` method (usually at the end of the method)
+  // of the inheriting Operator class, using `Operator::initialize()` call.
+  // In Python, the user doesn't have to call the parent class's `initialize()` method explicitly.
+  // If there is a need to initialize something (such as adding arguments), it can be done
+  // directly in the `__init__` method of the Python class inheriting from the Operator class before
+  // calling the parent class's `__init__` method using
+  // `super().__init__(fragment, *args, **kwargs)`.
+  Operator::initialize();
+
   set_py_tracing();
 
   py_initialize_.operator()();
-
-  // Call the parent class's initialize method after invoking the Python Operator's initialize
-  // method.
-  Operator::initialize();
 }
 
 void PyOperator::start() {

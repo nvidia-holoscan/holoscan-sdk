@@ -64,6 +64,7 @@ namespace holoscan::ops {
  * - **width**: Width of the video stream. Optional (default: `1920`).
  * - **height**: Height of the video stream. Optional (default: `1080`).
  * - **framerate**: Frame rate of the video stream. Optional (default: `60`).
+ * - **interlaced**: Whether the frame is interlaced (true) or progressive (false). Optional (default: `false`).
  * - **rdma**: Boolean indicating whether RDMA is enabled. Optional (default: `false`).
  * - **enable_overlay**: Boolean indicating whether a separate overlay channel is enabled. Optional
  *   (default: `false`).
@@ -103,6 +104,7 @@ class AJASourceOp : public holoscan::Operator {
   Parameter<uint32_t> width_;
   Parameter<uint32_t> height_;
   Parameter<uint32_t> framerate_;
+  Parameter<bool> interlaced_;
   Parameter<bool> use_rdma_;
   Parameter<bool> enable_overlay_;
   Parameter<NTV2Channel> overlay_channel_;
@@ -113,7 +115,7 @@ class AJASourceOp : public holoscan::Operator {
   // internal state
   CNTV2Card device_;
   NTV2DeviceID device_id_ = DEVICE_ID_NOTFOUND;
-  NTV2VideoFormat video_format_ = NTV2_FORMAT_1080p_6000_A;
+  NTV2VideoFormat video_format_ = NTV2_FORMAT_UNKNOWN;
   NTV2PixelFormat pixel_format_ = NTV2_FBF_ABGR;
   bool use_tsi_ = false;
   bool is_kona_hdmi_ = false;

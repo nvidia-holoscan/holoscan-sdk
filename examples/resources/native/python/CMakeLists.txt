@@ -30,6 +30,13 @@ install(FILES
     COMPONENT "holoscan-examples"
 )
 
+# Install the minimal CMakeLists.txt file
+install(FILES CMakeLists.min.txt
+  RENAME "CMakeLists.txt"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_RESOURCES_PYTHON_NATIVE_RESOURCE_TEST

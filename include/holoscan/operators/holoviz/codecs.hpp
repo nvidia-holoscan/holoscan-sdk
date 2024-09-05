@@ -173,6 +173,25 @@ struct codec<ops::HolovizOp::InputSpec> {
     if (!maybe_size) { forward_error(maybe_size); }
     total_size += maybe_size.value();
 
+    maybe_size = serialize_trivial_type<ops::HolovizOp::YuvModelConversion>(
+        spec.yuv_model_conversion_, endpoint);
+    if (!maybe_size) { forward_error(maybe_size); }
+    total_size += maybe_size.value();
+
+    maybe_size = serialize_trivial_type<ops::HolovizOp::YuvRange>(spec.yuv_range_, endpoint);
+    if (!maybe_size) { forward_error(maybe_size); }
+    total_size += maybe_size.value();
+
+    maybe_size =
+        serialize_trivial_type<ops::HolovizOp::ChromaLocation>(spec.x_chroma_location_, endpoint);
+    if (!maybe_size) { forward_error(maybe_size); }
+    total_size += maybe_size.value();
+
+    maybe_size =
+        serialize_trivial_type<ops::HolovizOp::ChromaLocation>(spec.y_chroma_location_, endpoint);
+    if (!maybe_size) { forward_error(maybe_size); }
+    total_size += maybe_size.value();
+
     maybe_size = codec<std::vector<float>>::serialize(spec.color_, endpoint);
     if (!maybe_size) { forward_error(maybe_size); }
     total_size += maybe_size.value();
@@ -223,6 +242,23 @@ struct codec<ops::HolovizOp::InputSpec> {
     auto image_format = deserialize_trivial_type<ops::HolovizOp::ImageFormat>(endpoint);
     if (!image_format) { forward_error(image_format); }
     out.image_format_ = image_format.value();
+
+    auto yuv_model_conversion =
+        deserialize_trivial_type<ops::HolovizOp::YuvModelConversion>(endpoint);
+    if (!yuv_model_conversion) { forward_error(image_format); }
+    out.yuv_model_conversion_ = yuv_model_conversion.value();
+
+    auto yuv_range = deserialize_trivial_type<ops::HolovizOp::YuvRange>(endpoint);
+    if (!yuv_range) { forward_error(image_format); }
+    out.yuv_range_ = yuv_range.value();
+
+    auto x_chroma_location = deserialize_trivial_type<ops::HolovizOp::ChromaLocation>(endpoint);
+    if (!x_chroma_location) { forward_error(image_format); }
+    out.x_chroma_location_ = x_chroma_location.value();
+
+    auto y_chroma_location = deserialize_trivial_type<ops::HolovizOp::ChromaLocation>(endpoint);
+    if (!y_chroma_location) { forward_error(image_format); }
+    out.y_chroma_location_ = y_chroma_location.value();
 
     auto color = codec<std::vector<float>>::deserialize(endpoint);
     if (!color) { forward_error(color); }

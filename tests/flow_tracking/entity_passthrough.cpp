@@ -130,7 +130,9 @@ TEST(Graphs, TestFlowTrackingWithEntityPassthrough) {
   tracker.print();
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("OneOut,OneInOneOut,OneIn") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneOut,OneInOneOut,OneIn") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

@@ -19,6 +19,7 @@
 #define MODULES_HOLOVIZ_SRC_VULKAN_RESOURCE_HPP
 
 #include <memory>
+#include <vector>
 
 #include <nvvk/commands_vk.hpp>
 #include <nvvk/resourceallocator_vk.hpp>
@@ -29,11 +30,13 @@
 
 namespace holoscan::viz {
 
+class Vulkan;
+
 /// Resource base class. Can be shared between CUDA and Vulkan. Access to the resource is
 /// synchronized with semaphores.
 class Resource {
  public:
-  explicit Resource(vk::Device device, nvvk::ResourceAllocator* alloc);
+  explicit Resource(Vulkan* vulkan, nvvk::ResourceAllocator* alloc);
   Resource() = delete;
   virtual ~Resource();
 
@@ -58,6 +61,11 @@ class Resource {
    */
   void end_access_with_cuda(CUstream stream);
 
+  /**
+   * Wait for the access fence to be triggered.
+   */
+  void wait();
+
   /// access state
   enum class AccessState {
     /// not accessed yet
@@ -69,18 +77,14 @@ class Resource {
   };
   AccessState state_ = AccessState::UNKNOWN;
 
-  /// last usage of the texture, need to sync before destroying memory
+  /// last usage of the resource, need to sync before destroying memory
   vk::Fence fence_ = nullptr;
 
  protected:
-  UniqueCUexternalMemory external_mem_;
+  std::vector<UniqueCUexternalMemory> external_mems_;
 
-  const vk::Device device_;
+  Vulkan* const vulkan_;
   nvvk::ResourceAllocator* const alloc_;
-
-  CudaService* cuda_service_ = nullptr;
-
-  void destroy();
 
   void import_to_cuda(const std::unique_ptr<CudaService>& cuda_service,
                       const nvvk::MemAllocator::MemInfo& mem_info);

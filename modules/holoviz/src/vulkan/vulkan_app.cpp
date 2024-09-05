@@ -82,6 +82,7 @@ class Vulkan::Impl {
 
   Window* get_window() const;
   CudaService* get_cuda_service() const;
+  vk::Device get_device() const;
   std::vector<SurfaceFormat> get_surface_formats() const;
   std::vector<PresentMode> get_present_modes() const;
 
@@ -101,20 +102,17 @@ class Vulkan::Impl {
 
   void set_viewport(float x, float y, float width, float height);
 
-  Texture* create_texture_for_cuda_interop(uint32_t width, uint32_t height, ImageFormat format,
-                                           const vk::ComponentMapping& component_mapping,
-                                           vk::Filter filter, bool normalized);
-  Texture* create_texture(uint32_t width, uint32_t height, ImageFormat format, size_t data_size,
-                          const void* data, const vk::ComponentMapping& component_mapping,
-                          vk::Filter filter, bool normalized, bool export_allocation);
+  std::unique_ptr<Texture> create_texture(Vulkan* vulkan, const CreateTextureArgs& args);
 
-  void upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, Texture* texture,
-                         CUstream stream);
-  void upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture);
+  void upload_to_texture(Texture* texture, const std::array<const void*, 3>& host_ptr,
+                         const std::array<size_t, 3>& row_pitch);
+  void upload_to_texture(Texture* texture, const std::array<Buffer*, 3>& buffers);
 
-  Buffer* create_buffer_for_cuda_interop(size_t data_size, vk::BufferUsageFlags usage);
-  Buffer* create_buffer(size_t data_size, vk::BufferUsageFlags usage,
-                        bool export_allocation = false, const void* data = nullptr);
+  std::unique_ptr<Buffer> create_buffer_for_cuda_interop(Vulkan* vulkan, size_t data_size,
+                                                         vk::BufferUsageFlags usage);
+  std::unique_ptr<Buffer> create_buffer(Vulkan* vulkan, size_t data_size,
+                                        vk::BufferUsageFlags usage, bool export_allocation = false,
+                                        const void* data = nullptr);
 
   void upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer, size_t dst_offset,
                         CUstream stream);
@@ -145,13 +143,15 @@ class Vulkan::Impl {
                     const std::array<float, 4>& color, float point_size, float line_width,
                     const nvmath::mat4f& view_matrix);
 
-  void read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
-                        CUdeviceptr device_ptr, CUstream stream, size_t row_pitch);
+  void read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t width, uint32_t height,
+                        size_t buffer_size, CUdeviceptr device_ptr, CUstream stream,
+                        size_t row_pitch);
 
  private:
   void init_im_gui(const std::string& font_path, float font_size_in_pixels);
   void create_framebuffer_sequence();
   void create_render_pass();
+  void create_pipelines();
 
   /**
    * Create all the framebuffers in which the image will be rendered
@@ -294,10 +294,7 @@ class Vulkan::Impl {
   nvvk::DescriptorSetBindings desc_set_layout_bind_;
   vk::UniqueDescriptorSetLayout desc_set_layout_;
 
-  nvvk::DescriptorSetBindings desc_set_layout_bind_imgui_;
   vk::UniqueDescriptorSetLayout desc_set_layout_imgui_;
-  vk::UniqueDescriptorPool desc_pool_imgui_;
-  vk::DescriptorSet desc_set_imgui_;
   vk::Sampler sampler_imgui_;
 
   vk::UniquePipeline image_pipeline_;
@@ -337,12 +334,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   window_ = window;
 
   // Initialize instance independent function pointers
-  {
-    vk::DynamicLoader dl;
-    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr =
-        dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
-  }
+  VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
 #ifdef NDEBUG
   nvvk::ContextCreateInfo context_info;
@@ -374,6 +366,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   line_rasterization_feature_.smoothLines = true;
   context_info.addDeviceExtension(
       VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME, true /*optional*/, &line_rasterization_feature_);
+  context_info.addDeviceExtension(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME);
 
   // Creating Vulkan base application
   if (!nvvk_.vk_ctx_.initInstance(context_info)) {
@@ -478,25 +471,25 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
 
   // create the descriptor sets
   desc_set_layout_bind_.addBinding(SAMPLE_BINDING_COLOR,
-                                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   vk::DescriptorType::eCombinedImageSampler,
                                    1,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT);
+                                   vk::ShaderStageFlagBits::eFragment);
   desc_set_layout_bind_.addBinding(SAMPLE_BINDING_COLOR_U,
-                                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   vk::DescriptorType::eCombinedImageSampler,
                                    1,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT);
+                                   vk::ShaderStageFlagBits::eFragment);
   desc_set_layout_bind_.addBinding(SAMPLE_BINDING_COLOR_S,
-                                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   vk::DescriptorType::eCombinedImageSampler,
                                    1,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT);
+                                   vk::ShaderStageFlagBits::eFragment);
   desc_set_layout_bind_.addBinding(SAMPLE_BINDING_LUT,
-                                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   vk::DescriptorType::eCombinedImageSampler,
                                    1,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT);
+                                   vk::ShaderStageFlagBits::eFragment);
   desc_set_layout_bind_.addBinding(SAMPLE_BINDING_DEPTH,
-                                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   vk::DescriptorType::eCombinedImageSampler,
                                    1,
-                                   VK_SHADER_STAGE_FRAGMENT_BIT);
+                                   vk::ShaderStageFlagBits::eFragment);
   // since we have one fragment shader for all the different texture types and dynamically
   // fetch from the right texture allow partially bound descriptor bindings (for example, when
   // color_u is used, color and colors_s are not bound)
@@ -528,17 +521,14 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     info.maxAnisotropy = 1.0f;
     sampler_imgui_ = nvvk_.alloc_.acquireSampler(info);
   }
-  desc_set_layout_bind_imgui_.addBinding(SAMPLE_BINDING_COLOR,
-                                         vk::DescriptorType::eCombinedImageSampler,
-                                         1,
-                                         vk::ShaderStageFlagBits::eFragment,
-                                         &sampler_imgui_);
+  nvvk::DescriptorSetBindings desc_set_layout_bind_imgui;
+  desc_set_layout_bind_imgui.addBinding(SAMPLE_BINDING_COLOR,
+                                        vk::DescriptorType::eCombinedImageSampler,
+                                        1,
+                                        vk::ShaderStageFlagBits::eFragment,
+                                        &sampler_imgui_);
   desc_set_layout_imgui_ =
-      vk::UniqueDescriptorSetLayout(desc_set_layout_bind_imgui_.createLayout(device_), device_);
-  desc_pool_imgui_ =
-      vk::UniqueDescriptorPool(desc_set_layout_bind_imgui_.createPool(device_), device_);
-  desc_set_imgui_ =
-      nvvk::allocateDescriptorSet(device_, desc_pool_imgui_.get(), desc_set_layout_imgui_.get());
+      vk::UniqueDescriptorSetLayout(desc_set_layout_bind_imgui.createLayout(device_), device_);
 
   // Push constants
   vk::PushConstantRange push_constant_ranges[2];
@@ -560,23 +550,6 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     image_pipeline_layout_ = device_.createPipelineLayoutUnique(create_info);
   }
 
-  const std::vector<vk::VertexInputBindingDescription> binding_description_float_3{
-      {0, sizeof(float) * 3, vk::VertexInputRate::eVertex}};
-  const std::vector<vk::VertexInputAttributeDescription> attribute_description_float_3{
-      {0, 0, vk::Format::eR32G32B32Sfloat, 0}};
-
-  // Create the Pipeline
-  image_pipeline_ =
-      create_pipeline(image_pipeline_layout_.get(),
-                      image_shader_glsl_vert,
-                      sizeof(image_shader_glsl_vert) / sizeof(image_shader_glsl_vert[0]),
-                      image_shader_glsl_frag,
-                      sizeof(image_shader_glsl_frag) / sizeof(image_shader_glsl_frag[0]),
-                      vk::PrimitiveTopology::eTriangleList,
-                      {},
-                      binding_description_float_3,
-                      attribute_description_float_3);
-
   // create the pipeline layout for geometry
   {
     vk::PipelineLayoutCreateInfo create_info;
@@ -584,94 +557,6 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     create_info.pPushConstantRanges = push_constant_ranges;
     geometry_pipeline_layout_ = device_.createPipelineLayoutUnique(create_info);
   }
-
-  geometry_point_pipeline_ =
-      create_pipeline(geometry_pipeline_layout_.get(),
-                      geometry_shader_glsl_vert,
-                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
-                      geometry_shader_glsl_frag,
-                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-                      vk::PrimitiveTopology::ePointList,
-                      {},
-                      binding_description_float_3,
-                      attribute_description_float_3);
-  geometry_line_pipeline_ =
-      create_pipeline(geometry_pipeline_layout_.get(),
-                      geometry_shader_glsl_vert,
-                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
-                      geometry_shader_glsl_frag,
-                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-                      vk::PrimitiveTopology::eLineList,
-                      {vk::DynamicState::eLineWidth},
-                      binding_description_float_3,
-                      attribute_description_float_3);
-  geometry_line_strip_pipeline_ =
-      create_pipeline(geometry_pipeline_layout_.get(),
-                      geometry_shader_glsl_vert,
-                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
-                      geometry_shader_glsl_frag,
-                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-                      vk::PrimitiveTopology::eLineStrip,
-                      {vk::DynamicState::eLineWidth},
-                      binding_description_float_3,
-                      attribute_description_float_3);
-  geometry_triangle_pipeline_ =
-      create_pipeline(geometry_pipeline_layout_.get(),
-                      geometry_shader_glsl_vert,
-                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
-                      geometry_shader_glsl_frag,
-                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-                      vk::PrimitiveTopology::eTriangleList,
-                      {},
-                      binding_description_float_3,
-                      attribute_description_float_3);
-
-  const std::vector<vk::VertexInputBindingDescription> binding_description_float_3_uint8_4{
-      {0, sizeof(float) * 3, vk::VertexInputRate::eVertex},
-      {1, sizeof(uint8_t) * 4, vk::VertexInputRate::eVertex}};
-  const std::vector<vk::VertexInputAttributeDescription> attribute_description_float_3_uint8_4{
-      {0, 0, vk::Format::eR32G32B32Sfloat, 0}, {1, 1, vk::Format::eR8G8B8A8Unorm, 0}};
-
-  geometry_point_color_pipeline_ = create_pipeline(
-      geometry_pipeline_layout_.get(),
-      geometry_color_shader_glsl_vert,
-      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
-      geometry_shader_glsl_frag,
-      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-      vk::PrimitiveTopology::ePointList,
-      {},
-      binding_description_float_3_uint8_4,
-      attribute_description_float_3_uint8_4);
-  geometry_line_color_pipeline_ = create_pipeline(
-      geometry_pipeline_layout_.get(),
-      geometry_color_shader_glsl_vert,
-      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
-      geometry_shader_glsl_frag,
-      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-      vk::PrimitiveTopology::eLineList,
-      {vk::DynamicState::eLineWidth},
-      binding_description_float_3_uint8_4,
-      attribute_description_float_3_uint8_4);
-  geometry_line_strip_color_pipeline_ = create_pipeline(
-      geometry_pipeline_layout_.get(),
-      geometry_color_shader_glsl_vert,
-      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
-      geometry_shader_glsl_frag,
-      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-      vk::PrimitiveTopology::eLineStrip,
-      {vk::DynamicState::eLineWidth},
-      binding_description_float_3_uint8_4,
-      attribute_description_float_3_uint8_4);
-  geometry_triangle_color_pipeline_ = create_pipeline(
-      geometry_pipeline_layout_.get(),
-      geometry_color_shader_glsl_vert,
-      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
-      geometry_shader_glsl_frag,
-      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
-      vk::PrimitiveTopology::eTriangleList,
-      {},
-      binding_description_float_3_uint8_4,
-      attribute_description_float_3_uint8_4);
 
   // create the pipeline layout for imgui
   {
@@ -683,27 +568,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     imgui_pipeline_layout_ = device_.createPipelineLayoutUnique(create_info);
   }
 
-  const std::vector<vk::VertexInputBindingDescription> binding_description_imgui{
-      {0, sizeof(ImDrawVert), vk::VertexInputRate::eVertex}};
-  const std::vector<vk::VertexInputAttributeDescription> attribute_description_imgui{
-      {0, 0, vk::Format::eR32G32Sfloat, IM_OFFSETOF(ImDrawVert, pos)},
-      {1, 0, vk::Format::eR32G32Sfloat, IM_OFFSETOF(ImDrawVert, uv)},
-      {2, 0, vk::Format::eR8G8B8A8Unorm, IM_OFFSETOF(ImDrawVert, col)}};
-
-  imgui_pipeline_ =
-      create_pipeline(imgui_pipeline_layout_.get(),
-                      imgui_shader_glsl_vert,
-                      sizeof(imgui_shader_glsl_vert) / sizeof(imgui_shader_glsl_vert[0]),
-                      imgui_shader_glsl_frag,
-                      sizeof(imgui_shader_glsl_frag) / sizeof(imgui_shader_glsl_frag[0]),
-                      vk::PrimitiveTopology::eTriangleList,
-                      {},
-                      binding_description_imgui,
-                      attribute_description_imgui,
-                      // There is depth buffer fighting when enabling depth writes for imgui
-                      // probably because things are just drawn on top of each other. Therefore
-                      // disable depth writes.
-                      false /*depth_write_enable*/);
+  create_pipelines();
 
   // ImGui initialization
   init_im_gui(font_path, font_size_in_pixels);
@@ -720,6 +585,10 @@ CudaService* Vulkan::Impl::get_cuda_service() const {
   return cuda_service_.get();
 }
 
+vk::Device Vulkan::Impl::get_device() const {
+  return device_;
+}
+
 std::vector<SurfaceFormat> Vulkan::Impl::get_surface_formats() const {
   return fb_sequence_->get_surface_formats();
 }
@@ -734,6 +603,7 @@ void Vulkan::Impl::set_surface_format(SurfaceFormat surface_format) {
       create_framebuffer_sequence();
       create_render_pass();
       create_frame_buffers();
+      create_pipelines();
     }
   }
 }
@@ -1032,12 +902,12 @@ void Vulkan::Impl::create_framebuffer_sequence() {
 
   fb_sequence_.reset(new FramebufferSequence);
   fb_sequence_->init(&nvvk_.alloc_,
-                    device_,
-                    physical_device_,
-                    queue_gct_,
-                    nvvk_.vk_ctx_.m_queueGCT.familyIndex,
-                    surface_format_,
-                    surface_.get());
+                     device_,
+                     physical_device_,
+                     queue_gct_,
+                     nvvk_.vk_ctx_.m_queueGCT.familyIndex,
+                     surface_format_,
+                     surface_.get());
 
   fb_sequence_->update(size_.width, size_.height, present_mode_, &size_);
 
@@ -1128,6 +998,135 @@ void Vulkan::Impl::create_render_pass() {
   name_info.pObjectName = R"(Holoviz)";
   device_.setDebugUtilsObjectNameEXT(name_info);
 #endif  // _DEBUG
+}
+
+void Vulkan::Impl::create_pipelines() {
+  const std::vector<vk::VertexInputBindingDescription> binding_description_float_3{
+      {0, sizeof(float) * 3, vk::VertexInputRate::eVertex}};
+  const std::vector<vk::VertexInputAttributeDescription> attribute_description_float_3{
+      {0, 0, vk::Format::eR32G32B32Sfloat, 0}};
+
+  // Create the Pipeline
+  image_pipeline_ =
+      create_pipeline(image_pipeline_layout_.get(),
+                      image_shader_glsl_vert,
+                      sizeof(image_shader_glsl_vert) / sizeof(image_shader_glsl_vert[0]),
+                      image_shader_glsl_frag,
+                      sizeof(image_shader_glsl_frag) / sizeof(image_shader_glsl_frag[0]),
+                      vk::PrimitiveTopology::eTriangleList,
+                      {},
+                      binding_description_float_3,
+                      attribute_description_float_3);
+
+  geometry_point_pipeline_ =
+      create_pipeline(geometry_pipeline_layout_.get(),
+                      geometry_shader_glsl_vert,
+                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
+                      geometry_shader_glsl_frag,
+                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+                      vk::PrimitiveTopology::ePointList,
+                      {},
+                      binding_description_float_3,
+                      attribute_description_float_3);
+  geometry_line_pipeline_ =
+      create_pipeline(geometry_pipeline_layout_.get(),
+                      geometry_shader_glsl_vert,
+                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
+                      geometry_shader_glsl_frag,
+                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+                      vk::PrimitiveTopology::eLineList,
+                      {vk::DynamicState::eLineWidth},
+                      binding_description_float_3,
+                      attribute_description_float_3);
+  geometry_line_strip_pipeline_ =
+      create_pipeline(geometry_pipeline_layout_.get(),
+                      geometry_shader_glsl_vert,
+                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
+                      geometry_shader_glsl_frag,
+                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+                      vk::PrimitiveTopology::eLineStrip,
+                      {vk::DynamicState::eLineWidth},
+                      binding_description_float_3,
+                      attribute_description_float_3);
+  geometry_triangle_pipeline_ =
+      create_pipeline(geometry_pipeline_layout_.get(),
+                      geometry_shader_glsl_vert,
+                      sizeof(geometry_shader_glsl_vert) / sizeof(geometry_shader_glsl_vert[0]),
+                      geometry_shader_glsl_frag,
+                      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+                      vk::PrimitiveTopology::eTriangleList,
+                      {},
+                      binding_description_float_3,
+                      attribute_description_float_3);
+
+  const std::vector<vk::VertexInputBindingDescription> binding_description_float_3_uint8_4{
+      {0, sizeof(float) * 3, vk::VertexInputRate::eVertex},
+      {1, sizeof(uint8_t) * 4, vk::VertexInputRate::eVertex}};
+  const std::vector<vk::VertexInputAttributeDescription> attribute_description_float_3_uint8_4{
+      {0, 0, vk::Format::eR32G32B32Sfloat, 0}, {1, 1, vk::Format::eR8G8B8A8Unorm, 0}};
+
+  geometry_point_color_pipeline_ = create_pipeline(
+      geometry_pipeline_layout_.get(),
+      geometry_color_shader_glsl_vert,
+      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
+      geometry_shader_glsl_frag,
+      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+      vk::PrimitiveTopology::ePointList,
+      {},
+      binding_description_float_3_uint8_4,
+      attribute_description_float_3_uint8_4);
+  geometry_line_color_pipeline_ = create_pipeline(
+      geometry_pipeline_layout_.get(),
+      geometry_color_shader_glsl_vert,
+      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
+      geometry_shader_glsl_frag,
+      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+      vk::PrimitiveTopology::eLineList,
+      {vk::DynamicState::eLineWidth},
+      binding_description_float_3_uint8_4,
+      attribute_description_float_3_uint8_4);
+  geometry_line_strip_color_pipeline_ = create_pipeline(
+      geometry_pipeline_layout_.get(),
+      geometry_color_shader_glsl_vert,
+      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
+      geometry_shader_glsl_frag,
+      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+      vk::PrimitiveTopology::eLineStrip,
+      {vk::DynamicState::eLineWidth},
+      binding_description_float_3_uint8_4,
+      attribute_description_float_3_uint8_4);
+  geometry_triangle_color_pipeline_ = create_pipeline(
+      geometry_pipeline_layout_.get(),
+      geometry_color_shader_glsl_vert,
+      sizeof(geometry_color_shader_glsl_vert) / sizeof(geometry_color_shader_glsl_vert[0]),
+      geometry_shader_glsl_frag,
+      sizeof(geometry_shader_glsl_frag) / sizeof(geometry_shader_glsl_frag[0]),
+      vk::PrimitiveTopology::eTriangleList,
+      {},
+      binding_description_float_3_uint8_4,
+      attribute_description_float_3_uint8_4);
+
+  const std::vector<vk::VertexInputBindingDescription> binding_description_imgui{
+      {0, sizeof(ImDrawVert), vk::VertexInputRate::eVertex}};
+  const std::vector<vk::VertexInputAttributeDescription> attribute_description_imgui{
+      {0, 0, vk::Format::eR32G32Sfloat, IM_OFFSETOF(ImDrawVert, pos)},
+      {1, 0, vk::Format::eR32G32Sfloat, IM_OFFSETOF(ImDrawVert, uv)},
+      {2, 0, vk::Format::eR8G8B8A8Unorm, IM_OFFSETOF(ImDrawVert, col)}};
+
+  imgui_pipeline_ =
+      create_pipeline(imgui_pipeline_layout_.get(),
+                      imgui_shader_glsl_vert,
+                      sizeof(imgui_shader_glsl_vert) / sizeof(imgui_shader_glsl_vert[0]),
+                      imgui_shader_glsl_frag,
+                      sizeof(imgui_shader_glsl_frag) / sizeof(imgui_shader_glsl_frag[0]),
+                      vk::PrimitiveTopology::eTriangleList,
+                      {},
+                      binding_description_imgui,
+                      attribute_description_imgui,
+                      // There is depth buffer fighting when enabling depth writes for imgui
+                      // probably because things are just drawn on top of each other. Therefore
+                      // disable depth writes.
+                      false /*depth_write_enable*/);
 }
 
 void Vulkan::Impl::create_frame_buffers() {
@@ -1293,69 +1292,134 @@ vk::UniquePipeline Vulkan::Impl::create_pipeline(
   return device_.createGraphicsPipelineUnique(pipeline_cache_.get(), generator.createInfo).value;
 }
 
-Texture* Vulkan::Impl::create_texture(uint32_t width, uint32_t height, ImageFormat format,
-                                      size_t data_size, const void* data,
-                                      const vk::ComponentMapping& component_mapping,
-                                      vk::Filter filter, bool normalized, bool export_allocation) {
+std::unique_ptr<Texture> Vulkan::Impl::create_texture(Vulkan* vulkan,
+                                                      const CreateTextureArgs& args) {
   if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to create_texture() need to be enclosed by "
         "begin_transfer_pass() and end_transfer_pass()");
   }
 
-  const vk::Format vk_format = to_vulkan_format(format);
-  uint32_t src_channels, dst_channels, component_size;
-  format_info(format, &src_channels, &dst_channels, &component_size);
-
-  const vk::ImageCreateInfo image_create_info =
-      nvvk::makeImage2DCreateInfo(vk::Extent2D{width, height}, vk_format);
+  const vk::Format vk_format = to_vulkan_format(args.format_);
+  vk::ImageCreateInfo image_create_info =
+      nvvk::makeImage2DCreateInfo(vk::Extent2D{args.width_, args.height_}, vk_format);
+  if (is_multi_planar_format(args.format_)) {
+    image_create_info.flags = vk::ImageCreateFlagBits::eDisjoint;
+  }
   nvvk::Image image;
   nvvk::ResourceAllocator* allocator;
-  if (export_allocation) {
+  if (args.cuda_interop_) {
     allocator = &nvvk_.export_alloc_;
   } else {
     allocator = &nvvk_.alloc_;
   }
-  if (data) {
-    if (data_size != width * height * src_channels * component_size) {
-      throw std::runtime_error("The size of the data array is wrong");
-    }
-    image = allocator->createImage(
-        transfer_jobs_.back().cmd_buffer_, data_size, data, image_create_info);
-  } else {
-    // the VkExternalMemoryImageCreateInfoKHR struct is appended by nvvk::ExportResourceAllocator
-    image = allocator->createImage(image_create_info, vk::MemoryPropertyFlagBits::eDeviceLocal);
-  }
+  // the VkExternalMemoryImageCreateInfoKHR struct is appended by nvvk::ExportResourceAllocator
+  // so we don't need to explicitly add it
+  image = allocator->createImage(image_create_info, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
   // create the texture
   std::unique_ptr<Texture> texture =
-      std::make_unique<Texture>(device_, allocator, width, height, format);
+      std::make_unique<Texture>(vulkan, allocator, args.width_, args.height_, args.format_);
+
+  if (is_yuv_format(args.format_)) {
+    vk::SamplerYcbcrConversionCreateInfo sampler_ycbcr_conversion_create_info;
+    sampler_ycbcr_conversion_create_info.ycbcrModel = args.ycbcr_model_conversion_;
+    sampler_ycbcr_conversion_create_info.ycbcrRange = args.ycbcr_range_;
+    sampler_ycbcr_conversion_create_info.chromaFilter = args.filter_;
+    sampler_ycbcr_conversion_create_info.components = args.component_mapping_;
+    sampler_ycbcr_conversion_create_info.xChromaOffset = args.x_chroma_location_;
+    sampler_ycbcr_conversion_create_info.yChromaOffset = args.y_chroma_location_;
+    sampler_ycbcr_conversion_create_info.format = vk_format;
+    texture->sampler_ycbcr_conversion_ =
+        device_.createSamplerYcbcrConversionUnique(sampler_ycbcr_conversion_create_info);
+  }
 
   // create the Vulkan texture
   vk::SamplerCreateInfo sampler_create_info;
-  sampler_create_info.minFilter = filter;
-  sampler_create_info.magFilter = filter;
+  sampler_create_info.minFilter = args.filter_;
+  sampler_create_info.magFilter = args.filter_;
   sampler_create_info.mipmapMode = vk::SamplerMipmapMode::eNearest;
   sampler_create_info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
   sampler_create_info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
   sampler_create_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-  sampler_create_info.maxLod = normalized ? FLT_MAX : 0;
-  sampler_create_info.unnormalizedCoordinates = normalized ? false : true;
+  sampler_create_info.maxLod = args.normalized_ ? FLT_MAX : 0;
+  sampler_create_info.unnormalizedCoordinates = args.normalized_ ? false : true;
 
   vk::ImageViewCreateInfo image_view_info =
       nvvk::makeImageViewCreateInfo(image.image, image_create_info);
-  image_view_info.components = component_mapping;
+  // for Y'CbCr the component mapping of SamplerYcbcrConversion and is set there, so only set it
+  // here for non-Y'CbCr formats
+  if (!is_yuv_format(args.format_)) { image_view_info.components = args.component_mapping_; }
+
+  vk::SamplerYcbcrConversionInfo sampler_ycbcr_conversion;
+  if (texture->sampler_ycbcr_conversion_) {
+    sampler_ycbcr_conversion.conversion = texture->sampler_ycbcr_conversion_.get();
+    assert(sampler_create_info.pNext == nullptr);
+    sampler_create_info.pNext = &sampler_ycbcr_conversion;
+    assert(image_view_info.pNext == nullptr);
+    image_view_info.pNext = &sampler_ycbcr_conversion;
+  }
+
   texture->texture_ = allocator->createTexture(image, image_view_info, sampler_create_info);
 
-  // transition to shader layout
-  /// @todo I don't know if this is defined. Should the old layout be
-  /// vk::ImageLayout::eTransferDstOptimal, like it would be if we uploaded using Vulkan?
-  nvvk::cmdBarrierImageLayout(transfer_jobs_.back().cmd_buffer_,
-                              image.image,
-                              image_create_info.initialLayout,
-                              vk::ImageLayout::eShaderReadOnlyOptimal);
+  // if this is a Y'CbCr texture we need to create a descriptor set that must be allocated with a
+  // layout that includes an immutable sampler
+  if (is_yuv_format(args.format_)) {
+    // start with the normal descriptor set bindings set the immutable sampler
+    texture->desc_set_layout_bind_ = desc_set_layout_bind_;
+    VkDescriptorSetLayoutBinding* bindings = texture->desc_set_layout_bind_.data();
+    for (size_t index = 0; index < texture->desc_set_layout_bind_.size(); ++index) {
+      if (bindings[index].binding == SAMPLE_BINDING_COLOR) {
+        bindings[index].pImmutableSamplers = &texture->texture_.descriptor.sampler;
+        break;
+      }
+    }
+    texture->desc_set_layout_ = vk::UniqueDescriptorSetLayout(
+        texture->desc_set_layout_bind_.createLayout(
+            device_, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR),
+        device_);
 
-  return texture.release();
+    // Push constants
+    vk::PushConstantRange push_constant_ranges[2];
+    push_constant_ranges[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
+    push_constant_ranges[0].offset = 0;
+    push_constant_ranges[0].size = sizeof(PushConstantVertex);
+    push_constant_ranges[1].stageFlags = vk::ShaderStageFlagBits::eFragment;
+    push_constant_ranges[1].offset = sizeof(PushConstantVertex);
+    push_constant_ranges[1].size = sizeof(PushConstantFragment);
+
+    // create the pipeline layout for images
+    {
+      // Creating the Pipeline Layout
+      vk::PipelineLayoutCreateInfo create_info;
+      create_info.setLayoutCount = 1;
+      create_info.pSetLayouts = &texture->desc_set_layout_.get();
+      create_info.pushConstantRangeCount = 2;
+      create_info.pPushConstantRanges = push_constant_ranges;
+      texture->pipeline_layout_ = device_.createPipelineLayoutUnique(create_info);
+    }
+
+    const std::vector<vk::VertexInputBindingDescription> binding_description_float_3{
+        {0, sizeof(float) * 3, vk::VertexInputRate::eVertex}};
+    const std::vector<vk::VertexInputAttributeDescription> attribute_description_float_3{
+        {0, 0, vk::Format::eR32G32B32Sfloat, 0}};
+
+    // Create the Pipeline
+    texture->pipeline_ =
+        create_pipeline(texture->pipeline_layout_.get(),
+                        image_shader_glsl_vert,
+                        sizeof(image_shader_glsl_vert) / sizeof(image_shader_glsl_vert[0]),
+                        image_shader_glsl_frag,
+                        sizeof(image_shader_glsl_frag) / sizeof(image_shader_glsl_frag[0]),
+                        vk::PrimitiveTopology::eTriangleList,
+                        {},
+                        binding_description_float_3,
+                        attribute_description_float_3);
+  }
+
+  if (args.cuda_interop_) { texture->import_to_cuda(cuda_service_); }
+
+  return texture;
 }
 
 void Vulkan::Impl::set_viewport(float x, float y, float width, float height) {
@@ -1380,125 +1444,8 @@ void Vulkan::Impl::set_viewport(float x, float y, float width, float height) {
   cmd_buf.setScissor(0, scissor);
 }
 
-Texture* Vulkan::Impl::create_texture_for_cuda_interop(
-    uint32_t width, uint32_t height, ImageFormat format,
-    const vk::ComponentMapping& component_mapping, vk::Filter filter, bool normalized) {
-  if (transfer_jobs_.empty()) {
-    throw std::runtime_error(
-        "Transfer command buffer not set. Calls to create_texture_for_cuda_interop() "
-        "need to be enclosed by "
-        "begin_transfer_pass() and "
-        "end_transfer_pass()");
-  }
-
-  std::unique_ptr<Texture> texture;
-  texture.reset(create_texture(width,
-                               height,
-                               format,
-                               0,
-                               nullptr,
-                               component_mapping,
-                               filter,
-                               normalized,
-                               true /*export_allocation*/));
-
-  texture->import_to_cuda(cuda_service_);
-
-  return texture.release();
-}
-
-void Vulkan::Impl::upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, Texture* texture,
-                                     CUstream ext_stream) {
-  if (!texture->mipmap_) {
-    throw std::runtime_error("Texture had not been imported to CUDA, can't upload data.");
-  }
-
-  const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
-
-  // select the stream to be used by CUDA operations
-  const CUstream stream = cuda_service_->select_cuda_stream(ext_stream);
-
-  // start accessing the texture with CUDA
-  texture->begin_access_with_cuda(stream);
-
-  CUarray array;
-  CudaCheck(cuMipmappedArrayGetLevel(&array, texture->mipmap_.get(), 0));
-
-  uint32_t src_channels, dst_channels, component_size;
-  format_info(texture->format_, &src_channels, &dst_channels, &component_size);
-  size_t src_pitch = row_pitch != 0 ? row_pitch : texture->width_ * src_channels * component_size;
-
-  if (src_channels != dst_channels) {
-    // three channel texture data is not hardware natively supported, convert to four channel
-    if ((src_channels != 3) || (dst_channels != 4) || (component_size != 1)) {
-      throw std::runtime_error("Unhandled conversion.");
-    }
-
-    // if the source CUDA memory is on a different device, allocate temporary memory, copy from
-    // the source memory to the temporary memory and start the convert kernel using the temporary
-    // memory
-    UniqueAsyncCUdeviceptr tmp_device_ptr;
-    if (!cuda_service_->IsMemOnDevice(device_ptr)) {
-      const size_t tmp_pitch = texture->width_ * src_channels * component_size;
-
-      // allocate temporary memory, note this is using the stream ordered memory allocator which
-      // is not syncing globally like the normal `cuMemAlloc`
-      tmp_device_ptr.reset([tmp_pitch, texture, stream] {
-        CUdeviceptr device_ptr;
-        CudaCheck(cuMemAllocAsync(&device_ptr, tmp_pitch * texture->height_, stream));
-        return std::pair<CUdeviceptr, CUstream>(device_ptr, stream);
-      }());
-
-      CUDA_MEMCPY2D memcpy_2d{};
-      memcpy_2d.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-      memcpy_2d.srcDevice = device_ptr;
-      memcpy_2d.srcPitch = src_pitch;
-      memcpy_2d.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-      memcpy_2d.dstDevice = tmp_device_ptr.get().first;
-      memcpy_2d.dstPitch = tmp_pitch;
-      memcpy_2d.WidthInBytes = tmp_pitch;
-      memcpy_2d.Height = texture->height_;
-      CudaCheck(cuMemcpy2DAsync(&memcpy_2d, stream));
-
-      device_ptr = tmp_device_ptr.get().first;
-      src_pitch = tmp_pitch;
-    }
-
-    uint8_t alpha;
-    switch (texture->format_) {
-      case ImageFormat::R8G8B8_UNORM:
-      case ImageFormat::R8G8B8_SRGB:
-        alpha = 0xFf;
-        break;
-      case ImageFormat::R8G8B8_SNORM:
-        alpha = 0x7f;
-        break;
-      default:
-        throw std::runtime_error("Unhandled format.");
-    }
-
-    ConvertR8G8B8ToR8G8B8A8(
-        texture->width_, texture->height_, device_ptr, src_pitch, array, stream, alpha);
-  } else {
-    // else just copy
-    CUDA_MEMCPY2D memcpy_2d{};
-    memcpy_2d.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-    memcpy_2d.srcDevice = device_ptr;
-    memcpy_2d.srcPitch = src_pitch;
-    memcpy_2d.dstMemoryType = CU_MEMORYTYPE_ARRAY;
-    memcpy_2d.dstArray = array;
-    memcpy_2d.WidthInBytes = texture->width_ * dst_channels * component_size;
-    memcpy_2d.Height = texture->height_;
-    CudaCheck(cuMemcpy2DAsync(&memcpy_2d, stream));
-  }
-
-  // indicate that the texture had been used by CUDA
-  texture->end_access_with_cuda(stream);
-
-  CudaService::sync_with_selected_stream(ext_stream, stream);
-}
-
-void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture) {
+void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const void*, 3>& host_ptr,
+                                     const std::array<size_t, 3>& row_pitch) {
   if (transfer_jobs_.empty()) {
     throw std::runtime_error(
         "Transfer command buffer not set. Calls to upload_to_texture() need to be enclosed by "
@@ -1514,11 +1461,19 @@ void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Tex
 
   const vk::CommandBuffer cmd_buf = transfer_jobs_.back().cmd_buffer_;
 
-  // Copy buffer to image
+  // transition the image to eTransferDstOptimal so we can copy to it from a buffer
   vk::ImageSubresourceRange subresource_range;
-  subresource_range.aspectMask = vk::ImageAspectFlagBits::eColor;
-  subresource_range.baseArrayLayer = 0;
-  subresource_range.baseMipLevel = 0;
+  if (is_multi_planar_format(texture->format_)) {
+    for (uint32_t plane = 0; plane < host_ptr.size(); ++plane) {
+      if (!host_ptr[plane]) { continue; }
+      subresource_range.aspectMask |=
+          vk::ImageAspectFlagBits(int(vk::ImageAspectFlagBits::ePlane0) << plane);
+    }
+  } else if (is_depth_format(texture->format_)) {
+    subresource_range.aspectMask = vk::ImageAspectFlagBits::eDepth;
+  } else {
+    subresource_range.aspectMask = vk::ImageAspectFlagBits::eColor;
+  }
   subresource_range.layerCount = 1;
   subresource_range.levelCount = 1;
 
@@ -1528,67 +1483,88 @@ void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Tex
                               vk::ImageLayout::eTransferDstOptimal,
                               subresource_range);
 
-  vk::Offset3D offset;
-  vk::ImageSubresourceLayers subresource;
-  subresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-  subresource.layerCount = 1;
+  for (uint32_t plane = 0; plane < host_ptr.size(); ++plane) {
+    if (!host_ptr[plane]) { continue; }
 
-  uint32_t src_channels, dst_channels, component_size;
-  format_info(texture->format_, &src_channels, &dst_channels, &component_size);
+    uint32_t channels, hw_channels, component_size, width_divisor, height_divisior;
+    format_info(texture->format_,
+                &channels,
+                &hw_channels,
+                &component_size,
+                &width_divisor,
+                &height_divisior,
+                plane);
 
-  const uint32_t src_pitch = texture->width_ * src_channels * component_size;
-  const uint32_t dst_pitch = texture->width_ * dst_channels * component_size;
-  const vk::DeviceSize data_size = dst_pitch * texture->height_;
+    // the width and height might be different for each plane for Y'CbCr formats
+    const uint32_t width = texture->width_ / width_divisor;
+    const uint32_t height = texture->height_ / height_divisior;
 
-  void* mapping =
-      nvvk_.alloc_.getStaging()->cmdToImage(cmd_buf,
-                                            texture->texture_.image,
-                                            VkOffset3D(offset),
-                                            VkExtent3D{texture->width_, texture->height_, 1},
-                                            VkImageSubresourceLayers(subresource),
-                                            data_size,
-                                            nullptr);
-
-  if (src_channels != dst_channels) {
-    // three channel texture data is not hardware natively supported, convert to four channel
-    if ((src_channels != 3) || (dst_channels != 4) || (component_size != 1)) {
-      throw std::runtime_error("Unhandled conversion.");
-    }
-    const uint8_t* src = reinterpret_cast<const uint8_t*>(host_ptr);
-    uint32_t* dst = reinterpret_cast<uint32_t*>(mapping);
-    uint8_t alpha;
-    switch (texture->format_) {
-      case ImageFormat::R8G8B8_UNORM:
-      case ImageFormat::R8G8B8_SRGB:
-        alpha = 0xFf;
-        break;
-      case ImageFormat::R8G8B8_SNORM:
-        alpha = 0x7f;
-        break;
-      default:
-        throw std::runtime_error("Unhandled format.");
-    }
-    for (uint32_t y = 0; y < texture->height_; ++y) {
-      for (uint32_t x = 0; x < texture->width_; ++x) {
-        const uint8_t data[4]{src[0], src[1], src[2], alpha};
-        *dst = *reinterpret_cast<const uint32_t*>(&data);
-        src += 3;
-        ++dst;
-      }
-      if (row_pitch != 0) { src += row_pitch - src_pitch; }
-    }
-  } else {
-    if ((row_pitch == 0) || (row_pitch == dst_pitch)) {
-      // contiguous copy
-      memcpy(mapping, host_ptr, data_size);
+    vk::Offset3D offset;
+    vk::ImageSubresourceLayers image_subresource_layers;
+    if (is_multi_planar_format(texture->format_)) {
+      image_subresource_layers.aspectMask =
+          vk::ImageAspectFlagBits(int(vk::ImageAspectFlagBits::ePlane0) << plane);
+    } else if (is_depth_format(texture->format_)) {
+      image_subresource_layers.aspectMask = vk::ImageAspectFlagBits::eDepth;
     } else {
-      // source and destination pitch is different, copy row by row
-      const uint8_t* src = reinterpret_cast<const uint8_t*>(host_ptr);
-      uint8_t* dst = reinterpret_cast<uint8_t*>(mapping);
-      for (uint32_t y = 0; y < texture->height_; ++y) {
-        memcpy(dst, src, dst_pitch);
-        src += row_pitch;
-        dst += dst_pitch;
+      image_subresource_layers.aspectMask = vk::ImageAspectFlagBits::eColor;
+    }
+    image_subresource_layers.layerCount = 1;
+
+    const uint32_t src_pitch = width * channels * component_size;
+    const uint32_t dst_pitch = width * hw_channels * component_size;
+    const vk::DeviceSize data_size = dst_pitch * height;
+
+    void* mapping =
+        nvvk_.alloc_.getStaging()->cmdToImage(cmd_buf,
+                                              texture->texture_.image,
+                                              VkOffset3D(offset),
+                                              VkExtent3D{width, height, 1},
+                                              VkImageSubresourceLayers(image_subresource_layers),
+                                              data_size,
+                                              nullptr);
+
+    if (channels != hw_channels) {
+      // three channel texture data is not hardware natively supported, convert to four channel
+      if ((channels != 3) || (hw_channels != 4) || (component_size != 1)) {
+        throw std::runtime_error("Unhandled conversion.");
+      }
+      const uint8_t* src = reinterpret_cast<const uint8_t*>(host_ptr[plane]);
+      uint32_t* dst = reinterpret_cast<uint32_t*>(mapping);
+      uint8_t alpha;
+      switch (texture->format_) {
+        case ImageFormat::R8G8B8_UNORM:
+        case ImageFormat::R8G8B8_SRGB:
+          alpha = 0xFf;
+          break;
+        case ImageFormat::R8G8B8_SNORM:
+          alpha = 0x7f;
+          break;
+        default:
+          throw std::runtime_error("Unhandled format.");
+      }
+      for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+          const uint8_t data[4]{src[0], src[1], src[2], alpha};
+          *dst = *reinterpret_cast<const uint32_t*>(&data);
+          src += 3;
+          ++dst;
+        }
+        if (row_pitch[plane] != 0) { src += row_pitch[plane] - src_pitch; }
+      }
+    } else {
+      if ((row_pitch[plane] == 0) || (row_pitch[plane] == dst_pitch)) {
+        // contiguous copy
+        memcpy(mapping, host_ptr[plane], data_size);
+      } else {
+        // source and destination pitch is different, copy row by row
+        const uint8_t* src = reinterpret_cast<const uint8_t*>(host_ptr[plane]);
+        uint8_t* dst = reinterpret_cast<uint8_t*>(mapping);
+        for (uint32_t y = 0; y < height; ++y) {
+          memcpy(dst, src, dst_pitch);
+          src += row_pitch[plane];
+          dst += dst_pitch;
+        }
       }
     }
   }
@@ -1603,8 +1579,96 @@ void Vulkan::Impl::upload_to_texture(const void* host_ptr, size_t row_pitch, Tex
   // always synchronized to the render command buffer submission.
 }
 
-Buffer* Vulkan::Impl::create_buffer(size_t data_size, vk::BufferUsageFlags usage,
-                                    bool export_allocation, const void* data) {
+void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<Buffer*, 3>& buffers) {
+  if (transfer_jobs_.empty()) {
+    throw std::runtime_error(
+        "Transfer command buffer not set. Calls to upload_to_texture() need to be enclosed by "
+        "begin_transfer_pass() and end_transfer_pass()");
+  }
+
+  if ((texture->state_ != Texture::AccessState::VULKAN) &&
+      (texture->state_ != Texture::AccessState::UNKNOWN)) {
+    throw std::runtime_error(
+        "When uploading to texture, the texture should be in Vulkan "
+        "or unknown state");
+  }
+
+  const vk::CommandBuffer cmd_buf = transfer_jobs_.back().cmd_buffer_;
+
+  // transition the image to eTransferDstOptimal so we can copy to it from a buffer
+  vk::ImageSubresourceRange subresource_range;
+  if (is_multi_planar_format(texture->format_)) {
+    for (uint32_t plane = 0; plane < buffers.size(); ++plane) {
+      if (!buffers[plane]) { continue; }
+      subresource_range.aspectMask |=
+          vk::ImageAspectFlagBits(int(vk::ImageAspectFlagBits::ePlane0) << plane);
+    }
+  } else if (is_depth_format(texture->format_)) {
+    subresource_range.aspectMask = vk::ImageAspectFlagBits::eDepth;
+  } else {
+    subresource_range.aspectMask = vk::ImageAspectFlagBits::eColor;
+  }
+  subresource_range.layerCount = 1;
+  subresource_range.levelCount = 1;
+
+  nvvk::cmdBarrierImageLayout(cmd_buf,
+                              texture->texture_.image,
+                              vk::ImageLayout::eUndefined,
+                              vk::ImageLayout::eTransferDstOptimal,
+                              subresource_range);
+
+  for (uint32_t plane = 0; plane < buffers.size(); ++plane) {
+    if (!buffers[plane]) { continue; }
+
+    uint32_t channels, hw_channels, component_size, width_divisor, height_divisior;
+    format_info(texture->format_,
+                &channels,
+                &hw_channels,
+                &component_size,
+                &width_divisor,
+                &height_divisior,
+                plane);
+
+    // the width and height might be different for each plane for Y'CbCr formats
+    const uint32_t width = texture->width_ / width_divisor;
+    const uint32_t height = texture->height_ / height_divisior;
+
+    // now copy from the buffer to the image
+    vk::ImageSubresourceLayers image_subresource_layers;
+    if (is_multi_planar_format(texture->format_)) {
+      image_subresource_layers.aspectMask =
+          vk::ImageAspectFlagBits(int(vk::ImageAspectFlagBits::ePlane0) << plane);
+    } else if (is_depth_format(texture->format_)) {
+      image_subresource_layers.aspectMask = vk::ImageAspectFlagBits::eDepth;
+    } else {
+      image_subresource_layers.aspectMask = vk::ImageAspectFlagBits::eColor;
+    }
+    image_subresource_layers.layerCount = 1;
+
+    vk::BufferImageCopy buffer_image_copy;
+    buffer_image_copy.imageSubresource = image_subresource_layers;
+    buffer_image_copy.imageExtent = vk::Extent3D{width, height, 1};
+
+    cmd_buf.copyBufferToImage(vk::Buffer(buffers[plane]->buffer_.buffer),
+                              vk::Image(texture->texture_.image),
+                              vk::ImageLayout::eTransferDstOptimal,
+                              1,
+                              &buffer_image_copy);
+  }
+
+  // transition back to shader optimal layout since we will now use that image for rendering
+  nvvk::cmdBarrierImageLayout(cmd_buf,
+                              texture->texture_.image,
+                              vk::ImageLayout::eTransferDstOptimal,
+                              vk::ImageLayout::eShaderReadOnlyOptimal);
+
+  // no need to set the texture state here, the transfer command buffer submission is
+  // always synchronized to the render command buffer submission.
+}
+
+std::unique_ptr<Buffer> Vulkan::Impl::create_buffer(Vulkan* vulkan, size_t data_size,
+                                                    vk::BufferUsageFlags usage,
+                                                    bool export_allocation, const void* data) {
   nvvk::ResourceAllocator* allocator;
   if (export_allocation) {
     /// @TODO Use the dedicted allocator. Without it there is corruption with the depth map
@@ -1616,7 +1680,7 @@ Buffer* Vulkan::Impl::create_buffer(size_t data_size, vk::BufferUsageFlags usage
     allocator = &nvvk_.alloc_;
   }
 
-  std::unique_ptr<Buffer> buffer(new Buffer(device_, allocator, data_size));
+  std::unique_ptr<Buffer> buffer(new Buffer(vulkan, allocator, data_size));
   if (data) {
     if (transfer_jobs_.empty()) {
       throw std::runtime_error(
@@ -1631,17 +1695,19 @@ Buffer* Vulkan::Impl::create_buffer(size_t data_size, vk::BufferUsageFlags usage
         static_cast<vk::DeviceSize>(data_size), usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
   }
 
-  return buffer.release();
+  return buffer;
 }
 
-Buffer* Vulkan::Impl::create_buffer_for_cuda_interop(size_t data_size, vk::BufferUsageFlags usage) {
-  std::unique_ptr<Buffer> buffer;
-  buffer.reset(create_buffer(data_size, usage, true /*export_allocation*/));
+std::unique_ptr<Buffer> Vulkan::Impl::create_buffer_for_cuda_interop(Vulkan* vulkan,
+                                                                     size_t data_size,
+                                                                     vk::BufferUsageFlags usage) {
+  std::unique_ptr<Buffer> buffer =
+      create_buffer(vulkan, data_size, usage, true /*export_allocation*/);
 
   // import buffer to CUDA
   buffer->import_to_cuda(cuda_service_);
 
-  return buffer.release();
+  return buffer;
 }
 
 void Vulkan::Impl::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer,
@@ -1693,6 +1759,14 @@ void Vulkan::Impl::draw_texture(Texture* texture, Texture* depth_texture, Textur
   PushConstantFragment push_constants;
   push_constants.flags = 0;
 
+  // if this is a Y'CbCr texture it has its own pipeline, else use the default image pipeline
+  const vk::Pipeline pipeline =
+      texture->pipeline_ ? texture->pipeline_.get() : image_pipeline_.get();
+  const vk::PipelineLayout pipeline_layout =
+      texture->pipeline_layout_ ? texture->pipeline_layout_.get() : image_pipeline_layout_.get();
+  const nvvk::DescriptorSetBindings& desc_set_layout_bind =
+      texture->desc_set_layout_ ? texture->desc_set_layout_bind_ : desc_set_layout_bind_;
+
   // update descriptor sets
   std::vector<vk::WriteDescriptorSet> writes;
   uint32_t color_sample_binding = SAMPLE_BINDING_COLOR;
@@ -1712,34 +1786,34 @@ void Vulkan::Impl::draw_texture(Texture* texture, Texture* depth_texture, Textur
       push_constants.flags |= PUSH_CONSTANT_FRAGMENT_FLAG_LUT;
     }
     writes.emplace_back(
-        desc_set_layout_bind_.makeWrite(nullptr, SAMPLE_BINDING_LUT, &lut->texture_.descriptor));
+        desc_set_layout_bind.makeWrite(nullptr, SAMPLE_BINDING_LUT, &lut->texture_.descriptor));
   } else {
     push_constants.flags |= PUSH_CONSTANT_FRAGMENT_FLAG_COLOR;
   }
 
   texture->access_with_vulkan(nvvk_.batch_submission_);
-  writes.emplace_back(desc_set_layout_bind_.makeWrite(
-      nullptr, color_sample_binding, &texture->texture_.descriptor));
+  writes.emplace_back(
+      desc_set_layout_bind.makeWrite(nullptr, color_sample_binding, &texture->texture_.descriptor));
 
   if (depth_texture) {
     depth_texture->access_with_vulkan(nvvk_.batch_submission_);
 
-    writes.emplace_back(desc_set_layout_bind_.makeWrite(
+    writes.emplace_back(desc_set_layout_bind.makeWrite(
         nullptr, SAMPLE_BINDING_DEPTH, &depth_texture->texture_.descriptor));
     push_constants.flags |= PUSH_CONSTANT_FRAGMENT_FLAG_DEPTH;
   }
 
-  cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, image_pipeline_.get());
+  cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
 
   cmd_buf.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics,
-                               image_pipeline_layout_.get(),
+                               pipeline_layout,
                                0,
                                static_cast<uint32_t>(writes.size()),
                                writes.data());
 
   // push the constants
   push_constants.opacity = opacity;
-  cmd_buf.pushConstants(image_pipeline_layout_.get(),
+  cmd_buf.pushConstants(pipeline_layout,
                         vk::ShaderStageFlagBits::eFragment,
                         sizeof(PushConstantVertex),
                         sizeof(PushConstantFragment),
@@ -1747,7 +1821,7 @@ void Vulkan::Impl::draw_texture(Texture* texture, Texture* depth_texture, Textur
 
   PushConstantVertex push_constant_vertex;
   push_constant_vertex.matrix = view_matrix;
-  cmd_buf.pushConstants(image_pipeline_layout_.get(),
+  cmd_buf.pushConstants(pipeline_layout,
                         vk::ShaderStageFlagBits::eVertex,
                         0,
                         sizeof(PushConstantVertex),
@@ -1991,9 +2065,9 @@ void Vulkan::Impl::draw_indexed(vk::PrimitiveTopology topology,
                view_matrix);
 }
 
-void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height,
-                                    size_t buffer_size, CUdeviceptr device_ptr, CUstream ext_stream,
-                                    size_t row_pitch) {
+void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t width,
+                                    uint32_t height, size_t buffer_size, CUdeviceptr device_ptr,
+                                    CUstream ext_stream, size_t row_pitch) {
   ReadTransferType transfer_type;
   vk::Image image;
   vk::Format image_format;
@@ -2025,22 +2099,23 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
   TransferJob& read_job = read_transfer_jobs_[transfer_type];
 
   const vk::Format out_vk_format = to_vulkan_format(fmt);
-  uint32_t src_channels, dst_channels, component_size;
-  format_info(fmt, &src_channels, &dst_channels, &component_size);
+  uint32_t channels, hw_channels, component_size;
+  format_info(fmt, &channels, &hw_channels, &component_size);
 
   // limit size to actual framebuffer size
   const uint32_t read_width = std::min(size_.width, width);
   const uint32_t read_height = std::min(size_.height, height);
 
-  const size_t data_size = read_width * read_height * dst_channels * component_size;
+  const size_t data_size = read_width * read_height * hw_channels * component_size;
   if (buffer_size < data_size) { throw std::runtime_error("The size of the buffer is too small"); }
 
   // allocate the transfer buffer if needed
-  const size_t src_data_size = read_width * read_height * src_channels * component_size;
+  const size_t src_data_size = read_width * read_height * channels * component_size;
   if (!read_transfer_buffers_[transfer_type] ||
       (read_transfer_buffers_[transfer_type]->size_ < src_data_size)) {
-    read_transfer_buffers_[transfer_type].reset(
-        create_buffer_for_cuda_interop(src_data_size, vk::BufferUsageFlagBits::eTransferDst));
+    read_transfer_buffers_[transfer_type].reset();
+    read_transfer_buffers_[transfer_type] = create_buffer_for_cuda_interop(
+        vulkan, src_data_size, vk::BufferUsageFlagBits::eTransferDst);
   }
   Buffer* read_transfer_buffer = read_transfer_buffers_[transfer_type].get();
 
@@ -2121,7 +2196,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
 
     // select the stream to be used by CUDA operations
     const CUstream stream = cuda_service_->select_cuda_stream(ext_stream);
-    const size_t dst_pitch = row_pitch ? row_pitch : width * dst_channels * component_size;
+    const size_t dst_pitch = row_pitch ? row_pitch : width * hw_channels * component_size;
 
     // synchronize with the Vulkan copy
     read_transfer_buffer->begin_access_with_cuda(stream);
@@ -2151,7 +2226,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
       ConvertB8G8R8A8ToR8G8B8A8(read_width,
                                 read_height,
                                 read_transfer_buffer->device_ptr_.get(),
-                                read_width * src_channels * component_size,
+                                read_width * channels * component_size,
                                 dst_device_ptr,
                                 dst_pitch,
                                 stream);
@@ -2173,7 +2248,7 @@ void Vulkan::Impl::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t he
       CUDA_MEMCPY2D memcpy2d{};
       memcpy2d.srcMemoryType = CU_MEMORYTYPE_DEVICE;
       memcpy2d.srcDevice = read_transfer_buffer->device_ptr_.get();
-      memcpy2d.srcPitch = read_width * src_channels * component_size;
+      memcpy2d.srcPitch = read_width * channels * component_size;
       memcpy2d.dstMemoryType = CU_MEMORYTYPE_DEVICE;
       memcpy2d.dstDevice = device_ptr;
       memcpy2d.dstPitch = dst_pitch;
@@ -2204,6 +2279,10 @@ Window* Vulkan::get_window() const {
 
 CudaService* Vulkan::get_cuda_service() const {
   return impl_->get_cuda_service();
+}
+
+vk::Device Vulkan::get_device() const {
+  return impl_->get_device();
 }
 
 std::vector<SurfaceFormat> Vulkan::get_surface_formats() const {
@@ -2246,48 +2325,27 @@ void Vulkan::set_viewport(float x, float y, float width, float height) {
   impl_->set_viewport(x, y, width, height);
 }
 
-Texture* Vulkan::create_texture_for_cuda_interop(uint32_t width, uint32_t height,
-                                                 ImageFormat format,
-                                                 const vk::ComponentMapping& component_mapping,
-                                                 vk::Filter filter, bool normalized) {
-  return impl_->create_texture_for_cuda_interop(
-      width, height, format, component_mapping, filter, normalized);
+std::unique_ptr<Texture> Vulkan::create_texture(const CreateTextureArgs& args) {
+  return impl_->create_texture(this, args);
 }
 
-Texture* Vulkan::create_texture(uint32_t width, uint32_t height, ImageFormat format,
-                                size_t data_size, const void* data,
-                                const vk::ComponentMapping& component_mapping, vk::Filter filter,
-                                bool normalized) {
-  return impl_->create_texture(width,
-                               height,
-                               format,
-                               data_size,
-                               data,
-                               component_mapping,
-                               filter,
-                               normalized,
-                               false /*export_allocation*/);
+void Vulkan::upload_to_texture(Texture* texture, const std::array<const void*, 3>& host_ptr,
+                               const std::array<size_t, 3>& row_pitch) {
+  impl_->upload_to_texture(texture, host_ptr, row_pitch);
 }
 
-void Vulkan::destroy_texture(Texture* texture) {
-  delete texture;
+void Vulkan::upload_to_texture(Texture* texture, const std::array<Buffer*, 3>& buffers) {
+  impl_->upload_to_texture(texture, buffers);
 }
 
-void Vulkan::upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, Texture* texture,
-                               CUstream stream) {
-  impl_->upload_to_texture(device_ptr, row_pitch, texture, stream);
+std::unique_ptr<Buffer> Vulkan::create_buffer(size_t data_size, const void* data,
+                                              vk::BufferUsageFlags usage) {
+  return impl_->create_buffer(this, data_size, usage, false, data);
 }
 
-void Vulkan::upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture) {
-  impl_->upload_to_texture(host_ptr, row_pitch, texture);
-}
-
-Buffer* Vulkan::create_buffer(size_t data_size, const void* data, vk::BufferUsageFlags usage) {
-  return impl_->create_buffer(data_size, usage, false, data);
-}
-
-Buffer* Vulkan::create_buffer_for_cuda_interop(size_t data_size, vk::BufferUsageFlags usage) {
-  return impl_->create_buffer_for_cuda_interop(data_size, usage);
+std::unique_ptr<Buffer> Vulkan::create_buffer_for_cuda_interop(size_t data_size,
+                                                               vk::BufferUsageFlags usage) {
+  return impl_->create_buffer_for_cuda_interop(this, data_size, usage);
 }
 
 void Vulkan::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* buffer,
@@ -2297,10 +2355,6 @@ void Vulkan::upload_to_buffer(size_t data_size, CUdeviceptr device_ptr, Buffer* 
 
 void Vulkan::upload_to_buffer(size_t data_size, const void* data, const Buffer* buffer) {
   return impl_->upload_to_buffer(data_size, data, buffer);
-}
-
-void Vulkan::destroy_buffer(Buffer* buffer) {
-  delete buffer;
 }
 
 void Vulkan::draw_texture(Texture* texture, Texture* depth_texture, Texture* lut, float opacity,
@@ -2351,7 +2405,7 @@ void Vulkan::draw_indexed(vk::PrimitiveTopology topology,
 
 void Vulkan::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
                               CUdeviceptr buffer, CUstream stream, size_t row_pitch) {
-  impl_->read_framebuffer(fmt, width, height, buffer_size, buffer, stream, row_pitch);
+  impl_->read_framebuffer(this, fmt, width, height, buffer_size, buffer, stream, row_pitch);
 }
 
 }  // namespace holoscan::viz

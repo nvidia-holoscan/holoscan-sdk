@@ -30,6 +30,13 @@ install(FILES
     COMPONENT "holoscan-examples"
 )
 
+# Install the minimal CMakeLists.txt file
+install(FILES CMakeLists.min.txt
+  RENAME "CMakeLists.txt"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST
@@ -37,9 +44,10 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "AssertionError:"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST
@@ -47,9 +55,10 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "AssertionError:"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST
@@ -59,6 +68,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Usage: ping_distributed.py \\[OPTIONS\\]"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_INVALID_DEVICE_TEST
@@ -71,5 +81,6 @@ if(HOLOSCAN_BUILD_TESTS)
     PASS_REGULAR_EXPRESSION "GPUDevice value found and cached. dev_id: -5"
     PASS_REGULAR_EXPRESSION "cudaSetDevice Failed - 101, device id -5"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
   )
 endif()

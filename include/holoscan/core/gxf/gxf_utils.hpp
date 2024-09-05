@@ -257,6 +257,13 @@ bool has_component(gxf_context_t context, gxf_uid_t eid, gxf_tid_t tid = GxfTidN
 /// Create a GXF entity group with the specified name
 gxf_uid_t add_entity_group(void* context, std::string name);
 
+/**
+ * @brief Get the default queue policy from environment variable HOLOSCAN_QUEUE_POLICY.
+ *
+ * @return The default queue policy.
+ */
+uint64_t get_default_queue_policy();
+
 }  // namespace holoscan::gxf
 
 #endif /* HOLOSCAN_CORE_GXF_GXF_UTILS_HPP */

@@ -22,7 +22,6 @@
 #include <nvmath/nvmath_types.h>
 #include <vulkan/vulkan_core.h>
 
-#include <array>
 #include <cstdint>
 #include <list>
 #include <memory>
@@ -74,6 +73,11 @@ class Vulkan {
    * @return the CUDA service (created to use the same device as Vulkan)
    */
   CudaService* get_cuda_service() const;
+
+  /**
+   * @return the Vulkan device
+   */
+  vk::Device get_device() const;
 
   /**
    * Get the supported surface formats.
@@ -146,87 +150,72 @@ class Vulkan {
   void set_viewport(float x, float y, float width, float height);
 
   /**
-   * Create a texture to be used for interop with CUDA, see ::upload_to_texture.
-   * Destroy with ::destroy_texture.
+   * Arguments for create_texture()
+   */
+  struct CreateTextureArgs {
+    uint32_t width_;                           //< texture width
+    uint32_t height_;                          //< texture height
+    ImageFormat format_;                       //< texture format
+    vk::ComponentMapping component_mapping_;   //< component mapping
+    vk::Filter filter_ = vk::Filter::eLinear;  //< texture filter
+    bool normalized_ = true;     //< if true, then texture coordinates are normalize (0...1), else
+                                 //< (0...width, 0...height)
+    bool cuda_interop_ = false;  //< used for interop with CUDA
+    vk::SamplerYcbcrModelConversion ycbcr_model_conversion_;  ///< YCbCr model conversion
+    vk::SamplerYcbcrRange ycbcr_range_;                       ///< YCbCR range
+    vk::ChromaLocation x_chroma_location_;  ///< chroma location in x direction for formats which
+                                            ///< are chroma downsampled in width (420 and 422)
+    vk::ChromaLocation y_chroma_location_;  ///< chroma location in y direction for formats which
+                                            ///< are chroma downsampled in height (420)
+  };
+
+  /**
+   * Create a Texture using host data.
    *
-   * @param width, height     size
-   * @param format            texture format
-   * @param component_mapping component mapping
-   * @param filter            texture filter
-   * @param normalized        if true, then texture coordinates are normalize (0...1),
-   *                             else (0...width, 0...height)
+   * @param args arguments
    * @return created texture object
    */
-  Texture* create_texture_for_cuda_interop(uint32_t width, uint32_t height, ImageFormat format,
-                                           const vk::ComponentMapping& component_mapping,
-                                           vk::Filter filter = vk::Filter::eLinear,
-                                           bool normalized = true);
-
-  /**
-   * Create a Texture using host data. Destroy with ::destroy_texture.
-   *
-   * @param width, height     size
-   * @param format            texture format
-   * @param data_size         data size in bytes
-   * @param data              texture data
-   * @param component_mapping component mapping
-   * @param filter            texture filter
-   * @param normalized        if true, then texture coordinates are normalize (0...1),
-   *                             else (0...width, 0...height)
-   * @return created texture object
-   */
-  Texture* create_texture(uint32_t width, uint32_t height, ImageFormat format, size_t data_size,
-                          const void* data, const vk::ComponentMapping& component_mapping,
-                          vk::Filter filter = vk::Filter::eLinear, bool normalized = true);
-
-  /**
-   * Destroy a texture created with ::create_texture_for_cuda_interop or ::create_texture.
-   *
-   * @param texture   texture to destroy
-   */
-  void destroy_texture(Texture* texture);
-
-  /**
-   * Upload data from CUDA device memory to a texture created with ::create_texture_for_cuda_interop
-   *
-   * @param device_ptr    CUDA device memory
-   * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
-   * contiguous in memory
-   * @param texture       texture to be updated
-   * @param ext_stream    CUDA stream to use for operations
-   */
-  void upload_to_texture(CUdeviceptr device_ptr, size_t row_pitch, Texture* texture,
-                         CUstream ext_stream);
+  std::unique_ptr<Texture> create_texture(const CreateTextureArgs& args);
 
   /**
    * Upload data from host memory to a texture created with ::create_texture
    *
-   * @param host_ptr      data to upload in host memory
-   * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
-   * contiguous in memory
    * @param texture       texture to be updated
+   * @param host_ptr      data in host memory to upload for the planes
+   * @param row_pitch     the number of bytes between each row for the planes, if zero then data is
+   * assumed to be contiguous in memory
    */
-  void upload_to_texture(const void* host_ptr, size_t row_pitch, Texture* texture);
+  void upload_to_texture(Texture* texture, const std::array<const void*, 3>& host_ptr,
+                         const std::array<size_t, 3>& row_pitch);
+
+  /**
+   * Upload data from a Buffer to a texture
+   *
+   * @param texture texture to be updated
+   * @param buffers data to be uploaded for each plane
+   */
+  void upload_to_texture(Texture* texture, const std::array<Buffer*, 3>& buffers);
 
   /**
    * Create a vertex or index buffer to be used for interop with CUDA, see ::upload_texture.
-   * Destroy with ::destroy_buffer.
    *
    * @param data_size     size of the buffer in bytes
    * @param usage         buffer usage
    * @return created buffer
    */
-  Buffer* create_buffer_for_cuda_interop(size_t data_size, vk::BufferUsageFlags usage);
+  std::unique_ptr<Buffer> create_buffer_for_cuda_interop(size_t data_size,
+                                                         vk::BufferUsageFlags usage);
 
   /**
-   * Create a vertex or index buffer and initialize with data. Destroy with ::destroy_buffer.
+   * Create a vertex or index buffer and initialize with data.
    *
    * @param data_size     size of the buffer in bytes
    * @param data          host size data to initialize buffer with or nullptr
    * @param usage         buffer usage
    * @return created buffer
    */
-  Buffer* create_buffer(size_t data_size, const void* data, vk::BufferUsageFlags usage);
+  std::unique_ptr<Buffer> create_buffer(size_t data_size, const void* data,
+                                        vk::BufferUsageFlags usage);
 
   /**
    * Upload data from CUDA device memory to a buffer created with ::create_buffer_for_cuda_interop
@@ -248,13 +237,6 @@ class Vulkan {
    * @param buffer    buffer to be updated
    */
   void upload_to_buffer(size_t data_size, const void* data, const Buffer* buffer);
-
-  /**
-   * Destroy a buffer created with ::CreateBuffer.
-   *
-   * @param buffer    buffer to destroy
-   */
-  void destroy_buffer(Buffer* buffer);
 
   /**
    * Draw a texture with an optional depth texture and color lookup table.

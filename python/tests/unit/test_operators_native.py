@@ -22,7 +22,16 @@ import pytest
 
 import holoscan.operators
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Arg, Operator, OperatorSpec, Tensor, _Operator
+from holoscan.core import (
+    Application,
+    Arg,
+    MetadataDictionary,
+    MetadataPolicy,
+    Operator,
+    OperatorSpec,
+    Tensor,
+    _Operator,
+)
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.gxf import Entity
 
@@ -30,20 +39,27 @@ from holoscan.gxf import Entity
 with suppress(ImportError):
     from holoscan.operators.aja_source import AJASourceOp, NTV2Channel
 
-from holoscan.operators.bayer_demosaic import BayerDemosaicOp
-from holoscan.operators.format_converter import FormatConverterOp
-from holoscan.operators.holoviz import (
+from holoscan.operators import (
+    BayerDemosaicOp,
+    FormatConverterOp,
     HolovizOp,
+    InferenceOp,
+    InferenceProcessorOp,
+    PingTensorRxOp,
+    PingTensorTxOp,
+    SegmentationPostprocessorOp,
+    V4L2VideoCaptureOp,
+    VideoStreamRecorderOp,
+    VideoStreamReplayerOp,
+)
+from holoscan.operators.holoviz import (
+    _holoviz_str_to_chroma_location,
     _holoviz_str_to_depth_map_render_mode,
     _holoviz_str_to_image_format,
     _holoviz_str_to_input_type,
+    _holoviz_str_to_yuv_model_conversion,
+    _holoviz_str_to_yuv_range,
 )
-from holoscan.operators.inference import InferenceOp
-from holoscan.operators.inference_processor import InferenceProcessorOp
-from holoscan.operators.segmentation_postprocessor import SegmentationPostprocessorOp
-from holoscan.operators.v4l2_video_capture import V4L2VideoCaptureOp
-from holoscan.operators.video_stream_recorder import VideoStreamRecorderOp
-from holoscan.operators.video_stream_replayer import VideoStreamReplayerOp
 from holoscan.resources import (
     BlockMemoryPool,
     CudaStreamPool,
@@ -79,12 +95,27 @@ class TestOperator:
         with pytest.raises(RuntimeError):
             Operator(fragment, fragment)
 
-    def test_basic_init(self, fragment, capfd):
+    def test_basic_init(self, fragment):
         op = Operator(fragment)
         assert op.name.startswith("unnamed_operator")
         assert op.fragment is fragment
         assert op.operator_type == Operator.OperatorType.NATIVE
-        capfd.readouterr()
+
+    def test_metadata(self, fragment):
+        op = Operator(fragment)
+        assert op.metadata_policy == MetadataPolicy.RAISE
+        assert isinstance(op.metadata, MetadataDictionary)
+        meta = op.metadata
+        assert len(meta) == 0
+        meta["name"] = "abcd"
+        op.metadata["age"] = 50
+        assert len(op.metadata) == 2
+        assert "name" in op.metadata
+        assert "age" in op.metadata
+
+        # metadata transmission is disabled by default
+        assert not fragment.is_metadata_enabled
+        assert not op.is_metadata_enabled
 
     def test_basic_kwarg_init(self, fragment, capfd):
         op = Operator(fragment=fragment)
@@ -597,10 +628,56 @@ def test_holoviz_input_types(type_str):
         "b8g8r8a8_srgb",
         "a8b8g8r8_unorm_pack32",
         "a8b8g8r8_srgb_pack32",
+        "y8u8y8v8_422_unorm",
+        "u8y8v8y8_422_unorm",
+        "y8_u8v8_2plane_420_unorm",
+        "y8_u8v8_2plane_422_unorm",
+        "y8_u8_v8_3plane_420_unorm",
+        "y8_u8_v8_3plane_422_unorm",
+        "y16_u16v16_2plane_420_unorm",
+        "y16_u16v16_2plane_422_unorm",
+        "y16_u16_v16_3plane_420_unorm",
+        "y16_u16_v16_3plane_422_unorm",
     ],
 )
 def test_holoviz_image_formats(image_format_str):
     assert isinstance(_holoviz_str_to_image_format[image_format_str], HolovizOp.ImageFormat)
+
+
+@pytest.mark.parametrize(
+    "yuv_model_conversion",
+    [
+        "yuv_601",
+        "yuv_709",
+        "yuv_2020",
+    ],
+)
+def test_holoviz_yuv_model_conversions(yuv_model_conversion):
+    assert isinstance(
+        _holoviz_str_to_yuv_model_conversion[yuv_model_conversion], HolovizOp.YuvModelConversion
+    )
+
+
+@pytest.mark.parametrize(
+    "yuv_range",
+    [
+        "itu_full",
+        "itu_narrow",
+    ],
+)
+def test_holoviz_yuv_ranges(yuv_range):
+    assert isinstance(_holoviz_str_to_yuv_range[yuv_range], HolovizOp.YuvRange)
+
+
+@pytest.mark.parametrize(
+    "chroma_location",
+    [
+        "cosited_even",
+        "midpoint",
+    ],
+)
+def test_holoviz_chroma_locations(chroma_location):
+    assert isinstance(_holoviz_str_to_chroma_location[chroma_location], HolovizOp.ChromaLocation)
 
 
 @pytest.mark.parametrize(
@@ -679,6 +756,50 @@ class TestHolovizOpInputSpec:
         assert text == []
 
         spec.text = ["abc", "de", "fghij"]
+
+    def test_yuv_model_conversion(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        yuv_model_conversion = spec.yuv_model_conversion
+        assert yuv_model_conversion == HolovizOp.YuvModelConversion.YUV_601
+
+        spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_709
+
+        with pytest.raises(TypeError):
+            spec.yuv_model_conversion = 0
+
+    def test_yuv_range(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        yuv_range = spec.yuv_range
+        assert yuv_range == HolovizOp.YuvRange.ITU_FULL
+
+        spec.yuv_range = HolovizOp.YuvRange.ITU_NARROW
+
+        with pytest.raises(TypeError):
+            spec.yuv_range = 0
+
+    def test_x_chroma_location(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        x_chroma_location = spec.x_chroma_location
+        assert x_chroma_location == HolovizOp.ChromaLocation.COSITED_EVEN
+
+        spec.x_chroma_location = HolovizOp.ChromaLocation.MIDPOINT
+
+        with pytest.raises(TypeError):
+            spec.x_chroma_location = 0
+
+    def test_y_chroma_location(self):
+        spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.COLOR)
+
+        y_chroma_location = spec.y_chroma_location
+        assert y_chroma_location == HolovizOp.ChromaLocation.COSITED_EVEN
+
+        spec.y_chroma_location = HolovizOp.ChromaLocation.MIDPOINT
+
+        with pytest.raises(TypeError):
+            spec.y_chroma_location = 0
 
     def test_depth_map_render_mode(self):
         spec = HolovizOp.InputSpec("tensor1", HolovizOp.InputType.DEPTH_MAP)
@@ -987,13 +1108,14 @@ class TestV4L2VideoCaptureOp:
             width=320,
             height=240,
             pixel_format="auto",
+            pass_through=False,
             device="/dev/video0",
             allocator=UnboundedAllocator(app, name="pool"),
             exposure_time=500,
             gain=100,
         )
         assert isinstance(op, _Operator)
-        assert len(op.args) == 8
+        assert len(op.args) == 9
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1010,7 +1132,7 @@ class TestV4L2VideoCaptureOp:
             allocator=UnboundedAllocator(app, name="pool"),
         )
         assert isinstance(op, _Operator)
-        assert len(op.args) == 6  # No hardcoded defaults for exposure and gain
+        assert len(op.args) == 7  # No hardcoded defaults for exposure and gain
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1030,7 +1152,95 @@ class TestV4L2VideoCaptureOp:
             **app.kwargs("v4l2_video_capture"),
         )
         assert isinstance(op, _Operator)
-        assert len(op.args) == 8
+        assert len(op.args) == 9
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+
+class TestPingTensorRxOp:
+    def test_default_initialization(self, app, capfd):
+        name = "tensor_rx"
+        op = PingTensorRxOp(
+            fragment=app,
+            name=name,
+        )
+        assert isinstance(op, _Operator)
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
+        assert "warning" not in captured.err
+
+
+class TestPingTensorTxOp:
+    def test_default_initialization(self, app, capfd):
+        name = "tensor_tx"
+        op = PingTensorTxOp(
+            fragment=app,
+            name=name,
+        )
+        assert isinstance(op, _Operator)
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            np.dtype("float32"),
+            np.dtype("float64"),
+            np.dtype("complex64"),
+            np.dtype("complex128"),
+            np.dtype("int8"),
+            np.dtype("int16"),
+            np.dtype("int32"),
+            np.dtype("int64"),
+            np.dtype("uint8"),
+            np.dtype("uint16"),
+            np.dtype("uint32"),
+            np.dtype("uint64"),
+            np.dtype("bool"),  # will use uint8_t
+            "float",
+            "double",
+            "complex<float>",
+            "complex<double>",
+            "int8_t",
+            "int16_t",
+            "int32_t",
+            "int64_t",
+            "uint8_t",
+            "uint16_t",
+            "uint32_t",
+            "uint64_t",
+        ],
+    )
+    def test_kwarg_based_initialization(self, app, capfd, dtype):
+        name = "tensor_tx"
+        op = PingTensorTxOp(
+            fragment=app,
+            allocator=UnboundedAllocator(app, name="alloc"),
+            storage_type="system",
+            batch_size=10,
+            rows=16,
+            columns=24,
+            channels=3,
+            dtype=dtype,
+            tensor_name="image",
+            name=name,
+        )
+        assert isinstance(op, _Operator)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 

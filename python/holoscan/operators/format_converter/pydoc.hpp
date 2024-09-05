@@ -134,22 +134,6 @@ name : str, optional (constructor only)
     The name of the operator. Default value is ``"format_converter"``.
 )doc")
 
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : holoscan.core.OperatorSpec
-    The operator specification.
-)doc")
-
 }  // namespace holoscan::doc::FormatConverterOp
 
 #endif /* PYHOLOSCAN_OPERATORS_FORMAT_CONVERTER_PYDOC_HPP */

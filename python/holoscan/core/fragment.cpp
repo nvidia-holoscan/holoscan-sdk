@@ -139,6 +139,10 @@ void init_fragment(py::module_& m) {
            "latency_threshold"_a = kDefaultLatencyThreshold,
            doc::Application::doc_track,
            py::return_value_policy::reference_internal)
+      .def_property("is_metadata_enabled",
+                    py::overload_cast<>(&Fragment::is_metadata_enabled, py::const_),
+                    py::overload_cast<bool>(&Fragment::is_metadata_enabled),
+                    doc::Fragment::doc_is_metadata_enabled)
       .def("run",
            &Fragment::run,
            doc::Fragment::doc_run,

@@ -101,9 +101,12 @@ TEST(Fragment, TestFragmentConfig) {
   testing::internal::CaptureStderr();
   F.config(config_file);
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
+  EXPECT_TRUE(log_output.find("warning") != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("Config object was already created. Overwriting...") !=
-              std::string::npos);
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Fragment, TestFragmentConfigNestedArgs) {
@@ -145,9 +148,12 @@ TEST(Fragment, TestFragmentFromConfigNonexistentKey) {
 
   // verify that an error is logged when the key is not in the YAML file
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") != std::string::npos);
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("Unable to find the parameter item/map with key 'non-existent'") !=
-              std::string::npos);
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Fragment, TestFragmentConfigNonexistentFile) {
@@ -161,8 +167,11 @@ TEST(Fragment, TestFragmentConfigNonexistentFile) {
 
   // verify that an error is logged when the YAML file doesn't exist
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Config file 'nonexistent.yaml' doesn't exist") != std::string::npos);
+  EXPECT_TRUE(log_output.find("warning") != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Config file 'nonexistent.yaml' doesn't exist") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Fragment, TestFragmentGraph) {

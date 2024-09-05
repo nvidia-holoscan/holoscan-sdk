@@ -28,7 +28,7 @@ namespace holoscan::viz {
 
 class Buffer : public Resource {
  public:
-  explicit Buffer(vk::Device device, nvvk::ResourceAllocator* alloc, size_t size);
+  explicit Buffer(Vulkan *vulkan, nvvk::ResourceAllocator* alloc, size_t size);
   Buffer() = delete;
 
   virtual ~Buffer();

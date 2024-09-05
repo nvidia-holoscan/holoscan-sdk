@@ -32,6 +32,7 @@ class MinimalOp(Operator):
 
     def initialize(self):
         print("** initialize method called **")
+        print(f"initialize(): param_value = {self.param_value}")
 
     def start(self):
         print("** start method called **")
@@ -70,6 +71,9 @@ def test_minimal_app(ping_config_file, SchedulerClass, capfd):  # noqa: N803
     assert captured.out.count("** initialize method called **") == 1
     assert captured.out.count("** start method called **") == 1
     assert captured.out.count("** stop method called **") == 1
+
+    # verity if parameter value is set
+    assert "initialize(): param_value = 500" in captured.out
 
 
 @pytest.mark.parametrize(

@@ -106,6 +106,35 @@ the AJA device, so the following instructions cover this native installation.
      * :ref:`aja_testing`
 
 
+Using the AJA NTV2 Driver and SDK Build Script
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Included in the `scripts` directory is the `aja_build.sh` script which can be
+used to download the AJA NTV2 source, build the drivers and SDK, load the
+drivers, and run the `ntv2enumerateboards` utility to list the AJA boards that
+are connected to the system. To download and build the drivers and SDK, simply
+run the script:
+
+   .. code-block:: sh
+
+      $ ./scripts/aja_build.sh
+
+To optionally have the script load the drivers and list the connected devices
+once the build is complete, add the `--load-driver` flag:
+
+   .. code-block:: sh
+
+      $ ./scripts/aja_build.sh --load-driver
+
+.. Note::
+
+   The remainder of the steps in this documentation describe how to manually
+   build and load the AJA NTV2 drivers and SDK, and are not needed when using
+   the build script. However, it will still be required to reload the drivers
+   after rebooting the system by running the `load_ajantv2` command as described
+   in :ref:`aja_driver_load`.
+
+
 .. _aja_download:
 
 Downloading the AJA NTV2 SDK Source

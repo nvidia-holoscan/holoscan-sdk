@@ -33,12 +33,13 @@ https://www.kernel.org/doc/html/v4.9/media/uapi/v4l/v4l2.html
 Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
 
  - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
-   pixel format will be automatically selected. However, only ``AB24``, ``YUYV``, and ``MJPG`` are then
-   supported.
+   pixel format will be automatically selected. However, only `AB24`, `YUYV`, `MJPG`, and `RGB3`
+   are then supported.
    If a pixel format is specified in the yaml file, then this format will be used. However, note
-   that the operator then expects that this format can be encoded as RGBA32. If not, the behavior
-   is undefined.
- - Output stream is on host. Always RGBA32 at this time.
+   if `pass_through` is `false` that the operator then expects that this format can be encoded as
+   RGBA32. If not, the behavior is undefined.
+ - Output stream is on host. if `pass_through` is `false` (the default) the video buffer is
+   converted to RGBA32, else output the input video buffer unmodified.
 
 Use ``holoscan.operators.FormatConverterOp`` to move data from the host to a GPU device.
 
@@ -81,6 +82,9 @@ num_buffers : int, optional
 pixel_format : str
     Video stream pixel format (little endian four character code (fourcc)).
     Default value is ``"auto"``.
+pass_through : bool
+    If set, pass through the input buffer to the output unmodified, else convert to RGBA32.
+    Default value is ``False``.
 name : str, optional (constructor only)
     The name of the operator. Default value is ``"v4l2_video_capture"``.
 exposure_time : int, optional
@@ -100,22 +104,6 @@ gain : int, optional
     When not set by the user, V4L2_CID_AUTOGAIN is set to true (if supported).
     When set by the user, V4L2_CID_AUTOGAIN is set to false (if supported). The provided value is
     then used to set V4L2_CID_GAIN.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : ``holoscan.core.OperatorSpec``
-    The operator specification.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
 )doc")
 
 }  // namespace holoscan::doc::V4L2VideoCaptureOp

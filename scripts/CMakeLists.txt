@@ -16,6 +16,7 @@
 # Install useful scripts for developers
 install(
   FILES
+    aja_build.sh
     convert_gxf_entities_to_images.py
     convert_gxf_entities_to_video.py
     convert_video_to_gxf_entities.py

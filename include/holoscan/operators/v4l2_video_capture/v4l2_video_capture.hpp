@@ -33,12 +33,13 @@ namespace holoscan::ops {
  *
  * Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
  * - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
- *   pixel format will be automatically selected. However, only `AB24`, `YUYV`, and MJPG are then
- *   supported.
+ *   pixel format will be automatically selected. However, only `AB24`, `YUYV`, `MJPG`, and `RGB3`
+ *   are then supported.
  *   If a pixel format is specified in the yaml file, then this format will be used. However, note
- *   that the operator then expects that this format can be encoded as RGBA32. If not, the behavior
- *   is undefined.
- * - Output stream is on host. Always RGBA32 at this time.
+ *   if `pass_through` is `False` that the operator then expects that this format can be encoded as
+ *   RGBA32. If not, the behavior is undefined.
+ * - Output stream is on host. if `pass_through` is `False` (the default) the video buffer is
+ *   converted to RGBA32, else output the input video buffer unmodified.
  *
  * Use `holoscan::ops::FormatConverterOp` to move data from the host to a GPU device.
  *
@@ -58,6 +59,8 @@ namespace holoscan::ops {
  * - **num_buffers**: Number of V4L2 buffers to use. Optional (default: `4`).
  * - **pixel_format**: Video stream pixel format (little endian four character code (fourcc)).
  *   Default value is `"auto"`.
+ * - **pass_through**: If set, pass through the input buffer to the output unmodified, else convert
+ *   to RGBA32 (default `false`).
  * - **exposure_time**: Exposure time of the camera sensor in multiples of 100 μs (e.g. setting
  *   exposure_time to 100 is 10 ms). Optional (default: auto exposure, or camera sensor default).
  *   Use `v4l2-ctl -d /dev/<your_device> -L` for a range of values supported by your device.
@@ -113,6 +116,7 @@ class V4L2VideoCaptureOp : public Operator {
   Parameter<uint32_t> height_;
   Parameter<uint32_t> num_buffers_;
   Parameter<std::string> pixel_format_;
+  Parameter<bool> pass_through_;
   Parameter<uint32_t> exposure_time_;
   Parameter<uint32_t> gain_;
 
@@ -127,9 +131,6 @@ class V4L2VideoCaptureOp : public Operator {
   void v4l2_start();
   void v4l2_read_buffer(v4l2_buffer& buf);
 
-  void YUYVToRGBA(const void* yuyv, void* rgba, size_t width, size_t height);
-  void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t height);
-
   struct Buffer {
     void* ptr;
     size_t length;
@@ -140,6 +141,9 @@ class V4L2VideoCaptureOp : public Operator {
   uint32_t width_use_{0};
   uint32_t height_use_{0};
   uint32_t pixel_format_use_{V4L2_PIX_FMT_RGBA32};
+
+  typedef void (*ConverterFunc)(const void* in, void* rgba, size_t width, size_t height);
+  ConverterFunc converter_{nullptr};
 };
 
 }  // namespace holoscan::ops

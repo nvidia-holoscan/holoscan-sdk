@@ -111,13 +111,25 @@ TEST(Application, TestAppPrintOptions) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
 
-  EXPECT_TRUE(log_output.find("run_driver: true") != std::string::npos);
-  EXPECT_TRUE(log_output.find("run_worker: true") != std::string::npos);
-  EXPECT_TRUE(log_output.find("driver_address: 10.0.0.1:9999") != std::string::npos);
-  EXPECT_TRUE(log_output.find("worker_address: 0.0.0.0:8888") != std::string::npos);
+  EXPECT_TRUE(log_output.find("run_driver: true") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("run_worker: true") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("driver_address: 10.0.0.1:9999") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("worker_address: 0.0.0.0:8888") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("worker_targets: fragment1, fragment2, fragment3") !=
-              std::string::npos);
-  EXPECT_TRUE(log_output.find("config_path: app_config.yaml") != std::string::npos);
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("config_path: app_config.yaml") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Application, TestAppHelpOption) {
@@ -128,7 +140,8 @@ TEST(Application, TestAppHelpOption) {
   EXPECT_EXIT(make_application<Application>(args), ::testing::ExitedWithCode(0), ".*");
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("Usage: ") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Usage: ") != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
 }
 
 TEST(Application, TestAppVersionOption) {
@@ -139,7 +152,8 @@ TEST(Application, TestAppVersionOption) {
   EXPECT_EXIT(make_application<Application>(args), ::testing::ExitedWithCode(0), ".*");
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("0.0.0") != std::string::npos) << log_output;
+  EXPECT_TRUE(log_output.find("0.0.0") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST(Application, TestAddFragment) {
@@ -210,7 +224,9 @@ TEST(Application, TestReservedFragmentName) {
   auto fragment = app->make_fragment<Fragment>("all");
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Fragment name 'all' is reserved") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Fragment name 'all' is reserved") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

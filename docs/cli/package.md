@@ -6,7 +6,7 @@
 
 ## Synopsis
 
-`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-platform-config) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-source) [](#cli-package-sdk-version) [](#cli-package-holoscan-sdk-file) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application) [](#cli-package-source)
+`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-platform-config) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-includes) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-source) [](#cli-package-sdk-version) [](#cli-package-holoscan-sdk-file) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application) [](#cli-package-source)
 
 ## Examples
 
@@ -162,6 +162,28 @@ Optionally specifies the base container image for building packaged application.
 ### `[--build-image BUILD_IMAGE]`
 
 Optionally specifies the build container image for building C++ applications. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a build image to use from [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
+
+(#cli-package-includes)=
+
+### `[--includes  [{debug,holoviz,torch,onnx}]]`
+
+To reduce the size of the packaged application container, the CLI Packager, by default, includes minimum runtime dependencies to run applications designed for Holoscan. You can specify additional runtime dependencies to be included in the packaged application using this option. The following options are available:
+
+- `debug`: includes debugging tools, such as `gdb`
+- `holoviz`: includes dependencies for Holoviz rendering on x11 and Wayland
+- `torch`: includes `libtorch` and `torchvision` runtime dependencies
+- `onnx`: includes `onnxruntime` runtime, `libnvinfer-plugin8`, `libnconnxparser8` dependencies.
+
+:::{note}
+Refer to [Developer Resources](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/DEVELOP.md#advanced-local-environment--cmake) for dependency versions.
+:::
+
+
+
+Usage:
+```bash
+holoscan package --includes holoviz torch onnx
+```
 
 (#cli-package-build-cache)=
 

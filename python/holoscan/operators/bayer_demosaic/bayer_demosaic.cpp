@@ -111,8 +111,6 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
            "generate_alpha"_a = false,
            "alpha_value"_a = 255,
            "name"_a = "bayer_demosaic"s,
-           doc::BayerDemosaicOp::doc_BayerDemosaicOp)
-      .def("initialize", &BayerDemosaicOp::initialize, doc::BayerDemosaicOp::doc_initialize)
-      .def("setup", &BayerDemosaicOp::setup, "spec"_a, doc::BayerDemosaicOp::doc_setup);
+           doc::BayerDemosaicOp::doc_BayerDemosaicOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <algorithm>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
@@ -73,6 +75,29 @@ gxf_uid_t add_entity_group(void* context, std::string name) {
   gxf_uid_t entity_group_gid = kNullUid;
   HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntityGroup(context, name.c_str(), &entity_group_gid));
   return entity_group_gid;
+}
+
+uint64_t get_default_queue_policy() {
+  const char* env_value = std::getenv("HOLOSCAN_QUEUE_POLICY");
+  if (env_value) {
+    std::string value{env_value};
+    std::transform(
+        value.begin(), value.end(), value.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (value == "pop") {
+      return 0UL;
+    } else if (value == "reject") {
+      return 1UL;
+    } else if (value == "fail") {
+      return 2UL;
+    } else {
+      HOLOSCAN_LOG_ERROR(
+          "Unrecognized HOLOSCAN_QUEUE_POLICY: {}. It should be 'pop', 'reject' or 'fail'. Falling "
+          "back to default policy of 'fail'",
+          value);
+      return 2UL;
+    }
+  }
+  return 2UL;  // fail
 }
 
 }  // namespace holoscan::gxf

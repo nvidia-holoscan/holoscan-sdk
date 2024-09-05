@@ -205,6 +205,18 @@ PYDOC(fragment, R"doc(
 The fragment (``holoscan.core.Fragment``) that the operator belongs to.
 )doc")
 
+PYDOC(metadata, R"doc(
+The metadata dictionary (``holoscan.core.MetadataDictionary``) associated with the operator.
+)doc")
+
+PYDOC(is_metadata_enabled, R"doc(
+Boolean indicating whether the fragment this operator belongs to has metadata transmission enabled.
+)doc")
+
+PYDOC(metadata_policy, R"doc(
+The metadata dictionary (``holoscan.core.MetadataPolicy``) associated with the operator.
+)doc")
+
 PYDOC(spec, R"doc(
 The operator spec (``holoscan.core.OperatorSpec``) associated with the operator.
 )doc")

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,20 +22,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
-
-#define CUDA_TRY(stmt)                                                                        \
-  ({                                                                                          \
-    cudaError_t _holoscan_cuda_err = stmt;                                                    \
-    if (cudaSuccess != _holoscan_cuda_err) {                                                  \
-      HOLOSCAN_LOG_ERROR("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).", \
-                         #stmt,                                                               \
-                         __LINE__,                                                            \
-                         __FILE__,                                                            \
-                         cudaGetErrorString(_holoscan_cuda_err),                              \
-                         _holoscan_cuda_err);                                                 \
-    }                                                                                         \
-    _holoscan_cuda_err;                                                                       \
-  })
+#include "holoscan/utils/cuda_macros.hpp"
 
 namespace holoscan {
 namespace ops {
@@ -67,10 +54,12 @@ void TensorCompareOp::compute(InputContext& op_input, OutputContext&, ExecutionC
   }
 
   std::vector<uint8_t> data1(tensor1->nbytes());
-  CUDA_TRY(cudaMemcpy(data1.data(), tensor1->data(), tensor1->nbytes(), cudaMemcpyDeviceToHost));
+  HOLOSCAN_CUDA_CALL(
+      cudaMemcpy(data1.data(), tensor1->data(), tensor1->nbytes(), cudaMemcpyDeviceToHost));
 
   std::vector<uint8_t> data2(tensor2->nbytes());
-  CUDA_TRY(cudaMemcpy(data2.data(), tensor2->data(), tensor2->nbytes(), cudaMemcpyDeviceToHost));
+  HOLOSCAN_CUDA_CALL(
+      cudaMemcpy(data2.data(), tensor2->data(), tensor2->nbytes(), cudaMemcpyDeviceToHost));
 
   auto result = std::mismatch(data1.begin(), data1.end(), data2.begin());
   if (result.first != data1.end()) {

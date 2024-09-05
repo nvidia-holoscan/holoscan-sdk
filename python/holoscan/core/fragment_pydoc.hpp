@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -106,6 +106,10 @@ Get the computation graph (Graph node is an Operator) associated with the fragme
 
 PYDOC(executor, R"doc(
 Get the executor associated with the fragment.
+)doc")
+
+PYDOC(is_metadata_enabled, R"doc(
+Property to get or set the boolean controlling whether operator metadata transmission is enabled.
 )doc")
 
 PYDOC(from_config, R"doc(

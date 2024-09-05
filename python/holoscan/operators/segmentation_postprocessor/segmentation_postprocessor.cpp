@@ -106,10 +106,6 @@ PYBIND11_MODULE(_segmentation_postprocessor, m) {
            "data_format"_a = "hwc"s,
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "segmentation_postprocessor"s,
-           doc::SegmentationPostprocessorOp::doc_SegmentationPostprocessorOp)
-      .def("setup",
-           &SegmentationPostprocessorOp::setup,
-           "spec"_a,
-           doc::SegmentationPostprocessorOp::doc_setup);
+           doc::SegmentationPostprocessorOp::doc_SegmentationPostprocessorOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

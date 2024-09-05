@@ -83,22 +83,6 @@ name : str, optional (constructor only)
     The name of the operator. Default value is ``"postprocessor"``.
 )doc")
 
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : holoscan.core.OperatorSpec
-    The operator specification.
-)doc")
-
 }  // namespace holoscan::doc::InferenceProcessorOp
 
 #endif /* PYHOLOSCAN_OPERATORS_INFERENCE_PROCESSOR_PYDOC_HPP */

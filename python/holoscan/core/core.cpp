@@ -45,6 +45,7 @@ PYBIND11_MODULE(_core, m) {
   init_io_context(m);
   init_execution_context(m);
   init_io_spec(m);
+  init_metadata(m);
   init_operator(m);
   init_scheduler(m);
   init_network_context(m);

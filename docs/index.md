@@ -92,6 +92,13 @@ latency_tool.rst
 ```
 
 ```{toctree}
+:maxdepth: 1
+:caption: FAQ
+
+hsdk_faq
+```
+
+```{toctree}
 :caption: Links
 Developer page <https://developer.nvidia.com/holoscan-sdk>
 Support Forum <https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all>

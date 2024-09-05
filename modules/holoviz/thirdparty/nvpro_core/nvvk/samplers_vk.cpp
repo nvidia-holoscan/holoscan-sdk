@@ -56,8 +56,8 @@ VkSampler SamplerPool::acquireSampler(const VkSamplerCreateInfo& createInfo)
       case VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO:
         state.reduction = *(const VkSamplerReductionModeCreateInfo*)ext;
         break;
-      case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO:
-        state.ycbr = *(const VkSamplerYcbcrConversionCreateInfo*)ext;
+      case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO:
+        state.ycbr = *(const VkSamplerYcbcrConversionInfo*)ext;
         break;
       default:
         assert(0 && "unsupported sampler create");

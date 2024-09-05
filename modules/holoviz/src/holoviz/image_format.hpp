@@ -38,6 +38,12 @@ namespace holoscan::viz {
  *   - SRGB - the R, G, and B components are unsigned normalized values that
  *            represent values using sRGB nonlinear encoding, while the A
  *            component (if one exists) is a regular unsigned normalized value
+ * - multi-planar formats
+ *   - 2PLANE - data is stored in two separate memory planes
+ *   - 3PLANE - data is stored in three separate memory planes
+ * - YUV formats
+ *   - 420 - the horizontal and vertical resolution of the chroma (UV) planes is halved
+ *   - 422 - the horizontal of the chroma (UV) planes is halved
  */
 enum class ImageFormat {
   R8_UINT,   ///< specifies a one-component, 8-bit unsigned integer format that has
@@ -171,6 +177,79 @@ enum class ImageFormat {
                           ///  in bits 8..15,
                           ///  and an 8-bit R component stored with sRGB nonlinear
                           ///  encoding in bits 0..7.
+
+  Y8U8Y8V8_422_UNORM,  ///< specifies a four-component, 32-bit format containing a pair of Y
+                       ///  components, a V component, and a U component, collectively encoding a
+                       ///  2×1 rectangle of unsigned normalized RGB texel data. One Y value is
+                       ///  present at each i coordinate, with the U and V values shared across both
+                       ///  Y values and thus recorded at half the horizontal resolution of the
+                       ///  image. This format has an 8-bit Y component for the even i coordinate in
+                       ///  byte 0, an 8-bit U component in byte 1, an 8-bit Y component for the odd
+                       ///  i coordinate in byte 2, and an 8-bit V component in byte 3. This format
+                       ///  only supports images with a width that is a multiple of two.
+  U8Y8V8Y8_422_UNORM,  ///< specifies a four-component, 32-bit format containing a pair of Y
+                       ///  components, a V component, and a U component, collectively encoding a
+                       ///  2×1 rectangle of unsigned normalized RGB texel data. One Y value is
+                       ///  present at each i coordinate, with the U and V values shared across both
+                       ///  Y values and thus recorded at half the horizontal resolution of the
+                       ///  image. This format has an 8-bit U component in byte 0, an 8-bit Y
+                       ///  component for the even i coordinate in byte 1, an 8-bit V component in
+                       ///  byte 2, and an 8-bit Y component for the odd i coordinate in byte 3.
+                       ///  This format only supports images with a width that is a multiple of two.
+  Y8_U8V8_2PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that has an
+                             ///  8-bit Y component in plane 0, and a two-component, 16-bit UV plane
+                             ///  1 consisting of an 8-bit U component in byte 0 and an 8-bit V
+                             ///  component in byte 1. The horizontal and vertical dimensions of the
+                             ///  UV plane are halved relative to the image dimensions. This format
+                             ///  only supports images with a width and height that are a multiple
+                             ///  of two.
+  Y8_U8V8_2PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that has an
+                             ///  8-bit Y component in plane 0, and a two-component, 16-bit UV plane
+                             ///  1 consisting of an 8-bit U component in byte 0 and an 8-bit V
+                             ///  component in byte 1. The horizontal dimension of the UV plane is
+                             ///  halved relative to the image dimensions. This format only supports
+                             ///  images with a width that is a multiple of two.
+  Y8_U8_V8_3PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that has an
+                              ///  8-bit Y component in plane 0, an 8-bit U component in plane 1,
+                              ///  and an 8-bit V component in plane 2. The horizontal and vertical
+                              ///  dimensions of the V and U planes are halved relative to the image
+                              ///  dimensions. This format only supports images with a width and
+                              ///  height that are a multiple of two.
+  Y8_U8_V8_3PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that has an
+                              ///  8-bit Y component in plane 0, an 8-bit U component in plane 1,
+                              ///  and an 8-bit V component in plane 2. The horizontal dimension of
+                              ///  the V and U plane is halved relative to the image dimensions.
+                              ///  This format only supports images with a width that is a multiple
+                              ///  of two.
+  Y16_U16V16_2PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that has a
+                                ///  16-bit Y component in each 16-bit word of plane 0, and a
+                                ///  two-component, 32-bit UV plane 1 consisting of a 16-bit U
+                                ///  component in the word in bytes 0..1, and a 16-bit V component
+                                ///  in the word in bytes 2..3. The horizontal and vertical
+                                ///  dimensions of the UV plane are halved relative to the image
+                                ///  dimensions. This format only supports images with a width and
+                                ///  height that are a multiple of two.
+  Y16_U16V16_2PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that has a
+                                ///  16-bit Y component in each 16-bit word of plane 0, and a
+                                ///  two-component, 32-bit UV plane 1 consisting of a 16-bit U
+                                ///  component in the word in bytes 0..1, and a 16-bit V component
+                                ///  in the word in bytes 2..3. The horizontal dimension of the UV
+                                ///  plane is halved relative to the image dimensions. This format
+                                ///  only supports images with a width that is a multiple of two.
+  Y16_U16_V16_3PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that has
+                                 ///  a 16-bit Y component in each 16-bit word of plane 0, a 16-bit
+                                 ///  U component in each 16-bit word of plane 1, and a 16-bit V
+                                 ///  component in each 16-bit word of plane 2. The horizontal and
+                                 ///  vertical dimensions of the V and U planes are halved relative
+                                 ///  to the image dimensions. This format only supports images with
+                                 ///  a width and height that are a multiple of two.
+  Y16_U16_V16_3PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that has
+                                 ///  a 16-bit Y component in each 16-bit word of plane 0, a 16-bit
+                                 ///  U component in each 16-bit word of plane 1, and a 16-bit V
+                                 ///  component in each 16-bit word of plane 2. The horizontal
+                                 ///  dimension of the V and U plane is halved relative to the image
+                                 ///  dimensions. This format only supports images with a width that
+                                 ///  is a multiple of two.
 };
 
 /**
@@ -193,6 +272,36 @@ enum class ComponentSwizzle {
   G,    ///< specifies that the component is set to the value of the G component of the image
   B,    ///< specifies that the component is set to the value of the B component of the image
   A     ///< specifies that the component is set to the value of the A component of the image
+};
+
+/**
+ * Defines the conversion from the source color model to the shader color model.
+ */
+enum class YuvModelConversion {
+  YUV_601,   ///< specifies the color model conversion from YUV to RGB defined in BT.601
+  YUV_709,   ///< specifies the color model conversion from YUV to RGB defined in BT.709
+  YUV_2020,  ///< specifies the color model conversion from YUV to RGB defined in BT.2020
+};
+
+/**
+ * Specifies the YUV range
+ */
+enum class YuvRange {
+  ITU_FULL,    ///< specifies that the full range of the encoded values are valid and
+               ///< interpreted according to the ITU “full range” quantization rules
+  ITU_NARROW,  ///< specifies that headroom and foot room are reserved in the numerical range
+               ///< of encoded values, and the remaining values are expanded according to the
+               ///< ITU “narrow range” quantization rules
+};
+
+/**
+ * Defines the location of downsampled chroma component samples relative to the luma samples
+ */
+enum class ChromaLocation {
+  COSITED_EVEN,  ///< specifies that downsampled chroma samples are aligned with luma samples with
+                 ///< even coordinates
+  MIDPOINT,  ///< specifies that downsampled chroma samples are located half way between each even
+             ///< luma sample and the nearest higher odd luma sample.
 };
 
 }  // namespace holoscan::viz

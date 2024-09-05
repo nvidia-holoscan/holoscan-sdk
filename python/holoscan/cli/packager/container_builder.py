@@ -17,6 +17,7 @@ limitations under the License.
 
 import logging
 import os
+import pprint
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -141,6 +142,7 @@ class BuilderBase:
             "UID": self._build_parameters.uid,
             "GID": self._build_parameters.gid,
             "UNAME": self._build_parameters.username,
+            "GPU_TYPE": platform_parameters.platform_config.value,
         }
 
         self._logger.debug(f"Building Holoscan Application Package: tag={platform_parameters.tag}")
@@ -180,6 +182,7 @@ Building image for:                 {platform_parameters.platform.value}
     SDK Version:                    {self._build_parameters.holoscan_sdk_version}
     SDK:                            {self._build_parameters.sdk.value}
     Tag:                            {platform_parameters.tag}
+    Included features/dependencies: {", ".join(self._build_parameters.includes) if self._build_parameters.includes else "N/A"}
     """  # noqa: E501
         )
 
@@ -234,7 +237,7 @@ Building image for:                 {platform_parameters.platform.value}
             shutil.copytree(self._build_parameters.application, target_application_path)
 
         target_config_file_path = Path(os.path.join(self._temp_dir, "app.config"))
-        shutil.copyfile(self._build_parameters.config_file, target_config_file_path)
+        shutil.copyfile(self._build_parameters.app_config_file_path, target_config_file_path)
 
     def _copy_model_files(self):
         """Copy models to temporary location"""
@@ -267,12 +270,26 @@ Building image for:                 {platform_parameters.platform.value}
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        self._logger.debug(
+            f"""
+========== Begin Build Parameters ==========
+{pprint.pformat(self._build_parameters.to_jinja)}
+=========== End Build Parameters ===========
+"""
+        )
+        self._logger.debug(
+            f"""
+========== Begin Platform Parameters ==========
+{pprint.pformat(platform_parameters.to_jinja)}
+=========== End Platform Parameters ===========
+"""
+        )
 
         jinja_template = jinja_env.get_template("Dockerfile.jinja2")
         return jinja_template.render(
             {
-                **self._build_parameters.to_jina,
-                **platform_parameters.to_jina,
+                **self._build_parameters.to_jinja,
+                **platform_parameters.to_jinja,
             }
         )
 
@@ -318,7 +335,7 @@ class PythonAppBuilder(BuilderBase):
                 requirements_file.writelines("\n".join(self._build_parameters.pip_packages))
 
     def _copy_sdk_file(self, sdk_file: Optional[Path]):
-        if sdk_file is not None and sdk_file != Constants.PYPI_INSTALL_SOURCE:
+        if sdk_file is not None and os.path.isfile(sdk_file):
             dest = os.path.join(self._temp_dir, sdk_file.name)
             if os.path.exists(dest):
                 os.remove(dest)
@@ -339,7 +356,9 @@ class CppAppBuilder(BuilderBase):
 
     def _copy_supporting_files(self, platform_parameters: PlatformParameters):
         """Copies the SDK file to the temporary directory"""
-        if platform_parameters.holoscan_sdk_file is not None:
+        if platform_parameters.holoscan_sdk_file is not None and os.path.isfile(
+            platform_parameters.holoscan_sdk_file
+        ):
             dest = os.path.join(self._temp_dir, platform_parameters.holoscan_sdk_file.name)
             if os.path.exists(dest):
                 os.remove(dest)

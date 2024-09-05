@@ -14,11 +14,13 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 """  # noqa: E501
+import os
 
 import pytest
+from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, ConditionType, IOSpec, Operator, OperatorSpec
+from holoscan.core import Application, ConditionType, IOSpec, Operator, OperatorSpec, Tracker
 
 
 class PingMultiQueueTxOp(Operator):
@@ -42,10 +44,11 @@ class PingMultiQueueTxOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
+        policy_kwarg = dict() if self.queue_policy is None else {"policy": self.queue_policy}
         spec.output("out").connector(
             IOSpec.ConnectorType.DOUBLE_BUFFER,
             capacity=self.queue_capacity,
-            policy=self.queue_policy,
+            **policy_kwarg,
         ).condition(
             ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
             min_size=self.queue_capacity,
@@ -89,10 +92,11 @@ class PingMultiQueueRxOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
+        policy_kwarg = dict() if self.queue_policy is None else {"policy": self.queue_policy}
         spec.input("in").connector(
             IOSpec.ConnectorType.DOUBLE_BUFFER,
             capacity=self.queue_capacity,
-            policy=self.queue_policy,
+            **policy_kwarg,
         ).condition(
             ConditionType.MESSAGE_AVAILABLE,
             min_size=self.queue_capacity,
@@ -102,8 +106,20 @@ class PingMultiQueueRxOp(Operator):
     def compute(self, op_input, op_output, context):
         offset = self.count * self.queue_capacity
         expected_values = tuple(offset + i for i in range(1, self.queue_capacity + 1))
+        queue_policy = self.queue_policy
+        if queue_policy is None:
+            # Need to know what the environment variable was set to in order to validate the
+            # expected result.
+            queue_policy = os.environ.get("HOLOSCAN_QUEUE_POLICY", "fail").lower()
+            if queue_policy == "pop":
+                queue_policy = 0
+            elif queue_policy == "reject":
+                queue_policy = 1
+            else:
+                queue_policy = 2
+
         if self.extra_emit and self.queue_capacity > 1:  # noqa: SIM102
-            if self.queue_policy == 0:
+            if queue_policy == 0:
                 # Policy 0 is 'pop', so the first value would have been popped from the queue.
                 # For `PingMultiQueueTxOp`, the last value is repeated.
                 expected_values = expected_values[1:] + (expected_values[-1],)
@@ -202,7 +218,7 @@ def test_ping_app_with_larger_queue(queue_capacity, capfd):
     assert f"PingMultiQueueRxOp has been called {count} times." in captured.out
 
 
-@pytest.mark.parametrize("queue_policy", [0, 1, 2])
+@pytest.mark.parametrize("queue_policy", [0, 1, 2, None])
 @pytest.mark.parametrize("queue_capacity", [1, 2, 5])
 def test_ping_app_with_larger_queue_and_extra_emit(queue_capacity, queue_policy, capfd):
     """Test different queue policies when there is an extra emit call on the Transmitter"""
@@ -226,7 +242,7 @@ def test_ping_app_with_larger_queue_and_extra_emit(queue_capacity, queue_policy,
         assert "error" not in captured.err
         assert "GXF_EXCEEDING_PREALLOCATED_SIZE" not in captured.err
     except RuntimeError as err:
-        if queue_policy == 2:
+        if queue_policy is None or queue_policy == 2:
             # policy 2 = fault, so app will terminate on the first compute call to
             # PingMultiQueueTxOp when `extra_emit=True` as above.
             captured = capfd.readouterr()
@@ -236,3 +252,48 @@ def test_ping_app_with_larger_queue_and_extra_emit(queue_capacity, queue_policy,
             assert "GXF_EXCEEDING_PREALLOCATED_SIZE" in captured.err
         else:
             raise RuntimeError(f"unexpected Runtime error: {err}") from err
+
+
+@pytest.mark.parametrize("policy_name", ["Pop", "Reject", "Fail"])
+@pytest.mark.parametrize("flow_tracking_enabled", [False, True])
+def test_ping_app_with_queue_policy_from_environment(policy_name, flow_tracking_enabled, capfd):
+    """Test different queue policies when there is an extra emit call on the Transmitter"""
+    count = 3
+    app = MyCustomQueuePingApp(
+        count=count,
+        queue_capacity=2,
+        queue_policy=None,  # None to use HOLOSCAN_QUEUE_POLICY environment variable
+        extra_emit=True,
+    )
+    env_var_settings = {
+        ("HOLOSCAN_QUEUE_POLICY", policy_name),
+    }
+    with env_var_context(env_var_settings):
+        try:
+            if flow_tracking_enabled:
+                with Tracker(app) as tracker:
+                    app.run()
+                    tracker.print()
+            else:
+                app.run()
+
+            captured = capfd.readouterr()
+
+            # Assert that `PingMultiQueueRxOp.compute` was called the expected number of times
+            # (The compute method itself confirms the received values)
+            assert f"PingMultiQueueRxOp has been called {count} times." in captured.out
+
+            # queue size error was not logged
+            assert "error" not in captured.err
+            assert "GXF_EXCEEDING_PREALLOCATED_SIZE" not in captured.err
+        except RuntimeError as err:
+            if policy_name.lower() == "fail":
+                # policy 2 = fault, so app will terminate on the first compute call to
+                # PingMultiQueueTxOp when `extra_emit=True` as above.
+                captured = capfd.readouterr()
+
+                # verify that an error about exceeding the queue size was logged
+                assert "error" in captured.err
+                assert "GXF_EXCEEDING_PREALLOCATED_SIZE" in captured.err
+            else:
+                raise RuntimeError(f"unexpected Runtime error: {err}") from err

@@ -18,115 +18,11 @@
 import textwrap
 from argparse import ArgumentParser
 
-import cupy as cp
 import numpy as np
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Fragment, Operator, OperatorSpec
-
-# define transmit/receive operators using tensors
-
-
-def data_type_to_numpy_dtype(data_type):
-    if data_type == "uint8_t":
-        return np.uint8
-    elif data_type == "uint16_t":
-        return np.uint16
-    elif data_type == "uint32_t":
-        return np.uint32
-    elif data_type == "uint64_t":
-        return np.uint64
-    elif data_type == "int8_t":
-        return np.int8
-    elif data_type == "int16_t":
-        return np.int16
-    elif data_type == "int32_t":
-        return np.int32
-    elif data_type == "int64_t":
-        return np.int64
-    elif data_type == "float":
-        return np.float32
-    elif data_type == "double":
-        return np.float64
-    elif data_type == "complex<float>":
-        return np.complex64
-    elif data_type == "complex<double>":
-        return np.complex128
-    else:
-        raise ValueError(f"unsupported data_type: {data_type}")
-
-
-class PingTensorTxOp(Operator):
-    """Simple transmitter operator.
-
-    This operator has a single output port:
-        output: "out"
-
-    On each tick, it transmits a tensor on the "out" port.
-    The boolean gpu_tensor argument determines if it is a host or device tensor.
-    """
-
-    def __init__(
-        self,
-        fragment,
-        *args,
-        gpu_tensor=False,
-        shape=(32, 64),
-        dtype=np.uint8,
-        tensor_name="out",
-        **kwargs,
-    ):
-        self.index = 1
-        self.gpu_tensor = gpu_tensor
-        self.shape = shape
-        self.dtype = dtype
-        self.tensor_name = tensor_name
-        # Need to call the base class constructor last
-        super().__init__(fragment, *args, **kwargs)
-
-    def setup(self, spec: OperatorSpec):
-        spec.output("out")
-
-    def compute(self, op_input, op_output, context):
-        xp = cp if self.gpu_tensor else np
-        op_output.emit(dict(out=xp.ones(self.shape, dtype=self.dtype)), self.tensor_name)
-        self.index += 1
-
-
-class PingTensorRxOp(Operator):
-    """Simple receiver operator.
-
-    This operator has a single input port:
-        input: "in"
-
-    This is an example of a native operator with one input port.
-    On each tick, it receives a tensor from the "in" port.
-    """
-
-    def __init__(self, fragment, *args, **kwargs):
-        # Need to call the base class constructor last
-        self.count = 1
-        super().__init__(fragment, *args, **kwargs)
-
-    def setup(self, spec: OperatorSpec):
-        spec.input("in")
-
-    def compute(self, op_input, op_output, context):
-        tensormap = op_input.receive("in")
-        for key, value in tensormap.items():
-            if hasattr(value, "__cuda_array_interface__"):
-                arr = cp.asarray(value)
-            else:
-                arr = np.asarray(value)
-            dtype_name = np.dtype(dtype).name
-            print(
-                f"message {self.count}: Tensor key: '{key}', shape: {arr.shape}, "
-                f"dtype: '{dtype_name}'"
-            )
-        self.count += 1
-
-
-# Now define a simple application using the operators defined above
+from holoscan.core import Application, Fragment
+from holoscan.operators import PingTensorRxOp, PingTensorTxOp
 
 
 class Fragment1(Fragment):
@@ -136,12 +32,16 @@ class Fragment1(Fragment):
         gpu_tensor=False,
         count=10,
         shape=(32, 64),
-        dtype=np.uint8,
+        dtype="uint8_t",
         tensor_name="out",
         **kwargs,
     ):
         self.gpu_tensor = gpu_tensor
         self.count = count
+        if len(shape) == 2:
+            self.rows, self.columns = shape
+        else:
+            raise ValueError("expected shape of length 2")
         self.shape = shape
         self.dtype = dtype
         self.tensor_name = tensor_name
@@ -150,11 +50,13 @@ class Fragment1(Fragment):
     def compose(self):
         # Configure the operators. Here we use CountCondition to terminate
         # execution after a specific number of messages have been sent.
+        storage_type = "device" if self.gpu_tensor else "system"
         tx = PingTensorTxOp(
             self,
             CountCondition(self, self.count),
-            gpu_tensor=self.gpu_tensor,
-            shape=self.shape,
+            storage_type=storage_type,
+            rows=self.rows,
+            columns=self.columns,
             dtype=self.dtype,
             tensor_name=self.tensor_name,
             name="tx",
@@ -194,8 +96,6 @@ class MyPingApp(Application):
         # Connect the two fragments (tx.out -> rx.in)
         # We can skip the "out" and "in" suffixes, as they are the default
         self.add_flow(fragment1, fragment2, {("tx", "rx")})
-
-        # self.resource(self.from_config("resources.fragments"))
 
 
 def main(on_gpu=False, count=10, shape=(64, 32), dtype=np.uint8):
@@ -291,12 +191,9 @@ if __name__ == "__main__":
     # only non-zero dimensions are included in the shape
     shape = tuple(s for s in (args.batch, args.rows, args.columns, args.channels) if s > 0)
 
-    # convert CLI string to numpy.dtype
-    dtype = data_type_to_numpy_dtype(args.data_type)
-
     main(
         on_gpu=args.gpu,
         count=args.count,
         shape=shape,
-        dtype=dtype,
+        dtype=args.data_type,
     )

@@ -15,6 +15,9 @@
  limitations under the License.
 """  # noqa: E501
 
+import os
+
+from holoscan.conditions import CountCondition
 from holoscan.core import Application
 from holoscan.operators import AJASourceOp, HolovizOp
 
@@ -31,34 +34,25 @@ class AJACaptureApp(Application):
     """
 
     def compose(self):
-        width = 1920
-        height = 1080
+        args_aja = self.kwargs("aja")
 
-        source = AJASourceOp(
-            self,
-            name="aja",
-            width=width,
-            height=height,
-            rdma=True,
-            enable_overlay=False,
-            overlay_rdma=True,
-        )
+        count = args_aja["count"]
+        args_aja.pop("count")
 
-        visualizer = HolovizOp(
-            self,
-            name="holoviz",
-            width=width,
-            height=height,
-            tensors=[{"name": "", "type": "color", "opacity": 1.0, "priority": 0}],
-        )
+        source = AJASourceOp(self, CountCondition(self, count), name="aja", **args_aja)
+
+        visualizer = HolovizOp(self, name="holoviz", **self.kwargs("holoviz"))
 
         self.add_flow(source, visualizer, {("video_buffer_output", "receivers")})
 
 
-def main():
+def main(config_file):
     app = AJACaptureApp()
+    # if the --config command line argument was provided, it will override this config_file
+    app.config(config_file)
     app.run()
 
 
 if __name__ == "__main__":
-    main()
+    config_file = os.path.join(os.path.dirname(__file__), "aja_capture.yaml")
+    main(config_file=config_file)

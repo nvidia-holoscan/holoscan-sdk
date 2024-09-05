@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,98 +27,84 @@ namespace nvvk {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-MemAllocateInfo::MemAllocateInfo(const VkMemoryRequirements& memReqs, VkMemoryPropertyFlags memProps, bool isTilingOptimal)
-    : m_memReqs(memReqs)
-    , m_memProps(memProps)
-    , m_isTilingOptimal(isTilingOptimal)
-{
-}
+MemAllocateInfo::MemAllocateInfo(const VkMemoryRequirements& memReqs,
+                                 VkMemoryPropertyFlags memProps, bool isTilingOptimal)
+    : m_memReqs({memReqs}), m_memProps(memProps), m_isTilingOptimal(isTilingOptimal) {}
 
-MemAllocateInfo::MemAllocateInfo(VkDevice device, VkBuffer buffer, VkMemoryPropertyFlags memProps)
-{
-  VkBufferMemoryRequirementsInfo2 bufferReqs = {VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2, nullptr, buffer};
-  VkMemoryDedicatedRequirements   dedicatedRegs = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
-  VkMemoryRequirements2           memReqs       = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedRegs};
+MemAllocateInfo::MemAllocateInfo(const std::vector<VkMemoryRequirements>& memReqs,
+                                 VkMemoryPropertyFlags memProps, bool isTilingOptimal)
+    : m_memReqs(memReqs), m_memProps(memProps), m_isTilingOptimal(isTilingOptimal) {}
+
+MemAllocateInfo::MemAllocateInfo(VkDevice device, VkBuffer buffer, VkMemoryPropertyFlags memProps) {
+  VkBufferMemoryRequirementsInfo2 bufferReqs = {
+      VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2, nullptr, buffer};
+  VkMemoryDedicatedRequirements dedicatedRegs = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+  VkMemoryRequirements2 memReqs = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedRegs};
 
   vkGetBufferMemoryRequirements2(device, &bufferReqs, &memReqs);
 
-  m_memReqs  = memReqs.memoryRequirements;
+  m_memReqs = {memReqs.memoryRequirements};
   m_memProps = memProps;
 
-  if(dedicatedRegs.requiresDedicatedAllocation)
-  {
-    setDedicatedBuffer(buffer);
-  }
+  if (dedicatedRegs.requiresDedicatedAllocation) { setDedicatedBuffer(buffer); }
 
   setTilingOptimal(false);
 }
 
-MemAllocateInfo::MemAllocateInfo(VkDevice device, VkImage image, VkMemoryPropertyFlags memProps)
-{
-  VkImageMemoryRequirementsInfo2 imageReqs     = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2, nullptr, image};
-  VkMemoryDedicatedRequirements  dedicatedRegs = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
-  VkMemoryRequirements2          memReqs       = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedRegs};
+MemAllocateInfo::MemAllocateInfo(VkDevice device, VkImage image, VkMemoryPropertyFlags memProps) {
+  VkImageMemoryRequirementsInfo2 imageReqs = {
+      VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2, nullptr, image};
+  VkMemoryDedicatedRequirements dedicatedRegs = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+  VkMemoryRequirements2 memReqs = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicatedRegs};
 
   vkGetImageMemoryRequirements2(device, &imageReqs, &memReqs);
 
-  m_memReqs  = memReqs.memoryRequirements;
+  m_memReqs = {memReqs.memoryRequirements};
   m_memProps = memProps;
 
-  if(dedicatedRegs.requiresDedicatedAllocation)
-  {
-    setDedicatedImage(image);
-  }
+  if (dedicatedRegs.requiresDedicatedAllocation) { setDedicatedImage(image); }
 
   setTilingOptimal(true);
 }
 
-MemAllocateInfo& MemAllocateInfo::setDedicatedImage(VkImage image)
-{
+MemAllocateInfo& MemAllocateInfo::setDedicatedImage(VkImage image) {
   assert(!m_dedicatedBuffer);
   m_dedicatedImage = image;
 
   return *this;
 }
-MemAllocateInfo& MemAllocateInfo::setDedicatedBuffer(VkBuffer buffer)
-{
+MemAllocateInfo& MemAllocateInfo::setDedicatedBuffer(VkBuffer buffer) {
   assert(!m_dedicatedImage);
   m_dedicatedBuffer = buffer;
 
   return *this;
 }
-MemAllocateInfo& MemAllocateInfo::setAllocationFlags(VkMemoryAllocateFlags flags)
-{
+MemAllocateInfo& MemAllocateInfo::setAllocationFlags(VkMemoryAllocateFlags flags) {
   m_allocateFlags |= flags;
   return *this;
 }
 
-MemAllocateInfo& MemAllocateInfo::setDeviceMask(uint32_t mask)
-{
+MemAllocateInfo& MemAllocateInfo::setDeviceMask(uint32_t mask) {
   m_deviceMask = mask;
   return *this;
 }
 
-
-MemAllocateInfo& MemAllocateInfo::setDebugName(const std::string& name)
-{
+MemAllocateInfo& MemAllocateInfo::setDebugName(const std::string& name) {
   m_debugName = name;
   return *this;
 }
 
-MemAllocateInfo& MemAllocateInfo::setExportable(bool exportable)
-{
+MemAllocateInfo& MemAllocateInfo::setExportable(bool exportable) {
   m_isExportable = exportable;
   return *this;
 }
 
-MemAllocateInfo& MemAllocateInfo::setTilingOptimal(bool isTilingOptimal)
-{
+MemAllocateInfo& MemAllocateInfo::setTilingOptimal(bool isTilingOptimal) {
   m_isTilingOptimal = isTilingOptimal;
   return *this;
 }
 
-MemAllocateInfo& MemAllocateInfo::setPriority(const float priority /*= 0.5f*/)
-{
+MemAllocateInfo& MemAllocateInfo::setPriority(const float priority /*= 0.5f*/) {
   m_priority = priority;
   return *this;
 }
@@ -127,12 +113,11 @@ MemAllocateInfo& MemAllocateInfo::setPriority(const float priority /*= 0.5f*/)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-uint32_t getMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t typeBits, const VkMemoryPropertyFlags& properties)
-{
-  for(uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
-  {
-    if(((typeBits & (1 << i)) > 0) && (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties)
-    {
+uint32_t getMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties, uint32_t typeBits,
+                       const VkMemoryPropertyFlags& properties) {
+  for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
+    if (((typeBits & (1 << i)) > 0) &&
+        (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
       return i;
     }
   }
@@ -140,25 +125,25 @@ uint32_t getMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties,
   return ~0u;
 }
 
-bool fillBakedAllocateInfo(const VkPhysicalDeviceMemoryProperties& physMemProps, const MemAllocateInfo& info, BakedAllocateInfo& baked)
-{
-  baked.memAllocInfo.allocationSize = info.getMemoryRequirements().size;
+bool fillBakedAllocateInfo(const VkPhysicalDeviceMemoryProperties& physMemProps,
+                           const MemAllocateInfo& info, uint32_t plane, BakedAllocateInfo& baked) {
+  const auto& memReqs = info.getMemoryRequirements();
+  baked.memAllocInfo.allocationSize = memReqs[plane].size;
   baked.memAllocInfo.memoryTypeIndex =
-      getMemoryType(physMemProps, info.getMemoryRequirements().memoryTypeBits, info.getMemoryProperties());
+      getMemoryType(physMemProps, memReqs[plane].memoryTypeBits, info.getMemoryProperties());
 
-  // Put it last in the chain, so we can directly pass it into the DeviceMemoryAllocator::alloc function
-  if(info.getDedicatedBuffer() || info.getDedicatedImage())
-  {
+  // Put it last in the chain, so we can directly pass it into the DeviceMemoryAllocator::alloc
+  // function
+  if (info.getDedicatedBuffer() || info.getDedicatedImage()) {
     baked.dedicatedInfo.pNext = baked.memAllocInfo.pNext;
-    baked.memAllocInfo.pNext  = &baked.dedicatedInfo;
+    baked.memAllocInfo.pNext = &baked.dedicatedInfo;
 
     baked.dedicatedInfo.buffer = info.getDedicatedBuffer();
-    baked.dedicatedInfo.image  = info.getDedicatedImage();
+    baked.dedicatedInfo.image = info.getDedicatedImage();
   }
 
-  if(info.getExportable())
-  {
-    baked.exportInfo.pNext   = baked.memAllocInfo.pNext;
+  if (info.getExportable()) {
+    baked.exportInfo.pNext = baked.memAllocInfo.pNext;
     baked.memAllocInfo.pNext = &baked.exportInfo;
 #ifdef WIN32
     baked.exportInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
@@ -167,18 +152,14 @@ bool fillBakedAllocateInfo(const VkPhysicalDeviceMemoryProperties& physMemProps,
 #endif
   }
 
-  if(info.getDeviceMask() || info.getAllocationFlags())
-  {
-    baked.flagsInfo.pNext    = baked.memAllocInfo.pNext;
+  if (info.getDeviceMask() || info.getAllocationFlags()) {
+    baked.flagsInfo.pNext = baked.memAllocInfo.pNext;
     baked.memAllocInfo.pNext = &baked.flagsInfo;
 
-    baked.flagsInfo.flags      = info.getAllocationFlags();
+    baked.flagsInfo.flags = info.getAllocationFlags();
     baked.flagsInfo.deviceMask = info.getDeviceMask();
 
-    if(baked.flagsInfo.deviceMask)
-    {
-      baked.flagsInfo.flags |= VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT;
-    }
+    if (baked.flagsInfo.deviceMask) { baked.flagsInfo.flags |= VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT; }
   }
 
   return true;

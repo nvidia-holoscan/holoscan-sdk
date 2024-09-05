@@ -150,7 +150,7 @@ When specifying the `inputs` and `outputs` arguments to `create_op`, please make
 
 ## Interoperability with wrapped C++ operators
 
-There SDK includes a [python_decorator example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/python_decorator) showing interoperability of wrapped C++ operators (`VideoStreamReplayerOp` and `HolovizOp`) alongside native Python operators created via the `create_op` decorator.
+There SDK includes a [python_decorator example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/python_decorator) showing interoperability of wrapped C++ operators (`VideoStreamReplayerOp` and `HolovizOp`) alongside native Python operators created via the `create_op` decorator. 
 
 The start of this application imports a couple of the built in C++-based operators with Python bindings (`HolovizOp` and `VideoStreamReplayerOp`). In addition to these, two new operators are created via the `create_op` decorator APIs.
 

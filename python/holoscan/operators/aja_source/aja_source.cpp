@@ -84,14 +84,15 @@ class PyAJASourceOp : public AJASourceOp {
   PyAJASourceOp(
       Fragment* fragment, const py::args& args, const std::string& device = "0"s,
       const std::variant<std::string, NTV2Channel> channel = NTV2Channel::NTV2_CHANNEL1,
-      uint32_t width = 1920, uint32_t height = 1080, uint32_t framerate = 60, bool rdma = false,
-      bool enable_overlay = false,
+      uint32_t width = 1920, uint32_t height = 1080, uint32_t framerate = 60,
+      bool interlaced = false, bool rdma = false, bool enable_overlay = false,
       const std::variant<std::string, NTV2Channel> overlay_channel = NTV2Channel::NTV2_CHANNEL2,
       bool overlay_rdma = true, const std::string& name = "aja_source")
       : AJASourceOp(ArgList{Arg{"device", device},
                             Arg{"width", width},
                             Arg{"height", height},
                             Arg{"framerate", framerate},
+                            Arg{"interlaced", interlaced},
                             Arg{"rdma", rdma},
                             Arg{"enable_overlay", enable_overlay},
                             Arg{"overlay_rdma", overlay_rdma}}) {
@@ -145,6 +146,7 @@ PYBIND11_MODULE(_aja_source, m) {
                     uint32_t,
                     bool,
                     bool,
+                    bool,
                     const std::variant<std::string, NTV2Channel>,
                     bool,
                     const std::string&>(),
@@ -154,13 +156,12 @@ PYBIND11_MODULE(_aja_source, m) {
            "width"_a = 1920,
            "height"_a = 1080,
            "framerate"_a = 60,
+           "interlaced"_a = false,
            "rdma"_a = false,
            "enable_overlay"_a = false,
            "overlay_channel"_a = NTV2Channel::NTV2_CHANNEL2,
            "overlay_rdma"_a = true,
            "name"_a = "aja_source"s,
-           doc::AJASourceOp::doc_AJASourceOp)
-      .def("initialize", &AJASourceOp::initialize, doc::AJASourceOp::doc_initialize)
-      .def("setup", &AJASourceOp::setup, "spec"_a, doc::AJASourceOp::doc_setup);
+           doc::AJASourceOp::doc_AJASourceOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

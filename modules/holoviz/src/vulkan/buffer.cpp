@@ -19,17 +19,19 @@
 
 #include <memory>
 
+#include "vulkan_app.hpp"
+
 namespace holoscan::viz {
 
-Buffer::Buffer(vk::Device device, nvvk::ResourceAllocator* alloc, size_t size)
-    : Resource(device, alloc), size_(size) {}
+Buffer::Buffer(Vulkan* vulkan, nvvk::ResourceAllocator* alloc, size_t size)
+    : Resource(vulkan, alloc), size_(size) {}
 
 Buffer::~Buffer() {
-  destroy();
+  wait();
 
   // check if this buffer had been imported to CUDA
   if (device_ptr_) {
-    const CudaService::ScopedPush cuda_context = cuda_service_->PushContext();
+    const CudaService::ScopedPush cuda_context = vulkan_->get_cuda_service()->PushContext();
     device_ptr_.reset();
   }
   alloc_->destroy(buffer_);
@@ -48,7 +50,7 @@ void Buffer::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
   buffer_desc.size = size_;
   buffer_desc.offset = mem_info.offset;
 
-  device_ptr_.reset([external_mem = external_mem_.get(), &buffer_desc] {
+  device_ptr_.reset([external_mem = external_mems_.front().get(), &buffer_desc] {
     CUdeviceptr device_ptr;
     CudaCheck(cuExternalMemoryGetMappedBuffer(&device_ptr, external_mem, &buffer_desc));
     return device_ptr;

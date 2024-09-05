@@ -81,7 +81,7 @@ namespace {
 std::pair<uint64_t, uint64_t> get_capacity_and_policy(
     nvidia::gxf::Handle<nvidia::gxf::Component> component) {
   uint64_t capacity = 1;
-  uint64_t policy = 2;
+  uint64_t policy = holoscan::gxf::get_default_queue_policy();
   if (component.is_null()) {
     HOLOSCAN_LOG_ERROR("Null component handle");
     return std::make_pair(capacity, policy);
@@ -1124,7 +1124,7 @@ void GXFExecutor::connect_broadcast_to_previous_op(
 
         // Find prev_connector's capacity and policy.
         uint64_t prev_connector_capacity = 1;
-        uint64_t prev_connector_policy = 2;  // fault
+        uint64_t prev_connector_policy = holoscan::gxf::get_default_queue_policy();
 
         // Create a transmitter based on the prev_connector_type.
         switch (prev_connector_type) {
@@ -1275,7 +1275,7 @@ void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType 
 
     uint64_t curr_min_size = 1;
     uint64_t curr_connector_capacity = 1;
-    uint64_t curr_connector_policy = 2;  // fault
+    uint64_t curr_connector_policy = holoscan::gxf::get_default_queue_policy();
 
     // Create a corresponding condition of the op's output port and set it as the
     // receiver's condition for the broadcast entity.
@@ -1657,6 +1657,14 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   } else if (!own_gxf_context_) {  // GXF context was created outside
     HOLOSCAN_LOG_DEBUG("Not an own GXF context. Op: {}", op->name());
   }
+
+  // Skip if the operator is already initialized
+  if (op->is_initialized_) {
+    HOLOSCAN_LOG_DEBUG("Operator '{}' is already initialized. Skipping initialization.",
+                       op->name());
+    return true;
+  }
+
   HOLOSCAN_LOG_DEBUG("Initializing Operator '{}'", op->name());
 
   if (!op->spec()) {
@@ -1700,6 +1708,9 @@ bool GXFExecutor::initialize_operator(Operator* op) {
 
   // Set any parameters based on the specified arguments and parameter value defaults.
   op->set_parameters();
+
+  // Set the operator is initialized
+  op->is_initialized_ = true;
   return true;
 }
 

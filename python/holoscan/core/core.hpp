@@ -36,6 +36,7 @@ namespace holoscan {
 
 void init_component(py::module_&);
 void init_condition(py::module_&);
+void init_metadata(py::module_&);
 void init_network_context(py::module_&);
 void init_resource(py::module_&);
 void init_scheduler(py::module_&);

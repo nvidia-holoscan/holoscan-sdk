@@ -41,6 +41,7 @@ nvidia::gxf::Receiver* get_gxf_receiver(const std::shared_ptr<IOSpec>& input_spe
           "'IOSpec::kAnySize'. Please call 'op_input.receive<std::vector<T>>()' instead of "
           "'op_input.receive<T>()'.",
           input_spec->name());
+      throw std::invalid_argument("Invalid template type for the input port");
     } else {
       HOLOSCAN_LOG_ERROR("Invalid connector type for the input spec '{}'", input_spec->name());
     }
@@ -87,24 +88,26 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
 
   auto it = inputs_.find(input_name);
   if (it == inputs_.end()) {
-    if (no_error_message) { return nullptr; }
+    if (no_error_message) { return kNoReceivedMessage; }
     // Show error message because the input name is not found.
     if (inputs_.size() == 1) {
-      HOLOSCAN_LOG_ERROR(
+      auto no_accessible_error_message = NoAccessibleMessageType(fmt::format(
           "The operator({}) has only one port with label '{}' but the non-existent port label "
           "'{}' was specified in the receive() method",
           op_->name(),
           inputs_.begin()->first,
-          name);
-      return kNoTypeCastableMessage;  // to cause a bad_any_cast
+          name));
+
+      return no_accessible_error_message;
     } else {
       if (inputs_.empty()) {
-        HOLOSCAN_LOG_ERROR(
-            "The operator({}) does not have any input port but '{}' was specified in "
-            "receive() method",
-            op_->name(),
-            input_name);
-        return kNoTypeCastableMessage;  // to cause a bad_any_cast
+        auto no_accessible_error_message = NoAccessibleMessageType(
+            fmt::format("The operator({}) does not have any input port but '{}' was specified in "
+                        "receive() method",
+                        op_->name(),
+                        input_name));
+
+        return no_accessible_error_message;
       }
 
       auto msg_buf = fmt::memory_buffer();
@@ -116,20 +119,25 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
           fmt::format_to(std::back_inserter(msg_buf), ", {}", label);
         }
       }
-      HOLOSCAN_LOG_ERROR(
-          "The operator({}) does not have an input port with label '{}'. It should be "
-          "one of ({:.{}}) in receive() method",
-          op_->name(),
-          input_name,
-          msg_buf.data(),
-          msg_buf.size());
-      return kNoTypeCastableMessage;  // to cause a bad_any_cast
+      auto no_accessible_error_message = NoAccessibleMessageType(
+          fmt::format("The operator({}) does not have an input port with label "
+                      "'{}'. It should be one of ({:.{}}) "
+                      "in receive() method",
+                      op_->name(),
+                      input_name,
+                      msg_buf.data(),
+                      msg_buf.size()));
+
+      return no_accessible_error_message;
     }
   }
 
   auto receiver = get_gxf_receiver(it->second);
   if (!receiver) {
-    return kNoTypeCastableMessage;  // to cause a bad_any_cast
+    auto no_accessible_error_message = NoAccessibleMessageType(
+        fmt::format("Invalid receiver found for the input port with name {}", input_name));
+
+    return no_accessible_error_message;
   }
 
   auto entity = receiver->receive();

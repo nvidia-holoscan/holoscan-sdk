@@ -42,6 +42,8 @@ create a custom application.
     holoscan.core.InputContext
     holoscan.core.IOSpec
     holoscan.core.Message
+    holoscan.core.MetadataDictionary
+    holoscan.core.MetadataPolicy
     holoscan.core.NetworkContext
     holoscan.core.Operator
     holoscan.core.OperatorSpec
@@ -83,7 +85,14 @@ from ._core import (
     Executor,
 )
 from ._core import Fragment as _Fragment
-from ._core import InputContext, IOSpec, Message, NetworkContext
+from ._core import (
+    InputContext,
+    IOSpec,
+    Message,
+    MetadataDictionary,
+    MetadataPolicy,
+    NetworkContext,
+)
 from ._core import Operator as _Operator
 from ._core import OutputContext, ParameterFlag
 from ._core import PyComponentSpec as ComponentSpec
@@ -127,6 +136,8 @@ __all__ = [
     "InputContext",
     "IOSpec",
     "Message",
+    "MetadataDictionary",
+    "MetadataPolicy",
     "NetworkContext",
     "Operator",
     "OperatorSpec",
@@ -143,6 +154,15 @@ __all__ = [
     "kwargs_to_arglist",
     "py_object_to_arg",
 ]
+
+
+# Define custom __repr__ method for MetadataDictionary
+def metadata_repr(self):
+    items = {k: v for k, v in self.items()}
+    return f"{items}"
+
+
+MetadataDictionary.__repr__ = metadata_repr
 
 
 class Application(_Application):

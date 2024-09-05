@@ -434,11 +434,21 @@ TEST(OperatorMetadataApps, TestOperatorMetadataMergeApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("rx metadata has 3 keys") != std::string::npos);
-  EXPECT_TRUE(log_output.find("tx label: my title") != std::string::npos);
-  EXPECT_TRUE(log_output.find("fwd date: 2024-07-16") != std::string::npos);
-  EXPECT_TRUE(log_output.find(fmt::format("fwd2 value: {}", count)) != std::string::npos);
-  EXPECT_TRUE(log_output.find("value1 == value2") != std::string::npos);
+  EXPECT_TRUE(log_output.find("rx metadata has 3 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("tx label: my title") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("fwd date: 2024-07-16") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find(fmt::format("fwd2 value: {}", count)) != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("value1 == value2") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(OperatorMetadataApps, TestOperatorMetadataMergeAppPolicyRaise) {
@@ -454,8 +464,11 @@ TEST(OperatorMetadataApps, TestOperatorMetadataMergeAppPolicyRaise) {
   EXPECT_THROW(app->run(), std::runtime_error);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Key 'PingTxMetadataOp.label' already exists") != std::string::npos);
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Key 'PingTxMetadataOp.label' already exists") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(OperatorMetadataApps, TestOperatorMetadataMergeAppTrackingDisabled) {
@@ -470,8 +483,12 @@ TEST(OperatorMetadataApps, TestOperatorMetadataMergeAppTrackingDisabled) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("rx metadata has 0 keys") != std::string::npos);
-  EXPECT_TRUE(log_output.find("value1 == value2") != std::string::npos);
+  EXPECT_TRUE(log_output.find("rx metadata has 0 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("value1 == value2") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 // This app verifies that metadata passes through GXF Codelet-based operators as expected
@@ -487,10 +504,18 @@ TEST(OperatorMetadataApps, TestGXFOperatorMetadataBroadcastApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("rx1 metadata has 1 keys") != std::string::npos);
-  EXPECT_TRUE(log_output.find("rx2 metadata has 1 keys") != std::string::npos);
-  EXPECT_TRUE(log_output.find("rx3 metadata has 1 keys") != std::string::npos);
-  EXPECT_TRUE(log_output.find("rx4 metadata has 1 keys") != std::string::npos);
+  EXPECT_TRUE(log_output.find("rx1 metadata has 1 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("rx2 metadata has 1 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("rx3 metadata has 1 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("rx4 metadata has 1 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 // This app verifies that metadata passes through GXF Codelet-based operators as expected
@@ -506,8 +531,12 @@ TEST(OperatorMetadataApps, TestGXFOperatorMetadataApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("rx metadata has 1 keys") != std::string::npos);
-  EXPECT_TRUE(log_output.find("tx label: my title") != std::string::npos);
+  EXPECT_TRUE(log_output.find("rx metadata has 1 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("tx label: my title") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(OperatorMetadataApps, TestGXFOperatorMetadataAppTrackingDisabled) {
@@ -522,7 +551,9 @@ TEST(OperatorMetadataApps, TestGXFOperatorMetadataAppTrackingDisabled) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("rx metadata has 0 keys") != std::string::npos);
+  EXPECT_TRUE(log_output.find("rx metadata has 0 keys") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 // This app tests case with many objects in the metadata dictionary
@@ -539,7 +570,8 @@ TEST(OperatorMetadataApps, TestOperatorLargeMetadataApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 // This app tests sending metadata in an entity alongside a TensorMap object
@@ -555,7 +587,8 @@ TEST(OperatorMetadataApps, TestTensorMapOperatorsMetadataApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

@@ -41,8 +41,12 @@ TEST(DistributedApp, TestTwoParallelFragmentsApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("SingleOp fragment1.op: 0 - 10") != std::string::npos);
-  EXPECT_TRUE(log_output.find("SingleOp fragment2.op: 0 - 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("SingleOp fragment1.op: 0 - 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("SingleOp fragment2.op: 0 - 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
@@ -54,8 +58,9 @@ TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos) << "===LogMessage===\n"
-                                                                          << log_output;
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsApp) {
@@ -67,7 +72,9 @@ TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsBroadcastApp) {
@@ -79,7 +86,9 @@ TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsBroadcastApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestOneTxBroadcastOneRxTwoInputs) {
@@ -91,7 +100,9 @@ TEST(DistributedApp, TestOneTxBroadcastOneRxTwoInputs) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp2) {
@@ -103,7 +114,9 @@ TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp2) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestUCXConnectionApp) {
@@ -115,7 +128,9 @@ TEST(DistributedApp, TestUCXConnectionApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestUCXConnectionApp2) {
@@ -127,7 +142,9 @@ TEST(DistributedApp, TestUCXConnectionApp2) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestUCXLinearPipelineApp) {
@@ -138,7 +155,9 @@ TEST(DistributedApp, TestUCXLinearPipelineApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("received count: 20") != std::string::npos);
+  EXPECT_TRUE(log_output.find("received count: 20") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestUCXBroadcastApp) {
@@ -153,7 +172,9 @@ TEST(DistributedApp, TestUCXBroadcastApp) {
   EXPECT_TRUE(log_output.find("Rx fragment3.rx message received count: 10") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
-  EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestUCXBroadCastMultiReceiverApp) {
@@ -166,8 +187,12 @@ TEST(DistributedApp, TestUCXBroadCastMultiReceiverApp) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("RxParam fragment2.rx message received (count: 10, size: 2)") !=
-              std::string::npos);
-  EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos);
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(DistributedApp, TestDriverTerminationWithConnectionFailure) {
@@ -194,7 +219,9 @@ TEST(DistributedApp, TestDriverTerminationWithConnectionFailure) {
   // The driver should terminate after the connection failure (after 1 retry)
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Failed to connect to driver") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Failed to connect to driver") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
   // restore the original environment variable
   if (env_orig) {

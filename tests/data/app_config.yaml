@@ -191,6 +191,7 @@ v4l2_video_capture:
   width: 320
   height: 240
   pixel_format: "auto"
+  pass_through: false
   device: "/dev/video0"
   exposure_time: 500
   gain: 100

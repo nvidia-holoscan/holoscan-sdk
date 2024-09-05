@@ -17,31 +17,38 @@
 
 import os
 import pathlib
-import platform
 
 import pytest
 
 from holoscan.cli.common.constants import Constants, DefaultValues
-from holoscan.cli.common.enum_types import ApplicationType
+from holoscan.cli.common.enum_types import (
+    ApplicationType,
+    Platform,
+    PlatformConfiguration,
+)
 from holoscan.cli.common.exceptions import UnknownApplicationTypeError
-from holoscan.cli.packager.parameters import PackageBuildParameters
+from holoscan.cli.packager.parameters import PackageBuildParameters, PlatformParameters
+
+
+class TestPlatformParameters:
+    def test_with_aarch64(self, monkeypatch):
+        build_parameters = PlatformParameters(
+            Platform.IGXOrinDevIt, PlatformConfiguration.iGPU, "my-container-app", "1.2.3"
+        )
+        assert build_parameters.holoscan_deb_arch == "arm64"
+        assert build_parameters.cuda_deb_arch == "sbsa"
+        assert build_parameters.target_arch == "aarch64"
+
+    def test_with_x64(self, monkeypatch):
+        build_parameters = PlatformParameters(
+            Platform.X64Workstation, PlatformConfiguration.dGPU, "my-container-app", "1.2.3"
+        )
+        assert build_parameters.holoscan_deb_arch == "amd64"
+        assert build_parameters.cuda_deb_arch == "x86_64"
+        assert build_parameters.target_arch == "x86_64"
 
 
 class TestPackageBuildParameters:
-    def test_with_aarch64(self, monkeypatch):
-        monkeypatch.setattr(platform, "processor", lambda: "aarch64")
-
-        build_parameters = PackageBuildParameters()
-        assert build_parameters.holoscan_deb_arch == "arm64"
-        assert build_parameters.cuda_deb_arch == "sbsa"
-
-    def test_with_x64(self, monkeypatch):
-        monkeypatch.setattr(platform, "processor", lambda: "x86_64")
-
-        build_parameters = PackageBuildParameters()
-        assert build_parameters.holoscan_deb_arch == "amd64"
-        assert build_parameters.cuda_deb_arch == "x86_64"
-
     def test_set_application_python_dir(self, monkeypatch):
         input_dir = pathlib.Path("/path/to/my/python/app/dir")
 

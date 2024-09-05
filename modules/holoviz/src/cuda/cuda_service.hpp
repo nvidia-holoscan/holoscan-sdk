@@ -32,15 +32,15 @@ namespace holoscan::viz {
 /**
  * CUDA runtime API error check helper
  */
-#define CudaRTCheck(FUNC)                                                                   \
-  {                                                                                         \
-    const cudaError_t result = FUNC;                                                        \
-    if (result != cudaSuccess) {                                                            \
-      std::stringstream buf;                                                                \
-      buf << "[" << __FILE__ << ":" << __LINE__ << "] CUDA driver error " << result << " (" \
-          << cudaGetErrorName(result) << "): " << cudaGetErrorString(result);               \
-      throw std::runtime_error(buf.str().c_str());                                          \
-    }                                                                                       \
+#define CudaRTCheck(FUNC)                                                                    \
+  {                                                                                          \
+    const cudaError_t result = FUNC;                                                         \
+    if (result != cudaSuccess) {                                                             \
+      std::stringstream buf;                                                                 \
+      buf << "[" << __FILE__ << ":" << __LINE__ << "] CUDA runtime error " << result << " (" \
+          << cudaGetErrorName(result) << "): " << cudaGetErrorString(result);                \
+      throw std::runtime_error(buf.str().c_str());                                           \
+    }                                                                                        \
   }
 
 /**

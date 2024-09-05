@@ -21,11 +21,11 @@
 #include <utility>
 
 #include "holoscan/holoscan.hpp"
-#include <holoscan/operators/bayer_demosaic/bayer_demosaic.hpp>
+#include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
+#include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
+#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 #include "env_wrapper.hpp"
-#include "ping_tensor_rx_op.hpp"
-#include "ping_tensor_tx_op.hpp"
 
 constexpr int NUM_RX = 3;
 constexpr int NUM_ITER = 100;
@@ -76,14 +76,15 @@ TEST(MultithreadedApp, TestSendingTensorToMultipleOperators) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("null data") == std::string::npos);
+  EXPECT_TRUE(log_output.find("null data") == std::string::npos) << "=== LOG ===\n"
+                                                                 << log_output << "\n===========\n";
   for (int i = 1; i < NUM_RX; ++i) {
-    EXPECT_TRUE(log_output.find(fmt::format("Rx message value - name:rx{}, data[0]:", i)) !=
-                std::string::npos);
+    EXPECT_TRUE(log_output.find(fmt::format("rx{} received message", i)) != std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
   // Check that the last rx operator received the expected value and print the log if it didn't
-  EXPECT_TRUE(log_output.find(fmt::format("Rx message value - name:rx{}, data[0]:", NUM_RX)) !=
-              std::string::npos)
+  EXPECT_TRUE(log_output.find(fmt::format("rx{} received message", NUM_RX)) != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 }

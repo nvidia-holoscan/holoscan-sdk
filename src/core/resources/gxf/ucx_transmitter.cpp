@@ -24,6 +24,7 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/resources/gxf/ucx_receiver.hpp"  // for kDefaultUcxPort
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
 
@@ -71,7 +72,8 @@ UcxTransmitter::UcxTransmitter(const std::string& name, nvidia::gxf::Transmitter
 void UcxTransmitter::setup(ComponentSpec& spec) {
   HOLOSCAN_LOG_DEBUG("UcxTransmitter::setup");
   spec.param(capacity_, "capacity", "Capacity", "", 1UL);
-  spec.param(policy_, "policy", "Policy", "0: pop, 1: reject, 2: fault", 2UL);
+  auto default_policy = holoscan::gxf::get_default_queue_policy();
+  spec.param(policy_, "policy", "Policy", "0: pop, 1: reject, 2: fault", default_policy);
   spec.param(receiver_address_,
              "receiver_address",
              "Receiver address",

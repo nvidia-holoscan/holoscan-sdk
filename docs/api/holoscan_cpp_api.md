@@ -111,6 +111,8 @@
 - {ref}`exhale_class_classholoscan_1_1ops_1_1InferenceOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1InferenceProcessorOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1PingRxOp`
+- {ref}`exhale_class_classholoscan_1_1ops_1_1PingTensorRxOp`
+- {ref}`exhale_class_classholoscan_1_1ops_1_1PingTensorTxOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1PingTxOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1SegmentationPostprocessorOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1V4L2VideoCaptureOp`

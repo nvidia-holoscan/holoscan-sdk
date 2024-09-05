@@ -88,7 +88,7 @@
     }                                                                 \
   }
 
-#define HOLOSCAN_CUDA_CALL(stmt)                                                                \
+#define HOLOSCAN_CUDA_CALL_CHECK_HANDLE(stmt)                                                   \
   ({                                                                                            \
     holoscan::cuda::cudaError_t _holoscan_cuda_err = -1;                                        \
     if (cuda_handle_ == nullptr) {                                                              \
@@ -113,23 +113,23 @@
     _holoscan_cuda_err;                                                                         \
   })
 
-#define HOLOSCAN_CUDA_CALL_RETURN(stmt)                                        \
-  {                                                                            \
-    holoscan::cuda::cudaError_t _holoscan_cuda_err = HOLOSCAN_CUDA_CALL(stmt); \
-    if (_holoscan_cuda_err != 0) {                                             \
-      shutdown_cuda_runtime();                                                 \
-      return;                                                                  \
-    }                                                                          \
+#define HOLOSCAN_CUDA_CALL_RETURN(stmt)                                                     \
+  {                                                                                         \
+    holoscan::cuda::cudaError_t _holoscan_cuda_err = HOLOSCAN_CUDA_CALL_CHECK_HANDLE(stmt); \
+    if (_holoscan_cuda_err != 0) {                                                          \
+      shutdown_cuda_runtime();                                                              \
+      return;                                                                               \
+    }                                                                                       \
   }
 
-#define HOLOSCAN_CUDA_CALL_RETURN_VALUE_MSG(stmt, return_value, ...)           \
-  {                                                                            \
-    holoscan::cuda::cudaError_t _holoscan_cuda_err = HOLOSCAN_CUDA_CALL(stmt); \
-    if (_holoscan_cuda_err != 0) {                                             \
-      HOLOSCAN_LOG_ERROR(__VA_ARGS__);                                         \
-      shutdown_cuda_runtime();                                                 \
-      return return_value;                                                     \
-    }                                                                          \
+#define HOLOSCAN_CUDA_CALL_RETURN_VALUE_MSG(stmt, return_value, ...)                        \
+  {                                                                                         \
+    holoscan::cuda::cudaError_t _holoscan_cuda_err = HOLOSCAN_CUDA_CALL_CHECK_HANDLE(stmt); \
+    if (_holoscan_cuda_err != 0) {                                                          \
+      HOLOSCAN_LOG_ERROR(__VA_ARGS__);                                                      \
+      shutdown_cuda_runtime();                                                              \
+      return return_value;                                                                  \
+    }                                                                                       \
   }
 
 namespace holoscan {

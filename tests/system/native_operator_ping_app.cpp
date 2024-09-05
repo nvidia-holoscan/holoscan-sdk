@@ -172,8 +172,11 @@ TEST(NativeOperatorPingApp, TestNativeOperatorPingApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("value1: 1") != std::string::npos);
-  EXPECT_TRUE(log_output.find("value2: 100") != std::string::npos);
+  EXPECT_TRUE(log_output.find("value1: 1") != std::string::npos) << "=== LOG ===\n"
+                                                                 << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("value2: 100") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(NativeOperatorPingApp, TestNativeOperatorForwardApp) {
@@ -188,8 +191,11 @@ TEST(NativeOperatorPingApp, TestNativeOperatorForwardApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("value1: 1") != std::string::npos);
-  EXPECT_TRUE(log_output.find("value2: 100") != std::string::npos);
+  EXPECT_TRUE(log_output.find("value1: 1") != std::string::npos) << "=== LOG ===\n"
+                                                                 << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("value2: 100") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(NativeOperatorPingApp, TestNativeForwardOpAppDanglingOutput) {
@@ -207,8 +213,12 @@ TEST(NativeOperatorPingApp, TestNativeForwardOpAppDanglingOutput) {
   // string tested here is from GXF itself, so may have to update it as GXF is updated
   EXPECT_TRUE(log_output.find(
                   "No receiver connected to transmitter of DownstreamReceptiveSchedulingTerm") !=
-              std::string::npos);
-  EXPECT_TRUE(log_output.find("The entity will never tick") != std::string::npos);
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("The entity will never tick") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(NativeOperatorPingApp, TestNativeForwardOpAppDanglingInput) {
@@ -225,7 +235,8 @@ TEST(NativeOperatorPingApp, TestNativeForwardOpAppDanglingInput) {
   std::string log_output = testing::internal::GetCapturedStderr();
   // No error will be logged in the dangling input case, but we can test that the
   // app will deadlock so that value1 is not printed
-  EXPECT_TRUE(log_output.find("value1: ") == std::string::npos);
+  EXPECT_TRUE(log_output.find("value1: ") == std::string::npos) << "=== LOG ===\n"
+                                                                << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

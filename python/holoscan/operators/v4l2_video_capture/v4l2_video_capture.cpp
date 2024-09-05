@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "../operator_util.hpp"
@@ -63,6 +64,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
                        uint32_t height = 0, uint32_t num_buffers = 4,
                        const std::string& pixel_format = "auto",
+                       bool pass_through = false,
                        const std::string& name = "v4l2_video_capture",
                        std::optional<uint32_t> exposure_time = std::nullopt,
                        std::optional<uint32_t> gain = std::nullopt)
@@ -71,13 +73,10 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
                                    Arg{"width", width},
                                    Arg{"height", height},
                                    Arg{"numBuffers", num_buffers},
-                                   Arg{"pixel_format", pixel_format}}) {
-    if (exposure_time.has_value()) {
-      this->add_arg(Arg{"exposure_time", exposure_time.value() });
-    }
-    if (gain.has_value()) {
-      this->add_arg(Arg{"gain", gain.value() });
-    }
+                                   Arg{"pixel_format", pixel_format},
+                                   Arg{"pass_through", pass_through}}) {
+    if (exposure_time.has_value()) { this->add_arg(Arg{"exposure_time", exposure_time.value()}); }
+    if (gain.has_value()) { this->add_arg(Arg{"gain", gain.value()}); }
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
@@ -106,6 +105,7 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
                     uint32_t,
                     uint32_t,
                     const std::string&,
+                    bool,
                     const std::string&,
                     std::optional<uint32_t>,
                     std::optional<uint32_t>>(),
@@ -116,11 +116,10 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
            "height"_a = 0,
            "num_buffers"_a = 4,
            "pixel_format"_a = "auto"s,
+           "pass_through"_a = false,
            "name"_a = "v4l2_video_capture"s,
            "exposure_time"_a = py::none(),
            "gain"_a = py::none(),
-           doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp)
-      .def("initialize", &V4L2VideoCaptureOp::initialize, doc::V4L2VideoCaptureOp::doc_initialize)
-      .def("setup", &V4L2VideoCaptureOp::setup, "spec"_a, doc::V4L2VideoCaptureOp::doc_setup);
+           doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

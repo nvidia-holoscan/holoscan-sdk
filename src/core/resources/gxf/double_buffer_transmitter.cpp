@@ -62,7 +62,8 @@ const char* DoubleBufferTransmitter::gxf_typename() const {
 
 void DoubleBufferTransmitter::setup(ComponentSpec& spec) {
   spec.param(capacity_, "capacity", "Capacity", "", 1UL);
-  spec.param(policy_, "policy", "Policy", "0: pop, 1: reject, 2: fault", 2UL);
+  auto default_policy = holoscan::gxf::get_default_queue_policy();
+  spec.param(policy_, "policy", "Policy", "0: pop, 1: reject, 2: fault", default_policy);
 }
 
 void DoubleBufferTransmitter::track() {

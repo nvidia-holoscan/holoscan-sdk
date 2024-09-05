@@ -55,7 +55,9 @@ TEST(OperatorSpec, TestOperatorSpecInput) {
   // duplicate name
   spec.input<gxf::Entity>("a");
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("already exists") != std::string::npos);
+  EXPECT_TRUE(log_output.find("already exists") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 struct OperatorSpecTestParam {
@@ -93,7 +95,9 @@ TEST_P(OperatorSpecTest, TestOperatorSpecInputSize) {
   // duplicate name
   spec.input<gxf::Entity>(param.name);
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("already exists") != std::string::npos);
+  EXPECT_TRUE(log_output.find("already exists") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(OperatorSpec, TestOperatorSpectOutput) {
@@ -111,7 +115,9 @@ TEST(OperatorSpec, TestOperatorSpectOutput) {
   // duplicate name
   spec.output<gxf::Entity>("a");
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("already exists") != std::string::npos);
+  EXPECT_TRUE(log_output.find("already exists") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(OperatorSpec, TestOperatorSpecParam) {
@@ -138,7 +144,9 @@ TEST(OperatorSpec, TestOperatorSpecParam) {
   // repeating a key will not add an additional parameter
   spec.param(p, "beta", "headline1", "description4");
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("already exists") != std::string::npos);
+  EXPECT_TRUE(log_output.find("already exists") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   EXPECT_EQ(spec.params().size(), 1);
 }
 
@@ -245,7 +253,9 @@ TEST(OperatorSpec, TestOperatorSpecParamVector) {
   EXPECT_EQ(spec.params().size(), 1);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("already exists") != std::string::npos);
+  EXPECT_TRUE(log_output.find("already exists") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   EXPECT_EQ(spec.params().size(), 1);
 }
 

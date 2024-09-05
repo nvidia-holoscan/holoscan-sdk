@@ -86,9 +86,11 @@ class TestBase : public ::testing::Test {
   /**
    * Read back color data and compare with the data generated with SetupData().
    *
+   * @param absolute_error allowed absolute error
+   *
    * @return false if read back and generated data do not match
    */
-  bool CompareColorResult();
+  bool CompareColorResult(uint8_t absolute_error = 1);
 
   /**
    * Read back depth data and compare with the data generated with SetupData().

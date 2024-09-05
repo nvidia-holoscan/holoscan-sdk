@@ -15,16 +15,18 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_STREAM_PLAYBACK_VIDEO_STREAM_REPLAYER_HPP
-#define HOLOSCAN_OPERATORS_STREAM_PLAYBACK_VIDEO_STREAM_REPLAYER_HPP
+#ifndef HOLOSCAN_OPERATORS_VIDEO_STREAM_REPLAYER_VIDEO_STREAM_REPLAYER_HPP
+#define HOLOSCAN_OPERATORS_VIDEO_STREAM_REPLAYER_VIDEO_STREAM_REPLAYER_HPP
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/gxf/gxf_operator.hpp"
 #include "gxf/serialization/file_stream.hpp"
+#include "holoscan/core/conditions/gxf/boolean.hpp"
+#include "holoscan/core/gxf/gxf_operator.hpp"
+#include "holoscan/core/resources/gxf/allocator.hpp"
 
 namespace holoscan::ops {
 
@@ -53,6 +55,12 @@ namespace holoscan::ops {
  * - **count**: Number of frame counts to playback. If zero value is specified, it is ignored.
  *   If the count is less than the number of frames in the video, it would finish early.
  *   Optional (default: `0`).
+ * - **allocator**: The allocator used for Tensor objects. Currently this can only use the default
+ *   allocator type of `holoscan::UnboundedAllocator`.
+ *   Optional (default: `holoscan::UnboundedAllocator`)
+ * - **entity_serializer**: The entity serializer used for deserialization. The default is to use
+ *   a default-initialized ``holoscan::gxzf::StdEntitySerializer``. If this argument is
+ *   specified, then the `allocator` argument is ignored.
  */
 class VideoStreamReplayerOp : public holoscan::Operator {
  public:
@@ -70,6 +78,7 @@ class VideoStreamReplayerOp : public holoscan::Operator {
 
  private:
   Parameter<holoscan::IOSpec*> transmitter_;
+  Parameter<std::shared_ptr<holoscan::Allocator>> allocator_;
   Parameter<std::shared_ptr<holoscan::Resource>> entity_serializer_;
   Parameter<std::shared_ptr<BooleanCondition>> boolean_scheduling_term_;
   Parameter<std::string> directory_;
@@ -98,4 +107,4 @@ class VideoStreamReplayerOp : public holoscan::Operator {
 
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_STREAM_PLAYBACK_VIDEO_STREAM_REPLAYER_HPP */
+#endif /* HOLOSCAN_OPERATORS_VIDEO_STREAM_REPLAYER_VIDEO_STREAM_REPLAYER_HPP */

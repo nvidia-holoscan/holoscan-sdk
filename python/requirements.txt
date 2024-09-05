@@ -1,4 +1,4 @@
-pip>=20.3
+pip>22.0.2
 cupy-cuda12x==12.2
 cloudpickle==2.2.1
 python-on-whales==0.60.1

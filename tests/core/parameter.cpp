@@ -172,7 +172,8 @@ TEST(Parameter, TestMetaParameterFormatter) {
   testing::internal::CaptureStderr();
   HOLOSCAN_LOG_INFO("Formatted parameter value: {}", p);
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("5") != std::string::npos);
+  EXPECT_TRUE(log_output.find("5") != std::string::npos) << "=== LOG ===\n"
+                                                         << log_output << "\n===========\n";
 }
 
 // simple test with format option for formatter feature
@@ -184,7 +185,8 @@ TEST(Parameter, TestMetaParameterFormatterSyntax) {
   testing::internal::CaptureStderr();
   HOLOSCAN_LOG_INFO("Formatted parameter value: {:0.3f}", seconds);
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("1.320") != std::string::npos);
+  EXPECT_TRUE(log_output.find("1.320") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

@@ -181,8 +181,8 @@ def launch_app(use_new_receivers=True):
         # set the max duration to 10s to have enough time to run the test
         # (connection time takes ~5 seconds)
         ("HOLOSCAN_MAX_DURATION_MS", "10000"),
-        # set the stop on deadlock timeout to 5s to have enough time to run the test
-        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "5000"),
+        # set the stop on deadlock timeout to 10s to have enough time to run the test
+        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "10000"),
     }
 
     with env_var_context(env_var_settings):
@@ -205,6 +205,10 @@ def test_distributed_app_three_ucx_receivers(use_new_receivers, capfd):
 
     # assert that no errors were logged
     captured = capfd.readouterr()
+
+    print("Captured stdout:", captured.out)
+    print("Captured stderr:", captured.err)
+
     # avoid catching the expected error message
     # : "error handling callback was invoked with status -25 (Connection reset by remote peer)"
     captured_error = captured.err.replace("error handling callback", "ucx handling callback")

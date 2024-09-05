@@ -455,7 +455,7 @@ class GXFParameterAdaptor {
                   gxf_uid_t resource_cid = gxf_resource->gxf_cid();
                   std::string full_resource_name =
                       gxf::get_full_component_name(context, resource_cid);
-                  yaml_node.push_back(full_resource_name.c_str());
+                  yaml_node.push_back(full_resource_name);
                 } else {
                   HOLOSCAN_LOG_TRACE(
                       "Resource item in the vector is null. Skipping it for key '{}'", key);
@@ -487,7 +487,7 @@ class GXFParameterAdaptor {
                   gxf_uid_t condition_cid = gxf_condition->gxf_cid();
                   std::string full_condition_name =
                       gxf::get_full_component_name(context, condition_cid);
-                  yaml_node.push_back(full_condition_name.c_str());
+                  yaml_node.push_back(full_condition_name);
                 } else {
                   HOLOSCAN_LOG_TRACE(
                       "Condition item in the vector is null. Skipping it for key '{}'", key);

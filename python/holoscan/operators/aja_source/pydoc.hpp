@@ -62,6 +62,9 @@ height : int, optional
     Height of the video stream. Default value is ``1080``.
 framerate : int, optional
     Frame rate of the video stream. Default value is ``60``.
+interlaced : bool, optional
+    Whether or not the video is an interlaced format. Default value is ``False``
+    (``"false"`` in YAML).
 rdma : bool, optional
     Boolean indicating whether RDMA is enabled. Default value is ``False`` (``"false"`` in YAML).
 enable_overlay : bool, optional
@@ -75,22 +78,6 @@ overlay_rdma : bool, optional
     (``"false"`` in YAML).
 name : str, optional (constructor only)
     The name of the operator. Default value is ``"aja_source"``.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : holoscan.core.OperatorSpec
-    The operator specification.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
 )doc")
 
 }  // namespace holoscan::doc::AJASourceOp

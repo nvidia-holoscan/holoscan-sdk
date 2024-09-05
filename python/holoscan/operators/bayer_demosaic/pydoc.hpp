@@ -103,22 +103,6 @@ name : str, optional (constructor only)
     The name of the operator. Default value is ``"bayer_demosaic"``.
 )doc")
 
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : holoscan.core.OperatorSpec
-    The operator specification.
-)doc")
-
 }  // namespace holoscan::doc::BayerDemosaicOp
 
 #endif /* PYHOLOSCAN_OPERATORS_BAYER_DEMOSAIC_PYDOC_HPP */

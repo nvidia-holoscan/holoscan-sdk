@@ -220,7 +220,7 @@ In cases where a distributed application using the UCX library encounters a segm
 
 While the default action is to print a backtrace on a segmentation fault, it may not always be helpful.
 
-For instance, if a segmentation fault is intentionally caused at line 129 in `examples/ping_distributed/cpp/ping_distributed_ops.cpp` (by adding `*(int*)0 = 0;`), running `./examples/ping_distributed/cpp/ping_distributed` will result in the following output:
+For instance, if a segmentation fault is intentionally caused at line 139 near the start of `PingTensorTxOp::compute` in `/workspace/holoscan-sdk/src/operators/ping_tensor_tx/ping_tensor_tx.cpp` (by adding `*(int*)0 = 0;`), running `./examples/ping_distributed/cpp/ping_distributed` will result in the following output:
 
 
 ```bash
@@ -252,88 +252,89 @@ By setting the `UCX_HANDLE_ERRORS` environment variable to `freeze,bt` and runni
 $ UCX_HANDLE_ERRORS=freeze,bt ./examples/ping_distributed/cpp/ping_distributed
 
 
-[holoscan:2127091:0:2127105] Caught signal 11 (Segmentation fault: address not mapped to object at address (nil))
-==== backtrace (tid:2127105) ====
- 0  /opt/ucx/1.15.0/lib/libucs.so.0(ucs_handle_error+0x2e4) [0x7f9995850264]
- 1  /opt/ucx/1.15.0/lib/libucs.so.0(+0x3045f) [0x7f999585045f]
- 2  /opt/ucx/1.15.0/lib/libucs.so.0(+0x30746) [0x7f9995850746]
- 3  /usr/lib/x86_64-linux-gnu/libc.so.6(+0x42520) [0x7f99949ee520]
- 4  ./examples/ping_distributed/cpp/ping_distributed(+0x103d2b) [0x55971617fd2b]
- 5  /workspace/holoscan-sdk/build-debug-x86_64/lib/libholoscan_core.so.1(_ZN8holoscan3gxf10GXFWrapper4tickEv+0x13d) [0x7f9996bfaafd]
- 6  /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so(_ZN6nvidia3gxf14EntityExecutor10EntityItem11tickCodeletERKNS0_6HandleINS0_7CodeletEEE+0x127) [0x7f99952cb487]
- 7  /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so(_ZN6nvidia3gxf14EntityExecutor10EntityItem4tickElPNS0_6RouterE+0x444) [0x7f99952cde44]
- 8  /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so(_ZN6nvidia3gxf14EntityExecutor10EntityItem7executeElPNS0_6RouterERl+0x3e9) [0x7f99952ce859]
- 9  /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so(_ZN6nvidia3gxf14EntityExecutor13executeEntityEll+0x41b) [0x7f99952cf0cb]
-10  /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_serialization.so(_ZN6nvidia3gxf20MultiThreadScheduler20workerThreadEntranceEPNS0_10ThreadPoolEl+0x3c0) [0x7f9994f0cc50]
-11  /usr/lib/x86_64-linux-gnu/libstdc++.so.6(+0xdc253) [0x7f9994cb0253]
-12  /usr/lib/x86_64-linux-gnu/libc.so.6(+0x94ac3) [0x7f9994a40ac3]
-13  /usr/lib/x86_64-linux-gnu/libc.so.6(+0x126660) [0x7f9994ad2660]
+[holoscan:37   :1:51] Caught signal 11 (Segmentation fault: address not mapped to object at address (nil))
+==== backtrace (tid:     51) ====
+ 0  /opt/ucx/1.15.0/lib/libucs.so.0(ucs_handle_error+0x2e4) [0x7f9fc6d75264]
+ 1  /opt/ucx/1.15.0/lib/libucs.so.0(+0x3045f) [0x7f9fc6d7545f]
+ 2  /opt/ucx/1.15.0/lib/libucs.so.0(+0x30746) [0x7f9fc6d75746]
+ 3  /usr/lib/x86_64-linux-gnu/libc.so.6(+0x42520) [0x7f9fc803e520]
+ 4  /workspace/holoscan-sdk/build-x86_64/lib/libholoscan_op_ping_tensor_tx.so.2(_ZN8holoscan3ops14PingTensorTxOp7computeERNS_12InputContextERNS_13OutputContextERNS_16ExecutionContextE+0x53) [0x7f9fcad9e7f1]
+ 5  /workspace/holoscan-sdk/build-x86_64/lib/libholoscan_core.so.2(_ZN8holoscan3gxf10GXFWrapper4tickEv+0x155) [0x7f9fc9e415eb]
+ 6  /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so(_ZN6nvidia3gxf14EntityExecutor10EntityItem11tickCodeletERKNS0_6HandleINS0_7CodeletEEE+0x1a7) [0x7f9fc88f0347]
+ 7  /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so(_ZN6nvidia3gxf14EntityExecutor10EntityItem4tickElPNS0_6RouterE+0x460) [0x7f9fc88f29c0]
+ 8  /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so(_ZN6nvidia3gxf14EntityExecutor10EntityItem7executeElPNS0_6RouterERl+0x31e) [0x7f9fc88f31ee]
+ 9  /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so(_ZN6nvidia3gxf14EntityExecutor13executeEntityEll+0x2e7) [0x7f9fc88f39d7]
+10  /workspace/holoscan-sdk/build-x86_64/lib/libgxf_serialization.so(_ZN6nvidia3gxf20MultiThreadScheduler20workerThreadEntranceEPNS0_10ThreadPoolEl+0x419) [0x7f9fc8605dd9]
+11  /usr/lib/x86_64-linux-gnu/libstdc++.so.6(+0xdc253) [0x7f9fc8321253]
+12  /usr/lib/x86_64-linux-gnu/libc.so.6(+0x94ac3) [0x7f9fc8090ac3]
+13  /usr/lib/x86_64-linux-gnu/libc.so.6(clone+0x44) [0x7f9fc8121a04]
 =================================
 [holoscan:2127091:0:2127105] Process frozen, press Enter to attach a debugger...
 ```
 
-It is observed that the thread responsible for the segmentation fault is 2127105 (`tid:2127105`). To attach a debugger to this thread, simply press Enter.
+It is observed that the thread responsible for the segmentation fault is 51 (`tid:     51`). To attach a debugger to this thread, simply press Enter.
 
 Upon attaching the debugger, a backtrace will be displayed, but it may not be from the thread that triggered the segmentation fault. To handle this, use the `info threads` command to list all threads, and the `thread <thread_id>` command to switch to the thread that caused the segmentation fault.
 
 
 ```bash
 (gdb) info threads
-  Id   Target Id                                             Frame
-* 1    Thread 0x7f9997b36000 (LWP 2127091) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  2    Thread 0x7f9992731000 (LWP 2127093) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  3    Thread 0x7f9991f30000 (LWP 2127094) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  4    Thread 0x7f999172f000 (LWP 2127095) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  5    Thread 0x7f99909ec000 (LWP 2127096) "cuda-EvtHandlr"  0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  6    Thread 0x7f99891ff000 (LWP 2127097) "async"           0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  7    Thread 0x7f997d7cd000 (LWP 2127098) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  8    Thread 0x7f997cfcc000 (LWP 2127099) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  9    Thread 0x7f995ffff000 (LWP 2127100) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  10   Thread 0x7f99577fe000 (LWP 2127101) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  11   Thread 0x7f995f3e5000 (LWP 2127103) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  12   Thread 0x7f995ebe4000 (LWP 2127104) "ping_distribute" 0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
-  13   Thread 0x7f995e3e3000 (LWP 2127105) "ping_distribute" 0x00007f9994a9642f in __GI___wait4 (pid=pid@entry=2127631, stat_loc=stat_loc@entry=0x7f995e3ddd3c, options=options@entry=0, usage=usage@entry=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+  Id   Target Id                                        Frame 
+* 1    Thread 0x7f9fc6ce2000 (LWP 37) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  2    Thread 0x7f9fc51bb000 (LWP 39) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  3    Thread 0x7f9fc11ba000 (LWP 40) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  4    Thread 0x7f9fbd1b9000 (LWP 41) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  5    Thread 0x7f9fabfff000 (LWP 42) "cuda00001400006" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  6    Thread 0x7f9f99fff000 (LWP 43) "async"           0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  7    Thread 0x7f9f95ffe000 (LWP 44) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  8    Thread 0x7f9f77fff000 (LWP 45) "dispatcher"      0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  9    Thread 0x7f9f73ffe000 (LWP 46) "async"           0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  10   Thread 0x7f9f6fffd000 (LWP 47) "worker"          0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  11   Thread 0x7f9f5bfff000 (LWP 48) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  12   Thread 0x7f9f57ffe000 (LWP 49) "dispatcher"      0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  13   Thread 0x7f9f53ffd000 (LWP 50) "async"           0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+  14   Thread 0x7f9f4fffc000 (LWP 51) "worker"          0x00007f9fc80e642f in __GI___wait4 (pid=pid@entry=52, stat_loc=stat_loc@entry=0x7f9f4fff6cfc, options=options@entry=0, usage=usage@entry=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
 ```
 
-It's evident that thread ID 13 is responsible for the segmentation fault (`LWP 2127105`). To investigate further, we can switch to this thread using the command `thread 13` in GDB:
+It's evident that thread ID 14 is responsible for the segmentation fault (`LWP 51`). To investigate further, we can switch to this thread using the command `thread 14` in GDB:
 
 ```bash
-(gdb) thread 13
+(gdb) thread 14
 ```
 
 After switching, we can employ the `bt` command to examine the backtrace of this thread.
 
 ```bash
 (gdb) bt
-#0  0x00007f9994a9642f in __GI___wait4 (pid=pid@entry=2127631, stat_loc=stat_loc@entry=0x7f995e3ddd3c, options=options@entry=0, usage=usage@entry=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
-#1  0x00007f9994a963ab in __GI___waitpid (pid=pid@entry=2127631, stat_loc=stat_loc@entry=0x7f995e3ddd3c, options=options@entry=0) at ./posix/waitpid.c:38
-#2  0x00007f999584d587 in ucs_debugger_attach () at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:816
-#3  0x00007f999585031d in ucs_error_freeze (message=0x7f999586ec53 "address not mapped to object") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:919
-#4  ucs_handle_error (message=0x7f999586ec53 "address not mapped to object") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1089
-#5  ucs_handle_error (message=0x7f999586ec53 "address not mapped to object") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1077
-#6  0x00007f999585045f in ucs_debug_handle_error_signal (signo=signo@entry=11, cause=0x7f999586ec53 "address not mapped to object", fmt=fmt@entry=0x7f999586ecf5 " at address %p") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1038
-#7  0x00007f9995850746 in ucs_error_signal_handler (signo=11, info=0x7f995e3de3f0, context=<optimized out>) at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1060
+#0  0x00007f9fc80e642f in __GI___wait4 (pid=pid@entry=52, stat_loc=stat_loc@entry=0x7f9f4fff6cfc, options=options@entry=0, usage=usage@entry=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+#1  0x00007f9fc80e63ab in __GI___waitpid (pid=pid@entry=52, stat_loc=stat_loc@entry=0x7f9f4fff6cfc, options=options@entry=0) at ./posix/waitpid.c:38
+#2  0x00007f9fc6d72587 in ucs_debugger_attach () at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:816
+#3  0x00007f9fc6d7531d in ucs_error_freeze (message=0x7f9fc6d93c53 "address not mapped to object") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:919
+#4  ucs_handle_error (message=0x7f9fc6d93c53 "address not mapped to object") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1089
+#5  ucs_handle_error (message=0x7f9fc6d93c53 "address not mapped to object") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1077
+#6  0x00007f9fc6d7545f in ucs_debug_handle_error_signal (signo=signo@entry=11, cause=0x7f9fc6d93c53 "address not mapped to object", fmt=fmt@entry=0x7f9fc6d93cf5 " at address %p") at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1038
+#7  0x00007f9fc6d75746 in ucs_error_signal_handler (signo=11, info=0x7f9f4fff73b0, context=<optimized out>) at /opt/ucx/src/contrib/../src/ucs/debug/debug.c:1060
 #8  <signal handler called>
-#9  holoscan::ops::PingTensorTxOp::compute (this=0x559716f26fa0, op_output=..., context=...) at ../examples/ping_distributed/cpp/ping_distributed_ops.cpp:129
-#10 0x00007f9996bfaafd in holoscan::gxf::GXFWrapper::tick (this=0x559716f6f740) at ../src/core/gxf/gxf_wrapper.cpp:66
-#11 0x00007f99952cb487 in nvidia::gxf::EntityExecutor::EntityItem::tickCodelet(nvidia::gxf::Handle<nvidia::gxf::Codelet> const&) () from /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so
-#12 0x00007f99952cde44 in nvidia::gxf::EntityExecutor::EntityItem::tick(long, nvidia::gxf::Router*) () from /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so
-#13 0x00007f99952ce859 in nvidia::gxf::EntityExecutor::EntityItem::execute(long, nvidia::gxf::Router*, long&) () from /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so
-#14 0x00007f99952cf0cb in nvidia::gxf::EntityExecutor::executeEntity(long, long) () from /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_core.so
-#15 0x00007f9994f0cc50 in nvidia::gxf::MultiThreadScheduler::workerThreadEntrance(nvidia::gxf::ThreadPool*, long) () from /workspace/holoscan-sdk/build-debug-x86_64/lib/libgxf_serialization.so
-#16 0x00007f9994cb0253 in ?? () from /usr/lib/x86_64-linux-gnu/libstdc++.so.6
-#17 0x00007f9994a40ac3 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
-#18 0x00007f9994ad2660 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+#9  holoscan::ops::PingTensorTxOp::compute (this=0x5643fdcbd540, op_output=..., context=...) at /workspace/holoscan-sdk/src/operators/ping_tensor_tx/ping_tensor_tx.cpp:139
+#10 0x00007f9fc9e415eb in holoscan::gxf::GXFWrapper::tick (this=0x5643fdcfef00) at /workspace/holoscan-sdk/src/core/gxf/gxf_wrapper.cpp:78
+#11 0x00007f9fc88f0347 in nvidia::gxf::EntityExecutor::EntityItem::tickCodelet(nvidia::gxf::Handle<nvidia::gxf::Codelet> const&) () from /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so
+#12 0x00007f9fc88f29c0 in nvidia::gxf::EntityExecutor::EntityItem::tick(long, nvidia::gxf::Router*) () from /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so
+#13 0x00007f9fc88f31ee in nvidia::gxf::EntityExecutor::EntityItem::execute(long, nvidia::gxf::Router*, long&) () from /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so
+#14 0x00007f9fc88f39d7 in nvidia::gxf::EntityExecutor::executeEntity(long, long) () from /workspace/holoscan-sdk/build-x86_64/lib/libgxf_sample.so
+#15 0x00007f9fc8605dd9 in nvidia::gxf::MultiThreadScheduler::workerThreadEntrance(nvidia::gxf::ThreadPool*, long) () from /workspace/holoscan-sdk/build-x86_64/lib/libgxf_serialization.so
+#16 0x00007f9fc8321253 in ?? () from /usr/lib/x86_64-linux-gnu/libstdc++.so.6
+#17 0x00007f9fc8090ac3 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+#18 0x00007f9fc8121a04 in clone () at ../sysdeps/unix/sysv/linux/x86_64/clone.S:100
 ```
 
-Under the backtrace of thread 13, you will find:
+Under the backtrace of thread 14, you will find:
 
 ```text
 #8  <signal handler called>
-#9  holoscan::ops::PingTensorTxOp::compute (this=0x559716f26fa0, op_output=..., context=...) at ../examples/ping_distributed/cpp/ping_distributed_ops.cpp:129
+#9  holoscan::ops::PingTensorTxOp::compute (this=0x5643fdcbd540, op_output=..., context=...) at /workspace/holoscan-sdk/src/operators/ping_tensor_tx/ping_tensor_tx.cpp:139
 ```
 
-This indicates that the segmentation fault occurred at line 129 in `examples/ping_distributed/cpp/ping_distributed_ops.cpp`.
+This indicates that the segmentation fault occurred at line 139 in `/workspace/holoscan-sdk/src/operators/ping_tensor_tx/ping_tensor_tx.cpp`.
 
 To view the backtrace of all threads, use the `thread apply all bt` command.
 
@@ -341,12 +342,12 @@ To view the backtrace of all threads, use the `thread apply all bt` command.
 (gdb) thread apply all bt
 
 ...
-Thread 13 (Thread 0x7f995e3e3000 (LWP 2127105) "ping_distribute"):
-#0  0x00007f9994a9642f in __GI___wait4 (pid=pid@entry=2127631, stat_loc=stat_loc@entry=0x7f995e3ddd3c, options=options@entry=0, usage=usage@entry=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+Thread 14 (Thread 0x7f9f4fffc000 (LWP 51) "worker"):
+#0  0x00007f9fc80e642f in __GI___wait4 (pid=pid@entry=52, stat_loc=stat_loc@entry=0x7f9f4fff6cfc, options=options@entry=0, usage=usage@entry=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
 ...
 
-Thread 12 (Thread 0x7f995ebe4000 (LWP 2127104) "ping_distribute"):
-#0  0x00007f9994a96612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
+Thread 13 (Thread 0x7f9f53ffd000 (LWP 50) "async"):
+#0  0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
 ...
 
 ```

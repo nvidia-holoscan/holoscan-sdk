@@ -92,11 +92,7 @@ PYBIND11_MODULE(_video_stream_recorder, m) {
            "directory"_a,
            "basename"_a,
            "flush_on_tick"_a = false,
-           "name"_a = "recorder"s,
-           doc::VideoStreamRecorderOp::doc_VideoStreamRecorderOp)
-      .def("initialize",
-           &VideoStreamRecorderOp::initialize,
-           doc::VideoStreamRecorderOp::doc_initialize)
-      .def("setup", &VideoStreamRecorderOp::setup, "spec"_a, doc::VideoStreamRecorderOp::doc_setup);
+           "name"_a = "video_stream_recorder"s,
+           doc::VideoStreamRecorderOp::doc_VideoStreamRecorderOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

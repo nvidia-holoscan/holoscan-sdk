@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -89,13 +89,13 @@ void DedicatedMemoryAllocator::deinit()
   m_device = NULL;
 }
 
-MemHandle DedicatedMemoryAllocator::allocMemory(const MemAllocateInfo& allocInfo, VkResult *pResult)
+MemHandle DedicatedMemoryAllocator::allocMemory(const MemAllocateInfo& allocInfo, uint32_t plane, VkResult *pResult)
 {
   MemAllocateInfo   localInfo(allocInfo);
   localInfo.setAllocationFlags(allocInfo.getAllocationFlags() | m_flags);
 
   BakedAllocateInfo bakedInfo;
-  fillBakedAllocateInfo(m_physicalMemoryProperties, localInfo, bakedInfo);
+  fillBakedAllocateInfo(m_physicalMemoryProperties, localInfo, plane, bakedInfo);
 
   VkDeviceMemory memory = VK_NULL_HANDLE;
   VkResult result = vkAllocateMemory(m_device, &bakedInfo.memAllocInfo, nullptr, &memory);

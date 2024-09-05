@@ -22,12 +22,12 @@
 #include <utility>
 
 #include "../config.hpp"
-#include "ping_tensor_rx_op.hpp"
-#include "ping_tensor_tx_op.hpp"
 #include "tensor_compare_op.hpp"
 
 #include "holoscan/holoscan.hpp"
 #include "holoscan/operators/format_converter/format_converter.hpp"
+#include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
+#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 using namespace holoscan;
 
@@ -57,7 +57,7 @@ class FormatConverterApp : public holoscan::Application {
                                                            pool,
                                                            Arg("in_tensor_name", in_tensor_name),
                                                            Arg("out_tensor_name", out_tensor_name));
-    auto rx = make_operator<ops::PingTensorRxOp>("rx", Arg("tensor_name", out_tensor_name));
+    auto rx = make_operator<ops::PingTensorRxOp>("rx");
 
     add_flow(source, converter, {{"out", "source_video"}});
     add_flow(converter, rx, {{"tensor", "in"}});
@@ -84,9 +84,12 @@ void run_app(const std::string& failure_str = "", const std::string& storage_typ
   }
   std::string log_output = testing::internal::GetCapturedStderr();
   if (failure_str.empty()) {
-    EXPECT_TRUE(log_output.find("error") == std::string::npos) << log_output;
+    EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
   } else {
-    EXPECT_TRUE(log_output.find(failure_str) != std::string::npos) << log_output;
+    EXPECT_TRUE(log_output.find(failure_str) != std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
 }
 

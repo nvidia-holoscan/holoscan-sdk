@@ -52,7 +52,6 @@ class Constants:
     PYTHON_EXECUTABLE = "python3"
     PYTHON_MAIN_FILE = "__main__.py"
 
-    PYPI_INSTALL_SOURCE = "pypi.org"
     TARBALL_FILE_EXTENSION = ".tar"
 
     DEBIAN_FILE_EXTENSION = ".deb"

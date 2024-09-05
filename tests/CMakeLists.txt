@@ -112,6 +112,8 @@ target_link_libraries(OPERATORS_CLASSES_TEST
   holoscan::ops::inference_processor
   holoscan::ops::ping_rx
   holoscan::ops::ping_tx
+  holoscan::ops::ping_tensor_rx
+  holoscan::ops::ping_tensor_tx
   holoscan::ops::segmentation_postprocessor
   holoscan::ops::v4l2
   holoscan::ops::video_stream_recorder
@@ -145,10 +147,9 @@ ConfigureTest(
   system/native_operator_ping_app.cpp
   system/operator_metadata_apps.cpp
   system/ping_rx_op.cpp
-  system/ping_tensor_rx_op.cpp
-  system/ping_tensor_tx_op.cpp
   system/ping_tx_op.cpp
   system/tensor_compare_op.cpp
+  system/video_stream_replayer_op.cpp
 )
 target_link_libraries(SYSTEM_TEST
   PRIVATE
@@ -160,6 +161,9 @@ target_link_libraries(SYSTEM_TEST
   holoscan::ops::holoviz
   holoscan::ops::ping_rx
   holoscan::ops::ping_tx
+  holoscan::ops::ping_tensor_rx
+  holoscan::ops::ping_tensor_tx
+  holoscan::ops::video_stream_replayer
 )
 
 ConfigureTest(
@@ -172,13 +176,13 @@ ConfigureTest(
   system/distributed/standalone_fragments.cpp
   system/distributed/ucx_message_serialization_ping_app.cpp
   system/env_wrapper.cpp
-  system/ping_tensor_rx_op.cpp
-  system/ping_tensor_tx_op.cpp
 )
 target_link_libraries(SYSTEM_DISTRIBUTED_TEST
   PRIVATE
   holoscan::ops::bayer_demosaic
   holoscan::ops::holoviz
+  holoscan::ops::ping_tensor_rx
+  holoscan::ops::ping_tensor_tx
 )
 
 # set environment variables used by distributed applications in the tests
@@ -215,13 +219,13 @@ ConfigureTest(
   system/distributed/holoscan_ucx_ports_env.cpp
   system/distributed/standalone_fragments.cpp
   system/env_wrapper.cpp
-  system/ping_tensor_rx_op.cpp
-  system/ping_tensor_tx_op.cpp
 )
 target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
   PRIVATE
   holoscan::ops::bayer_demosaic
   holoscan::ops::holoviz
+  holoscan::ops::ping_tensor_rx
+  holoscan::ops::ping_tensor_tx
 )
 
   set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS

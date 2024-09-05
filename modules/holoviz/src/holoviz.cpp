@@ -147,17 +147,37 @@ void BeginImageLayer() {
   Context::get().begin_image_layer();
 }
 
-void ImageCudaDevice(uint32_t w, uint32_t h, ImageFormat fmt, CUdeviceptr device_ptr,
-                     size_t row_pitch) {
-  Context::get().get_active_image_layer()->image_cuda_device(w, h, fmt, device_ptr, row_pitch);
+void ImageCudaDevice(uint32_t width, uint32_t height, ImageFormat fmt,
+                     CUdeviceptr device_ptr_plane_0, size_t row_pitch_plane_0,
+                     CUdeviceptr device_ptr_plane_1, size_t row_pitch_plane_1,
+                     CUdeviceptr device_ptr_plane_2, size_t row_pitch_plane_2) {
+  Context::get().get_active_image_layer()->image_cuda_device(width,
+                                                             height,
+                                                             fmt,
+                                                             device_ptr_plane_0,
+                                                             row_pitch_plane_0,
+                                                             device_ptr_plane_1,
+                                                             row_pitch_plane_1,
+                                                             device_ptr_plane_2,
+                                                             row_pitch_plane_2);
 }
 
 void ImageCudaArray(ImageFormat fmt, CUarray array) {
   Context::get().get_active_image_layer()->image_cuda_array(fmt, array);
 }
 
-void ImageHost(uint32_t w, uint32_t h, ImageFormat fmt, const void* data, size_t row_pitch) {
-  Context::get().get_active_image_layer()->image_host(w, h, fmt, data, row_pitch);
+void ImageHost(uint32_t w, uint32_t h, ImageFormat fmt, const void* data_plane_0,
+               size_t row_pitch_plane_0, const void* data_plane_1, size_t row_pitch_plane_1,
+               const void* data_plane_2, size_t row_pitch_plane_2) {
+  Context::get().get_active_image_layer()->image_host(w,
+                                                      h,
+                                                      fmt,
+                                                      data_plane_0,
+                                                      row_pitch_plane_0,
+                                                      data_plane_1,
+                                                      row_pitch_plane_1,
+                                                      data_plane_2,
+                                                      row_pitch_plane_2);
 }
 
 void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data, bool normalized) {
@@ -167,6 +187,19 @@ void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data, boo
 void ImageComponentMapping(ComponentSwizzle r, ComponentSwizzle g, ComponentSwizzle b,
                            ComponentSwizzle a) {
   Context::get().get_active_image_layer()->image_component_mapping(r, g, b, a);
+}
+
+void ImageYuvModelConversion(YuvModelConversion yuv_model_conversion) {
+  Context::get().get_active_image_layer()->image_yuv_model_conversion(yuv_model_conversion);
+}
+
+void ImageYuvRange(YuvRange yuv_range) {
+  Context::get().get_active_image_layer()->image_yuv_range(yuv_range);
+}
+
+void ImageChromaLocation(ChromaLocation x_chroma_location, ChromaLocation y_chroma_location) {
+  Context::get().get_active_image_layer()->image_chroma_location(x_chroma_location,
+                                                                 y_chroma_location);
 }
 
 void BeginImGuiLayer() {

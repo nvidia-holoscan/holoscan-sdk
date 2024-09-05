@@ -19,15 +19,18 @@
 
 namespace holoscan::viz {
 
-void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* dst_channels,
-                 uint32_t* component_size) {
+void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
+                 uint32_t* component_size, uint32_t* width_divisor, uint32_t* height_divisor,
+                 uint32_t plane) {
+  if (width_divisor) { *width_divisor = 1; }
+  if (height_divisor) { *height_divisor = 1; }
   switch (format) {
     case ImageFormat::R8_UINT:
     case ImageFormat::R8_SINT:
     case ImageFormat::R8_UNORM:
     case ImageFormat::R8_SNORM:
     case ImageFormat::R8_SRGB:
-      *src_channels = *dst_channels = 1u;
+      *channels = *hw_channels = 1u;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R16_UINT:
@@ -35,7 +38,7 @@ void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* dst_chann
     case ImageFormat::R16_UNORM:
     case ImageFormat::R16_SNORM:
     case ImageFormat::R16_SFLOAT:
-      *src_channels = *dst_channels = 1u;
+      *channels = *hw_channels = 1u;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::R32_UINT:
@@ -43,18 +46,18 @@ void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* dst_chann
     // packed formats are treated as single component formats
     case ImageFormat::A2B10G10R10_UNORM_PACK32:
     case ImageFormat::A2R10G10B10_UNORM_PACK32:
-      *src_channels = *dst_channels = 1u;
+      *channels = *hw_channels = 1u;
       *component_size = sizeof(uint32_t);
       break;
     case ImageFormat::R32_SFLOAT:
-      *src_channels = *dst_channels = 1u;
+      *channels = *hw_channels = 1u;
       *component_size = sizeof(float);
       break;
     case ImageFormat::R8G8B8_UNORM:
     case ImageFormat::R8G8B8_SNORM:
     case ImageFormat::R8G8B8_SRGB:
-      *src_channels = 3u;
-      *dst_channels = 4u;
+      *channels = 3u;
+      *hw_channels = 4u;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R8G8B8A8_UNORM:
@@ -64,30 +67,123 @@ void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* dst_chann
     case ImageFormat::B8G8R8A8_SRGB:
     case ImageFormat::A8B8G8R8_UNORM_PACK32:
     case ImageFormat::A8B8G8R8_SRGB_PACK32:
-      *src_channels = *dst_channels = 4u;
+      *channels = *hw_channels = 4u;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R16G16B16A16_UNORM:
     case ImageFormat::R16G16B16A16_SNORM:
     case ImageFormat::R16G16B16A16_SFLOAT:
-      *src_channels = *dst_channels = 4u;
+      *channels = *hw_channels = 4u;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::R32G32B32A32_SFLOAT:
-      *src_channels = *dst_channels = 4u;
+      *channels = *hw_channels = 4u;
       *component_size = sizeof(float);
       break;
     case ImageFormat::D16_UNORM:
-      *src_channels = *dst_channels = 1u;
+      *channels = *hw_channels = 1u;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::X8_D24_UNORM:
-      *src_channels = *dst_channels = 1u;
+      *channels = *hw_channels = 1u;
       *component_size = sizeof(uint32_t);
       break;
     case ImageFormat::D32_SFLOAT:
-      *src_channels = *dst_channels = 1u;
+      *channels = *hw_channels = 1u;
       *component_size = sizeof(uint32_t);
+      break;
+    case ImageFormat::Y8U8Y8V8_422_UNORM:
+    case ImageFormat::U8Y8V8Y8_422_UNORM:
+      *channels = *hw_channels = 2u;
+      *component_size = sizeof(uint8_t);
+      break;
+    case ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+      if (plane == 0) {
+        *channels = *hw_channels = 1u;
+      } else if (plane == 1) {
+        *channels = *hw_channels = 2u;
+        if (width_divisor) { *width_divisor = 2; }
+        if (height_divisor) { *height_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
+      *component_size = sizeof(uint8_t);
+      break;
+    case ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+      if (plane == 0) {
+        *channels = *hw_channels = 1u;
+      } else if (plane == 1) {
+        *channels = *hw_channels = 2u;
+        if (width_divisor) { *width_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
+      *component_size = sizeof(uint8_t);
+      break;
+    case ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+      *channels = *hw_channels = 1u;
+      *component_size = sizeof(uint8_t);
+      if (plane == 0) {
+      } else if ((plane == 1) || (plane == 2)) {
+        if (width_divisor) { *width_divisor = 2; }
+        if (height_divisor) { *height_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
+      break;
+    case ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+      *channels = *hw_channels = 1u;
+      *component_size = sizeof(uint8_t);
+      if (plane == 0) {
+      } else if ((plane == 1) || (plane == 2)) {
+        if (width_divisor) { *width_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
+      break;
+    case ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+      if (plane == 0) {
+        *channels = *hw_channels = 1u;
+      } else if (plane == 1) {
+        *channels = *hw_channels = 2u;
+        if (width_divisor) { *width_divisor = 2; }
+        if (height_divisor) { *height_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
+      *component_size = sizeof(uint16_t);
+      break;
+    case ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+      if (plane == 0) {
+        *channels = *hw_channels = 1u;
+      } else if (plane == 1) {
+        *channels = *hw_channels = 2u;
+        if (width_divisor) { *width_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
+      *component_size = sizeof(uint16_t);
+      break;
+    case ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+      *channels = *hw_channels = 1u;
+      *component_size = sizeof(uint16_t);
+      if (plane == 0) {
+      } else if ((plane == 1) || (plane == 2)) {
+        if (width_divisor) { *width_divisor = 2; }
+        if (height_divisor) { *height_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
+      break;
+    case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+      *channels = *hw_channels = 1u;
+      *component_size = sizeof(uint16_t);
+      if (plane == 0) {
+      } else if ((plane == 1) || (plane == 2)) {
+        if (width_divisor) { *width_divisor = 2; }
+      } else {
+        throw std::invalid_argument("Unhandled plane index");
+      }
       break;
     default:
       throw std::runtime_error("Unhandled image format.");
@@ -197,6 +293,36 @@ vk::Format to_vulkan_format(ImageFormat format) {
     case ImageFormat::A8B8G8R8_SRGB_PACK32:
       vk_format = vk::Format::eA8B8G8R8SrgbPack32;
       break;
+    case ImageFormat::Y8U8Y8V8_422_UNORM:
+      vk_format = vk::Format::eG8B8G8R8422Unorm;
+      break;
+    case ImageFormat::U8Y8V8Y8_422_UNORM:
+      vk_format = vk::Format::eB8G8R8G8422Unorm;
+      break;
+    case ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+      vk_format = vk::Format::eG8B8R82Plane420Unorm;
+      break;
+    case ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+      vk_format = vk::Format::eG8B8R82Plane422Unorm;
+      break;
+    case ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+      vk_format = vk::Format::eG8B8R83Plane420Unorm;
+      break;
+    case ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+      vk_format = vk::Format::eG8B8R83Plane422Unorm;
+      break;
+    case ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+      vk_format = vk::Format::eG16B16R162Plane420Unorm;
+      break;
+    case ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+      vk_format = vk::Format::eG16B16R162Plane422Unorm;
+      break;
+    case ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+      vk_format = vk::Format::eG16B16R163Plane420Unorm;
+      break;
+    case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+      vk_format = vk::Format::eG16B16R163Plane422Unorm;
+      break;
     default:
       throw std::runtime_error("Unhandled image format.");
   }
@@ -294,7 +420,8 @@ std::optional<ImageFormat> to_image_format(vk::Format vk_format) {
       break;
     case vk::Format::eA8B8G8R8SrgbPack32:
       image_format = ImageFormat::A8B8G8R8_SRGB_PACK32;
-      break;    default:
+      break;
+    default:
       break;
   }
 
@@ -324,6 +451,45 @@ vk::ColorSpaceKHR to_vulkan_color_space(ColorSpace color_space) {
   }
 
   return vk_color_space;
+}
+
+bool is_depth_format(ImageFormat fmt) {
+  return ((fmt == ImageFormat::D16_UNORM) || (fmt == ImageFormat::X8_D24_UNORM) ||
+          (fmt == ImageFormat::D32_SFLOAT));
+}
+
+bool is_yuv_format(ImageFormat fmt) {
+  switch (fmt) {
+    case ImageFormat::Y8U8Y8V8_422_UNORM:
+    case ImageFormat::U8Y8V8Y8_422_UNORM:
+    case ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+    case ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+    case ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+    case ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+    case ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+    case ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+    case ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+    case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool is_multi_planar_format(ImageFormat fmt) {
+  switch (fmt) {
+    case ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+    case ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+    case ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+    case ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+    case ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+    case ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+    case ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+    case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+      return true;
+    default:
+      return false;
+  }
 }
 
 }  // namespace holoscan::viz

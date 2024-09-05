@@ -36,7 +36,7 @@
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
-bool pixel_format_supported(int fd, unsigned int pixel_format_fourcc) {
+static bool pixel_format_supported(int fd, unsigned int pixel_format_fourcc) {
   struct v4l2_fmtdesc fmtdesc;
   CLEAR(fmtdesc);
   fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -51,6 +51,102 @@ bool pixel_format_supported(int fd, unsigned int pixel_format_fourcc) {
   return supported_format;
 }
 
+static void YUYVToRGBA(const void* yuyv, void* rgba, size_t width, size_t height) {
+  auto r_convert = [](int y, int cr) {
+    double r = y + (1.4065 * (cr - 128));
+    return static_cast<unsigned int>(std::max(0, std::min(255, static_cast<int>(r))));
+  };
+  auto g_convert = [](int y, int cb, int cr) {
+    double g = y - (0.3455 * (cb - 128)) - (0.7169 * (cr - 128));
+    return static_cast<unsigned int>(std::max(0, std::min(255, static_cast<int>(g))));
+  };
+  auto b_convert = [](int y, int cb) {
+    double b = y + (1.7790 * (cb - 128));
+    return static_cast<unsigned int>(std::max(0, std::min(255, static_cast<int>(b))));
+  };
+
+  const unsigned char* yuyv_buf = static_cast<const unsigned char*>(yuyv);
+  unsigned char* rgba_buf = static_cast<unsigned char*>(rgba);
+
+  for (unsigned int i = 0, j = 0; i < width * height * 4; i += 8, j += 4) {
+    int cb = yuyv_buf[j + 1];
+    int cr = yuyv_buf[j + 3];
+
+    // First pixel
+    int y = yuyv_buf[j];
+    rgba_buf[i] = r_convert(y, cr);
+    rgba_buf[i + 1] = g_convert(y, cb, cr);
+    rgba_buf[i + 2] = b_convert(y, cb);
+    rgba_buf[i + 3] = 255;
+
+    // Second pixel
+    y = yuyv_buf[j + 2];
+    rgba_buf[i + 4] = r_convert(y, cr);
+    rgba_buf[i + 5] = g_convert(y, cb, cr);
+    rgba_buf[i + 6] = b_convert(y, cb);
+    rgba_buf[i + 7] = 255;
+  }
+}
+
+// Support for RGB24 format (`RGB3` in 4CC code)
+// For every pixel, add alpha channel to get RGBA
+static void RGB24ToRGBA(const void* rgb3, void* rgba, size_t width, size_t height) {
+  const unsigned char* rgb3_buf = static_cast<const unsigned char*>(rgb3);
+  unsigned char* rgba_buf = static_cast<unsigned char*>(rgba);
+
+  for (unsigned int i = 0, j = 0; i < width * height * 3; i += 3, j += 4) {
+    rgba_buf[j] = rgb3_buf[i];
+    rgba_buf[j + 1] = rgb3_buf[i + 1];
+    rgba_buf[j + 2] = rgb3_buf[i + 2];
+    rgba_buf[j + 3] = 255;
+  }
+}
+
+// Support for MJPEG format
+// Each frame is a JPEG image so use libjpeg to decompress the image and modify it to
+// add alpha channel
+static void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t height) {
+  struct jpeg_decompress_struct cinfo;
+  struct jpeg_error_mgr jerr;
+  // Size of image is width * height * 3 (RGB)
+  unsigned long jpg_size = width * height * 3;
+  int row_stride;
+
+  cinfo.err = jpeg_std_error(&jerr);
+  jpeg_create_decompress(&cinfo);
+
+  const unsigned char* src_buf =
+      const_cast<unsigned char*>(static_cast<const unsigned char*>(mjpg));
+  unsigned char* dest_buf = static_cast<unsigned char*>(rgba);
+  jpeg_mem_src(&cinfo, src_buf, jpg_size);
+  int rc = jpeg_read_header(&cinfo, TRUE);
+
+  if (rc != 1) { throw std::runtime_error("Failed to read jpeg header"); }
+
+  jpeg_start_decompress(&cinfo);
+
+  // Each row has width * 4 pixels (RGBA)
+  row_stride = width * 4;
+
+  while (cinfo.output_scanline < cinfo.output_height) {
+    unsigned char* buffer_array[1];
+    buffer_array[0] = dest_buf + (cinfo.output_scanline) * row_stride;
+    // Decompress jpeg image and write it to buffer_arary
+    jpeg_read_scanlines(&cinfo, buffer_array, 1);
+    unsigned char* buf = buffer_array[0];
+    // Modify image to add alpha channel with values set to 255
+    // start from the end so we don't overwrite existing values
+    for (int i = (int)width * 3 - 1, j = row_stride - 1; i > 0; i -= 3, j -= 4) {
+      buf[j] = 255;
+      buf[j - 1] = buf[i];
+      buf[j - 2] = buf[i - 1];
+      buf[j - 3] = buf[i - 2];
+    }
+  }
+  jpeg_finish_decompress(&cinfo);
+  jpeg_destroy_decompress(&cinfo);
+}
+
 namespace holoscan::ops {
 
 void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
@@ -60,6 +156,7 @@ void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
 
   static constexpr char kDefaultDevice[] = "/dev/video0";
   static constexpr char kDefaultPixelFormat[] = "auto";
+  static constexpr bool kDefaultPassThrough = false;
   static constexpr uint32_t kDefaultWidth = 0;
   static constexpr uint32_t kDefaultHeight = 0;
   static constexpr uint32_t kDefaultNumBuffers = 4;
@@ -80,6 +177,12 @@ void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
              "Pixel Format",
              "Pixel format of capture stream (little endian four character code (fourcc))",
              std::string(kDefaultPixelFormat));
+  spec.param(pass_through_,
+             "pass_through",
+             "Pass Through",
+             "If set, pass through the input buffer to the output unmodified, else convert to "
+             "RGBA32",
+             kDefaultPassThrough);
   spec.param(exposure_time_,
              "exposure_time",
              "Exposure Time",
@@ -123,35 +226,27 @@ void V4L2VideoCaptureOp::compute(InputContext& op_input, OutputContext& op_outpu
   auto video_buffer = out_message.value().add<nvidia::gxf::VideoBuffer>();
   if (!video_buffer) { throw std::runtime_error("Failed to allocate video buffer; terminating."); }
 
-  // Get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
-  auto allocator =
-      nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(), allocator_->gxf_cid());
-  // Allocate output buffer
-  video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
-      width_use_,
-      height_use_,
-      nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
-      nvidia::gxf::MemoryStorageType::kHost,
-      allocator.value(),
-      false);
-  if (!video_buffer.value()->pointer()) {
-    throw std::runtime_error("Failed to allocate output buffer.");
-  }
-
-  // Wrap buffer
   Buffer& read_buf = buffers_[buf.index];
-  if (pixel_format_use_ == V4L2_PIX_FMT_YUYV) {
-    // Convert YUYV to RGBA output buffer
-    YUYVToRGBA(read_buf.ptr, video_buffer.value()->pointer(), width_use_, height_use_);
 
-    // Return (queue) the buffer.
-    if (ioctl(fd_, VIDIOC_QBUF, &buf) < 0) {
-      throw std::runtime_error(
-          fmt::format("Failed to queue buffer {} on {}", buf.index, device_.get().c_str()));
+  if (converter_) {
+    // Convert to RGBA output buffer
+
+    // Get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
+    auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
+                                                                         allocator_->gxf_cid());
+    // Allocate output buffer
+    video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
+        width_use_,
+        height_use_,
+        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
+        nvidia::gxf::MemoryStorageType::kHost,
+        allocator.value(),
+        false);
+    if (!video_buffer.value()->pointer()) {
+      throw std::runtime_error("Failed to allocate output buffer.");
     }
-  } else if (pixel_format_use_ == V4L2_PIX_FMT_MJPEG) {
-    // Convert MJPG to RGBA output buffer
-    MJPEGToRGBA(read_buf.ptr, video_buffer.value()->pointer(), width_use_, height_use_);
+
+    (*converter_)(read_buf.ptr, video_buffer.value()->pointer(), width_use_, height_use_);
 
     // Return (queue) the buffer.
     if (ioctl(fd_, VIDIOC_QBUF, &buf) < 0) {
@@ -160,8 +255,30 @@ void V4L2VideoCaptureOp::compute(InputContext& op_input, OutputContext& op_outpu
     }
   } else {
     // Wrap memory into output buffer
+    nvidia::gxf::VideoBufferInfo video_buffer_info{};
+    video_buffer_info.width = width_use_;
+    video_buffer_info.height = height_use_;
+    video_buffer_info.surface_layout = nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR;
+    auto& color_plane = video_buffer_info.color_planes.emplace_back();
+    color_plane = nvidia::gxf::ColorPlane{};
+    color_plane.width = width_use_;
+    color_plane.height = height_use_;
+    color_plane.size = buf.length;
+
+    if (pixel_format_use_ == V4L2_PIX_FMT_RGBA32) {
+      video_buffer_info.color_format = nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA;
+      video_buffer_info.color_planes[0].bytes_per_pixel = 1;
+    } else if (pixel_format_use_ == V4L2_PIX_FMT_RGB24) {
+      video_buffer_info.color_format = nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB;
+      video_buffer_info.color_planes[0].bytes_per_pixel = 1;
+    } else {
+      // If there is no GXF VideoFormat for the V4L pixel format, set it to custom. In this case
+      // the downstream operator needs to be configured to expect the correct format.
+      video_buffer_info.color_format = nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_CUSTOM;
+    }
+
     video_buffer.value()->wrapMemory(
-        video_buffer.value()->video_frame_info(),
+        video_buffer_info,
         buf.length,
         nvidia::gxf::MemoryStorageType::kHost,
         read_buf.ptr,
@@ -282,22 +399,35 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
     // Update format with valid user-given format
     pixel_format_use_ = pixel_format;
   } else if (pixel_format_.get() == "auto") {
-    // Currently, AB24, YUYV, and MJPG are supported in auto mode
-    uint32_t ab24 = v4l2_fourcc('A', 'B', '2', '4');
-    uint32_t yuyv = v4l2_fourcc('Y', 'U', 'Y', 'V');
-    uint32_t mjpg = v4l2_fourcc('M', 'J', 'P', 'G');
+    // Currently, AB24, YUYV, MJPG, and RGB3 are supported in auto mode
+    uint32_t ab24 = v4l2_fourcc('A', 'B', '2', '4');  // V4L2_PIX_FMT_RGBA32
+    uint32_t yuyv = v4l2_fourcc('Y', 'U', 'Y', 'V');  // V4L2_PIX_FMT_YUYV
+    uint32_t mjpg = v4l2_fourcc('M', 'J', 'P', 'G');  // V4L2_PIX_FMT_MJPEG
+    uint32_t rgb3 = v4l2_fourcc('R', 'G', 'B', '3');  // V4L2_PIX_FMT_RGB24
 
     if (pixel_format_supported(fd_, ab24)) {
       pixel_format_use_ = ab24;
     } else if (pixel_format_supported(fd_, yuyv)) {
       pixel_format_use_ = yuyv;
+    } else if (pixel_format_supported(fd_, rgb3)) {
+      pixel_format_use_ = rgb3;
     } else if (pixel_format_supported(fd_, mjpg)) {
       pixel_format_use_ = mjpg;
     } else {
       throw std::runtime_error(
-          "Automatic setting of pixel format failed: device does not support AB24, YUYV, or MJPG. "
-          " If you are sure that the device pixel format is RGBA, please specify the pixel format "
-          "in the yaml configuration file.");
+          "Automatic setting of pixel format failed: device does not support AB24, YUYV, MJPG, or "
+          "RGB3. If you are sure that the device pixel format is RGBA, please specify the pixel "
+          "format in the yaml configuration file.");
+    }
+  }
+
+  if (!pass_through_) {
+    if (pixel_format_use_ == V4L2_PIX_FMT_YUYV) {
+      converter_ = &YUYVToRGBA;
+    } else if (pixel_format_use_ == V4L2_PIX_FMT_RGB24) {
+      converter_ = &RGB24ToRGBA;
+    } else if (pixel_format_use_ == V4L2_PIX_FMT_MJPEG) {
+      converter_ = &MJPEGToRGBA;
     }
   }
 
@@ -308,6 +438,7 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
     frmsize.pixel_format = pixel_format_use_;
     int supported_formats = 0;
     while (ioctl(fd_, VIDIOC_ENUM_FRAMESIZES, &frmsize) == 0) {
+      supported_formats = 0;
       if (frmsize.type != V4L2_FRMSIZE_TYPE_DISCRETE) {
         throw std::runtime_error("Non-discrete frame sizes not supported");
       }
@@ -321,8 +452,16 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
           fmt::format("Device does not support '{}x{}'", width_.get(), height_.get()));
     }
     // Update format with valid user-given format
-    if (width_.get() > 0) width_use_ = width_.get();
-    if (height_.get() > 0) height_use_ = height_.get();
+    if (width_.get() > 0) {
+      width_use_ = width_.get();
+    } else {
+      width_use_ = frmsize.discrete.width;
+    }
+    if (height_.get() > 0) {
+      height_use_ = height_.get();
+    } else {
+      height_use_ = frmsize.discrete.height;
+    }
   }
 }
 
@@ -515,88 +654,6 @@ void V4L2VideoCaptureOp::v4l2_read_buffer(v4l2_buffer& buf) {
     throw std::runtime_error(
         fmt::format("Buf index is {} more than the queue size {}", buf.index, num_buffers_.get()));
   }
-}
-
-void V4L2VideoCaptureOp::YUYVToRGBA(const void* yuyv, void* rgba, size_t width, size_t height) {
-  auto r_convert = [](int y, int cr) {
-    double r = y + (1.4065 * (cr - 128));
-    return static_cast<unsigned int>(std::max(0, std::min(255, static_cast<int>(r))));
-  };
-  auto g_convert = [](int y, int cb, int cr) {
-    double g = y - (0.3455 * (cb - 128)) - (0.7169 * (cr - 128));
-    return static_cast<unsigned int>(std::max(0, std::min(255, static_cast<int>(g))));
-  };
-  auto b_convert = [](int y, int cb) {
-    double b = y + (1.7790 * (cb - 128));
-    return static_cast<unsigned int>(std::max(0, std::min(255, static_cast<int>(b))));
-  };
-
-  const unsigned char* yuyv_buf = static_cast<const unsigned char*>(yuyv);
-  unsigned char* rgba_buf = static_cast<unsigned char*>(rgba);
-
-  for (unsigned int i = 0, j = 0; i < width * height * 4; i += 8, j += 4) {
-    int cb = yuyv_buf[j + 1];
-    int cr = yuyv_buf[j + 3];
-
-    // First pixel
-    int y = yuyv_buf[j];
-    rgba_buf[i] = r_convert(y, cr);
-    rgba_buf[i + 1] = g_convert(y, cb, cr);
-    rgba_buf[i + 2] = b_convert(y, cb);
-    rgba_buf[i + 3] = 255;
-
-    // Second pixel
-    y = yuyv_buf[j + 2];
-    rgba_buf[i + 4] = r_convert(y, cr);
-    rgba_buf[i + 5] = g_convert(y, cb, cr);
-    rgba_buf[i + 6] = b_convert(y, cb);
-    rgba_buf[i + 7] = 255;
-  }
-}
-
-// Support for MJPEG format
-// Each frame is a JPEG image so use libjpeg to decompress the image and modify it to
-// add alpha channel
-void V4L2VideoCaptureOp::MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t height) {
-  struct jpeg_decompress_struct cinfo;
-  struct jpeg_error_mgr jerr;
-  // Size of image is width * height * 3 (RGB)
-  unsigned long jpg_size = width * height * 3;
-  int row_stride;
-
-  cinfo.err = jpeg_std_error(&jerr);
-  jpeg_create_decompress(&cinfo);
-
-  const unsigned char* src_buf =
-      const_cast<unsigned char*>(static_cast<const unsigned char*>(mjpg));
-  unsigned char* dest_buf = static_cast<unsigned char*>(rgba);
-  jpeg_mem_src(&cinfo, src_buf, jpg_size);
-  int rc = jpeg_read_header(&cinfo, TRUE);
-
-  if (rc != 1) { throw std::runtime_error("Failed to read jpeg header"); }
-
-  jpeg_start_decompress(&cinfo);
-
-  // Each row has width * 4 pixels (RGBA)
-  row_stride = width * 4;
-
-  while (cinfo.output_scanline < cinfo.output_height) {
-    unsigned char* buffer_array[1];
-    buffer_array[0] = dest_buf + (cinfo.output_scanline) * row_stride;
-    // Decompress jpeg image and write it to buffer_arary
-    jpeg_read_scanlines(&cinfo, buffer_array, 1);
-    unsigned char* buf = buffer_array[0];
-    // Modify image to add alpha channel with values set to 255
-    // start from the end so we don't overwrite existing values
-    for (int i = (int)width * 3 - 1, j = row_stride - 1; i > 0; i -= 3, j -= 4) {
-      buf[j] = 255;
-      buf[j - 1] = buf[i];
-      buf[j - 2] = buf[i - 1];
-      buf[j - 3] = buf[i - 2];
-    }
-  }
-  jpeg_finish_decompress(&cinfo);
-  jpeg_destroy_decompress(&cinfo);
 }
 
 }  // namespace holoscan::ops

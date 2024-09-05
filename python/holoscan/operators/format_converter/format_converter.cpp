@@ -131,8 +131,6 @@ PYBIND11_MODULE(_format_converter, m) {
            "out_channel_order"_a = std::vector<int>{},
            "cuda_stream_pool"_a = py::none(),
            "name"_a = "format_converter"s,
-           doc::FormatConverterOp::doc_FormatConverterOp)
-      .def("initialize", &FormatConverterOp::initialize, doc::FormatConverterOp::doc_initialize)
-      .def("setup", &FormatConverterOp::setup, "spec"_a, doc::FormatConverterOp::doc_setup);
+           doc::FormatConverterOp::doc_FormatConverterOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

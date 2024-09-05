@@ -67,6 +67,9 @@ void CLIParser::initialize(std::string app_description, std::string app_version)
         "Path to the configuration file. This will override the configuration file path "
         "configured in the application code (before run() is called).");
 
+    // Allow extra arguments (ie, don't throw an error)
+    app_.allow_extras(true);
+
     is_initialized_ = true;
   }
   has_error_ = false;
@@ -107,12 +110,16 @@ std::vector<std::string>& CLIParser::parse(std::vector<std::string>& argv) {
     std::cout << v.what() << "\n";
     std::exit(0);
   } catch (const CLI::ExtrasError& e) {
-    // Do nothing for the extra arguments error when too many positionals or options are found.
-    // This is intended to allow the application to handle the extra arguments.
+    // It won't reach here since `allow_extras` is set to `true`
+    // (`app_.allow_extras(true);`) in the `initialize()` function
   } catch (const CLI::ParseError& e) {
     // Print the error message and set the error flag
     HOLOSCAN_LOG_ERROR("{}", e.what());
     has_error_ = true;
+  }
+  if (app_.get_allow_extras()) {
+    // Store the remaining arguments
+    argv = app_.remaining();
   }
   return argv;
 }

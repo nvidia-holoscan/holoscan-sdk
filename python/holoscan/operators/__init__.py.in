@@ -24,6 +24,8 @@
     holoscan.operators.InferenceOp
     holoscan.operators.InferenceProcessorOp
     holoscan.operators.PingRxOp
+    holoscan.operators.PingTensorRxOp
+    holoscan.operators.PingTensorTxOp
     holoscan.operators.PingTxOp
     holoscan.operators.SegmentationPostprocessorOp
     holoscan.operators.V4L2VideoCaptureOp
@@ -41,6 +43,8 @@ _OPERATOR_MODULES = {
     "inference": ["InferenceOp"],
     "inference_processor": ["InferenceProcessorOp"],
     "ping_rx": ["PingRxOp"],
+    "ping_tensor_rx": ["PingTensorRxOp"],
+    "ping_tensor_tx": ["PingTensorTxOp"],
     "ping_tx": ["PingTxOp"],
     "segmentation_postprocessor": ["SegmentationPostprocessorOp"],
     "v4l2_video_capture": ["V4L2VideoCaptureOp"],

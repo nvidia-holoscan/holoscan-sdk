@@ -59,24 +59,16 @@ count : int, optional
     Number of frame counts to playback. If zero value is specified, it is
     ignored. If the count is less than the number of frames in the video, it
     would finish early. Default value is ``0``.
+allocator : holoscan.core.Allocator
+    Allocator used to tensor memory. Currently, only the ``holoscan.resources.UnboundedAllocator``
+    is supported. The default value of ``None`` will lead to use of a
+    ``holoscan.resources.UnboundedAllocator``.
+entity_serializer : holoscan.core.EntitySerializer
+    The entity serializer used for deserialization. The default value of ``None``
+    will lead to use of a default ``holoscan.resources.StdEntitySerializer``. If this argument is
+    specified, then the `allocator` argument is ignored.
 name : str, optional (constructor only)
     The name of the operator. Default value is ``"video_stream_replayer"``.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : holoscan.core.OperatorSpec
-    The operator specification.
 )doc")
 
 }  // namespace holoscan::doc::VideoStreamReplayerOp

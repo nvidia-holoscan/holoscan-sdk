@@ -150,8 +150,11 @@ TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithoutSpec) 
   count.initialize();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") != std::string::npos);
-  EXPECT_TRUE(log_output.find("No component spec") != std::string::npos);
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("No component spec") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithUnrecognizedArg) {
@@ -162,8 +165,11 @@ TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithUnrecogni
   condition->initialize();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
-  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec_.params") != std::string::npos);
+  EXPECT_TRUE(log_output.find("warning") != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec_.params") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(ConditionClasses, TestDownstreamMessageAffordableCondition) {
@@ -350,8 +356,11 @@ TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithoutSpe
   periodic.initialize();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") != std::string::npos);
-  EXPECT_TRUE(log_output.find("No component spec") != std::string::npos);
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("No component spec") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithArg) {
@@ -405,8 +414,11 @@ TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithUnreco
   condition->initialize();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
-  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec_.params") != std::string::npos);
+  EXPECT_TRUE(log_output.find("warning") != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec_.params") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

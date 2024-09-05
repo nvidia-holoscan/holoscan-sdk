@@ -22,12 +22,12 @@
 #include <utility>
 
 #include "../config.hpp"
-#include "ping_tensor_tx_op.hpp"
 #include "tensor_compare_op.hpp"
 
 #include "holoscan/holoscan.hpp"
 #include "holoscan/operators/format_converter/format_converter.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
+#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 using namespace holoscan;
 
@@ -110,9 +110,12 @@ void run_app(StringOrArg enable_arg, const std::string& failure_str = "",
   }
   std::string log_output = testing::internal::GetCapturedStderr();
   if (failure_str.empty()) {
-    EXPECT_TRUE(log_output.find("error") == std::string::npos) << log_output;
+    EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
   } else {
-    EXPECT_TRUE(log_output.find(failure_str) != std::string::npos) << log_output;
+    EXPECT_TRUE(log_output.find(failure_str) != std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
 }
 

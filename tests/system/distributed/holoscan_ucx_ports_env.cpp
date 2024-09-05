@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,6 +81,16 @@ TEST(HOLOSCAN_UCX_PORTS, TestUCXBroadCastMultiReceiverAppLocal) {
     // use DEBUG log level to be able to check detailed messages in the output
     set_log_level(LogLevel::DEBUG);
 
+    // Collect three unused network ports starting from 50007 for verification
+    auto unused_ports = get_unused_network_ports(3, 50007, 65535, {}, {50007});
+    EXPECT_EQ(unused_ports.size(), 3);
+    EXPECT_GE(unused_ports[0], 50007);
+    EXPECT_GT(unused_ports[1], unused_ports[0]);
+    EXPECT_GT(unused_ports[2], unused_ports[1]);
+    EXPECT_LE(unused_ports[2], 65535);
+
+    auto verification_str = fmt::format("unused_ports={}", fmt::join(unused_ports, ","));
+
     // 'AppDriver::launch_fragments_async()' path will be tested.
     auto app = make_application<UCXBroadCastMultiReceiverApp>();
 
@@ -91,12 +101,16 @@ TEST(HOLOSCAN_UCX_PORTS, TestUCXBroadCastMultiReceiverAppLocal) {
 
     std::string log_output = testing::internal::GetCapturedStderr();
 
-    EXPECT_TRUE(log_output.find("unused_ports=50007,50008,50009") != std::string::npos)
+    EXPECT_TRUE(log_output.find(verification_str) != std::string::npos)
         << "=== LOG ===\n"
         << log_output << "\n===========\n";
     EXPECT_TRUE(log_output.find("RxParam fragment2.rx message received (count: 10, size: 2)") !=
-                std::string::npos);
-    EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos);
+                std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
+    EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
 
   // restore the log level
@@ -118,6 +132,16 @@ TEST(HOLOSCAN_UCX_PORTS, TestUCXBroadCastMultiReceiverAppWorker) {
     // use DEBUG log level to be able to check detailed messages in the output
     set_log_level(LogLevel::DEBUG);
 
+    // Collect three unused network ports including port numbers 50101, 50105 for verification
+    auto unused_ports = get_unused_network_ports(3, 50101, 65535, {}, {50101, 50105});
+    EXPECT_EQ(unused_ports.size(), 3);
+    EXPECT_GE(unused_ports[0], 50007);
+    EXPECT_GT(unused_ports[1], unused_ports[0]);
+    EXPECT_GT(unused_ports[2], unused_ports[1]);
+    EXPECT_LE(unused_ports[2], 65535);
+
+    auto verification_str = fmt::format("unused_ports={}", fmt::join(unused_ports, ","));
+
     // With this arguments, this will go through 'AppWorkerServiceImpl::GetAvailablePorts()' path
     std::vector<std::string> args{"app", "--driver", "--worker", "--fragments=all"};
     auto app = make_application<UCXBroadCastMultiReceiverApp>(args);
@@ -129,12 +153,16 @@ TEST(HOLOSCAN_UCX_PORTS, TestUCXBroadCastMultiReceiverAppWorker) {
 
     std::string log_output = testing::internal::GetCapturedStderr();
 
-    EXPECT_TRUE(log_output.find("unused_ports=50101,50105,50106") != std::string::npos)
+    EXPECT_TRUE(log_output.find(verification_str) != std::string::npos)
         << "=== LOG ===\n"
         << log_output << "\n===========\n";
     EXPECT_TRUE(log_output.find("RxParam fragment2.rx message received (count: 10, size: 2)") !=
-                std::string::npos);
-    EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos);
+                std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
+    EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
 
   // restore the log level

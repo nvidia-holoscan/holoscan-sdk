@@ -20,8 +20,8 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
-
-#include "ping_distributed_ops.hpp"
+#include <holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp>
+#include <holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp>
 
 class Fragment1 : public holoscan::Fragment {
  public:
@@ -37,14 +37,16 @@ class Fragment1 : public holoscan::Fragment {
 
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::PingTensorTxOp>("tx",
-                                                 make_condition<CountCondition>(count_),
-                                                 Arg("tensor_on_gpu", gpu_tensor_),
-                                                 Arg("batch_size", batch_size_),
-                                                 Arg("rows", rows_),
-                                                 Arg("columns", columns_),
-                                                 Arg("channels", channels_),
-                                                 Arg("data_type", data_type_));
+
+    auto tx = make_operator<ops::PingTensorTxOp>(
+        "tx",
+        make_condition<CountCondition>(count_),
+        Arg("storage_type", std::string{gpu_tensor_ ? "device" : "system"}),
+        Arg("batch_size", batch_size_),
+        Arg("rows", rows_),
+        Arg("columns", columns_),
+        Arg("channels", channels_),
+        Arg("data_type", data_type_));
     add_operator(tx);
   }
 

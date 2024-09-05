@@ -374,8 +374,11 @@ TEST(Arg, TestArgListAsError) {
 
   // an error will have been logged about the failed parsing
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Unable to parse YAML node") != std::string::npos);
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Unable to parse YAML node") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Arg, TestArgListDescription) {

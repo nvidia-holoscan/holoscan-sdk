@@ -58,32 +58,6 @@ name : str, optional (constructor only)
    specifically part of the ``nvidia::gxf::Receiver`` nor the    ``nvidia::gxf::Transmitter``
    components. These parameters can provide further customization and functionality to the operator.
 )doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : holoscan.core.OperatorSpec
-    The operator specification.
-)doc")
-
 }  // namespace holoscan::doc::GXFCodeletOp
 
 #endif /* PYHOLOSCAN_OPERATORS_GXF_CODELET_PYDOC_HPP */

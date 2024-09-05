@@ -20,6 +20,8 @@ project(holoinfer VERSION ${HOLOSCAN_BUILD_VERSION} LANGUAGES CXX CUDA)
 find_package(CUDAToolkit REQUIRED)
 
 if(HOLOSCAN_BUILD_LIBTORCH)
+    # It is necessary to set the TORCH_CUDA_ARCH_LIST explicitly for newer versions of Torch (circa v2.3.0)
+    set(TORCH_CUDA_ARCH_LIST "3.5 5.0 8.0 8.6 8.9 9.0")
     find_package(Torch REQUIRED)
     find_package(TorchVision REQUIRED)
     add_library(holoinfer_torch SHARED infer/torch/core.cpp)

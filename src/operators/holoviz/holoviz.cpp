@@ -39,26 +39,13 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/operators/holoviz/buffer_info.hpp"
 #include "holoscan/operators/holoviz/codecs.hpp"
+#include "holoscan/utils/cuda_macros.hpp"
 
 #include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
 #include "gxf/std/scheduling_terms.hpp"
 #include "gxf/std/tensor.hpp"
 #include "holoviz/holoviz.hpp"  // holoviz module
-
-#define CUDA_TRY(stmt)                                                                          \
-  ({                                                                                            \
-    cudaError_t _holoscan_cuda_err = stmt;                                                      \
-    if (cudaSuccess != _holoscan_cuda_err) {                                                    \
-      HOLOSCAN_LOG_ERROR("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).\n", \
-                         #stmt,                                                                 \
-                         __LINE__,                                                              \
-                         __FILE__,                                                              \
-                         cudaGetErrorString(_holoscan_cuda_err),                                \
-                         _holoscan_cuda_err);                                                   \
-    }                                                                                           \
-    _holoscan_cuda_err;                                                                         \
-  })
 
 namespace viz = holoscan::viz;
 
@@ -117,7 +104,7 @@ static std::string inputTypeToString(holoscan::ops::HolovizOp::InputType input_t
 }
 
 /// table to convert image format to string
-static const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 31>
+static const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 41>
     kImageFormatToStr{
         {{holoscan::ops::HolovizOp::ImageFormat::AUTO_DETECT, "auto_detect"},
          {holoscan::ops::HolovizOp::ImageFormat::R8_UINT, "r8_uint"},
@@ -150,7 +137,25 @@ static const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::st
          {holoscan::ops::HolovizOp::ImageFormat::B8G8R8A8_UNORM, "b8g8r8a8_unorm"},
          {holoscan::ops::HolovizOp::ImageFormat::B8G8R8A8_SRGB, "b8g8r8a8_srgb"},
          {holoscan::ops::HolovizOp::ImageFormat::A8B8G8R8_UNORM_PACK32, "a8b8g8r8_unorm_pack32"},
-         {holoscan::ops::HolovizOp::ImageFormat::A8B8G8R8_SRGB_PACK32, "a8b8g8r8_srgb_pack32"}}};
+         {holoscan::ops::HolovizOp::ImageFormat::A8B8G8R8_SRGB_PACK32, "a8b8g8r8_srgb_pack32"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM, "y8u8y8v8_422_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM, "u8y8v8y8_422_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+          "y8_u8v8_2plane_420_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y8_U8V8_2PLANE_422_UNORM,
+          "y8_u8v8_2plane_422_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+          "y8_u8_v8_3plane_420_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM,
+          "y8_u8_v8_3plane_422_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y16_U16V16_2PLANE_420_UNORM,
+          "y16_u16v16_2plane_420_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y16_U16V16_2PLANE_422_UNORM,
+          "y16_u16v16_2plane_422_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM,
+          "y16_u16_v16_3plane_420_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM,
+          "y16_u16_v16_3plane_422_unorm"}}};
 
 /**
  * Convert a string to a image format enum
@@ -221,6 +226,123 @@ static std::string depthMapRenderModeToString(
       std::cend(kDepthMapRenderModeToStr),
       [&depth_map_render_mode](const auto& v) { return v.first == depth_map_render_mode; });
   if (it != std::cend(kDepthMapRenderModeToStr)) { return it->second; }
+
+  return "invalid";
+}
+
+/// table to convert yuv model conversion enum to string
+static const std::array<std::pair<holoscan::ops::HolovizOp::YuvModelConversion, std::string>, 3>
+    kYuvModelConversionToStr{
+        {{holoscan::ops::HolovizOp::YuvModelConversion::YUV_601, "yuv_601"},
+         {holoscan::ops::HolovizOp::YuvModelConversion::YUV_709, "yuv_709"},
+         {holoscan::ops::HolovizOp::YuvModelConversion::YUV_2020, "yuv_2020"}}};
+
+/**
+ * Convert a string to a yuv model conversion enum
+ *
+ * @param string yuv model conversion string
+ * @return yuv model conversion enum
+ */
+static nvidia::gxf::Expected<holoscan::ops::HolovizOp::YuvModelConversion>
+yuvModelConversionFromString(const std::string& string) {
+  const auto it = std::find_if(std::cbegin(kYuvModelConversionToStr),
+                               std::cend(kYuvModelConversionToStr),
+                               [&string](const auto& v) { return v.second == string; });
+  if (it != std::cend(kYuvModelConversionToStr)) { return it->first; }
+
+  HOLOSCAN_LOG_ERROR("Unsupported yuv model conversion '{}'", string);
+  return nvidia::gxf::Unexpected{GXF_FAILURE};
+}
+
+/**
+ * Convert a yuv model conversion enum to a string
+ *
+ * @param yuv_model_conversion yuv model conversion enum
+ * @return depth map render mode string
+ */
+static std::string yuvModelConversionToString(
+    holoscan::ops::HolovizOp::YuvModelConversion yuv_model_conversion) {
+  const auto it = std::find_if(
+      std::cbegin(kYuvModelConversionToStr),
+      std::cend(kYuvModelConversionToStr),
+      [&yuv_model_conversion](const auto& v) { return v.first == yuv_model_conversion; });
+  if (it != std::cend(kYuvModelConversionToStr)) { return it->second; }
+
+  return "invalid";
+}
+
+/// table to convert yuv range enum to string
+static const std::array<std::pair<holoscan::ops::HolovizOp::YuvRange, std::string>, 2>
+    kYuvRangeToStr{{{holoscan::ops::HolovizOp::YuvRange::ITU_FULL, "itu_full"},
+                    {holoscan::ops::HolovizOp::YuvRange::ITU_NARROW, "itu_narrow"}}};
+
+/**
+ * Convert a string to a yuv range enum
+ *
+ * @param string yuv range string
+ * @return yuv range enum
+ */
+static nvidia::gxf::Expected<holoscan::ops::HolovizOp::YuvRange> yuvRangeFromString(
+    const std::string& string) {
+  const auto it = std::find_if(std::cbegin(kYuvRangeToStr),
+                               std::cend(kYuvRangeToStr),
+                               [&string](const auto& v) { return v.second == string; });
+  if (it != std::cend(kYuvRangeToStr)) { return it->first; }
+
+  HOLOSCAN_LOG_ERROR("Unsupported yuv range '{}'", string);
+  return nvidia::gxf::Unexpected{GXF_FAILURE};
+}
+
+/**
+ * Convert a yuv range enum to a string
+ *
+ * @param yuv_range yuv range enum
+ * @return yuv range string
+ */
+static std::string yuvRangeToString(holoscan::ops::HolovizOp::YuvRange yuv_range) {
+  const auto it = std::find_if(std::cbegin(kYuvRangeToStr),
+                               std::cend(kYuvRangeToStr),
+                               [&yuv_range](const auto& v) { return v.first == yuv_range; });
+  if (it != std::cend(kYuvRangeToStr)) { return it->second; }
+
+  return "invalid";
+}
+
+/// table to convert chroma location enum to string
+static const std::array<std::pair<holoscan::ops::HolovizOp::ChromaLocation, std::string>, 2>
+    kChromaLoactionToStr{{{holoscan::ops::HolovizOp::ChromaLocation::COSITED_EVEN, "cosited_even"},
+                          {holoscan::ops::HolovizOp::ChromaLocation::MIDPOINT, "midpoint"}}};
+
+/**
+ * Convert a string to a chroma location enum
+ *
+ * @param string chroma location string
+ * @return chroma location enum
+ */
+static nvidia::gxf::Expected<holoscan::ops::HolovizOp::ChromaLocation> chromaLocationFromString(
+    const std::string& string) {
+  const auto it = std::find_if(std::cbegin(kChromaLoactionToStr),
+                               std::cend(kChromaLoactionToStr),
+                               [&string](const auto& v) { return v.second == string; });
+  if (it != std::cend(kChromaLoactionToStr)) { return it->first; }
+
+  HOLOSCAN_LOG_ERROR("Unsupported chroma location '{}'", string);
+  return nvidia::gxf::Unexpected{GXF_FAILURE};
+}
+
+/**
+ * Convert a chroma location enum to a string
+ *
+ * @param chroma_location chroma location enum
+ * @return chroma location string
+ */
+static std::string chromaLocationToString(
+    holoscan::ops::HolovizOp::ChromaLocation chroma_location) {
+  const auto it =
+      std::find_if(std::cbegin(kChromaLoactionToStr),
+                   std::cend(kChromaLoactionToStr),
+                   [&chroma_location](const auto& v) { return v.first == chroma_location; });
+  if (it != std::cend(kChromaLoactionToStr)) { return it->second; }
 
   return "invalid";
 }
@@ -300,6 +422,26 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
       case holoscan::ops::HolovizOp::InputType::COLOR_LUT:
       case holoscan::ops::HolovizOp::InputType::DEPTH_MAP_COLOR:
         node["image_format"] = imageFormatToString(input_spec.image_format_);
+        switch (input_spec.image_format_) {
+          case holoscan::ops::HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+            node["yuv_model_conversion"] =
+                yuvModelConversionToString(input_spec.yuv_model_conversion_);
+            node["yuv_range"] = yuvRangeToString(input_spec.yuv_range_);
+            node["x_chroma_location"] = chromaLocationToString(input_spec.x_chroma_location_);
+            node["y_chroma_location"] = chromaLocationToString(input_spec.y_chroma_location_);
+            break;
+          default:
+            break;
+        }
         break;
       case holoscan::ops::HolovizOp::InputType::POINTS:
       case holoscan::ops::HolovizOp::InputType::LINES:
@@ -354,6 +496,31 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
             const auto maybe_image_format =
                 imageFormatFromString(node["image_format"].as<std::string>());
             if (maybe_image_format) { input_spec.image_format_ = maybe_image_format.value(); }
+          }
+          if (node["yuv_model_conversion"]) {
+            const auto maybe_yuv_model_conversion =
+                yuvModelConversionFromString(node["yuv_model_conversion"].as<std::string>());
+            if (maybe_yuv_model_conversion) {
+              input_spec.yuv_model_conversion_ = maybe_yuv_model_conversion.value();
+            }
+          }
+          if (node["yuv_range"]) {
+            const auto maybe_yuv_range = yuvRangeFromString(node["yuv_range"].as<std::string>());
+            if (maybe_yuv_range) { input_spec.yuv_range_ = maybe_yuv_range.value(); }
+          }
+          if (node["x_chroma_location"]) {
+            const auto maybe_x_chroma_location =
+                chromaLocationFromString(node["x_chroma_location"].as<std::string>());
+            if (maybe_x_chroma_location) {
+              input_spec.x_chroma_location_ = maybe_x_chroma_location.value();
+            }
+          }
+          if (node["chroma_y_location"]) {
+            const auto maybe_y_chroma_location =
+                chromaLocationFromString(node["y_chroma_location"].as<std::string>());
+            if (maybe_y_chroma_location) {
+              input_spec.y_chroma_location_ = maybe_y_chroma_location.value();
+            }
           }
           break;
         case holoscan::ops::HolovizOp::InputType::LINES:
@@ -804,6 +971,59 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
              lut_.data());
   }
 
+  switch (buffer_info.yuv_model_conversion) {
+    case YuvModelConversion::YUV_601:
+      viz::ImageYuvModelConversion(viz::YuvModelConversion::YUV_601);
+      break;
+    case YuvModelConversion::YUV_709:
+      viz::ImageYuvModelConversion(viz::YuvModelConversion::YUV_601);
+      break;
+    case YuvModelConversion::YUV_2020:
+      viz::ImageYuvModelConversion(viz::YuvModelConversion::YUV_2020);
+      break;
+    default:
+      throw std::runtime_error(
+          fmt::format("Unhandled yuv model conversion {}",
+                      yuvModelConversionToString(buffer_info.yuv_model_conversion)));
+  }
+
+  switch (buffer_info.yuv_range) {
+    case YuvRange::ITU_FULL:
+      viz::ImageYuvRange(viz::YuvRange::ITU_FULL);
+      break;
+    case YuvRange::ITU_NARROW:
+      viz::ImageYuvRange(viz::YuvRange::ITU_NARROW);
+      break;
+    default:
+      throw std::runtime_error(
+          fmt::format("Unhandled yuv range {}", yuvRangeToString(buffer_info.yuv_range)));
+  }
+
+  viz::ChromaLocation x_chroma_location, y_chroma_location;
+  switch (input_spec.x_chroma_location_) {
+    case ChromaLocation::COSITED_EVEN:
+      x_chroma_location = viz::ChromaLocation::COSITED_EVEN;
+      break;
+    case ChromaLocation::MIDPOINT:
+      x_chroma_location = viz::ChromaLocation::MIDPOINT;
+      break;
+    default:
+      throw std::runtime_error(fmt::format("Unhandled x chroma location {}",
+                                           chromaLocationToString(input_spec.x_chroma_location_)));
+  }
+  switch (input_spec.y_chroma_location_) {
+    case ChromaLocation::COSITED_EVEN:
+      y_chroma_location = viz::ChromaLocation::COSITED_EVEN;
+      break;
+    case ChromaLocation::MIDPOINT:
+      y_chroma_location = viz::ChromaLocation::MIDPOINT;
+      break;
+    default:
+      throw std::runtime_error(fmt::format("Unhandled y chroma location {}",
+                                           chromaLocationToString(input_spec.y_chroma_location_)));
+  }
+  viz::ImageChromaLocation(x_chroma_location, y_chroma_location);
+
   viz::ImageComponentMapping(buffer_info.component_swizzle[0],
                              buffer_info.component_swizzle[1],
                              buffer_info.component_swizzle[2],
@@ -811,19 +1031,53 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
   if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
     // if it's the device convert to `CUDeviceptr`
     const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
+    CUdeviceptr cu_buffer_ptr_plane_1 = 0;
+    size_t row_pitch_plane_1 = 0;
+    CUdeviceptr cu_buffer_ptr_plane_2 = 0;
+    size_t row_pitch_plane_2 = 0;
+    if (buffer_info.color_planes.size() >= 2) {
+      cu_buffer_ptr_plane_1 = cu_buffer_ptr + buffer_info.color_planes[1].offset;
+      row_pitch_plane_1 = buffer_info.color_planes[1].stride;
+    }
+    if (buffer_info.color_planes.size() >= 3) {
+      cu_buffer_ptr_plane_2 = cu_buffer_ptr + buffer_info.color_planes[2].offset;
+      row_pitch_plane_2 = buffer_info.color_planes[2].stride;
+    }
     viz::ImageCudaDevice(buffer_info.width,
                          buffer_info.height,
                          image_format,
                          cu_buffer_ptr,
-                         buffer_info.stride[0]);
+                         buffer_info.stride[0],
+                         cu_buffer_ptr_plane_1,
+                         row_pitch_plane_1,
+                         cu_buffer_ptr_plane_2,
+                         row_pitch_plane_2);
   } else {
     // convert to void * if using the system/host
     const auto host_buffer_ptr = reinterpret_cast<const void*>(buffer_info.buffer_ptr);
+    const void* host_buffer_ptr_plane_1 = nullptr;
+    size_t row_pitch_plane_1 = 0;
+    const void* host_buffer_ptr_plane_2 = nullptr;
+    size_t row_pitch_plane_2 = 0;
+    if (buffer_info.color_planes.size() >= 2) {
+      host_buffer_ptr_plane_1 = reinterpret_cast<const void*>(uintptr_t(host_buffer_ptr) +
+                                                              buffer_info.color_planes[1].offset);
+      row_pitch_plane_1 = buffer_info.color_planes[1].stride;
+    }
+    if (buffer_info.color_planes.size() >= 3) {
+      host_buffer_ptr_plane_2 = reinterpret_cast<const void*>(uintptr_t(host_buffer_ptr) +
+                                                              buffer_info.color_planes[2].offset);
+      row_pitch_plane_2 = buffer_info.color_planes[2].stride;
+    }
     viz::ImageHost(buffer_info.width,
                    buffer_info.height,
                    image_format,
                    host_buffer_ptr,
-                   buffer_info.stride[0]);
+                   buffer_info.stride[0],
+                   host_buffer_ptr_plane_1,
+                   row_pitch_plane_1,
+                   host_buffer_ptr_plane_2,
+                   row_pitch_plane_2);
   }
   viz::EndLayer();
 }
@@ -844,13 +1098,14 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
     host_buffer.resize(buffer_info.bytes_size);
 
     // copy from device to host
-    CUDA_TRY(cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
-                             static_cast<const void*>(buffer_info.buffer_ptr),
-                             buffer_info.bytes_size,
-                             cudaMemcpyDeviceToHost,
-                             cuda_stream_handler_.get_cuda_stream(context.context())));
+    HOLOSCAN_CUDA_CALL(cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
+                                       static_cast<const void*>(buffer_info.buffer_ptr),
+                                       buffer_info.bytes_size,
+                                       cudaMemcpyDeviceToHost,
+                                       cuda_stream_handler_.get_cuda_stream(context.context())));
     // wait for the CUDA memory copy to finish
-    CUDA_TRY(cudaStreamSynchronize(cuda_stream_handler_.get_cuda_stream(context.context())));
+    HOLOSCAN_CUDA_CALL(
+        cudaStreamSynchronize(cuda_stream_handler_.get_cuda_stream(context.context())));
 
     buffer_info.buffer_ptr = host_buffer.data();
   }
@@ -987,9 +1242,8 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         // oval primitive, an oval primitive is defined by the center coordinate and the axis
         // sizes (xi, yi, sxi, syi)
         if ((buffer_info.components < 2) || (buffer_info.components > 4)) {
-          throw std::runtime_error(
-              fmt::format("Expected two, three or four values per oval, but got '{}'",
-                          buffer_info.components));
+          throw std::runtime_error(fmt::format(
+              "Expected two, three or four values per oval, but got '{}'", buffer_info.components));
         }
         topology = viz::PrimitiveTopology::OVAL_LIST;
         primitive_count = coordinates;
@@ -1209,9 +1463,6 @@ void HolovizOp::start() {
   // make the instance current
   ScopedPushInstance scoped_instance(instance_);
 
-  if (framebuffer_srgb_) {
-    viz::SetSurfaceFormat({viz::ImageFormat::B8G8R8A8_SRGB, viz::ColorSpace::SRGB_NONLINEAR});
-  }
   if (vsync_) { viz::SetPresentMode(viz::PresentMode::FIFO); }
 
   // initialize Holoviz
@@ -1231,6 +1482,32 @@ void HolovizOp::start() {
               window_title_.get().c_str(),
               init_flags,
               display_name_.get().empty() ? nullptr : display_name_.get().c_str());
+  }
+
+  if (framebuffer_srgb_) {
+    // If the SRGB framebuffer is enabled, get the supported surface formats and look for a
+    // sRGB format.
+    uint32_t surface_format_count = 0;
+    viz::GetSurfaceFormats(&surface_format_count, nullptr);
+    std::vector<viz::SurfaceFormat> surface_formats(surface_format_count);
+    viz::GetSurfaceFormats(&surface_format_count, surface_formats.data());
+
+    bool found = false;
+    for (auto surface_format_it = surface_formats.begin();
+         surface_format_it != surface_formats.end();
+         ++surface_format_it) {
+      // Ignore the color space, it might be `SRGB_NONLINEAR` if a display is connected or
+      // `PASS_THROUGH` in headless mode.
+      if ((surface_format_it->image_format_ == viz::ImageFormat::R8G8B8A8_SRGB) ||
+          (surface_format_it->image_format_ == viz::ImageFormat::B8G8R8A8_SRGB) ||
+          (surface_format_it->image_format_ == viz::ImageFormat::A8B8G8R8_SRGB_PACK32)) {
+        viz::SetSurfaceFormat(*surface_format_it);
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) { throw std::runtime_error("No sRGB framebuffer format found."); }
   }
 
   // initialize the camera with the provided parameters

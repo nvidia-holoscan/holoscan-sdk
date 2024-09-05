@@ -220,7 +220,7 @@ class GXFExecutor : public holoscan::Executor {
                                   ///< initializing a new operator if this is 0.
   gxf_uid_t op_cid_ = 0;  ///< The GXF component ID of the operator. Create new component for
                           ///< initializing a new operator if this is 0.
-  nvidia::gxf::Extension* gxf_holoscan_extension_ = nullptr;    ///< The GXF holoscan extension.
+  nvidia::gxf::Extension* gxf_holoscan_extension_ = nullptr;  ///< The GXF holoscan extension.
 
   /// The flag to indicate whether the GXF graph is initialized.
   bool is_gxf_graph_initialized_ = false;

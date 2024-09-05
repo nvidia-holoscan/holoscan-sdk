@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +73,8 @@ TEST(NativeOperatorMultiBroadcastsApp, TestNativeOperatorMultiBroadcastsApp) {
     count++;
     pos = log_output.find(recv_string, pos + recv_string.size());
   }
-  EXPECT_EQ(count, 4);
+  EXPECT_EQ(count, 4) << "expected count of 4, found " << count << "\n=== LOG ===\n"
+                      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

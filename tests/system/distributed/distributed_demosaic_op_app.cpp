@@ -22,10 +22,10 @@
 #include <utility>
 
 #include "../../config.hpp"
-#include "../ping_tensor_rx_op.hpp"
-#include "../ping_tensor_tx_op.hpp"
 #include "holoscan/holoscan.hpp"
 #include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
+#include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
+#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 static HoloscanTestConfig test_config;
 
@@ -36,7 +36,7 @@ class GenerateAndDemosaicFragment : public holoscan::Fragment {
 
     int32_t rows = 3840;
     int32_t columns = 2160;
-    int32_t channels = 3;
+    int32_t channels = 1;
     std::string tensor_name{"signal"};
     auto tx = make_operator<ops::PingTensorTxOp>("tx",
                                                  Arg("rows", rows),
@@ -46,16 +46,18 @@ class GenerateAndDemosaicFragment : public holoscan::Fragment {
                                                  make_condition<CountCondition>(3));
 
     auto cuda_stream_pool = make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5);
+    bool generate_alpha = false;
+    int32_t out_channels = generate_alpha ? 4 : 3;
     ArgList demosaic_arglist = ArgList{
         Arg("in_tensor_name", tensor_name),
         Arg("out_tensor_name", tensor_name),
-        Arg("generate_alpha", false),
+        Arg("generate_alpha", generate_alpha),
         Arg("bayer_grid_pos", 2),
         Arg("interpolation_mode", 0),
         // The pool size is set to 10 to prevent memory allocation errors during testing.
         // Additional memory pool may be required as UcxTransmitter sends data asynchronously
         // without checking the receiver's queue.
-        Arg("pool", make_resource<BlockMemoryPool>("pool", 1, rows * columns * channels, 10)),
+        Arg("pool", make_resource<BlockMemoryPool>("pool", 1, rows * columns * out_channels, 10)),
         Arg("cuda_stream_pool", cuda_stream_pool)};
 
     std::shared_ptr<Operator> bayer_demosaic;
@@ -69,7 +71,7 @@ class RxFragment : public holoscan::Fragment {
  public:
   void compose() override {
     using namespace holoscan;
-    auto rx = make_operator<ops::PingTensorRxOp>("rx", Arg("tensor_name", std::string("signal")));
+    auto rx = make_operator<ops::PingTensorRxOp>("rx");
     add_operator(rx);
   }
 };
@@ -121,9 +123,13 @@ TEST(DistributedDemosaicOpApp, TestDistributedDummyDemosaicApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Graph activation failed") == std::string::npos);
+  EXPECT_TRUE(log_output.find("Graph activation failed") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   // Currently expect a warning that the CUDA stream ID object will not be serialized
   // over the distributed connection.
   std::string serializer_warning = "No serializer found for component 'cuda_stream_id_'";
-  EXPECT_TRUE(log_output.find(serializer_warning) != std::string::npos);
+  EXPECT_TRUE(log_output.find(serializer_warning) != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }

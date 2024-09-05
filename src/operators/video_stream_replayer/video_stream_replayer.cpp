@@ -19,9 +19,11 @@
 
 #include <chrono>
 #include <cinttypes>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "gxf/core/expected.hpp"
 #include "gxf/serialization/entity_serializer.hpp"
@@ -32,6 +34,8 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/operator_spec.hpp"
+#include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/core/resources/gxf/std_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 
 namespace holoscan::ops {
@@ -44,7 +48,11 @@ void VideoStreamReplayerOp::setup(OperatorSpec& spec) {
              "Entity transmitter",
              "Transmitter channel for replaying entities",
              &output);
-
+  spec.param(allocator_,
+             "allocator",
+             "Tensor Memory Allocator",
+             "Tensor memory allocator for tensor components, only used if an entity_serializer is "
+             "not provided. The default allocator is a holoscan::gxf::UnboundedAllocator.");
   spec.param(entity_serializer_,
              "entity_serializer",
              "Entity serializer",
@@ -91,13 +99,49 @@ void VideoStreamReplayerOp::setup(OperatorSpec& spec) {
 void VideoStreamReplayerOp::initialize() {
   // Set up prerequisite parameters before calling Operator::initialize()
   auto frag = fragment();
-  auto entity_serializer =
-      frag->make_resource<holoscan::StdEntitySerializer>("replayer__std_entity_serializer");
-  if (graph_entity_) {
-    entity_serializer->gxf_eid(graph_entity_->eid());
-    entity_serializer->gxf_graph_entity(graph_entity_);
+
+  // Find if there is an argument for 'boolean_scheduling_term'
+  auto has_entity_serializer = std::find_if(args().begin(), args().end(), [](const auto& arg) {
+    return (arg.name() == "entity_serializer");
+  });
+  if (has_entity_serializer == args().end()) {
+    HOLOSCAN_LOG_TRACE(
+        "VideoStreamReplayerOp: entity_serializer argument not found, using default");
+
+    auto component_serializer = frag->make_resource<holoscan::StdComponentSerializer>(
+        "replayer__holoscan_component_serializer");
+
+    auto has_allocator = std::find_if(
+        args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "allocator"); });
+    if (has_allocator == args().end()) {
+      HOLOSCAN_LOG_TRACE("VideoStreamReplayerOp: allocator argument not found, using default");
+      auto allocator = frag->make_resource<holoscan::UnboundedAllocator>("replayer__allocator");
+      component_serializer->add_arg(Arg("allocator", allocator));
+    } else {
+      HOLOSCAN_LOG_TRACE("VideoStreamReplayerOp: allocator found");
+      auto& allocator_arg = *has_allocator;
+      component_serializer->add_arg(allocator_arg);
+      if (graph_entity_) {
+        auto allocator = std::any_cast<std::shared_ptr<holoscan::Allocator>>(allocator_arg.value());
+        allocator->gxf_eid(graph_entity_->eid());
+        allocator->gxf_graph_entity(graph_entity_);
+      }
+    }
+
+    // Create new StdEntitySerializer with the provided allocator
+    auto entity_serializer = frag->make_resource<holoscan::StdEntitySerializer>(
+        "replayer__std_entity_serializer",
+        Arg("component_serializers", std::vector<std::shared_ptr<Resource>>{component_serializer}));
+    if (graph_entity_) {
+      component_serializer->gxf_eid(graph_entity_->eid());
+      component_serializer->gxf_graph_entity(graph_entity_);
+      entity_serializer->gxf_eid(graph_entity_->eid());
+      entity_serializer->gxf_graph_entity(graph_entity_);
+    }
+    add_arg(Arg("entity_serializer") = entity_serializer);
+  } else {
+    HOLOSCAN_LOG_TRACE("VideoStreamReplayerOp: entity_serializer argument found");
   }
-  add_arg(Arg("entity_serializer") = entity_serializer);
 
   // Find if there is an argument for 'boolean_scheduling_term'
   auto has_boolean_scheduling_term =
@@ -107,7 +151,7 @@ void VideoStreamReplayerOp::initialize() {
   // Create the BooleanCondition if there is no argument provided.
   if (has_boolean_scheduling_term == args().end()) {
     boolean_scheduling_term_ =
-        frag->make_condition<holoscan::BooleanCondition>("boolean_scheduling_term");
+        frag->make_condition<holoscan::BooleanCondition>("replayer__boolean_scheduling_term");
     add_arg(boolean_scheduling_term_.get());
   }
 

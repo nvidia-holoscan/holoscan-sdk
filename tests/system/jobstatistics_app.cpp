@@ -53,7 +53,9 @@ TEST(JobStatisticsApp, TestJobStatisticsDisabled) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("Job Statistics Report") == std::string::npos);
+  EXPECT_TRUE(log_output.find("Job Statistics Report") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(JobStatisticsApp, TestJobStatisticsEnabled) {
@@ -70,10 +72,14 @@ TEST(JobStatisticsApp, TestJobStatisticsEnabled) {
   app->run();
 
   std::string console_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos);
+  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos)
+      << "=== CONSOLE (stdout) ===\n"
+      << console_output << "\n===========\n";
 
   // Codelet statistics report is disabled by default
-  EXPECT_TRUE(console_output.find("Codelet Statistics Report") == std::string::npos);
+  EXPECT_TRUE(console_output.find("Codelet Statistics Report") == std::string::npos)
+      << "=== CONSOLE (stdout) ===\n"
+      << console_output << "\n===========\n";
 }
 
 TEST(JobStatisticsApp, TestJobStatisticsEnabledCountSet) {
@@ -95,11 +101,15 @@ TEST(JobStatisticsApp, TestJobStatisticsEnabledCountSet) {
 
   std::string console_output = testing::internal::GetCapturedStdout();
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos);
+  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos)
+      << "=== CONSOLE (stdout) ===\n"
+      << console_output << "\n===========\n";
 
   // Rely on DEBUG level log output to detect the event_history_count that was set as the
   // value is not shown in the report itself.
-  EXPECT_TRUE(log_output.find("event_history_count: 35") != std::string::npos);
+  EXPECT_TRUE(log_output.find("event_history_count: 35") != std::string::npos)
+      << "=== LOG (stderr) ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(JobStatisticsApp, TestJobStatisticsCodeletReportEnabled) {
@@ -117,8 +127,12 @@ TEST(JobStatisticsApp, TestJobStatisticsCodeletReportEnabled) {
   app->run();
 
   std::string console_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos);
-  EXPECT_TRUE(console_output.find("Codelet Statistics Report") != std::string::npos);
+  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos)
+      << "=== CONSOLE (stdout) ===\n"
+      << console_output << "\n===========\n";
+  EXPECT_TRUE(console_output.find("Codelet Statistics Report") != std::string::npos)
+      << "=== CONSOLE (stdout) ===\n"
+      << console_output << "\n===========\n";
 }
 
 TEST(JobStatisticsApp, TestJobStatisticsFilePathSet) {
@@ -139,7 +153,9 @@ TEST(JobStatisticsApp, TestJobStatisticsFilePathSet) {
   app->run();
 
   std::string console_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos);
+  EXPECT_TRUE(console_output.find("Job Statistics Report") != std::string::npos)
+      << "=== CONSOLE (stdout) ===\n"
+      << console_output << "\n===========\n";
 
   // check that the expected JSON file was created
   EXPECT_TRUE(std::filesystem::exists(file_path));

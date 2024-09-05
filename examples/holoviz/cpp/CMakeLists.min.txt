@@ -102,4 +102,14 @@ if(BUILD_TESTING)
     DEPENDS EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST
     PASS_REGULAR_EXPRESSION "Valid video output!"
   )
+
+  # Add the camera example and make sure it runs
+  add_test(NAME EXAMPLE_CPP_HOLOVIZ_CAMERA_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/holoviz_camera --count 120
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_HOLOVIZ_CAMERA_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Received camera pose:"
+    PASS_REGULAR_EXPRESSION "Scheduler stopped: Some entities are waiting for execution, but there are no periodic or async entities to get out of the deadlock."
+  )
 endif()

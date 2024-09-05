@@ -31,12 +31,19 @@ void StdComponentSerializer::setup(ComponentSpec& spec) {
 // }
 
 void StdComponentSerializer::initialize() {
-  // Set up prerequisite parameters before calling GXFOperator::initialize()
-  auto frag = fragment();
-  auto allocator = frag->make_resource<UnboundedAllocator>("std_component_serializer_allocator");
-  allocator->gxf_cname(allocator->name().c_str());
-  if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
-  add_arg(Arg("allocator") = allocator);
+  // Add a default UnboundedAllocator if no allocator was provided
+  auto has_allocator = std::find_if(
+      args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "allocator"); });
+  if (has_allocator == args().end()) {
+    HOLOSCAN_LOG_TRACE("StdComponentSerializer: allocator argument not found, using default.");
+    auto frag = fragment();
+    auto allocator = frag->make_resource<UnboundedAllocator>("std_component_serializer_allocator");
+    allocator->gxf_cname(allocator->name().c_str());
+    if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
+    add_arg(Arg("allocator") = allocator);
+  } else {
+    HOLOSCAN_LOG_TRACE("StdComponentSerializer: allocator argument found");
+  }
 
   GXFResource::initialize();
 }

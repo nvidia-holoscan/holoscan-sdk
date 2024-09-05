@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,8 +94,8 @@ TEST(SystemResourceManager, TestReportCPUResourceInfo) {
   EXPECT_GE(cpuinfo.shared_memory_available, 0);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "Log message:\n"
-                                                               << log_output << "\n";
+  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
 }
 
 TEST(SystemResourceManager, TestReportGPUResourceInfo) {
@@ -158,8 +158,8 @@ TEST(SystemResourceManager, TestReportGPUResourceInfo) {
   }
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "Log message:\n"
-                                                               << log_output << "\n";
+  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
 }
 
 TEST(SystemResourceManager, TestGetCPUInfo) {
@@ -209,8 +209,8 @@ TEST(SystemResourceManager, TestGetCPUInfo) {
   HOLOSCAN_LOG_INFO("CPU memory usage: {}", cpu_info.memory_usage);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "Log message:\n"
-                                                               << log_output << "\n";
+  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
 }
 
 TEST(SystemResourceManager, TestGetGPUInfo) {
@@ -298,8 +298,8 @@ TEST(SystemResourceManager, TestGetGPUInfo) {
   }
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "Log message:\n"
-                                                               << log_output << "\n";
+  EXPECT_TRUE(log_output.find("[error]") == std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

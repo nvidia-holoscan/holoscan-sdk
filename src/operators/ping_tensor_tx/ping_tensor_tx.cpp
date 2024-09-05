@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "ping_tensor_tx_op.hpp"
+#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 #include <cuda_runtime.h>
 
@@ -25,23 +25,9 @@
 #include <vector>
 
 #include <gxf/std/allocator.hpp>
+#include "holoscan/utils/cuda_macros.hpp"
 
-#define CUDA_TRY(stmt)                                                                        \
-  ({                                                                                          \
-    cudaError_t _holoscan_cuda_err = stmt;                                                    \
-    if (cudaSuccess != _holoscan_cuda_err) {                                                  \
-      HOLOSCAN_LOG_ERROR("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).", \
-                         #stmt,                                                               \
-                         __LINE__,                                                            \
-                         __FILE__,                                                            \
-                         cudaGetErrorString(_holoscan_cuda_err),                              \
-                         _holoscan_cuda_err);                                                 \
-    }                                                                                         \
-    _holoscan_cuda_err;                                                                       \
-  })
-
-namespace holoscan {
-namespace ops {
+namespace holoscan::ops {
 
 void PingTensorTxOp::initialize() {
   // Set up prerequisite parameters before calling Operator::initialize()
@@ -139,7 +125,6 @@ void PingTensorTxOp::compute(InputContext&, OutputContext& op_output, ExecutionC
   TensorMap out_message;
 
   auto gxf_context = context.context();
-  auto frag = fragment();
 
   // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
   auto allocator =
@@ -195,7 +180,8 @@ void PingTensorTxOp::compute(InputContext&, OutputContext& op_output, ExecutionC
   out_message.insert({tensor_name_.get().c_str(), holoscan_tensor});
 
   op_output.emit(out_message);
+
+  HOLOSCAN_LOG_INFO("Sent message {}", count_++);
 }
 
-}  // namespace ops
-}  // namespace holoscan
+}  // namespace holoscan::ops

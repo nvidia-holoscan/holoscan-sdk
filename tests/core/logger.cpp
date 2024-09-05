@@ -50,8 +50,11 @@ TEST(Logger, TestLoggingPattern) {
 
   // test that the specified pattern includes the thread, but omits the message
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("[thread") != std::string::npos);
-  EXPECT_TRUE(log_output.find("my_message") == std::string::npos);
+  EXPECT_TRUE(log_output.find("[thread") != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("my_message") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
   // restore the original log level
   set_log_level(orig_level);
@@ -287,30 +290,49 @@ TEST_P(LevelParameterizedTestFixture, TestLoggingMacros) {
 
   switch (desired_level) {
     case LogLevel::TRACE:
-      EXPECT_TRUE(log_output.find("trace") != std::string::npos);
+      EXPECT_TRUE(log_output.find("trace") != std::string::npos) << "=== LOG ===\n"
+                                                                 << log_output << "\n===========\n";
       break;
     case LogLevel::DEBUG:
-      EXPECT_TRUE(log_output.find("debug") != std::string::npos);
-      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos);
+      EXPECT_TRUE(log_output.find("debug") != std::string::npos) << "=== LOG ===\n"
+                                                                 << log_output << "\n===========\n";
+      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
       break;
     case LogLevel::INFO:
-      EXPECT_TRUE(log_output.find("info") != std::string::npos);
-      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos);
+      EXPECT_TRUE(log_output.find("info") != std::string::npos) << "=== LOG ===\n"
+                                                                << log_output << "\n===========\n";
+      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
       break;
     case LogLevel::WARN:
-      EXPECT_TRUE(log_output.find("warn") != std::string::npos);
-      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos);
+      EXPECT_TRUE(log_output.find("warn") != std::string::npos) << "=== LOG ===\n"
+                                                                << log_output << "\n===========\n";
+      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
       break;
     case LogLevel::ERROR:
-      EXPECT_TRUE(log_output.find("error") != std::string::npos);
-      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos);
+      EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                                 << log_output << "\n===========\n";
+      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
       break;
     case LogLevel::CRITICAL:
-      EXPECT_TRUE(log_output.find("critical") != std::string::npos);
-      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos);
+      EXPECT_TRUE(log_output.find("critical") != std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
+      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
       break;
     case LogLevel::OFF:
-      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos);
+      EXPECT_TRUE(log_output.find("unlogged") == std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
       break;
   }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,8 @@ class App : public holoscan::Application {
   void compose() override {
     using namespace holoscan;
 
-    auto source = make_operator<ops::AJASourceOp>("aja", from_config("aja"));
+    auto source = make_operator<ops::AJASourceOp>("aja", from_config("aja"),
+                                make_condition<CountCondition>(from_config("aja.count")));
     auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"));
 
     // Flow definition
@@ -38,6 +39,8 @@ int main(int argc, char** argv) {
   // Get the configuration
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= std::filesystem::path("aja_capture.yaml");
+  if (argc >= 2) { config_path = argv[1]; }
+
   app.config(config_path);
 
   app.run();

@@ -29,6 +29,36 @@ with contextlib.suppress(ImportError):
     import cupy as cp
     import numpy as np
 
+# test HolovizOp InputSpec
+test_input_specs = []
+test_text_spec = HolovizOp.InputSpec("dynamic_text", "text")
+test_text_spec.text = ["Text1"]
+test_text_spec.color = [1.0, 0.0, 0.0, 1.0]
+test_input_specs.append(test_text_spec)
+test_input_specs.append(HolovizOp.InputSpec("triangles", HolovizOp.InputType.TRIANGLES))
+# create a full spec with all fields different from default
+test_full_spec = HolovizOp.InputSpec("full", HolovizOp.InputType.COLOR)
+test_full_spec.color = [0.5, 0.1, 0.2, 0.8]
+test_full_spec.opacity = 0.124
+test_full_spec.priority = 12
+test_full_spec.image_format = HolovizOp.ImageFormat.R32G32B32A32_SFLOAT
+test_full_spec.line_width = 12.0
+test_full_spec.point_size = 24.0
+test_full_spec.text = ["abc"]
+test_full_spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_2020
+test_full_spec.yuv_range = HolovizOp.YuvRange.ITU_NARROW
+test_full_spec.x_chroma_location = HolovizOp.ChromaLocation.MIDPOINT
+test_full_spec.y_chroma_location = HolovizOp.ChromaLocation.MIDPOINT
+test_full_spec.depth_map_render_mode = HolovizOp.DepthMapRenderMode.LINES
+test_view = HolovizOp.InputSpec.View()
+test_view.offset_x = 0.2
+test_view.offset_y = 1.3
+test_view.width = 4.0
+test_view.height = 2.8
+test_view.matrix = np.arange(16.0, dtype=float)
+test_full_spec.views = [test_view]
+test_input_specs.append(test_full_spec)
+
 
 class PingMessageTxOp(Operator):
     """Simple transmitter operator.
@@ -108,10 +138,30 @@ def _check_value(value, expected_value):
         assert z.shape == (16, 8, 4)
     elif isinstance(expected_value, list) and isinstance(expected_value[0], HolovizOp.InputSpec):
         assert isinstance(value, list)
-        assert len(value) == 2
+        assert len(value) == 3
         assert all(isinstance(v, HolovizOp.InputSpec) for v in value)
-        assert value[0].type == HolovizOp.InputType.TEXT
+        assert value[0].type == test_text_spec.type
+        assert value[0].color == test_text_spec.color
         assert value[1].type == HolovizOp.InputType.TRIANGLES
+        assert value[2].type == test_full_spec.type
+        assert value[2].color == test_full_spec.color
+        assert value[2].opacity == test_full_spec.opacity
+        assert value[2].priority == test_full_spec.priority
+        assert value[2].image_format == test_full_spec.image_format
+        assert value[2].line_width == test_full_spec.line_width
+        assert value[2].point_size == test_full_spec.point_size
+        assert value[2].text == test_full_spec.text
+        assert value[2].yuv_model_conversion == test_full_spec.yuv_model_conversion
+        assert value[2].yuv_range == test_full_spec.yuv_range
+        assert value[2].x_chroma_location == test_full_spec.x_chroma_location
+        assert value[2].y_chroma_location == test_full_spec.y_chroma_location
+        assert value[2].depth_map_render_mode == test_full_spec.depth_map_render_mode
+        assert all(isinstance(v, HolovizOp.InputSpec.View) for v in value[2].views)
+        assert value[2].views[0].offset_x == test_view.offset_x
+        assert value[2].views[0].offset_y == test_view.offset_y
+        assert value[2].views[0].width == test_view.width
+        assert value[2].views[0].height == test_view.height
+        assert value[2].views[0].matrix == test_view.matrix
 
 
 class PingMessageRxOp(Operator):
@@ -194,13 +244,7 @@ def test_ucx_object_serialization_app(ping_config_file, value, capfd):
     elif value in ["cupy", "cupy-complex", "cupy-tensormap"]:
         pytest.importorskip("cupy")
     elif value == "input_specs":
-        specs = []
-        text_spec = HolovizOp.InputSpec("dynamic_text", "text")
-        text_spec.text = ["Text1"]
-        text_spec.color = [1.0, 0.0, 0.0, 1.0]
-        specs.append(text_spec)
-        specs.append(HolovizOp.InputSpec("triangles", HolovizOp.InputType.TRIANGLES))
-        value = specs
+        value = test_input_specs
 
     app = MultiFragmentPyObjectPingApp(value=value)
     app.run()
@@ -285,13 +329,7 @@ def test_ucx_object_receivers_serialization_app(ping_config_file, value, capfd):
     elif value == "cupy":
         pytest.importorskip("cupy")
     elif value == "input_specs":
-        specs = []
-        text_spec = HolovizOp.InputSpec("dynamic_text", "text")
-        text_spec.text = ["Text1"]
-        text_spec.color = [1.0, 0.0, 0.0, 1.0]
-        specs.append(text_spec)
-        specs.append(HolovizOp.InputSpec("triangles", HolovizOp.InputType.TRIANGLES))
-        value = specs
+        value = test_input_specs
 
     app = MultiFragmentPyObjectReceiversPingApp(value=value)
     app.run()

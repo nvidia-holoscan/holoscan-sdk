@@ -25,29 +25,10 @@
 #include <memory>
 #include <string>
 
+#include "gxf/std/dlpack_utils.hpp"  // nvidia::gxf::numpyTypestr
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/domain/tensor.hpp"
-#include "gxf/std/dlpack_utils.hpp"  // nvidia::gxf::numpyTypestr
-
-namespace {
-
-// A macro like CHECK_CUDA_ERROR from gxf/cuda/cuda_common.h, but it uses Holoscan-style
-// logging and throws an exception instead of returning an nvidia::gxf::Unexpected.
-#define CHECK_CUDA_THROW_ERROR(cu_result, stmt, ...)                                    \
-  do {                                                                                  \
-    cudaError_t err = (cu_result);                                                      \
-    if (err != cudaSuccess) {                                                           \
-      HOLOSCAN_LOG_ERROR("Runtime call {} in line {} of file {} failed with '{}' ({})", \
-                         #stmt,                                                         \
-                         __LINE__,                                                      \
-                         __FILE__,                                                      \
-                         cudaGetErrorString(err),                                       \
-                         err);                                                          \
-      throw std::runtime_error("Error occurred in CUDA runtime API call");              \
-    }                                                                                   \
-  } while (0)
-
-}  // namespace
+#include "holoscan/utils/cuda_macros.hpp"
 
 namespace holoscan {
 
@@ -164,19 +145,15 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream) {
   // Wait for the current stream to finish before the provided stream starts consuming the memory.
   if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
     cudaEvent_t curr_stream_event;
-    cudaError_t cuda_status;
-
-    cuda_status = cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming);
-    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventCreateWithFlags");
-
-    cuda_status = cudaEventRecord(curr_stream_event, curr_stream_ptr);
-    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventRecord");
-
-    cuda_status = cudaStreamWaitEvent(stream_ptr, curr_stream_event, 0);
-    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaStreamWaitEvent");
-
-    cuda_status = cudaEventDestroy(curr_stream_event);
-    CHECK_CUDA_THROW_ERROR(cuda_status, "Failure during call to cudaEventDestroy");
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(
+        cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming),
+        "Failure during call to cudaEventCreateWithFlags");
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventRecord(curr_stream_event, curr_stream_ptr),
+                                   "Failure during call to cudaEventRecord");
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamWaitEvent(stream_ptr, curr_stream_event, 0),
+                                   "Failure during call to cudaStreamWaitEvent");
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventDestroy(curr_stream_event),
+                                   "Failure during call to cudaEventDestroy");
   }
 
   DLManagedTensor* dl_managed_tensor = tensor->to_dlpack();

@@ -250,6 +250,44 @@ The details of the dictionary is as follows:
 - **text**: array of text strings, used when ``type`` is text (default: ``[]``)
 
   - type: ``List[str]``
+- **yuv_model_conversion**: YUV model conversion (default: ``yuv_601``)
+
+  - type: ``str``
+  - possible values:
+
+    - **yuv_601**: color model conversion from YUV to RGB defined in BT.601
+    - **yuv_709**: color model conversion from YUV to RGB defined in BT.709
+    - **yuv_2020**: color model conversion from YUV to RGB defined in BT.2020
+- **yuv_range**: YUV range (default: ``itu_full``)
+
+  - type: ``str``
+  - possible values:
+
+    - **itu_full**: the full range of the encoded values are valid and interpreted according
+        to the ITU “full range” quantization rules
+    - **itu_narrow**: headroom and foot room are reserved in the numerical range of encoded
+        values, and the remaining values are expanded according to the ITU “narrow range”
+        quantization rules
+- **x_chroma_location**: Location of downsampled chroma component samples relative to the luma
+    samples. (default: ``cosited_even``)
+
+  - type: ``str``
+  - possible values:
+
+    - **cosited_even**: downsampled chroma samples are aligned with luma samples with even
+        coordinates
+    - **midpoint**: downsampled chroma samples are located half way between each even
+        luma sample and the nearest higher odd luma sample
+- **y_chroma_location**: Location of downsampled chroma component samples relative to the luma
+    samples. (default: ``cosited_even``)
+
+  - type: ``str``
+  - possible values:
+
+    - **cosited_even**: downsampled chroma samples are aligned with luma samples with even
+        coordinates
+    - **midpoint**: downsampled chroma samples are located half way between each even
+        luma sample and the nearest higher odd luma sample
 - **depth_map_render_mode**: depth map render mode (default: ``points``)
 
   - type: ``str``
@@ -311,7 +349,16 @@ The details of the dictionary is as follows:
    - `"b8g8r8a8_unorm"`
    - `"b8g8r8a8_srgb"`
    - `"a8b8g8r8_unorm_pack32"`
-   - `"a8b8g8r8_srgb_pack32"`
+   - `"y8u8y8v8_422_unorm"`
+   - `"u8y8v8y8_422_unorm"`
+   - `"y8_u8v8_2plane_420_unorm"`
+   - `"y8_u8v8_2plane_422_unorm"`
+   - `"y8_u8_v8_3plane_420_unorm"`
+   - `"y8_u8_v8_3plane_422_unorm"`
+   - `"y16_u16v16_2plane_420_unorm"`
+   - `"y16_u16v16_2plane_422_unorm"`
+   - `"y16_u16_v16_3plane_420_unorm"`
+   - `"y16_u16_v16_3plane_422_unorm"`
 
    When the ``type`` parameter is set to ``color_lut`` the final color is looked up using the values
    from the ``color_lut`` parameter. For color lookups these image formats are supported
@@ -391,22 +438,6 @@ The details of the dictionary is as follows:
    The rendered framebuffer can be output to ``render_buffer_output``.
 )doc")
 
-PYDOC(initialize, R"doc(
-Initialize the operator.
-
-This method is called only once when the operator is created for the first time,
-and uses a light-weight initialization.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the operator specification.
-
-Parameters
-----------
-spec : holoscan.core.OperatorSpec
-    The operator specification.
-)doc")
-
 }  // namespace holoscan::doc::HolovizOp
 
 namespace holoscan::doc::HolovizOp::Pose3D {
@@ -457,6 +488,14 @@ point_size : float
     Point size for geometry made of points.
 text : sequence of str
     Sequence of strings used when type is `HolovizOp.InputType.TEXT`.
+yuv_model_conversion : holoscan.operators.HolovizOp.YuvModelConversion
+    YUV model conversion.
+yuv_range : holoscan.operators.HolovizOp.YuvRange
+    YUV range.
+x_chroma_location : holoscan.operators.HolovizOp.ChromaLocation
+    chroma location in x direction for formats which are chroma downsampled in width (420 and 422).
+y_chroma_location : holoscan.operators.HolovizOp.ChromaLocation
+    chroma location in y direction for formats which are chroma downsampled in height (420).
 depth_map_render_mode : holoscan.operators.HolovizOp.DepthMapRenderMode
     The depth map render mode. Used only if `type` is `HolovizOp.InputType.DEPTH_MAP` or
     `HolovizOp.InputType.DEPTH_MAP_COLOR`.

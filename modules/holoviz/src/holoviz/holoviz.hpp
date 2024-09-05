@@ -301,15 +301,26 @@ void BeginImageLayer();
  * the same layer. This enables depth-compositing image layers with other Holoviz layers.
  * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
  *
+ * Supports multi-planar images (e.g. YUV), `device_ptr` and `row_pitch` specify the parameters
+ * for the first plane (plane 0), `device_ptr_n` and `row_pitch_n` for subsequent planes.
+ *
  * @param width         width of the image
  * @param height        height of the image
  * @param fmt           image format
  * @param device_ptr    CUDA device memory pointer
- * @param row_pitch     the number of bytes between each row, if zero then data is assumed to be
- * contiguous in memory
+ * @param row_pitch     the number of bytes between each row, if zero then data is
+ * assumed to be contiguous in memory
+ * @param device_ptr_plane_1    CUDA device memory pointer for plane 1
+ * @param row_pitch_1     the number of bytes between each row for plane 1, if zero then data is
+ * assumed to be contiguous in memory
+ * @param device_ptr_plane_2    CUDA device memory pointer for plane 2
+ * @param row_pitch_2     the number of bytes between each row for plane 2, if zero then data is
+ * assumed to be contiguous in memory
  */
 void ImageCudaDevice(uint32_t width, uint32_t height, ImageFormat fmt, CUdeviceptr device_ptr,
-                     size_t row_pitch = 0);
+                     size_t row_pitch = 0, CUdeviceptr device_ptr_plane_1 = 0,
+                     size_t row_pitch_plane_1 = 0, CUdeviceptr device_ptr_plane_2 = 0,
+                     size_t row_pitch_plane_2 = 0);
 
 /**
  * Defines the image data for this layer, source is a CUDA array.
@@ -336,15 +347,26 @@ void ImageCudaArray(ImageFormat fmt, CUarray array);
  * the same layer. This enables depth-compositing image layers with other Holoviz layers.
  * Supported depth formats are: D16_UNORM, X8_D24_UNORM, D32_SFLOAT.
  *
+ * Supports multi-planar images (e.g. YUV), `device_ptr` and `row_pitch` specify the parameters
+ * for the first plane (plane 0), `device_ptr_n` and `row_pitch_n` for subsequent planes.
+ *
  * @param width     width of the image
  * @param height    height of the image
  * @param fmt       image format
  * @param data      host memory pointer
  * @param row_pitch the number of bytes between each row, if zero then data is assumed to be
  * contiguous in memory
+ * @param data_plane_1      host memory pointer for plane 1
+ * @param row_pitch_plane_1 the number of bytes between each row for plane 1, if zero then data is
+ * assumed to be contiguous in memory
+ * @param data_plane_2      host memory pointer for plane 2
+ * @param row_pitch_plane_2 the number of bytes between each row for plane 2, if zero then data is
+ * assumed to be contiguous in memory
  */
 void ImageHost(uint32_t width, uint32_t height, ImageFormat fmt, const void* data,
-               size_t row_pitch = 0);
+               size_t row_pitch = 0, const void* data_plane_1 = nullptr,
+               size_t row_pitch_plane_1 = 0, const void* data_plane_2 = nullptr,
+               size_t row_pitch_plane_2 = 0);
 
 /**
  * Defines the lookup table for this image layer.
@@ -401,6 +423,30 @@ void LUT(uint32_t size, ImageFormat fmt, size_t data_size, const void* data,
  */
 void ImageComponentMapping(ComponentSwizzle r, ComponentSwizzle g, ComponentSwizzle b,
                            ComponentSwizzle a);
+
+/**
+ * Specifies the YUV model conversion.
+ *
+ * @param yuv_model_conversion YUV model conversion. Default is `YUV_601`.
+ */
+void ImageYuvModelConversion(YuvModelConversion yuv_model_conversion);
+
+/**
+ * Specifies the YUV range.
+ *
+ * @param yuv_range YUV range. Default is `ITU_FULL`.
+ */
+void ImageYuvRange(YuvRange yuv_range);
+
+/**
+ * Defines the location of downsampled chroma component samples relative to the luma samples.
+ *
+ * @param x_chroma_location chroma location in x direction for formats which are chroma downsampled
+ * in width (420 and 422). Default is `COSITED_EVEN`.
+ * @param y_chroma_location chroma location in y direction for formats which are chroma downsampled
+ * in height (420). Default is `COSITED_EVEN`.
+ */
+void ImageChromaLocation(ChromaLocation x_chroma_location, ChromaLocation y_chroma_location);
 
 /**
  * Start a ImGUI layer.

@@ -128,14 +128,14 @@ Supported formats for `nvidia::gxf::VideoBuffer`.
 | nvidia::gxf::VideoFormat | Supported | Description |
 |-|-|-|
 | GXF_VIDEO_FORMAT_CUSTOM | - | |
-| GXF_VIDEO_FORMAT_YUV420 | - | BT.601 multi planar 4:2:0 YUV |
-| GXF_VIDEO_FORMAT_YUV420_ER | - | BT.601 multi planar 4:2:0 YUV ER |
-| GXF_VIDEO_FORMAT_YUV420_709 | - | BT.709 multi planar 4:2:0 YUV |
-| GXF_VIDEO_FORMAT_YUV420_709_ER | - | BT.709 multi planar 4:2:0 YUV |
-| GXF_VIDEO_FORMAT_NV12 | - | BT.601 multi planar 4:2:0 YUV with interleaved UV |
-| GXF_VIDEO_FORMAT_NV12_ER | - | BT.601 multi planar 4:2:0 YUV ER with interleaved UV |
-| GXF_VIDEO_FORMAT_NV12_709 | - | BT.709 multi planar 4:2:0 YUV with interleaved UV |
-| GXF_VIDEO_FORMAT_NV12_709_ER | - | BT.709 multi planar 4:2:0 YUV ER with interleaved UV |
+| GXF_VIDEO_FORMAT_YUV420 | &check; | BT.601 multi planar 4:2:0 YUV |
+| GXF_VIDEO_FORMAT_YUV420_ER | &check; | BT.601 multi planar 4:2:0 YUV ER |
+| GXF_VIDEO_FORMAT_YUV420_709 | &check; | BT.709 multi planar 4:2:0 YUV |
+| GXF_VIDEO_FORMAT_YUV420_709_ER | &check; | BT.709 multi planar 4:2:0 YUV ER |
+| GXF_VIDEO_FORMAT_NV12 | &check; | BT.601 multi planar 4:2:0 YUV with interleaved UV |
+| GXF_VIDEO_FORMAT_NV12_ER | &check; | BT.601 multi planar 4:2:0 YUV ER with interleaved UV |
+| GXF_VIDEO_FORMAT_NV12_709 | &check; | BT.709 multi planar 4:2:0 YUV with interleaved UV |
+| GXF_VIDEO_FORMAT_NV12_709_ER | &check; | BT.709 multi planar 4:2:0 YUV ER with interleaved UV |
 | GXF_VIDEO_FORMAT_RGBA | &check; | RGBA-8-8-8-8 single plane |
 | GXF_VIDEO_FORMAT_BGRA | &check; | BGRA-8-8-8-8 single plane |
 | GXF_VIDEO_FORMAT_ARGB | &check; | ARGB-8-8-8-8 single plane |
@@ -515,7 +515,7 @@ To use sRGB encoded images set the `fmt` parameter of {func}`viz::ImageCudaDevic
 
 {py:class}`Python <holoscan.operators.HolovizOp>`.
 
-### Examples
+### Holoviz Operator Examples
 
 There are multiple [examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/holoviz) both in Python and C++ showing how to use various features of the Holoviz operator.
 
@@ -578,6 +578,6 @@ Holoviz example app
 
 {ref}`namespace_holoscan__viz`
 
-### Examples
+### Holoviz Module Examples
 
 There are multiple [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/modules/holoviz/examples) showing how to use various features of the Holoviz module.

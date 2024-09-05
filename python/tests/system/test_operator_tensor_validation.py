@@ -42,7 +42,7 @@ class FrameGeneratorOp(Operator):
         *args,
         width=800,
         height=640,
-        channels=3,
+        channels=1,
         on_host=True,
         fortran_ordered=False,
         dtype=np.uint8,
@@ -152,7 +152,7 @@ class BayerDemosaicApp(Application):
         count=10,
         width=800,
         height=640,
-        channels=3,
+        channels=1,
         on_host=False,
         fortran_ordered=False,
         **kwargs,
@@ -204,7 +204,7 @@ class BayerDemosaicApp(Application):
 
 
 @pytest.mark.parametrize("fortran_ordered, on_host", [(False, False), (True, False), (False, True)])
-@pytest.mark.parametrize("channels", [3, None])
+@pytest.mark.parametrize("channels", [1, None])
 def test_bayer_demosaic_memory_layout(fortran_ordered, on_host, channels, capfd):
     """Test HolovizOp with valid (row-major) and invalid (column-major) memory layouts."""
     count = 3
@@ -218,32 +218,22 @@ def test_bayer_demosaic_memory_layout(fortran_ordered, on_host, channels, capfd)
         on_host=on_host,
         fortran_ordered=fortran_ordered,
     )
-    if channels is None:
+    if fortran_ordered:
         with pytest.raises(RuntimeError):
             demosaic_app.run()
         captured = capfd.readouterr()
 
         # assert that app raised exception on the first frame
         assert captured.out.count("Emitting frame") == 1
-        assert "Input tensor has 2 dimensions. Expected a tensor with 3 dimensions" in captured.err
+        assert "Tensor must have a row-major memory layout" in captured.err
 
     else:
-        if fortran_ordered:
-            with pytest.raises(RuntimeError):
-                demosaic_app.run()
-            captured = capfd.readouterr()
+        demosaic_app.run()
 
-            # assert that app raised exception on the first frame
-            assert captured.out.count("Emitting frame") == 1
-            assert "Tensor must have a row-major memory layout" in captured.err
+        captured = capfd.readouterr()
 
-        else:
-            demosaic_app.run()
-
-            captured = capfd.readouterr()
-
-            # assert that replayer_app received all frames
-            assert captured.out.count("Emitting frame") == count
+        # assert that replayer_app received all frames
+        assert captured.out.count("Emitting frame") == count
 
 
 class SegmentationPostprocessorApp(Application):

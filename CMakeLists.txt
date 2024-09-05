@@ -194,6 +194,8 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_inference_processor
     op_ping_rx
     op_ping_tx
+    op_ping_tensor_tx
+    op_ping_tensor_rx
     op_segmentation_postprocessor
     op_video_stream_recorder
     op_video_stream_replayer

@@ -71,6 +71,9 @@ class MinimalThrowOp : public Operator {
 
     Operator::initialize();
 
+    // Make sure that calling initialize() twice does not cause any issues
+    Operator::initialize();
+
     if (throw_type_.get() == ThrowMethod::kInitialize) {
       throw std::runtime_error("Exception occurred in MinimalThrowOp::initialize");
     }
@@ -145,10 +148,14 @@ TEST_P(MethodParmeterizedTestFixture, TestMethodExceptionHandling) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
   if ((throw_method != ThrowMethod::kNone)) {
-    EXPECT_TRUE(log_output.find("Exception occurred in MinimalThrowOp") != std::string::npos);
+    EXPECT_TRUE(log_output.find("Exception occurred in MinimalThrowOp") != std::string::npos)
+        << "=== LOG ===\n"
+        << log_output << "\n===========\n";
     if (throw_method != ThrowMethod::kInitialize) {
       // exception in initialize is before graph start, so this would not be printed
-      EXPECT_TRUE(log_output.find("Graph execution error: ") != std::string::npos);
+      EXPECT_TRUE(log_output.find("Graph execution error: ") != std::string::npos)
+          << "=== LOG ===\n"
+          << log_output << "\n===========\n";
     }
   }
 }

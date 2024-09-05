@@ -22,14 +22,13 @@ find_package(holoscan REQUIRED CONFIG
 
 add_executable(ping_distributed
   ping_distributed.cpp
-  ping_distributed_ops.cpp
 )
 
 target_link_libraries(ping_distributed
   PRIVATE
   holoscan::core
-  holoscan::ops::ping_tx
-  holoscan::ops::ping_rx
+  holoscan::ops::ping_tensor_tx
+  holoscan::ops::ping_tensor_rx
 )
 
 # Testing
@@ -39,7 +38,7 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'tensor', shape: \\(32, 64\\)"
   )
 
   add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_GPU_TEST
@@ -47,7 +46,7 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_GPU_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'tensor', shape: \\(32, 64\\)"
   )
 
   add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_HELP_STRING_TEST

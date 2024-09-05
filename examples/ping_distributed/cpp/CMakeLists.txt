@@ -16,13 +16,12 @@
 # Create examples
 add_executable(ping_distributed
   ping_distributed.cpp
-  ping_distributed_ops.cpp
 )
 target_link_libraries(ping_distributed
   PUBLIC
   holoscan::core
-  holoscan::ops::ping_tx
-  holoscan::ops::ping_rx
+  holoscan::ops::ping_tensor_tx
+  holoscan::ops::ping_tensor_rx
 )
 
 # Install examples
@@ -40,8 +39,6 @@ if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
 install(
   FILES
     ping_distributed.cpp
-    ping_distributed_ops.cpp
-    ping_distributed_ops.hpp
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )
@@ -67,7 +64,7 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'tensor', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
@@ -76,7 +73,7 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_GPU_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'tensor', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 

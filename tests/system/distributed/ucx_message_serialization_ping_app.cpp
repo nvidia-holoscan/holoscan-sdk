@@ -74,8 +74,9 @@ TEST_P(MessageTypeParmeterizedTestFixture, TestMessageSerializationApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Found expected value in deserialized message.") !=
-              std::string::npos);
+  EXPECT_TRUE(log_output.find("Found expected value in deserialized message.") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 INSTANTIATE_TEST_CASE_P(MessageSerializationAppTests, MessageTypeParmeterizedTestFixture,
@@ -166,10 +167,13 @@ TEST_P(UcxMessageTypeParmeterizedTestFixture, TestUcxMessageSerializationApp) {
 
   // check for the string that gets printed if receive value validation succeeded
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Found expected value in deserialized message.") !=
-              std::string::npos);
+  EXPECT_TRUE(log_output.find("Found expected value in deserialized message.") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
-  EXPECT_TRUE(remove_ignored_errors(log_output).find("error") == std::string::npos);
+  EXPECT_TRUE(remove_ignored_errors(log_output).find("error") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
   // restore the original log level
   if (message_type == MessageType::VEC_DOUBLE_LARGE) {

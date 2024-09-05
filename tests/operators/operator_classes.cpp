@@ -84,7 +84,8 @@ TEST_F(OperatorClassesWithGXFContext, TestAJASourceOpChannelFromYAML) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
@@ -107,7 +108,8 @@ TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
 
   std::string log_output = testing::internal::GetCapturedStderr();
 
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 #endif
 
@@ -144,7 +146,8 @@ TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
@@ -161,7 +164,8 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamRecorderOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
@@ -186,7 +190,8 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestSegmentationPostprocessorOp) {
@@ -206,7 +211,8 @@ TEST_F(OperatorClassesWithGXFContext, TestSegmentationPostprocessorOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
@@ -233,7 +239,8 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestHolovizOpInputSpec) {
@@ -264,7 +271,8 @@ TEST_F(OperatorClassesWithGXFContext, TestInferenceOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOp) {
@@ -282,7 +290,8 @@ TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOp) {
@@ -302,7 +311,8 @@ TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOpDefaultConstructor) {
@@ -311,7 +321,8 @@ TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOpDefaultConstructor) {
   auto op = F.make_operator<ops::BayerDemosaicOp>();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST(Operator, TestNativeOperatorWithoutFragment) {
@@ -323,9 +334,13 @@ TEST(Operator, TestNativeOperatorWithoutFragment) {
 
   op.initialize();
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Fragment is not set") != std::string::npos);
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("warning") != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Fragment is not set") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestPingRxOp) {
@@ -337,7 +352,8 @@ TEST_F(OperatorClassesWithGXFContext, TestPingRxOp) {
   EXPECT_EQ(op->name(), name);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataAttributes) {
@@ -355,6 +371,9 @@ TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataAttributes) {
   // add an operator
   auto op = F.make_operator<ops::PingRxOp>(name);
   EXPECT_EQ(op->name(), name);
+
+  // default metadata policy is kRaise
+  EXPECT_EQ(op->metadata_policy(), MetadataPolicy::kRaise);
 
   // at construction metadata is disabled
   EXPECT_FALSE(op->is_metadata_enabled());
@@ -375,7 +394,8 @@ TEST_F(OperatorClassesWithGXFContext, TestPingTxOp) {
   EXPECT_EQ(op->name(), name);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestPingTxWithStringName) {
@@ -387,7 +407,8 @@ TEST_F(OperatorClassesWithGXFContext, TestPingTxWithStringName) {
   EXPECT_EQ(op->name(), name);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestAsyncPingRxOp) {
@@ -399,7 +420,8 @@ TEST_F(OperatorClassesWithGXFContext, TestAsyncPingRxOp) {
   EXPECT_EQ(op->name(), name);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestAsyncPingTxOp) {
@@ -411,7 +433,8 @@ TEST_F(OperatorClassesWithGXFContext, TestAsyncPingTxOp) {
   EXPECT_EQ(op->name(), name);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOp) {
@@ -423,6 +446,7 @@ TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOp) {
 
   ArgList kwargs{Arg{"device", std::string("/dev/video0")},
                  Arg{"pixel_format", std::string("auto")},
+                 Arg{"pass_through", false},
                  Arg{"width", width},
                  Arg{"height", height},
                  Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")},
@@ -437,7 +461,8 @@ TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOp) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpYAMLConfig) {
@@ -453,7 +478,8 @@ TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpYAMLConfig) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpDefaults) {
@@ -471,7 +497,8 @@ TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpDefaults) {
   EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestInvalidOperatorName) {

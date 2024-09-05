@@ -53,6 +53,12 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
 
+  add_test(NAME cli-tests
+    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/cli/unit -v --durations=0
+    # either have to run from this working directory or set PYTHONPATH
+    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
+  )
+
   # rerun distributed tests but with the event-based scheduler
   # (omit serialization tests on this second run to keep overall time down)
   add_test(NAME python-api-system-distributed-ebs-tests
@@ -60,11 +66,15 @@ if(HOLOSCAN_BUILD_TESTS)
     # either have to run from this working directory or set PYTHONPATH
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
+
   # Tracking any fatal error reported by the application tests
   set_tests_properties(python-api-system-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
 
   set_tests_properties(python-api-system-distributed-tests PROPERTIES
+                       FAIL_REGULAR_EXPRESSION "Fatal Python error")
+
+  set_tests_properties(cli-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
 
   set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES

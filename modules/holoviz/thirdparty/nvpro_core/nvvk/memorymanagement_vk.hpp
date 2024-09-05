@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -227,7 +227,7 @@ public:
   //////////////////////////////////////////////////////////////////////////
 
   // Implement MemAllocator interface
-  virtual MemHandle allocMemory(const MemAllocateInfo& allocInfo, VkResult *pResult = nullptr) override;
+  virtual MemHandle allocMemory(const MemAllocateInfo& allocInfo, uint32_t plane = 0, VkResult *pResult = nullptr) override;
   virtual void      freeMemory(MemHandle memHandle) override;
   virtual MemInfo   getMemoryInfo(MemHandle memHandle) const override;
   virtual void*     map(MemHandle memHandle, VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE, VkResult *pResult = nullptr) override;

@@ -15,17 +15,31 @@
  * limitations under the License.
  */
 
-#ifndef SYSTEM_PING_TENSOR_RX_OP_HPP
-#define SYSTEM_PING_TENSOR_RX_OP_HPP
+#ifndef HOLOSCAN_OPERATORS_PING_TENSOR_RX_PING_TENSOR_RX_HPP
+#define HOLOSCAN_OPERATORS_PING_TENSOR_RX_PING_TENSOR_RX_HPP
 
 #include <string>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
 
-namespace holoscan {
-namespace ops {
+namespace holoscan::ops {
 
+/**
+ * @brief Simple tensor receive operator.
+ *
+ * This is an example of a native operator with one input port.
+ *
+ * This operator is intended for use in test cases and example applications.
+ *
+ * On each tick, it receives a TensorMap and loops over each tensor in the map. For each, it will
+ * print the tensor's name and shape.
+ *
+ * ==Named Inputs==
+ *
+ * - **in** : nvidia::gxf::Tensor(s)
+ *   - One or more received tensors (i.e. a TensorMap).
+ */
 class PingTensorRxOp : public Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(PingTensorRxOp)
@@ -37,11 +51,9 @@ class PingTensorRxOp : public Operator {
   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override;
 
  private:
-  int count_ = 1;
-  Parameter<std::string> tensor_name_;
+  size_t count_ = 1;
 };
 
-}  // namespace ops
-}  // namespace holoscan
+}  // namespace holoscan::ops
 
-#endif /* SYSTEM_PING_TENSOR_RX_OP_HPP */
+#endif /* HOLOSCAN_OPERATORS_PING_TENSOR_RX_PING_TENSOR_RX_HPP */

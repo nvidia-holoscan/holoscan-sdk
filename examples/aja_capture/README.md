@@ -14,7 +14,7 @@ Minimal example to demonstrate the use of the aja source operator to capture dev
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/aja_capture/cpp/aja_capture
-  ```
+  
 * **source (local env)**:
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/aja_capture/cpp/aja_capture
@@ -47,3 +47,13 @@ Minimal example to demonstrate the use of the aja source operator to capture dev
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   python3 ${BUILD_OR_INSTALL_DIR}/examples/aja_capture/python/aja_capture.py
   ```
+## Settings
+
+ To evaluate the AJA example using alternative resolutions, you may modify the aja_capture.yaml configuration file as needed. For instance, to test a resolution format of 1280 x 720 at 50 Hz, you can specify the following parameters in the aja section of the configuration :
+   
+    ```bash
+      aja:
+        width: 1280
+        height: 720
+        framerate: 60
+    ```

@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import logging
@@ -27,7 +27,6 @@ from ..common.enum_types import ApplicationType, SdkType
 from ..common.exceptions import IncompatiblePlatformConfigurationError, InvalidSdkError
 from ..common.sdk_utils import detect_sdk, detect_sdk_version
 from .parameters import PlatformParameters
-from .sdk_downloader import download_sdk_debian_file
 
 
 class Platform:
@@ -171,9 +170,9 @@ class Platform:
         try:
             return (
                 False,
-                self._artifact_sources.base_images(sdk_version)[
+                self._artifact_sources.base_image(sdk_version)[
                     platform_parameters.platform_config.value
-                ][platform_parameters.platform.value],
+                ],
             )
         except Exception as ex:
             raise IncompatiblePlatformConfigurationError(
@@ -234,7 +233,10 @@ class Platform:
         application_type: ApplicationType,
         holoscan_sdk_file: Optional[Path] = None,
         monai_deploy_sdk_file: Optional[Path] = None,
-    ) -> Tuple[Tuple[bool, Union[Path, str]], Tuple[Union[Path, str, None]]]:
+    ) -> Tuple[
+        Tuple[bool, Union[Path, str]],
+        Tuple[Union[Optional[Path], Optional[str]], Union[Optional[Path], Optional[str]]],
+    ]:
         """
         Detects the SDK distributable to use based on internal mapping or user input.
 
@@ -315,7 +317,7 @@ class Platform:
         Returns:
             Tuple[bool, Union[Path, str]]:
                 bool: True when user provides SDk file. Otherwise, False.
-                Union[Path, str]: Path to the SDK redistributable file.
+                Union[Path, str]: User provided SDK file path or package version.
         """
         assert sdk is SdkType.Holoscan
 
@@ -347,39 +349,34 @@ class Platform:
                 ApplicationType.PythonModule,
                 ApplicationType.PythonFile,
             ]:
-                return (False, Constants.PYPI_INSTALL_SOURCE)
+                wheel_package_version = self._artifact_sources.wheel_package_version(sdk_version)
+
+                if wheel_package_version is None:
+                    raise InvalidSdkError(
+                        "Unable to locate matching Holoscan SDK PyPI package with "
+                        f"version {sdk_version}."
+                    )
+
+                return (False, wheel_package_version)
             elif application_type in [
                 ApplicationType.CppCMake,
                 ApplicationType.Binary,
             ]:
-                debian_package_source = self._artifact_sources.debian_packages(
-                    sdk_version,
-                    platform_parameters.platform_arch,
-                    platform_parameters.platform_config,
-                )
-                if debian_package_source is not None:
-                    return (
-                        False,
-                        download_sdk_debian_file(
-                            debian_package_source,
-                            sdk_version,
-                            platform_parameters.platform_arch,
-                            temp_dir,
-                            self._logger,
-                            self._artifact_sources,
-                        ),
-                    )
-                else:
+                debian_package_version = self._artifact_sources.debian_package_version(sdk_version)
+
+                if debian_package_version is None:
                     raise InvalidSdkError(
-                        f"No match Debian packages found for Holoscan SDK v{sdk_version}. Try "
-                        "using `--sdk-file` instead."
+                        "Unable to locate matching Holoscan SDK Debian package with "
+                        f"version {sdk_version}."
                     )
+
+                return (False, debian_package_version)
 
             raise InvalidSdkError(f"Unknown application type: {application_type.value}")
 
     def _get_monai_deploy_sdk(
         self, monai_deploy_app_sdk_version: Optional[str], sdk_file: Optional[Path] = None
-    ) -> Tuple[Union[Path, str]]:
+    ) -> Tuple[bool, Union[Optional[Path], Optional[str]]]:
         """
         Validates MONAI Deploy SDK redistributable file if specified.
         Otherwise, Docker build stage will install the SDK from PyPI.

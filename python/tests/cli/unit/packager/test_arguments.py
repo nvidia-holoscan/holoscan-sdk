@@ -16,7 +16,6 @@
 """  # noqa: E501
 
 import pathlib
-import platform
 from argparse import Namespace
 
 import pytest
@@ -47,6 +46,7 @@ class TestPackagingArguments:
         self.input_args.source = pathlib.Path("/path/to/source.json")
         self.input_args.platform = Platform.X64Workstation
         self.input_args.platform_config = PlatformConfiguration.dGPU
+        self.input_args.includes = []
 
         self.source_load_called = False
 
@@ -91,6 +91,10 @@ class TestPackagingArguments:
             "holoscan.cli.packager.config_reader.PackageBuildParameters._set_app_command",
             lambda x: None,
         )
+        monkeypatch.setattr(
+            "holoscan.cli.common.artifact_sources.ArtifactSources.download_manifest",
+            lambda x: None,
+        )
 
         def mock_artifact_load(x, y):
             self.source_load_called = True
@@ -108,6 +112,7 @@ class TestPackagingArguments:
         assert args.build_parameters.docs == self.input_args.docs
         assert args.build_parameters.docs_dir == DefaultValues.HOLOSCAN_DOCS_DIR
         assert args.build_parameters.logs_dir == DefaultValues.HOLOSCAN_LOGS_DIR
+        assert args.build_parameters.app_config_file_path == self.input_args.config
         assert (
             args.build_parameters.full_input_path
             == DefaultValues.WORK_DIR / DefaultValues.INPUT_DIR
@@ -115,16 +120,6 @@ class TestPackagingArguments:
         assert (
             args.build_parameters.full_output_path
             == DefaultValues.WORK_DIR / DefaultValues.OUTPUT_DIR
-        )
-        assert (
-            args.build_parameters.cuda_deb_arch == "sbsa"
-            if platform.processor() == "aarch64"
-            else "x86_64"
-        )
-        assert (
-            args.build_parameters.holoscan_deb_arch == "arm64"
-            if platform.processor() == "aarch64"
-            else "amd64"
         )
         assert args.build_parameters.input_dir == DefaultValues.INPUT_DIR
         assert args.build_parameters.models_dir == DefaultValues.MODELS_DIR

@@ -16,6 +16,10 @@ There are several examples of bindings on Holohub in the [operators folder](http
 There are also several [examples of bindings](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/python/holoscan/operators) for the built-in operators of the SDK. Unlike on Holohub, for the SDK, the corresponding C++ [headers](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/include/holoscan/operators) and [sources](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/src/operators) of an operator are stored under separate directory trees.
 :::
 
+:::{warning}
+It is recommended to put any cleanup of resources allocated in the C++ operator's `initialize()` and/or `start()` methods into the `stop()` method of the operator and **not** in its destructor. This is necessary as a workaround to a current issue where it is not guaranteed that the destructor always gets called prior to Python application termination. The `stop()` method will always be explicitly called, so we can be assured that any cleanup happens as expected.
+:::
+
 (pybind11-operator-tutorial)=
 ## Tutorial: binding the ToolTrackingPostprocessorOp class
 

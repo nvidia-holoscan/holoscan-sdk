@@ -101,8 +101,11 @@ TEST(NativeOperatorApp, TestNativeOperatorApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("value1: 1") != std::string::npos);
-  EXPECT_TRUE(log_output.find("value2: 100") != std::string::npos);
+  EXPECT_TRUE(log_output.find("value1: 1") != std::string::npos) << "=== LOG ===\n"
+                                                                 << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("value2: 100") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

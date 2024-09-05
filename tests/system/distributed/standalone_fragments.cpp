@@ -103,8 +103,12 @@ TEST(DistributedApp, TestStandaloneFragments) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Operator: tx, Index: 10") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Operator: rx, Index: 5") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Operator: tx, Index: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Operator: rx, Index: 5") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

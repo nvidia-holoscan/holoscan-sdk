@@ -111,10 +111,6 @@ PYBIND11_MODULE(_gxf_codelet, m) {
            "fragment"_a,
            "gxf_typename"_a,
            "name"_a = "gxf_codelet"s,
-           doc::GXFCodeletOp::doc_GXFCodeletOp)
-      .def_property_readonly(
-          "gxf_typename", &GXFCodeletOp::gxf_typename, doc::GXFCodeletOp::doc_gxf_typename)
-      .def("initialize", &GXFCodeletOp::initialize, doc::GXFCodeletOp::doc_initialize)
-      .def("setup", &GXFCodeletOp::setup, doc::GXFCodeletOp::doc_setup);
+           doc::GXFCodeletOp::doc_GXFCodeletOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

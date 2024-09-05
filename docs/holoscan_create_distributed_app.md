@@ -206,7 +206,7 @@ The following are known limitations of the distributed application support in th
 
 #### 1. A connection error message is displayed even when the distributed application is running correctly.
 
-The message `Connection dropped with status -25 (Connection reset by remote peer)` appears in the console even when the application is functioning properly. This is a known issue and will be addressed in future updates, ensuring that this message will only be displayed in the event of an actual connection error.
+The message `Connection dropped with status -25 (Connection reset by remote peer)` appears in the console even when the application is functioning properly. This is a known issue and will be addressed in future updates, ensuring that this message will only be displayed in the event of an actual connection error. It currently is printed once some fragments complete their work and start shutdown. Any connections from those fragments to ones that remain open are disconnected at that point, resulting in the logged message.
 
 #### 2. GPU tensors can only currently be sent/received by UCX from a single device on a given node.
 

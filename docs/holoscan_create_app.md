@@ -1067,15 +1067,17 @@ app->run();
 
 ### Understanding Metadata Flow
 
-Each operator in the workflow has an associated {cpp:class}`~holoscan::MetadataDictionary` object. At the start of each operator's {cpp:func}`~holoscan::Operator::compute` call this metadata dictionary will be empty (i.e. metadata does not persist from previous compute calls). When any call to {cpp:class}`~holoscan::InputContext::receive` data is made, any metadata also found in the input message will be merged into the operator's local metadata dictionary. The operator's compute method can then read, append to or remove metadata as explained in the next section. Whenever the operator emits data via a call to {cpp:class}`~holoscan::OutputContext::emit` the current status of the operator's metadata dictionary will be transmitted on that port alonside the data passed via the first argument to the emit call. Any downstream operators will then receive this metadata via their input ports.
+Each operator in the workflow has an associated {cpp:class}`~holoscan::MetadataDictionary` object. At the start of each operator's {cpp:func}`~holoscan::Operator::compute` call this metadata dictionary will be empty (i.e. metadata does not persist from previous compute calls). When any call to {cpp:func}`~holoscan::InputContext::receive` data is made, any metadata also found in the input message will be merged into the operator's local metadata dictionary. The operator's compute method can then read, append to or remove metadata as explained in the next section. Whenever the operator emits data via a call to {cpp:func}`~holoscan::OutputContext::emit` the current status of the operator's metadata dictionary will be transmitted on that port alonside the data passed via the first argument to the emit call. Any downstream operators will then receive this metadata via their input ports.
 
 ### Working With Metadata from Operator::compute
 
-Within the operator's {cpp:func}`~holoscan::Operator::compute` method, the {cpp:func}`~holoscan::Operator::metadata` method can be called to get a shared pointer to the {cpp:class}`~holoscan::MetadataDictionary` of the operator. The metadata dictionary provides a similar API to a `std::unordered_map` (C++) where the keys are strings (`std::string` for C++) and the values can store any object type (via a C++ {cpp:type}`~holoscan::MetadataObject` holding a `std::any`). Templated {cpp:func}`~holoscan::MetadataObject::get` and {cpp:func}`~holoscan::MetadataObject::set` method are provided as demonstrated below to allow directly setting values of a given type without having to explicitly work with the internal {cpp:type}`~holoscan::MetadataObject` type.
+Within the operator's {cpp:func}`~holoscan::Operator::compute` method, the {cpp:func}`~holoscan::Operator::metadata` method can be called to get a shared pointer to the {cpp:class}`~holoscan::MetadataDictionary` of the operator. The metadata dictionary provides a similar API to a `std::unordered_map` (C++) or `dict` (Python) where the keys are strings (`std::string` for C++) and the values can store any object type (via a C++ {cpp:type}`~holoscan::MetadataObject` holding a `std::any`).
 
 
 `````{tab-set}
 ````{tab-item} C++
+Templated {cpp:func}`~holoscan::MetadataObject::get` and {cpp:func}`~holoscan::MetadataObject::set` method are provided as demonstrated below to allow directly setting values of a given type without having to explicitly work with the internal {cpp:type}`~holoscan::MetadataObject` type.
+
 ```cpp
 
 // Receiving from a port updates operator metadata with any metadata found on the port
@@ -1112,27 +1114,130 @@ meta->clear();
 // Any emit call after this point would not transmit a metadata object
 op_output.emit(data, "output2");
 ```
+See the {py:class}`~holoscan.core.MetadataDictionary` API docs for all available methods.
+````
+````{tab-item} Python
+A Pythonic interface is provided for the {py:class}`~holoscan.core.MetadataObject` type.
+
+```python
+
+# Receiving from a port updates operator metadata with any metadata found on the port
+input_tensors = op_input.receive("in")
+
+# self.metadata can be used to access the shared MetadataDictionary
+# for example we can check if a key exists
+has_key = "my_key" in self.metadata
+
+# get the number of keys
+num_keys = len(self.metadata)
+
+# get a list of the keys
+print(f"metadata keys = {self.metadata.keys()}")
+
+# iterate over the values in the dictionary using the `items()` method
+for key, value in self.metadata.items():
+    # process item
+    pass
+
+# print a Python dict of the keys/values
+print(self.metadata)
+
+# Retrieve existing values. If the underlying value is a C++ class, a conversion to an equivalent Python object will be made (e.g. `std::vector<std::string>` to `List[str]`).
+name = self.metadata["patient_name"]
+age = self.metadata["age"]
+
+# It is also supported to use the get method along with an optional default value to use
+# if the key is not present.
+flag = self.metadata.get("flag", False)
+
+# print the current metadata policy
+print(f"metadata policy = {self.metadata_policy}")
+
+# Add a new value (if a key already exists, the value will be updated according to the
+# operator's metadata_policy). If the value is set via the indexing operator as below,
+# the Python object itself is stored as the value.
+spacing = (1.0, 1.0, 3.0)
+self.metadata["pixel_spacing"] = spacing
+
+# In some cases, if sending metadata to downstream C++-based operators, it may be desired
+# to instead store the metadata value as an equivalent C++ type. In that case, it is
+# necessary to instead set the value using the `set` method with `cast_to_cpp=True`.
+# Automatic casting is supported for bool, str, and various numeric and iterator or
+# sequence types.
+
+# The following would result in the spacing `Tuple[float]` being stored as a
+# C++ `std::vector<double>`. Here we show use of the `pop` method to remove a previous value
+# if present.
+self.metadata.pop("pixel_spacing", None)
+self.metadata.set("pixel_spacing", spacing, cast_to_cpp=True)
+
+# To store floating point elements at a different than the default (double) precision or
+# integers at a different precision than int64_t, use the dtype argument and pass a
+# numpy.dtype argument corresponding to the desired C++ type. For example, the following
+# would instead store `spacing` as a std::vector<float> instead. In this case we show
+# use of Python's `del` instead of the pop method to remove an existing item.
+del self.metadata["pixel_spacing"]
+self.metadata.set("pixel_spacing", spacing, dtype=np.float32, cast_to_cpp=True)
+
+# Remove a value
+del self["patient name"]
+
+# ... Some processing to produce output `data` could go here ...
+
+# Current state of `meta` will automatically be emitted along with `data` in the call below
+op_output.emit(data, "output1")
+
+# Can clear all items
+self.metadata.clear()
+
+# Any emit call after this point would not transmit a metadata object
+op_output.emit(data, "output2")
+```
+
+See the {py:class}`~holoscan.core.MetadataDictionary` API docs for all available methods.
+
+The above code illustrated various ways of working with and updating an operator's metadata.
+
+:::{note}
+Pay particular attention to the details of how metadata is set. When working with pure Python applications it is best to just use `self.metadata[key] = value` or `self.metadata.set(key, value)` to pass Python objects as the value. This will just use a shared object and not result in copies to/from corresponding C++ types. However, when interacting with other operators that wrap a C++ implementation, their `compute` method would expected C++ metadata. In that case, the `set` method with `cast_to_cpp=True` is needed to cast to the expected C++ type. This was shown in some of the "pixel_spacing" set calls in the example above. For convenience, the `value` passed to the `set` method can also be a NumPy array, but note that in this case, a copy into a new C++ std::vector is performed. The dtype of the array will be respected when creating the vector. In general, the types that can currently be cast to C++ are scalar numeric values, strings and Python Iterators or Sequences of these (the sequence will be converted to a 1D or 2D C++ std::vector<T> so the items in the Python sequence cannot be of mixed type).
+:::
 ````
 `````
 
-See the {cpp:class}`~holoscan::MetadataDictionary` API docs for all available methods. Most of these like `begin()` and `end()` iterators and the `find()` method match the corresponding methods of `std::unordered_map`.
-
 #### Metadata Update Policies
 
-The operator class also has a {cpp:func}`~holoscan::Operator::metadata_policy` method that can be used to set a {cpp:func}`~holoscan::MetadataPolicy` to use when handling duplicate metadata keys across multiple input ports of the operator. The available options are:
+`````{tab-set}
+````{tab-item} C++
+
+The operator class also has a {cpp:func}`~holoscan::Operator::metadata_policy` method that can be used to set a {cpp:enum}`~holoscan::MetadataPolicy` to use when handling duplicate metadata keys across multiple input ports of the operator. The available options are:
 - "update" (`MetadataPolicy::kUpdate`): replace any existing key from a prior `receive` call with one present in a subsequent `receive` call.
 - "reject" (`MetadataPolicy::kReject`): Reject the new key/value pair when a key already exists due to a prior `receive` call.
 - "raise" (`MetadataPolicy::kRaise`): Throw a `std::runtime_error` if a duplicate key is encountered. This is the default policy.
 
 The metadata policy would typically be set during {cpp:func}`~holoscan::Application::compose` as in the following example:
 
-`````{tab-set}
-````{tab-item} C++
 ```cpp
 
 // Example for setting metadata policy from Application::compose()
 my_op = make_operator<MyOperator>("my_op");
 my_op->metadata_policy(holoscan::MetadataPolicy::kRaise);
+
+```
+````
+````{tab-item} Python
+
+The operator class also has a {py:func}`~holoscan.core.Operator.metadata_policy` property that can be used to set a {py:class}`~holoscan.core.MetadataPolicy` to use when handling duplicate metadata keys across multiple input ports of the operator. The available options are:
+- "update" (`MetadataPolicy.UPDATE`): replace any existing key from a prior `receive` call with one present in a subsequent `receive` call. This is the default policy.
+- "reject" (`MetadataPolicy.REJECT`): Reject the new key/value pair when a key already exists due to a prior `receive` call.
+- "raise" (`MetadataPolicy.RAISE`): Throw an exception if a duplicate key is encountered.
+
+The metadata policy would typically be set during {py:func}`~holoscan.core.Application.compose` as in the following example:
+
+```python
+
+# Example for setting metadata policy from Application.compose()
+my_op = MyOperator(self, name="my_op")
+my_op.metadata_policy = holoscan.MetadataPolicy.RAISE
 
 ```
 ````
@@ -1143,7 +1248,7 @@ The policy only applies to the operator on which it was set.
 
 Sending metadata between two fragments of a distributed application is supported, but there are a couple of aspects to be aware of.
 
-1. Sending metadata over the network requires serialization and deserialization of the metadata keys and values. The value types supported for this are the same as for data emitted over output ports (see the table in the section on {ref}`object serialization<object-serialization>`). The only exception is that {cpp:class}`~holoscan::Tensor` and {cpp:func}`~holoscan::TensorMap` values cannot be sent as metadata values between fragments. Any {ref}`custom codecs<object-serialization>` registered for the SDK will automatically also be available for serialization of metadata values.
+1. Sending metadata over the network requires serialization and deserialization of the metadata keys and values. The value types supported for this are the same as for data emitted over output ports (see the table in the section on {ref}`object serialization<object-serialization>`). The only exception is that {cpp:class}`~holoscan::Tensor` and {cpp:class}`~holoscan::TensorMap` values cannot be sent as metadata values between fragments (this restriction also applies to tensor-like Python objects). Any {ref}`custom codecs<object-serialization>` registered for the SDK will automatically also be available for serialization of metadata values.
 2. There is a practical size limit of several kilobytes in the amount of metadata that can be transmitted between fragments. This is because metadata is currently sent along with other entity header information in the UCX header, which has fixed size limit (the metadata is stored along with other header information within the size limit defined by the `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` {ref}`environment variable<holoscan-distributed-env>`).
 
 The above restrictions only apply to metadata sent **between** fragments. Within a fragment there is no size limit on metadata (aside from system memory limits) and no serialization or deserialization step is needed.

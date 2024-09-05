@@ -24,6 +24,7 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
 
 namespace holoscan {
@@ -58,7 +59,8 @@ UcxReceiver::UcxReceiver(const std::string& name, nvidia::gxf::Receiver* compone
 void UcxReceiver::setup(ComponentSpec& spec) {
   HOLOSCAN_LOG_DEBUG("UcxReceiver::setup");
   spec.param(capacity_, "capacity", "Capacity", "", 1UL);
-  spec.param(policy_, "policy", "Policy", "0: pop, 1: reject, 2: fault", 2UL);
+  auto default_policy = holoscan::gxf::get_default_queue_policy();
+  spec.param(policy_, "policy", "Policy", "0: pop, 1: reject, 2: fault", default_policy);
   spec.param(address_, "address", "RX address", "RX address", std::string("0.0.0.0"));
   spec.param(port_, "port", "rx_port", "RX port", kDefaultUcxPort);
   spec.param(buffer_, "buffer", "Serialization Buffer", "");

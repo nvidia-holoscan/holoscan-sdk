@@ -393,7 +393,7 @@ class HolovizOp : public Operator {
    * {component format}_{numeric format}
    *
    * - component format
-   *   - indicates the size in bits of the R, G, B and A components if present
+   *   - indicates the size in bits of the R, G, B, A or Y, U, V components if present
    * - numeric format
    *   - UNORM - unsigned normalize values, range [0, 1]
    *   - SNORM - signed normalized values, range [-1,1]
@@ -403,6 +403,12 @@ class HolovizOp : public Operator {
    *   - SRGB - the R, G, and B components are unsigned normalized values that
    *            represent values using sRGB nonlinear encoding, while the A
    *            component (if one exists) is a regular unsigned normalized value
+   * - multi-planar formats
+   *   - 2PLANE - data is stored in two separate memory planes
+   *   - 3PLANE - data is stored in three separate memory planes
+   * - YUV formats
+   *   - 420 - the horizontal and vertical resolution of the chroma (UV) planes is halved
+   *   - 422 - the horizontal of the chroma (UV) planes is halved
    *
    * Note: this needs to match the viz::ImageFormat enum (except the AUTO_DETECT value).
    */
@@ -540,6 +546,88 @@ class HolovizOp : public Operator {
                            ///  and an 8-bit R component stored with sRGB nonlinear
                            ///  encoding in bits 0..7.
 
+    Y8U8Y8V8_422_UNORM,  ///< specifies a four-component, 32-bit format containing a pair of Y
+                         ///  components, a V component, and a U component, collectively encoding a
+                         ///  2×1 rectangle of unsigned normalized RGB texel data. One Y value is
+                         ///  present at each i coordinate, with the U and V values shared across
+                         ///  both Y values and thus recorded at half the horizontal resolution of
+                         ///  the image. This format has an 8-bit Y component for the even i
+                         ///  coordinate in byte 0, an 8-bit U component in byte 1, an 8-bit Y
+                         ///  component for the odd i coordinate in byte 2, and an 8-bit V component
+                         ///  in byte 3. This format only supports images with a width that is a
+                         ///  multiple of two.
+    U8Y8V8Y8_422_UNORM,  ///< specifies a four-component, 32-bit format containing a pair of Y
+                         ///  components, a V component, and a U component, collectively encoding a
+                         ///  2×1 rectangle of unsigned normalized RGB texel data. One Y value is
+                         ///  present at each i coordinate, with the U and V values shared across
+                         ///  both Y values and thus recorded at half the horizontal resolution of
+                         ///  the image. This format has an 8-bit U component in byte 0, an 8-bit Y
+                         ///  component for the even i coordinate in byte 1, an 8-bit V component in
+                         ///  byte 2, and an 8-bit Y component for the odd i coordinate in byte 3.
+                         ///  This format only supports images with a width that is a multiple of
+                         ///  two.
+    Y8_U8V8_2PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that has an
+                               ///  8-bit Y component in plane 0, and a two-component, 16-bit UV
+                               ///  plane 1 consisting of an 8-bit U component in byte 0 and an
+                               ///  8-bit V component in byte 1. The horizontal and vertical
+                               ///  dimensions of the UV plane are halved relative to the image
+                               ///  dimensions. This format only supports images with a width and
+                               ///  height that are a multiple of two.
+    Y8_U8V8_2PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that has an
+                               ///  8-bit Y component in plane 0, and a two-component, 16-bit UV
+                               ///  plane 1 consisting of an 8-bit U component in byte 0 and an
+                               ///  8-bit V component in byte 1. The horizontal dimension of the UV
+                               ///  plane is halved relative to the image dimensions. This format
+                               ///  only supports images with a width that is a multiple of two.
+    Y8_U8_V8_3PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that has
+                                ///< an
+                                ///  8-bit Y component in plane 0, an 8-bit U component in plane 1,
+                                ///  and an 8-bit V component in plane 2. The horizontal and
+                                ///  vertical dimensions of the V and U planes are halved relative
+                                ///  to the image dimensions. This format only supports images with
+                                ///  a width and height that are a multiple of two.
+    Y8_U8_V8_3PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that has
+                                ///< an
+                                ///  8-bit Y component in plane 0, an 8-bit U component in plane 1,
+                                ///  and an 8-bit V component in plane 2. The horizontal dimension
+                                ///  of the V and U plane is halved relative to the image
+                                ///  dimensions. This format only supports images with a width that
+                                ///  is a multiple of two.
+    Y16_U16V16_2PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that has
+                                  ///< a
+                                  ///  16-bit Y component in each 16-bit word of plane 0, and a
+                                  ///  two-component, 32-bit UV plane 1 consisting of a 16-bit U
+                                  ///  component in the word in bytes 0..1, and a 16-bit V component
+                                  ///  in the word in bytes 2..3. The horizontal and vertical
+                                  ///  dimensions of the UV plane are halved relative to the image
+                                  ///  dimensions. This format only supports images with a width and
+                                  ///  height that are a multiple of two.
+    Y16_U16V16_2PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that has
+                                  ///< a
+                                  ///  16-bit Y component in each 16-bit word of plane 0, and a
+                                  ///  two-component, 32-bit UV plane 1 consisting of a 16-bit U
+                                  ///  component in the word in bytes 0..1, and a 16-bit V component
+                                  ///  in the word in bytes 2..3. The horizontal dimension of the UV
+                                  ///  plane is halved relative to the image dimensions. This format
+                                  ///  only supports images with a width that is a multiple of two.
+    Y16_U16_V16_3PLANE_420_UNORM,  ///< specifies an unsigned normalized multi-planar format that
+                                   ///< has
+                                   ///  a 16-bit Y component in each 16-bit word of plane 0, a
+                                   ///  16-bit U component in each 16-bit word of plane 1, and a
+                                   ///  16-bit V component in each 16-bit word of plane 2. The
+                                   ///  horizontal and vertical dimensions of the V and U planes are
+                                   ///  halved relative to the image dimensions. This format only
+                                   ///  supports images with a width and height that are a multiple
+                                   ///  of two.
+    Y16_U16_V16_3PLANE_422_UNORM,  ///< specifies an unsigned normalized multi-planar format that
+                                   ///< has
+                                   ///  a 16-bit Y component in each 16-bit word of plane 0, a
+                                   ///  16-bit U component in each 16-bit word of plane 1, and a
+                                   ///  16-bit V component in each 16-bit word of plane 2. The
+                                   ///  horizontal dimension of the V and U plane is halved relative
+                                   ///  to the image dimensions. This format only supports images
+                                   ///  with a width that is a multiple of two.
+
     AUTO_DETECT = -1  ///< Auto detect the image format. If the input is a video buffer the format
                       ///  of the video buffer is used, if the input is a tensor then the format
                       ///  depends on the component count
@@ -547,6 +635,36 @@ class HolovizOp : public Operator {
                       ///   - three components : RGB image
                       ///   - four components : RGBA image
                       ///  and the component type.
+  };
+
+  /**
+   * Defines the conversion from the source color model to the shader color model.
+   */
+  enum class YuvModelConversion {
+    YUV_601,   ///< specifies the color model conversion from YUV to RGB defined in BT.601
+    YUV_709,   ///< specifies the color model conversion from YUV to RGB defined in BT.709
+    YUV_2020,  ///< specifies the color model conversion from YUV to RGB defined in BT.2020
+  };
+
+  /**
+   * Specifies the YUV range
+   */
+  enum class YuvRange {
+    ITU_FULL,    ///< specifies that the full range of the encoded values are valid and
+                 ///< interpreted according to the ITU “full range” quantization rules
+    ITU_NARROW,  ///< specifies that headroom and foot room are reserved in the numerical range
+                 ///< of encoded values, and the remaining values are expanded according to the
+                 ///< ITU “narrow range” quantization rules
+  };
+
+  /**
+   * Defines the location of downsampled chroma component samples relative to the luma samples.
+   */
+  enum class ChromaLocation {
+    COSITED_EVEN,  ///< specifies that downsampled chroma samples are aligned with luma samples with
+                   ///< even coordinates
+    MIDPOINT,  ///< specifies that downsampled chroma samples are located half way between each even
+               ///< luma sample and the nearest higher odd luma sample.
   };
 
   /**
@@ -589,9 +707,18 @@ class HolovizOp : public Operator {
         0;  ///< layer priority, determines the render order, layers with higher priority values are
             ///< rendered on top of layers with lower priority values
     ImageFormat image_format_ = ImageFormat::AUTO_DETECT;  ///< image format
-    std::vector<float> color_{1.f, 1.f, 1.f, 1.f};         ///< color of rendered geometry
-    float line_width_ = 1.f;         ///< line width for geometry made of lines
-    float point_size_ = 1.f;         ///< point size for geometry made of points
+    YuvModelConversion yuv_model_conversion_ =
+        YuvModelConversion::YUV_601;           ///< YUV model conversion
+    YuvRange yuv_range_ = YuvRange::ITU_FULL;  ///< YUV range
+    ChromaLocation x_chroma_location_ =
+        ChromaLocation::COSITED_EVEN;  ///< chroma location in x direction for formats which are
+                                       ///< chroma downsampled in width (420 and 422)
+    ChromaLocation y_chroma_location_ =
+        ChromaLocation::COSITED_EVEN;  ///< chroma location in y direction for formats which are
+                                       ///< chroma downsampled in height (420)
+    std::vector<float> color_{1.f, 1.f, 1.f, 1.f};  ///< color of rendered geometry
+    float line_width_ = 1.f;                        ///< line width for geometry made of lines
+    float point_size_ = 1.f;                        ///< point size for geometry made of points
     std::vector<std::string> text_;  ///< array of text strings, used when type_ is TEXT.
     DepthMapRenderMode depth_map_render_mode_ =
         DepthMapRenderMode::POINTS;  ///< depth map render mode, used if type_ is

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +39,20 @@ class MinimalOp : public Operator {
   HOLOSCAN_OPERATOR_FORWARD_ARGS(MinimalOp)
 
   MinimalOp() = default;
+
+  void initialize() override {
+    HOLOSCAN_LOG_INFO("MinimalOp::initialize() - default value before Operator::initialize(): {}",
+                      value_.default_value());
+    if (value_.has_value()) {
+      HOLOSCAN_LOG_INFO("MinimalOp::initialize() - has value before Operator::initialize(): {}",
+                        value_.get());
+    } else {
+      HOLOSCAN_LOG_INFO("MinimalOp::initialize() - has no value before Operator::initialize()");
+    }
+    Operator::initialize();
+    HOLOSCAN_LOG_INFO("MinimalOp::initialize() - value after Operator::initialize(): {}",
+                      value_.get());
+  }
 
   void setup(OperatorSpec& spec) override {
     spec.param(value_, "value", "value", "value stored by the operator", 2.5);
@@ -106,7 +120,26 @@ TEST(MinimalNativeOperatorApp, TestMinimalNativeOperatorApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("value: 5.3") != std::string::npos);
+
+  EXPECT_TRUE(
+      log_output.find("MinimalOp::initialize() - has no value before Operator::initialize()") !=
+      std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find(
+                  "MinimalOp::initialize() - default value before Operator::initialize(): 2.5") !=
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(
+      log_output.find("MinimalOp::initialize() - value after Operator::initialize(): 5.3") !=
+      std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+
+  EXPECT_TRUE(log_output.find("value: 5.3") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(MinimalNativeOperatorApp, TestMinimalNativeOperatorAppMultiThread) {
@@ -134,13 +167,23 @@ TEST(MinimalNativeOperatorApp, TestMinimalNativeOperatorAppMultiThread) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("value: 5.3") != std::string::npos);
+  EXPECT_TRUE(log_output.find("value: 5.3") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   // check that the expected parameters were sent onto GXF
-  EXPECT_TRUE(log_output.find("setting GXF parameter 'worker_thread_number'") != std::string::npos);
-  EXPECT_TRUE(log_output.find("setting GXF parameter 'stop_on_deadlock'") != std::string::npos);
+  EXPECT_TRUE(log_output.find("setting GXF parameter 'worker_thread_number'") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("setting GXF parameter 'stop_on_deadlock'") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("setting GXF parameter 'check_recession_period_ms'") !=
-              std::string::npos);
-  EXPECT_TRUE(log_output.find("setting GXF parameter 'max_duration_ms'") != std::string::npos);
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("setting GXF parameter 'max_duration_ms'") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 
   // restore the original environment variable
   if (env_orig) {
@@ -198,7 +241,9 @@ TEST(MinimalNativeOperatorApp, TestComplexValueApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("value: 5.3+2j") != std::string::npos);
+  EXPECT_TRUE(log_output.find("value: 5.3+2j") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(MinimalNativeOperatorApp, TestComplexValueAppDefault) {
@@ -211,7 +256,9 @@ TEST(MinimalNativeOperatorApp, TestComplexValueAppDefault) {
 
   // did not provide a config file, so the default value will have been used
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("value: 2.5-3j") != std::string::npos);
+  EXPECT_TRUE(log_output.find("value: 2.5-3j") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

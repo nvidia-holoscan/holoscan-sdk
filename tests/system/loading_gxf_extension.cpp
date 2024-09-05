@@ -91,8 +91,8 @@ TEST(Extensions, LoadInsideComposeMethod) {
     pos = log_output.find("Hello world", pos + 1);
   }
   EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << ".\nLog output:\n"
-                       << log_output;
+                       << count << "\n=== LOG ===\n"
+                       << log_output << "\n===========\n";
 }
 
 TEST(Extensions, LoadOutsideApp) {
@@ -118,8 +118,8 @@ TEST(Extensions, LoadOutsideApp) {
     pos = log_output.find("Hello world", pos + 1);
   }
   EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << ".\nLog output:\n"
-                       << log_output;
+                       << count << "\n=== LOG ===\n"
+                       << log_output << "\n===========\n";
 }
 
 TEST(Extensions, LoadFromConfigFile) {
@@ -142,8 +142,8 @@ TEST(Extensions, LoadFromConfigFile) {
     pos = log_output.find("Hello world", pos + 1);
   }
   EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << ".\nLog output:\n"
-                       << log_output;
+                       << count << "\n=== LOG ===\n"
+                       << log_output << "\n===========\n";
 }
 
 TEST(Extensions, LoadFromConfigFileAfterAccessingExecutor) {
@@ -168,8 +168,8 @@ TEST(Extensions, LoadFromConfigFileAfterAccessingExecutor) {
     pos = log_output.find("Hello world", pos + 1);
   }
   EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << ".\nLog output:\n"
-                       << log_output;
+                       << count << "\n=== LOG ===\n"
+                       << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

@@ -18,6 +18,8 @@ The operators below are defined under the `holoscan::ops` namespace for C++ and 
 | **InferenceOp** | `inference` | {cpp:class}`C++ <holoscan::ops::InferenceOp>`/{py:class}`Python <holoscan.operators.InferenceOp>` |
 | **InferenceProcessorOp** | `inference_processor` | {cpp:class}`C++ <holoscan::ops::InferenceProcessorOp>`/{py:class}`Python <holoscan.operators.InferenceProcessorOp>` |
 | **PingRxOp** | `ping_rx` | {cpp:class}`C++ <holoscan::ops::PingRxOp>`/{py:class}`Python <holoscan.operators.PingRxOp>` |
+| **PingTensorRxOp** | `ping_tensor_rx` | {cpp:class}`C++ <holoscan::ops::PingTensorRxOp>`/{py:class}`Python <holoscan.operators.PingTensorRxOp>` |
+| **PingTensorTxOp** | `ping_tensor_tx` | {cpp:class}`C++ <holoscan::ops::PingTensorTxOp>`/{py:class}`Python <holoscan.operators.PingTensorTxOp>` |
 | **PingTxOp** | `ping_tx` | {cpp:class}`C++ <holoscan::ops::PingTxOp>`/{py:class}`Python <holoscan.operators.PingTxOp>` |
 | **SegmentationPostprocessorOp** | `segmentation_postprocessor` | {cpp:class}`C++ <holoscan::ops::SegmentationPostprocessorOp>`/{py:class}`Python <holoscan.operators.SegmentationPostprocessorOp>` |
 | **VideoStreamRecorderOp** | `video_stream_recorder` | {cpp:class}`C++ <holoscan::ops::VideoStreamRecorderOp>`/{py:class}`Python <holoscan.operators.VideoStreamRecorderOp>` |

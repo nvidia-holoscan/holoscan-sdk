@@ -86,6 +86,7 @@ void TestBase::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
 
   uint32_t channels;
   uint32_t component_size;
+  uint32_t elements;
   switch (format) {
     case viz::ImageFormat::R8_UINT:
     case viz::ImageFormat::R8_SINT:
@@ -276,7 +277,7 @@ static std::string BuildFileName(const std::string& end) {
   return file_name;
 }
 
-bool TestBase::CompareColorResult() {
+bool TestBase::CompareColorResult(uint8_t absolute_error) {
   const uint32_t components = color_data_.size() / (width_ * height_);
   if ((components != 1) && (components != 3) && (components != 4)) {
     EXPECT_TRUE(false) << "Can compare R8_UNORM, R8G8B8_UNORM or R8G8B8A8_UNORM data only";
@@ -290,7 +291,7 @@ bool TestBase::CompareColorResult() {
     bool different = false;
     for (uint32_t component = 0; component < components; ++component) {
       different |= std::abs(color_data_[index * components + component] -
-                            color_data[index * 4 + component]) > 1;
+                            color_data[index * 4 + component]) > absolute_error;
     }
     if (different) {
       const std::string ref_file_name = BuildFileName("color_ref");

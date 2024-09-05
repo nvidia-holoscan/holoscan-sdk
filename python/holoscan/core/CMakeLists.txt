@@ -30,6 +30,7 @@ holoscan_pybind11_module(
     io_context.cpp
     io_spec.cpp
     kwarg_handling.cpp
+    metadata.cpp
     network_context.cpp
     operator.cpp
     resource.cpp

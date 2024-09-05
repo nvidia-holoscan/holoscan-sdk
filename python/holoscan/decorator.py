@@ -432,7 +432,7 @@ def create_op(
 
                 def compute(self, op_input, op_output, context):
                     for port_name, arg_map in self.input_mappings.items():
-                        print(f"input {port_name=}, {arg_map=}")
+                        # print(f"input {port_name=}, {arg_map=}")
                         msg = op_input.receive(port_name)
                         if isinstance(arg_map, str):
                             # print(f"{msg=}")

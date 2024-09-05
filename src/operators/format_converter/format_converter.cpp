@@ -32,20 +32,7 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-
-#define CUDA_TRY(stmt)                                                                          \
-  ({                                                                                            \
-    cudaError_t _holoscan_cuda_err = stmt;                                                      \
-    if (cudaSuccess != _holoscan_cuda_err) {                                                    \
-      HOLOSCAN_LOG_ERROR("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).\n", \
-                         #stmt,                                                                 \
-                         __LINE__,                                                              \
-                         __FILE__,                                                              \
-                         cudaGetErrorString(_holoscan_cuda_err),                                \
-                         _holoscan_cuda_err);                                                   \
-    }                                                                                           \
-    _holoscan_cuda_err;                                                                         \
-  })
+#include "holoscan/utils/cuda_macros.hpp"
 
 namespace {
 
@@ -348,10 +335,10 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
               fmt::format("Failed to allocate device scratch buffer ({} bytes)", buffer_size));
         }
       }
-      CUDA_TRY(cudaMemcpy(device_scratch_buffer_->pointer(),
-                          frame->pointer(),
-                          buffer_size,
-                          cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL(cudaMemcpy(device_scratch_buffer_->pointer(),
+                                    frame->pointer(),
+                                    buffer_size,
+                                    cudaMemcpyHostToDevice));
       in_tensor_data = device_scratch_buffer_->pointer();
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
     }
@@ -418,10 +405,10 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
         }
       }
 
-      CUDA_TRY(cudaMemcpy(static_cast<void*>(device_scratch_buffer_->pointer()),
-                          static_cast<const void*>(in_tensor_gxf.pointer()),
-                          buffer_size,
-                          cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL(cudaMemcpy(static_cast<void*>(device_scratch_buffer_->pointer()),
+                                    static_cast<const void*>(in_tensor_gxf.pointer()),
+                                    buffer_size,
+                                    cudaMemcpyHostToDevice));
       in_tensor_data = device_scratch_buffer_->pointer();
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
     }
@@ -669,14 +656,15 @@ void FormatConverterOp::convertTensorFormat(
       const auto in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
       auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      cudaError_t cuda_status = CUDA_TRY(cudaMemcpy2DAsync(out_tensor_ptr,
-                                                           dst_step,
-                                                           in_tensor_ptr,
-                                                           src_step,
-                                                           columns * out_channels * dst_typesize,
-                                                           rows,
-                                                           cudaMemcpyDeviceToDevice,
-                                                           npp_stream_ctx_.hStream));
+      cudaError_t cuda_status =
+          HOLOSCAN_CUDA_CALL(cudaMemcpy2DAsync(out_tensor_ptr,
+                                               dst_step,
+                                               in_tensor_ptr,
+                                               src_step,
+                                               columns * out_channels * dst_typesize,
+                                               rows,
+                                               cudaMemcpyDeviceToDevice,
+                                               npp_stream_ctx_.hStream));
       if (cuda_status) { throw std::runtime_error("Failed to copy GPU data to GPU memory."); }
       status = NPP_SUCCESS;
       break;

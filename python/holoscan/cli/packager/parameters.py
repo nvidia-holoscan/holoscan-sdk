@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import logging
@@ -35,6 +35,8 @@ class PlatformParameters:
         self._platform: Platform = platform
         self._platform_config: PlatformConfiguration = platform_config
         self._arch: Arch = SDK.PLATFORM_MAPPINGS[platform]
+        self._tag_prefix: Optional[str]
+        self._version: Optional[str]
 
         (self._tag_prefix, self._version) = parse_docker_image_name_and_tag(tag)
 
@@ -55,6 +57,9 @@ class PlatformParameters:
         self._data["custom_base_image"] = False
         self._data["custom_holoscan_sdk"] = False
         self._data["custom_monai_deploy_sdk"] = False
+        self._data["target_arch"] = "aarch64" if self._arch == Arch.arm64 else "x86_64"
+        self._data["cuda_deb_arch"] = "sbsa" if self._arch == Arch.arm64 else "x86_64"
+        self._data["holoscan_deb_arch"] = "arm64" if self._arch == Arch.arm64 else "amd64"
 
     @property
     def tag(self) -> str:
@@ -119,8 +124,8 @@ class PlatformParameters:
         self._data["holoscan_sdk_file"] = value
         if value is not None and hasattr(value, "name"):
             self._data["holoscan_sdk_filename"] = value.name
-        elif value == Constants.PYPI_INSTALL_SOURCE:
-            self._data["holoscan_sdk_filename"] = Constants.PYPI_INSTALL_SOURCE
+        elif value is not None:
+            self._data["holoscan_sdk_filename"] = value
 
     @property
     def monai_deploy_sdk_file(self) -> Optional[Path]:
@@ -131,8 +136,6 @@ class PlatformParameters:
         self._data["monai_deploy_sdk_file"] = value
         if value is not None and hasattr(value, "name"):
             self._data["monai_deploy_sdk_filename"] = value.name
-        elif value == Constants.PYPI_INSTALL_SOURCE:
-            self._data["monai_deploy_sdk_filename"] = Constants.PYPI_INSTALL_SOURCE
 
     @property
     def version(self) -> str:
@@ -143,7 +146,7 @@ class PlatformParameters:
         return self._data.get("health_probe", None)
 
     @health_probe.setter
-    def health_probe(self, value: Path):
+    def health_probe(self, value: Optional[Path]):
         self._data["health_probe"] = value
 
     @property
@@ -163,7 +166,7 @@ class PlatformParameters:
         return self._platform_config
 
     @property
-    def to_jina(self) -> Dict[str, Any]:
+    def to_jinja(self) -> Dict[str, Any]:
         return self._data
 
     @property
@@ -172,41 +175,53 @@ class PlatformParameters:
             platform.machine() == "x86_64" and self._arch == Arch.amd64
         )
 
+    @property
+    def cuda_deb_arch(self) -> str:
+        return self._data["cuda_deb_arch"]
+
+    @property
+    def holoscan_deb_arch(self) -> str:
+        return self._data["holoscan_deb_arch"]
+
+    @property
+    def target_arch(self) -> str:
+        return self._data["target_arch"]
+
 
 class PlatformBuildResults:
     def __init__(self, parameters: PlatformParameters):
         self._parameters = parameters
-        self._docker_tag = None
-        self._tarball_filenaem = None
+        self._docker_tag: Optional[str] = None
+        self._tarball_filenaem: Optional[str] = None
         self._succeeded = False
-        self._error = None
+        self._error: Optional[str] = None
 
     @property
     def parameters(self) -> PlatformParameters:
         return self._parameters
 
     @property
-    def error(self) -> Exception:
+    def error(self) -> Optional[str]:
         return self._error
 
     @error.setter
-    def error(self, value: Exception):
+    def error(self, value: Optional[str]):
         self._error = value
 
     @property
-    def docker_tag(self) -> str:
+    def docker_tag(self) -> Optional[str]:
         return self._docker_tag
 
     @docker_tag.setter
-    def docker_tag(self, value: str):
+    def docker_tag(self, value: Optional[str]):
         self._docker_tag = value
 
     @property
-    def tarball_filenaem(self) -> str:
+    def tarball_filenaem(self) -> Optional[str]:
         return self._tarball_filenaem
 
     @tarball_filenaem.setter
-    def tarball_filenaem(self, value: str):
+    def tarball_filenaem(self, value: Optional[str]):
         self._tarball_filenaem = value
 
     @property
@@ -232,8 +247,6 @@ class PackageBuildParameters:
         self._data["logs_dir"] = DefaultValues.HOLOSCAN_LOGS_DIR
         self._data["full_input_path"] = DefaultValues.WORK_DIR / DefaultValues.INPUT_DIR
         self._data["full_output_path"] = DefaultValues.WORK_DIR / DefaultValues.OUTPUT_DIR
-        self._data["cuda_deb_arch"] = "sbsa" if platform.processor() == "aarch64" else "x86_64"
-        self._data["holoscan_deb_arch"] = "arm64" if platform.processor() == "aarch64" else "amd64"
         self._data["input_dir"] = DefaultValues.INPUT_DIR
         self._data["models_dir"] = DefaultValues.MODELS_DIR
         self._data["output_dir"] = DefaultValues.OUTPUT_DIR
@@ -247,10 +260,12 @@ class PackageBuildParameters:
         self._data["gid"] = os.getgid()
         self._data["tarball_output"] = None
         self._data["cmake_args"] = ""
+        self._data["includes"] = []
 
         self._data["application_directory"] = None
         self._data["application_type"] = None
         self._data["application"] = None
+        self._data["app_config_file_path"] = None
         self._data["command"] = None
         self._data["no_cache"] = False
         self._data["pip_packages"] = None
@@ -267,14 +282,6 @@ class PackageBuildParameters:
     @build_cache.setter
     def build_cache(self, value: int):
         self._data["build_cache"] = value
-
-    @property
-    def cuda_deb_arch(self) -> str:
-        return self._data["cuda_deb_arch"]
-
-    @property
-    def holoscan_deb_arch(self) -> str:
-        return self._data["holoscan_deb_arch"]
 
     @property
     def full_input_path(self) -> str:
@@ -387,6 +394,14 @@ class PackageBuildParameters:
         return self._data["config_file_path"]
 
     @property
+    def app_config_file_path(self):
+        return self._data["app_config_file_path"]
+
+    @app_config_file_path.setter
+    def app_config_file_path(self, value):
+        self._data["app_config_file_path"] = value
+
+    @property
     def app_dir(self):
         return self._data["app_dir"]
 
@@ -496,7 +511,15 @@ class PackageBuildParameters:
         self._data["monai_deploy_app_sdk_version"] = value
 
     @property
-    def to_jina(self) -> Dict[str, Any]:
+    def includes(self) -> str:
+        return self._data["includes"]
+
+    @includes.setter
+    def includes(self, value: str):
+        self._data["includes"] = value
+
+    @property
+    def to_jinja(self) -> Dict[str, Any]:
         return self._data
 
     def _detect_application_type(self) -> ApplicationType:

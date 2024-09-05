@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -267,7 +267,9 @@ TEST(Graphs, CycleWithSource) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, BroadcastInCycle) {
@@ -279,7 +281,9 @@ TEST(Graphs, BroadcastInCycle) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, BroadcastAndRxInCycle) {
@@ -291,8 +295,12 @@ TEST(Graphs, BroadcastAndRxInCycle) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos);
-  EXPECT_TRUE(log_output.find("OneInOp count 10") != std::string::npos);
+  EXPECT_TRUE(log_output.find("OneInOneOut count 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("OneInOp count 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Graphs, TestHasCycleForCycleWithSource) {

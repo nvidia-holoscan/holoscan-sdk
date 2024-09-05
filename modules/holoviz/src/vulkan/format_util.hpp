@@ -27,12 +27,54 @@
 
 namespace holoscan::viz {
 
-void format_info(ImageFormat format, uint32_t* src_channels, uint32_t* dst_channels,
-                 uint32_t* component_size);
+/**
+ * Get information on a format
+ *
+ * @param format format to get information from
+ * @param channels format channels
+ * @param hw_channels channels when used by Vulkan (different from `channels` for RGB8 formats)
+ * @param component_size size in bytes of one component
+ * @param width_divisor width divisor for multi-planar formats
+ * @param height_divisor height divisor for multi-planar formats
+ * @param plane image plane for multi-planar formats
+ */
+void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
+                 uint32_t* component_size, uint32_t* width_divisor = nullptr,
+                 uint32_t* height_divisor = nullptr, uint32_t plane = 0);
+
+/**
+ * Convert a ImageFormat enum to a Vulkan format enum
+ *
+ * @param format ImageFormat enum
+ * @return vk::Format Vulkan format enum
+ */
 vk::Format to_vulkan_format(ImageFormat format);
+
+/**
+ * Convert a Vulkan format enum to a ImageFormat enum. If there is no matching ImageFormat then
+ * the return value will not be valid.
+ *
+ * @param vk_format Vulkan format enum
+ * @return std::optional<ImageFormat> ImageFormat enum
+ */
 std::optional<ImageFormat> to_image_format(vk::Format vk_format);
 
+/**
+ * Convert a ColorSpace enum to a Vulkan color space enum
+ *
+ * @param color_space ColorSpace enum
+ * @return vk::ColorSpaceKHR Vulkan color space enum
+ */
 vk::ColorSpaceKHR to_vulkan_color_space(ColorSpace color_space);
+
+/// @return true if fmt is a depth format
+bool is_depth_format(ImageFormat fmt);
+
+/// @return true if fmt is a ycpcr format
+bool is_yuv_format(ImageFormat fmt);
+
+/// @return true if fmt is multi-planar
+bool is_multi_planar_format(ImageFormat fmt);
 
 }  // namespace holoscan::viz
 

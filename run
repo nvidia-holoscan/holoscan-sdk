@@ -36,6 +36,7 @@ init_globals() {
     # Options
     export DO_DRY_RUN="false"  # print commands but do not execute them. Used by run_command
     export DO_STANDALONE="false"  # do not run prerequisite functions
+    export NO_CACHE="" # by default, use cache
 
     # Define default img and dir names
     export SDK_BUILD_IMG="holoscan-sdk-build"
@@ -453,6 +454,7 @@ build_image() {
         --build-arg GPU_TYPE=${GPU} \
         --platform $(get_platform_str) \
         --network=host \
+        ${NO_CACHE} \
         ${docker_tags} \
         ${extra_args} \
         ${TOP}
@@ -714,6 +716,7 @@ build_run_image() {
         --platform $(get_platform_str) \
         --network=host \
         --target ${stage} \
+        ${NO_CACHE} \
         ${docker_tags} \
         ${extra_args[@]} \
         -f ${TOP}/runtime_docker/Dockerfile \
@@ -1134,7 +1137,7 @@ vscode() {
     local i
     local arg
     for i in "${!args[@]}"; do
-        if [ "$arg" = "--parallel" ]; then
+        if [ "${args[i]}" = "--parallel" ]; then
            build_njobs="${args[i+1]}"
         fi
     done
@@ -1241,6 +1244,7 @@ build_docs_builder() {
         --network=host \
         --target "docs-base" \
         -t ${DOCS_BASE_IMG} \
+        ${NO_CACHE} \
         ${extra_args} \
         ${TOP}/${DOCS_SRC_DIR}
 }
@@ -1265,6 +1269,7 @@ run_html_builder() {
         --target "docs-html" \
         --build-arg BASE_IMAGE=${current_build_img} \
         -t ${DOCS_HTML_IMG} \
+        ${NO_CACHE} \
         ${TOP}/${DOCS_SRC_DIR}
 
     # Run HTML generation with sphynx. We need nvidia runtime and the SDK mounted and pythonpath
@@ -1363,6 +1368,7 @@ build_pdf() {
         --network=host \
         --target "docs-pdf" \
         -t ${DOCS_PDF_IMG} \
+        ${NO_CACHE} \
         ${extra_args} \
         ${TOP}/${DOCS_SRC_DIR}
 
@@ -1652,6 +1658,7 @@ get_list_of_global_flags() {
     --help, -h                  : Print help messages for [command]
     --dryrun                    : Print commands to screen without running
     --standalone, -s            : Do not run prerequisite steps for build-related commands
+    --no-cache, -n              : Do not use cache when building docker images
     --arch, -a [amd64 | arm64]  : Specify the platform (for cross-compilation)
         Default: current host architecture ($(get_host_arch))
         Associated environment variable: HOLOSCAN_BUILD_ARCH
@@ -1713,6 +1720,10 @@ main() {
         ;;
         -s|--standalone)
             DO_STANDALONE="true"
+            shift
+        ;;
+        -n|--no-cache)
+            NO_CACHE="--no-cache"
             shift
         ;;
         -a|--arch)

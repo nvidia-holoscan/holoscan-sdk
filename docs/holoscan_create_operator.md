@@ -53,6 +53,10 @@ Typically, the `start()` and the `stop()` functions are only called once during 
     compute -> stop
 ```
 
+:::{warning}
+If Python bindings are going to be created for this C++ operator, it is recommended to put any cleanup of resources allocated in the `initialize()` and/or `start()` methods into the `stop()` method of the operator and **not** in its destructor. This is necessary as a workaround to a current issue where it is not guaranteed that the destructor always gets called prior to Python application termination. The `stop()` method will always be explicitly called, so we can be assured that any cleanup happens as expected.
+:::
+
 We can override the default behavior of the operator by implementing the above methods. The following example shows how to implement a custom operator that overrides start, stop and compute methods.
 
 
@@ -255,6 +259,42 @@ emitted or received. For large objects such as tensors it may be preferable from
 standpoint to transmit a shared pointer to the object rather than making a copy. When shared
 pointers are used and the same tensor is sent to more than one downstream operator, one should
 avoid in-place operations on the tensor or race conditions between operators may occur.
+
+
+If you need to configure arguments or perform other setup tasks before or after the operator is initialized, you can override the `initialize()` method. This method is called once before the `start()` method.
+
+Example:
+
+```cpp
+  void initialize() override {
+    // Register custom type and codec for serialization
+    register_converter<std::array<float, 3>>();
+    register_codec<std::vector<InputSpec>>("std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
+
+    // Set up prerequisite parameters before calling Operator::initialize()
+    auto frag = fragment();
+
+    // Check if an argument for 'allocator' exists
+    auto has_allocator = std::find_if(
+        args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "allocator"); });
+    // Create the allocator if no argument is provided
+    if (has_allocator == args().end()) {
+      allocator_ = frag->make_resource<UnboundedAllocator>("allocator");
+      add_arg(allocator_.get());
+    }
+
+    // Call the parent class's initialize() method to complete the initialization.
+    // Operator::initialize must occur after all arguments have been added.
+    Operator::initialize();
+
+    // After Operator::initialize(), the operator is ready for use and the parameters are set
+    int multiplier = multiplier_;
+    HOLOSCAN_LOG_INFO("Multiplier: {}", multiplier);
+  }
+```
+
+For details on the `register_converter()` and `register_codec()` methods, refer to {cpp:func}`holoscan::Operator::register_converter` for the custom parameter type and the section on {ref}`object serialization<object-serialization>` for distributed applications.
+
 
 (specifying-operator-parameters-cpp)=
 
@@ -631,7 +671,7 @@ spec:
 :::
 
 
-##### Configuring input port queue size and message batch condition
+##### Configuring input port queue size and message batch condition (C++)
 
 If you want to receive multiple objects on a port and process them in batches, you can increase the queue size of the input port and set the `min_size` parameter of the `MessageAvailableCondition` condition to the desired batch size. This can be done by calling the `connector()` and `condition()` methods with the desired arguments, using the batch size as the `capacity` and `min_size` parameters, respectively.
 
@@ -1242,10 +1282,21 @@ class MyOp(Operator):
 ```
 #### `setup()` method vs `initialize()` vs `__init__()`
 
-The {py:class}`~holoscan.core.Operator.setup` method aims to get the "operator's spec" by providing {py:class}`~holoscan.core.OperatorSpec` object as a spec param. When {py:class}`~holoscan.core.Operator.__init__`  is called, it calls C++'s {cpp:func}`Operator::spec <holoscan::Operator::spec>` method (and also sets {py:class}`self.spec <holoscan.core.Operator.spec>` class member), and calls {py:class}`setup <holoscan.core.Operator.setup>` method so that Operator's {py:class}`~holoscan.core.Operator.spec` property holds the operator's specification. (See the [source code](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/core/__init__.py#:~:text=class%20Operator) for more details.)
+The {py:meth}`~holoscan.core.Operator.setup` method aims to get the "operator's spec" by providing a {py:class}`~holoscan.core.OperatorSpec` object as a spec param. When {py:meth}`~holoscan.core.Operator.__init__` is called, it calls C++'s {cpp:func}`Operator::spec <holoscan::Operator::spec>` method (and also sets the {py:attr}`self.spec <holoscan.core.Operator.spec>` class member) and calls the {py:meth}`setup <holoscan.core.Operator.setup>` method so that the Operator's {py:attr}`~holoscan.core.Operator.spec` property holds the operator's specification. (See the [source code](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/core/__init__.py#:~:text=class%20Operator) for more details.)
 
-Since the {py:class}`~holoscan.core.Operator.setup` method can be called multiple times with other {py:class}`~holoscan.core.OperatorSpec` object (e.g., to enumerate the operator's description), in the {py:class}`~holoscan.core.Operator.setup` method, a user shouldn't initialize something in the {py:class}`~holoscan.core.Operator` object. Such initialization needs to be done in {py:class}`~holoscan.core.Operator.initialize` method. The {py:class}`~holoscan.core.Operator.__init__` method is for creating the Operator object and it can be used for initializing the operator object itself by passing miscellaneous arguments. Still, it doesn't 'initialize' the corresponding GXF entity object.
 
+Since the {py:meth}`~holoscan.core.Operator.setup` method can be called multiple times with other {py:class}`~holoscan.core.OperatorSpec` objects (e.g., to enumerate the operator's description), in the {py:meth}`~holoscan.core.Operator.setup` method, a user shouldn't initialize something.
+Such initialization needs to be done by overriding the {py:meth}`~holoscan.core.Operator.initialize` method.
+
+```python
+    def initialize(self):
+        pass
+```
+
+The {py:meth}`~holoscan.core.Operator.__init__` method is for creating the Operator object and can be used to initialize the operator object itself by passing various arguments.
+Note that it doesn't initialize the corresponding GXF entity object. The underlying GXF entity object is initialized when the operator is scheduled for execution.
+
+Please do not forget to call the base class constructor (`super().__init__(fragment, *args, **kwargs)`) at the end of the `__init__` method.
 
 #### Creating a custom operator (Python)
 
@@ -1459,13 +1510,15 @@ def __init__(self, fragment, *args, width=4, unit_area=False, **kwargs):
 ```
 
 :::{note}
-As an alternative closer to C++, these parameters can be added through the {py:class}`~holoscan.core.OperatorSpec` attribute of the operator in its {py:func}`~holoscan.core.Operator.setup` method, where an associated string key must be provided as well as a default value:
+As an alternative closer to C++, these parameters can be added through the {py:class}`~holoscan.core.OperatorSpec` attribute of the operator in its {py:func}`~holoscan.core.Operator.setup` method, where an associated string key must be provided as well as a default value.
 
 ```py
 def setup(self, spec: OperatorSpec):
     spec.param("width", 4)
     spec.param("unit_area", False)
 ```
+
+The parameters can then be accessed on the `self` object in the operator's methods (including `initialize()`, `start()`, `compute()`, `stop()`) as `self.width` and `self.unit_area`.
 
 Other `kwargs` properties can also be passed to `spec.param`, such as `headline`, `description` (used by GXF applications), or `kind` (used when {ref}`retrieving-any-number-of-inputs-python`, which is deprecated since v2.3.0).
 :::
@@ -1672,7 +1725,7 @@ spec:
 :::
 
 
-##### Configuring input port queue size and message batch condition
+##### Configuring input port queue size and message batch condition (Python)
 
 If you want to receive multiple objects on a port and process them in batches, you can increase the queue size of the input port and set the `min_size` parameter of the `MessageAvailableCondition` condition to the desired batch size. This can be done by calling the `connector()` and `condition()` methods with the desired arguments, using the batch size as the `capacity` and `min_size` parameters, respectively.
 
@@ -1901,10 +1954,16 @@ This section complements the information above on basic input and output port co
 
 By default, both the input and output ports of an Operator will use a double-buffered queue that has a capacity of one message and a policy that is set to error if a message arrives while the queue is already full. A single `MessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::MessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.MessageAvailableCondition>`)) condition is automatically placed on the operator for each input port so that the `compute` method will not be called until a single message is available at each port. Similarly each output port has a `DownstreamMessageAffordableCondition` ({cpp:class}`C++ <holoscan::gxf::DownstreamMessageAffordableCondition>`/{py:class}`Python <holoscan.conditions.DownstreamMessageAffordableCondition>`) condition that does not let the operator call `compute` until any operators connected downstream have space in their receiver queue for a single message. These default conditions ensure that messages never arrive at a queue when it is already full and that a message has already been received whenever the `compute` method is called. These default conditions make it relatively easy to connect a pipeline where each operator calls compute in turn, but may not be suitable for all applications. This section covers how the default behavior can be overridden on request.
 
+It is possible to modify the global default queue policy via the `HOLOSCAN_QUEUE_POLICY` environment variable. Valid options (case insensitive) are:
+  - "pop": a new item that arrives when the queue is full replaces the oldest item
+  - "reject": a new item that arrives when the queue is discarded
+  - "fail": terminate the application if a new item arrives when the queue is full
+
+The default behavior is "fail" when `HOLOSCAN_QUEUE_POLICY` is not specified. If an operator's `setup` method explicitly sets a receiver or transmitter via the `connector` ({cpp:func}`C++ <holoscan::IOSpec::connector>`/{py:func}`Python <holoscan.core.IOSpec.connector>`) method as describe below, that connector's policy will not be overridden by the default.
+
 :::{note}
 Overriding operator port properties is an advanced topic. Developers may want to skip this section until they come across a case where the default behavior is not sufficient for their application.
 :::
-
 
 To override the properties of the queue used for a given port, the `connector` ({cpp:func}`C++ <holoscan::IOSpec::connector>`/{py:func}`Python <holoscan.core.IOSpec.connector>`) method can be used as shown in the example below. This example also shows how the `condition` ({cpp:func}`C++ <holoscan::IOSpec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method can be used to change the condition type placed on the Operator by a port. In general, when an operator has multiple conditions, they are AND combined, so the conditions on **all** ports must be satisfied before an operator can call `compute`.
 

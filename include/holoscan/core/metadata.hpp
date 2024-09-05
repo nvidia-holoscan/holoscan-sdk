@@ -59,7 +59,7 @@ class MetadataDictionary {
   using ConstIterator = MapType::const_iterator;
 
   // Constructors
-  explicit MetadataDictionary(const MetadataPolicy& policy = MetadataPolicy::kUpdate)
+  explicit MetadataDictionary(const MetadataPolicy& policy = MetadataPolicy::kRaise)
       : dictionary_(std::make_shared<MapType>()), policy_(policy) {}
   MetadataDictionary(const MetadataDictionary&) = default;
   MetadataDictionary(MetadataDictionary&&) = default;
@@ -248,7 +248,8 @@ class MetadataDictionary {
   /// merge (move) the contents of other dictionary into this dictionary
   void merge(MetadataDictionary& other);
 
-  /// Insert items the other dictionary into this dictionary. Pre-existing values are not updated.
+  /// Insert items the other dictionary into this dictionary. Pre-existing values are not
+  /// updated.
   void insert(MetadataDictionary& other);
 
   /**

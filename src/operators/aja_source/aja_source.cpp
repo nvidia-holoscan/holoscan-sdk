@@ -49,6 +49,7 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   constexpr uint32_t kDefaultWidth = 1920;
   constexpr uint32_t kDefaultHeight = 1080;
   constexpr uint32_t kDefaultFramerate = 60;
+  constexpr bool kDefaultInterlaced = false;
   constexpr bool kDefaultRDMA = false;
   constexpr bool kDefaultEnableOverlay = false;
   constexpr bool kDefaultOverlayRDMA = false;
@@ -65,6 +66,7 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   spec.param(width_, "width", "Width", "Width of the stream.", kDefaultWidth);
   spec.param(height_, "height", "Height", "Height of the stream.", kDefaultHeight);
   spec.param(framerate_, "framerate", "Framerate", "Framerate of the stream.", kDefaultFramerate);
+  spec.param(interlaced_, "interlaced", "Interlaced", "Interlaced or not.", kDefaultInterlaced);
   spec.param(use_rdma_, "rdma", "RDMA", "Enable RDMA.", kDefaultRDMA);
   spec.param(
       enable_overlay_, "enable_overlay", "EnableOverlay", "Enable overlay.", kDefaultEnableOverlay);
@@ -88,15 +90,85 @@ void AJASourceOp::setup(OperatorSpec& spec) {
 }
 
 AJAStatus AJASourceOp::DetermineVideoFormat() {
-  if (width_ == 1920 && height_ == 1080 && framerate_ == 60) {
-    video_format_ = NTV2_FORMAT_1080p_6000_A;
-  } else if (width_ == 3840 && height_ == 2160 && framerate_ == 60) {
-    video_format_ = NTV2_FORMAT_3840x2160p_6000;
+  video_format_ = NTV2_FORMAT_UNKNOWN;
+
+  if (interlaced_) {
+    if (width_ == 1920 && height_ == 1080) {
+      if (framerate_ == 50) {
+        video_format_ = NTV2_FORMAT_1080i_5000;
+      } else if (framerate_ == 59) {
+        video_format_ = NTV2_FORMAT_1080i_5994;
+      } else if (framerate_ == 60) {
+        video_format_ = NTV2_FORMAT_1080i_6000;
+      }
+    }
   } else {
-    return AJA_STATUS_UNSUPPORTED;
+    if (width_ == 1280 && height_ == 720) {
+      if (framerate_ == 50) {
+        video_format_ = NTV2_FORMAT_720p_5000;
+      } else if (framerate_ == 59) {
+        video_format_ = NTV2_FORMAT_720p_5994;
+      } else if (framerate_ == 60) {
+        video_format_ = NTV2_FORMAT_720p_6000;
+      }
+    } else if (width_ == 1920 && height_ == 1080) {
+      if (framerate_ == 23) {
+        video_format_ = NTV2_FORMAT_1080p_2398;
+      } else if (framerate_ == 24) {
+        video_format_ = NTV2_FORMAT_1080p_2400;
+      } else if (framerate_ == 25) {
+        video_format_ = NTV2_FORMAT_1080p_2500;
+      } else if (framerate_ == 29) {
+        video_format_ = NTV2_FORMAT_1080p_2997;
+      } else if (framerate_ == 30) {
+        video_format_ = NTV2_FORMAT_1080p_3000;
+      } else if (framerate_ == 50) {
+        video_format_ = NTV2_FORMAT_1080p_5000_A;
+      } else if (framerate_ == 59) {
+        video_format_ = NTV2_FORMAT_1080p_5994_A;
+      } else if (framerate_ == 60) {
+        video_format_ = NTV2_FORMAT_1080p_6000_A;
+      }
+    } else if (width_ == 3840 && height_ == 2160) {
+      if (framerate_ == 23) {
+        video_format_ = NTV2_FORMAT_3840x2160p_2398;
+      } else if (framerate_ == 24) {
+        video_format_ = NTV2_FORMAT_3840x2160p_2400;
+      } else if (framerate_ == 25) {
+        video_format_ = NTV2_FORMAT_3840x2160p_2500;
+      } else if (framerate_ == 29) {
+        video_format_ = NTV2_FORMAT_3840x2160p_2997;
+      } else if (framerate_ == 30) {
+        video_format_ = NTV2_FORMAT_3840x2160p_3000;
+      } else if (framerate_ == 50) {
+        video_format_ = NTV2_FORMAT_3840x2160p_5000;
+      } else if (framerate_ == 59) {
+        video_format_ = NTV2_FORMAT_3840x2160p_5994;
+      } else if (framerate_ == 60) {
+        video_format_ = NTV2_FORMAT_3840x2160p_6000;
+      }
+    } else if (width_ == 4096 && height_ == 2160) {
+      if (framerate_ == 23) {
+        video_format_ = NTV2_FORMAT_4096x2160p_2398;
+      } else if (framerate_ == 24) {
+        video_format_ = NTV2_FORMAT_4096x2160p_2400;
+      } else if (framerate_ == 25) {
+        video_format_ = NTV2_FORMAT_4096x2160p_2500;
+      } else if (framerate_ == 29) {
+        video_format_ = NTV2_FORMAT_4096x2160p_2997;
+      } else if (framerate_ == 30) {
+        video_format_ = NTV2_FORMAT_4096x2160p_3000;
+      } else if (framerate_ == 50) {
+        video_format_ = NTV2_FORMAT_4096x2160p_5000;
+      } else if (framerate_ == 59) {
+        video_format_ = NTV2_FORMAT_4096x2160p_5994;
+      } else if (framerate_ == 60) {
+        video_format_ = NTV2_FORMAT_4096x2160p_6000;
+      }
+    }
   }
 
-  return AJA_STATUS_SUCCESS;
+  return (video_format_ == NTV2_FORMAT_UNKNOWN) ? AJA_STATUS_UNSUPPORTED : AJA_STATUS_SUCCESS;
 }
 
 AJAStatus AJASourceOp::OpenDevice() {
@@ -383,7 +455,19 @@ void AJASourceOp::start() {
   cudaGetDeviceProperties(&prop, 0);
   is_igpu_ = prop.integrated;
 
-  HOLOSCAN_LOG_INFO("AJA Source: Capturing from NTV2_CHANNEL{}", (channel_.get() + 1));
+  float framerate;
+  if (framerate_ == 23) {
+    framerate = 23.98f;
+  } else if (framerate_ == 29) {
+    framerate = 29.97f;
+  } else if (framerate_ == 59) {
+    framerate = 59.94f;
+  } else {
+    framerate = framerate_;
+  }
+  HOLOSCAN_LOG_INFO("AJA Source: Capturing {}x{}@{}Hz {}from NTV2_CHANNEL{}",
+                    width_, height_, framerate, (interlaced_ ? "(interlaced) " : ""),
+                    (channel_.get() + 1));
   HOLOSCAN_LOG_INFO("AJA Source: RDMA is {}", use_rdma_ ? "enabled" : "disabled");
   if (enable_overlay_) {
     HOLOSCAN_LOG_INFO("AJA Source: Outputting overlay to NTV2_CHANNEL{}",
@@ -395,7 +479,7 @@ void AJASourceOp::start() {
 
   AJAStatus status = DetermineVideoFormat();
   if (AJA_FAILURE(status)) {
-    throw std::runtime_error("Video format could not be determined based on parameters.");
+    throw std::runtime_error("Video format could not be determined or is not supported.");
   }
 
   status = OpenDevice();
@@ -444,7 +528,7 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
   // Update the next input frame and wait until it starts.
   uint32_t next_hw_frame = (current_hw_frame_ + 1) % 2;
   device_.SetInputFrame(channel_, next_hw_frame);
-  device_.WaitForInputVerticalInterrupt(channel_);
+  device_.WaitForInputFieldID(NTV2_FIELD0, channel_);
 
   // Read the last completed frame.
   auto size = GetVideoWriteSize(video_format_, pixel_format_);

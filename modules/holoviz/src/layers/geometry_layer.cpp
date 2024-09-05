@@ -187,41 +187,24 @@ class GeometryLayer::Impl {
   std::list<class DepthMap> depth_maps_;
 
   // internal state
-  Vulkan* vulkan_ = nullptr;
-
   float aspect_ratio_ = 1.f;
 
   size_t vertex_count_ = 0;
-  Buffer* vertex_buffer_ = nullptr;
+  std::unique_ptr<Buffer> vertex_buffer_;
 
   std::unique_ptr<ImDrawList> text_draw_list_;
-  Buffer* text_vertex_buffer_ = nullptr;
-  Buffer* text_index_buffer_ = nullptr;
+  std::unique_ptr<Buffer> text_vertex_buffer_;
+  std::unique_ptr<Buffer> text_index_buffer_;
 
   size_t depth_map_vertex_count_ = 0;
-  Buffer* depth_map_vertex_buffer_ = nullptr;
-  Buffer* depth_map_index_buffer_ = nullptr;
-  Buffer* depth_map_color_buffer_ = nullptr;
+  std::unique_ptr<Buffer> depth_map_vertex_buffer_;
+  std::unique_ptr<Buffer> depth_map_index_buffer_;
+  std::unique_ptr<Buffer> depth_map_color_buffer_;
 };
 
 GeometryLayer::GeometryLayer() : Layer(Type::Geometry), impl_(new GeometryLayer::Impl) {}
 
-GeometryLayer::~GeometryLayer() {
-  if (impl_->vulkan_) {
-    if (impl_->vertex_buffer_) { impl_->vulkan_->destroy_buffer(impl_->vertex_buffer_); }
-    if (impl_->text_vertex_buffer_) { impl_->vulkan_->destroy_buffer(impl_->text_vertex_buffer_); }
-    if (impl_->text_index_buffer_) { impl_->vulkan_->destroy_buffer(impl_->text_index_buffer_); }
-    if (impl_->depth_map_vertex_buffer_) {
-      impl_->vulkan_->destroy_buffer(impl_->depth_map_vertex_buffer_);
-    }
-    if (impl_->depth_map_index_buffer_) {
-      impl_->vulkan_->destroy_buffer(impl_->depth_map_index_buffer_);
-    }
-    if (impl_->depth_map_color_buffer_) {
-      impl_->vulkan_->destroy_buffer(impl_->depth_map_color_buffer_);
-    }
-  }
-}
+GeometryLayer::~GeometryLayer() {}
 
 void GeometryLayer::color(float r, float g, float b, float a) {
   impl_->attributes_.color_[0] = r;
@@ -372,14 +355,8 @@ void GeometryLayer::end(Vulkan* vulkan) {
     impl_->aspect_ratio_ = vulkan->get_window()->get_aspect_ratio();
 
     impl_->text_draw_list_.reset();
-    if (impl_->text_vertex_buffer_) {
-      impl_->vulkan_->destroy_buffer(impl_->text_vertex_buffer_);
-      impl_->text_vertex_buffer_ = nullptr;
-    }
-    if (impl_->text_index_buffer_) {
-      impl_->vulkan_->destroy_buffer(impl_->text_index_buffer_);
-      impl_->text_index_buffer_ = nullptr;
-    }
+    impl_->text_vertex_buffer_.reset();
+    impl_->text_index_buffer_.reset();
 
     // only crosses depend on the aspect ratio
     bool has_crosses = false;
@@ -389,20 +366,11 @@ void GeometryLayer::end(Vulkan* vulkan) {
         break;
       }
     }
-    if (has_crosses) {
-      if (impl_->vertex_buffer_) {
-        impl_->vulkan_->destroy_buffer(impl_->vertex_buffer_);
-        impl_->vertex_buffer_ = nullptr;
-      }
-    }
+    if (has_crosses) { impl_->vertex_buffer_.reset(); }
   }
 
   if (!impl_->primitives_.empty()) {
     if (!impl_->vertex_buffer_) {
-      /// @todo need to remember Vulkan instance for destroying buffer,
-      ///       destroy should probably be handled by Vulkan class
-      impl_->vulkan_ = vulkan;
-
       // setup the vertex buffer
       std::vector<float> vertices;
       vertices.reserve(impl_->vertex_count_ * 3);
@@ -512,10 +480,6 @@ void GeometryLayer::end(Vulkan* vulkan) {
       // text might be completely out of clip rectangle,
       //      if this is the case no vertices had been generated
       if (impl_->text_draw_list_->VtxBuffer.size() != 0) {
-        /// @todo need to remember Vulkan instance for destroying buffer, destroy should
-        //        probably be handled by Vulkan class
-        impl_->vulkan_ = vulkan;
-
         impl_->text_vertex_buffer_ =
             vulkan->create_buffer(impl_->text_draw_list_->VtxBuffer.size() * sizeof(ImDrawVert),
                                   impl_->text_draw_list_->VtxBuffer.Data,
@@ -533,10 +497,6 @@ void GeometryLayer::end(Vulkan* vulkan) {
   if (!impl_->depth_maps_.empty()) {
     // allocate vertex buffer
     if (!impl_->depth_map_vertex_buffer_) {
-      /// @todo need to remember Vulkan instance for destroying buffer, destroy should probably be
-      /// handled by Vulkan class
-      impl_->vulkan_ = vulkan;
-
       // calculate the index count needed
       size_t index_count = 0;
       bool has_color_buffer = false;
@@ -569,9 +529,8 @@ void GeometryLayer::end(Vulkan* vulkan) {
 
       if (index_count) {
         // generate index data
-        impl_->depth_map_index_buffer_ =
-            vulkan->create_buffer_for_cuda_interop(index_count * sizeof(uint32_t),
-                                  vk::BufferUsageFlagBits::eIndexBuffer);
+        impl_->depth_map_index_buffer_ = vulkan->create_buffer_for_cuda_interop(
+            index_count * sizeof(uint32_t), vk::BufferUsageFlagBits::eIndexBuffer);
 
         CudaService* const cuda_service = vulkan->get_cuda_service();
         const CudaService::ScopedPush cuda_context = cuda_service->PushContext();
@@ -583,11 +542,8 @@ void GeometryLayer::end(Vulkan* vulkan) {
         for (auto&& depth_map : impl_->depth_maps_) {
           depth_map.index_offset_ = offset;
           const CUdeviceptr dst = impl_->depth_map_index_buffer_->device_ptr_.get() + offset;
-          offset += GenDepthMapIndices(depth_map.render_mode_,
-                            depth_map.width_,
-                            depth_map.height_,
-                            dst,
-                            stream);
+          offset += GenDepthMapIndices(
+              depth_map.render_mode_, depth_map.width_, depth_map.height_, dst, stream);
         }
         // indicate that the index buffer had been used by CUDA
         impl_->depth_map_index_buffer_->end_access_with_cuda(stream);
@@ -640,7 +596,7 @@ void GeometryLayer::end(Vulkan* vulkan) {
       if (depth_map.color_device_ptr_) {
         vulkan->upload_to_buffer(size,
                                  depth_map.color_device_ptr_,
-                                 impl_->depth_map_color_buffer_,
+                                 impl_->depth_map_color_buffer_.get(),
                                  offset,
                                  depth_map.cuda_stream_);
       }
@@ -678,7 +634,7 @@ void GeometryLayer::render(Vulkan* vulkan) {
         vulkan->draw(primitive.vk_topology_,
                      vertex_count,
                      vertex_offset,
-                     {impl_->vertex_buffer_},
+                     {impl_->vertex_buffer_.get()},
                      get_opacity(),
                      primitive.attributes_.color_,
                      primitive.attributes_.point_size_,
@@ -694,8 +650,8 @@ void GeometryLayer::render(Vulkan* vulkan) {
         const ImDrawCmd* pcmd = &impl_->text_draw_list_->CmdBuffer[i];
         vulkan->draw_imgui(
             vk::DescriptorSet(reinterpret_cast<VkDescriptorSet>(ImGui::GetIO().Fonts->TexID)),
-            impl_->text_vertex_buffer_,
-            impl_->text_index_buffer_,
+            impl_->text_vertex_buffer_.get(),
+            impl_->text_index_buffer_.get(),
             (sizeof(ImDrawIdx) == 2) ? vk::IndexType::eUint16 : vk::IndexType::eUint32,
             pcmd->ElemCount,
             pcmd->IdxOffset,
@@ -709,9 +665,9 @@ void GeometryLayer::render(Vulkan* vulkan) {
     if (!impl_->depth_maps_.empty()) {
       for (auto&& depth_map : impl_->depth_maps_) {
         std::vector<Buffer*> vertex_buffers;
-        vertex_buffers.push_back(impl_->depth_map_vertex_buffer_);
+        vertex_buffers.push_back(impl_->depth_map_vertex_buffer_.get());
         if (depth_map.color_device_ptr_) {
-          vertex_buffers.push_back(impl_->depth_map_color_buffer_);
+          vertex_buffers.push_back(impl_->depth_map_color_buffer_.get());
         }
 
         if ((depth_map.render_mode_ == DepthMapRenderMode::LINES) ||
@@ -720,7 +676,7 @@ void GeometryLayer::render(Vulkan* vulkan) {
                                    ? vk::PrimitiveTopology::eLineList
                                    : vk::PrimitiveTopology::eTriangleList,
                                vertex_buffers,
-                               impl_->depth_map_index_buffer_,
+                               impl_->depth_map_index_buffer_.get(),
                                vk::IndexType::eUint32,
                                depth_map.index_count_,
                                depth_map.index_offset_,

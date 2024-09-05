@@ -15,15 +15,21 @@
  limitations under the License.
 """  # noqa: E501
 
+import importlib.metadata
+
 # We import cli, core and gxf to make sure they're available before other modules that rely on them
 from . import cli, core, gxf
 
-try:
-    from ._version import __version__
-except ImportError:
-    __version__ = "unknown version"
+
+def _set_version():
+    try:
+        return importlib.metadata.version("holoscan")
+    except ImportError:
+        return "unknown version"
+
 
 __all__ = ["__version__", "as_tensor", "cli", "core", "gxf"]
+__version__ = _set_version()
 
 
 def as_tensor(obj):

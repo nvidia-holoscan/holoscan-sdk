@@ -91,14 +91,22 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncRxApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Async ping rx thread entering") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Async ping rx thread exiting") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Async ping rx thread entering") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Async ping rx thread exiting") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 
-  EXPECT_TRUE(log_output.find("Async ping tx thread entering") == std::string::npos);
-  EXPECT_TRUE(log_output.find("Async ping tx thread exiting") == std::string::npos);
+  EXPECT_TRUE(log_output.find("Async ping tx thread entering") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Async ping tx thread exiting") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncTxApp) {
@@ -116,14 +124,22 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncTxApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Async ping tx thread entering") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Async ping tx thread exiting") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Async ping tx thread entering") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Async ping tx thread exiting") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 
-  EXPECT_TRUE(log_output.find("Async ping rx thread entering") == std::string::npos);
-  EXPECT_TRUE(log_output.find("Async ping rx thread exiting") == std::string::npos);
+  EXPECT_TRUE(log_output.find("Async ping rx thread entering") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Async ping rx thread exiting") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncTxRxApp) {
@@ -141,10 +157,18 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncTxRxApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Async ping tx thread entering") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Async ping rx thread entering") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Async ping tx thread exiting") != std::string::npos);
-  EXPECT_TRUE(log_output.find("Async ping rx thread exiting") != std::string::npos);
+  EXPECT_TRUE(log_output.find("Async ping tx thread entering") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Async ping rx thread entering") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Async ping tx thread exiting") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Async ping rx thread exiting") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";

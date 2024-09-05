@@ -27,6 +27,10 @@ source:  # V4L2VideoCaptureOp
   # | App will auto-select the default "pixel_format" for your device if not provided.
   # | See this app's readme file for details.
   # pixel_format: "AB24"
+  # | App will convert to RGBA32 if "pass_through" is "false" (the default). If "pass_through" is
+  # | "true" the video buffer will be passed to the HolovizOp unmodified.
+  # | See this app's readme file for details.
+  # pass_through: true
 
   # | These properties might not be supported for all v4l2 nodes.
   # | The app will attempt to do auto exposure and gain if not provided. If auto is not supported,
@@ -36,3 +40,4 @@ source:  # V4L2VideoCaptureOp
   # gain: 100
 
 visualizer:  # Holoviz
+

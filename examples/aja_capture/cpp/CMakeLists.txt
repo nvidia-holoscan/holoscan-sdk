@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +47,95 @@ install(TARGETS aja_capture
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )
+
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/aja_capture.yaml"
   DESTINATION ${app_relative_dest_path}
   COMPONENT holoscan-examples
 )
+
+# Installing examples
+if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
+  # Install the source
+  install(FILES aja_capture.cpp aja_capture.yaml
+    DESTINATION "${app_relative_dest_path}"
+    COMPONENT holoscan-examples
+  )
+
+  # Install the minimal CMakeLists.txt file
+  install(FILES CMakeLists.min.txt
+    RENAME "CMakeLists.txt"
+    DESTINATION "${app_relative_dest_path}"
+    COMPONENT holoscan-examples
+  )
+endif()
+
+# Testing
+if(HOLOSCAN_BUILD_TESTS AND TEST_AJA)
+
+  set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
+  set(SOURCE_VIDEO_BASENAME video_replayer_output)
+  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/aja_capture/)
+
+  file(MAKE_DIRECTORY ${RECORDING_DIR})
+
+  file(READ ${CMAKE_CURRENT_SOURCE_DIR}/aja_capture.yaml CONFIG_STRING)
+  string(REPLACE "count: -1" "count: 10" CONFIG_STRING "${CONFIG_STRING}")
+  set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_aja_capture_config.yaml)
+  file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
+
+  # Patch the current example to enable recording the rendering window
+  add_custom_command(OUTPUT aja_capture_test.cpp
+    PRE_LINK
+    COMMAND patch -u -o aja_capture_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/aja_capture.cpp
+            ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/aja_capture/cpp_aja_capture.patch
+  )
+
+  # Create the test executable
+  add_executable(aja_capture_test
+     aja_capture_test.cpp
+  )
+
+  target_include_directories(aja_capture_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+
+  target_compile_definitions(aja_capture_test
+    PRIVATE RECORD_OUTPUT RECORDING_DIR="${RECORDING_DIR}"
+    PRIVATE SOURCE_VIDEO_BASENAME="${SOURCE_VIDEO_BASENAME}"
+  )
+
+  target_link_libraries(aja_capture_test
+    PRIVATE
+    holoscan::core
+    holoscan::ops::aja
+    holoscan::ops::holoviz
+    holoscan::ops::video_stream_replayer
+    holoscan::ops::video_stream_recorder
+    holoscan::ops::format_converter
+  )
+
+  # Add the test and make sure it runs
+  add_test(NAME EXAMPLE_CPP_AJA_CAPTURE_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/aja_capture_test ${CONFIG_FILE}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_AJA_CAPTURE_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Scheduler stopped: Some entities are waiting for execution"
+  )
+
+  # Add a test to check the validity of the frames
+  add_test(NAME EXAMPLE_CPP_AJA_CAPTURE_RENDER_TEST
+      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      --source_video_dir ${RECORDING_DIR}
+      --source_video_basename ${SOURCE_VIDEO_BASENAME}
+      --output_dir ${RECORDING_DIR}
+      --validation_frames_dir ${VALIDATION_FRAMES_DIR}
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
+  set_tests_properties(EXAMPLE_CPP_AJA_CAPTURE_RENDER_TEST PROPERTIES
+  DEPENDS EXAMPLE_CPP_AJA_CAPTURE_TEST
+  PASS_REGULAR_EXPRESSION "Valid video output!"
+  )
+
+endif()
+

@@ -23,6 +23,7 @@
 #include <memory>
 #include <vector>
 
+#include "../vulkan/buffer.hpp"
 #include "../vulkan/vulkan_app.hpp"
 
 namespace holoscan::viz {
@@ -30,19 +31,13 @@ namespace holoscan::viz {
 struct ImGuiLayer::Impl {
   const ImDrawData* draw_data_ = nullptr;
 
-  Vulkan* vulkan_ = nullptr;
-  Buffer* vertex_buffer_ = nullptr;
-  Buffer* index_buffer_ = nullptr;
+  std::unique_ptr<Buffer> vertex_buffer_;
+  std::unique_ptr<Buffer> index_buffer_;
 };
 
 ImGuiLayer::ImGuiLayer() : Layer(Type::ImGui), impl_(new ImGuiLayer::Impl) {}
 
-ImGuiLayer::~ImGuiLayer() {
-  if (impl_->vulkan_) {
-    if (impl_->vertex_buffer_) { impl_->vulkan_->destroy_buffer(impl_->vertex_buffer_); }
-    if (impl_->index_buffer_) { impl_->vulkan_->destroy_buffer(impl_->index_buffer_); }
-  }
-}
+ImGuiLayer::~ImGuiLayer() {}
 
 void ImGuiLayer::set_opacity(float opacity) {
   // call the base class
@@ -78,12 +73,8 @@ void ImGuiLayer::end(Vulkan* vulkan) {
 
     // create device buffers from vertex and index data
 
-    /// @todo need to remember Vulkan instance for destroying buffer,
-    ///       destroy should probably be handled by Vulkan class
-    impl_->vulkan_ = vulkan;
-
-    if (impl_->vertex_buffer_) { impl_->vulkan_->destroy_buffer(impl_->vertex_buffer_); }
-    if (impl_->index_buffer_) { impl_->vulkan_->destroy_buffer(impl_->index_buffer_); }
+    impl_->vertex_buffer_.reset();
+    impl_->index_buffer_.reset();
 
     impl_->vertex_buffer_ =
         vulkan->create_buffer(impl_->draw_data_->TotalVtxCount * sizeof(ImDrawVert),
@@ -129,8 +120,8 @@ void ImGuiLayer::render(Vulkan* vulkan) {
         const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[draw_cmd_index];
         vulkan->draw_imgui(
             vk::DescriptorSet(reinterpret_cast<VkDescriptorSet>(ImGui::GetIO().Fonts->TexID)),
-            impl_->vertex_buffer_,
-            impl_->index_buffer_,
+            impl_->vertex_buffer_.get(),
+            impl_->index_buffer_.get(),
             (sizeof(ImDrawIdx) == 2) ? vk::IndexType::eUint16 : vk::IndexType::eUint32,
             pcmd->ElemCount,
             pcmd->IdxOffset + index_offset,

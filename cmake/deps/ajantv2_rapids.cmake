@@ -19,6 +19,13 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 # Setting NTV2_VERSION_BUILD environment variable to avoid CMake warning
 set(ENV{NTV2_VERSION_BUILD} 1)
 
+# Do not include debug information for RelWithDebInfo builds to avoid large binaries
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+    set(AJA_BUILD_TYPE "Debug")
+else()
+    set(AJA_BUILD_TYPE "Release")
+endif()
+
 rapids_cpm_find(ajantv2 17.0.1
     GLOBAL_TARGETS AJA::ajantv2
 
@@ -34,7 +41,7 @@ rapids_cpm_find(ajantv2 17.0.1
     "AJANTV2_DISABLE_TOOLS ON"
     "AJA_INSTALL_HEADERS OFF"
     "AJA_INSTALL_SOURCES OFF"
-    "CMAKE_BUILD_TYPE Release"
+    "CMAKE_BUILD_TYPE ${AJA_BUILD_TYPE}"
     EXCLUDE_FROM_ALL
 )
 

@@ -74,11 +74,9 @@ gxf_result_t GXFWrapper::tick() {
   InputContext* op_input = exec_context.input();
   OutputContext* op_output = exec_context.output();
   try {
-    if (op_->is_metadata_enabled()) {
-      // clear any existing values from a previous compute call
-      auto dynamic_metadata = op_->metadata();
-      dynamic_metadata->clear();
-    }
+    // clear any existing values from a previous compute call
+    op_->metadata()->clear();
+
     op_->compute(*op_input, *op_output, exec_context);
     // Note: output metadata is inserted via op_output.emit() rather than here
   } catch (const std::exception& e) {

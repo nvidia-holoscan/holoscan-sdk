@@ -425,7 +425,10 @@ def _start_container(
             if not quiet:
                 print(log[1].decode("utf-8"))
         elif log[0] == "stderr":
-            print(str(log[1].decode("utf-8")))
+            try:
+                print(str(log[1].decode("utf-8")))
+            except Exception:
+                print(str(log[1]))
 
     logger.info(f"Container '{container_name}'({container_id}) exited.")
 
