@@ -30,15 +30,6 @@ PYDOC(Allocator, R"doc(
 Base allocator class.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
 PYDOC(is_available, R"doc(
 Boolean representing whether the resource is available.
 
@@ -107,24 +98,6 @@ name : str, optional
     The name of the memory pool.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
-)doc")
-
 }  // namespace BlockMemoryPool
 
 namespace CudaStreamPool {
@@ -160,24 +133,6 @@ References
 
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
-)doc")
-
 }  // namespace CudaStreamPool
 
 namespace UnboundedAllocator {
@@ -193,24 +148,6 @@ fragment : holoscan.core.Fragment
     The fragment to assign the resource to.
 name : str, optional
     The name of the serializer.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
 )doc")
 
 }  // namespace UnboundedAllocator

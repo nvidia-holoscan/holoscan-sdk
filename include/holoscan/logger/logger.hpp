@@ -167,13 +167,13 @@ class Logger {
                 function_name,
                 level,
                 format,
-                fmt::make_args_checked<ArgsT...>(format, std::forward<ArgsT>(args)...));
+                fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...));
   }
 
   template <typename FormatT, typename... ArgsT>
   static void log(LogLevel level, const FormatT& format, ArgsT&&... args) {
     log_message(
-        level, format, fmt::make_args_checked<ArgsT...>(format, std::forward<ArgsT>(args)...));
+        level, format, fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...));
   }
 
   /**

@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import os
@@ -49,11 +49,34 @@ class VideoReplayerApp(Application):
         # Define the workflow
         self.add_flow(replayer, visualizer, {("output", "receivers")})
 
+        # Check if the YAML dual_window parameter is set and add a second visualizer in that case
+        dual_window = self.kwargs("dual_window").get("dual_window", False)
+        if dual_window:
+            visualizer2 = HolovizOp(self, name="holoviz-2", **self.kwargs("holoviz"))
+            self.add_flow(replayer, visualizer2, {("output", "receivers")})
+
 
 def main(config_file):
     app = VideoReplayerApp()
     # if the --config command line argument was provided, it will override this config_file
     app.config(config_file)
+
+    dual_window = app.kwargs("dual_window").get("dual_window", False)
+    if dual_window:
+        from holoscan.schedulers import EventBasedScheduler
+
+        # Use an event-based scheduler to allow multiple operators to run in
+        # parallel
+        app.scheduler(
+            EventBasedScheduler(
+                app,
+                name="event-based-scheduler",
+                worker_thread_number=3,
+                stop_on_deadlock=True,
+                stop_on_deadlock_timeout=200,
+            )
+        )
+
     app.run()
 
 

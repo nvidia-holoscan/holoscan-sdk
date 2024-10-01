@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import datetime
@@ -42,17 +42,14 @@ class TestBooleanCondition:
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::BooleanSchedulingTerm"
 
-        assert (
-            f"""
+        assert f"""
 name: {name}
 fragment: ""
 args:
   - name: enable_tick
     type: bool
     value: true
-"""
-            in repr(cond)
-        )
+""" in repr(cond)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -87,15 +84,12 @@ class TestAsynchronousCondition:
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::AsynchronousSchedulingTerm"
 
-        assert (
-            f"""
+        assert f"""
 name: {name}
 fragment: ""
 args:
   []
-"""
-            in repr(cond)
-        )
+""" in repr(cond)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -119,17 +113,14 @@ class TestCountCondition:
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::CountSchedulingTerm"
 
-        assert (
-            f"""
+        assert f"""
 name: {name}
 fragment: ""
 args:
   - name: count
     type: int64_t
     value: 100
-"""
-            in repr(cond)
-        )
+""" in repr(cond)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -161,17 +152,14 @@ class TestDownstreamMessageAffordableCondition:
         assert "error" not in captured.err
         assert "warning" not in captured.err
 
-        assert (
-            f"""
+        assert f"""
 name: {name}
 fragment: ""
 args:
   - name: min_size
     type: uint64_t
     value: 10
-"""
-            in repr(cond)
-        )
+""" in repr(cond)
 
     def test_default_initialization(self, app):
         DownstreamMessageAffordableCondition(app)
@@ -190,8 +178,7 @@ class TestMessageAvailableCondition:
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::MessageAvailableSchedulingTerm"
 
-        assert (
-            f"""
+        assert f"""
 name: {name}
 fragment: ""
 args:
@@ -201,9 +188,7 @@ args:
   - name: front_stage_max_size
     type: uint64_t
     value: 10
-"""
-            in repr(cond)
-        )
+""" in repr(cond)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -228,17 +213,14 @@ class TestExpiringMessageAvailableCondition:
         assert cond.gxf_typename == "nvidia::gxf::ExpiringMessageAvailableSchedulingTerm"
 
         # verify that name is as expected and that clock argument was automatically added
-        assert (
-            f"""
+        assert f"""
 name: {name}
 fragment: ""
 args:
   - name: clock
     type: std::shared_ptr<Resource>
 spec:
-"""
-            in repr(cond)
-        )
+""" in repr(cond)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -261,15 +243,12 @@ class TestPeriodicCondition:
         assert cond.gxf_typename == "nvidia::gxf::PeriodicSchedulingTerm"
 
         # args empty here because recess_period is passed to the constructor directly, not as Arg
-        assert (
-            f"""
+        assert f"""
 name: {name}
 fragment: ""
 args:
   []
-"""
-            in repr(cond)
-        )
+""" in repr(cond)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()

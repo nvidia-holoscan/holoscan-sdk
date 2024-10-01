@@ -207,14 +207,14 @@ AJAStatus AJASourceOp::OpenDevice() {
     return AJA_STATUS_UNSUPPORTED;
   }
   if (!NTV2_IS_VALID_CHANNEL(channel_)) {
-    HOLOSCAN_LOG_ERROR("Invalid AJA channel: {}", channel_.get());
+    HOLOSCAN_LOG_ERROR("Invalid AJA channel: {}", static_cast<int>(channel_.get()));
     return AJA_STATUS_UNSUPPORTED;
   }
 
   // Check overlay capabilities.
   if (enable_overlay_) {
     if (!NTV2_IS_VALID_CHANNEL(overlay_channel_)) {
-      HOLOSCAN_LOG_ERROR("Invalid overlay channel: {}", overlay_channel_.get());
+      HOLOSCAN_LOG_ERROR("Invalid overlay channel: {}", static_cast<int>(overlay_channel_.get()));
       return AJA_STATUS_UNSUPPORTED;
     }
 
@@ -312,7 +312,7 @@ AJAStatus AJASourceOp::SetupVideo() {
     }
   } else if (!is_input_rgb) {
     if (NTV2DeviceGetNumCSCs(device_id_) <= static_cast<int>(channel_)) {
-      HOLOSCAN_LOG_ERROR("No CSC available for NTV2_CHANNEL{}", channel_ + 1);
+      HOLOSCAN_LOG_ERROR("No CSC available for NTV2_CHANNEL{}", static_cast<int>(channel_) + 1);
       return AJA_STATUS_UNSUPPORTED;
     }
     NTV2InputXptID csc_input = GetCSCInputXptFromChannel(channel_);
@@ -466,7 +466,10 @@ void AJASourceOp::start() {
     framerate = framerate_;
   }
   HOLOSCAN_LOG_INFO("AJA Source: Capturing {}x{}@{}Hz {}from NTV2_CHANNEL{}",
-                    width_, height_, framerate, (interlaced_ ? "(interlaced) " : ""),
+                    width_,
+                    height_,
+                    framerate,
+                    (interlaced_ ? "(interlaced) " : ""),
                     (channel_.get() + 1));
   HOLOSCAN_LOG_INFO("AJA Source: RDMA is {}", use_rdma_ ? "enabled" : "disabled");
   if (enable_overlay_) {

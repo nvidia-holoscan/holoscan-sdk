@@ -21,9 +21,16 @@
 #include "holoscan/core/metadata.hpp"
 #include "operator_wrapper.hpp"
 
+// Helper macros to convert macro value to string
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
+#define HOLOSCAN_BUILD_VERSION_STR TOSTRING(HOLOSCAN_BUILD_VERSION)
+
 GXF_EXT_FACTORY_BEGIN()
 GXF_EXT_FACTORY_SET_INFO(0x12d01b4ee06f49ef, 0x93c4961834347385, "HoloscanWrapperExtension",
-                         "Holoscan Wrapper extension", "NVIDIA", "0.5.0", "LICENSE");
+                         "Holoscan Wrapper extension", "NVIDIA", HOLOSCAN_BUILD_VERSION_STR,
+                         "LICENSE");
 
 // Register types/components that are used by Holoscan
 GXF_EXT_FACTORY_ADD_0(0x61510ca06aa9493b, 0x8a777d0bf87476b7, holoscan::Message,

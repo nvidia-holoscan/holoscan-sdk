@@ -50,6 +50,7 @@ superbuild_depend(ucx)
 superbuild_depend(v4l2)
 superbuild_depend(yaml-cpp_rapids)
 superbuild_depend(gxf)
+superbuild_depend(nvtx3)
 
 # Testing dependencies
 if(HOLOSCAN_BUILD_TESTS)

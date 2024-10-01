@@ -1,12 +1,12 @@
 # Overview
 
-[NVIDIA Holoscan](https://developer.nvidia.com/holoscan-sdk) is the AI sensor processing platform that combines hardware systems for low-latency sensor and network connectivity, optimized libraries for data processing and AI, and core microservices to run streaming, imaging, and other applications, from embedded to edge to cloud. It can be used to build streaming AI pipelines for a variety of domains, including Medical Devices, High Performance Computing at the Edge, Industrial Inspection and more.
+[NVIDIA Holoscan](https://developer.nvidia.com/holoscan-sdk) is the AI sensor processing platform that combines hardware systems for low-latency sensor and network connectivity, optimized libraries for data processing and AI, and core microservices to run streaming, imaging, and other applications, from embedded to edge to cloud. It can be used to build streaming AI pipelines for a variety of domains, including medical devices, high-performance computing at the edge, industrial inspection, and more.
 
 The Holoscan SDK assists developers by providing:
 
 1. **Various installation strategies**
 
-From containers, to python wheels, to source, from development to deployment environments, the Holoscan SDK comes in many packaging flavors to adapt to different needs. Find more information in the {ref}`sdk installation<clara_holoscan_setup>` section.
+From containers, to Python wheels, to source, and from development to deployment environments, the Holoscan SDK comes in many packaging flavors to adapt to different needs. Find more information in the {ref}`sdk installation<clara_holoscan_setup>` section.
 
 2. **C++ and Python APIs**
 
@@ -14,11 +14,11 @@ These APIs are now the recommended interface for the creation of application pip
 
 3. **Built-in Operators**
 
-The units of work of Holoscan applications are implemented within Operators, as described in the [core concepts](holoscan_core.md) of the SDK. The operators included in the SDK provide domain-agnostic functionalities such as IO, machine learning inference, processing, and visualization, optimized for AI streaming pipelines, relying on a set of [Core Technologies](relevant_technologies.md). This guide provides more information on the operators provided within the SDK [here](holoscan_operators_extensions.md).
+The units of work in Holoscan applications are implemented within Operators, as described in the [core concepts](holoscan_core.md) of the SDK. The operators included in the SDK provide domain-agnostic functionalities such as IO, machine learning inference, processing, and visualization, optimized for AI streaming pipelines, relying on a set of [Core Technologies](relevant_technologies.md). This guide provides more information on the operators provided within the SDK [here](holoscan_operators_extensions.md).
 
 4. **Minimal Examples**
 
-The Holoscan SDK provides a list of examples to illustrate specific capabilities of the SDK. Their source code can be found in the [GitHub repository](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#readme). The {ref}`Holoscan by Example<holoscan-getting-started>` section provides step-by-step analysis of some of these examples to illustrate the innerworkings of the Holoscan SDK.
+The Holoscan SDK provides a list of examples to illustrate specific capabilities of the SDK. Their source code can be found in the [GitHub repository](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#readme). The {ref}`Holoscan by Example<holoscan-getting-started>` section provides step-by-step analysis of some of these examples to illustrate the inner workings of the Holoscan SDK.
 
 5. **Repository of Operators and Applications**
 
@@ -30,7 +30,7 @@ Packaging and deploying applications is a complex problem that can require large
 
 7. **Performance tools**
 
-As highlighted in the relevant technologies section, the soul of the Holoscan project is to achieve peak performance by leveraging hardware and software developed at NVIDIA or provided by third-parties. To validate this, Holoscan provides performance tools to help users and developers track their application performance. They currently include:
+As highlighted in the relevant technologies section, the soul of the Holoscan project is to achieve peak performance by leveraging hardware and software developed at NVIDIA or provided by third parties. To validate this, Holoscan provides performance tools to help users and developers track their application performance. They currently include:
 
 - a {ref}`Video Pipeline Latency Measurement Tool <latency_tool>` to measure and estimate the total end-to-end latency of a video streaming application including the video capture, processing, and output using various hardware and software components that are supported by the NVIDIA Developer Kits.
 - the [Data Flow Tracking](./flow_tracking.md) feature to profile your application and analyze the data flow between operators in its graph.

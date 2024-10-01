@@ -55,15 +55,6 @@ name : str, optional
     The name of the scheduler.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the scheduler.
-
-Returns
--------
-str
-    The GXF type name of the scheduler
-)doc")
-
 }  // namespace GreedyScheduler
 
 }  // namespace holoscan::doc

@@ -42,31 +42,6 @@ name : str, optional (constructor only)
     These parameters can provide further customization and functionality to the resource.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the resource.
-
-This method is called only once when the resource is created for the first time,
-and uses a light-weight initialization.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the resource specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    The resource specification.
-)doc")
-
 }  // namespace GXFComponentResource
 
 }  // namespace holoscan::doc

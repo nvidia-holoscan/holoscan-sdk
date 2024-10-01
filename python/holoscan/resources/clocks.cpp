@@ -150,9 +150,6 @@ void init_clocks(py::module_& m) {
            "use_time_since_epoch"_a = false,
            "name"_a = "realtime_clock"s,
            doc::RealtimeClock::doc_RealtimeClock)
-      .def_property_readonly(
-          "gxf_typename", &RealtimeClock::gxf_typename, doc::RealtimeClock::doc_gxf_typename)
-      .def("setup", &RealtimeClock::setup, "spec"_a, doc::RealtimeClock::doc_setup)
       .def("time", &RealtimeClock::time, doc::Clock::doc_time)
       .def("timestamp", &RealtimeClock::timestamp, doc::Clock::doc_timestamp)
       // define a version of sleep_for that can take either int or datetime.timedelta
@@ -179,9 +176,6 @@ void init_clocks(py::module_& m) {
            "initial_timestamp"_a = 0LL,
            "name"_a = "realtime_clock"s,
            doc::ManualClock::doc_ManualClock)
-      .def_property_readonly(
-          "gxf_typename", &ManualClock::gxf_typename, doc::ManualClock::doc_gxf_typename)
-      .def("setup", &ManualClock::setup, "spec"_a, doc::ManualClock::doc_setup)
       .def("time", &ManualClock::time, doc::Clock::doc_time)
       .def("timestamp", &ManualClock::timestamp, doc::Clock::doc_timestamp)
       // define a version of sleep_for that can take either int or datetime.timedelta

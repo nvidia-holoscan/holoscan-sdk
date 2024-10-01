@@ -54,6 +54,7 @@ from holoscan.operators import (
 )
 from holoscan.operators.holoviz import (
     _holoviz_str_to_chroma_location,
+    _holoviz_str_to_color_space,
     _holoviz_str_to_depth_map_render_mode,
     _holoviz_str_to_image_format,
     _holoviz_str_to_input_type,
@@ -694,6 +695,22 @@ def test_holoviz_depth_types(depth_type_str):
     )
 
 
+@pytest.mark.parametrize(
+    "color_space",
+    [
+        "srgb_nonlinear",
+        "extended_srgb_linear",
+        "bt2020_linear",
+        "hdr10_st2084",
+        "pass_through",
+        "bt709_linear",
+        "auto",
+    ],
+)
+def test_holoviz_color_spaces(color_space):
+    assert isinstance(_holoviz_str_to_color_space[color_space], HolovizOp.ColorSpace)
+
+
 class TestHolovizOpInputSpec:
     def test_input_type_based_initialization(self):
         HolovizOp.InputSpec("tensor1", HolovizOp.InputType.TRIANGLES)
@@ -948,6 +965,12 @@ class TestHolovizOp:
                 type="color",
                 image_format="invalid",
             ),
+            # unrecognized display color space
+            dict(
+                name="scaled_coords",
+                type="color",
+                display_color_space="invalid",
+            ),
         ],
     )
     def test_invalid_tensors(self, tensor, app):
@@ -1057,6 +1080,61 @@ def test_holoviz_depth_map_app(capfd, depth_data_type):
     pytest.importorskip("cupy")
     app = MyHolovizDepthMapApp(depth_data_type)
     app.run()
+
+    # assert no errors logged
+    captured = capfd.readouterr()
+    assert captured.err.count("[error]") == 0
+
+
+class HolovizCallbackSourceOp(Operator):
+    def setup(self, spec: OperatorSpec):
+        spec.output("out")
+
+    def compute(self, op_input, op_output, context):
+        op_output.emit({"data": np.ones((1, 1, 4), dtype=np.uint8)}, "out")
+
+
+class MyHolovizCallbackApp(Application):
+    callback_invocations = []
+    width = 640
+    height = 512
+
+    def callback(self, *args):
+        self.callback_invocations.append(list(args))
+
+    def compose(self):
+        source = HolovizCallbackSourceOp(
+            self,
+            CountCondition(self, 1),
+            name="source",
+        )
+
+        holoviz = HolovizOp(
+            self,
+            name="viz",
+            width=self.width,
+            height=self.height,
+            key_callback=self.callback,
+            unicode_char_callback=self.callback,
+            mouse_button_callback=self.callback,
+            scroll_callback=self.callback,
+            cursor_pos_callback=self.callback,
+            framebuffer_size_callback=self.callback,
+            window_size_callback=self.callback,
+        )
+
+        self.add_flow(source, holoviz, {("", "receivers")})
+
+
+def test_holoviz_callbacks(capfd):
+    app = MyHolovizCallbackApp()
+    app.run()
+
+    # when setting the framebuffer and window callbacks the callback is called once with the
+    # initial size
+    assert len(app.callback_invocations) == 2
+    assert app.callback_invocations[0] == [app.width, app.height]
+    assert app.callback_invocations[1] == [app.width, app.height]
 
     # assert no errors logged
     captured = capfd.readouterr()

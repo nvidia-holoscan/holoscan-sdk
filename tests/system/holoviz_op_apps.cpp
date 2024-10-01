@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "../config.hpp"
 #include "tensor_compare_op.hpp"
@@ -155,4 +156,16 @@ TEST(HolovizApps, TestDisableRenderBufferOutputArg) {
 
 TEST(HolovizApps, TestInvalidRenderBufferOutputArg) {
   run_app(Arg("enable_render_buffer_output", 2), "Could not cast parameter");
+}
+
+// Test the layer callback. The other callbacks are tested in Python, but the layer callback
+// is available in C++ only.
+TEST(HolovizApps, TestLayerCallback) {
+  std::vector<std::size_t> input_sizes;
+  run_app(Arg("layer_callback", ops::HolovizOp::LayerCallbackFunction(
+                [&input_sizes](const std::vector<holoscan::gxf::Entity>& inputs) -> void {
+                  input_sizes.push_back(inputs.size());
+                })));
+  EXPECT_EQ(input_sizes.size(), 1);
+  EXPECT_EQ(input_sizes[0], 1);
 }

@@ -88,11 +88,7 @@ void init_serialization_buffers(py::module_& m) {
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,
            "name"_a = "serialization_buffer"s,
-           doc::SerializationBuffer::doc_SerializationBuffer)
-      .def_property_readonly("gxf_typename",
-                             &SerializationBuffer::gxf_typename,
-                             doc::SerializationBuffer::doc_gxf_typename)
-      .def("setup", &SerializationBuffer::setup, "spec"_a, doc::SerializationBuffer::doc_setup);
+           doc::SerializationBuffer::doc_SerializationBuffer);
 
   py::class_<UcxSerializationBuffer,
              PyUcxSerializationBuffer,
@@ -104,13 +100,6 @@ void init_serialization_buffers(py::module_& m) {
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,
            "name"_a = "serialization_buffer"s,
-           doc::UcxSerializationBuffer::doc_UcxSerializationBuffer)
-      .def_property_readonly("gxf_typename",
-                             &UcxSerializationBuffer::gxf_typename,
-                             doc::UcxSerializationBuffer::doc_gxf_typename)
-      .def("setup",
-           &UcxSerializationBuffer::setup,
-           "spec"_a,
-           doc::UcxSerializationBuffer::doc_setup);
+           doc::UcxSerializationBuffer::doc_UcxSerializationBuffer);
 }
 }  // namespace holoscan

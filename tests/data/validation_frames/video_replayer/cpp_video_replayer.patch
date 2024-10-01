@@ -1,25 +1,24 @@
 --- examples/video_replayer/cpp/video_replayer.cpp	2023-12-11 14:11:08.450220903 -0800
 +++ build-x86_64/examples/video_replayer/cpp/video_replayer_test.cpp	2023-12-11 14:33:13.446159002 -0800
-@@ -19,6 +19,12 @@
+@@ -20,6 +20,12 @@
  #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
  #include <holoscan/operators/holoviz/holoviz.hpp>
  
-+#ifdef RECORD_OUTPUT 
-+  #include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
-+  #include <holoscan/operators/format_converter/format_converter.hpp>
-+  #include <recorder.hpp>
++#ifdef RECORD_OUTPUT
++#include <holoscan/operators/format_converter/format_converter.hpp>
++#include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
++#include <recorder.hpp>
 +#endif
 +
  class VideoReplayerApp : public holoscan::Application {
   public:
    void compose() override {
-@@ -30,6 +36,9 @@
- 
-     // Define the workflow: replayer -> holoviz
-     add_flow(replayer, visualizer, {{"output", "receivers"}});
-+    
-+    // Recorder to validate the video output 
+@@ -48,6 +54,9 @@ class VideoReplayerApp : public holoscan::Application {
+       auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz"));
+       add_flow(replayer, visualizer2, {{"output", "receivers"}});
+     }
++
++    // Recorder to validate the video output
 +    RECORDER(visualizer);
    }
  };
- 

@@ -49,16 +49,17 @@ nvidia::gxf::Handle<nvidia::gxf::VideoBuffer> get_videobuffer(Entity entity, con
   auto tid_result = GxfComponentTypeId(
       entity.context(), nvidia::TypenameAsString<nvidia::gxf::VideoBuffer>(), &tid);
   if (tid_result != GXF_SUCCESS) {
-    throw std::runtime_error(fmt::format("Unable to get component type id: {}", tid_result));
+    throw std::runtime_error(
+        fmt::format("Unable to get component type id: (error: {})", GxfResultStr(tid_result)));
   }
 
   gxf_uid_t cid;
   auto cid_result = GxfComponentFind(entity.context(), entity.eid(), tid, name, nullptr, &cid);
   if (cid_result != GXF_SUCCESS) {
     std::string msg = fmt::format(
-        "Unable to find nvidia::gxf::VideoBuffer component from the name '{}' (error code: {})",
+        "Unable to find nvidia::gxf::VideoBuffer component from the name '{}' (error: {})",
         name == nullptr ? "" : name,
-        cid_result);
+        GxfResultStr(cid_result));
     throw std::runtime_error(msg);
   }
 

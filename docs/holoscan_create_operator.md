@@ -57,7 +57,7 @@ Typically, the `start()` and the `stop()` functions are only called once during 
 If Python bindings are going to be created for this C++ operator, it is recommended to put any cleanup of resources allocated in the `initialize()` and/or `start()` methods into the `stop()` method of the operator and **not** in its destructor. This is necessary as a workaround to a current issue where it is not guaranteed that the destructor always gets called prior to Python application termination. The `stop()` method will always be explicitly called, so we can be assured that any cleanup happens as expected.
 :::
 
-We can override the default behavior of the operator by implementing the above methods. The following example shows how to implement a custom operator that overrides start, stop and compute methods.
+We can override the default behavior of the operator by implementing the above methods. The following example shows how to implement a custom operator that overrides start, stop, and compute methods.
 
 
 ```{code-block} cpp
@@ -99,7 +99,7 @@ class MyOp : public Operator {
 
 #### Creating a custom operator (C++)
 
-To create a custom operator in C++ it is necessary to create a subclass of
+To create a custom operator in C++, it is necessary to create a subclass of
 {cpp:class}`holoscan::Operator`. The following example demonstrates how to use native operators (the operators that do not have an underlying, pre-compiled GXF Codelet).
 
 **Code Snippet:** [**examples/ping_multi_port/cpp/ping_multi_port.cpp**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_multi_port/cpp/ping_multi_port.cpp)
@@ -255,9 +255,9 @@ of the operator. Then inputs are received within the {cpp:func}`~holoscan::Opera
 method via {cpp:func}`op_input.receive() <holoscan::InputContext::receive>` and outputs are emitted via {cpp:func}`op_output.emit() <holoscan::OutputContext::emit>`.
 
 Note that for native C++ operators as defined here, any object including a shared pointer can be
-emitted or received. For large objects such as tensors it may be preferable from a performance
+emitted or received. For large objects such as tensors, it may be preferable from a performance
 standpoint to transmit a shared pointer to the object rather than making a copy. When shared
-pointers are used and the same tensor is sent to more than one downstream operator, one should
+pointers are used and the same tensor is sent to more than one downstream operator, you should
 avoid in-place operations on the tensor or race conditions between operators may occur.
 
 
@@ -300,7 +300,7 @@ For details on the `register_converter()` and `register_codec()` methods, refer 
 
 #### Specifying operator parameters (C++)
 
-In the example `holoscan::ops::PingMxOp` operator above, we have a parameter `multiplier` that is declared as part of the class as a private member using the {cpp:func}`~holoscan::OperatorSpec::param` templated type:
+In the example `holoscan::ops::PingMxOp` operator above, you have a parameter `multiplier` that is declared as part of the class as a private member using the {cpp:func}`~holoscan::OperatorSpec::param` templated type:
 
 ```cpp
 Parameter<int> multiplier_;
@@ -849,7 +849,7 @@ You can then include the headers to your C++ operator in your application code.
 With the Holoscan C++ API, we can also wrap {ref}`GXF Codelets<holoscan-core-concepts-gxf>` from GXF extensions as Holoscan {ref}`Operators <exhale_class_classholoscan_1_1Operator>`.
 
 :::{note}
-If you do not have an existing GXF extension, we recommend developing native operators using the {ref}`C++<native-cpp-operators>` or {ref}`Python<native-python-operators>` APIs to skip the need for wrapping gxf codelets as operators. If you do need to create a GXF Extension, follow the {ref}`Creating a GXF Extension <creating-gxf-extension>` section for a detailed explanation of the GXF extension development process.
+If you do not have an existing GXF extension, we recommend developing native operators using the {ref}`C++<native-cpp-operators>` or {ref}`Python<native-python-operators>` APIs to skip the need for wrapping GXF codelets as operators. If you do need to create a GXF Extension, follow the {ref}`Creating a GXF Extension <creating-gxf-extension>` section for a detailed explanation of the GXF extension development process.
 :::
 
 :::{tip}

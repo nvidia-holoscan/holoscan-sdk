@@ -52,6 +52,14 @@
  * the instance current before calling the Holoviz module function to be executed for the window the
  * instance belongs to.
  *
+ * \section Callbacks
+ *
+ * Callbacks are executed for certain events like key input ({func}`viz::SetKeyCallback()`,
+ * {func}`viz::SetUnicodeCharCallback()`), mouse events ({func}`viz::SetMouseButtonCallback()`,
+ * {func}`viz::SetCursorPosCallback()`), framebuffer events
+({func}`viz::SetFramebufferSizeCallback()`
+ * and window events ({func}`viz::SetWindowSizeCallback()`).
+ *
  * \section Usage
  *
  * The code below creates a window and displays an image.
@@ -86,6 +94,7 @@ viz::Shutdown();
 
 #include <cstdint>
 
+#include "holoviz/callbacks.hpp"
 #include "holoviz/depth_map_render_mode.hpp"
 #include "holoviz/image_format.hpp"
 #include "holoviz/init_flags.hpp"
@@ -179,6 +188,69 @@ void Init(const char* displayName, uint32_t width = 0, uint32_t height = 0,
           uint32_t refreshRate = 0, InitFlags flags = InitFlags::NONE);
 
 /**
+ * Set the key callback. The callback function is called when a key is pressed, released or
+ * repeated.
+ *
+ * @param user_pointer user pointer value to be passed to the callback
+ * @param callback the new key callback or nullptr to remove the current callback
+ */
+void SetKeyCallback(void* user_pointer, KeyCallbackFunction callback);
+
+/**
+ * Set the Unicode character callback. The callback function is called when a Unicode character is
+ * input.
+ *
+ * @param user_pointer user pointer value to be passed to the callback
+ * @param callback the new Unicode character callback or nullptr to remove the current callback
+ */
+void SetUnicodeCharCallback(void* user_pointer, UnicodeCharCallbackFunction callback);
+
+/**
+ * Set the mouse button callback. The callback function is called when a mouse button is pressed
+ * or released.
+ *
+ * @param user_pointer user pointer value to be passed to the callback
+ * @param callback the new mouse button callback or nullptr to remove the current callback
+ */
+void SetMouseButtonCallback(void* user_pointer, MouseButtonCallbackFunction callback);
+
+/**
+ * Set the scroll callback. The callback function is called when a scrolling device is used,
+ * such as a mouse scroll wheel or the scroll area of a touch pad.
+ *
+ * @param user_pointer user pointer value to be passed to the callback
+ * @param callback the new cursor callback or nullptr to remove the current callback
+ */
+void SetScrollCallback(void* user_pointer, ScrollCallbackFunction callback);
+
+/**
+ * Set the cursor position callback. The callback function is called when the cursor position
+ * changes. Coordinates are provided in screen coordinates, relative to the upper left edge of the
+ * content area.
+ *
+ * @param user_pointer user pointer value to be passed to the callback
+ * @param callback the new cursor callback or nullptr to remove the current callback
+ */
+void SetCursorPosCallback(void* user_pointer, CursorPosCallbackFunction callback);
+
+/**
+ * Set the framebuffer size callback. The callback function is called when the framebuffer is
+ * resized.
+ *
+ * @param user_pointer user pointer value to be passed to the callback
+ * @param callback the new framebuffer size callback or nullptr to remove the current callback
+ */
+void SetFramebufferSizeCallback(void* user_pointer, FramebufferSizeCallbackFunction callback);
+
+/**
+ * Set the window size callback. The callback function is called when the window is resized.
+ *
+ * @param user_pointer user pointer value to be passed to the callback
+ * @param callback the new window size callback or nullptr to remove the current callback
+ */
+void SetWindowSizeCallback(void* user_pointer, WindowSizeCallbackFunction callback);
+
+/**
  * Get the supported present modes.
  *
  * `viz::Init()` has to be called before since the present modes depend on the window.
@@ -194,6 +266,17 @@ void Init(const char* displayName, uint32_t width = 0, uint32_t height = 0,
  * @param present_modes either nullptr or a pointer to an array of PresentMode values
  */
 void GetPresentModes(uint32_t* present_mode_count, PresentMode* present_modes);
+
+/**
+ * Set the present mode.
+ *
+ * The present mode determines how the rendered result will be presented on the screen.
+ *
+ * Default is 'PresentMode::AUTO'.
+ *
+ * @param present_mode present mode
+ */
+void SetPresentMode(PresentMode present_mode);
 
 /**
  * Get the supported surface formats.
@@ -230,17 +313,6 @@ void SetSurfaceFormat(SurfaceFormat surface_format);
  * @param size_in_pixels size of the font bitmaps
  */
 void SetFont(const char* path, float size_in_pixels);
-
-/**
- * Set the present mode.
- *
- * The present mode determines how the rendered result will be presented on the screen.
- *
- * Default is 'PresentMode::AUTO'.
- *
- * @param present_mode present mode
- */
-void SetPresentMode(PresentMode present_mode);
 
 /**
  * Set the CUDA stream used by Holoviz for CUDA operations.

@@ -37,31 +37,6 @@ name : str, optional
     The name of the serializer.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the resource
-
-This method is called only once when the resource is created for the first
-time, and uses a light-weight initialization.
-)doc")
-
 }  // namespace StdEntitySerializer
 
 }  // namespace holoscan::doc

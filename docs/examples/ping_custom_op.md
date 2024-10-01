@@ -1,18 +1,17 @@
 (ping-custom-op-example)=
 # Ping Custom Op
 
-In this section, we will modify the previous `ping_simple` example to add a custom operator into the workflow.  We've
-already seen a custom operator defined in the `hello_world` example but skipped over some of the details.
+In this section, we will modify the previous `ping_simple` example to add a custom operator into the workflow.  We've already seen a custom operator defined in the `hello_world` example but skipped over some of the details.
 
 In this example we will cover:
 
-- the details of creating your own custom operator class
-- how to add input and output ports to your operator
-- how to add parameters to your operator
-- the data type of the messages being passed between operators
+- The details of creating your own custom operator class.
+- How to add input and output ports to your operator.
+- How to add parameters to your operator.
+- The data type of the messages being passed between operators.
 
 :::{note}
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ## Operators and Workflow
@@ -34,14 +33,11 @@ Here is the diagram of the operators and workflow used in this example.
 ```
 
 Compared to the previous example, we are adding a new **PingMxOp** operator between the
-**PingTxOp** and **PingRxOp** operators.  This new operator takes as input an integer, multiplies it by a
- constant factor, and then sends the new value to **PingRxOp**.  You can think of this custom operator
-as doing some data processing on an input stream before sending the result to downstream operators.
+**PingTxOp** and **PingRxOp** operators.  This new operator takes as input an integer, multiplies it by a constant factor, and then sends the new value to **PingRxOp**.  You can think of this custom operator as doing some data processing on an input stream before sending the result to downstream operators.
 
 ## Configuring Operator Input and Output Ports
 
-Our custom operator needs 1 input and 1 output port and can be added
-by calling `spec.input()` and `spec.output()` methods within the operator's `setup()` method.
+Our custom operator needs 1 input and 1 output port and can be added by calling `spec.input()` and `spec.output()` methods within the operator's `setup()` method.
 This requires providing the data type and name of the port as arguments (for C++ API), or just the port name (for Python API). We will see an example of this in the code snippet below. For more details, see  {ref}`specifying-operator-inputs-and-outputs-cpp` or {ref}`specifying-operator-inputs-and-outputs-python`.
 
 ## Configuring Operator Parameters
@@ -94,12 +90,10 @@ class PingMxOp : public Operator {
 }  // namespace holoscan::ops
 ```
 - The `PingMxOp` class inherits from the {cpp:class}`Operator <holoscan::ops::Operator>` base class (line `7`).
-- The `HOLOSCAN_OPERATOR_FORWARD_ARGS` macro (line `9`) is syntactic sugar to help forward an operator's constructor arguments to the {cpp:class}`Operator <holoscan::ops::Operator>` base class,
-  and is a convenient shorthand to avoid having to manually define constructors for your operator with the necessary parameters.
-- Input/output ports with the names "in"/"out" are added to the operator spec on lines `14` and `15` respectively.  The port
-type of both ports are `int` as indicated by the template argument `<int>`.
+- The `HOLOSCAN_OPERATOR_FORWARD_ARGS` macro (line `9`) is syntactic sugar to help forward an operator's constructor arguments to the {cpp:class}`Operator <holoscan::ops::Operator>` base class, and is a convenient shorthand to avoid having to manually define constructors for your operator with the necessary parameters.
+- Input/output ports with the names "in"/"out" are added to the operator spec on lines `14` and `15` respectively.  The port type of both ports are `int` as indicated by the template argument `<int>`.
 - We add a "multiplier" parameter to the operator spec (line `16`) with a default value of 2.  This parameter is tied to the private "multiplier_" data member.
-- In the `compute()` method, we receive the integer data from the operator's "in" port (line `20`), print it's value, multiply it's value by the multiplicative factor, and send the new value downstream (line `27`).
+- In the `compute()` method, we receive the integer data from the operator's "in" port (line `20`), print its value, multiply its value by the multiplicative factor, and send the new value downstream (line `27`).
 - On line `20`, note that the data being passed between the operators has the type `int`.
 - The call to `op_output.emit(value)` on line `27` is equivalent to `op_output.emit(value, "out")` since this operator has only 1 output port.  If the operator has more than 1 output port, then the port name is required.
 ````
@@ -139,9 +133,9 @@ class PingMxOp(Operator):
         op_output.emit(value, "out")
 ```
 - The `PingMxOp` class inherits from the `Operator` base class (line `5`).
-- Input/output ports with the names "in"/"out" are added to the operator spec on lines `17` and `18` respectively.
+- Input/output ports with the names "in"/"out" are added to the operator spec on lines `17` and `18`, respectively.
 - We add a "multiplier" parameter to the operator spec with a default value of 2 (line `19`).
-- In the `compute()` method, we receive the integer data from the operator's "in" port (line `22`), print it's value, multiply it's value by the multiplicative factor, and send the new value downstream (line `28`).
+- In the `compute()` method, we receive the integer data from the operator's "in" port (line `22`), print its value, multiply its value by the multiplicative factor, and send the new value downstream (line `28`).
 ````
 `````
 Now that the custom operator has been defined, we create the application, operators, and define the workflow.
@@ -216,11 +210,7 @@ if __name__ == "__main__":
 
 ## Message Data Types
 
-For the C++ API, the messages that are passed between the operators are the objects of the data type
-at the inputs and outputs, so the `value` variable from lines 20 and 25 of the example above has the type
-`int`.  For the Python API, the messages passed between operators can be arbitrary
-Python objects so no special consideration is needed since it is not restricted to the stricter
-parameter typing used for C++ API operators.
+For the C++ API, the messages that are passed between the operators are the objects of the data type at the inputs and outputs, so the `value` variable from lines 20 and 25 of the example above has the type `int`.  For the Python API, the messages passed between operators can be arbitrary Python objects so no special consideration is needed since it is not restricted to the stricter parameter typing used for C++ API operators.
 
 Let's look at the code snippet for the built-in **PingTxOp** class and see if this helps to make it clearer.
 
@@ -278,7 +268,7 @@ class PingTxOp(Operator):
 `````
 
 :::{attention}
-For advance use cases, e.g., when writing C++ applications where you need interoperability between C++ native and GXF operators you will need to use the `holoscan::TensorMap` type instead. See {ref}`interoperability-with-gxf-operators-cpp` for more details. If you are writing a Python application which needs a mixture of Python wrapped C++ operators and native Python operators, see {ref}`interoperability-with-wrapped-operators-python`
+For advanced use cases, e.g., when writing C++ applications where you need interoperability between C++ native and GXF operators, you will need to use the `holoscan::TensorMap` type instead. See {ref}`interoperability-with-gxf-operators-cpp` for more details. If you are writing a Python application which needs a mixture of Python wrapped C++ operators and native Python operators, see {ref}`interoperability-with-wrapped-operators-python`.
 :::
 
 ## Running the Application

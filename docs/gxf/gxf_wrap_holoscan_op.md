@@ -3,7 +3,7 @@
 
 For users who are familiar with the GXF development ecosystem (used in Holoscan SDK 0.2), we provide an export feature to leverage native Holoscan operators as GXF codelets to execute in GXF applications and GraphComposer.
 
-We demonstrate how to wrap a native C++ holoscan operator as a GXF codelet in the [`wrap_operator_as_gxf_extension` example on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension), as described below.
+We demonstrate how to wrap a native C++ Holoscan operator as a GXF codelet in the [`wrap_operator_as_gxf_extension` example on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension), as described below.
 
 ## 1. Creating compatible Holoscan Operators
 
@@ -18,10 +18,12 @@ For more details regarding the use of `holoscan::gxf::Entity`, follow the docume
 ## 2. Creating the GXF extension that wraps the operator
 
 To wrap the native operator as a GXF codelet in a GXF extension, we provide the CMake `wrap_operator_as_gxf_extension` function in the SDK. An example of how it wraps `PingTxNativeOp` and `PingRxNativeOp` can be found [here](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension/gxf_extension/CMakeLists.min.txt).
+
 - It leverages the CMake target names of the operators defined in their respective `CMakeLists.txt` ([ping_tx_native_op](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension/ping_tx_native_op/CMakeLists.min.txt), [ping_rx_native_op](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension/ping_rx_native_op/CMakeLists.min.txt))
 - The function parameters are documented at the top of the [WrapOperatorAsGXFExtension.cmake](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/cmake/modules/WrapOperatorAsGXFExtension.cmake#L18-42) file (ignore implementation below).
 
 :::{warning}
+
 - A unique GXF extension is currently needed for each native operator to export (operators cannot be bundled in a single extension at this time).
 - Wrapping other GXF entities than operators (as codelets) is not currently supported.
 :::
@@ -35,6 +37,6 @@ This section assumes you are familiar with {ref}`how to create a GXF application
 As shown in the `gxf_app/CMakeLists.txt` [here](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension/gxf_app/CMakeLists.min.txt#L30-33), you need to list the following extensions in `create_gxe_application()` to use your wrapped codelets:
 - `GXF::std`
 - `gxf_holoscan_wrapper`
-- the name of the CMake target for the created extension, defined by the `EXTENSION_TARGET_NAME` argument passed to `wrap_operator_as_gxf_extension` in the previous section
+- The name of the CMake target for the created extension, defined by the `EXTENSION_TARGET_NAME` argument passed to `wrap_operator_as_gxf_extension` in the previous section.
 
-The codelet class name (defined by the `CODELET_NAMESPACE::CODELET_NAME` arguments passed to `wrap_operator_as_gxf_extension` in the previous section) can then be used as a component `type` in a GXF app node, as shown in the [YAML app definition](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension/gxf_app/ping.yaml) of the example, connecting the two ping operators.
+The codelet class name (defined by the `CODELET_NAMESPACE::CODELET_NAME` arguments passed to `wrap_operator_as_gxf_extension` in the previous section) can then be used as a component `type` in a GXF application node, as shown in the [YAML app definition](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension/gxf_app/ping.yaml) of the example, connecting the two ping operators.

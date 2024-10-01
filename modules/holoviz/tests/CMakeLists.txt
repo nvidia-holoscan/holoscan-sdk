@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-find_package(GTest)
+if(NOT TARGET GTest::gtest_main)
+   find_package(GTest)
+endif()
 
-if(GTest_FOUND)
+if(TARGET GTest::gtest_main OR GTest_FOUND)
    add_subdirectory(functional)
    add_subdirectory(unit)
 endif()

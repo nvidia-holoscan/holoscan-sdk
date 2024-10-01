@@ -115,6 +115,16 @@ _holoviz_str_to_chroma_location = {
     "midpoint": _HolovizOp.ChromaLocation.MIDPOINT,
 }
 
+_holoviz_str_to_color_space = {
+    "srgb_nonlinear": _HolovizOp.ColorSpace.SRGB_NONLINEAR,
+    "extended_srgb_linear": _HolovizOp.ColorSpace.EXTENDED_SRGB_LINEAR,
+    "bt2020_linear": _HolovizOp.ColorSpace.BT2020_LINEAR,
+    "hdr10_st2084": _HolovizOp.ColorSpace.HDR10_ST2084,
+    "pass_through": _HolovizOp.ColorSpace.PASS_THROUGH,
+    "bt709_linear": _HolovizOp.ColorSpace.BT709_LINEAR,
+    "auto": _HolovizOp.ColorSpace.AUTO,
+}
+
 
 class HolovizOp(_HolovizOp):
     def __init__(
@@ -135,6 +145,7 @@ class HolovizOp(_HolovizOp):
         headless=False,
         framebuffer_srgb=False,
         vsync=False,
+        display_color_space=_HolovizOp.ColorSpace.AUTO,
         enable_render_buffer_input=False,
         enable_render_buffer_output=False,
         enable_camera_pose_output=False,
@@ -142,6 +153,13 @@ class HolovizOp(_HolovizOp):
         camera_eye=(0.0, 0.0, 1.0),
         camera_look_at=(0.0, 0.0, 0.0),
         camera_up=(0.0, 1.0, 0.0),
+        key_callback=None,
+        unicode_char_callback=None,
+        mouse_button_callback=None,
+        scroll_callback=None,
+        cursor_pos_callback=None,
+        framebuffer_size_callback=None,
+        window_size_callback=None,
         font_path="",
         cuda_stream_pool=None,
         name="holoviz_op",
@@ -370,6 +388,7 @@ class HolovizOp(_HolovizOp):
             headless=headless,
             framebuffer_srgb=framebuffer_srgb,
             vsync=vsync,
+            display_color_space=display_color_space,
             enable_render_buffer_input=enable_render_buffer_input,
             enable_render_buffer_output=enable_render_buffer_output,
             enable_camera_pose_output=enable_camera_pose_output,
@@ -377,6 +396,13 @@ class HolovizOp(_HolovizOp):
             camera_eye=camera_eye,
             camera_look_at=camera_look_at,
             camera_up=camera_up,
+            key_callback=key_callback,
+            unicode_char_callback=unicode_char_callback,
+            mouse_button_callback=mouse_button_callback,
+            scroll_callback=scroll_callback,
+            cursor_pos_callback=cursor_pos_callback,
+            framebuffer_size_callback=framebuffer_size_callback,
+            window_size_callback=window_size_callback,
             font_path=font_path,
             cuda_stream_pool=cuda_stream_pool,
             name=name,
@@ -385,6 +411,9 @@ class HolovizOp(_HolovizOp):
     InputSpec = _HolovizOp.InputSpec
     InputType = _HolovizOp.InputType
     ImageFormat = _HolovizOp.ImageFormat
+    YuvModelConversion = _HolovizOp.YuvModelConversion
+    YuvRange = _HolovizOp.YuvRange
+    ChromaLocation = _HolovizOp.ChromaLocation
     DepthMapRenderMode = _HolovizOp.DepthMapRenderMode
 
 

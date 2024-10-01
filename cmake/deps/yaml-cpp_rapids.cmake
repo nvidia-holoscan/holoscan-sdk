@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,10 +34,13 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 # (https://cmake.org/cmake/help/latest/variable/CMAKE_FIND_USE_PACKAGE_REGISTRY.html#variable:CMAKE_FIND_USE_PACKAGE_REGISTRY)
 set(CMAKE_FIND_USE_PACKAGE_REGISTRY FALSE)
 
+set(patch_command ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/patches/yaml-cpp.patch <SOURCE_DIR> && git apply <SOURCE_DIR>/yaml-cpp.patch)
+
 # https://github.com/cpm-cmake/CPM.cmake/wiki/More-Snippets#yaml-cpp
 set(YAML_CPP_CPM_ARGS
     GITHUB_REPOSITORY jbeder/yaml-cpp
     GIT_TAG yaml-cpp-0.7.0
+    PATCH_COMMAND ${patch_command}
     OPTIONS
     "YAML_CPP_BUILD_TESTS Off"
     "YAML_CPP_BUILD_CONTRIB Off"

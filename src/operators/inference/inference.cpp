@@ -254,6 +254,19 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
                                                             cuda_stream_handler_);
 
     if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Tick, Data extraction"); }
+
+    // check for tensor validity the first time
+    if (validate_tensor_dimensions_) {
+      validate_tensor_dimensions_ = false;
+      auto model_in_dims_map = holoscan_infer_context_->get_input_dimensions();
+
+      auto dim_status = HoloInfer::tensor_dimension_check(
+          pre_processor_map_.get().get_map(), model_in_dims_map, dims_per_tensor_);
+      if (dim_status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
+        HoloInfer::raise_error(module_,
+                               "Compute, Inference execution, " + dim_status.get_message());
+      }
+    }
     // Execute inference and populate output buffer in inference specifications
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
@@ -265,7 +278,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     HoloInfer::timer_check(s_time, e_time, "Inference Operator: Inference execution");
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
       status.display_message();
-      HoloInfer::raise_error(module_, "Tick, Inference execution, " + status.get_message());
+      HoloInfer::raise_error(module_, "Compute, Inference execution, " + status.get_message());
     }
     HOLOSCAN_LOG_DEBUG(status.get_message());
 
@@ -284,11 +297,11 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
                                                     allocator.value(),
                                                     module_,
                                                     cuda_stream_handler_);
-    if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Tick, Data Transmission"); }
+    if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Compute, Data Transmission"); }
   } catch (const std::runtime_error& r_) {
     HoloInfer::raise_error(module_,
-                           "Tick, Inference execution, Message->" + std::string(r_.what()));
-  } catch (...) { HoloInfer::raise_error(module_, "Tick, unknown exception"); }
+                           "Compute, Inference execution, Message->" + std::string(r_.what()));
+  } catch (...) { HoloInfer::raise_error(module_, "Compute, unknown exception"); }
 }
 
 }  // namespace holoscan::ops

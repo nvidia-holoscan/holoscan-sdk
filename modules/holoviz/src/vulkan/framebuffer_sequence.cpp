@@ -106,19 +106,17 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
   color_space_ = to_vulkan_color_space(surface_format.value().color_space_);
 
   if (surface_) {
-    swap_chain_.reset(new nvvk::SwapChain());
-    if (!swap_chain_->init(device,
-                           physical_device,
-                           queue,
-                           queue_family_index,
-                           surface_,
-                           VkFormat(color_format_),
-                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) {
-      throw std::runtime_error("Failed to init swap chain.");
-    }
+    swap_chain_.reset(
+        new nvvk::SwapChain(device,
+                            physical_device,
+                            queue,
+                            queue_family_index,
+                            surface_,
+                            VkFormat(color_format_),
+                            VkColorSpaceKHR(color_space_),
+                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
 
-    // the color format and image count might have changed when creating the swap chain
-    color_format_ = vk::Format(swap_chain_->getFormat());
+    // the image count might have changed when creating the swap chain
     image_count_ = swap_chain_->getImageCount();
   } else {
     // create semaphores
@@ -173,13 +171,20 @@ std::vector<SurfaceFormat> FramebufferSequence::get_surface_formats() const {
             surface_formats.push_back({image_format.value(), ColorSpace::SRGB_NONLINEAR});
             break;
           case vk::ColorSpaceKHR::eExtendedSrgbLinearEXT:
-            surface_formats.push_back({image_format.value(), ColorSpace::EXTENDED_SRGB_LINEAR_EXT});
+            surface_formats.push_back({image_format.value(), ColorSpace::EXTENDED_SRGB_LINEAR});
             break;
           case vk::ColorSpaceKHR::eBt2020LinearEXT:
             surface_formats.push_back({image_format.value(), ColorSpace::BT2020_LINEAR});
             break;
           case vk::ColorSpaceKHR::eHdr10St2084EXT:
             surface_formats.push_back({image_format.value(), ColorSpace::HDR10_ST2084});
+            break;
+          case vk::ColorSpaceKHR::eBt709LinearEXT:
+            surface_formats.push_back({image_format.value(), ColorSpace::BT709_LINEAR});
+            break;
+          default:
+            HOLOSCAN_LOG_DEBUG("Unhandled Vulkan color space {}",
+                               to_string(vulkan_surface_format.colorSpace));
             break;
         }
       }

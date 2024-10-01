@@ -8,28 +8,28 @@
 
 ## Overview
 
-Holoviz provides the functionality to composite real time streams of frames with multiple different other layers like segmentation mask layers, geometry layers and GUI layers.
+Holoviz provides the functionality to composite real-time streams of frames with multiple different other layers like segmentation mask layers, geometry layers, and GUI layers.
 
-For maximum performance Holoviz makes use of [Vulkan](https://www.vulkan.org/), which is already installed as part of the Nvidia GPU driver.
+For maximum performance, Holoviz makes use of [Vulkan](https://www.vulkan.org/), which is already installed as part of the NVIDIA GPU driver.
 
 Holoscan provides the [Holoviz operator](#holoviz-operator) which is sufficient for many, even complex visualization tasks. The [Holoviz operator](#holoviz-operator) is used by multiple Holoscan [example applications](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples).
 
-Additionally, for more advanced use cases, the [Holoviz module](#holoviz-module) can be used to create application specific visualization operators. The [Holoviz module](#holoviz-module) provides a C++ API and is also used by the [Holoviz operator](#holoviz-operator).
+Additionally, for more advanced use cases, the [Holoviz module](#holoviz-module) can be used to create application-specific visualization operators. The [Holoviz module](#holoviz-module) provides a C++ API and is also used by the [Holoviz operator](#holoviz-operator).
 
-The term Holoviz is used for both the [Holoviz operator](#holoviz-operator) and the [Holoviz module](#holoviz-module) below. Both the operator and the module roughly support the same features set. Where applicable information how to use a feature with the operator and the module is provided. It's explicitly mentioned below when features are not supported by the operator.
+The term Holoviz is used for both the [Holoviz operator](#holoviz-operator) and the [Holoviz module](#holoviz-module) below. Both the operator and the module roughly support the same feature set. Where applicable, information on how to use a feature with the operator and the module is provided. It's explicitly mentioned below when features are not supported by the operator.
 
 ## Layers
 
 The core entity of Holoviz are layers. A layer is a two-dimensional image object. Multiple layers are composited to create the final output.
 
 These layer types are supported by Holoviz:
-- image layer
-- geometry layer
+- Image layer
+- Geometry layer
 - GUI layer
 
 All layers have common attributes which define the look and also the way layers are finally composited.
 
-The priority determines the rendering order of the layers. Before rendering the layers they are sorted by priority, the layers with the lowest priority are rendered first so that the layer with the highest priority is rendered on top of all other layers. If layers have the same priority then the render order of these layers is undefined.
+The priority determines the rendering order of the layers. Before rendering, the layers are sorted by priority. The layers with the lowest priority are rendered first, so that the layer with the highest priority is rendered on top of all other layers. If layers have the same priority, then the render order of these layers is undefined.
 
 The example below draws a transparent geometry layer on top of an image layer (geometry data and image data creation is omitted in the code). Although the geometry layer is specified first, it is drawn last because it has a higher priority (`1`) than the image layer (`0`).
 
@@ -37,9 +37,9 @@ The example below draws a transparent geometry layer on top of an image layer (g
 ````{tab-item} Operator
 The operator has a `receivers` port which accepts tensors and video buffers produced by other operators. Each tensor or video buffer will result in a layer.
 
-The operator autodetects the layer type for certain input types (e.g. a video buffer will result in an image layer).
+The operator autodetects the layer type for certain input types (e.g., a video buffer will result in an image layer).
 
-For other input types or more complex use cases input specifications can be provided either at initialization time as a parameter or dynamically at run time.
+For other input types or more complex use cases, input specifications can be provided either at initialization time as a parameter or dynamically at runtime.
 
 ```cpp
 std::vector<ops::HolovizOp::InputSpec> input_specs;
@@ -88,7 +88,7 @@ viz::End();
 
 `````{tab-set}
 ````{tab-item} Operator
-Image data can either be on host or device (GPU), both tensors and video buffers are accepted.
+Image data can either be on host or device (GPU); both tensors and video buffers are accepted.
 
 ```cpp
 std::vector<ops::HolovizOp::InputSpec> input_specs;
@@ -217,7 +217,7 @@ The function {func}`viz::BeginGeometryLayer` starts a geometry layer.
 
 See {enum}`viz::PrimitiveTopology` for supported geometry primitive topologies.
 
-There are functions to set attributes for geometric primitives like color ({func}`viz::Color`), line width ({func}`viz::LineWidth`) and point size ({func}`viz::PointSize`).
+There are functions to set attributes for geometric primitives like color ({func}`viz::Color`), line width ({func}`viz::LineWidth`), and point size ({func}`viz::PointSize`).
 
 The code below draws a red rectangle and a green text.
 
@@ -248,7 +248,7 @@ ImGui layers are not supported when using the Holoviz operator.
 
 The Holoviz module supports user interface layers created with [Dear ImGui](https://github.com/ocornut/imgui).
 
-Calls to the Dear ImGui API are allowed between {func}`viz::BeginImGuiLayer` and {func}`viz::EndImGuiLayer` are used to draw to the ImGui layer. The ImGui layer behaves like other layers and is rendered with the layer opacity and priority.
+Calls to the Dear ImGui API are allowed between {func}`viz::BeginImGuiLayer` and {func}`viz::EndImGuiLayer`, and are used to draw to the ImGui layer. The ImGui layer behaves like other layers and is rendered with the layer opacity and priority.
 
 The code below creates a Dear ImGui window with a checkbox used to conditionally show a image layer.
 
@@ -277,19 +277,18 @@ while (!viz::WindowShouldClose()) {
 }
 ```
 
-ImGUI is a static library and has no stable API. Therefore the application and Holoviz have to use the same ImGUI version. Therefore the link target `holoscan::viz::imgui` is exported, make sure to link your app against that target.
+ImGUI is a static library and has no stable API. Therefore, the application and Holoviz have to use the same ImGUI version. When the link target `holoscan::viz::imgui` is exported, make sure to link your application against that target.
 
 ### Depth Map Layers
 
-A depth map is a single channel 2d array where each element represents a depth value. The data is rendered as a 3d object using points, lines or triangles. The color for the elements can also be specified.
+A depth map is a single channel 2d array where each element represents a depth value. The data is rendered as a 3D object using points, lines, or triangles. The color for the elements can also be specified.
 
 Supported formats for the depth map:
 - 8-bit unsigned normalized format that has a single 8-bit depth component
 - 32-bit signed float format that has a single 32-bit depth component
 
 Supported format for the depth color map:
-- 32-bit unsigned normalized format that has an 8-bit R component in byte 0, an 8-bit G component in byte 1,
-an 8-bit B component in byte 2, and an 8-bit A component in byte 3
+- 32-bit unsigned normalized format that has an 8-bit R component in byte 0, an 8-bit G component in byte 1, an 8-bit B component in byte 2, and an 8-bit A component in byte 3
 
 Depth maps are rendered in 3D and support camera movement.
 
@@ -316,16 +315,16 @@ See [holoviz depth map demo](https://github.com/nvidia-holoscan/holoscan-sdk/blo
 
 ## Views
 
-By default a layer will fill the whole window. When using a view, the layer can be placed freely within the window.
+By default, a layer will fill the whole window. When using a view, the layer can be placed freely within the window.
 
 Layers can also be placed in 3D space by specifying a 3D transformation matrix.
 :::{note}
-For geometry layers there is a default matrix which allows coordinates in the range of [0 ... 1] instead of the Vulkan [-1 ... 1] range. When specifying a matrix for a geometry layer, this default matrix is overwritten.
+For geometry layers, there is a default matrix which allows coordinates in the range of [0 ... 1] instead of the Vulkan [-1 ... 1] range. When specifying a matrix for a geometry layer, this default matrix is overwritten.
 :::
 
-When multiple views are specified the layer is drawn multiple times using the specified layer view.
+When multiple views are specified, the layer is drawn multiple times using the specified layer view.
 
-It's possible to specify a negative term for height, which flips the image. When using a negative height, one should also adjust the y value to point to the lower left corner of the viewport instead of the upper left corner.
+It's possible to specify a negative term for height, which flips the image. When using a negative height, you should also adjust the y value to point to the lower left corner of the viewport instead of the upper left corner.
 
 `````{tab-set}
 ````{tab-item} Operator
@@ -359,11 +358,11 @@ Use {func}`viz::SetCamera()` to change the camera.
 
 (holoviz-display-mode)=
 
-## Using a display in exclusive mode
+## Using a Display in Exclusive Mode
 
-Usually Holoviz opens a normal window on the Linux desktop. In that case the desktop compositor is combining the Holoviz image with all other elements on the desktop. To avoid this extra compositing step, Holoviz can render to a display directly.
+Typically, Holoviz opens a normal window on the Linux desktop. In that case, the desktop compositor is combining the Holoviz image with all other elements on the desktop. To avoid this extra compositing step, Holoviz can render to a display directly.
 
-### Configure a display for exclusive use
+### Configure a Display for Exclusive Use
 
 `````{tab-set}
 ````{tab-item} Single display
@@ -383,7 +382,7 @@ The display to be used in exclusive mode needs to be disabled in the NVIDIA Sett
 ````
 `````
 
-### Enable exclusive display in Holoviz
+### Enable Exclusive Display in Holoviz
 
 `````{tab-set}
 ````{tab-item} Operator
@@ -403,7 +402,7 @@ auto visualizer = make_operator<ops::HolovizOp>("holoviz",
 ````{tab-item} Module
 Provide the name of the display and desired display mode properties to {func}`viz::Init()`.
 
-If the name is `nullptr` then the first display is selected.
+If the name is `nullptr`, then the first display is selected.
 ````
 `````
 
@@ -436,9 +435,9 @@ $ hwinfo --monitor | grep Model
 `````
 :::
 
-## CUDA streams
+## CUDA Streams
 
-By default Holoviz is using CUDA stream `0` for all CUDA operations. Using the default stream can affect concurrency of CUDA operations, see [stream synchronization behavior](https://docs.nvidia.com/cuda/cuda-runtime-api/stream-sync-behavior.html#stream-sync-behavior__default-stream) for more information.
+By default, Holoviz is using CUDA stream `0` for all CUDA operations. Using the default stream can affect concurrency of CUDA operations, see [stream synchronization behavior](https://docs.nvidia.com/cuda/cuda-runtime-api/stream-sync-behavior.html#stream-sync-behavior__default-stream) for more information.
 
 `````{tab-set}
 ````{tab-item} Operator
@@ -455,11 +454,11 @@ auto visualizer =
 
 ````
 ````{tab-item} Module
-When providing CUDA resources to Holoviz through e.g. {func}`viz::ImageCudaDevice` Holoviz is using CUDA operations to use that memory. The CUDA stream used by these operations can be set by calling {func}`viz::SetCudaStream`. The stream can be changed at any time.
+When providing CUDA resources to Holoviz through (e.g., {func}`viz::ImageCudaDevice`), Holoviz is using CUDA operations to use that memory. The CUDA stream used by these operations can be set by calling {func}`viz::SetCudaStream`. The stream can be changed at any time.
 ````
 `````
 
-## Reading the framebuffer
+## Reading the Frame Buffer
 
 The rendered frame buffer can be read back. This is useful when when doing offscreen rendering or running Holoviz in a headless environment.
 
@@ -470,9 +469,9 @@ Reading the depth buffer is not supported when using the Holoviz operator.
 `````{tab-set}
 ````{tab-item} Operator
 
-To read back the color framebuffer set the `enable_render_buffer_output` parameter to `true` and provide an allocator to the operator.
+To read back the color frame buffer, set the `enable_render_buffer_output` parameter to `true` and provide an allocator to the operator.
 
-The framebuffer is emitted on the `render_buffer_output` port.
+The frame buffer is emitted on the `render_buffer_output` port.
 
 ```cpp
 std::shared_ptr<holoscan::ops::HolovizOp> visualizer =
@@ -507,9 +506,154 @@ To use sRGB encoded images set the `fmt` parameter of {func}`viz::ImageCudaDevic
 ````
 `````
 
+## HDR
+
+Holoviz supports selecting the framebuffer surface image format and color space. To enable HDR select a HDR color space.
+
+`````{tab-set}
+````{tab-item} Operator
+Set the `framebuffer_color_space` parameter to a supported HDR color space.
+````
+````{tab-item} Module
+Use the {func}`viz::GetSurfaceFormats()` to query the available surface formats.
+
+Use the {func}`viz::SetSurfaceFormat()` to set the framebuffer surface format to a surface format with a HDR color space.
+````
+`````
+
+### Distributions supporting HDR
+
+At the time of writing (08/2024) there is currently no official support for HDR on Linux. However there is experimental HDR support for Gnome version 44 and KDE Plasma 6.
+
+#### KDE Plasma 6
+
+Experimental HDR support is described in this [blog post](https://zamundaaa.github.io/wayland/2023/12/18/update-on-hdr-and-colormanagement-in-plasma.html). Three steps are required to use HDR with Holoviz:
+
+1. Enable HDR in the display configuration
+1. Install the [Vulkan HDR layer](https://github.com/Zamundaaa/VK_hdr_layer)
+2. Set the `ENABLE_HDR_WSI` environment variable to `1`.
+
+Run `vulkaninfo` to verify that HDR color spaces are reported
+
+```shell
+> vulkaninfo
+...
+GPU id : 0 (NVIDIA RTX 6000 Ada Generation):
+        Surface type = VK_KHR_wayland_surface
+        Formats: count = 11
+                SurfaceFormat[0]:
+                        format = FORMAT_A2B10G10R10_UNORM_PACK32
+                        colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+                SurfaceFormat[1]:
+                        format = FORMAT_A2R10G10B10_UNORM_PACK32
+                        colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+                SurfaceFormat[2]:
+                        format = FORMAT_R8G8B8A8_SRGB
+                        colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+                SurfaceFormat[3]:
+                        format = FORMAT_R8G8B8A8_UNORM
+                        colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+                SurfaceFormat[4]:
+                        format = FORMAT_B8G8R8A8_SRGB
+                        colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+                SurfaceFormat[5]:
+                        format = FORMAT_B8G8R8A8_UNORM
+                        colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+                SurfaceFormat[6]:
+                        format = FORMAT_R16G16B16A16_SFLOAT
+                        colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+                SurfaceFormat[7]:
+                        format = FORMAT_A2B10G10R10_UNORM_PACK32
+                        colorSpace = COLOR_SPACE_HDR10_ST2084_EXT
+                SurfaceFormat[8]:
+                        format = FORMAT_A2R10G10B10_UNORM_PACK32
+                        colorSpace = COLOR_SPACE_HDR10_ST2084_EXT
+                SurfaceFormat[9]:
+                        format = FORMAT_R16G16B16A16_SFLOAT
+                        colorSpace = COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT
+                SurfaceFormat[10]:
+                        format = FORMAT_R16G16B16A16_SFLOAT
+                        colorSpace = COLOR_SPACE_BT709_LINEAR_EXT
+...
+```
+
+#### Gnome version 44
+
+Gnome version 44 is part of Ubuntu 24.04.
+
+Experimental HDR support had been added with this [MR](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/2879). To enable HDR, make sure Wayland is used (no HDR with X11), press `Alt+F2`, then type `lg` in the prompt to start the `looking glass` console. Enter `global.compositor.backend.get_monitor_manager().experimental_hdr = 'on'` to enable HDR, `global.compositor.backend.get_monitor_manager().experimental_hdr = 'off'` to disable HDR.
+
+Gnome is not yet passing the HDR color space to Vulkan. The color space and other information can be queried using `drm_info`, check modes where `HDR_OUTPUT_METADATA` is not `0`.
+
+For the case below (`Microstep MSI MPG343CQR` display) the HDR color space is `BT2020_RGB` with `SMPTE ST 2084 (PQ)` EOTF. Max luminance is 446 nits.
+
+```shell
+> drm_info | grep -B 1 -A 11 HDR
+...
+│   │       ├───"Colorspace": enum {Default, BT2020_RGB, BT2020_YCC} = BT2020_RGB
+│   │       ├───"HDR_OUTPUT_METADATA": blob = 114
+│   │       │   ├───Type: Static Metadata Type 1
+│   │       │   ├───EOTF: SMPTE ST 2084 (PQ)
+│   │       │   ├───Display primaries:
+│   │       │   │   ├───Red: (0.6768, 0.3096)
+│   │       │   │   ├───Green: (0.2764, 0.6445)
+│   │       │   │   └───Blue: (0.1514, 0.0693)
+│   │       │   ├───White point: (0.3135, 0.3291)
+│   │       │   ├───Max display mastering luminance: 446 cd/m²
+│   │       │   ├───Min display mastering luminance: 0.0001 cd/m²
+│   │       │   ├───Max content light level: 446 cd/m²
+│   │       │   └───Max frame average light level: 446 cd/m²
+-
+...
+```
+
+## Callbacks
+
+Callbacks can be used to receive updates on key presses, mouse position and buttons, and window size.
+
+`````{tab-set}
+````{tab-item} Operator
+C++
+```cpp
+visualizer = make_operator<ops::HolovizOp>(
+            "holoviz",
+            Arg("key_callback",
+                ops::HolovizOp::KeyCallbackFunction([](ops::HolovizOp::Key key,
+                                                       ops::HolovizOp::KeyAndButtonAction action,
+                                                       ops::HolovizOp::KeyModifiers modifiers) -> void {
+                HOLOSCAN_LOG_INFO(
+                  "key {} action {} modifiers {}", int(key), int(action), *(uint32_t*)(&modifiers));
+            }))
+        )
+```
+Python
+```python
+def callback(
+    key: HolovizOp.Key, action: HolovizOp.KeyAndButtonAction, modifiers: HolovizOp.KeyModifiers
+):
+    print(key, action, modifiers)
+
+visualizer = HolovizOp(
+            self,
+            name="holoviz",
+            key_callback=callback)
+```
+````
+````{tab-item} Module
+```cpp
+void key_callback(void *user_pointer, Key key, KeyAndButtonAction action, KeyModifiers modifiers) {
+    ...
+}
+...
+viz::SetKeyCallback(user_pointer, &key_callback);
+...
+```
+````
+`````
+
 ## Holoviz operator
 
-### Class documentation
+### Class Documentation
 
 {cpp:class}`C++ <holoscan::ops::HolovizOp>`
 
@@ -517,13 +661,13 @@ To use sRGB encoded images set the `fmt` parameter of {func}`viz::ImageCudaDevic
 
 ### Holoviz Operator Examples
 
-There are multiple [examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/holoviz) both in Python and C++ showing how to use various features of the Holoviz operator.
+There are multiple [examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/holoviz), both in Python and C++, showing how to use various features of the Holoviz operator.
 
 ## Holoviz module
 
 ### Concepts
 
-The Holoviz module uses the concept of the immediate mode design pattern for its API, inspired by the [Dear ImGui](https://github.com/ocornut/imgui) library. The difference to the retained mode, for which most APIs are designed for, is, that there are no objects created and stored by the application. This makes it fast and easy to make visualization changes in a Holoscan application.
+The Holoviz module uses the concept of the immediate mode design pattern for its API, inspired by the [Dear ImGui](https://github.com/ocornut/imgui) library. The difference to the retained mode, for which most APIs are designed, is that there are no objects created and stored by the application. This makes it fast and easy to make visualization changes in a Holoscan application.
 
 ### Instances
 
@@ -531,19 +675,19 @@ The Holoviz module uses a thread-local instance object to store its internal sta
 
 When calling into the Holoviz module from other threads other than the thread from which the Holoviz module functions were first called, make sure to call {func}`viz::GetCurrent()` and {func}`viz::SetCurrent()` in the respective threads.
 
-There are usage cases where multiple instances are needed, for example, to open multiple windows. Instances can be created by calling {func}`viz::Create()`. Call {func}`viz::SetCurrent()` to make the instance current before calling the Holoviz module function to be executed for the window the instance belongs to.
+There are usage cases where multiple instances are needed; for example, to open multiple windows. Instances can be created by calling {func}`viz::Create()`. Call {func}`viz::SetCurrent()` to make the instance current before calling the Holoviz module function to be executed for the window the instance belongs to.
 
-### Getting started
+### Getting Started
 
 The code below creates a window and displays an image.
 
-First the Holoviz module needs to be initialized. This is done by calling {func}`viz::Init()`.
+First, the Holoviz module needs to be initialized. This is done by calling {func}`viz::Init()`.
 
-The elements to display are defined in the render loop, termination of the loop is checked with {func}`viz::WindowShouldClose`.
+The elements to display are defined in the render loop; termination of the loop is checked with {func}`viz::WindowShouldClose`.
 
-The definition of the displayed content starts with {func}`viz::Begin` and ends with {func}`viz::End`. {func}`viz::End` starts the rendering and displays the rendered result.
+The definition of the displayed content starts with {func}`viz::Begin`, and ends with {func}`viz::End`. {func}`viz::End` starts the rendering and displays the rendered result.
 
-Finally the Holoviz module is shutdown with {func}`viz::Shutdown`.
+Finally, the Holoviz module is shutdown with {func}`viz::Shutdown`.
 
 ```cpp
 #include "holoviz/holoviz.hpp"

@@ -178,36 +178,19 @@ bool TrtInfer::initialize_parameters() {
 
     switch (engine_->getTensorIOMode(tensor_name)) {
       case nvinfer1::TensorIOMode::kINPUT: {
-        switch (dims.nbDims) {
-          case 2: {
-            nvinfer1::Dims2 in_dimensions = {dims.d[0], dims.d[1]};
-            auto set_status = context_->setInputShape(tensor_name, in_dimensions);
-            if (!set_status) {
-              HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
-              return false;
-            }
-          } break;
-          case 3: {
-            nvinfer1::Dims3 in_dimensions = {dims.d[0], dims.d[1], dims.d[2]};
-            auto set_status = context_->setInputShape(tensor_name, in_dimensions);
-            if (!set_status) {
-              HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
-              return false;
-            }
-          } break;
-          case 4: {
-            nvinfer1::Dims4 in_dimensions = {dims.d[0], dims.d[1], dims.d[2], dims.d[3]};
-            auto set_status = context_->setInputShape(tensor_name, in_dimensions);
-            if (!set_status) {
-              HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
-              return false;
-            }
-          } break;
-          default: {
-            HOLOSCAN_LOG_INFO("All tensors must have dimension size between 2 and 4.");
-            throw std::runtime_error("Dimension size not supported: " +
-                                     std::to_string(dims.nbDims));
-          }
+        if (dims.nbDims > 8) {
+          HOLOSCAN_LOG_INFO("All tensors must have dimension size less than or equal to 8.");
+          return false;
+        }
+        nvinfer1::Dims in_dimensions;
+        in_dimensions.nbDims = dims.nbDims;
+
+        for (size_t in = 0; in < dims.nbDims; in++) { in_dimensions.d[in] = dims.d[in]; }
+
+        auto set_status = context_->setInputShape(tensor_name, in_dimensions);
+        if (!set_status) {
+          HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
+          return false;
         }
 
         std::vector<int64_t> indim;
@@ -225,13 +208,14 @@ bool TrtInfer::initialize_parameters() {
       } break;
       default: {
         HOLOSCAN_LOG_ERROR("Input index {} is neither input nor output.", i);
-        throw std::runtime_error("Input mode not supported");
+        return false;
       }
     }
   }
 
   if (!context_->allInputDimensionsSpecified()) {
-    throw std::runtime_error("Error, not all input dimensions specified.");
+    HOLOSCAN_LOG_ERROR("Error, not all input dimensions specified.");
+    return false;
   }
 
   return true;

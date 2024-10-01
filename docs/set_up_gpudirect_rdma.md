@@ -6,14 +6,14 @@ Learn more about RDMA in the {ref}`technology overview<gpudirect_rdma>` section.
 
 There are two parts to enabling RDMA for Holoscan:
 
-- [Enabling RDMA on the ConnectX SmartNIC](#enabling-rdma-on-the-connectx-smartnic)
-- [Enabling GPUDirect RDMA](#enabling-gpudirect-rdma)
+  - [Enabling RDMA on the ConnectX SmartNIC](#enabling-rdma-on-the-connectx-smartnic)
+  - [Enabling GPUDirect RDMA](#enabling-gpudirect-rdma)
 
 ## Enabling RDMA on the ConnectX SmartNIC
 
 _Skip to the next section if you do not plan to leverage a ConnectX SmartNIC._
 
-The NVIDIA IGX Orin developer kit comes with an embedded [ConnectX Ethernet adapter](https://www.nvidia.com/en-us/networking/ethernet-adapters/) to offer advanced hardware offloads and accelerations. You can also purchase an individual ConnectX adapter and install it on other systems such as x86_64 workstations.
+The NVIDIA IGX Orin developer kit comes with an embedded [ConnectX Ethernet adapter](https://www.nvidia.com/en-us/networking/ethernet-adapters/) to offer advanced hardware offloads and accelerations. You can also purchase an individual ConnectX adapter and install it on other systems, such as x86_64 workstations.
 
 The following steps are required to ensure your ConnectX can be used for RDMA over Converged Ethernet ([RoCE](https://docs.nvidia.com/networking/display/mlnxofedv23070512/rdma+over+converged+ethernet+(roce))):
 
@@ -25,7 +25,7 @@ Ensure the Mellanox OFED drivers version 23.10 or above are installed:
 cat /sys/module/mlx5_core/version
 ```
 
-If not installed, or an older version, install the appropriate version from the [MLNX_OFED download page](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed), or use the script below:
+If not installed, or an older version is installed, you should install the appropriate version from the [MLNX_OFED download page](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed), or use the script below:
 
 ```bash
 # You can choose different versions/OS or download directly from the
@@ -61,7 +61,7 @@ The ConnectX SmartNIC can function in two separate modes (called link layer):
 - Ethernet (ETH)
 - Infiniband (IB)
 
-**Holoscan does not support IB at this time (not tested), so the ConnectX will need to use the ETH link layer.**
+**Holoscan does not support IB at this time (as it is not tested), so the ConnectX will need to use the ETH link layer.**
 
 To identify the current mode, run `ibstat` or `ibv_devinfo` and look for the `Link Layer` value. In the example below, the `mlx5_0` interface is in Ethernet mode, while the `mlx5_1` interface is in Infiniband mode. Do not pay attention to the `transport` value which is always `InfiniBand`.
 
@@ -115,7 +115,7 @@ sudo /etc/init.d/openibd restart
 To switch the link layer mode, there are two possible options:
 
 1. On IGX Orin developer kits, you can switch that setting through the BIOS: [see IGX Orin documentation](https://docs.nvidia.com/igx-orin/user-guide/latest/switch-network-link.html).
-2. On any system with a ConnectX (including IGX Orin devkits), you can run the command below from a terminal (requires a reboot). `sudo ibdev2netdev -v` is used to identify the PCI address of the ConnectX (any of the two interfaces is fine to use), and `mlxconfig` is used to apply the changes.
+2. On any system with a ConnectX (including IGX Orin developer kits), you can run the command below from a terminal (this will require a reboot). `sudo ibdev2netdev -v` is used to identify the PCI address of the ConnectX (any of the two interfaces is fine to use), and `mlxconfig` is used to apply the changes.
 
    ```bash
    mlx_pci=$(sudo ibdev2netdev -v | awk '{print $1}' | head -n1)
@@ -142,7 +142,7 @@ To switch the link layer mode, there are two possible options:
    Apply new Configuration? (y/n) [n] :
    ```
 
-   `Next Boot` is actually the current value that was expected to be used at the next reboot, while `New` is the value you're about to set to override `Next Boot`.
+   `Next Boot` is the current value that was expected to be used at the next reboot, while `New` is the value you're about to set to override `Next Boot`.
 
    Apply with `y` and reboot afterwards:
 
@@ -151,9 +151,9 @@ To switch the link layer mode, there are two possible options:
    -I- Please reboot machine to load new configurations.
    ```
 
-### 4. Configure the IP addresses of the ethernet interfaces
+### 4. Configure the IP addresses of the Ethernet interfaces
 
-First, identify the logical names of your ConnectX interfaces. Connecting a cable in just one of the interfaces on the ConnectX will help you identify which port is which (in the example below, only `mlx5_1` i.e. `eth3` is connected):
+First, identify the logical names of your ConnectX interfaces. Connecting a cable in just one of the interfaces on the ConnectX will help you identify which port is which (in the example below, only `mlx5_1` – i.e., `eth3` – is connected):
 
 ```bash
 $ sudo ibdev2netdev
@@ -163,7 +163,7 @@ mlx5_1 port 1 ==> eth3 (Up)
 :::{tip}
 For IGX Orin Developer Kits with no live source to connect to the ConnectX QSFP ports, adding `-v` can show you which logical name is mapped to each specific port:
 - `0005:03.00.0` is the QSFP port closer to the PCI slots
-- `0005:03.00.1` is the QSFP closer to the RJ45 ethernet ports
+- `0005:03.00.1` is the QSFP port closer to the RJ45 ethernet ports
 
 ```sh
 $ sudo ibdev2netdev -v
@@ -183,7 +183,7 @@ $ sudo dmesg | grep -w mlx5_core
 ```
 ```
 :::
-The next step is to set a static IP on the interface you'd like to use so you can refer to it in your Holoscan applications (ex: {ref}`Emergent cameras<emergent-vision-tech>`, [distributed applications](./holoscan_create_distributed_app.md)...).
+The next step is to set a static IP on the interface you'd like to use so you can refer to it in your Holoscan applications (e.g., {ref}`Emergent cameras<emergent-vision-tech>`, [distributed applications](./holoscan_create_distributed_app.md)...).
 
 First, check if you already have an address setup. We'll use the `eth3` interface in this example for `mlx5_1`:
 
@@ -191,7 +191,7 @@ First, check if you already have an address setup. We'll use the `eth3` interfac
 ip -f inet addr show eth3
 ```
 
-If nothing appears or you'd like to change the address, you can set an IP and MTU (Maximum Transmission Unit) through the Network Manager user interface, CLI (`nmcli`), or other IP configuration tools. In the example below, we use `ip` (`ifconfig` is legacy) to configure the `eth3` interface with an address of `192.168.1.1/24` and a MTU of `9000` (i.e. "jumbo frame") to send Ethernet frames with a payload greater than the standard size of 1500 bytes:
+If nothing appears, or you'd like to change the address, you can set an IP and MTU (Maximum Transmission Unit) through the Network Manager user interface, CLI (`nmcli`), or other IP configuration tools. In the example below, we use `ip` (`ifconfig` is legacy) to configure the `eth3` interface with an address of `192.168.1.1/24` and a MTU of `9000` (i.e., "jumbo frame") to send Ethernet frames with a payload greater than the standard size of 1500 bytes:
 
 ```bash
 sudo ip link set dev eth3 down
@@ -245,7 +245,7 @@ Run the following to load it automatically during boot:
 ````{tab-item} iGPU
 
 :::{warning}
-At this time the IGX SW 1.0 DP and JetPack 6.0 DP are missing the `nvidia-p2p` kernel for support for GPU Direct RDMA support. They're planned in the respective GA releases. The instructions below are to load the kernel module once it is packaged in the GA releases.
+At this time, the IGX SW 1.0 DP and JetPack 6.0 DP are missing the `nvidia-p2p` kernel for support for GPU Direct RDMA support. They're planned in the respective GA releases. The instructions below are to load the kernel module once it is packaged in the GA releases.
 :::
 
 On iGPU, the GPUDirect RDMA drivers are named `nvidia-p2p`. Run the following to load the kernel module manually:
@@ -266,8 +266,7 @@ Run the following to load it automatically during boot:
 ## Testing with Rivermax
 
 The instructions below describe the steps to test GPUDirect using the
-[Rivermax](https://developer.nvidia.com/networking/rivermax) SDK. The test applications used by
-these instructions, `generic_sender` and `generic_receiver`, can
+[Rivermax](https://developer.nvidia.com/networking/rivermax) SDK. The test applications used by these instructions, `generic_sender` and `generic_receiver`, can
 then be used as samples in order to develop custom applications that use the
 Rivermax SDK to optimize data transfers.
 
@@ -281,8 +280,8 @@ If manually installing the Rivermax SDK from the link above, please note there i
 
 Running the Rivermax sample applications requires two systems, a sender and a
 receiver, connected via ConnectX network adapters. If two Developer
-Kits are used then the onboard ConnectX can be used on each system, but
-if only one Developer Kit is available then it is expected that another system with
+Kits are used, then the onboard ConnectX can be used on each system. However,
+if only one Developer Kit is available, then it is expected that another system with
 an add-in ConnectX network adapter will need to be used. Rivermax supports a
 wide array of platforms, including both Linux and Windows, but these
 instructions assume that another Linux based platform will be used as the
@@ -290,7 +289,7 @@ sender device while the Developer Kit is used as the receiver.
 
 :::{note}
 The `$rivermax_sdk` variable referenced below corresponds to the path where the Rivermax SDK
-package was installed. If the Rivermax SDK was installed via SDK Manager, this path will be:
+package is installed. If the Rivermax SDK was installed via SDK Manager, this path will be:
 ```sh
 rivermax_sdk=$HOME/Documents/Rivermax/1.31.10
 ```
@@ -298,7 +297,7 @@ If the Rivermax SDK was installed via a manual download, make sure to export you
 ```sh
 rivermax_sdk=$DOWNLOAD_PATH/1.31.10
 ```
-*Install path might differ in future versions of Rivermax.*
+*The install path might differ in future versions of Rivermax.*
 :::
 
 1. Determine the logical name for the ConnectX devices that are used by each
@@ -388,7 +387,7 @@ rivermax_sdk=$DOWNLOAD_PATH/1.31.10
          $ sudo ifconfig enp9s0f0 up 10.0.0.2
       ```
 
-   b. Build the `generic_receiver` app with GPUDirect support from the [Rivermax GitHub Repo](https://github.com/NVIDIA/Rivermax). Before following the instructions to [build with CUDA-Toolkit support](https://github.com/NVIDIA/Rivermax/blob/master/generic_receiver/README.md#how-to-build), apply the changes to file `generic_receiver/generic_receiver.cpp` in [this PR](https://github.com/NVIDIA/Rivermax/pull/3/files), this was tested on the IGX Orin Developer Kit with Rivermax 1.31.10.
+   b. Build the `generic_receiver` app with GPUDirect support from the [Rivermax GitHub Repo](https://github.com/NVIDIA/Rivermax). Before following the instructions to [build with CUDA Toolkit support](https://github.com/NVIDIA/Rivermax/blob/master/generic_receiver/README.md#how-to-build), apply the changes to the file `generic_receiver/generic_receiver.cpp` in [this PR](https://github.com/NVIDIA/Rivermax/pull/3/files). This was tested on the NVIDIA IGX Orin Developer Kit with Rivermax 1.31.10.
 
    c. Launch the `generic_receiver` application from the `build` directory:
 

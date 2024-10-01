@@ -123,9 +123,6 @@ void init_expiring_message_available(py::module_& m) {
            "clock"_a = py::none(),
            "name"_a = "noname_expiring_message_available_condition"s,
            doc::ExpiringMessageAvailableCondition::doc_ExpiringMessageAvailableCondition)
-      .def_property_readonly("gxf_typename",
-                             &ExpiringMessageAvailableCondition::gxf_typename,
-                             doc::ExpiringMessageAvailableCondition::doc_gxf_typename)
       .def_property("receiver",
                     py::overload_cast<>(&ExpiringMessageAvailableCondition::receiver),
                     py::overload_cast<std::shared_ptr<gxf::GXFResource>>(
@@ -145,12 +142,6 @@ void init_expiring_message_available(py::module_& m) {
            doc::ExpiringMessageAvailableCondition::doc_max_delay)
       .def("max_delay_ns",
            &ExpiringMessageAvailableCondition::max_delay_ns,
-           doc::ExpiringMessageAvailableCondition::doc_max_delay_ns)
-      .def("setup",
-           &ExpiringMessageAvailableCondition::setup,
-           doc::ExpiringMessageAvailableCondition::doc_setup)
-      .def("initialize",
-           &ExpiringMessageAvailableCondition::initialize,
-           doc::ExpiringMessageAvailableCondition::doc_initialize);
+           doc::ExpiringMessageAvailableCondition::doc_max_delay_ns);
 }
 }  // namespace holoscan

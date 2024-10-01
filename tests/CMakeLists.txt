@@ -169,6 +169,7 @@ target_link_libraries(SYSTEM_TEST
 ConfigureTest(
   SYSTEM_DISTRIBUTED_TEST
   system/distributed/distributed_app.cpp
+  system/distributed/distributed_gxf_operator_app.cpp
   system/distributed/distributed_demosaic_op_app.cpp
   system/distributed/holoscan_ucx_ports_env.cpp
   system/distributed/ping_message_rx_op.cpp
@@ -180,6 +181,7 @@ ConfigureTest(
 target_link_libraries(SYSTEM_DISTRIBUTED_TEST
   PRIVATE
   holoscan::ops::bayer_demosaic
+  holoscan::ops::gxf_codelet
   holoscan::ops::holoviz
   holoscan::ops::ping_tensor_rx
   holoscan::ops::ping_tensor_tx
@@ -216,6 +218,7 @@ ConfigureTest(
   SYSTEM_DISTRIBUTED_EBS_TEST
   system/distributed/distributed_app.cpp
   system/distributed/distributed_demosaic_op_app.cpp
+  system/distributed/distributed_gxf_operator_app.cpp
   system/distributed/holoscan_ucx_ports_env.cpp
   system/distributed/standalone_fragments.cpp
   system/env_wrapper.cpp
@@ -223,6 +226,7 @@ ConfigureTest(
 target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
   PRIVATE
   holoscan::ops::bayer_demosaic
+  holoscan::ops::gxf_codelet
   holoscan::ops::holoviz
   holoscan::ops::ping_tensor_rx
   holoscan::ops::ping_tensor_tx

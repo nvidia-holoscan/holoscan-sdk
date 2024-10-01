@@ -14,33 +14,33 @@
 # limitations under the License.
 
 cmake_minimum_required(VERSION 3.20)
-project(periodic_ping CXX)
+project(ping_period CXX)
 
 # Finds the package holoscan
 find_package(holoscan REQUIRED CONFIG
              PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
 
-add_executable(periodic_ping
-  periodic_ping.cpp
+add_executable(ping_periodic
+  ping_periodic.cpp
 )
 
-target_link_libraries(periodic_ping
+target_link_libraries(ping_periodic
   PRIVATE
   holoscan::core
 )
 
 # Copy config file to the build tree
-add_custom_target(periodic_ping_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/periodic_ping.yaml" ${CMAKE_CURRENT_BINARY_DIR}
+add_custom_target(ping_periodic_yaml
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/ping_periodic.yaml" ${CMAKE_CURRENT_BINARY_DIR}
 )
-add_dependencies(periodic_ping periodic_ping_yaml)
+add_dependencies(ping_periodic ping_periodic_yaml)
 
 # Testing
 if(BUILD_TESTING)
-  add_test(NAME EXAMPLE_CPP_PERIODIC_PING_TEST
-           COMMAND periodic_ping
+  add_test(NAME EXAMPLE_CPP_PING_PERIODIC_TEST
+           COMMAND ping_periodic
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
           )
-  set_tests_properties(EXAMPLE_CPP_PERIODIC_PING_TEST PROPERTIES
+  set_tests_properties(EXAMPLE_CPP_PING_PERIODIC_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "Rx message received: Periodic ping")
 endif()

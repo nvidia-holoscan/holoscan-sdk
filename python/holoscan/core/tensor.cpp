@@ -63,8 +63,9 @@ void init_tensor(py::module_& m) {
       .def(
           "__repr__",
           [](const DLDevice& device) {
-            return fmt::format(
-                "<DLDevice device_type:{} device_id:{}>", device.device_type, device.device_id);
+            return fmt::format("<DLDevice device_type:{} device_id:{}>",
+                               static_cast<int>(device.device_type),
+                               device.device_id);
           },
           R"doc(Return repr(self).)doc");
 
@@ -540,7 +541,8 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
       break;
     }
     default:
-      throw std::runtime_error(fmt::format("Unsupported device type: {}", device_type));
+      throw std::runtime_error(
+          fmt::format("Unsupported device type: {}", static_cast<int>(device_type)));
   }
 
   // Note: we should keep the reference to the capsule object (`dlpack_obj`) while working with

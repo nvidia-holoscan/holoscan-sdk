@@ -5,13 +5,13 @@ In this example, we extend the previous [video replayer application](./video_rep
 
 In the distributed case we will:
 
-- create one fragment that loads a video file from disk using **VideoStreamReplayerOp** operator
-- create a second fragment that will display the video using the **HolovizOp** operator
+- Create one fragment that loads a video file from disk using **VideoStreamReplayerOp** operator.
+- Create a second fragment that will display the video using the **HolovizOp** operator.
 
 These two fragments will be combined into a distributed application such that the display of the video frames could occur on a separate node from the node where the data is read.
 
 :::{note}
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ## Operators and Workflow
@@ -31,15 +31,15 @@ Here is the diagram of the operators and workflow used in this example.
     replayer -> viz [label="output...receivers"]
 ```
 
-This is the same workflow as the [single fragment video replayer](./video_replayer.md),  each operator is assigned to a separate fragment and there is now a network connection between the fragments.
+This is the same workflow as the [single fragment video replayer](./video_replayer.md). Each operator is assigned to a separate fragment and there is now a network connection between the fragments.
 
 
 ## Defining and Connecting Fragments
 
-Distributed applications define Fragments explicitly to isolate the different units of work that could be distributed to different nodes. In this example:
+Distributed applications define fragments explicitly to isolate the different units of work that could be distributed to different nodes. In this example:
 - We define two classes that inherit from `Fragment`:
-  - **Fragment1** contains an instance of **VideoStreamReplayerOp** named "replayer".
-  - **Fragment2** contains an instance of **HolovizOp** name "holoviz".
+  - **Fragment1** contains an instance of **VideoStreamReplayerOp** named "replayer."
+  - **Fragment2** contains an instance of **HolovizOp** name "holoviz."
 - We create an application, **DistributedVideoReplayerApp**. In its compose method:
   - we call **make_fragment** to initialize both fragments.
   - we then connect the "output" port of "replayer" operator in fragment1 to the "receivers" port of the "holoviz" operator in fragment2 to define the application workflow.
@@ -187,7 +187,7 @@ if __name__ == "__main__":
 ````
 `````
 
-This particular distributed application only has one operator per fragment, so the operators was added via **`add_operator` ({cpp:func}`C++ <holoscan::Fragment::add_operator>`/{py:func}`Python <holoscan.core.Fragment.add_operator>`)**. In general, each fragment may have multiple operators and connections between operators within a fragment would be made using `add_flow()` ({cpp:func}`C++ <holoscan::Fragment::add_flow>`/{py:func}`Python <holoscan.core.Fragment.add_flow>`) method within the fragment's `compute()` ({cpp:func}`C++ <holoscan::Operator::compute>`/{py:func}`Python <holoscan.core.Operator.compute>`) method.
+This particular distributed application only has one operator per fragment, so the operators were added via **`add_operator` ({cpp:func}`C++ <holoscan::Fragment::add_operator>`/{py:func}`Python <holoscan.core.Fragment.add_operator>`)**. In general, each fragment may have multiple operators and connections between operators within a fragment would be made using `add_flow()` ({cpp:func}`C++ <holoscan::Fragment::add_flow>`/{py:func}`Python <holoscan.core.Fragment.add_flow>`) method within the fragment's `compute()` ({cpp:func}`C++ <holoscan::Operator::compute>`/{py:func}`Python <holoscan.core.Operator.compute>`) method.
 
 ## Running the Application
 
@@ -196,7 +196,7 @@ Running the application should bring up video playback of the video referenced i
 ![](../images/video_replayer.png)
 
 :::{note}
-Instructions for running the distributed application involve calling the application from the "driver" node as well as from any worker nodes. For details, see the application run instructions in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/video_replayer_distributed) directory on GitHub, or under `/opt/nvidia/holoscan/examples/video_replayer_distributed` in the NGC container and the debian package.
+Instructions for running the distributed application involve calling the application from the "driver" node as well as from any worker nodes. For details, see the application run instructions in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/video_replayer_distributed) directory on GitHub, or under `/opt/nvidia/holoscan/examples/video_replayer_distributed` in the NGC container and the Debian package.
 :::
 
 :::{tip}

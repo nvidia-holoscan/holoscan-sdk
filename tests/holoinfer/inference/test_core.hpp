@@ -61,7 +61,7 @@ class HoloInferTests {
   std::vector<std::string> in_tensor_names = {"m1_pre_proc", "m2_pre_proc"};
   std::vector<std::string> out_tensor_names = {"m1_infer", "m2_infer"};
 
-  std::string model_folder = "../examples/bring_your_own_model/model/";
+  std::string model_folder = "../tests/holoinfer/test_models/";
 
   std::map<std::string, std::string> model_path_map = {
       {"model_1", model_folder + "identity_model.onnx"},
@@ -85,7 +85,7 @@ class HoloInferTests {
       {"model_2", {"m2_infer"}},
   };
 
-  const std::map<std::string, std::vector<int>> in_tensor_dimensions = {
+  std::map<std::string, std::vector<int>> in_tensor_dimensions = {
       {"m1_pre_proc", {3, 256, 256}},
       {"m2_pre_proc", {3, 256, 256}},
   };
@@ -170,7 +170,9 @@ class HoloInferTests {
       {28, "TRT backend, Basic parallel inference on multi-GPU"},
       {29, "TRT backend, Parallel inference on multi-GPU with I/O on host"},
       {30, "TRT backend, Parallel inference on multi-GPU with Input on host"},
-      {31, "TRT backend, Parallel inference on multi-GPU with Output on host"}};
+      {31, "TRT backend, Parallel inference on multi-GPU with Output on host"},
+      {32, "TRT backend, multi rank test (rank 5)"},
+      {33, "TRT backend, multi rank test (rank 9)"}};
 };
 
 #endif /* HOLOINFER_INFERENCE_TESTS_HPP */

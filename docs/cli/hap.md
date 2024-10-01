@@ -6,13 +6,11 @@
 
 ## Introduction
 
-The Holoscan Application Package specification extends the MONAI Deploy Application Package specification to provide
-the streaming capabilities, multi-fragment and other features of the Holoscan SDK.
+The Holoscan Application Package specification extends the MONAI Deploy Application Package specification to provide the streaming capabilities, multi-fragment, and other features of the Holoscan SDK.
 
 ## Overview
 
-This document includes the specification of the Holoscan Application Package (HAP). A HAP is a containerized application
-or service which is self-descriptive, as defined by this document.
+This document includes the specification of the Holoscan Application Package (HAP). A HAP is a containerized application or service which is self-descriptive, as defined by this document.
 
 ### Goal
 
@@ -63,8 +61,7 @@ The following assumptions relate to HAP execution, inspection and general usage:
 
 ## Requirements
 
-The following requirements MUST be met by the HAP specification to be considered complete and approved.
-All requirements marked as `MUST` or `SHALL` MUST be implemented in order to be supported by a HAP-ready hosting service.
+The following requirements MUST be met by the HAP specification to be considered complete and approved. All requirements marked as `MUST` or `SHALL` MUST be implemented in order to be supported by a HAP-ready hosting service.
 
 ### Single Artifact
 
@@ -381,7 +378,7 @@ The Application Manifest file provides information about the HAP's Application.
 | `version`                                            | No       | 0.0.0                   | string      | semantic version          | Version of the package.                                                                                       |
 
 > [Notes]
-> (1) Use of resource limits depend on the orchestration service or the hosting environement's configuration and implementation.
+> (1) Use of resource limits depend on the orchestration service or the hosting environment's configuration and implementation.
 > (2) Consider rounding up to a whole number as decimal values may not be supported by all orchestration/hosting services.
 
 The Package Manifest file provides information about the HAP's package layout. It is not intended as a mechanism for controlling how the HAP is used or how the HAP's Application is executed.
@@ -602,7 +599,7 @@ A HAP SHOULD provide at least one method to access the _embedded application_, _
 
     -   `/var/run/holoscan/export/`: when detected without any of the above being detected, the Method SHALL copy all of the above.
 
-Since a HAP is an OCI compliant container, a user can also run a HAP and log in to an interactive shell, using a method supported by the container engine and its command line interface, e.g. Docker supports this by setting the entrypoint option. The files in the HAP can then be opened or copied to the mapped volumes with shell commands or scripts. A specific implementation of a HAP may choose to streamline such a process with scripts and applicable user documentation.
+Since a HAP is an OCI compliant container, a user can also run a HAP and log in to an interactive shell, using a method supported by the container engine and its command line interface; e.g., Docker supports this by setting the entrypoint option. The files in the HAP can then be opened or copied to the mapped volumes with shell commands or scripts. A specific implementation of a HAP may choose to streamline such a process with scripts and applicable user documentation.
 
 ### Table of Important Paths
 

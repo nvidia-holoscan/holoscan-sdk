@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
-#define HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#ifndef INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#define INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
 
 #include <array>
 #include <memory>
@@ -32,7 +32,7 @@
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/utils/cuda_stream_handler.hpp"
 
-#include <holoviz/image_format.hpp>
+#include <holoviz/callbacks.hpp>
 
 namespace holoscan::viz {
 
@@ -64,6 +64,9 @@ struct BufferInfo;
  * Or by providing new values at the `camera_eye_input`, `camera_look_at_input` or `camera_up_input`
  * input ports. The camera pose can be output at the `camera_pose_output` port when
  * `enable_camera_pose_output` is set to `true`.
+ *
+ * Callbacks can be used to receive updates on key presses, mouse position and buttons, and window
+ * size.
  *
  * ==Named Inputs==
  *
@@ -204,9 +207,15 @@ struct BufferInfo;
  * - **framebuffer_srgb**: Enable sRGB framebuffer. If set to true, the operator will use an sRGB
  *   framebuffer for rendering. If set to false, the operator will use a linear framebuffer.
  *   (default: `false`)
+ *   - type: `bool`
  * - **vsync**: Enable vertical sync. If set to true the operator waits for the next vertical
  *   blanking period of the display to update the current image. (default: `false`)
  *   - type: `bool`
+ * - **display_color_space**: Set the display color space. Supported color spaces depend on
+ *   the display setup. 'ColorSpace::SRGB_NONLINEAR' is always supported. In headless mode, only
+ *   'ColorSpace::PASS_THROUGH' is supported since there is no display. For other color spaces the
+ *   display needs to be configured for HDR (default: `ColorSpace::AUTO`)
+ *   - type: `std::string`
  * - **window_close_scheduling_term**: BooleanSchedulingTerm to stop the codelet from ticking
  *   when the window is closed
  *   - type: `gxf::Handle<gxf::BooleanSchedulingTerm>`
@@ -225,6 +234,27 @@ struct BufferInfo;
  *   - type: `std::array<float, 3>`
  * - **camera_up**: Initial camera up vector.
  *   - type: `std::array<float, 3>`
+ * - **key_callback**: The callback function is called when a key is pressed, released or repeated.
+ *   - type: `KeyCallbackFunction`
+ * - **unicode_char_callback**: The callback function is called when a Unicode character is input.
+ *   - type: `UnicodeCharCallbackFunction`
+ * - **mouse_button_callback**: The callback function is called when a mouse button is pressed or
+ *   released.
+ *   - type: `MouseButtonCallbackFunction`
+ * - **scroll_callback**: The callback function is called when a scrolling device is used, such as a
+ *   mouse scroll wheel or the scroll area of a touch pad.
+ *   - type: `ScrollCallbackFunction`
+ * - **cursor_pos_callback**: The callback function is called when the cursor position changes.
+ *   Coordinates are provided in screen coordinates, relative to the upper left edge of the content
+ *   area.
+ *   - type: `CursorPosCallbackFunction`
+ * - **framebuffer_size_callback**: The callback function is called when the framebuffer is resized.
+ *   - type: `FramebufferSizeCallbackFunction`
+ * - **window_size_callback**: The callback function is called when the window is resized.
+ *   - type: `:WindowSizeCallbackFunction`
+ * - **layer_callback**: The callback function is called when HolovizOp processed all layers
+ *   defined by the input specification. It can be used to add extra layers.
+ *   - type: `LayerCallbackFunction`
  *
  * ==Device Memory Requirements==
  *
@@ -677,6 +707,23 @@ class HolovizOp : public Operator {
   };
 
   /**
+   * The color space specifies how the surface data is interpreted when presented on screen.
+   *
+   * Note: this needs to match the viz::ColorSpace enum (except the AUTO value).
+   */
+  enum class ColorSpace {
+    SRGB_NONLINEAR,        ///< sRGB color space
+    EXTENDED_SRGB_LINEAR,  ///< extended sRGB color space to be displayed using a linear EOTF
+    BT2020_LINEAR,         ///< BT2020 color space to be displayed using a linear EOTF
+    HDR10_ST2084,  ///< HDR10 (BT2020 color) space to be displayed using the SMPTE ST2084 Perceptual
+                   ///< Quantizer (PQ) EOTF
+    PASS_THROUGH,  ///< color components are used “as is”
+    BT709_LINEAR,  ///< BT709 color space to be displayed using a linear EOTF
+    AUTO = -1,  ///< Auto select the color format. Is a display is connected then `SRGB_NONLINEAR`
+                ///< is used, in headless mode `PASS_THROUGH` is used.
+  };
+
+  /**
    * Input specification
    */
   struct InputSpec {
@@ -755,6 +802,82 @@ class HolovizOp : public Operator {
     std::vector<View> views_;
   };
 
+  /// export the types used by the callbacks directly from Holoviz module
+  using Key = viz::Key;
+  using KeyAndButtonAction = viz::KeyAndButtonAction;
+  using KeyModifiers = viz::KeyModifiers;
+  using MouseButton = viz::MouseButton;
+
+  /**
+   * Function pointer type for key callbacks.
+   *
+   * @param key the key that was pressed
+   * @param action key action (PRESS, RELEASE, REPEAT)
+   * @param modifiers bit field describing which modifieres were held down
+   */
+  using KeyCallbackFunction =
+      std::function<void(Key key, KeyAndButtonAction action, KeyModifiers modifiers)>;
+
+  /**
+   * Function pointer type for Unicode character callbacks.
+   *
+   * @param code_point Unicode code point of the character
+   */
+  using UnicodeCharCallbackFunction = std::function<void(uint32_t code_point)>;
+
+  /**
+   * Function pointer type for mouse button callbacks.
+   *
+   * @param button the mouse button that was pressed
+   * @param action button action (PRESS, RELEASE)
+   * @param modifiers bit field describing which modifieres were held down
+   */
+  using MouseButtonCallbackFunction =
+      std::function<void(MouseButton button, KeyAndButtonAction action, KeyModifiers modifiers)>;
+
+  /**
+   * Function pointer type for scroll callbacks.
+   *
+   * @param x_offset scroll offset along the x-axis
+   * @param y_offset scroll offset along the y-axis
+   */
+  using ScrollCallbackFunction = std::function<void(double x_offset, double y_offset)>;
+
+  /**
+   * Function pointer type for cursor position callbacks.
+   *
+   * @param x_pos new cursor x-coordinate in screen coordinates, relative to the left edge of the
+   * content area
+   * @param y_pos new cursor y-coordinate in screen coordinates, relative to the left edge of the
+   * content area
+   */
+  using CursorPosCallbackFunction = std::function<void(double x_pos, double y_pos)>;
+
+  /**
+   * Function pointer type for framebuffer size callbacks.
+   *
+   * @param width new width of the framebuffer in pixels
+   * @param height new height of the framebuffer in pixels
+   */
+  using FramebufferSizeCallbackFunction = std::function<void(int width, int height)>;
+
+  /**
+   * Function pointer type for window size callbacks.
+   *
+   * @param width new width of the window in screen coordinates
+   * @param height new height of the window in screen coordinates
+   */
+  using WindowSizeCallbackFunction = std::function<void(int width, int height)>;
+
+  /**
+   * Function pointer type for layer callbacks. This function is called when HolovizOp processed
+   * all layers defined by the input specification. It can be used to add extra layers.
+   *
+   * @param inputs the entities received from the 'receivers' input port
+   */
+  using LayerCallbackFunction =
+      std::function<void(const std::vector<holoscan::gxf::Entity>& inputs)>;
+
  private:
   bool enable_conditional_port(const std::string& name,
                                bool set_none_condition_on_disabled = false);
@@ -788,6 +911,7 @@ class HolovizOp : public Operator {
   Parameter<bool> headless_;
   Parameter<bool> framebuffer_srgb_;
   Parameter<bool> vsync_;
+  Parameter<ColorSpace> display_color_space_;
   Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
   Parameter<std::shared_ptr<Allocator>> allocator_;
   Parameter<std::string> font_path_;
@@ -795,6 +919,15 @@ class HolovizOp : public Operator {
   Parameter<std::array<float, 3>> camera_eye_;
   Parameter<std::array<float, 3>> camera_look_at_;
   Parameter<std::array<float, 3>> camera_up_;
+
+  holoscan::Parameter<KeyCallbackFunction> key_callback_;
+  holoscan::Parameter<UnicodeCharCallbackFunction> unicode_char_callback_;
+  holoscan::Parameter<MouseButtonCallbackFunction> mouse_button_callback_;
+  holoscan::Parameter<ScrollCallbackFunction> scroll_callback_;
+  holoscan::Parameter<CursorPosCallbackFunction> cursor_pos_callback_;
+  holoscan::Parameter<FramebufferSizeCallbackFunction> framebuffer_size_callback_;
+  holoscan::Parameter<WindowSizeCallbackFunction> window_size_callback_;
+  holoscan::Parameter<LayerCallbackFunction> layer_callback_;
 
   // internal state
   viz::InstanceHandle instance_ = nullptr;
@@ -806,10 +939,21 @@ class HolovizOp : public Operator {
   bool camera_pose_output_enabled_ = false;
   bool is_first_tick_ = true;
 
+  static std::mutex mutex_;  ///< mutex to protect start method
+
+  static std::remove_pointer_t<viz::KeyCallbackFunction> key_callback_handler;
+  static std::remove_pointer_t<viz::UnicodeCharCallbackFunction> unicode_char_callback_handler;
+  static std::remove_pointer_t<viz::MouseButtonCallbackFunction> mouse_button_callback_handler;
+  static std::remove_pointer_t<viz::ScrollCallbackFunction> scroll_callback_handler;
+  static std::remove_pointer_t<viz::CursorPosCallbackFunction> cursor_pos_callback_handler;
+  static std::remove_pointer_t<viz::FramebufferSizeCallbackFunction>
+      framebuffer_size_callback_handler;
+  static std::remove_pointer_t<viz::WindowSizeCallbackFunction> window_size_callback_handler;
+
   std::array<float, 3> camera_eye_cur_;      //< current camera eye position
   std::array<float, 3> camera_look_at_cur_;  //< current camera look at position
   std::array<float, 3> camera_up_cur_;       //< current camera up vector
 };
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */

@@ -179,7 +179,7 @@ void VideoStreamReplayerOp::initialize() {
   if (!result) {
     HOLOSCAN_LOG_WARN("Could not open index file: {}", index_filename);
     auto code = nvidia::gxf::ToResultCode(result);
-    throw std::runtime_error(fmt::format("File open failed with code: {}", code));
+    throw std::runtime_error(fmt::format("File open failed with error: {}", GxfResultStr(code)));
   }
 
   // Open entity file stream as read-only
@@ -188,7 +188,7 @@ void VideoStreamReplayerOp::initialize() {
   if (!result) {
     HOLOSCAN_LOG_WARN("Could not open entity file: {}", entity_filename);
     auto code = nvidia::gxf::ToResultCode(result);
-    throw std::runtime_error(fmt::format("File open failed with code: {}", code));
+    throw std::runtime_error(fmt::format("File open failed with error: {}", GxfResultStr(code)));
   }
 
   boolean_scheduling_term_->enable_tick();
@@ -209,14 +209,14 @@ VideoStreamReplayerOp::~VideoStreamReplayerOp() {
   nvidia::gxf::Expected<void> result = entity_file_stream_.close();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    HOLOSCAN_LOG_ERROR("Failed to close entity_file_stream_ with code: {}", code);
+    HOLOSCAN_LOG_ERROR("Failed to close entity_file_stream_ with error: {}", GxfResultStr(code));
   }
 
   // Close index file stream
   result = index_file_stream_.close();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    HOLOSCAN_LOG_ERROR("Failed to close index_file_stream_ with code: {}", code);
+    HOLOSCAN_LOG_ERROR("Failed to close index_file_stream_ with error: {}", GxfResultStr(code));
   }
 }
 
@@ -270,8 +270,8 @@ void VideoStreamReplayerOp::compute(InputContext& op_input, OutputContext& op_ou
         continue;
       } else {
         auto code = nvidia::gxf::ToResultCode(entity);
-        throw std::runtime_error(
-            fmt::format("failed reading entity from entity_file_stream with code {}", code));
+        throw std::runtime_error(fmt::format(
+            "failed reading entity from entity_file_stream with error: {}", GxfResultStr(code)));
       }
     }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,17 @@ void ForwardOp::setup(OperatorSpec& spec) {
 
 void ForwardOp::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) {
   auto in_message = op_input.receive<std::any>("in");
-  if (in_message) { op_output.emit(in_message.value(), "out"); }
+  if (in_message) {
+    auto value = in_message.value();
+    if (value.type() == typeid(holoscan::gxf::Entity)) {
+      // emit as entity
+      auto entity = std::any_cast<holoscan::gxf::Entity>(value);
+      op_output.emit(entity, "out");
+    } else {
+      // emit as std::any
+      op_output.emit(value, "out");
+    }
+  }
 }
 
 }  // namespace holoscan::ops

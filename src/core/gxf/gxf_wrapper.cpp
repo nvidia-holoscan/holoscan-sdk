@@ -28,6 +28,7 @@ namespace holoscan::gxf {
 
 gxf_result_t GXFWrapper::initialize() {
   HOLOSCAN_LOG_TRACE("GXFWrapper::initialize()");
+  PROF_REGISTER_CATEGORY(op_->id(), op_->name().c_str());
   return GXF_SUCCESS;
 }
 gxf_result_t GXFWrapper::deinitialize() {
@@ -51,6 +52,7 @@ gxf_result_t GXFWrapper::start() {
   HOLOSCAN_LOG_TRACE("Starting operator: {}", op_->name());
 
   try {
+    PROF_SCOPED_EVENT(op_->id(), event_start);
     op_->start();
   } catch (const std::exception& e) {
     store_exception();
@@ -77,6 +79,7 @@ gxf_result_t GXFWrapper::tick() {
     // clear any existing values from a previous compute call
     op_->metadata()->clear();
 
+    PROF_SCOPED_EVENT(op_->id(), event_compute);
     op_->compute(*op_input, *op_output, exec_context);
     // Note: output metadata is inserted via op_output.emit() rather than here
   } catch (const std::exception& e) {
@@ -101,6 +104,7 @@ gxf_result_t GXFWrapper::stop() {
   HOLOSCAN_LOG_TRACE("Stopping operator: {}", op_->name());
 
   try {
+    PROF_SCOPED_EVENT(op_->id(), event_stop);
     op_->stop();
   } catch (const std::exception& e) {
     store_exception();

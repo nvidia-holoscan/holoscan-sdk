@@ -33,19 +33,19 @@
 // macro like GXF_ASSERT_SUCCESS, but uses HOLOSCAN_LOG_ERROR and includes line/filename info
 // Note: HOLOSCAN_GXF_CALL depends on GNU C statement expressions ({ })
 //       https://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html
-#define HOLOSCAN_GXF_CALL(stmt)                                                     \
-  ({                                                                                \
-    gxf_result_t code = (stmt);                                                     \
-    if (code != GXF_SUCCESS) {                                                      \
-      HOLOSCAN_LOG_ERROR("GXF call {} in line {} of file {} failed with '{}' ({})", \
-                         #stmt,                                                     \
-                         __LINE__,                                                  \
-                         __FILE__,                                                  \
-                         GxfResultStr(code),                                        \
-                         code);                                                     \
-      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) { PrettyPrintBacktrace(); }   \
-    }                                                                               \
-    code;                                                                           \
+#define HOLOSCAN_GXF_CALL(stmt)                                                         \
+  ({                                                                                    \
+    gxf_result_t code = (stmt);                                                         \
+    if (code != GXF_SUCCESS) {                                                          \
+      HOLOSCAN_LOG_ERROR("GXF call '{}' in line {} of file {} failed with '{}' ({})",   \
+                         #stmt,                                                         \
+                         __LINE__,                                                      \
+                         __FILE__,                                                      \
+                         GxfResultStr(code),                                            \
+                         static_cast<int>(code));                                       \
+      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) { PrettyPrintBacktrace(); }       \
+    }                                                                                   \
+    code;                                                                               \
   })
 
 #define HOLOSCAN_GXF_CALL_FATAL(stmt)                                                 \
@@ -77,7 +77,7 @@
                         __LINE__,                                                  \
                         __FILE__,                                                  \
                         GxfResultStr(code),                                        \
-                        code);                                                     \
+                        static_cast<int>(code));                                   \
     }                                                                              \
     code;                                                                          \
   })

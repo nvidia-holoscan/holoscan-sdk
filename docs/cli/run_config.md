@@ -12,18 +12,17 @@ That file is the same configuration file commonly used to configure other aspect
 
 The configuration file can be defined in two ways:
 
-- At package time, with the `--config` flag of the `holoscan package` command (Required/Default)
-- At runtime, with the `--config` flag of the `holoscan run` command (Optional/Override)
+- At package time, with the `--config` flag of the `holoscan package` command (Required/Default).
+- At runtime, with the `--config` flag of the `holoscan run` command (Optional/Override).
 
 ## Properties
 
 The `holoscan run` command parses two specific YAML nodes from the configuration file:
 
 - A required `application` parameter group to generate a [HAP-compliant](./hap.md)` container image for the application, including:
-  - the `title` (name) and `version` of the application.
-  - optionally, `inputFormats` and `outputFormats` if the application expects any inputs or outputs respectively.
-- An optional `resources` parameter group that defines the system resources required to run the application, such as the number of CPUs, GPUs and amount of
-memory required. If the application contains multiple fragments for distributed workloads, resource definitions can be assigned to each fragment.
+  - The `title` (name) and `version` of the application.
+  - Optionally, `inputFormats` and `outputFormats` if the application expects any inputs or outputs respectively.
+- An optional `resources` parameter group that defines the system resources required to run the application, such as the number of CPUs, GPUs and amount of memory required. If the application contains multiple fragments for distributed workloads, resource definitions can be assigned to each fragment.
 
 ## Example
 

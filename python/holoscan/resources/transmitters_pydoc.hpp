@@ -30,15 +30,6 @@ PYDOC(Transmitter, R"doc(
 Base GXF transmitter class.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
 }  // namespace Transmitter
 
 namespace DoubleBufferTransmitter {
@@ -59,24 +50,6 @@ policy : int, optional
     The policy to use (0=pop, 1=reject, 2=fault).
 name : str, optional
     The name of the transmitter.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
 )doc")
 
 }  // namespace DoubleBufferTransmitter
@@ -110,24 +83,6 @@ maximum_connection_retries : int, optional
     The maximum number of times the transmitter will retry making a connection.
 name : str, optional
     The name of the transmitter.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
 )doc")
 
 }  // namespace UcxTransmitter

@@ -37,24 +37,6 @@ name : str, optional
     The name of the serializer.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
-)doc")
-
 PYDOC(initialize, R"doc(
 Initialize the resource
 
@@ -79,24 +61,6 @@ name : str, optional
     The name of the component serializer.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
-)doc")
-
 }  // namespace UcxComponentSerializer
 
 namespace UcxHoloscanComponentSerializer {
@@ -117,24 +81,6 @@ allocator : holoscan.resource.Allocator
     The memory allocator for tensor components.
 name : str, optional
     The name of the component serializer.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
 )doc")
 
 }  // namespace UcxHoloscanComponentSerializer

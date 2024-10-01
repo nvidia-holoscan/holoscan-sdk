@@ -64,7 +64,7 @@ Here’s how to get started:
 3. Set the necessary breakpoints in both your Python and C++ code.
 4. Initiate the debugging session by pressing `F5`.
 
-Upon starting the session, two separate debug terminals will be launched - one for Python and another for C++. In the C++ terminal, you will encounter a prompt regarding superuser access:
+Upon starting the session, two separate debug terminals will be launched; one for Python and another for C++. In the C++ terminal, you will encounter a prompt regarding superuser access:
 
 ```bash
 Superuser access is required to attach to a process. Attaching as superuser can potentially harm your computer. Do you want to continue? [y/N]
@@ -85,7 +85,7 @@ This section outlines the procedures for debugging an application crash.
 In the event of an application crash, you might encounter messages like `Segmentation fault (core dumped)` or `Aborted (core dumped)`. These indicate the generation of a core dump file, which captures the application's memory state at the time of the crash. This file can be utilized for debugging purposes.
 
 
-#### Enabling coredump
+#### Enabling Core Dump
 
 There are instances where core dumps might be disabled or not generated despite an application crash.
 
@@ -112,7 +112,7 @@ echo "coredump_%e_%p" | sudo tee /proc/sys/kernel/core_pattern
 sudo sysctl -w kernel.core_pattern=coredump_%e_%p
 ```
 
-where in this case we have requested both the executable name (`%e`) and the process id (`%p`) be present in the generated file's name. The various options available are documented in the [core documentation](https://man7.org/linux/man-pages/man5/core.5.html).
+In this case, we have requested that both the executable name (`%e`) and the process id (`%p`) be present in the generated file's name. The various options available are documented in the [core documentation](https://man7.org/linux/man-pages/man5/core.5.html).
 
 If you encounter errors like `tee: /proc/sys/kernel/core_pattern: Read-only file system` or `sysctl: setting key "kernel.core_pattern", ignoring: Read-only file system` within a Docker container, it's advisable to set the `kernel.core_pattern` parameter on the host system instead of within the container.
 
@@ -121,7 +121,7 @@ As `kernel.core_pattern` is a system-wide kernel parameter, modifying it on the 
 Furthermore, when launching a Docker container using `docker run`, it's often essential to include the `--cap-add=SYS_PTRACE` option to enable core dump creation inside the container. Core dump generation typically requires elevated privileges, which are not automatically available to Docker containers.
 
 
-#### Using GDB to Debug a coredump File
+#### Using GDB to Debug a Core Dump File
 
 After the core dump file is generated, you can utilize GDB to debug the core dump file.
 

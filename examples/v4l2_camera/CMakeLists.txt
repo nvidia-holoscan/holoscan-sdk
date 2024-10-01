@@ -14,7 +14,9 @@
 # limitations under the License.
 
 add_subdirectory(cpp)
-add_subdirectory(python)
+if(HOLOSCAN_BUILD_PYTHON)
+  add_subdirectory(python)
+endif()
 
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -77,9 +77,8 @@ class Entity : public nvidia::gxf::Entity {
         GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid);
     if (tid_result != GXF_SUCCESS) {
       if (log_errors) {
-        HOLOSCAN_LOG_ERROR(
-            "Unable to get component type id from 'nvidia::gxf::Tensor' (error code: {})",
-            tid_result);
+        HOLOSCAN_LOG_ERROR("Unable to get component type id from 'nvidia::gxf::Tensor' (error: {})",
+                           GxfResultStr(tid_result));
       }
       return nullptr;
     }
@@ -88,9 +87,9 @@ class Entity : public nvidia::gxf::Entity {
     auto cid_result = GxfComponentFind(context(), eid(), tid, name, nullptr, &cid);
     if (cid_result != GXF_SUCCESS) {
       if (log_errors) {
-        HOLOSCAN_LOG_ERROR("Unable to find component from the name '{}' (error code: {})",
+        HOLOSCAN_LOG_ERROR("Unable to find component from the name '{}' (error: {})",
                            name == nullptr ? "" : name,
-                           cid_result);
+                           GxfResultStr(cid_result));
       }
       return nullptr;
     }

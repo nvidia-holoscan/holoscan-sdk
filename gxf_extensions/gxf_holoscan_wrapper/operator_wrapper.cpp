@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -280,6 +280,10 @@ gxf_result_t OperatorWrapper::registerInterface(nvidia::gxf::Registrar* registra
       parameters_.emplace_back(GXFParameter{{}, param.second.arg_type(), storage_ptr});
     }
   }
+
+  // Call registerParameterlessComponent() regardless of whether there are parameters or not.
+  // This will ensure that the component parameter information for this type (codelet) is available.
+  result &= registrar->registerParameterlessComponent();
 
   // Register the operator's parameters.
   for (auto& gxf_param : parameters_) {

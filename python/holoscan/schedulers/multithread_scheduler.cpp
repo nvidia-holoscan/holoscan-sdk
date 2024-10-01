@@ -111,9 +111,6 @@ void init_multithread_scheduler(py::module_& m) {
       .def_property_readonly("check_recession_period_ms",
                              &MultiThreadScheduler::check_recession_period_ms)
       .def_property_readonly("stop_on_deadlock_timeout",
-                             &MultiThreadScheduler::stop_on_deadlock_timeout)
-      .def_property_readonly("gxf_typename",
-                             &MultiThreadScheduler::gxf_typename,
-                             doc::MultiThreadScheduler::doc_gxf_typename);
+                             &MultiThreadScheduler::stop_on_deadlock_timeout);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

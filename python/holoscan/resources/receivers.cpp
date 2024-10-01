@@ -77,9 +77,7 @@ class PyUcxReceiver : public UcxReceiver {
 void init_receivers(py::module_& m) {
   py::class_<Receiver, gxf::GXFResource, std::shared_ptr<Receiver>>(
       m, "Receiver", doc::Receiver::doc_Receiver)
-      .def(py::init<>(), doc::Receiver::doc_Receiver)
-      .def_property_readonly(
-          "gxf_typename", &Receiver::gxf_typename, doc::Receiver::doc_gxf_typename);
+      .def(py::init<>(), doc::Receiver::doc_Receiver);
 
   py::class_<DoubleBufferReceiver,
              PyDoubleBufferReceiver,
@@ -91,11 +89,7 @@ void init_receivers(py::module_& m) {
            "capacity"_a = 1UL,
            "policy"_a = 2UL,
            "name"_a = "double_buffer_receiver"s,
-           doc::DoubleBufferReceiver::doc_DoubleBufferReceiver)
-      .def_property_readonly("gxf_typename",
-                             &DoubleBufferReceiver::gxf_typename,
-                             doc::DoubleBufferReceiver::doc_gxf_typename)
-      .def("setup", &DoubleBufferReceiver::setup, "spec"_a, doc::DoubleBufferReceiver::doc_setup);
+           doc::DoubleBufferReceiver::doc_DoubleBufferReceiver);
 
   py::class_<UcxReceiver, PyUcxReceiver, Receiver, std::shared_ptr<UcxReceiver>>(
       m, "UcxReceiver", doc::UcxReceiver::doc_UcxReceiver)
@@ -113,9 +107,6 @@ void init_receivers(py::module_& m) {
            "address"_a = std::string("0.0.0.0"),
            "port"_a = kDefaultUcxPort,
            "name"_a = "ucx_receiver"s,
-           doc::UcxReceiver::doc_UcxReceiver)
-      .def_property_readonly(
-          "gxf_typename", &UcxReceiver::gxf_typename, doc::UcxReceiver::doc_gxf_typename)
-      .def("setup", &UcxReceiver::setup, "spec"_a, doc::UcxReceiver::doc_setup);
+           doc::UcxReceiver::doc_UcxReceiver);
 }
 }  // namespace holoscan

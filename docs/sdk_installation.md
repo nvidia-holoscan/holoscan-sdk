@@ -5,7 +5,7 @@
 The section below refers to the installation of the Holoscan SDK referred to as the **development stack**, designed for NVIDIA Developer Kits (arm64), and for x86_64 Linux compute platforms, ideal for development and testing of the SDK.
 
 :::{note}
-An alternative for the [IGX Orin Developer Kit](https://www.nvidia.com/en-us/edge-computing/products/igx/) is the [deployment stack](./deployment_stack.md), based on [OpenEmbedded](https://www.openembedded.org/wiki/Main_Page) ([Yocto](https://www.yoctoproject.org/) build system) instead of Ubuntu. This is recommended to limit your stack to the software components strictly required to run your Holoscan application. The runtime Board Support Package (BSP) can be optimized with respect to memory usage, speed, security and power requirements.
+or Holoscan Developer Kits such as the [IGX Orin Developer Kit](https://www.nvidia.com/en-us/edge-computing/products/igx/), an alternative option is the [deployment stack](./deployment_stack.md), based on [OpenEmbedded](https://www.openembedded.org/wiki/Main_Page) ([Yocto](https://www.yoctoproject.org/) build system) instead of Ubuntu. This is recommended to limit your stack to the software components strictly required to run your Holoscan application. The runtime Board Support Package (BSP) can be optimized with respect to memory usage, speed, security and power requirements.
 :::
 
 ## Prerequisites
@@ -13,7 +13,7 @@ An alternative for the [IGX Orin Developer Kit](https://www.nvidia.com/en-us/edg
 `````{tab-set}
 ````{tab-item} NVIDIA Developer Kits
 
-Set up your developer kit:
+Setup your developer kit:
 
 Developer Kit | User Guide | OS | GPU Mode
 ------------- | ---------- | --- | ---
@@ -81,11 +81,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.4.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.5.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.4.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.5.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -236,7 +236,7 @@ For x86_64, ensure that the [CUDA Runtime is installed](https://developer.nvidia
 
 ### Need more control over the SDK?
 
-The [Holoscan SDK source repository](https://github.com/nvidia-holoscan/holoscan-sdk) is **open-source** and provides reference implementations as well as infrastructure for building the SDK yourself.
+The [Holoscan SDK source repository](https://github.com/nvidia-holoscan/holoscan-sdk) is **open-source** and provides reference implementations, as well as infrastructure, for building the SDK yourself.
 
 :::{attention}
 We only recommend building the SDK from source if you need to build it with debug symbols or other options not used as part of the published packages. If you want to write your own operator or application, you can use the SDK as a dependency (and contribute to [HoloHub](https://github.com/nvidia-holoscan/holohub)). If you need to make other modifications to the SDK, [file a feature or bug request](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).

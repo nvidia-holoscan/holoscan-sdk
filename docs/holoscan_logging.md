@@ -14,8 +14,7 @@ severity of a message and as a way to control the number and verbosity of messag
 
 Messages that are logged using the Logger module have a severity level, e.g., messages can be categorized as INFO, WARN, ERROR, etc.
 
-The default logging level for an application is to print out messages with severity INFO or above, i.e., messages that are categorized as INFO, WARN, ERROR, and CRITICAL.
-You can modify this default by calling `set_log_level()` ({cpp:func}`C++ <holoscan::set_log_level>`/{py:func}`Python <holoscan.logger.set_log_level>`) in the application code to override the SDK default logging level and give it one of the following log levels.
+The default logging level for an application is to print out messages with severity INFO or above, i.e., messages that are categorized as INFO, WARN, ERROR, and CRITICAL. You can modify this default by calling `set_log_level()` ({cpp:func}`C++ <holoscan::set_log_level>`/{py:func}`Python <holoscan.logger.set_log_level>`) in the application code to override the SDK default logging level and give it one of the following log levels.
 
 - TRACE
 - DEBUG
@@ -54,9 +53,7 @@ if __name__ == "__main__":
     main()
 ```
 ````
-Additionally, at runtime, the user can set the `HOLOSCAN_LOG_LEVEL` environment variable to one of the values listed above.
-This provides users with the flexibility to enable printing of diagnostic information for debugging purposes when
-an issue occurs.
+Additionally, at runtime, the user can set the `HOLOSCAN_LOG_LEVEL` environment variable to one of the values listed above. This provides users with the flexibility to enable printing of diagnostic information for debugging purposes when an issue occurs.
 
 ```bash
 export HOLOSCAN_LOG_LEVEL=TRACE
@@ -71,8 +68,7 @@ For distributed applications, it can sometimes be useful to also enable addition
 
 ## Logger Format
 
-When a message is printed out, the default message format shows the message severity level, filename:linenumber, and
-the message to be printed.
+When a message is printed out, the default message format shows the message severity level, filename:linenumber, and Sthe message to be printed.
 
 For example:
 ```
@@ -123,12 +119,12 @@ With this logger format, the above application would display messages with the f
 [info] Rx message value1: 51
 [info] Rx message value2: 54
 ```
-Alternatively, the pattern string can be a custom pattern to customize the logger format.  Using this string pattern
+Alternatively, the pattern string can be a custom pattern to customize the logger format.  Using this string pattern:
 ```
 "[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [%s:%#] %v";
 ```
 
-would display messages with the following format:
+The following format will be displayed:
 ```
 [2023-06-27 14:22:36.073] [holoscan] [info] [ping_multi_port.cpp:114] Rx message value1: 51
 [2023-06-27 14:22:36.073] [holoscan] [info] [ping_multi_port.cpp:115] Rx message value2: 54
@@ -155,9 +151,7 @@ The **C++ API** uses the {ref}`HOLOSCAN_LOG_XXX() macros <api/holoscan_cpp_api:l
 
 
 :::{note}
-Holoscan automatically checks `HOLOSCAN_LOG_LEVEL` environment variable and sets the log level when the Application class instance is created.
-However, those log level settings are for Holoscan core or C++ operator (C++)'s logging message (such as `HOLOSCAN_LOG_INFO` macro), not for Python's logging. Users of the **Python API** should use the built-in [`logging`](https://docs.python.org/3/howto/logging.html) module to log messages.
-The user needs to configure the logger before use (`logging.basicConfig(level=logging.INFO)`):
+Holoscan automatically checks `HOLOSCAN_LOG_LEVEL` environment variable and sets the log level when the Application class instance is created. However, those log level settings are for Holoscan core or C++ operator (C++)'s logging message (such as `HOLOSCAN_LOG_INFO` macro), not for Python's logging. Users of the **Python API** should use the built-in [`logging`](https://docs.python.org/3/howto/logging.html) module to log messages. You must configure the logger before use (`logging.basicConfig(level=logging.INFO)`):
 
 ```text
 >>> import logging

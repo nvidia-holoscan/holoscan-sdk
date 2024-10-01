@@ -93,6 +93,16 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # ##############################################################################
+# # Add library holoscan::profiler
+# ##############################################################################
+add_holoscan_library(profiler
+    profiler/profiler.cpp)
+target_link_libraries(profiler
+    PUBLIC
+        nvtx3-cpp
+)
+
+# ##############################################################################
 # # Add library: holoscan::core
 # ##############################################################################
 
@@ -212,6 +222,7 @@ target_link_libraries(core
     PUBLIC
         ${CMAKE_DL_LIBS}  # for dlopen
         holoscan::logger
+        holoscan::profiler
         CUDA::cudart
         fmt::fmt-header-only
         GXF::app

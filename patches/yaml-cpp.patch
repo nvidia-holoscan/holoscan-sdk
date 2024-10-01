@@ -1,0 +1,14 @@
+diff --git a/include/yaml-cpp/node/detail/node.h b/include/yaml-cpp/node/detail/node.h
+index b881c2c..473b250 100644
+--- a/include/yaml-cpp/node/detail/node.h
++++ b/include/yaml-cpp/node/detail/node.h
+@@ -111,7 +111,8 @@ class node {
+   node_iterator end() { return m_pRef->end(); }
+ 
+   // sequence
+-  void push_back(node& input, shared_memory_holder pMemory) {
++  __attribute__((no_sanitize_address)) void push_back(
++      node& input, shared_memory_holder pMemory) {
+     m_pRef->push_back(input, pMemory);
+     input.add_dependency(*this);
+     m_index = m_amount.fetch_add(1);

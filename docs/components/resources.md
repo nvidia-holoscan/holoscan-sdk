@@ -1,6 +1,6 @@
 # Resources
 
-Resource classes represent resources such as a allocators, clocks, transmitters or receivers that may be used as a parameter for operators or schedulers. The resource classes that are likely to be directly used by application authors are documented here.
+Resource classes represent resources such as a allocators, clocks, transmitters, or receivers that may be used as a parameter for operators or schedulers. The resource classes that are likely to be directly used by application authors are documented here.
 
 :::{note}
 There are a number of other resources classes used internally which are not documented here, but appear in the API Documentation ({ref}`C++ <api/holoscan_cpp_api:resources>`/{py:mod}`Python <holoscan.resources>`).
@@ -48,14 +48,14 @@ The `RealtimeClock` respects the true duration of conditions such as `PeriodicCo
 
 In addition to the general clock methods documented above:
 
-- this class has a {cpp:func}`set_time_scale()<Clock::set_time_scale>` method which can be used to dynamically change the time scale used by the clock.
-- the parameter `initial_time_offset` can be used to set an initial offset in the time at initialization.
-- the parameter `initial_time_scale` can be used to modify the scale of time. For instance, a scale of 2.0 would cause time to run twice as fast.
-- the parameter `use_time_since_epoch` makes times relative to the [POSIX epoch](https://en.wikipedia.org/wiki/Epoch_(computing)) (`initial_time_offset` becomes an offset from epoch).
+- This class has a {cpp:func}`set_time_scale()<Clock::set_time_scale>` method which can be used to dynamically change the time scale used by the clock.
+- The parameter `initial_time_offset` can be used to set an initial offset in the time at initialization.
+- The parameter `initial_time_scale` can be used to modify the scale of time. For instance, a scale of 2.0 would cause time to run twice as fast.
+- The parameter `use_time_since_epoch` makes times relative to the [POSIX epoch](https://en.wikipedia.org/wiki/Epoch_(computing)) (`initial_time_offset` becomes an offset from epoch).
 
 ### Manual Clock
 
-The `ManualClock` compresses time intervals (e.g. `PeriodicCondition` proceeds immediately rather than waiting for the specified period). It is provided mainly for use during testing/development.
+The `ManualClock` compresses time intervals (e.g., `PeriodicCondition` proceeds immediately rather than waiting for the specified period). It is provided mainly for use during testing/development.
 
 The parameter `initial_timestamp` controls the initial timestamp on the clock in ns.
 
@@ -73,7 +73,7 @@ This is the transmitter class used by output ports of operators that connect fra
 
 ## Receiver (advanced)
 
-Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators a `DoubleBufferReceiver` will be used, while for connections between fragments in a distributed application, the `UcxReceiver` will be used. When data frame flow tracking is enabled any `DoubleBufferReceiver` will be replaced by an `AnnotatedDoubleBufferReceiver` which also records the timestamps needed for that feature.
+Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators, a `DoubleBufferReceiver` will be used, while for connections between fragments in a distributed application, the `UcxReceiver` will be used. When data frame flow tracking is enabled, any `DoubleBufferReceiver` will be replaced by an `AnnotatedDoubleBufferReceiver` which also records the timestamps needed for that feature.
 
 ### DoubleBufferReceiver
 

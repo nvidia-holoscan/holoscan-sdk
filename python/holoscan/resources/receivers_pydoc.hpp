@@ -30,15 +30,6 @@ PYDOC(Receiver, R"doc(
 Base GXF receiver class.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
 }  // namespace Receiver
 
 namespace DoubleBufferReceiver {
@@ -58,24 +49,6 @@ policy : int, optional
     The policy to use (0=pop, 1=reject, 2=fault).
 name : str, optional
     The name of the receiver.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
 )doc")
 
 }  // namespace DoubleBufferReceiver
@@ -103,24 +76,6 @@ port : int, optional
     The network port used by the transmitter.
 name : str, optional
     The name of the receiver.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
 )doc")
 
 }  // namespace UcxReceiver

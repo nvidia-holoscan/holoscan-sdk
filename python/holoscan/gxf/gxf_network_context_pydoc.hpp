@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,10 +29,6 @@ namespace GXFNetworkContext {
 // Constructor
 PYDOC(GXFNetworkContext, R"doc(
 Base GXF-based network context class.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the network context.
 )doc")
 
 }  // namespace GXFNetworkContext

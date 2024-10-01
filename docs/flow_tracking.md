@@ -12,18 +12,14 @@ Currently, data flow tracking is only supported between the root operators and l
 graph and in simple cycles in a graph (support for tracking data flow between any pair of operators
 in a graph is planned for the future).
 
-- A *root operator* is an operator without any predecessor nodes
+- A *root operator* is an operator without any predecessor nodes.
 - A *leaf operator* (also known as a *sink operator*) is an operator without any successor nodes.
 
-When data flow tracking is enabled, every message is tracked from the root operators to the leaf
-operators and in cycles. Then, the maximum (worst-case), average and minimum end-to-end latencies of one or more
-paths can be retrieved using the Data Flow Tracking APIs.
+When data flow tracking is enabled, every message is tracked from the root operators to the leaf operators and in cycles. Then, the maximum (worst-case), average, and minimum end-to-end latencies of one or more paths can be retrieved using the Data Flow Tracking APIs.
 
 :::{tip}
-- The end-to-end latency between a root operator and a leaf operator is the time taken between the
-  start of a root operator and the end of a leaf operator. Data Flow Tracking enables the support to track the end-to-end latency of every message being passed between a root operator and a leaf operator.
-- The reported end-to-end latency for a cyclic path is the time taken between the start of the first
-  operator of a cycle and the time when a message is again received by the first operator of the cycle.
+- The end-to-end latency between a root operator and a leaf operator is the time taken between the start of a root operator and the end of a leaf operator. Data Flow Tracking enables the support to track the end-to-end latency of every message being passed between a root operator and a leaf operator.
+- The reported end-to-end latency for a cyclic path is the time taken between the start of the first operator of a cycle and the time when a message is again received by the first operator of the cycle.
 :::
 
 The API also provides the ability to retrieve the number of messages sent from the root operators.
@@ -89,13 +85,13 @@ various functions:
    - `get_metric(std::string pathstring, holoscan::DataFlowMetric metric)` returns the value of a
      metric `metric` for a path `pathstring`. The metric can be one of the following:
         - `holoscan::DataFlowMetric::kMaxE2ELatency`
-        ({py:const}`python <holoscan.core.DataFlowMetric.MAX_E2E_LATENCY>`): the maximum end-to-end latency in the path
-        - `holoscan::DataFlowMetric::kAvgE2ELatency` ({py:const}`python <holoscan.core.DataFlowMetric.AVG_E2E_LATENCY>`): the average end-to-end latency in the path
-        - `holoscan::DataFlowMetric::kMinE2ELatency` ({py:const}`python <holoscan.core.DataFlowMetric.MIN_E2E_LATENCY>`): the minimum end-to-end latency in the path
+        ({py:const}`python <holoscan.core.DataFlowMetric.MAX_E2E_LATENCY>`): the maximum end-to-end latency in the path.
+        - `holoscan::DataFlowMetric::kAvgE2ELatency` ({py:const}`python <holoscan.core.DataFlowMetric.AVG_E2E_LATENCY>`): the average end-to-end latency in the path.
+        - `holoscan::DataFlowMetric::kMinE2ELatency` ({py:const}`python <holoscan.core.DataFlowMetric.MIN_E2E_LATENCY>`): the minimum end-to-end latency in the path.
         - `holoscan::DataFlowMetric::kMaxMessageID` ({py:const}`python <holoscan.core.DataFlowMetric.MAX_MESSAGE_ID>`): the message number or ID which resulted in the
-          maximum end-to-end latency
+          maximum end-to-end latency.
         - `holoscan::DataFlowMetric::kMinMessageID` ({py:const}`python <holoscan.core.DataFlowMetric.MIN_MESSAGE_ID>`): the message number or ID which resulted in the
-          minimum end-to-end latency
+          minimum end-to-end latency.
    - `get_metric(holoscan::DataFlowMetric metric = DataFlowMetric::kNumSrcMessages)` returns a map of source operator and its edge, and the number of messages sent from the source operator to the edge.
 
 In the {ref}`above example <holoscan-enable-data-flow-tracking-cpp>`, the data flow tracking results can be printed to the standard output like the
@@ -132,16 +128,10 @@ with Tracker(app) as tracker:
 
 ## Customizing Data Flow Tracking
 
-Data flow tracking can be customized using a few, optional configuration parameters. The
-`track()` method ({cpp:func}`C++ <holoscan::Fragment::track>`/{py:class}`Tracker class in python <holoscan.core.Tracker>`) can be configured to skip a few messages at
-the beginning of an application's execution as a *warm-up* period. It is also possible to discard a few
-messages at the end of an application's run as a *wrap-up* period. Additionally, outlier
-end-to-end latencies can be ignored by setting a latency threshold value which is the minimum
-latency below which the observed latencies are ignored.
+Data flow tracking can be customized using a few, optional configuration parameters. The `track()` method ({cpp:func}`C++ <holoscan::Fragment::track>`/{py:class}`Tracker class in python <holoscan.core.Tracker>`) can be configured to skip a few messages at the beginning of an application's execution as a *warm-up* period. It is also possible to discard a few messages at the end of an application's run as a *wrap-up* period. Additionally, outlier end-to-end latencies can be ignored by setting a latency threshold value which is the minimum latency below which the observed latencies are ignored.
 
 :::{tip}
-For effective benchmarking, it is common practice to include warm-up and cool-down periods by skipping the
-initial and final messages.
+For effective benchmarking, it is common practice to include warm-up and cool-down periods by skipping the initial and final messages.
 :::
 
 `````{tab-set}
@@ -174,14 +164,9 @@ and {cpp:func}`set_skip_latencies <holoscan::DataFlowTracker::set_skip_latencies
 
 ## Logging
 
-The Data Flow Tracking API provides the ability to log every message's graph-traversal information to
-a file. This enables developers to analyze the data flow at a granular level. When logging is
-enabled, every message's received and sent timestamps at every operator between the root and the leaf
-operators are logged after a message has been processed at the leaf operator.
+The Data Flow Tracking API provides the ability to log every message's graph-traversal information to a file. This enables you to analyze the data flow at a granular level. When logging is enabled, every message's received and sent timestamps at every operator between the root and the leaf operators are logged after a message has been processed at the leaf operator.
 
-The logging is enabled by calling the `enable_logging`
-method in {cpp:func}`C++ <holoscan::DataFlowTracker::enable_logging>` and by providing the `filename`
-parameter to `Tracker` in {py:class}`python <holoscan.core.Tracker>`.
+The logging is enabled by calling the `enable_logging` method in {cpp:func}`C++ <holoscan::DataFlowTracker::enable_logging>` and by providing the `filename` parameter to `Tracker` in {py:class}`python <holoscan.core.Tracker>`.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -209,10 +194,8 @@ with Tracker(app, filename="logger.log") as tracker:
 ````
 `````
 
-The logger file logs the paths of the messages after a leaf operator has finished its `compute` method.
-Every path in the logfile includes an array of tuples of the form:
+The logger file logs the paths of the messages after a leaf operator has finished its `compute` method. Every path in the logfile includes an array of tuples of the form:
 
 >"(root operator name, message receive timestamp, message publish timestamp) -> ... -> (leaf operator name, message receive timestamp, message publish timestamp)".
 
-This log file can further be analyzed to understand latency distributions, bottlenecks, data flow
-and other characteristics of an application.
+This log file can further be analyzed to understand latency distributions, bottlenecks, data flow, and other characteristics of an application.

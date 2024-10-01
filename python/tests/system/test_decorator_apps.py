@@ -1,23 +1,25 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
+
 import numpy as np
+import pytest
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application
+from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.core._core import Tensor as TensorBase
 from holoscan.decorator import Input, Output, create_op
 
@@ -145,6 +147,137 @@ def test_multiple_output_tensor_app(capfd):
     assert "error" not in captured.out
     assert captured.out.count("tensor.shape = (32, 16)") == 3
     assert captured.out.count("tensor.shape = (512,)") == 3
+
+
+@create_op(outputs=("x", "waveform"))
+def tensor_tuple_generate(x_shape=(128, 64), waveform_shape=(512,)):
+    x = np.zeros(x_shape, dtype=np.float32)
+    waveform = np.ones(waveform_shape, dtype=np.float32)
+    return x, waveform
+
+
+@create_op(inputs=("x1", "x2"), outputs=("out1", "out2"))
+def update_tuple(x1, x2, bias=1.5, scale=2.0):
+    return (x1 + bias), (x2 * scale)
+
+
+# intentionally use a class to verify that tensor-like arrays packed into tuples work
+class PrintTensorShapeOp(Operator):
+    def __init__(self, *args, expected_value=None, **kwargs):
+        self.expected_value = expected_value
+        super().__init__(*args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        spec.input("tensor")
+
+    def compute(self, op_input, op_output, context):
+        msg = op_input.receive("tensor")
+        tensor = np.array(msg[""])
+        print(f"{tensor.shape = }")
+        if self.expected_value is not None:
+            assert tensor.ravel()[0] == self.expected_value
+
+
+class TensorTupleOutputApp(Application):
+    def compose(self):
+        src_op = tensor_tuple_generate(
+            self, CountCondition(self, 3), name="tuple_gen", x_shape=(32, 16)
+        )
+        update_tensor_tuple_op = update_tuple(self, name="update_tensor_tuple", bias=2.0, scale=1.5)
+        assert update_tensor_tuple_op.fixed_kwargs["bias"] == 2.0
+        assert update_tensor_tuple_op.fixed_kwargs["scale"] == 1.5
+
+        print_op = PrintTensorShapeOp(self, name="print_x", expected_value=2.0)
+        # recycle the operator from MultipleOutputTensorApp test
+        print_op2 = print_shape(self, name="print_waveform", expected_value=1.5)
+
+        self.add_flow(src_op, update_tensor_tuple_op, {("x", "x1"), ("waveform", "x2")})
+        self.add_flow(update_tensor_tuple_op, print_op, {("out1", "tensor")})
+        self.add_flow(update_tensor_tuple_op, print_op2, {("out2", "tensor")})
+
+
+def test_tensor_tuple_output_app(capfd):
+    app = TensorTupleOutputApp()
+    app.run()
+
+    captured = capfd.readouterr()
+    assert "error" not in captured.out
+    assert captured.out.count("tensor.shape = (32, 16)") == 3
+    assert captured.out.count("tensor.shape = (512,)") == 3
+
+
+# test tuple transmission
+def get_source_tuple_op(n_ports=2, count=5):
+    _outputs = tuple(f"out{i+1}" for i in range(n_ports))
+
+    @create_op(outputs=_outputs)
+    def source_tuple(count=count):
+        return tuple(range(count))
+
+    return source_tuple
+
+
+@create_op
+def sink_tuple(y, *, expected_length=None):
+    print("sink called", y)
+    if (expected_length is not None) and isinstance(y, tuple):
+        assert len(y) == expected_length
+
+
+class TupleTransmissionApp(Application):
+    def __init__(
+        self,
+        *args,
+        iterations: int = 3,
+        count: int = 10,
+        n_ports: int = 2,
+        **kwargs,
+    ):
+        self.count = count
+        self.iterations = iterations
+        self.n_ports = n_ports
+        super().__init__(*args, **kwargs)
+
+    def compose(self):
+        source_tuple_func = get_source_tuple_op(self.n_ports, self.count)
+        src_op = source_tuple_func(self, CountCondition(self, self.iterations), name="src")
+        for port_name in src_op.output_tensor_map:
+            sink_tuple_op = sink_tuple(
+                self, name=f"sink_tuple_{port_name}", expected_length=self.count
+            )
+            self.add_flow(src_op, sink_tuple_op, {(port_name, "y")})
+
+
+@pytest.mark.parametrize("n_ports", [1, 3, 5])
+def test_tuple_transmission_app(n_ports, capfd):
+    iterations = 3
+    count = 5
+    app = TupleTransmissionApp(iterations=iterations, count=count, n_ports=n_ports)
+
+    # test if a tuple will be transmitted as is through a single port
+    if n_ports == 1:
+        app.run()
+        captured = capfd.readouterr()
+        assert "error" not in captured.out
+        assert captured.out.count(f"sink called {tuple(range(5))}") == iterations
+    # test if a tuple will be distributed among ports
+    elif n_ports == count:
+        app.run()
+        captured = capfd.readouterr()
+        assert "error" not in captured.out
+        for i in range(count):
+            assert captured.out.count(f"sink called {i}") == iterations
+    # test if tuple length and number if ports mismatch, an exception is raised
+    else:
+        err_msg = (
+            f"The number of output tuple elements and number of tensors must match.\n"
+            f"Output tuple length = {count}\n"
+            f"Number of output tensors = {n_ports}"
+        )
+        with pytest.raises(ValueError, match=err_msg):
+            app.run()
+        captured = capfd.readouterr()
+        assert "error" in captured.err
 
 
 @create_op(inputs="tensor", cast_tensors=False)

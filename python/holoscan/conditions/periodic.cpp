@@ -92,10 +92,6 @@ void init_periodic(py::module_& m) {
            "recess_period"_a,
            "name"_a = "noname_periodic_condition"s,
            doc::PeriodicCondition::doc_PeriodicCondition)
-      .def_property_readonly("gxf_typename",
-                             &PeriodicCondition::gxf_typename,
-                             doc::PeriodicCondition::doc_gxf_typename)
-      .def("setup", &PeriodicCondition::setup, doc::PeriodicCondition::doc_setup)
       .def("recess_period",
            static_cast<void (PeriodicCondition::*)(int64_t)>(&PeriodicCondition::recess_period),
            doc::PeriodicCondition::doc_recess_period)

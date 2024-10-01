@@ -87,11 +87,60 @@ class Context::Impl {
   void setup() {
     im_gui_context_ = ImGui::CreateContext();
     vulkan_.reset(new Vulkan);
-    if (surface_format_.has_value()) {
-      vulkan_->set_surface_format(surface_format_.value());
-    }
+    if (surface_format_.has_value()) { vulkan_->set_surface_format(surface_format_.value()); }
     vulkan_->set_present_mode(present_mode_);
     vulkan_->setup(window_.get(), font_path_, font_size_in_pixels_);
+
+    // setup the window callbacks, they call the user callbacks if present
+    key_callback_handle_ = window_->add_key_callback(
+        [this](Key key, KeyAndButtonAction action, KeyModifiers modifiers) {
+          if (key_callback_) { key_callback_(key_user_pointer_, key, action, modifiers); }
+        });
+    unicode_char_callback_handle_ = window_->add_unicode_char_callback([this](uint32_t code_point) {
+      if (unicode_char_callback_) {
+        unicode_char_callback_(unicode_char_user_pointer_, code_point);
+      }
+    });
+    mouse_button_callback_handle_ = window_->add_mouse_button_callback(
+        [this](MouseButton button, KeyAndButtonAction action, KeyModifiers modifiers) {
+          if (mouse_button_callback_) {
+            mouse_button_callback_(mouse_button_user_pointer_, button, action, modifiers);
+          }
+        });
+    scroll_callback_handle_ =
+        window_->add_scroll_callback([this](double x_offset, double y_offset) {
+          if (scroll_callback_) { scroll_callback_(scroll_user_pointer_, x_offset, y_offset); }
+        });
+    cursor_pos_callback_handle_ =
+        window_->add_cursor_pos_callback([this](double x_pos, double y_pos) {
+          if (cursor_pos_callback_) {
+            cursor_pos_callback_(cursor_pos_user_pointer_, x_pos, y_pos);
+          }
+        });
+    framebuffer_size_callback_handle_ =
+        window_->add_framebuffer_size_callback([this](int width, int height) {
+          if (framebuffer_size_callback_) {
+            framebuffer_size_callback_(framebuffer_size_user_pointer_, width, height);
+          }
+        });
+    window_size_callback_handle_ = window_->add_window_size_callback([this](int width, int height) {
+      if (window_size_callback_) {
+        window_size_callback_(window_size_user_pointer_, width, height);
+      }
+    });
+
+    if (framebuffer_size_callback_ || window_size_callback_) {
+      // call with initial framebuffer and window size
+      uint32_t width, height;
+      if (framebuffer_size_callback_) {
+        window_->get_framebuffer_size(&width, &height);
+        framebuffer_size_callback_(framebuffer_size_user_pointer_, width, height);
+      }
+      if (window_size_callback_) {
+        window_->get_window_size(&width, &height);
+        window_size_callback_(window_size_user_pointer_, width, height);
+      }
+    }
   }
 
   ImGuiContext* im_gui_context_ = nullptr;
@@ -104,6 +153,34 @@ class Context::Impl {
   PresentMode present_mode_ = PresentMode::AUTO;
 
   std::unique_ptr<Window> window_;
+
+  void* key_user_pointer_ = nullptr;
+  KeyCallbackFunction key_callback_ = nullptr;
+  Window::CallbackHandle key_callback_handle_;
+
+  void* unicode_char_user_pointer_ = nullptr;
+  UnicodeCharCallbackFunction unicode_char_callback_ = nullptr;
+  Window::CallbackHandle unicode_char_callback_handle_;
+
+  void* mouse_button_user_pointer_ = nullptr;
+  MouseButtonCallbackFunction mouse_button_callback_ = nullptr;
+  Window::CallbackHandle mouse_button_callback_handle_;
+
+  void* scroll_user_pointer_ = nullptr;
+  ScrollCallbackFunction scroll_callback_ = nullptr;
+  Window::CallbackHandle scroll_callback_handle_;
+
+  void* cursor_pos_user_pointer_ = nullptr;
+  CursorPosCallbackFunction cursor_pos_callback_ = nullptr;
+  Window::CallbackHandle cursor_pos_callback_handle_;
+
+  void* framebuffer_size_user_pointer_ = nullptr;
+  FramebufferSizeCallbackFunction framebuffer_size_callback_ = nullptr;
+  Window::CallbackHandle framebuffer_size_callback_handle_;
+
+  void* window_size_user_pointer_ = nullptr;
+  WindowSizeCallbackFunction window_size_callback_ = nullptr;
+  Window::CallbackHandle window_size_callback_handle_;
 
   std::unique_ptr<Vulkan> vulkan_;
 
@@ -142,6 +219,13 @@ Context::~Context() {
   impl_->layers_.clear();
   impl_->layer_cache_.clear();
   impl_->vulkan_.reset();
+  impl_->window_size_callback_handle_.reset();
+  impl_->framebuffer_size_callback_handle_.reset();
+  impl_->cursor_pos_callback_handle_.reset();
+  impl_->scroll_callback_handle_.reset();
+  impl_->mouse_button_callback_handle_.reset();
+  impl_->unicode_char_callback_handle_.reset();
+  impl_->key_callback_handle_.reset();
   impl_->window_.reset();
 
   if (impl_->im_gui_context_) { ImGui::DestroyContext(impl_->im_gui_context_); }
@@ -200,6 +284,54 @@ void Context::init(const char* display_name, uint32_t width, uint32_t height, ui
   impl_->window_.reset(new ExclusiveWindow(display_name, width, height, refresh_rate, flags));
   impl_->flags_ = flags;
   impl_->setup();
+}
+
+void Context::set_key_callback(void* user_pointer, KeyCallbackFunction callback) {
+  impl_->key_user_pointer_ = user_pointer;
+  impl_->key_callback_ = callback;
+}
+
+void Context::set_unicode_char_callback(void* user_pointer, UnicodeCharCallbackFunction callback) {
+  impl_->unicode_char_user_pointer_ = user_pointer;
+  impl_->unicode_char_callback_ = callback;
+}
+
+void Context::set_mouse_button_callback(void* user_pointer, MouseButtonCallbackFunction callback) {
+  impl_->mouse_button_user_pointer_ = user_pointer;
+  impl_->mouse_button_callback_ = callback;
+}
+
+void Context::set_scroll_callback(void* user_pointer, ScrollCallbackFunction callback) {
+  impl_->scroll_user_pointer_ = user_pointer;
+  impl_->scroll_callback_ = callback;
+}
+
+void Context::set_cursor_pos_callback(void* user_pointer, CursorPosCallbackFunction callback) {
+  impl_->cursor_pos_user_pointer_ = user_pointer;
+  impl_->cursor_pos_callback_ = callback;
+}
+
+void Context::set_framebuffer_size_callback(void* user_pointer,
+                                            FramebufferSizeCallbackFunction callback) {
+  impl_->framebuffer_size_user_pointer_ = user_pointer;
+  impl_->framebuffer_size_callback_ = callback;
+  if (impl_->window_ && callback) {
+    // call with initial framebuffer size
+    uint32_t width, height;
+    impl_->window_->get_framebuffer_size(&width, &height);
+    callback(user_pointer, width, height);
+  }
+}
+
+void Context::set_window_size_callback(void* user_pointer, WindowSizeCallbackFunction callback) {
+  impl_->window_size_user_pointer_ = user_pointer;
+  impl_->window_size_callback_ = callback;
+  if (impl_->window_ && callback) {
+    // call with initial window size
+    uint32_t width, height;
+    impl_->window_->get_window_size(&width, &height);
+    callback(user_pointer, width, height);
+  }
 }
 
 std::vector<SurfaceFormat> Context::get_surface_formats() const {

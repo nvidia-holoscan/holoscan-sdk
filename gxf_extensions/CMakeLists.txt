@@ -22,6 +22,8 @@ list(APPEND CMAKE_INSTALL_RPATH_LIST
     \$ORIGIN/..                                 # load 3rd-party dependency libs
     \$ORIGIN/../../../nvidia/cuda_runtime/lib   # for python wheels
     \$ORIGIN/../../../tensorrt                  # for python wheels
+    \$ORIGIN/../HoloscanWrapperExtension        # For HoloscanWrapperExtension
+    \$ORIGIN/../UcxHoloscanExtension            # For UcxHoloscanExtension
     )
 list(JOIN CMAKE_INSTALL_RPATH_LIST ":" CMAKE_INSTALL_RPATH)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib/gxf_extensions)

@@ -22,9 +22,12 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
+
+#include "holoviz/callbacks.hpp"
 
 namespace holoscan::viz {
 
@@ -49,16 +52,130 @@ class Window {
   virtual void init_im_gui() = 0;
 
   /**
-   * Setup call backs.
-   *
-   * @param framebuffersize_cb    Called when the frame buffer size changes
+   * Callback handle, returned but the add_???_callback() functions, removes callback when
+   * destroyed
    */
-  virtual void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) = 0;
+  typedef std::shared_ptr<void> CallbackHandle;
+
+  /// key callback type
+  typedef void (*KeyCallbackType)(Key key, KeyAndButtonAction action, KeyModifiers modifiers);
+  /// key callback function type
+  typedef std::function<std::remove_pointer_t<KeyCallbackType>> KeyCallbackFunction;
+
+  /// unicode char callback type
+  typedef void (*UnicodeCharCallbackType)(uint32_t code_point);
+  /// unicode char callback function type
+  typedef std::function<std::remove_pointer_t<UnicodeCharCallbackType>> UnicodeCharCallbackFunction;
+
+  /// mouse button callback type
+  typedef void (*MouseButtonCallbackType)(MouseButton button, KeyAndButtonAction action,
+                                          KeyModifiers modifiers);
+  /// mouse button callback function type
+  typedef std::function<std::remove_pointer_t<MouseButtonCallbackType>> MouseButtonCallbackFunction;
+
+  /// scroll callback type
+  typedef void (*ScrollCallbackType)(double x_offset, double y_offset);
+  /// scroll callback function type
+  typedef std::function<std::remove_pointer_t<ScrollCallbackType>> ScrollCallbackFunction;
+
+  /// cursor position callback type
+  typedef void (*CursorPosCallbackType)(double x_pos, double y_pos);
+  /// cursor position callback function type
+  typedef std::function<std::remove_pointer_t<CursorPosCallbackType>> CursorPosCallbackFunction;
+
+  /// framebuffer size callback type
+  typedef void (*FramebufferSizeCallbackType)(int width, int height);
+  /// framebuffer size callback function type
+  typedef std::function<std::remove_pointer_t<FramebufferSizeCallbackType>>
+      FramebufferSizeCallbackFunction;
+
+  /// window size callback type
+  typedef void (*WindowSizeCallbackType)(int width, int height);
+  /// window size callback function type
+  typedef std::function<std::remove_pointer_t<WindowSizeCallbackType>>
+      WindowSizeCallbackFunction;
 
   /**
-   * Restore call backs.
+   * Add a key callback. The callback function is called when a key is pressed, released or
+   * repeated.
+   *
+   * @param callback the key callback to add
+   *
+   * @return callback handle, callback is automatically removed when handle is deleted
    */
-  virtual void restore_callbacks() = 0;
+  virtual CallbackHandle add_key_callback(KeyCallbackFunction callback) { return CallbackHandle(); }
+
+  /**
+   * Add a Unicode character callback. The callback function is called when a Unicode character is
+   * input.
+   *
+   * @param callback the new Unicode character callback to add
+   *
+   * @return callback handle, callback is automatically removed when handle is deleted
+   */
+  virtual CallbackHandle add_unicode_char_callback(UnicodeCharCallbackFunction callback) {
+    return CallbackHandle();
+  }
+
+  /**
+   * Add a mouse button callback. The callback function is called when a mouse button is pressed
+   * or released.
+   *
+   * @param callback the new mouse button callback to add
+   *
+   * @return callback handle, callback is automatically removed when handle is deleted
+   */
+  virtual CallbackHandle add_mouse_button_callback(MouseButtonCallbackFunction callback) {
+    return CallbackHandle();
+  }
+
+  /**
+   * Add a scroll callback. The callback function is called when a scrolling device is used,
+   * such as a mouse scroll wheel or the scroll area of a touch pad.
+   *
+   * @param callback the new cursor callback to add
+   *
+   * @return callback handle, callback is automatically removed when handle is deleted
+   */
+  virtual CallbackHandle add_scroll_callback(ScrollCallbackFunction callback) {
+    return CallbackHandle();
+  }
+
+  /**
+   * Add a cursor position callback. The callback function is called when the cursor position
+   * changes. Coordinates are provided in screen coordinates, relative to the upper left edge of the
+   * content area.
+   *
+   * @param callback the new cursor position callback to add
+   *
+   * @return callback handle, callback is automatically removed when handle is deleted
+   */
+  virtual CallbackHandle add_cursor_pos_callback(CursorPosCallbackFunction callback) {
+    return CallbackHandle();
+  }
+
+  /**
+   * Add a framebuffer size callback. The callback function is called when the framebuffer is
+   * resized.
+   *
+   * @param callback the new framebuffer size callback to add
+   *
+   * @return callback handle, callback is automatically removed when handle is deleted
+   */
+  virtual CallbackHandle add_framebuffer_size_callback(FramebufferSizeCallbackFunction callback) {
+    return CallbackHandle();
+  }
+
+  /**
+   * Add a window size callback. The callback function is called when the window is resized.
+   *
+   * @param callback the new window size callback to add
+   *
+   * @return callback handle, callback is automatically removed when handle is deleted
+   */
+  virtual CallbackHandle add_window_size_callback(WindowSizeCallbackFunction callback) {
+    return CallbackHandle();
+  }
 
   /**
    * Get the required instance extensions for vulkan.
@@ -87,11 +204,18 @@ class Window {
                                  const std::vector<vk::PhysicalDevice>& physical_devices) = 0;
 
   /**
-   * Get the current frame buffer size.
+   * Get the current framebuffer size.
    *
-   * @param [out] width, height   framebuffer size
+   * @param [out] width, height   framebuffer size in pixels
    */
   virtual void get_framebuffer_size(uint32_t* width, uint32_t* height) = 0;
+
+  /**
+   * Get the current window size.
+   *
+   * @param [out] width, height   window size in screen coordinates
+   */
+  virtual void get_window_size(uint32_t* width, uint32_t* height) = 0;
 
   /**
    * Create a Vulkan surface.

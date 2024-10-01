@@ -184,6 +184,8 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     holoinfer
     infer_utils
     logger
+    nvtx3-c
+    nvtx3-cpp
     op_async_ping_rx
     op_async_ping_tx
     op_bayer_demosaic
@@ -200,6 +202,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_video_stream_recorder
     op_video_stream_replayer
     op_v4l2
+    profiler
     spdlog_logger
 )
 if(HOLOSCAN_BUILD_LIBTORCH)

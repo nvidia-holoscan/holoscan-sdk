@@ -896,5 +896,10 @@ DimType InferContext::get_output_dimensions() const {
   return g_manager->get_output_dimensions();
 }
 
+DimType InferContext::get_input_dimensions() const {
+  g_manager = g_managers.at(unique_id_);
+  return g_manager->get_input_dimensions();
+}
+
 }  // namespace inference
 }  // namespace holoscan

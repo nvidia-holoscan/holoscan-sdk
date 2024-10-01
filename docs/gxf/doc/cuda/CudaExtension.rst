@@ -28,10 +28,10 @@ Holds and provides access to native ``cudaStream_t``.
 
 :code:`nvidia::gxf::CudaStream` handle must be allocated by :code:`nvidia::gxf::CudaStreamPool`. Its lifecycle is valid until explicitly recycled through :code:`nvidia::gxf::CudaStreamPool.releaseStream()` or implicitly until :code:`nvidia::gxf::CudaStreamPool` is deactivated.
 
-You may call :code:`stream()` to get the native ``cudaStream_t`` handle, and to submit GPU operations. After the submission, GPU takes over the input tensors/buffers and keeps them in use. To prevent host carelessly releasing these in-use buffers, CUDA Codelet needs to call :code:`record(event, input_entity, sync_cb)` to extend :code:`input_entity`'s lifecycle until GPU completely consumes it.
+You may call :code:`stream()` to get the native ``cudaStream_t`` handle, and to submit GPU operations. After the submission, GPU takes over the input tensors/buffers and keeps them in use. To prevent the host carelessly releasing these in-use buffers, CUDA Codelet needs to call :code:`record(event, input_entity, sync_cb)` to extend :code:`input_entity`'s lifecycle until the GPU completely consumes it.
 Alternatively, you may call :code:`record(event, event_destroy_cb)` for native ``cudaEvent_t`` operations and free in-use resource via :code:`event_destroy_cb`.
 
-It is required to have a :code:`nvidia::gxf::CudaStreamSync` in the graph pipeline after all the CUDA operations. See more details in :code:`nvidia::gxf::CudaStreamSync`
+It is required to have a :code:`nvidia::gxf::CudaStreamSync` in the graph pipeline after all the CUDA operations. See more details in :code:`nvidia::gxf::CudaStreamSync`.
 
 * Component ID: 5683d692-7884-11eb-9338-c3be62d576be
 * Defined in: gxf/cuda/cuda_stream.hpp
@@ -124,7 +124,7 @@ Synchronize all CUDA streams which are carried by message entities.
 This codelet is required to get connected in the graph pipeline after all CUDA ops codelets. When a message entity is received, it would find all of the :code:`nvidia::gxf::CudaStreamId` in that message, and extract out each :code:`nvidia::gxf::CudaStream`. With each ``CudaStream`` handle, it synchronizes all previous :code:`nvidia::gxf::CudaStream.record()` events, along with all submitted GPU operations before this point.
 
 .. note::
-     ``CudaStreamSync`` must be set in the graph when :code:`nvidia::gxf::CudaStream.record()` is used, otherwise it may cause memory leak.
+     ``CudaStreamSync`` must be set in the graph when :code:`nvidia::gxf::CudaStream.record()` is used, otherwise it may cause a memory leak.
 
 * Component ID: 0d1d8142-6648-485d-97d5-277eed00129c
 * Base Type: nvidia::gxf::Codelet

@@ -78,10 +78,6 @@ Parameters
     Keyword arguments to pass on to the parent condition class.
 )doc")
 
-PYDOC(initialize, R"doc(
-Initialize the component.
-)doc")
-
 }  // namespace GXFCondition
 
 namespace GXFResource {
@@ -100,67 +96,7 @@ Parameters
     Keyword arguments to pass on to the parent resource class.
 )doc")
 
-PYDOC(initialize, R"doc(
-Initialize the component.
-)doc")
-
 }  // namespace GXFResource
-
-namespace GXFScheduler {
-
-// Constructor
-PYDOC(GXFScheduler, R"doc(
-Base GXF-based scheduler class.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the scheduler.
-)doc")
-
-}  // namespace GXFScheduler
-
-namespace GXFOperator {
-
-// Constructor
-PYDOC(GXFOperator, R"doc(
-Base GXF-based operator class.
-)doc")
-
-PYDOC(GXFOperator_kwargs, R"doc(
-Base GXF-based operator class.
-
-Parameters
-----------
-**kwargs : dict
-    Keyword arguments to pass on to the parent operator class.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the operator.
-
-Returns
--------
-str
-    The GXF type name of the operator.
-)doc")
-
-PYDOC(gxf_context, R"doc(
-The GXF context of the component.
-)doc")
-
-PYDOC(gxf_eid, R"doc(
-The GXF entity ID.
-)doc")
-
-PYDOC(gxf_cid, R"doc(
-The GXF component ID.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the operator.
-)doc")
-
-}  // namespace GXFOperator
 
 namespace GXFInputContext {
 

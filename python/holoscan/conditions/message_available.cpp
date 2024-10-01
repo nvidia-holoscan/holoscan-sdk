@@ -79,9 +79,6 @@ void init_message_available(py::module_& m) {
            "front_stage_max_size"_a = 1UL,
            "name"_a = "noname_message_available_condition"s,
            doc::MessageAvailableCondition::doc_MessageAvailableCondition)
-      .def_property_readonly("gxf_typename",
-                             &MessageAvailableCondition::gxf_typename,
-                             doc::MessageAvailableCondition::doc_gxf_typename)
       .def_property("receiver",
                     py::overload_cast<>(&MessageAvailableCondition::receiver),
                     py::overload_cast<std::shared_ptr<gxf::GXFResource>>(
@@ -94,10 +91,6 @@ void init_message_available(py::module_& m) {
       .def_property("front_stage_max_size",
                     py::overload_cast<>(&MessageAvailableCondition::front_stage_max_size),
                     py::overload_cast<size_t>(&MessageAvailableCondition::front_stage_max_size),
-                    doc::MessageAvailableCondition::doc_front_stage_max_size)
-      .def("setup", &MessageAvailableCondition::setup, doc::MessageAvailableCondition::doc_setup)
-      .def("initialize",
-           &MessageAvailableCondition::initialize,
-           doc::MessageAvailableCondition::doc_initialize);
+                    doc::MessageAvailableCondition::doc_front_stage_max_size);
 }
 }  // namespace holoscan

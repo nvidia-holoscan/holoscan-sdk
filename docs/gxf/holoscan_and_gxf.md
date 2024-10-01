@@ -4,22 +4,22 @@
 ## Design differences
 
 There are 2 main elements at the core of Holoscan and GXF designs:
-1. How to define and execute application graphs
-2. How to define nodes' functionality
+1. How to define and execute application graphs.
+2. How to define nodes' functionality.
 
 How Holoscan SDK interfaces with GXF on those topics varies as Holoscan SDK evolves, as described below:
 
 ### Holoscan SDK v0.2
 
 Holoscan SDK was tightly coupled with GXF's existing interface:
-1. GXF application graphs are defined in **YAML** configuration files. **GXE** (Graph Execution Engine) is used to execute AI application graphs. Its inputs are the YAML configuration file, and a list of GXF Extensions to load as plugins (manifest yaml file). This design allows entities to be swapped or updated without needing to recompile an application.
+1. GXF application graphs are defined in **YAML** configuration files. **GXE** (Graph Execution Engine) is used to execute AI application graphs. Its inputs are the YAML configuration file, and a list of GXF Extensions to load as plugins (manifest YAML file). This design allows entities to be swapped or updated without needing to recompile an application.
 2. Components are made available by registering them within a **GXF extension**, each of which maps to a shared library and header(s).
 
 Those concepts are illustrated in the {ref}`GXF by example<gxf-by-example>` section.
 
 The only additions that Holoscan provided on top of GXF were:
-- domain specific reference applications
-- new extensions
+- Domain-specific reference applications
+- New extensions
 - CMake configurations for building extensions and applications
 
 ### Holoscan SDK v0.3
@@ -32,7 +32,7 @@ The Holoscan SDK shifted to provide a more developer-friendly interface with C++
 
 The Holoscan SDK added Python wrapping and native operators to further increase ease of use:
 1. The C++ API is also wrapped in Python. GXF is still used as the backend.
-2. The Operator class supports **native operators**, i.e. operators that do not require to implement and register a GXF Extension. An important feature is the ability to support messaging between native and GXF operators without any performance loss (i.e. zero-copy communication of tensors).
+2. The Operator class supports **native operators**, i.e., operators that do not require that you implement and register a GXF Extension. An important feature is the ability to support messaging between native and GXF operators without any performance loss (i.e., zero-copy communication of tensors).
 
 ### Holoscan SDK v0.5
 
@@ -41,9 +41,9 @@ The Holoscan SDK added Python wrapping and native operators to further increase 
 
 ### Holoscan SDK v1.0
 
-1. The remaining GXF-based DemosiacOp operator was switched to a native implementation. Now all operators provided by the SDK are native operators.
+1. The remaining GXF-based DemosaicOp operator was switched to a native implementation. Now all operators provided by the SDK are native operators.
 
-## Current limitations
+## Current Limitations
 
 Here is a list of GXF capabilities not yet available in the Holoscan SDK which are planned to be supported in future releases:
 - {ref}`Job Statistics<job_stats>`

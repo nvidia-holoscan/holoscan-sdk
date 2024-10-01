@@ -43,7 +43,7 @@
                          __LINE__,                                                      \
                          __FILE__,                                                      \
                          cudaGetErrorString(cuda_status),                               \
-                         cuda_status);                                                  \
+                         static_cast<int>(cuda_status));                                \
     }                                                                                   \
   }
 #endif

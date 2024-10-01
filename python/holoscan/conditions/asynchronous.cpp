@@ -80,14 +80,10 @@ void init_asynchronous(py::module_& m) {
            "fragment"_a,
            "name"_a = "noname_async_condition"s,
            doc::AsynchronousCondition::doc_AsynchronousCondition_python)
-      .def_property_readonly("gxf_typename",
-                             &AsynchronousCondition::gxf_typename,
-                             doc::AsynchronousCondition::doc_gxf_typename)
       .def_property(
           "event_state",
           py::overload_cast<>(&AsynchronousCondition::event_state, py::const_),
           py::overload_cast<holoscan::AsynchronousEventState>(&AsynchronousCondition::event_state),
-          doc::AsynchronousCondition::doc_event_state)
-      .def("setup", &AsynchronousCondition::setup, "spec"_a, doc::AsynchronousCondition::doc_setup);
+          doc::AsynchronousCondition::doc_event_state);
 }
 }  // namespace holoscan

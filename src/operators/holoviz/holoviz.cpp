@@ -347,6 +347,49 @@ static std::string chromaLocationToString(
   return "invalid";
 }
 
+/// table to convert color space enum to string
+static const std::array<std::pair<holoscan::ops::HolovizOp::ColorSpace, std::string>, 7>
+    kColorSpaceToStr{
+        {{holoscan::ops::HolovizOp::ColorSpace::SRGB_NONLINEAR, "srgb_nonlinear"},
+         {holoscan::ops::HolovizOp::ColorSpace::EXTENDED_SRGB_LINEAR, "extended_srgb_linear"},
+         {holoscan::ops::HolovizOp::ColorSpace::BT2020_LINEAR, "bt2020_linear"},
+         {holoscan::ops::HolovizOp::ColorSpace::HDR10_ST2084, "hdr10_st2084"},
+         {holoscan::ops::HolovizOp::ColorSpace::PASS_THROUGH, "pass_through"},
+         {holoscan::ops::HolovizOp::ColorSpace::BT709_LINEAR, "bt709_linear"},
+         {holoscan::ops::HolovizOp::ColorSpace::AUTO, "auto"}}};
+
+/**
+ * Convert a string to a color space enum
+ *
+ * @param string color space string
+ * @return color space enum
+ */
+static nvidia::gxf::Expected<holoscan::ops::HolovizOp::ColorSpace> colorSpaceFromString(
+    const std::string& string) {
+  const auto it = std::find_if(std::cbegin(kColorSpaceToStr),
+                               std::cend(kColorSpaceToStr),
+                               [&string](const auto& v) { return v.second == string; });
+  if (it != std::cend(kColorSpaceToStr)) { return it->first; }
+
+  HOLOSCAN_LOG_ERROR("Unsupported color space '{}'", string);
+  return nvidia::gxf::Unexpected{GXF_FAILURE};
+}
+
+/**
+ * Convert a color space enum to a string
+ *
+ * @param color_space color space enum
+ * @return color space string
+ */
+static std::string colorSpaceToString(holoscan::ops::HolovizOp::ColorSpace color_space) {
+  const auto it = std::find_if(std::cbegin(kColorSpaceToStr),
+                               std::cend(kColorSpaceToStr),
+                               [&color_space](const auto& v) { return v.first == color_space; });
+  if (it != std::cend(kColorSpaceToStr)) { return it->second; }
+
+  return "invalid";
+}
+
 /**
  * Try to detect the input type enum for given buffer properties.
  *
@@ -604,7 +647,107 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
   }
 };
 
+/**
+ * Custom YAML parser for ColorSpace enum
+ */
+template <>
+struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
+  static Node encode(const holoscan::ops::HolovizOp::ColorSpace& color_space) {
+    Node node;
+    node.push_back(colorSpaceToString(color_space));
+    return node;
+  }
+
+  static bool decode(const Node& node, holoscan::ops::HolovizOp::ColorSpace& color_space) {
+    if (!node.IsScalar()) { return false; }
+
+    // YAML is using exceptions, catch them
+    try {
+      const auto maybe_color_space = colorSpaceFromString(node.Scalar());
+      if (maybe_color_space) {
+        color_space = maybe_color_space.value();
+        return true;
+      }
+      return false;
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_ERROR(e.what());
+      return false;
+    }
+  }
+};
+
+/**
+ * @brief This macro defining a YAML converter which throws for unsupported types.
+ *
+ * Background: Holoscan supports setting parameters through YAML files. But for some parameters
+ * accepted by the receiver operators like callbacks it makes no sense to specify them in YAML
+ * files. Therefore use a converter which throws for these types.
+ *
+ * @tparam TYPE
+ */
+#define YAML_CONVERTER(TYPE)                                     \
+  template <>                                                    \
+  struct YAML::convert<TYPE> {                                   \
+    static Node encode(TYPE&) {                                  \
+      throw std::runtime_error(#TYPE " is unsupported in YAML"); \
+    }                                                            \
+                                                                 \
+    static bool decode(const Node&, TYPE&) {                     \
+      throw std::runtime_error(#TYPE " is unsupported in YAML"); \
+    }                                                            \
+  };
+
+YAML_CONVERTER(holoscan::ops::HolovizOp::KeyCallbackFunction);
+YAML_CONVERTER(holoscan::ops::HolovizOp::UnicodeCharCallbackFunction);
+YAML_CONVERTER(holoscan::ops::HolovizOp::MouseButtonCallbackFunction);
+YAML_CONVERTER(holoscan::ops::HolovizOp::ScrollCallbackFunction);
+// don't need CursorPosCallbackFunction since it has the same signature as ScrollCallbackFunction
+YAML_CONVERTER(holoscan::ops::HolovizOp::FramebufferSizeCallbackFunction);
+// don't need WindowSizeCallbackFunction since it has the same signature as
+// FramebufferSizeCallbackFunction
+YAML_CONVERTER(holoscan::ops::HolovizOp::LayerCallbackFunction);
+
 namespace holoscan::ops {
+
+// Initialize static members
+std::mutex HolovizOp::mutex_;
+
+/*static*/ void HolovizOp::key_callback_handler(void* user_pointer, viz::Key key,
+                                                viz::KeyAndButtonAction action,
+                                                viz::KeyModifiers modifiers) {
+  reinterpret_cast<HolovizOp*>(user_pointer)->key_callback_.get()(key, action, modifiers);
+}
+
+/*static*/ void HolovizOp::unicode_char_callback_handler(void* user_pointer, uint32_t code_point) {
+  reinterpret_cast<HolovizOp*>(user_pointer)->unicode_char_callback_.get()(code_point);
+}
+
+/*static*/ void HolovizOp::mouse_button_callback_handler(void* user_pointer,
+                                                         viz::MouseButton button,
+                                                         viz::KeyAndButtonAction action,
+                                                         viz::KeyModifiers modifiers) {
+  reinterpret_cast<HolovizOp*>(user_pointer)
+      ->mouse_button_callback_.get()(button, action, modifiers);
+}
+
+/*static*/ void HolovizOp::scroll_callback_handler(void* user_pointer, double x_offset,
+                                                   double y_offset) {
+  reinterpret_cast<HolovizOp*>(user_pointer)->scroll_callback_.get()(x_offset, y_offset);
+}
+
+/*static*/ void HolovizOp::cursor_pos_callback_handler(void* user_pointer, double x_pos,
+                                                       double y_pos) {
+  reinterpret_cast<HolovizOp*>(user_pointer)->cursor_pos_callback_.get()(x_pos, y_pos);
+}
+
+/*static*/ void HolovizOp::framebuffer_size_callback_handler(void* user_pointer, int width,
+                                                             int height) {
+  reinterpret_cast<HolovizOp*>(user_pointer)->framebuffer_size_callback_.get()(width, height);
+}
+
+/*static*/ void HolovizOp::window_size_callback_handler(void* user_pointer, int width, int height) {
+  reinterpret_cast<HolovizOp*>(user_pointer)->window_size_callback_.get()(width, height);
+}
 
 HolovizOp::InputSpec::InputSpec(const std::string& tensor_name, const std::string& type_str)
     : tensor_name_(tensor_name) {
@@ -627,6 +770,7 @@ void HolovizOp::setup(OperatorSpec& spec) {
   constexpr bool DEFAULT_HEADLESS = false;
   constexpr bool DEFAULT_FRAMEBUFFER_SRGB = false;
   constexpr bool DEFAULT_VSYNC = false;
+  constexpr ColorSpace DEFAULT_DISPLAY_COLOR_SPACE = ColorSpace::AUTO;
 
   spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
 
@@ -728,6 +872,14 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Enable vertical sync. If set to true the operator waits for the next vertical "
              "blanking period of the display to update the current image.",
              DEFAULT_VSYNC);
+  spec.param(display_color_space_,
+             "display_color_space",
+             "Display Color Space",
+             "Set the display color space. Supported color spaces depend on the display setup. "
+             "'ColorSpace::SRGB_NONLINEAR' is always supported. In headless mode, only "
+             "'ColorSpace::PASS_THROUGH' is supported since there is no display. For other color "
+             "spaces the display needs to be configured for HDR.",
+             DEFAULT_DISPLAY_COLOR_SPACE);
   spec.param(window_close_scheduling_term_,
              "window_close_scheduling_term",
              "WindowCloseSchedulingTerm",
@@ -754,6 +906,43 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Camera look at position",
              {{0.f, 0.f, 0.f}});
   spec.param(camera_up_, "camera_up", "Camera Up", "Camera up vector", {{0.f, 1.f, 0.f}});
+
+  spec.param(key_callback_,
+             "key_callback",
+             "Key Callback",
+             "The callback function is called when a key is pressed, released or repeated.");
+  spec.param(unicode_char_callback_,
+             "unicode_char_callback",
+             "Unicode Char Callback",
+             "The callback function is called when a Unicode character is input.");
+  spec.param(mouse_button_callback_,
+             "mouse_button_callback",
+             "Mouse Button Callback",
+             "The callback function is called when a mouse button is pressed or released.");
+  spec.param(scroll_callback_,
+             "scroll_callback",
+             "Scroll Callback",
+             "The callback function is called when a scrolling device is used, such as a mouse "
+             "scroll wheel or the scroll area of a touch pad.");
+  spec.param(
+      cursor_pos_callback_,
+      "cursor_pos_callback",
+      "Cursor Pos Callback",
+      "The callback function is called when the cursor position changes. Coordinates are provided "
+      "in screen coordinates, relative to the upper left edge of the content area.");
+  spec.param(framebuffer_size_callback_,
+             "framebuffer_size_callback",
+             "Framebuffer Size Callback",
+             "The callback function is called when the framebuffer is resized.");
+  spec.param(window_size_callback_,
+             "window_size_callback",
+             "Window Size Callback",
+             "The callback function is called when the window is resized.");
+  spec.param(layer_callback_,
+             "layer_callback",
+             "Layer Callback",
+             "The callback function is called when HolovizOp processed all layers defined by the "
+             "input specification. It can be used to add extra layers.");
 
   cuda_stream_handler_.define_params(spec);
 }
@@ -1428,6 +1617,15 @@ void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
 void HolovizOp::initialize() {
   register_converter<std::vector<InputSpec>>();
   register_converter<std::array<float, 3>>();
+  register_converter<ColorSpace>();
+  register_converter<KeyCallbackFunction>();
+  register_converter<UnicodeCharCallbackFunction>();
+  register_converter<MouseButtonCallbackFunction>();
+  register_converter<ScrollCallbackFunction>();
+  register_converter<CursorPosCallbackFunction>();
+  register_converter<FramebufferSizeCallbackFunction>();
+  register_converter<WindowSizeCallbackFunction>();
+  register_converter<LayerCallbackFunction>();
   register_codec<std::vector<InputSpec>>("std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
 
   // Set up prerequisite parameters before calling Operator::initialize()
@@ -1455,6 +1653,8 @@ void HolovizOp::initialize() {
 }
 
 void HolovizOp::start() {
+  std::lock_guard<std::mutex> guard(mutex_);
+
   // set the font to be used
   if (!font_path_.get().empty()) { viz::SetFont(font_path_.get().c_str(), 25.f); }
 
@@ -1484,30 +1684,43 @@ void HolovizOp::start() {
               display_name_.get().empty() ? nullptr : display_name_.get().c_str());
   }
 
-  if (framebuffer_srgb_) {
-    // If the SRGB framebuffer is enabled, get the supported surface formats and look for a
-    // sRGB format.
+  if (framebuffer_srgb_.get() || (display_color_space_.get() != ColorSpace::AUTO)) {
+    // If the SRGB framebuffer is enabled or a display color space is requested, get the supported
+    // surface formats and look for a format supporting the requirements.
     uint32_t surface_format_count = 0;
     viz::GetSurfaceFormats(&surface_format_count, nullptr);
     std::vector<viz::SurfaceFormat> surface_formats(surface_format_count);
     viz::GetSurfaceFormats(&surface_format_count, surface_formats.data());
 
+    viz::ColorSpace color_space = viz::ColorSpace(display_color_space_.get());
     bool found = false;
     for (auto surface_format_it = surface_formats.begin();
          surface_format_it != surface_formats.end();
          ++surface_format_it) {
-      // Ignore the color space, it might be `SRGB_NONLINEAR` if a display is connected or
-      // `PASS_THROUGH` in headless mode.
-      if ((surface_format_it->image_format_ == viz::ImageFormat::R8G8B8A8_SRGB) ||
-          (surface_format_it->image_format_ == viz::ImageFormat::B8G8R8A8_SRGB) ||
-          (surface_format_it->image_format_ == viz::ImageFormat::A8B8G8R8_SRGB_PACK32)) {
+      if (framebuffer_srgb_.get() ==
+          ((surface_format_it->image_format_ == viz::ImageFormat::R8G8B8A8_SRGB) ||
+           (surface_format_it->image_format_ == viz::ImageFormat::B8G8R8A8_SRGB) ||
+           (surface_format_it->image_format_ == viz::ImageFormat::A8B8G8R8_SRGB_PACK32))) {
+        if (display_color_space_.get() == ColorSpace::AUTO) {
+          // Ignore the color space, it might be `SRGB_NONLINEAR` if a display is connected or
+          // `PASS_THROUGH` in headless mode.
+        } else if (surface_format_it->color_space_ != color_space) {
+          // check the next format for the required color space
+          continue;
+        }
+
         viz::SetSurfaceFormat(*surface_format_it);
         found = true;
         break;
       }
     }
 
-    if (!found) { throw std::runtime_error("No sRGB framebuffer format found."); }
+    if (!found) {
+      throw std::runtime_error(fmt::format(
+          "No framebuffer format found which supports the requirements {} {}.",
+          framebuffer_srgb_ ? "srgb" : "",
+          display_color_space_.has_value() ? colorSpaceToString(display_color_space_.get()) : ""));
+    }
   }
 
   // initialize the camera with the provided parameters
@@ -1547,6 +1760,25 @@ void HolovizOp::start() {
     initial_input_spec_.insert(
         initial_input_spec_.begin(), tensors_.get().begin(), tensors_.get().end());
   }
+
+  // setup callbacks
+  if (key_callback_.has_value()) { viz::SetKeyCallback(this, key_callback_handler); }
+  if (unicode_char_callback_.has_value()) {
+    viz::SetUnicodeCharCallback(this, unicode_char_callback_handler);
+  }
+  if (mouse_button_callback_.has_value()) {
+    viz::SetMouseButtonCallback(this, mouse_button_callback_handler);
+  }
+  if (scroll_callback_.has_value()) { viz::SetScrollCallback(this, scroll_callback_handler); }
+  if (cursor_pos_callback_.has_value()) {
+    viz::SetCursorPosCallback(this, cursor_pos_callback_handler);
+  }
+  if (framebuffer_size_callback_.has_value()) {
+    viz::SetFramebufferSizeCallback(this, framebuffer_size_callback_handler);
+  }
+  if (window_size_callback_.has_value()) {
+    viz::SetWindowSizeCallback(this, window_size_callback_handler);
+  }
 }
 
 void HolovizOp::stop() {
@@ -1556,14 +1788,15 @@ void HolovizOp::stop() {
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                         ExecutionContext& context) {
   // receive input messages
-  auto receivers_messages = op_input.receive<std::vector<gxf::Entity>>("receivers").value();
+  const auto receivers_messages = op_input.receive<std::vector<gxf::Entity>>("receivers").value();
 
-  auto input_specs_messages =
+  const auto input_specs_messages =
       op_input.receive<std::vector<holoscan::ops::HolovizOp::InputSpec>>("input_specs");
 
-  auto camera_eye_message = op_input.receive<std::array<float, 3>>("camera_eye_input");
-  auto camera_look_at_message = op_input.receive<std::array<float, 3>>("camera_look_at_input");
-  auto camera_up_message = op_input.receive<std::array<float, 3>>("camera_up_input");
+  const auto camera_eye_message = op_input.receive<std::array<float, 3>>("camera_eye_input");
+  const auto camera_look_at_message =
+      op_input.receive<std::array<float, 3>>("camera_look_at_input");
+  const auto camera_up_message = op_input.receive<std::array<float, 3>>("camera_up_input");
 
   // make instance current
   ScopedPushInstance scoped_instance(instance_);
@@ -1618,7 +1851,6 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   // information
   for (auto&& message : messages) {
     const auto tensors = message.findAll<nvidia::gxf::Tensor>();
-    HOLOSCAN_LOG_DEBUG("tensors.size()={}", tensors.value().size());
     for (auto&& tensor : tensors.value()) {
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(tensor->name());
@@ -1639,9 +1871,8 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         }
       }
     }
-    const auto video_buffers = message.findAll<nvidia::gxf::VideoBuffer>();
-    HOLOSCAN_LOG_DEBUG("video_buffers.size()={}", video_buffers.value().size());
 
+    const auto video_buffers = message.findAll<nvidia::gxf::VideoBuffer>();
     for (auto&& video_buffer : video_buffers.value()) {
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(video_buffer->name());
@@ -1737,7 +1968,8 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       const auto maybe_input_type = detectInputType(buffer_info, !lut_.empty());
       if (!maybe_input_type) {
         auto code = nvidia::gxf::ToResultCode(maybe_input_type);
-        throw std::runtime_error(fmt::format("failed setting input type with code {}", code));
+        throw std::runtime_error(
+            fmt::format("failed setting input type with error: {}", GxfResultStr(code)));
       }
       input_spec.type_ = maybe_input_type.value();
     }
@@ -1828,6 +2060,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                      input_spec_depth_map_color,
                      buffer_info_depth_map_color);
   }
+
+  // call the layer callback when there is one specified
+  if (layer_callback_.has_value()) { layer_callback_.get()(receivers_messages); }
 
   viz::End();
 

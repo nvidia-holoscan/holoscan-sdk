@@ -152,13 +152,14 @@ bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
   gxf_result_t tid_result;
   tid_result = GxfComponentTypeId(gxf_context_, gxf_typename(), &derived_tid);
   if (tid_result != GXF_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Unable to get component type id of '{}': {}", gxf_typename(), tid_result);
+    HOLOSCAN_LOG_ERROR(
+        "Unable to get component type id of '{}': {}", gxf_typename(), GxfResultStr(tid_result));
   }
   if (GxfTidIsNull(allocator_tid)) {
     tid_result = GxfComponentTypeId(gxf_context_, "nvidia::gxf::Allocator", &allocator_tid);
     if (tid_result != GXF_SUCCESS) {
       HOLOSCAN_LOG_ERROR("Unable to get component type id of 'nvidia::gxf::Allocator': {}",
-                         tid_result);
+                         GxfResultStr(tid_result));
     }
   }
   tid_result = GxfComponentIsBase(gxf_context_, derived_tid, allocator_tid, &is_derived);
@@ -166,7 +167,7 @@ bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
     HOLOSCAN_LOG_ERROR(
         "Unable to get determine if '{}' is derived from 'nvidia::gxf::Allocator': {}",
         gxf_typename(),
-        tid_result);
+        GxfResultStr(tid_result));
   }
   if (is_derived) {
     HOLOSCAN_LOG_DEBUG(

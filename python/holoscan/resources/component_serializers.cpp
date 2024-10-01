@@ -98,11 +98,6 @@ void init_component_serializers(py::module_& m) {
            "fragment"_a,
            "name"_a = "standard_component_serializer"s,
            doc::StdComponentSerializer::doc_StdComponentSerializer)
-      .def_property_readonly("gxf_typename",
-                             &StdComponentSerializer::gxf_typename,
-                             doc::StdComponentSerializer::doc_gxf_typename)
-      .def(
-          "setup", &StdComponentSerializer::setup, "spec"_a, doc::StdComponentSerializer::doc_setup)
       .def("initialize",
            &StdComponentSerializer::initialize,
            doc::StdComponentSerializer::doc_initialize);
@@ -116,14 +111,7 @@ void init_component_serializers(py::module_& m) {
            "fragment"_a,
            "allocator"_a = py::none(),
            "name"_a = "ucx_component_serializer"s,
-           doc::UcxComponentSerializer::doc_UcxComponentSerializer)
-      .def_property_readonly("gxf_typename",
-                             &UcxComponentSerializer::gxf_typename,
-                             doc::UcxComponentSerializer::doc_gxf_typename)
-      .def("setup",
-           &UcxComponentSerializer::setup,
-           "spec"_a,
-           doc::UcxComponentSerializer::doc_setup);
+           doc::UcxComponentSerializer::doc_UcxComponentSerializer);
 
   py::class_<UcxHoloscanComponentSerializer,
              PyUcxHoloscanComponentSerializer,
@@ -136,13 +124,6 @@ void init_component_serializers(py::module_& m) {
            "fragment"_a,
            "allocator"_a = py::none(),
            "name"_a = "ucx_component_serializer"s,
-           doc::UcxHoloscanComponentSerializer::doc_UcxHoloscanComponentSerializer_python)
-      .def_property_readonly("gxf_typename",
-                             &UcxHoloscanComponentSerializer::gxf_typename,
-                             doc::UcxHoloscanComponentSerializer::doc_gxf_typename)
-      .def("setup",
-           &UcxHoloscanComponentSerializer::setup,
-           "spec"_a,
-           doc::UcxHoloscanComponentSerializer::doc_setup);
+           doc::UcxHoloscanComponentSerializer::doc_UcxHoloscanComponentSerializer_python);
 }
 }  // namespace holoscan

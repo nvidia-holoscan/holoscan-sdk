@@ -20,3 +20,8 @@ holoscan_pybind11_module(holoviz
 target_link_libraries(holoviz_python
     PUBLIC holoscan::ops::holoviz
 )
+
+target_include_directories(holoviz_python
+    PUBLIC
+        $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>
+)

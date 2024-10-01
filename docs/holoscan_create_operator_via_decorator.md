@@ -71,6 +71,31 @@ def MaskAndOffsetOp(Operator):
         op_output.emit(out, "out")
 ```
 
+## Decorating a function that returns a tuple of arrays
+Let's consider another example where function takes in multiple arrays, processes them, and returns a tuple of updated arrays:
+
+```{code-block} python
+def scale_and_offset(x1, x2, scale=2.0, offset=1.5):
+    y1 = x1 * scale
+    y2 = x2 + offset
+    return y1, y2
+```
+To turn this into a corresponding operator we can add the `create_op` decorator like this:
+
+```{code-block} python
+@create_op(
+    inputs=("x1", "x2"),
+    outputs=("out1", "ou2"),
+)
+def scale_and_offset(x1, x2, scale=2.0, offset=1.5):
+    y1 = x1 * scale
+    y2 = x2 + offset
+    return y1, y2
+```
+
+As before, the messages received through the ports defined by `inputs`, "x1" and "x2", will be mapped to respective variables `x1` and `x2`. Likewise, the elements of the output tuple, arrays `y1` and `y2`, will be emitted through ports "out1" and "out2", respectively. In contrast to input mapping, which is determined by the naming of ports and variables, the output mapping is determined by the ordering of output ports and elements in the tuple returned by the function.
+
+
 (holoscan-operator-from-decorator-input)=
 ## Using the Input class for more control over input ports
 

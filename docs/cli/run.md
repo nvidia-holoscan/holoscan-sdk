@@ -68,8 +68,7 @@ Run the **App Driver** on the current machine. Can be used together with the [](
 
 ### `[--input|-i INPUT]`
 
-Specifies a directory path with input data for the application to process.
-When specified, a directory mount is set up to the value defined in the environment variable `HOLOSCAN_INPUT_PATH`.
+Specifies a directory path with input data for the application to process. When specified, a directory mount is set up to the value defined in the environment variable `HOLOSCAN_INPUT_PATH`.
 
 :::{note}
 Ensure that the directory on the host is accessible by the current user or the user specified with [--uid](#cli-run-uid).
@@ -84,8 +83,7 @@ Use the host system path when running applications inside Docker (DooD).
 
 ### `[--output|-o OUTPUT]`
 
-Specifies a directory path to store application-generated artifacts.
-When specified, a directory mount is set up to the value defined in the environment variable `HOLOSCAN_OUTPUT_PATH`.
+Specifies a directory path to store application-generated artifacts. When specified, a directory mount is set up to the value defined in the environment variable `HOLOSCAN_OUTPUT_PATH`.
 
 :::{note}
 Ensure that the directory on the host is accessible by the current user or the user specified with [--uid](#cli-run-uid).
@@ -95,7 +93,7 @@ Ensure that the directory on the host is accessible by the current user or the u
 
 ### `[--fragments|-f FRAGMENTS]`
 
-A Comma-separated names of the fragments to be executed by the **App Worker**. If not specified, only one fragment (selected by the **App Driver**) will be executed. `all` can be used to run all the fragments.
+Comma-separated names of the fragments to be executed by the **App Worker**. If not specified, only one fragment (selected by the **App Driver**) will be executed. `all` can be used to run all the fragments.
 
 (#cli-run-worker)=
 
@@ -107,8 +105,7 @@ Run the **App Worker**.
 
 ### `[--worker-address WORKER_ADDRESS]`
 
-The address (`[<IP or hostname>][:<port>]`) of the **App Worker**. If not specified, the **App Worker** uses the default host address (`0.0.0.0`) with a randomly chosen port number between `10000` and `32767` that is not currently in use.
-This argument automatically sets the `HOLOSCAN_UCX_SOURCE_ADDRESS` environment variable if the worker address is a local IP address. Refer to [](#creating-holoscan-distributed-application-env-vars) for details.
+The address (`[<IP or hostname>][:<port>]`) of the **App Worker**. If not specified, the **App Worker** uses the default host address (`0.0.0.0`) with a randomly chosen port number between `10000` and `32767` that is not currently in use. This argument automatically sets the `HOLOSCAN_UCX_SOURCE_ADDRESS` environment variable if the worker address is a local IP address. Refer to [](#creating-holoscan-distributed-application-env-vars) for details.
 
 For example:
 
@@ -131,31 +128,22 @@ Path to the application configuration file. If specified, it overrides the embed
 
 ### `[--network|-n NETWORK]`
 
-The Docker network that the application connects to for communicating with other containers.
-The **Runner** use the `host` network by default if not specified. Otherwise, the specified value
-is used to create a network with the `bridge` driver.
+The Docker network that the application connects to for communicating with other containers. The **Runner** use the `host` network by default if not specified. Otherwise, the specified value is used to create a network with the `bridge` driver.
 
-For advanced usages,
-first create a network using `docker network create` and pass the name of the network to the `--network` option.
-Refer to [Docker Networking](https://docs.docker.com/network/) documentation for additional details.
+For advanced uses, first create a network using `docker network create` and pass the name of the network to the `--network` option. Refer to [Docker Networking](https://docs.docker.com/network/) documentation for additional details.
 
 (#cli-run-nic)=
 
 ### `[--nic NETWORK_INTERFACE]`
 
-Name of the network interface to use with a distributed multi-fragment application.
-This option sets `UCX_NET_DEVICES` environment variable with the value specified and is required when
-running a distributed multi-fragment application across multiple nodes. 
-See {ref}`UCX Network Interface Selection <ucx-network-selection>` for details.
+Name of the network interface to use with a distributed multi-fragment application. This option sets `UCX_NET_DEVICES` environment variable with the value specified and is required when running a distributed multi-fragment application across multiple nodes. See {ref}`UCX Network Interface Selection <ucx-network-selection>` for details.
 
 
 (#cli-run-use-all-nics)=
 
 ### `[--use-all-nics]`
 
-When set, this option allows UCX to control the selection of network interface cards for data 
-transfer. Otherwise, the network interface card specified with '--nic' is used. 
-This option sets the environment variable `UCX_CM_USE_ALL_DEVICES` to `y`. (default: False)
+When set, this option allows UCX to control the selection of network interface cards for data transfer. Otherwise, the network interface card specified with '--nic' is used. This option sets the environment variable `UCX_CM_USE_ALL_DEVICES` to `y` (default: False).
 
 When this option is not set, the CLI runner always sets `UCX_CM_USE_ALL_DEVICES` to `n`.
 
@@ -176,9 +164,7 @@ Suppress the STDOUT and print only STDERR from the application. Defaults to `Fal
 
 ### `[--shm-size]`
 
-Sets the size of `/dev/shm`. The format is <number(int,float)>[MB|m|GB|g|Mi|MiB|Gi|GiB].
-Use `config` to read the shared memory value defined in the `app.json` manifest.
-By default, the container is launched using `--ipc=host` with host system's `/dev/shm` mounted.
+Sets the size of `/dev/shm`. The format is <number(int,float)>[MB|m|GB|g|Mi|MiB|Gi|GiB]. Use `config` to read the shared memory value defined in the `app.json` manifest. By default, the container is launched using `--ipc=host` with host system's `/dev/shm` mounted.
 
 (#cli-run-terminal)=
 
@@ -207,8 +193,7 @@ For example:
 
 
 :::{warning}
-When using the `--device` option, append `--` after the last item to avoid misinterpretation by the CLI.
-E.g.
+When using the `--device` option, append `--` after the last item to avoid misinterpretation by the CLI. For example:
 
 ```bash
 holoscan run --render --device ajantv0 video1 -- my-application-image:1.0

@@ -778,8 +778,8 @@ void FormatConverterOp::convertTensorFormat(
                                          scale_max_,
                                          npp_stream_ctx_);
       } else {
-        throw std::runtime_error(
-            fmt::format("Failed to convert channel order (NPP error code: {})", status));
+        throw std::runtime_error(fmt::format("Failed to convert channel order (NPP error code: {})",
+                                             static_cast<int>(status)));
       }
       break;
     }
@@ -801,8 +801,8 @@ void FormatConverterOp::convertTensorFormat(
 
       status = nppiRGBToYUV420_8u_C3P3R(in_tensor_ptr, src_step, out_yuv_ptrs, out_yuv_steps, roi);
       if (status != NPP_SUCCESS) {
-        throw std::runtime_error(
-            fmt::format("rgb888 to yuv420 conversion failed (NPP error code: {})", status));
+        throw std::runtime_error(fmt::format(
+            "rgb888 to yuv420 conversion failed (NPP error code: {})", static_cast<int>(status)));
       }
       break;
     }
@@ -822,8 +822,8 @@ void FormatConverterOp::convertTensorFormat(
 
       status = nppiYUV420ToRGB_8u_P3AC4R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi);
       if (status != NPP_SUCCESS) {
-        throw std::runtime_error(
-            fmt::format("yuv420 to rgba8888 conversion failed (NPP error code: {})", status));
+        throw std::runtime_error(fmt::format(
+            "yuv420 to rgba8888 conversion failed (NPP error code: {})", static_cast<int>(status)));
       }
       break;
     }
@@ -843,8 +843,8 @@ void FormatConverterOp::convertTensorFormat(
 
       status = nppiYUV420ToRGB_8u_P3C3R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi);
       if (status != NPP_SUCCESS) {
-        throw std::runtime_error(
-            fmt::format("yuv420 to rgb888 conversion failed (NPP error code: {})", status));
+        throw std::runtime_error(fmt::format(
+            "yuv420 to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
       }
       break;
     }
@@ -861,8 +861,8 @@ void FormatConverterOp::convertTensorFormat(
       status =
           nppiNV12ToRGB_709HDTV_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
       if (status != NPP_SUCCESS) {
-        throw std::runtime_error(
-            fmt::format("NV12 to rgb888 conversion failed (NPP error code: {})", status));
+        throw std::runtime_error(fmt::format(
+            "NV12 to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
       }
       break;
     }

@@ -1,18 +1,18 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
 
 import os
@@ -53,17 +53,12 @@ class TestPackageBuildParameters:
         input_dir = pathlib.Path("/path/to/my/python/app/dir")
 
         def mock_isdir(path):
-            if path == input_dir:
-                return True
-            return False
+            return path == input_dir
 
         def mock_exists(path):
-            if path == (input_dir / Constants.PYTHON_MAIN_FILE):
-                return True
-
-            if path == (input_dir / "requirements.txt"):
-                return True
-            return False
+            return path == (input_dir / Constants.PYTHON_MAIN_FILE) or path == (
+                input_dir / "requirements.txt"
+            )
 
         monkeypatch.setattr(os.path, "isdir", mock_isdir)
         monkeypatch.setattr(os.path, "exists", mock_exists)
@@ -84,22 +79,15 @@ class TestPackageBuildParameters:
         input_dir = pathlib.Path("/path/to/my/python/app.py")
 
         def mock_isdir(path):
-            if path == input_dir:
-                return False
             return False
 
         def mock_exists(path):
-            if path == (input_dir / Constants.PYTHON_MAIN_FILE):
-                return True
-
-            if path == (input_dir / "requirements.txt"):
-                return True
-            return False
+            return path == (input_dir / Constants.PYTHON_MAIN_FILE) or path == (
+                input_dir / "requirements.txt"
+            )
 
         def mock_isfile(path):
-            if path == input_dir:
-                return True
-            return False
+            return path == input_dir
 
         monkeypatch.setattr(os.path, "isdir", mock_isdir)
         monkeypatch.setattr(os.path, "isfile", mock_isfile)
@@ -121,17 +109,12 @@ class TestPackageBuildParameters:
         input_dir = pathlib.Path("/path/to/my/cpp/source/dir")
 
         def mock_isdir(path):
-            if path == input_dir:
-                return True
-            return False
+            return path == input_dir
 
         def mock_exists(path):
-            if path == (input_dir / Constants.CPP_CMAKELIST_FILE):
-                return True
-
-            if path == (input_dir / "requirements.txt"):
-                return True
-            return False
+            return path == (input_dir / Constants.CPP_CMAKELIST_FILE) or path == (
+                input_dir / "requirements.txt"
+            )
 
         monkeypatch.setattr(os.path, "isdir", mock_isdir)
         monkeypatch.setattr(os.path, "exists", mock_exists)
@@ -152,14 +135,10 @@ class TestPackageBuildParameters:
         input_dir = pathlib.Path("/path/to/my/cpp/app/exe")
 
         def mock_isdir(path):
-            if path == input_dir:
-                return False
             return False
 
         def mock_isfile(path):
-            if path == input_dir:
-                return True
-            return False
+            return path == input_dir
 
         monkeypatch.setattr(os.path, "isdir", mock_isdir)
         monkeypatch.setattr(os.path, "isfile", mock_isfile)

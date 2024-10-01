@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef _HOLOSCAN_INFER_UTILS_API_H
-#define _HOLOSCAN_INFER_UTILS_API_H
+#ifndef HOLOINFER_SRC_INCLUDE_HOLOINFER_UTILS_HPP
+#define HOLOINFER_SRC_INCLUDE_HOLOINFER_UTILS_HPP
 
 #include <sys/utsname.h>
 #include <filesystem>
@@ -105,6 +105,16 @@ void timer_init(TimePoint& _t);
 gxf_result_t timer_check(TimePoint& start, TimePoint& end, const std::string& module);
 void string_split(const std::string& line, std::vector<std::string>& tokens, char c);
 
+/**
+ * @brief Checks for correctness of input tensor dimensions.
+ * @param pre_processor_map Map with model name as key, mapped to vector of input tensor names
+ * @param model_input_dimensions Map with model name as key, mapped to input dimensions
+ * @param dims_per_tensor Map with input tensor as key, mapped to its dimension
+ */
+InferStatus tensor_dimension_check(const MultiMappings& pre_processor_map,
+                                   const DimType& model_input_dimensions,
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor);
+
 using node_type = std::map<std::string, std::map<std::string, std::string>>;
 static const std::map<std::string, holoinfer_datatype> kHoloInferDataTypeMap = {
     {"kFloat32", holoinfer_datatype::h_Float32},
@@ -118,4 +128,4 @@ InferStatus parse_yaml_node(const node_type& in_config, std::vector<std::string>
                             std::vector<holoinfer_datatype>& types);
 }  // namespace inference
 }  // namespace holoscan
-#endif
+#endif /* HOLOINFER_SRC_INCLUDE_HOLOINFER_UTILS_HPP */

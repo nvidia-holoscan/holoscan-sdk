@@ -92,6 +92,8 @@ PYBIND11_MODULE(_gxf, m) {
   py::class_<gxf::GXFComponent, std::shared_ptr<gxf::GXFComponent>>(
       m, "GXFComponent", doc::GXFComponent::doc_GXFComponent)
       .def(py::init<>(), doc::GXFComponent::doc_GXFComponent)
+      .def_property_readonly(
+          "gxf_typename", &gxf::GXFComponent::gxf_typename, doc::GXFComponent::doc_gxf_typename)
       .def_property("gxf_context",
                     py::overload_cast<>(&gxf::GXFComponent::gxf_context, py::const_),
                     py::overload_cast<void*>(&gxf::GXFComponent::gxf_context),
@@ -115,7 +117,6 @@ PYBIND11_MODULE(_gxf, m) {
   py::class_<gxf::GXFResource, Resource, gxf::GXFComponent, std::shared_ptr<gxf::GXFResource>>(
       m, "GXFResource", doc::GXFResource::doc_GXFResource)
       .def(py::init<>(), doc::GXFResource::doc_GXFResource)
-      .def("initialize", &gxf::GXFResource::initialize, doc::GXFResource::doc_initialize)
       .def(
           "__repr__",
           [](const py::object& obj) {
@@ -129,7 +130,6 @@ PYBIND11_MODULE(_gxf, m) {
   py::class_<gxf::GXFCondition, Condition, gxf::GXFComponent, std::shared_ptr<gxf::GXFCondition>>(
       m, "GXFCondition", doc::GXFCondition::doc_GXFCondition)
       .def(py::init<>(), doc::GXFCondition::doc_GXFCondition)
-      .def("initialize", &gxf::GXFCondition::initialize, doc::GXFCondition::doc_initialize)
       .def(
           "__repr__",
           [](const py::object& obj) {
@@ -150,8 +150,7 @@ PYBIND11_MODULE(_gxf, m) {
            "context"_a,
            "op"_a,
            doc::GXFInputContext::doc_GXFInputContext)
-      .def(
-          "receive", [](const InputContext&, const std::string&) { return py::none(); }, "name"_a);
+      .def("receive", [](const InputContext&, const std::string&) { return py::none(); }, "name"_a);
 
   py::class_<gxf::GXFOutputContext, OutputContext, std::shared_ptr<gxf::GXFOutputContext>>(
       m, "GXFOutputContext", R"doc(GXF output context.)doc")

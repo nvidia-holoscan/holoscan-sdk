@@ -40,11 +40,6 @@ HeadlessWindow::HeadlessWindow(uint32_t width, uint32_t height, InitFlags flags)
 
 void HeadlessWindow::init_im_gui() {}
 
-void HeadlessWindow::setup_callbacks(
-    std::function<void(int width, int height)> frame_buffer_size_cb) {}
-
-void HeadlessWindow::restore_callbacks() {}
-
 const char** HeadlessWindow::get_required_instance_extensions(uint32_t* count) {
   static char const* extensions[]{};
 
@@ -66,6 +61,10 @@ uint32_t HeadlessWindow::select_device(vk::Instance instance,
 void HeadlessWindow::get_framebuffer_size(uint32_t* width, uint32_t* height) {
   *width = impl_->width_;
   *height = impl_->height_;
+}
+
+void HeadlessWindow::get_window_size(uint32_t* width, uint32_t* height) {
+  get_framebuffer_size(width, height);
 }
 
 vk::SurfaceKHR HeadlessWindow::create_surface(vk::PhysicalDevice physical_device,

@@ -322,5 +322,52 @@ void HoloInferTests::inference_tests() {
       }
       device_map.at("model_2") = "0";
     }
+
+    // test multi-rank
+
+    auto original_path = model_path_map["model_1"];
+    auto original_dim = in_tensor_dimensions["m1_pre_proc"];
+
+    model_path_map["model_1"] = model_folder + "identity_model_5r.onnx";
+    model_path_map["model_2"] = model_folder + "identity_model_5r.onnx";
+
+    in_tensor_dimensions["m1_pre_proc"] = {1, 1, 1, 1, 1};
+    in_tensor_dimensions["m2_pre_proc"] = {1, 1, 1, 1, 1};
+
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     32,
+                     test_identifier_infer.at(32),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    model_path_map["model_1"] = model_folder + "identity_model_9r.onnx";
+    model_path_map["model_2"] = model_folder + "identity_model_9r.onnx";
+
+    in_tensor_dimensions["m1_pre_proc"] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+    in_tensor_dimensions["m2_pre_proc"] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(
+        status, test_module, 33, test_identifier_infer.at(33), HoloInfer::holoinfer_code::H_ERROR);
+
+    model_path_map["model_1"] = original_path;
+    model_path_map["model_2"] = original_path;
+
+    in_tensor_dimensions["m1_pre_proc"] = original_dim;
+    in_tensor_dimensions["m2_pre_proc"] = original_dim;
+  }
+
+  // cleaning engine files
+  for (const auto& file : std::filesystem::directory_iterator(model_folder)) {
+    if (file.is_regular_file()) {
+      auto filename = file.path().filename().string();
+      if (filename.find(".engine.") != std::string::npos) {
+        std::filesystem::remove(file.path());
+        HOLOSCAN_LOG_INFO("Cleaning up engine file {}: ", filename);
+      }
+    }
   }
 }

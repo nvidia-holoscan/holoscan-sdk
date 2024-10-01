@@ -230,6 +230,9 @@ GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
   if (create_gxf_context) {
     setup_gxf_logging();
 
+    bool trace_enable = AppDriver::get_bool_env_var("HOLOSCAN_ENABLE_PROFILE", false);
+    holoscan::profiler::trace(trace_enable);
+
     Application* application = fragment->application();
 
     // TODO(gbae): make shared context work

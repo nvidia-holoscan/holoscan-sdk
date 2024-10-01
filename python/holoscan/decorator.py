@@ -1,19 +1,20 @@
 """
- SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """  # noqa: E501
+
 """This module provides a decorator API for creating Python Operators
 
 .. autosummary::
@@ -32,11 +33,10 @@ from typing import Any, Dict, Optional, Tuple, Union
 import cupy as cp
 import numpy as np
 
-from holoscan.conditions import BooleanCondition, CountCondition
+from holoscan.conditions import BooleanCondition
 from holoscan.core import (
     Condition,
     ConditionType,
-    Fragment,
     IOSpec,
     Operator,
     OperatorSpec,
@@ -49,13 +49,11 @@ __all__ = ["Input", "Output", "create_op"]
 
 
 def _is_tensor_like(obj):
-    if (
+    return (
         (hasattr(obj, "__dlpack__") and hasattr(obj, "__dlpack_device__"))
         or hasattr(obj, "__cuda_array_interface__")
         or hasattr(obj, "__array_interface__")
-    ):
-        return True
-    return False
+    )
 
 
 def _as_python_tensor(tensor):
@@ -107,13 +105,13 @@ class Input:
 
 @dataclass
 class Output:
-    """Class for specifying an output port and how the received value maps to a function's
-    arguments.
+    """Class for specifying an output port and how one or more of a functions returned value(s) map
+    to it.
 
     Parameters
     ----------
     name : str
-        The name of the input port.
+        The name of the output port.
     tensor_names: str, tuple(str) or None
         If None, whatever Python object the func outputs is emitted on the output port. If a tuple
         of strings is provided it is assumed that the func returns a dictionary of tensors. The
@@ -230,8 +228,11 @@ def create_op(
         The default of an empty tuple corresponds to no input ports.
     outputs : str, Output, or Tuple[str | Output], optional
         If a str is provided, any value returned by the function will be emitted on an output port
-        of that name. Otherwise, an Output object can be provided in the case that the function
-        returns multiple outputs that should be split across multiple ports.
+        of that name. If a tuple of multiple str is provided and the function returns a tuple, then
+        the tuple elements will be emitted from each output port in the order at which they are
+        defined. In this case, the number of output ports should match the length of the output
+        tuple. Finally, an Output object can be provided in the case that the function returns a
+        dictionary of output arrays that should be split across multiple ports.
     cast_tensors : bool, optional
         If True, automatically cast any tensor-like input to a NumPy or CuPy array (for host and
         device tensors, respectively). If set to False, these will be left as `holoscan.Tensor` and
@@ -486,6 +487,33 @@ def create_op(
                     else:
                         out = self.func(*self.func_args, **self.fixed_kwargs, **self.dynamic_kwargs)
 
+                    # if the output is a tuple and there is >1 port, we distribute the outputs
+                    if isinstance(out, Tuple) and (len(self.output_tensor_map) > 1):
+                        # for tuple case, each port should correspond to each output tuple element
+                        if any([len(names) > 1 for names in self.output_tensor_map.values()]):
+                            raise ValueError(
+                                "The function output was found to be a tuple type, but each "
+                                "output tuple element must have its own port. In other words, "
+                                "the `outputs` argument of `create_op` should be a tuple of port "
+                                "names equal in length to the returned tuple."
+                            )
+                        # Make sure check that the output tuple length and number of ports match
+                        if len(out) != len(self.output_tensor_map):
+                            raise ValueError(
+                                f"The number of output tuple elements and number of tensors must "
+                                f"match.\n"
+                                f"Output tuple length = {len(out)}\n"
+                                f"Number of output tensors = {len(self.output_tensor_map)}"
+                            )
+                        for (port_name, tensor_names), out_element in zip(
+                            self.output_tensor_map.items(), out
+                        ):
+                            if _is_tensor_like(out_element):
+                                name = "" if len(tensor_names) == 0 else tensor_names[0]
+                                out_element = {name: out_element}
+                            op_output.emit(out_element, port_name)
+                        return
+
                     for port_name, tensor_names in self.output_tensor_map.items():
                         if tensor_names is None or len(tensor_names) == 0:
                             if _is_tensor_like(out):
@@ -562,25 +590,3 @@ def create_op(
         raise Exception(f"Invalid usage of decorator for {func_or_cls}")
 
     return decorator(function_or_class)
-
-
-"""
-Remove example code from below this point
-"""
-
-if False:
-    f = Fragment()
-
-    @create_op(
-        inputs=Input("image", arg_map={"tensor": "image"}),
-        outputs="out",
-    )
-    def scale_image(image: cp.ndarray, *, value: float = 1.0):
-        """Operator that scales an image by a specified value"""
-        return image * value
-
-    # ScaleOp operator with non-default value
-    scale_op = scale_image(f, CountCondition(f, count=10), value=5.0, name="scale")
-
-    assert scale_op.__name__ == "ScaleImageOp"
-    assert scale_op.name == "scale"

@@ -249,17 +249,15 @@ class SwapChain {
                                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
   SwapChain(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue queue,
-            uint32_t queueFamilyIndex, VkSurfaceKHR surface,
-            VkFormat format = VK_FORMAT_B8G8R8A8_UNORM,
-            VkImageUsageFlags imageUsage = s_defaultImageUsage) {
-    init(device, physicalDevice, queue, queueFamilyIndex, surface, format, imageUsage);
+            uint32_t queueFamilyIndex, VkSurfaceKHR surface, VkFormat format,
+            VkColorSpaceKHR color_space, VkImageUsageFlags imageUsage = s_defaultImageUsage) {
+    init(device, physicalDevice, queue, queueFamilyIndex, surface, format, color_space, imageUsage);
   }
   ~SwapChain() { deinit(); }
 
-  bool init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue queue,
-            uint32_t queueFamilyIndex, VkSurfaceKHR surface,
-            VkFormat format = VK_FORMAT_B8G8R8A8_UNORM,
-            VkImageUsageFlags imageUsage = s_defaultImageUsage);
+  void init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue queue,
+            uint32_t queueFamilyIndex, VkSurfaceKHR surface, VkFormat format,
+            VkColorSpaceKHR color_space, VkImageUsageFlags imageUsage = s_defaultImageUsage);
 
   // triggers queue/device wait idle
   void deinit();
@@ -268,7 +266,8 @@ class SwapChain {
   // (must be called at least once after init)
   // triggers queue/device wait idle
   // returns actual swapchain dimensions, which may differ from requested
-  bool update(int width, int height, VkPresentModeKHR presentMode, VkExtent2D* dimensions = nullptr);
+  bool update(int width, int height, VkPresentModeKHR presentMode,
+              VkExtent2D* dimensions = nullptr);
 
   // Returns true on success.
   //

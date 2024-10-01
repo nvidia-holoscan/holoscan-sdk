@@ -5,12 +5,12 @@ For our first example, we look at how to create a Hello World example using the 
 
 In this example we'll cover:
 
-- how to define your application class
-- how to define a one-operator workflow
-- how to use a `CountCondition` to limit the number of times an operator is executed
+- How to define your application class.
+- How to define a one-operator workflow.
+- How to use a `CountCondition` to limit the number of times an operator is executed.
 
 :::{note}
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ## Defining the HelloWorldApp class
@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
 _For more details, see the {ref}`application-workflows` section._
 
-When defining your application class, the primary task is to define the operators used in your application and the interconnectivity between them to define the application workflow. The `HelloWorldApp` uses the simplest form of a workflow which consists of a single operator: `HelloWorldOp`.
+When defining your application class, the primary task is to define the operators used in your application, and the interconnectivity between them to define the application workflow. The `HelloWorldApp` uses the simplest form of a workflow which consists of a single operator: `HelloWorldOp`.
 
 For the sake of this first example, we will ignore the details of defining a custom operator to focus on the highlighted information below: when this operator runs (`compute`), it will print out `Hello World!` to the standard output:
 
@@ -175,8 +175,7 @@ class HelloWorldApp(Application):
 ````
 `````
 
-Holoscan applications deal with streaming data, so an operator's `compute()` method will be called continuously until
-some situation arises that causes the operator to stop. For our Hello World example, we want to execute the operator only once. We can impose such a condition by passing a `CountCondition` object as an argument to the operator's constructor.
+Holoscan applications deal with streaming data, so an operator's `compute()` method will be called continuously until some situation arises that causes the operator to stop. For our Hello World example, we want to execute the operator only once. We can impose such a condition by passing a `CountCondition` object as an argument to the operator's constructor.
 
 _For more details, see the {ref}`configuring-app-operator-conditions` section._
 

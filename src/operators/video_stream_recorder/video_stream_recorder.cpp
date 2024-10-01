@@ -91,14 +91,16 @@ void VideoStreamRecorderOp::initialize() {
   nvidia::gxf::Expected<void> result = index_file_stream_.open();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    throw std::runtime_error(fmt::format("Failed to open index_file_stream_ with code: {}", code));
+    throw std::runtime_error(
+        fmt::format("Failed to open index_file_stream_ with error: {}", GxfResultStr(code)));
   }
 
   // Open binary file stream
   result = binary_file_stream_.open();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    throw std::runtime_error(fmt::format("Failed to open binary_file_stream_ with code: {}", code));
+    throw std::runtime_error(
+        fmt::format("Failed to open binary_file_stream_ with error: {}", GxfResultStr(code)));
   }
   binary_file_offset_ = 0;
 }
@@ -111,7 +113,7 @@ VideoStreamRecorderOp::~VideoStreamRecorderOp() {
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
     try {
-      HOLOSCAN_LOG_ERROR("Failed to close binary_file_stream_ with code: {}", code);
+      HOLOSCAN_LOG_ERROR("Failed to close binary_file_stream_ with error: {}", GxfResultStr(code));
     } catch (std::exception& e) {}
   }
 
@@ -120,7 +122,7 @@ VideoStreamRecorderOp::~VideoStreamRecorderOp() {
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
     try {
-      HOLOSCAN_LOG_ERROR("Failed to close index_file_stream_ with code: {}", code);
+      HOLOSCAN_LOG_ERROR("Failed to close index_file_stream_ with error: {}", GxfResultStr(code));
     } catch (std::exception& e) {}
   }
 }
@@ -134,14 +136,15 @@ void VideoStreamRecorderOp::stop() {
   nvidia::gxf::Expected<void> result = binary_file_stream_.flush();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    HOLOSCAN_LOG_ERROR("Failed to flush the binary_file_stream_ with code: {}", code);
+    HOLOSCAN_LOG_ERROR("Failed to flush the binary_file_stream_ with error: {}",
+                       GxfResultStr(code));
   }
 
   // Close index file stream
   result = index_file_stream_.flush();
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(result);
-    HOLOSCAN_LOG_ERROR("Failed to flush the index_file_stream_ with code: {}", code);
+    HOLOSCAN_LOG_ERROR("Failed to flush the index_file_stream_ with error: {}", GxfResultStr(code));
   }
 }
 
@@ -162,7 +165,8 @@ void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_ou
       entity_serializer.value()->serializeEntity(std::move(entity), &binary_file_stream_);
   if (!size) {
     auto code = nvidia::gxf::ToResultCode(size);
-    throw std::runtime_error(fmt::format("Failed to serialize entity with code {}", code));
+    throw std::runtime_error(
+        fmt::format("Failed to serialize entity with error {}", GxfResultStr(code)));
   }
 
   // Create entity index
@@ -175,7 +179,8 @@ void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_ou
   nvidia::gxf::Expected<size_t> result = index_file_stream_.writeTrivialType(&index);
   if (!result) {
     auto code = nvidia::gxf::ToResultCode(size);
-    throw std::runtime_error(fmt::format("Failed writing to index file stream with code {}", code));
+    throw std::runtime_error(
+        fmt::format("Failed writing to index file stream with error {}", GxfResultStr(code)));
   }
   binary_file_offset_ += size.value();
 
@@ -185,7 +190,7 @@ void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_ou
     if (!result) {
       auto code = nvidia::gxf::ToResultCode(size);
       throw std::runtime_error(
-          fmt::format("Failed writing to index file stream with code {}", code));
+          fmt::format("Failed writing to index file stream with error {}", GxfResultStr(code)));
     }
 
     // Flush index file output stream
@@ -193,7 +198,7 @@ void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_ou
     if (!result) {
       auto code = nvidia::gxf::ToResultCode(size);
       throw std::runtime_error(
-          fmt::format("Failed writing to index file stream with code {}", code));
+          fmt::format("Failed writing to index file stream with error {}", GxfResultStr(code)));
     }
   }
 }

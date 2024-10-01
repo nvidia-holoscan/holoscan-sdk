@@ -46,7 +46,7 @@ class ArtifactSources:
         )
         ArtifactSources.ManifestFileUrl = f"https://edge.urm.nvidia.com/artifactory/sw-holoscan-cli-generic/{ArtifactSources.HoloscanVersion}/artifacts.json"
         self._logger = logging.getLogger("common")
-        self._supported_holoscan_versions = ["2.4.0"]
+        self._supported_holoscan_versions = ["2.4.0", "2.5.0"]
 
     @property
     def holoscan_versions(self) -> List[str]:

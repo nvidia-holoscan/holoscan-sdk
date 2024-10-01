@@ -82,6 +82,12 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
       "minutes depending on your model size and GPU!",
       engine_path);
 
+  if (network_options.batch_sizes.size() != 3) {
+    HOLOSCAN_LOG_ERROR("Size of batches for optimization profile must be 3. Size provided: {}",
+                       network_options.batch_sizes.size());
+    return false;
+  }
+
   auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
   if (!builder) { return false; }
 
@@ -95,43 +101,34 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
       std::unique_ptr<nvonnxparser::IParser>(nvonnxparser::createParser(*network, logger));
   if (!parser) { return false; }
 
-  std::ifstream file(onnx_model_path, std::ios::binary | std::ios::ate);
-  std::streamsize size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  std::vector<char> buffer(size);
-  if (!file.read(buffer.data(), size)) { throw std::runtime_error("Unable to read engine file"); }
-
-  auto parsed = parser->parse(buffer.data(), buffer.size());
-  if (!parsed) { return false; }
-
-  const auto input_name = network->getInput(0)->getName();
-  const auto input_dims = network->getInput(0)->getDimensions();
-
-  const auto dims = nvinfer1::Dims4(1, input_dims.d[1], input_dims.d[2], input_dims.d[3]);
-  const auto max_batch_dim = nvinfer1::Dims4(
-      network_options.max_batch_size, input_dims.d[1], input_dims.d[2], input_dims.d[3]);
+  if (!parser->parseFromFile(onnx_model_path.c_str(),
+                             static_cast<int>(nvinfer1::ILogger::Severity::kWARNING))) {
+    HOLOSCAN_LOG_ERROR("Failed to parse onnx file at: {}", onnx_model_path);
+    return false;
+  }
 
   auto config = std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
   if (!config) { return false; }
 
-  nvinfer1::IOptimizationProfile* default_profile = builder->createOptimizationProfile();
-  set_dimensions_for_profile(input_name, default_profile, dims, dims, max_batch_dim);
-  config->addOptimizationProfile(default_profile);
+  // Create optimization profile
+  nvinfer1::IOptimizationProfile* profile = builder->createOptimizationProfile();
 
-  for (const auto& batch_size : network_options.batch_sizes) {
-    if (batch_size == 1) { continue; }
+  for (int i = 0; i < network->getNbInputs(); i++) {
+    nvinfer1::ITensor* input = network->getInput(i);
+    const auto input_name = input->getName();
+    nvinfer1::Dims dims = input->getDimensions();
+    std::vector<nvinfer1::Dims> profile_batch_dims = {dims, dims, dims};
 
-    if (batch_size > network_options.max_batch_size) {
-      throw std::runtime_error("Batch Size cannot be greater than maxBatchSize!");
-    }
+    profile_batch_dims[0].d[0] = network_options.batch_sizes[0];
+    profile_batch_dims[1].d[0] = network_options.batch_sizes[1];
+    profile_batch_dims[2].d[0] = network_options.batch_sizes[2];
 
-    nvinfer1::IOptimizationProfile* profile = builder->createOptimizationProfile();
-    auto batch_dims = nvinfer1::Dims4(batch_size, dims.d[1], dims.d[2], dims.d[3]);
-    set_dimensions_for_profile(input_name, profile, dims, batch_dims, max_batch_dim);
-    config->addOptimizationProfile(profile);
+    profile->setDimensions(input_name, nvinfer1::OptProfileSelector::kMIN, profile_batch_dims[0]);
+    profile->setDimensions(input_name, nvinfer1::OptProfileSelector::kOPT, profile_batch_dims[1]);
+    profile->setDimensions(input_name, nvinfer1::OptProfileSelector::kMAX, profile_batch_dims[2]);
   }
 
+  config->addOptimizationProfile(profile);
   config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, network_options.max_memory);
 
   if (network_options.use_fp16) { config->setFlag(nvinfer1::BuilderFlag::kFP16); }

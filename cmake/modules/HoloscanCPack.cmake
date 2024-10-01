@@ -59,67 +59,47 @@ set(CPACK_COMPONENTS_ALL
   holoscan-cpack
   )
 
-# Method to get all CUDA debian package names up to the current MAJOR-MINOR version
-if(NOT DEFINED CUDAToolkit_VERSION)
-  find_package(CUDAToolkit REQUIRED)
-endif()
-function(get_minor_version_packages dep_name output_string)
-  foreach(minor RANGE ${CUDAToolkit_VERSION_MINOR} 0 -1)
-    list(APPEND packages "${dep_name}-${CUDAToolkit_VERSION_MAJOR}-${minor}")
-  endforeach()
-  list(JOIN packages " | " ${output_string})
-  set(${output_string} ${${output_string}} PARENT_SCOPE)
-endfunction()
-set(CUDA_MAJOR ${CUDAToolkit_VERSION_MAJOR})
 
 # - cuda-nvcc: needed to find Holoscan with CMake (FindCUDAToolkit requirement)
 #   Note: not needed at runtime
 # - cuda-cudart-dev: needed for holoscan core and some operators
 #   Note: only cuda-cudart (non dev) needed at runtime
-get_minor_version_packages("cuda-nvcc" NVCC_PACKAGES)
-get_minor_version_packages("cuda-cudart-dev" CUDART_DEV_PACKAGES)
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-"${NVCC_PACKAGES}, libcudart.so.${CUDA_MAJOR}-dev | ${CUDART_DEV_PACKAGES}"
+  "cuda-nvcc-12-2 | cuda-nvcc-12-9 | cuda-nvcc-12-8 | cuda-nvcc-12-7 | cuda-nvcc-12-6 | cuda-nvcc-12-5 | cuda-nvcc-12-4 | cuda-nvcc-12-3 | cuda-nvcc-12-1 | cuda-nvcc-12-0, \
+  cuda-cudart-dev-12-2 | libcudart.so.12-dev"
 )
 # - libnvinfer-bin: meta package including required nvinfer libs, cublas, and cudnn.
-#   Needed for TensorRT and OnnxRuntime inference backends
-# - cuda-nvrtc: needed by cupy
-#   Note: only libcudart (non dev) needed at runtime
-#   Note: also a dependency of cuda-nvcc
-# - libcublas: needed by TensorRT and OnnxRuntime inference backends
+#   Needed for all inference backends
+#   Note: only libnvonnxparsers and libnvinfer-plugin needed at runtime
+# - libcublas: needed by all inference backends
 #   Note: also a dependency of the libnvinfer packages
+# - cuda-nvrtc: libtorch & CuPy dependency
+#   Note: also a dependency of cuda-nvcc
+#   Note: should be able to use libnvrtc.so.12, but doesn't work
 # - libcufft: needed by cupy and OnnxRuntime inference backend
-# - libcurand: needed by cupy
+# - libcurand: needed by libtorch and cupy
 # - libcusolver: needed by cupy
 # - libcusparse: needed by cupy
 # - libnpp-dev: needed for format_converter and bayer_demosaic operators
 #   Note: only libnpp (non dev) needed at runtime
 # - libnvjitlink: needed by cupy
-# - libgomb1: needed by cupy
-# - libvulkan1 : needed for holoviz operator
+# - libgomp1: needed by cupy
+# - libvulkan1: needed for holoviz operator
 # - libegl1: needed for holoviz operator in headless mode
 # - libv4l-0: needed for v4l2 operator
 # - python3-cloudpickle: needed for python distributed applications
 # - python3-pip: needed for holoscan CLI (packager, runner)
-get_minor_version_packages("cuda-nvrtc" NVRTC_PACKAGES)
-get_minor_version_packages("libcublas" CUBLAS_PACKAGES)
-get_minor_version_packages("libcufft" CUFFT_PACKAGES)
-get_minor_version_packages("libcurand" CURAND_PACKAGES)
-get_minor_version_packages("libcusolver" CUSOLVER_PACKAGES)
-get_minor_version_packages("libcusparse" CUSPARSE_PACKAGES)
-get_minor_version_packages("libnpp-dev" NPP_DEV_PACKAGES)
-get_minor_version_packages("libnvjitlink" NVJITLINK_PACKAGES)
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
-"libnvinfer-bin (>= 8.6.1), \
-${NVRTC_PACKAGES}, \
-libcublas.so.${CUDA_MAJOR} | ${CUBLAS_PACKAGES}, \
-libcufft.so.${CUDA_MAJOR} | ${CUFFT_PACKAGES}, \
-libcurand.so.${CUDA_MAJOR} | ${CURAND_PACKAGES}, \
-libcusolver.so.${CUDA_MAJOR} | ${CUSOLVER_PACKAGES}, \
-libcusparse.so.${CUDA_MAJOR} | ${CUSPARSE_PACKAGES}, \
-libnpp.so.${CUDA_MAJOR}-dev | ${NPP_DEV_PACKAGES}, \
-libnvJitLink.so.${CUDA_MAJOR} | ${NVJITLINK_PACKAGES}, \
-libgomb1, \
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
+libnvinfer-bin (>=8.6), libnvinfer-bin (<<9), \
+libcublas-12-2 | libcublas.so.12, \
+cuda-nvrtc-12-2 | cuda-nvrtc-12-9 | cuda-nvrtc-12-8 | cuda-nvrtc-12-7 | cuda-nvrtc-12-6 | cuda-nvrtc-12-5 | cuda-nvrtc-12-4 | cuda-nvrtc-12-3 | cuda-nvrtc-12-1 | cuda-nvrtc-12-0, \
+libcufft-12-2 | libcufft.so.11, \
+libcurand-12-2 | libcurand.so.10, \
+libcusolver-12-2 | libcusolver.so.11, \
+libcusparse-12-2 | libcusparse.so.12, \
+libnpp-dev-12-2 | libnpp.so.12-dev, \
+libnvjitlink-12-2 | libnvjitlink.so.12, \
+libgomp1, \
 libvulkan1, \
 libegl1, \
 libv4l-0, \

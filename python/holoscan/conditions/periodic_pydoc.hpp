@@ -55,15 +55,6 @@ name : str, optional
     The name of the condition.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the condition.
-
-Returns
--------
-str
-    The GXF type name of the condition
-)doc")
-
 PYDOC(recess_period, R"doc(
 Sets the recess (pause) period associated with the condition.
 The recess period can be specified as an integer value in nanoseconds or
@@ -76,15 +67,6 @@ Gets the recess (pause) period value in nanoseconds.
 
 PYDOC(last_run_timestamp, R"doc(
 Gets the integer representing the last run time stamp.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the condition.
 )doc")
 
 }  // namespace PeriodicCondition

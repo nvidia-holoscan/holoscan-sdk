@@ -128,6 +128,12 @@ vsync : bool, optional
     Enable vertical sync. If set to true the operator waits for the next vertical blanking period
     of the display to update the current image.
     Default value is ``False``.
+display_color_space : holoscan.operators.HolovizOp.ColorSpace, optional
+    Set the display color space. Supported color spaces depend on the display setup.
+    'ColorSpace::SRGB_NONLINEAR' is always supported. In headless mode, only
+    'ColorSpace::PASS_THROUGH' is supported since there is no display. For other color spaces the
+    display needs to be configured for HDR.
+    Default value is ``ColorSpace::AUTO``.
 enable_render_buffer_input : bool, optional
     If ``True``, an additional input port, named ``"render_buffer_input"`` is added to the
     operator. Default value is ``False``.
@@ -146,6 +152,22 @@ camera_look_at : sequence of three floats, optional
     Initial camera look at position. Default value is ``(0.0, 0.0, 0.0)``.
 camera_up : sequence of three floats, optional
     Initial camera up vector. Default value is ``(0.0, 1.0, 0.0)``.
+key_callback : Callable[HolovizOp.Key, HolovizOp.KeyAndButtonAction, HolovizOp.KeyModifiers], optional
+    The callback function is called when a key is pressed, released or repeated.
+unicode_char_callback : Callable[int], optional
+    The callback function is called when a Unicode character is input.
+mouse_button_callback : Callable[HolovizOp.MouseButton, HolovizOp.KeyAndButtonAction, HolovizOp.KeyModifiers], optional
+    The callback function is called when a mouse button is pressed or released.
+scroll_callback : Callable[float, float], optional
+    The callback function is called when a scrolling device is used, such as a mouse scroll wheel
+    or the scroll area of a touch pad.
+cursor_pos_callback : Callable[float, float], optional
+    The callback function is called when the cursor position changes. Coordinates are provided in
+    screen coordinates, relative to the upper left edge of the content area.
+framebuffer_size_callback : Callable[int, int], optional
+    The callback function is called when the framebuffer is resized.
+window_size_callback : Callable[int, int], optional
+    The callback function is called when the window is resized.
 font_path : str, optional
     File path for the font used for rendering text. Default value is ``""``.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional

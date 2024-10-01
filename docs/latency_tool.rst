@@ -19,7 +19,7 @@ an isolated compute or inference algorithm by simply measuring the time that
 it takes for a single frame (or a sequence of frames) to be processed, it is
 not always so easy to measure the complete end-to-end latency when the video
 capture and display is incorporated as this usually involves external capture
-hardware (e.g. cameras and other sensors) and displays.
+hardware (e.g., cameras and other sensors) and displays.
 
 In order to establish a baseline measurement of the minimal end-to-end latency
 that can be achieved with the NVIDIA Developer Kits and various video I/O
@@ -39,9 +39,9 @@ physical loopback cable.
 
 Testing the latency of any of the HDMI modes that output from the GPU requires
 a DisplayPort to HDMI adapter or cable (see `Example Configurations`_, below).
-Note that this cable must support the mode that is being tested --- for example,
+Note that this cable must support the mode that is being tested; for example,
 the UHD mode will only be available if the cable is advertised to support "4K
-Ultra HD (3840 x 2160) at 60 Hz".
+Ultra HD (3840 x 2160) at 60 Hz."
 
 Testing the latency of an optional AJA Video Systems device requires a supported
 AJA SDI or HDMI capture device (see :ref:`aja_video_systems` for the list of
@@ -126,7 +126,7 @@ binary to the current directory:
 
 .. Note:: If the error :code:`No CMAKE_CUDA_COMPILER could be found` is
    encountered, make sure that the :code:`nvcc` executable can be found by
-   adding the CUDA runtime location to your :code:`PATH` variable:
+   adding the CUDA runtime location to your :code:`PATH` variable.
 
    .. code::
 
@@ -150,7 +150,7 @@ Enabling AJA Support
 
 To enable AJA support, the :code:`NTV2_SDK` path must be appended to the
 :code:`cmake` command with the location of the NTV2 SDK in which both the
-headers and compiled libraries (i.e. :code:`libajantv2`) exist. For example, if
+headers and compiled libraries (i.e., :code:`libajantv2`) exist. For example, if
 the NTV2 SDK is in :code:`/home/nvidia/ntv2`, replace the :code:`cmake` command
 above with the following:
 
@@ -168,7 +168,7 @@ Example Configurations
    output from the GPU must be performed using a remote connection such as SSH
    from another machine. When this is the case, make sure that the
    :code:`DISPLAY` environment variable is set to the ID of the X11 display you
-   are using (e.g. in :code:`~/.bashrc`):
+   are using (e.g., in :code:`~/.bashrc`):
 
    .. code::
 
@@ -195,7 +195,7 @@ Example Configurations
    Make sure that the display is detached again after making these changes.
 
    See the `Producers`_ section for more details about GPU-based producers
-   (i.e. :ref:`OpenGL <producer_gl>` and :ref:`GStreamer <producer_gst>`).
+   (i.e., :ref:`OpenGL <producer_gl>` and :ref:`GStreamer <producer_gst>`).
 
 GPU To Onboard HDMI Capture Card
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -309,7 +309,7 @@ complete.
    the frame to host memory in order for the frame to be output by the producer
    component (for example, an AJA producer with RDMA disabled).
 
-   If a host copy is not required (i.e. RDMA is enabled for the producer), this
+   If a host copy is not required (i.e., RDMA is enabled for the producer), this
    time should be zero.
 
 4. **Write to HW**
@@ -320,8 +320,8 @@ complete.
    originate from host memory if RDMA is disabled for the producer, or from GPU
    memory if RDMA is enabled.
 
-   If this copy is not required, e.g. the producer outputs directly from the
-   GPU, this time should be zero.
+   If this copy is not required (e.g., the producer outputs directly from the
+   GPU), this time should be zero.
 
 5. **VSync Wait**
 
@@ -347,8 +347,8 @@ complete.
    example, an AJA consumer requires frames to be copied from the external frame
    store of the AJA device.
 
-   If this copy is not required, e.g. the consumer component writes received
-   frames directly to host/GPU memory, this time should be zero.
+   If this copy is not required (e.g., the consumer component writes received
+   frames directly to host/GPU memory), this time should be zero.
 
 8. **Copy to GPU**
 
@@ -388,12 +388,12 @@ is that it would capture, process, and output frames in the following order
 (with the component responsible for measuring that time within this tool given
 in parentheses):
 
-1. **Read from HW** (consumer)
+1. **Read from Hardware** (consumer)
 2. **Copy to GPU** (consumer)
 3. **Process Frame** (producer)
 4. **Render Results to GPU** (producer)
 5. **Copy to Host** (producer)
-6. **Write to HW** (producer)
+6. **Write to Hardware** (producer)
 
 .. figure:: images/latency_frame_real_application.png
    :align: center
@@ -402,7 +402,7 @@ in parentheses):
 
 To illustrate this, the tool sums and displays the total producer and consumer
 times, then provides the **Estimated Application Times** as the total sum of
-all of these steps (i.e. steps 1 through 6, above).
+all of these steps (i.e., steps 1 through 6, above).
 
   :code:`(continued from above)`
 
@@ -416,7 +416,7 @@ hardware. Using this assumption, the tool then estimates one final value for the
 
 1. Take the **Estimated Application Time** (from above)
 2. Round it up to the next VSync interval
-3. Add the physical wire time (i.e. a frame interval)
+3. Add the physical wire time (i.e., a frame interval)
 
 .. figure:: images/latency_frame_estimated_application_nordma.png
    :align: center
@@ -443,8 +443,8 @@ frame intervals (49998us).
 Reducing Latency With RMDA
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The previous example uses an AJA producer and consumer for a 4K @ 60Hz stream,
-however RDMA was disabled for both components. Because of this, the additional
+The previous example uses an AJA producer and consumer for a 4K @ 60Hz stream;
+however, RDMA was disabled for both components. Because of this, the additional
 copies between the GPU and host memory added more than 10000us of latency to
 the pipeline, causing the application to exceed one frame interval of processing
 time per frame and therefore a total frame latency of 3 frames. If RDMA is
@@ -467,18 +467,18 @@ The following shows the above example repeated with RDMA enabled.
 Simulating GPU Workload
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-By default the tool measures what is essentially a pass-through video pipeline;
+By default, the tool measures what is essentially a pass-through video pipeline;
 that is, no processing of the video frames is performed by the system. While
 this is useful for measuring the minimum latency that can be achieved by the
 video input and output components, it's not very indicative of a real-world
 use case in which the GPU is used for compute-intensive processing operations
-on the video frames between the input and output --- for example, an object
-detection algorithm that applies an overlay to the output frames.
+on the video frames between the input and output (for example, an object
+detection algorithm that applies an overlay to the output frames).
 
 While it may be relatively simple to measure the runtime latency of the
-processing algorithms that are to be applied to the video frames --- by simply
+processing algorithms that are to be applied to the video frames – by simply
 measuring the runtime of running the algorithm on a single or stream of frames
---- this may not be indicative of the effects that such processing might have
+– this may not be indicative of the effects that such processing might have
 on the overall system load, which may further increase the latency of the video
 input and output components.
 
@@ -517,7 +517,8 @@ follows:
 
      .. image:: images/latency_simulated_runtime.png
 
-.. tip:: To get the most accurate estimation of the latency that would be seen
+.. tip:: 
+   To get the most accurate estimation of the latency that would be seen
    by a real world application, the best thing to do would be to run the actual
    frame processing algorithm used by the application during the latency
    measurement. This could be done by modifying the :code:`SimulateProcessing`
@@ -600,7 +601,7 @@ OpenGL Producer Notes:
   display. As of this version, this component has only been tested in a
   display-less environment in which the loop-back HDMI cable is the only cable
   attached to the GPU (and thus is the primary display). It may also be required
-  to use the :code:`xrandr` tool to configure the HDMI output --- the tool will
+  to use the :code:`xrandr` tool to configure the HDMI output; the tool will
   provide the :code:`xrandr` commands needed if this is the case.
 
 * Since OpenGL renders directly to the GPU, the :code:`p.rdma` flag is not
@@ -612,19 +613,19 @@ GStreamer GPU Rendering (HDMI)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This producer (:code:`gst`) uses the :code:`nveglglessink` GStreamer component
-that is included with Holopack in order to render frames that originate from
+that is included with Holopack to render frames that originate from
 a GStreamer pipeline to the HDMI connectors on the GPU.
 
 GStreamer Producer Notes:
 
-* The tool must be built with DeepStream support in order for this producer to
+* The tool must be built with DeepStream support for this producer to
   support RDMA (see `Enabling DeepStream Support`_ for details).
 
 * The video generated by this producer is rendered full-screen to the primary
   display. As of this version, this component has only been tested in a
   display-less environment in which the loop-back HDMI cable is the only cable
   attached to the GPU (and thus is the primary display). It may also be required
-  to use the :code:`xrandr` tool to configure the HDMI output --- the tool will
+  to use the :code:`xrandr` tool to configure the HDMI output; the tool will
   provide the :code:`xrandr` commands needed if this is the case.
 
 * Since the output of the generated frames is handled internally by the
@@ -767,7 +768,7 @@ errors, the following steps may help resolve the issue.
 
       $ export DISPLAY=:0
 
-   If the error persists, try changing the display ID; e.g. replacing :code:`0`
+   If the error persists, try changing the display ID; e.g., replacing :code:`0`
    with :code:`1`:
 
    .. code::

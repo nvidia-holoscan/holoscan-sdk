@@ -278,7 +278,7 @@
             "name": "(gdb) examples/conditions/periodic/cpp",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.buildDirectory}/examples/conditions/periodic/cpp/periodic_ping",
+            "program": "${command:cmake.buildDirectory}/examples/conditions/periodic/cpp/ping_periodic",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${command:cmake.buildDirectory}",

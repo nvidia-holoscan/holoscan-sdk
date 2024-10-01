@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,28 +30,12 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-class PyGXFNetworkContext : public gxf::GXFNetworkContext {
- public:
-  /* Inherit the constructors */
-  using gxf::GXFNetworkContext::GXFNetworkContext;
-
-  /* Trampolines (need one for each virtual function) */
-  const char* gxf_typename() const override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE_PURE(const char*, gxf::GXFNetworkContext, gxf_typename);
-  }
-};
-
 void init_gxf_network_context(py::module_& m) {
   py::class_<gxf::GXFNetworkContext,
-             PyGXFNetworkContext,
              NetworkContext,
              gxf::GXFComponent,
              std::shared_ptr<gxf::GXFNetworkContext>>(
-      m, "GXFNetworkContext", doc::GXFNetworkContext::doc_GXFNetworkContext)
-      .def("initialize",
-           &gxf::GXFNetworkContext::initialize,
-           doc::GXFNetworkContext::doc_initialize);
+      m, "GXFNetworkContext", doc::GXFNetworkContext::doc_GXFNetworkContext);
 }  // PYBIND11_MODULE
 
 }  // namespace holoscan

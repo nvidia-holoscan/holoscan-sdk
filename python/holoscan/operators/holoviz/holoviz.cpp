@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <pybind11/functional.h>  // for callbacks
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>  // for vector
 
@@ -24,7 +25,12 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
+
+// the default range for enums is 128 which is not enough for the Key enum, increase to 512
+#define MAGIC_ENUM_RANGE_MAX 512
+#include <magic_enum.hpp>
 
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
@@ -51,6 +57,17 @@ using pybind11::literals::operator""_a;
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
 
 namespace py = pybind11;
+
+// Automatically export enum values (see https://github.com/pybind/pybind11/issues/1759)
+template <typename E, typename... Extra>
+py::enum_<E> export_enum(const py::handle& scope, Extra&&... extra) {
+  py::enum_<E> enum_type(
+      scope, magic_enum::enum_type_name<E>().data(), std::forward<Extra>(extra)...);
+  for (const auto& [value, name] : magic_enum::enum_entries<E>()) {
+    enum_type.value(name.data(), value);
+  }
+  return enum_type;
+}
 
 namespace holoscan {
 
@@ -86,12 +103,21 @@ class PyHolovizOp : public HolovizOp {
       const std::string& window_title = "Holoviz", const std::string& display_name = "",
       uint32_t width = 1920, uint32_t height = 1080, float framerate = 60.f,
       bool use_exclusive_display = false, bool fullscreen = false, bool headless = false,
-      bool framebuffer_srgb = false, bool vsync = false, bool enable_render_buffer_input = false,
+      bool framebuffer_srgb = false, bool vsync = false,
+      ColorSpace display_color_space = ColorSpace::AUTO, bool enable_render_buffer_input = false,
       bool enable_render_buffer_output = false, bool enable_camera_pose_output = false,
       const std::string& camera_pose_output_type = "projection_matrix",
       const std::array<float, 3>& camera_eye = {0.f, 0.f, 1.f},
       const std::array<float, 3>& camera_look_at = {0.f, 0.f, 0.f},
-      const std::array<float, 3>& camera_up = {0.f, 1.f, 1.f}, const std::string& font_path = "",
+      const std::array<float, 3>& camera_up = {0.f, 1.f, 1.f},
+      KeyCallbackFunction key_callback = KeyCallbackFunction(),
+      UnicodeCharCallbackFunction unicode_char_callback = UnicodeCharCallbackFunction(),
+      MouseButtonCallbackFunction mouse_button_callback = MouseButtonCallbackFunction(),
+      ScrollCallbackFunction scroll_callback = ScrollCallbackFunction(),
+      CursorPosCallbackFunction cursor_pos_callback = CursorPosCallbackFunction(),
+      FramebufferSizeCallbackFunction framebuffer_size_callback = FramebufferSizeCallbackFunction(),
+      WindowSizeCallbackFunction window_size_callback = WindowSizeCallbackFunction(),
+      const std::string& font_path = "",
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
       const std::string& name = "holoviz_op")
       : HolovizOp(ArgList{Arg{"allocator", allocator},
@@ -106,6 +132,7 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"headless", headless},
                           Arg{"framebuffer_srgb", framebuffer_srgb},
                           Arg{"vsync", vsync},
+                          Arg{"display_color_space", display_color_space},
                           Arg{"enable_render_buffer_input", enable_render_buffer_input},
                           Arg{"enable_render_buffer_output", enable_render_buffer_output},
                           Arg{"enable_camera_pose_output", enable_camera_pose_output},
@@ -119,6 +146,65 @@ class PyHolovizOp : public HolovizOp {
     if (tensors.size() > 0) { this->add_arg(Arg{"tensors", tensors}); }
     if (receivers.size() > 0) { this->add_arg(Arg{"receivers", receivers}); }
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+
+    // check if callbacks are provided, for each callback take the GIL before calling the function
+    if (key_callback) {
+      this->add_arg(
+          Arg{"key_callback",
+              KeyCallbackFunction(
+                  [key_callback](Key key, KeyAndButtonAction action, KeyModifiers modifiers) {
+                    py::gil_scoped_acquire guard;
+                    key_callback(key, action, modifiers);
+                  })});
+    }
+    if (unicode_char_callback) {
+      this->add_arg(Arg{"unicode_char_callback",
+                        UnicodeCharCallbackFunction([unicode_char_callback](uint32_t code_point) {
+                          py::gil_scoped_acquire guard;
+                          unicode_char_callback(code_point);
+                        })});
+    }
+    if (mouse_button_callback) {
+      this->add_arg(
+          Arg{"mouse_button_callback",
+              MouseButtonCallbackFunction([mouse_button_callback](MouseButton button,
+                                                                  KeyAndButtonAction action,
+                                                                  KeyModifiers modifiers) {
+                py::gil_scoped_acquire guard;
+                mouse_button_callback(button, action, modifiers);
+              })});
+    }
+    if (scroll_callback) {
+      this->add_arg(Arg{"scroll_callback",
+                        ScrollCallbackFunction([scroll_callback](double x_offset, double y_offset) {
+                          py::gil_scoped_acquire guard;
+                          scroll_callback(x_offset, y_offset);
+                        })});
+    }
+    if (cursor_pos_callback) {
+      this->add_arg(
+          Arg{"cursor_pos_callback",
+              CursorPosCallbackFunction([cursor_pos_callback](double x_pos, double y_pos) {
+                py::gil_scoped_acquire guard;
+                cursor_pos_callback(x_pos, y_pos);
+              })});
+    }
+    if (framebuffer_size_callback) {
+      this->add_arg(
+          Arg{"framebuffer_size_callback",
+              FramebufferSizeCallbackFunction([framebuffer_size_callback](int width, int height) {
+                py::gil_scoped_acquire guard;
+                framebuffer_size_callback(width, height);
+              })});
+    }
+    if (window_size_callback) {
+      this->add_arg(Arg{"window_size_callback",
+                        WindowSizeCallbackFunction([window_size_callback](int width, int height) {
+                          py::gil_scoped_acquire guard;
+                          window_size_callback(width, height);
+                        })});
+    }
+
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
@@ -138,6 +224,16 @@ PYBIND11_MODULE(_holoviz, m) {
 
   py::class_<HolovizOp, PyHolovizOp, Operator, std::shared_ptr<HolovizOp>> holoviz_op(
       m, "HolovizOp", doc::HolovizOp::doc_HolovizOp);
+
+  py::enum_<HolovizOp::ColorSpace>(holoviz_op, "ColorSpace")
+      .value("SRGB_NONLINEAR", HolovizOp::ColorSpace::SRGB_NONLINEAR)
+      .value("EXTENDED_SRGB_LINEAR", HolovizOp::ColorSpace::EXTENDED_SRGB_LINEAR)
+      .value("BT2020_LINEAR", HolovizOp::ColorSpace::BT2020_LINEAR)
+      .value("HDR10_ST2084", HolovizOp::ColorSpace::HDR10_ST2084)
+      .value("PASS_THROUGH", HolovizOp::ColorSpace::PASS_THROUGH)
+      .value("BT709_LINEAR", HolovizOp::ColorSpace::BT709_LINEAR)
+      .value("AUTO", HolovizOp::ColorSpace::AUTO);
+
   holoviz_op.def(py::init<Fragment*,
                           const py::args&,
                           std::shared_ptr<::holoscan::Allocator>,
@@ -154,6 +250,7 @@ PYBIND11_MODULE(_holoviz, m) {
                           bool,
                           bool,
                           bool,
+                          HolovizOp::ColorSpace,
                           bool,
                           bool,
                           bool,
@@ -161,6 +258,13 @@ PYBIND11_MODULE(_holoviz, m) {
                           const std::array<float, 3>&,
                           const std::array<float, 3>&,
                           const std::array<float, 3>&,
+                          const ops::HolovizOp::KeyCallbackFunction,
+                          ops::HolovizOp::UnicodeCharCallbackFunction,
+                          ops::HolovizOp::MouseButtonCallbackFunction,
+                          ops::HolovizOp::ScrollCallbackFunction,
+                          ops::HolovizOp::CursorPosCallbackFunction,
+                          ops::HolovizOp::FramebufferSizeCallbackFunction,
+                          ops::HolovizOp::WindowSizeCallbackFunction,
                           const std::string&,
                           std::shared_ptr<holoscan::CudaStreamPool>,
                           const std::string&>(),
@@ -179,6 +283,7 @@ PYBIND11_MODULE(_holoviz, m) {
                  "headless"_a = false,
                  "framebuffer_srgb"_a = false,
                  "vsync"_a = false,
+                 "display_color_space"_a = HolovizOp::ColorSpace::AUTO,
                  "enable_render_buffer_input"_a = false,
                  "enable_render_buffer_output"_a = false,
                  "enable_camera_pose_output"_a = false,
@@ -186,92 +291,27 @@ PYBIND11_MODULE(_holoviz, m) {
                  "camera_eye"_a = std::array<float, 3>{0.f, 0.f, 1.f},
                  "camera_look_at"_a = std::array<float, 3>{0.f, 0.f, 0.f},
                  "camera_up"_a = std::array<float, 3>{0.f, 1.f, 1.f},
+                 "key_callback"_a = HolovizOp::KeyCallbackFunction(),
+                 "unicode_char_callback"_a = HolovizOp::UnicodeCharCallbackFunction(),
+                 "mouse_button_callback"_a = HolovizOp::MouseButtonCallbackFunction(),
+                 "scroll_callback"_a = HolovizOp::ScrollCallbackFunction(),
+                 "cursor_pos_callback"_a = HolovizOp::CursorPosCallbackFunction(),
+                 "framebuffer_size_callback"_a = HolovizOp::FramebufferSizeCallbackFunction(),
+                 "window_size_callback"_a = HolovizOp::WindowSizeCallbackFunction(),
                  "font_path"_a = "",
                  "cuda_stream_pool"_a = py::none(),
                  "name"_a = "holoviz_op"s,
                  doc::HolovizOp::doc_HolovizOp);
 
-  py::enum_<HolovizOp::InputType>(holoviz_op, "InputType")
-      .value("UNKNOWN", HolovizOp::InputType::UNKNOWN)
-      .value("COLOR", HolovizOp::InputType::COLOR)
-      .value("COLOR_LUT", HolovizOp::InputType::COLOR_LUT)
-      .value("POINTS", HolovizOp::InputType::POINTS)
-      .value("LINES", HolovizOp::InputType::LINES)
-      .value("LINE_STRIP", HolovizOp::InputType::LINE_STRIP)
-      .value("TRIANGLES", HolovizOp::InputType::TRIANGLES)
-      .value("CROSSES", HolovizOp::InputType::CROSSES)
-      .value("RECTANGLES", HolovizOp::InputType::RECTANGLES)
-      .value("OVALS", HolovizOp::InputType::OVALS)
-      .value("TEXT", HolovizOp::InputType::TEXT)
-      .value("DEPTH_MAP", HolovizOp::InputType::DEPTH_MAP)
-      .value("DEPTH_MAP_COLOR", HolovizOp::InputType::DEPTH_MAP_COLOR)
-      .value("POINTS_3D", HolovizOp::InputType::POINTS_3D)
-      .value("LINES_3D", HolovizOp::InputType::LINES_3D)
-      .value("LINE_STRIP_3D", HolovizOp::InputType::LINE_STRIP_3D)
-      .value("TRIANGLES_3D", HolovizOp::InputType::TRIANGLES_3D);
-
-  py::enum_<HolovizOp::ImageFormat>(holoviz_op, "ImageFormat")
-      .value("AUTO_DETECT", HolovizOp::ImageFormat::AUTO_DETECT)
-      .value("R8_UINT", HolovizOp::ImageFormat::R8_UINT)
-      .value("R8_SINT", HolovizOp::ImageFormat::R8_SINT)
-      .value("R8_UNORM", HolovizOp::ImageFormat::R8_UNORM)
-      .value("R8_SNORM", HolovizOp::ImageFormat::R8_SNORM)
-      .value("R8_SRGB", HolovizOp::ImageFormat::R8_SRGB)
-      .value("R16_UINT", HolovizOp::ImageFormat::R16_UINT)
-      .value("R16_SINT", HolovizOp::ImageFormat::R16_SINT)
-      .value("R16_UNORM", HolovizOp::ImageFormat::R16_UNORM)
-      .value("R16_SNORM", HolovizOp::ImageFormat::R16_SNORM)
-      .value("R16_SFLOAT", HolovizOp::ImageFormat::R16_SFLOAT)
-      .value("R32_UINT", HolovizOp::ImageFormat::R32_UINT)
-      .value("R32_SINT", HolovizOp::ImageFormat::R32_SINT)
-      .value("R32_SFLOAT", HolovizOp::ImageFormat::R32_SFLOAT)
-      .value("R8G8B8_UNORM", HolovizOp::ImageFormat::R8G8B8_UNORM)
-      .value("R8G8B8_SNORM", HolovizOp::ImageFormat::R8G8B8_SNORM)
-      .value("R8G8B8_SRGB", HolovizOp::ImageFormat::R8G8B8_SRGB)
-      .value("R8G8B8A8_UNORM", HolovizOp::ImageFormat::R8G8B8A8_UNORM)
-      .value("R8G8B8A8_SNORM", HolovizOp::ImageFormat::R8G8B8A8_SNORM)
-      .value("R8G8B8A8_SRGB", HolovizOp::ImageFormat::R8G8B8A8_SRGB)
-      .value("R16G16B16A16_UNORM", HolovizOp::ImageFormat::R16G16B16A16_UNORM)
-      .value("R16G16B16A16_SNORM", HolovizOp::ImageFormat::R16G16B16A16_SNORM)
-      .value("R16G16B16A16_SFLOAT", HolovizOp::ImageFormat::R16G16B16A16_SFLOAT)
-      .value("R32G32B32A32_SFLOAT", HolovizOp::ImageFormat::R32G32B32A32_SFLOAT)
-      .value("D16_UNORM", HolovizOp::ImageFormat::D16_UNORM)
-      .value("X8_D24_UNORM", HolovizOp::ImageFormat::X8_D24_UNORM)
-      .value("D32_SFLOAT", HolovizOp::ImageFormat::D32_SFLOAT)
-      .value("A2B10G10R10_UNORM_PACK32", HolovizOp::ImageFormat::A2B10G10R10_UNORM_PACK32)
-      .value("A2R10G10B10_UNORM_PACK32", HolovizOp::ImageFormat::A2R10G10B10_UNORM_PACK32)
-      .value("B8G8R8A8_UNORM", HolovizOp::ImageFormat::B8G8R8A8_UNORM)
-      .value("B8G8R8A8_SRGB", HolovizOp::ImageFormat::B8G8R8A8_SRGB)
-      .value("A8B8G8R8_UNORM_PACK32", HolovizOp::ImageFormat::A8B8G8R8_UNORM_PACK32)
-      .value("A8B8G8R8_SRGB_PACK32", HolovizOp::ImageFormat::A8B8G8R8_SRGB_PACK32)
-      .value("Y8U8Y8V8_422_UNORM", HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM)
-      .value("U8Y8V8Y8_422_UNORM", HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM)
-      .value("Y8_U8V8_2PLANE_420_UNORM", HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM)
-      .value("Y8_U8V8_2PLANE_422_UNORM", HolovizOp::ImageFormat::Y8_U8V8_2PLANE_422_UNORM)
-      .value("Y8_U8_V8_3PLANE_420_UNORM", HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM)
-      .value("Y8_U8_V8_3PLANE_422_UNORM", HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM)
-      .value("Y16_U16V16_2PLANE_420_UNORM", HolovizOp::ImageFormat::Y16_U16V16_2PLANE_420_UNORM)
-      .value("Y16_U16V16_2PLANE_422_UNORM", HolovizOp::ImageFormat::Y16_U16V16_2PLANE_422_UNORM)
-      .value("Y16_U16_V16_3PLANE_420_UNORM", HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM)
-      .value("Y16_U16_V16_3PLANE_422_UNORM", HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM);
-
-  py::enum_<HolovizOp::YuvModelConversion>(holoviz_op, "YuvModelConversion")
-      .value("YUV_601", HolovizOp::YuvModelConversion::YUV_601)
-      .value("YUV_709", HolovizOp::YuvModelConversion::YUV_709)
-      .value("YUV_2020", HolovizOp::YuvModelConversion::YUV_2020);
-
-  py::enum_<HolovizOp::YuvRange>(holoviz_op, "YuvRange")
-      .value("ITU_FULL", HolovizOp::YuvRange::ITU_FULL)
-      .value("ITU_NARROW", HolovizOp::YuvRange::ITU_NARROW);
-
-  py::enum_<HolovizOp::ChromaLocation>(holoviz_op, "ChromaLocation")
-      .value("COSITED_EVEN", HolovizOp::ChromaLocation::COSITED_EVEN)
-      .value("MIDPOINT", HolovizOp::ChromaLocation::MIDPOINT);
-
-  py::enum_<HolovizOp::DepthMapRenderMode>(holoviz_op, "DepthMapRenderMode")
-      .value("POINTS", HolovizOp::DepthMapRenderMode::POINTS)
-      .value("LINES", HolovizOp::DepthMapRenderMode::LINES)
-      .value("TRIANGLES", HolovizOp::DepthMapRenderMode::TRIANGLES);
+  export_enum<HolovizOp::InputType>(holoviz_op, "InputType");
+  export_enum<HolovizOp::ImageFormat>(holoviz_op, "ImageFormat");
+  export_enum<HolovizOp::YuvModelConversion>(holoviz_op, "YuvModelConversion");
+  export_enum<HolovizOp::YuvRange>(holoviz_op, "YuvRange");
+  export_enum<HolovizOp::ChromaLocation>(holoviz_op, "ChromaLocation");
+  export_enum<HolovizOp::DepthMapRenderMode>(holoviz_op, "DepthMapRenderMode");
+  export_enum<HolovizOp::Key>(holoviz_op, "Key");
+  export_enum<HolovizOp::KeyAndButtonAction>(holoviz_op, "KeyAndButtonAction");
+  export_enum<HolovizOp::MouseButton>(holoviz_op, "MouseButton");
 
   py::class_<HolovizOp::InputSpec> inputspec(
       holoviz_op, "InputSpec", doc::HolovizOp::InputSpec::doc_InputSpec);
@@ -305,6 +345,28 @@ PYBIND11_MODULE(_holoviz, m) {
       .def_readwrite("width", &HolovizOp::InputSpec::View::width_)
       .def_readwrite("height", &HolovizOp::InputSpec::View::height_)
       .def_readwrite("matrix", &HolovizOp::InputSpec::View::matrix_);
+
+  py::class_<HolovizOp::KeyModifiers>(
+      holoviz_op, "KeyModifiers" /*, doc::HolovizOp::InputSpec::doc_KeyModifiers*/)
+      .def_property_readonly("shift",
+                             [](const HolovizOp::KeyModifiers& self) -> bool { return self.shift; })
+      .def_property_readonly(
+          "control", [](const HolovizOp::KeyModifiers& self) -> bool { return self.control; })
+      .def_property_readonly("alt",
+                             [](const HolovizOp::KeyModifiers& self) -> bool { return self.alt; })
+      .def_property_readonly(
+          "caps_lock", [](const HolovizOp::KeyModifiers& self) -> bool { return self.caps_lock; })
+      .def_property_readonly(
+          "num_lock", [](const HolovizOp::KeyModifiers& self) -> bool { return self.num_lock; })
+      .def("__repr__", [](const HolovizOp::KeyModifiers& modifiers) {
+        return fmt::format(
+            "KeyModifiers(shift: {}, control: {}, alt: {}, caps_lock {}, num_lock: {})",
+            modifiers.shift,
+            modifiers.control,
+            modifiers.alt,
+            modifiers.caps_lock,
+            modifiers.num_lock);
+      });
 
   // need to wrap nvidia::gxf::Pose3D for use of received Pose3D object from Python
   py::class_<nvidia::gxf::Pose3D> Pose3D(m, "Pose3D", doc::HolovizOp::Pose3D::doc_Pose3D);

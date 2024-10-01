@@ -39,15 +39,6 @@ name : str, optional
     The name of the condition.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the condition.
-
-Returns
--------
-str
-    The GXF type name of the condition
-)doc")
-
 PYDOC(enable_tick, R"doc(
 Set condition to ``True``.
 )doc")
@@ -58,15 +49,6 @@ Set condition to ``False``.
 
 PYDOC(check_tick_enabled, R"doc(
 Check whether the condition is ``True``.
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the condition.
 )doc")
 
 }  // namespace BooleanCondition

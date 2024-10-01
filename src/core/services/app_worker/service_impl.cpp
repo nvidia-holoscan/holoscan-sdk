@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -125,8 +125,9 @@ grpc::Status AppWorkerServiceImpl::ExecuteFragments(
     HOLOSCAN_LOG_DEBUG("Fragment ID: {}", fragment_id);
     for (const auto& connection_item : connection_item_list.connections()) {
       HOLOSCAN_LOG_DEBUG("Connection Name: {}", connection_item.name());
-      HOLOSCAN_LOG_DEBUG("Connection IO Type: {}", connection_item.io_type());
-      HOLOSCAN_LOG_DEBUG("Connection Connector Type: {}", connection_item.connector_type());
+      HOLOSCAN_LOG_DEBUG("Connection IO Type: {}", static_cast<int>(connection_item.io_type()));
+      HOLOSCAN_LOG_DEBUG("Connection Connector Type: {}",
+                         static_cast<int>(connection_item.connector_type()));
 
       IOSpec::IOType io_type = IOSpec::IOType::kInput;
       switch (connection_item.io_type()) {
@@ -153,7 +154,8 @@ grpc::Status AppWorkerServiceImpl::ExecuteFragments(
           connector_type = IOSpec::ConnectorType::kUCX;
           break;
         default:
-          HOLOSCAN_LOG_ERROR("Unsupported connector type: {}", connection_item.connector_type());
+          HOLOSCAN_LOG_ERROR("Unsupported connector type: {}",
+                             static_cast<int>(connection_item.connector_type()));
           return grpc::Status::CANCELLED;
       }
       holoscan::ArgList arg_list;

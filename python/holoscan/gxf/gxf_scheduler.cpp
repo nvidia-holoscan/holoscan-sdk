@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,30 +31,9 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-class PyGXFScheduler : public gxf::GXFScheduler {
- public:
-  /* Inherit the constructors */
-  using gxf::GXFScheduler::GXFScheduler;
-
-  /* Trampolines (need one for each virtual function) */
-  const char* gxf_typename() const override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE_PURE(const char*, gxf::GXFScheduler, gxf_typename);
-  }
-  std::shared_ptr<Clock> clock() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE_PURE(std::shared_ptr<Clock>, gxf::GXFScheduler, clock);
-  }
-};
-
 void init_gxf_scheduler(py::module_& m) {
-  py::class_<gxf::GXFScheduler,
-             PyGXFScheduler,
-             Scheduler,
-             gxf::GXFComponent,
-             std::shared_ptr<gxf::GXFScheduler>>(
+  py::class_<gxf::GXFScheduler, Scheduler, gxf::GXFComponent, std::shared_ptr<gxf::GXFScheduler>>(
       m, "GXFScheduler", doc::GXFScheduler::doc_GXFScheduler)
-      .def("initialize", &gxf::GXFScheduler::initialize, doc::GXFScheduler::doc_initialize)
       .def_property_readonly("clock", &gxf::GXFScheduler::clock);
 }  // PYBIND11_MODULE
 

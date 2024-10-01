@@ -514,6 +514,7 @@ build() {
     local install_prefix="${CMAKE_INSTALL_PREFIX:-$(get_install_dir)}"
     local reconfigure=false
     local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-'ON'}"
+    local config_args=""
 
     # Parse args
     local extra_args=""
@@ -559,6 +560,12 @@ build() {
             reconfigure=true
             shift
         ;;
+        --config | -c)
+            config_args+=("$2")
+            reconfigure=true
+            shift
+            shift
+            ;;
         *)
             extra_args+=("$1")
             shift
@@ -632,6 +639,7 @@ build() {
     #   jobs given by -j ${build_njobs}
     #
     img="$(get_build_img_name):$(get_git_sha)"
+    config_args="${config_args[@]}"
     run_command $HOLOSCAN_DOCKER_EXE run \
         --rm \
         --net=host \
@@ -650,7 +658,8 @@ build() {
                 cmake -S . -B ${build_path} -G Ninja \
                     -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
                     -D CMAKE_CUDA_ARCHITECTURES='${cuda_archs}' \
-                    -D CMAKE_BUILD_TYPE=${build_type}
+                    -D CMAKE_BUILD_TYPE=${build_type} \
+                    ${config_args}
             fi
             cmake --build ${build_path} -j ${build_njobs}
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan
@@ -760,7 +769,8 @@ lint() {
     pushd ${TOP} > /dev/null
 
     c_echo W "Linting Python"
-    run_command ruff $DIR_TO_RUN || exit_code=1
+    run_command ruff --version
+    run_command ruff check $DIR_TO_RUN || exit_code=1
     # Set --diff so formatting suggestions are not automatically applied, but the suggestions
     # will be printed to screen.
     run_command ruff format --diff $DIR_TO_RUN || exit_code=1
@@ -1210,7 +1220,7 @@ EOF
     c_echo W "Copying SSH keys to the container..."
     for i in identity id_rsa id_ed25519 id_ed25519_sk id_dsa id_cdsa id_ecdsa_sk; do
         if [ -e ~/.ssh/${i} ]; then
-            run_command $HOLOSCAN_DOCKER_EXE cp ~/.ssh/${i} ${container_name}:/home/holoscan-sdk/.ssh/
+            run_command $HOLOSCAN_DOCKER_EXE cp ~/.ssh/${i} ${container_name}:/home/holoscan/.ssh/
         fi
     done;
 

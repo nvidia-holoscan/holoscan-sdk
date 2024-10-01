@@ -20,7 +20,7 @@ First, go in your `build` or `install` directory (automatically done by `./run l
 
 Then, run:
 ```bash
-./examples/conditions/periodic/cpp/periodic_ping
+./examples/conditions/periodic/cpp/ping_periodic
 ```
 
 ## Python API

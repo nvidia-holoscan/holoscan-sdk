@@ -25,9 +25,9 @@
 #include <nvh/nvprint.hpp>
 #include <nvvk/debug_util_vk.hpp>
 namespace nvvk {
-bool SwapChain::init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue queue,
+void SwapChain::init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue queue,
                      uint32_t queueFamilyIndex, VkSurfaceKHR surface, VkFormat format,
-                     VkImageUsageFlags imageUsage) {
+                     VkColorSpaceKHR color_space, VkImageUsageFlags imageUsage) {
   assert(!m_device);
   m_device = device;
   m_physicalDevice = physicalDevice;
@@ -38,33 +38,8 @@ bool SwapChain::init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue q
   m_currentSemaphore = 0;
   m_surface = surface;
   m_imageUsage = imageUsage;
-
-  // Get the list of VkFormat's that are supported:
-  uint32_t formatCount;
-  if (NVVK_CHECK(
-          vkGetPhysicalDeviceSurfaceFormatsKHR(m_physicalDevice, m_surface, &formatCount, nullptr)))
-    return false;
-
-  std::vector<VkSurfaceFormatKHR> surfFormats(formatCount);
-  if (NVVK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(
-          m_physicalDevice, m_surface, &formatCount, surfFormats.data())))
-    return false;
-  // If the format list includes just one entry of VK_FORMAT_UNDEFINED,
-  // the surface has no preferred format.  Otherwise, at least one
-  // supported format will be returned.
-
-  m_surfaceFormat = VK_FORMAT_B8G8R8A8_UNORM;
-  m_surfaceColor = surfFormats[0].colorSpace;
-
-  for (uint32_t i = 0; i < formatCount; i++) {
-    if (surfFormats[i].format == format) {
-      m_surfaceFormat = format;
-      m_surfaceColor = surfFormats[i].colorSpace;
-      return true;
-    }
-  }
-
-  return false;
+  m_surfaceFormat = format;
+  m_surfaceColor = color_space;
 }
 
 bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
@@ -143,7 +118,7 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   // Note: destroying the swapchain also cleans up all its associated
   // presentable images once the platform is done with them.
   if (oldSwapchain != VK_NULL_HANDLE) {
-    for (auto &&it : m_entries) {
+    for (auto&& it : m_entries) {
       vkDestroyImageView(m_device, it.imageView, nullptr);
       vkDestroySemaphore(m_device, it.readSemaphore, nullptr);
       vkDestroySemaphore(m_device, it.writtenSemaphore, nullptr);
@@ -237,7 +212,7 @@ void SwapChain::deinitResources() {
   VkResult result = waitIdle();
   if (nvvk::checkResult(result, __FILE__, __LINE__)) { exit(-1); }
 
-  for (auto &&it : m_entries) {
+  for (auto&& it : m_entries) {
     vkDestroyImageView(m_device, it.imageView, nullptr);
     vkDestroySemaphore(m_device, it.readSemaphore, nullptr);
     vkDestroySemaphore(m_device, it.writtenSemaphore, nullptr);

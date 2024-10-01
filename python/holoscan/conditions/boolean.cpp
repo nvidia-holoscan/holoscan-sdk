@@ -70,13 +70,10 @@ void init_boolean(py::module_& m) {
            "enable_tick"_a = true,
            "name"_a = "noname_boolean_condition"s,
            doc::BooleanCondition::doc_BooleanCondition)
-      .def_property_readonly(
-          "gxf_typename", &BooleanCondition::gxf_typename, doc::BooleanCondition::doc_gxf_typename)
       .def("enable_tick", &BooleanCondition::enable_tick, doc::BooleanCondition::doc_enable_tick)
       .def("disable_tick", &BooleanCondition::disable_tick, doc::BooleanCondition::doc_disable_tick)
       .def("check_tick_enabled",
            &BooleanCondition::check_tick_enabled,
-           doc::BooleanCondition::doc_check_tick_enabled)
-      .def("setup", &BooleanCondition::setup, "spec"_a, doc::BooleanCondition::doc_setup);
+           doc::BooleanCondition::doc_check_tick_enabled);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

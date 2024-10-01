@@ -210,6 +210,9 @@ class InferenceOp : public holoscan::Operator {
   /// Operator Identifier, used in reporting.
   const std::string module_{"Inference Operator"};
 
+  /// @brief Parameter to validate incoming tensor dimensions with model input dimensions
+  bool validate_tensor_dimensions_ = true;
+
   CudaStreamHandler cuda_stream_handler_;
 };
 

@@ -45,6 +45,15 @@ The following dataset is used by this example:
   ./examples/video_replayer/cpp/video_replayer
   ```
 
+This example can also be run with a pair of visualization windows. In order to do that first modify
+the configuration file to set `dual_window` to `false`. This can be done via:
+
+```bash
+sed -i -e 's#^dual_window:.*#dual_window: true#' ./examples/video_replayer/cpp/video_replayer.yaml
+```
+and then follow the same instructions as above to run the application.
+
+
 ## Python Run instructions
 
 * **using python wheel**:
@@ -77,3 +86,11 @@ The following dataset is used by this example:
   export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data
   python3 ${BUILD_OR_INSTALL_DIR}/examples/video_replayer/python/video_replayer.py
   ```
+
+This example can also be run with a pair of visualization windows. In order to do that first modify
+the configuration file to set `dual_window` to `true`. This can be done via:
+
+```bash
+sed -i -e 's#^dual_window:.*#dual_window: true#' ./examples/video_replayer/python/video_replayer.yaml
+```
+and then follow the same instructions as above to run the application.

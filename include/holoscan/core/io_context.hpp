@@ -368,7 +368,7 @@ class InputContext {
 
     if constexpr (std::is_same_v<typename DataT::value_type, std::any>) {
       input_vector.push_back(std::move(value));
-    } else if (value_type == typeid(nullptr_t)) {
+    } else if (value_type == typeid(std::nullptr_t)) {
       handle_null_value<DataT>(input_vector);
     } else {
       try {
@@ -471,7 +471,7 @@ class InputContext {
     try {
       if constexpr (std::is_same_v<DataT, std::any>) {
         return value;
-      } else if (value_type == typeid(nullptr_t)) {
+      } else if (value_type == typeid(std::nullptr_t)) {
         return handle_null_value<DataT>();
       } else if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) {
         // Handle nvidia::gxf::Entity

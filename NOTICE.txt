@@ -231,6 +231,10 @@ nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
 Licensed under Apache 2.0 (https://github.com/nvpro-samples/nvpro_core/blob/master/LICENSE)
 
+NVTX
+Copyright 2009-2022, NVIDIA CORPORATION
+Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+
 ONNX Runtime (https://github.com/microsoft/onnxruntime)
 Copyright (c) Microsoft Corporation
 Licensed under MIT (https://github.com/microsoft/onnxruntime/blob/v1.15.1/LICENSE)

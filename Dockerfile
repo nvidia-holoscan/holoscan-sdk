@@ -134,6 +134,8 @@ RUN git clone --depth 1 --branch v${GRPC_VERSION} \
          https://github.com/grpc/grpc.git src
 RUN cmake -S src -B build -G Ninja \
          -D CMAKE_BUILD_TYPE=Release \
+         -D CMAKE_CXX_VISIBILITY_PRESET=hidden \
+         -D CMAKE_VISIBILITY_INLINES_HIDDEN=1 \
          -D gRPC_INSTALL=ON \
          -D gRPC_BUILD_TESTS=OFF
 RUN cmake --build build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
@@ -288,7 +290,8 @@ RUN install -m 0755 -d /etc/apt/keyrings \
         tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 # APT INSTALLS
-#  valgrind - static analysis
+#  valgrind - dynamic analysis
+#  clang-tidy - static analysis
 #  xvfb - testing on headless systems
 #  libx* - X packages
 #  libvulkan-dev, glslang-tools - for Vulkan apps (Holoviz)
@@ -306,6 +309,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         valgrind="1:3.18.1-*" \
+        clang-tidy="1:14.0-*" \
         xvfb="2:21.1.4-*" \
         libx11-dev="2:1.7.5-*" \
         libxcb-glx0="1.14-*" \

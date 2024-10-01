@@ -16,7 +16,7 @@ the scheduling terms associated with every entity. A scheduler is a
 component responsible for orchestrating the execution of all the
 entities defined in a graph. A scheduler typically keeps track of the
 graph entities and their current execution states and passes them on to
-a nvidia::gxf::EntityExecutor component when ready for execution. The
+a ``nvidia::gxf::EntityExecutor`` component when ready for execution. The
 following diagram depicts the flow for an entity execution.
 
 .. image:: ../images/scheduler_sequence.png
@@ -26,21 +26,21 @@ following diagram depicts the flow for an entity execution.
 **Figure: Entity execution sequence**
 
 As shown in the sequence diagram, the schedulers begin executing the
-graph entities via the nvidia::gxf::System::runAsync\_abi() interface
+graph entities via the ``nvidia::gxf::System::runAsync\_abi()`` interface,
 and continue this process until it meets the certain ending criteria. A
 single entity can have multiple codelets. These codelets are executed in
 the same order in which they were defined in the entity. A failure in
 execution of any single codelet stops the execution of all the entities.
 Entities are naturally unscheduled from execution when any one of their
-scheduling term reaches NEVER state.
+scheduling term reaches the ``NEVER`` state.
 
 Scheduling terms are components used to define the execution readiness
 of an entity. An entity can have multiple scheduling terms associated
 with it and each scheduling term represents the state of an entity using
 SchedulingCondition.
 
-The table below shows various states of nvidia::gxf::SchedulingConditionType described
-using nvidia::gxf::SchedulingCondition.
+The table below shows various states of ``nvidia::gxf::SchedulingConditionType`` described
+using ``nvidia::gxf::SchedulingCondition``.
 
 +-------------------------------+-------------------------------------------------------------------------+
 | **SchedulingConditionType**   | **Description**                                                         |
@@ -56,15 +56,15 @@ using nvidia::gxf::SchedulingCondition.
 | WAIT\_EVENT                   | Entity is waiting on an asynchronous event with unknown time interval   |
 +-------------------------------+-------------------------------------------------------------------------+
 
-Schedulers define deadlock as a condition when there are no entities which
-are in READY, WAIT\_TIME or WAIT\_EVENT state which guarantee execution
+Schedulers define deadlock as a condition when there are no entities which
+are in ``READY``, ``WAIT\_TIME`` or ``WAIT\_EVENT`` states, which guarantee execution
 at a future point in time. This implies all the entities are
-in WAIT state for which the scheduler does not know if they ever will
-reach the READY state in the future. The scheduler can be configured to
+in the ``WAIT`` state, for which the scheduler does not know if they ever will
+reach the ``READY`` state in the future. The scheduler can be configured to
 stop when it reaches such a state using
-the stop\_on\_deadlock parameter, else the entities are polled to check
-if any of them have reached READY state. max\_duration configuration parameter
-can be used to stop execution of all entities regardless of their state
+the ``stop\_on\_deadlock`` parameter, else the entities are polled to check
+if any of them have reached the ``READY`` state. The ``max\_duration`` configuration parameter
+can be used to stop execution of all entities, regardless of their state,
 after a specified amount of time has elapsed.
 
 There are two types of schedulers currently supported by GXF
@@ -77,20 +77,20 @@ Greedy Scheduler
 ----------------
 
 This is a basic single threaded scheduler which tests scheduling term
-greedily. It is great for simple use cases and predictable execution but
+greedily. It is great for simple use cases and predictable execution, but
 may incur a large overhead of scheduling term execution, making it
 unsuitable for large applications. The scheduler requires a clock to
 keep track of time. Based on the choice of clock the scheduler will
-execute differently. If a Realtime clock is used the scheduler will
-execute in real-time. This means pausing execution - sleeping the
-thread, until periodic scheduling terms are due again. If a ManualClock
-is used scheduling will happen “time-compressed”. This means flow of
+execute differently. If a Realtime clock is used, the scheduler will
+execute in real-time. This means pausing execution – sleeping the
+thread – until periodic scheduling terms are due again. If a ManualClock
+is used, scheduling will happen “time-compressed.” This means the flow of
 time is altered to execute codelets in immediate succession.
 
-The GreedyScheduler maintains a running count of entities which are
-in READY, WAIT\_TIME and WAIT\_EVENT states. The following activity
+The ``GreedyScheduler`` maintains a running count of entities which are
+in ``READY``, ``WAIT\_TIME`` and ``WAIT\_EVENT`` states. The following activity
 diagram depicts the gist of the decision making for scheduling an entity
-by the greedy scheduler -
+by the Greedy Scheduler:
 
 .. image:: ../images/greedy_scheduler.png
    :align: center
@@ -101,8 +101,7 @@ by the greedy scheduler -
 Greedy Scheduler Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The greedy scheduler takes in the following parameters from the
-configuration file
+The Greedy Scheduler takes in the following parameters from the configuration file: 
 
 .. csv-table::
     :header: Parameter name, Description
@@ -113,8 +112,7 @@ configuration file
     stop\_on\_deadlock, "If stop\_on\_deadlock is disabled, the GreedyScheduler constantly polls for the status of all the waiting entities to check if any of them are ready for execution."
 
 
-Example usage -
-The following code snippet configures a Greedy scheduler with a ManualClock option specified.
+Example usage – The following code snippet configures a Greedy Scheduler with a ManualClock option specified.
 
 .. code-block:: yaml
 
@@ -137,13 +135,13 @@ The following code snippet configures a Greedy scheduler with a ManualClock opti
 Multithread Scheduler
 ---------------------
 
-The MultiThread scheduler is more suitable for large applications with
+The MultiThread Scheduler is more suitable for large applications with
 complex execution patterns. The scheduler consists of a dispatcher
-thread which checks the status of an entity and dispatches it to a
+thread which checks the status of an entity, and dispatches it to a
 thread pool of worker threads responsible for executing them. Worker
 threads enqueue the entity back on to the dispatch queue upon completion
 of execution. The number of worker threads can be configured
-using worker\_thread\_number parameter. The MultiThread scheduler also
+using the ``worker\_thread\_number`` parameter. The MultiThread Scheduler also
 manages a dedicated queue and thread to handle asynchronous events. The
 following activity diagram demonstrates the gist of the multithread
 scheduler implementation.
@@ -154,28 +152,27 @@ scheduler implementation.
 
 **Figure: MultiThread Scheduler Activity Diagram**
 
-As depicted in the diagram, when an entity reaches WAIT\_EVENT state,
-it’s moved to a queue where they wait to receive event done
+As depicted in the diagram, when an entity reaches the ``WAIT\_EVENT`` state,
+it's moved to a queue where they wait to receive event done
 notification. The asynchronous event handler thread is responsible for
 moving entities to the dispatcher upon receiving event done
 notification. The dispatcher thread also maintains a running count of
-the number of entities in READY, WAIT\_EVENT and WAIT\_TIME states and
+the number of entities in ``READY``, ``WAIT\_EVENT`` and ``WAIT\_TIME`` states, and
 uses these statistics to check if the scheduler has reached a
-deadlock. The scheduler also needs a clock component to keep track of
-time and it is configured using the clock parameter.
+deadlock. The scheduler also needs a clock component to keep track of
+time and it is configured using the ``clock`` parameter.
 
-MultiThread scheduler is more resource efficient compared to the Greedy
-Scheduler and does not incur any additional overhead for constantly
+The MultiThread Scheduler is more resource efficient compared to the Greedy
+Scheduler, and does not incur any additional overhead for constantly
 polling the states of scheduling terms.
-The check\_recession\_period\_ms parameter can be used to configure the
+The ``check\_recession\_period\_ms`` parameter can be used to configure the
 time interval the scheduler must wait to poll the state of entities
-which are in WAIT state.
+which are in the ``WAIT`` state.
 
 Multithread Scheduler Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The multithread scheduler takes in the following parameters from the
-configuration file
+The Multithread Scheduler takes in the following parameters from the configuration file:
 
 .. csv-table::
     :header: Parameter name, Description
@@ -188,8 +185,7 @@ configuration file
     worker\_thread\_number, "Number of threads."
 
 
-Example usage -
-The following code snippet configures a Multithread scheduler with the number of worked threads and max duration specified -
+Example usage – The following code snippet configures a Multithread Scheduler with the number of worked threads and max duration specified:
 
 .. code-block:: yaml
 
@@ -213,10 +209,9 @@ The following code snippet configures a Multithread scheduler with the number of
 Epoch Scheduler
 ---------------------
 
-The Epoch scheduler is used for running loads in externally managed threads. Each run is called an Epoch. The scheduler goes over all entities that are known to be active and executes them one by one. If the epoch budget is provided (in ms), it would keep running all codelets until the budget is consumed or no codelet is ready. It might run over budget since it guarantees to cover all codelets in epoch. In case the budget is not provided, it would go over all the codelets once and execute them only once.
+The Epoch Scheduler is used for running loads in externally managed threads. Each run is called an Epoch. The scheduler goes over all entities that are known to be active and executes them one by one. If the epoch budget is provided (in ms), it would keep running all codelets until the budget is consumed or no codelet is ready. It might run over budget since it guarantees to cover all codelets in an epoch. In case the budget is not provided, it would go over all the codelets once and execute them only once.
 
-The epoch scheduler takes in the following parameters from the
-configuration file -
+The Epoch Scheduler takes in the following parameters from the configuration file:
 
 .. csv-table::
     :header: Parameter name, Description
@@ -224,8 +219,8 @@ configuration file -
 
     clock, "The clock used by the scheduler to define the flow of time. Typical choice is a RealtimeClock."
 
-Example usage -
-The following code snippet configures an Epoch scheduler -
+
+Example usage – The following code snippet configures an Epoch Scheduler:
 
 .. code-block:: yaml
 
@@ -238,14 +233,14 @@ The following code snippet configures an Epoch scheduler -
      parameters:
        clock: clock
 
-Note that the epoch scheduler is intended to run from an external thread. The ``runEpoch(float budget_ms);`` can be used to set the budget_ms and run the scheduler from the external thread. If the specified budget is not positive, all the nodes are executed once.
+Note that the Epoch Scheduler is intended to run from an external thread. The ``runEpoch(float budget_ms);`` can be used to set the budget_ms and run the scheduler from the external thread. If the specified budget is not positive, all the nodes are executed once.
 
 
 SchedulingTerms
 ---------------
 
-A SchedulingTerm defines a specific condition that is used by an entity
-to let the scheduler know when it’s ready for execution. There are
+A ``SchedulingTerm`` defines a specific condition that is used by an entity
+to let the scheduler know when it's ready for execution. There are
 various scheduling terms currently supported by GXF.
 
 .. _periodic_scheduling_term:
@@ -253,12 +248,12 @@ various scheduling terms currently supported by GXF.
 PeriodicSchedulingTerm
 ~~~~~~~~~~~~~~~~~~~~~~
 
-An entity associated with nvidia::gxf::PeriodicSchedulingTerm is ready
+An entity associated with ``nvidia::gxf::PeriodicSchedulingTerm`` is ready
 for execution after periodic time intervals specified using
-its recess\_period parameter. The PeriodicSchedulingTerm can either be
-in READY or WAIT\_TIME state.
+its ``recess\_period`` parameter. The ``PeriodicSchedulingTerm`` can either be
+in ``READY`` or ``WAIT\_TIME`` state.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 
@@ -271,13 +266,13 @@ Example usage -
 CountSchedulingTerm
 ~~~~~~~~~~~~~~~~~~~
 
-An entity associated with nvidia::gxf::CountSchedulingTerm is executed
-for a specific number of times specified using its count parameter.
-The CountSchedulingTerm can either be in READY or NEVER state. The
-scheduling term reaches the NEVER state when the entity has been
-executed count number of times.
+An entity associated with ``nvidia::gxf::CountSchedulingTerm`` is executed
+for a specific number of times specified using its ``count`` parameter.
+The ``CountSchedulingTerm`` can either be in ``READY`` or ``NEVER`` state. The
+scheduling term reaches the ``NEVER`` state when the entity has been
+executed ``count`` number of times.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 
@@ -309,7 +304,7 @@ MultiMessageAvailableSchedulingTerm
 
 An entity associated with ``nvidia::gxf::MultiMessageAvailableSchedulingTerm`` is executed when a list of provided input receivers combined have at least a given number of messages. The ``receivers`` parameter is used to specify a list of the input channels/receivers. The minimum number of messages needed to permit the entity execution is set by ``min_size`` parameter.
 
-Consider the example shown below. The associated entity will be executed when the number of messages combined for all the three receivers is at least the min_size, i.e. 5.
+Consider the example shown below. The associated entity will be executed when the number of messages combined for all the three receivers is at least the min_size; i.e., 5.
 
 .. code-block:: yaml
 
@@ -336,7 +331,7 @@ BooleanSchedulingTerm
 
 An entity associated with ``nvidia::gxf::BooleanSchedulingTerm`` is executed when its internal state is set to tick. The parameter ``enable_tick`` is used to control the entity execution. The scheduling term also has two APIs ``enable_tick()`` and ``disable_tick()`` to toggle its internal state. The entity execution can be controlled by calling these APIs. If ``enable_tick`` is set to false, the entity is not executed (Scheduling condition is set to ``NEVER``). If ``enable_tick`` is set to true, the entity will be executed (Scheduling condition is set to ``READY``). Entities can toggle the state of the scheduling term by maintaining a handle to it.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 
@@ -349,18 +344,18 @@ Example usage -
 AsynchronousSchedulingTerm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-AsynchronousSchedulingTerm is primarily associated with entities which
+``AsynchronousSchedulingTerm`` is primarily associated with entities which
 are working with asynchronous events happening outside of their regular
 execution performed by the scheduler. Since these events are
-non-periodic in nature, AsynchronousSchedulingTerm prevents the
+non-periodic in nature, ``AsynchronousSchedulingTerm`` prevents the
 scheduler from polling the entity for its status regularly and reduces
-CPU utilization. AsynchronousSchedulingTerm can either be
-in READY, WAIT, WAIT\_EVENT or NEVER states based on asynchronous event
-it’s waiting on.
+CPU utilization. ``AsynchronousSchedulingTerm`` can either be
+in ``READY``, ``WAIT``, ``WAIT\_EVENT`` or ``NEVER`` states based on asynchronous event
+it's waiting on.
 
 The state of an asynchronous event is described
-using nvidia::gxf::AsynchronousEventState and is updated using
-the setEventState API.
+using ``nvidia::gxf::AsynchronousEventState`` and is updated using
+the ``setEventState`` API.
 
 +------------------------------+---------------------------------------------------------------------+
 | **AsynchronousEventState**   | **Description**                                                     |
@@ -378,17 +373,17 @@ the setEventState API.
 
 Entities associated with this scheduling term most likely have an
 asynchronous thread which can update the state of the scheduling term
-outside of it’s regular execution cycle performed by the gxf scheduler.
-When the scheduling term is in WAIT state, the scheduler regularly polls
+outside of its regular execution cycle performed by the GXF scheduler.
+When the scheduling term is in ``WAIT`` state, the scheduler regularly polls
 for the state of the entity. When the scheduling term is
-in EVENT\_WAITING state, schedulers will not check the status of the
+in ``EVENT\_WAITING`` state, schedulers will not check the status of the
 entity again until they receive an event notification which can be
-triggered using the GxfEntityEventNotify api. Setting the state of the
-scheduling term to EVENT\_DONE automatically sends this notification to
-the scheduler. Entities can use the EVENT\_NEVER state to indicate the
+triggered using the ``GxfEntityEventNotify`` API. Setting the state of the
+scheduling term to ``EVENT\_DONE`` automatically sends this notification to
+the scheduler. Entities can use the ``EVENT\_NEVER`` state to indicate the
 end of its execution cycle.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 
@@ -400,7 +395,7 @@ DownsteamReceptiveSchedulingTerm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 This scheduling term specifies that an entity shall be executed if the receiver for a given transmitter can accept new messages.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 
@@ -416,7 +411,7 @@ TargetTimeSchedulingTerm
 ~~~~~~~~~~~~~~~~~~~~~~~~
 This scheduling term permits execution at a user-specified timestamp. The timestamp is specified on the clock provided.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 
@@ -431,7 +426,7 @@ ExpiringMessageAvailableSchedulingTerm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 This scheduling waits for a specified number of messages in the receiver. The entity is executed when the first message received in the queue is expiring or when there are enough messages in the queue. The ``receiver`` parameter is used to set the receiver to watch on. The parameters ``max_batch_size`` and ``max_delay_ns`` dictate the maximum number of messages to be batched together and the maximum delay from first message to wait before executing the entity respectively.
 
-In the example shown below, the associated entity will be executed when the number of messages in the queue is greater than ``max_batch_size``, i.e 5, or when the delay from the first message to current time is greater than ``max_delay_ns``, i.e 10000000.
+In the example shown below, the associated entity will be executed when the number of messages in the queue is greater than ``max_batch_size`` (i.e., 5), or when the delay from the first message to current time is greater than ``max_delay_ns`` (i.e., 10000000).
 
 .. code-block:: yaml
 
@@ -448,15 +443,15 @@ AND Combined
 ~~~~~~~~~~~~
 
 An entity can be associated with multiple scheduling terms which define
-it’s execution behavior. Scheduling terms are AND combined to describe
+its execution behavior. Scheduling terms are ``AND`` combined to describe
 the current state of an entity. For an entity to be executed by the
-scheduler, all the scheduling terms must be in READY state and
+scheduler, all the scheduling terms must be in ``READY`` state and
 conversely, the entity is unscheduled from execution whenever any one of
-the scheduling term reaches NEVER state. The priority of various states
-during AND combine follows the
-order NEVER, WAIT\_EVENT, WAIT, WAIT\_TIME, and READY.
+the scheduling term reaches ``NEVER`` state. The priority of various states
+during ``AND`` combine follows the
+order ``NEVER``, ``WAIT\_EVENT``, ``WAIT``, ``WAIT\_TIME``, and ``READY``.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 
@@ -478,7 +473,7 @@ BTSchedulingTerm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 A BT (Behavior Tree) scheduling term is used to schedule a behavior tree entity itself and its child entities (if any) in a Behavior tree.
 
-Example usage -
+Example usage:
 
 .. code-block:: yaml
 

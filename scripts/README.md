@@ -92,6 +92,21 @@ Above command will create two files: `tensor.gxf_entities` and `tensor.gxf_index
 Use `--directory` to specify the directory where the files will be created.
 Use `--basename` to specify a different output name than the default `tensor`
 
+When working with long videos, it can be desired to limit the disc space usage. In this case, `ffmpeg` can be used to convert only a portion of the video.
+Use `-ss` option to set the start time.
+Use `-t` option to set the duration or the `-to` option to set the end time.
+
+Examples:
+
+```sh
+ffmpeg -ss 00:00:05 -i video_1920x1080.avi -t 00:00:05 -pix_fmt rgb24 -f rawvideo pipe:1 | python3 scripts/convert_video_to_gxf_entities.py --width 1920 --height 1080 --channels 3 --framerate 30
+```
+```sh
+ffmpeg -ss 00:00:05 -i video_1920x1080.avi -to 00:00:10 -pix_fmt rgb24 -f rawvideo pipe:1 | python3 scripts/convert_video_to_gxf_entities.py --width 1920 --height 1080 --channels 3 --framerate 30
+```
+
+Above commands will parse the video starting at 00:00:05 and ending at 00:00:10.
+
 ____
 
 ## download_ngc_data

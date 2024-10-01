@@ -71,9 +71,6 @@ void init_count(py::module_& m) {
            "count"_a = 1L,
            "name"_a = "noname_count_condition"s,
            doc::CountCondition::doc_CountCondition)
-      .def_property_readonly(
-          "gxf_typename", &CountCondition::gxf_typename, doc::CountCondition::doc_gxf_typename)
-      .def("setup", &CountCondition::setup, doc::CountCondition::doc_setup)
       .def_property("count",
                     py::overload_cast<>(&CountCondition::count),
                     py::overload_cast<int64_t>(&CountCondition::count),

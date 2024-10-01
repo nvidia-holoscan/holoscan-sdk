@@ -134,7 +134,7 @@ Parameters
 
 **initial_time_offset**
 
-The initial time offset used until time scale is changed manually.
+The initial time offset used, until the time scale is changed manually.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_FLOAT64
@@ -143,7 +143,7 @@ The initial time offset used until time scale is changed manually.
 
 **initial_time_scale**
 
-The initial time scale used until time scale is changed manually.
+The initial time scale used, until the time scale is changed manually.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_FLOAT64
@@ -152,7 +152,7 @@ The initial time scale used until time scale is changed manually.
 
 **use_time_since_epoch**
 
-If true, clock time is time since ``epoch`` + ``initial_time_offset`` at ``initialize()``.Otherwise clock time is ``initial_time_offset`` at ``initialize()``.
+If true, clock time is time since ``epoch`` + ``initial_time_offset`` at ``initialize()``. Otherwise, clock time is ``initial_time_offset`` at ``initialize()``.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_BOOL
@@ -297,7 +297,7 @@ Parameters
 
 **recess_period**
 
-The recess period indicates the minimum amount of time which has to pass before the entity is permitted to execute again. The period is specified as a string containing of a number and an (optional) unit. If no unit is given the value is assumed to be in nanoseconds. Supported units are: Hz, s, ms. Example: 10ms, 10000000, 0.2s, 50Hz.
+The recess period indicates the minimum amount of time which has to pass before the entity is permitted to execute again. The period is specified as a string containing of a number and an (optional) unit. If no unit is given, the value is assumed to be in nanoseconds. Supported units are: Hz, s, ms. Example: 10ms, 10000000, 0.2s, 50Hz.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_STRING
@@ -361,7 +361,7 @@ The term permits execution if the receiver connected to the transmitter has at l
 
 **transmitter**
 
-The term permits execution if this transmitter can publish a message, i.e. if the receiver which is connected to this transmitter can receive messages.
+The term permits execution if this transmitter can publish a message; i.e., if the receiver which is connected to this transmitter can receive messages.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_HANDLE
@@ -380,7 +380,7 @@ Parameters
 
 **front_stage_max_size**
 
-If set the scheduling term will only allow execution if the number of messages in the front stage does not exceed this count. It can for example be used in combination with codelets which do not clear the front stage in every tick.
+If set, the scheduling term will only allow execution if the number of messages in the front stage does not exceed this count. For example, it can be used in combination with codelets which do not clear the front stage in every tick.
 
 * Flags: GXF_PARAMETER_FLAGS_OPTIONAL
 * Type: GXF_PARAMETER_TYPE_UINT64
@@ -482,7 +482,7 @@ Receiver to watch on.
 nvidia::gxf::BooleanSchedulingTerm
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A component which acts as a boolean AND term that can be used to control the execution of the entity.
+A component which acts as a Boolean ``AND`` term that can be used to control the execution of the entity.
 
 * Component ID: e07a0dc4-3908-4df8-8134-7ce38e60fbef
 * Base Type: nvidia::gxf::SchedulingTerm
@@ -490,7 +490,7 @@ A component which acts as a boolean AND term that can be used to control the exe
 nvidia::gxf::AsynchronousSchedulingTerm
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A component which is used to inform of that an entity is dependent upon an async event for its execution.
+A component which is used to inform that an entity is dependent upon an async event for its execution.
 
 * Component ID: 56be1662-ff63-4179-9200-3fcd8dc38673
 * Base Type: nvidia::gxf::SchedulingTerm
@@ -518,7 +518,7 @@ The clock used by the scheduler to define flow of time. Typical choices are a ``
 
 **max_duration_ms**
 
-The maximum duration for which the scheduler will execute (in ms). If not specified the scheduler will run until all work is done. If periodic terms are present this means the application will run indefinitely.
+The maximum duration for which the scheduler will execute (in ms). If not specified the scheduler will run until all work is done. If periodic terms are present, this means the application will run indefinitely.
 
 * Flags: GXF_PARAMETER_FLAGS_OPTIONAL
 * Type: GXF_PARAMETER_TYPE_INT64
@@ -536,7 +536,7 @@ This parameter is deprecated. Assign a clock directly.
 
 **stop_on_deadlock**
 
-If enabled the scheduler will stop when all entities are in a waiting state, but no periodic entity exists to break the dead end. Should be disabled when scheduling conditions can be changed by external actors, for example by clearing queues manually.
+If enabled, the scheduler will stop when all entities are in a waiting state, but no periodic entity exists to break the dead end. Should be disabled when scheduling conditions can be changed by external actors; for example, by clearing queues manually.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_BOOL
@@ -544,7 +544,7 @@ If enabled the scheduler will stop when all entities are in a waiting state, but
 nvidia::gxf::MultiThreadScheduler
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A multi thread scheduler that executes codelets for maximum throughput.
+A multi-thread scheduler that executes codelets for maximum throughput.
 
 * Component ID: de5e0646-7fa5-11eb-a5c4-330ebfa81bbf
 * Base Type: nvidia::gxf::Scheduler
@@ -573,7 +573,7 @@ The clock used by the scheduler to define flow of time. Typical choices are a ``
 
 **max_duration_ms**
 
-The maximum duration for which the scheduler will execute (in ms). If not specified the scheduler will run until all work is done. If periodic terms are present this means the application will run indefinitely.
+The maximum duration for which the scheduler will execute (in ms). If not specified, the scheduler will run until all work is done. If periodic terms are present, this means the application will run indefinitely.
 
 * Flags: GXF_PARAMETER_FLAGS_OPTIONAL
 * Type: GXF_PARAMETER_TYPE_INT64
@@ -582,7 +582,7 @@ The maximum duration for which the scheduler will execute (in ms). If not specif
 
 **stop_on_deadlock**
 
-If enabled the scheduler will stop when all entities are in a waiting state, but no periodic entity exists to break the dead end. Should be disabled when scheduling conditions can be changed by external actors, for example by clearing queues manually.
+If enabled, the scheduler will stop when all entities are in a waiting state, but no periodic entity exists to break the dead end. Should be disabled when scheduling conditions can be changed by external actors; for example, by clearing queues manually.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_BOOL
@@ -600,7 +600,7 @@ Number of threads.
 nvidia::gxf::BlockMemoryPool
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A memory pools which provides a maximum number of equally sized blocks of memory.
+A memory pool which provides a maximum number of equally sized blocks of memory.
 
 * Component ID: 92b627a3-5dd3-4c3c-976c-4700e8a3b96a
 * Base Type: nvidia::gxf::Allocator
@@ -610,7 +610,7 @@ Parameters
 
 **block_size**
 
-The size of one block of memory in byte. Allocation requests can only be fulfilled if they fit into one block. If less memory is requested still a full block is issued.
+The size of one block of memory in byte. Allocation requests can only be fulfilled if they fit into one block. If less memory is requested, a full block is still issued.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_UINT64
@@ -629,7 +629,7 @@ If enabled operator new will be used to allocate host memory instead of ``cudaMa
 
 **num_blocks**
 
-The total number of blocks which are allocated by the pool. If more blocks are requested allocation requests will fail.
+The total number of blocks which are allocated by the pool. If more blocks are requested, allocation requests will fail.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_UINT64
@@ -657,7 +657,7 @@ Parameters
 
 **do_not_use_cuda_malloc_host**
 
-If enabled operator new will be used to allocate host memory instead of ``cudaMallocHost``.
+If enabled, a new operator will be used to allocate host memory instead of ``cudaMallocHost``.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_BOOL
@@ -692,7 +692,7 @@ Parameters
 
 **aggregation_policy**
 
-Aggregation policy used to aggregate individual metric samples. Choices:{mean, min, max}.
+Aggregation policy used to aggregate individual metric samples. Choices: {mean, min, max}.
 
 * Flags: GXF_PARAMETER_FLAGS_OPTIONAL
 * Type: GXF_PARAMETER_TYPE_STRING
@@ -740,7 +740,7 @@ The clock component instance to retrieve time from.
 
 **codelet_statistics**
 
-If set to true, JobStatistics component will collect performance statistics related to codelets.
+If set to true, the ``JobStatistics`` component will collect performance statistics related to codelets.
 
 * Flags: GXF_PARAMETER_FLAGS_OPTIONAL
 * Type: GXF_PARAMETER_TYPE_BOOL
@@ -777,7 +777,6 @@ The broadcast mode. Can be Broadcast or RoundRobin.
 **source**
 
 
-
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_HANDLE
 * Handle Type: nvidia::gxf::Receiver
@@ -805,7 +804,7 @@ The output channel for gathered messages.
 
 **tick_source_limit**
 
-Maximum number of messages to take from each source in one tick. 0 means no limit.
+Maximum number of messages to take from each source in one tick. ``0`` means no limit.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_INT64
@@ -823,7 +822,7 @@ Parameters
 
 **allocator**
 
-Memory allocator for tensor data
+Memory allocator for tensor data.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_HANDLE
@@ -835,8 +834,8 @@ Memory allocator for tensor data
 
 Configuration to select what tensors to copy:
 
-  1. kCopyToDevice (0) - copies to device memory, ignores device allocation
-  2. kCopyToHost (1) - copies to pinned host memory, ignores host allocation
+  1. kCopyToDevice (0) - copies to device memory, ignores device allocation.
+  2. kCopyToHost (1) - copies to pinned host memory, ignores host allocation.
   3. kCopyToSystem (2) - copies to system memory, ignores system allocation.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
@@ -932,7 +931,7 @@ Parameters
 
 **drop_waiting**
 
-If too many messages are waiting the oldest ones are dropped.
+If too many messages are waiting, the oldest ones are dropped.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_BOOL
@@ -941,7 +940,7 @@ If too many messages are waiting the oldest ones are dropped.
 
 **max_waiting_count**
 
-The maximum number of waiting messages. If exceeded the codelet will stop pulling messages out of the input queue.
+The maximum number of waiting messages. If exceeded, the codelet will stop pulling messages out of the input queue.
 
 * Flags: GXF_PARAMETER_FLAGS_NONE
 * Type: GXF_PARAMETER_TYPE_UINT64

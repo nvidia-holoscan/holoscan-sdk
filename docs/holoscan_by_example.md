@@ -5,7 +5,7 @@ In this section, we demonstrate how to use the Holoscan SDK to build application
 The concepts needed to build your own Holoscan applications will be covered as we go through each example.
 
 :::{note}
-Examples source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+Example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ```{toctree}

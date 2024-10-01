@@ -5,16 +5,16 @@ Most applications will require more than one operator.  In this example, we will
 
 In this example we'll cover:
 
-- how to use built-in operators
-- how to use `add_flow()` to connect operators together
+- How to use built-in operators.
+- How to use `add_flow()` to connect operators together.
 
 :::{note}
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ## Operators and Workflow
 
-Here is a example workflow involving two operators that are connected linearly.
+Here is an example workflow involving two operators that are connected linearly.
 
 ```{digraph} ping_simple
 :align: center
@@ -42,8 +42,7 @@ The first element of the pair is the output port name of the upstream operator a
 An empty port name ("") can be used for specifying a port name if the operator has only one input/output port.
 If there is only one output port in the upstream operator and only one input port in the downstream operator, the port pairs can be omitted.
 
-The following code shows how to define a linear workflow in the `compose()` method for our example.  Note that when an operator appears
-in an `add_flow()` statement, it doesn't need to be added into the workflow separately using `add_operator()`.
+The following code shows how to define a linear workflow in the `compose()` method for our example.  Note that when an operator appears in an `add_flow()` statement, it doesn't need to be added into the workflow separately using `add_operator()`.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -77,10 +76,9 @@ int main(int argc, char** argv) {
 }
 ```
 - The header files that define **PingTxOp** and **PingRxOp** are included on lines `2` and `3` respectively.
-- We create an instance of the **PingTxOp** using the `make_operator()` function (line `10`) with the name "tx" and
-  constrain it's `compute()` method to execute 10 times.
-- We create an instance of the **PingRxOp** using the `make_operator()` function (line `11`) with the name "rx".
-- The tx and rx operators are connected using `add_flow()` (line `14`)
+- We create an instance of the **PingTxOp** using the `make_operator()` function (line `10`) with the name "tx" and constrain its `compute()` method to execute 10 times.
+- We create an instance of the **PingRxOp** using the `make_operator()` function (line `11`) with the name "rx."
+- The tx and rx operators are connected using `add_flow()` (line `14`).
 ````
 ````{tab-item} Python
 ```{code-block} python
@@ -111,7 +109,7 @@ if __name__ == "__main__":
     main()
 ```
 - The built-in holoscan operators, **PingRxOp** and **PingTxOp**, are imported on line `3`.
-- We create an instance of the **PingTxOp** operator with the name "tx" and constrain it's `compute()` method to execute 10 times (line `8`).
+- We create an instance of the **PingTxOp** operator with the name "tx" and constrain its `compute()` method to execute 10 times (line `8`).
 - We create an instance of the **PingRxOp** operator with the name "rx" (line `9`).
 - The tx and rx operators are connected using `add_flow()` which defines this application's workflow (line `12`).
 ````

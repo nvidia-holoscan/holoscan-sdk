@@ -3,10 +3,10 @@
 # Creating an Application
 
 In this section, we'll address:
-- how to {ref}`define an Application class<defining-an-application-class>`
-- how to {ref}`configure an Application<configuring-an-application>`
-- how to {ref}`define different types of workflows<application-workflows>`
-- how to [build and run your application](#building-and-running-your-application)
+- How to {ref}`define an Application class<defining-an-application-class>`.
+- How to {ref}`configure an Application<configuring-an-application>`.
+- How to {ref}`define different types of workflows<application-workflows>`.
+- How to [build and run your application](#building-and-running-your-application).
 
 :::{note}
 This section covers basics of applications running as a single fragment. For multi-fragment applications, refer to the [distributed application documentation](./holoscan_create_distributed_app.md).
@@ -82,7 +82,7 @@ This is also illustrated in the [hello_world](./examples/hello_world.md) example
 :::
 ___
 
-It is also possible to instead launch the application asynchronously (i.e. non-blocking for the thread launching the application), as shown below:
+It is also possible to instead launch the application asynchronously (i.e., non-blocking for the thread launching the application), as shown below:
 
 `````{tab-set}
 ````{tab-item} C++
@@ -126,22 +126,21 @@ This is also illustrated in the [ping_simple_run_async](https://github.com/nvidi
 
 An application can be configured at different levels:
 
-1. {ref}`providing the GXF extensions that need to be loaded<loading-gxf-extensions>` (when using {ref}`GXF operators<wrap-gxf-codelet-as-operator>`)
+1. {ref}`providing the GXF extensions that need to be loaded<loading-gxf-extensions>` (when using {ref}`GXF operators<wrap-gxf-codelet-as-operator>`).
 2. configuring parameters for your application, including for:
-   1. {ref}`the operators<configuring-app-operators>` in the workflow
-   2. {ref}`the scheduler<configuring-app-scheduler>` of your application
-3. {ref}`configuring some runtime properties<configuring-app-runtime>` when deploying for production
+   a. {ref}`the operators<configuring-app-operators>` in the workflow.
+   b. {ref}`the scheduler<configuring-app-scheduler>` of your application.
+3. {ref}`configuring some runtime properties<configuring-app-runtime>` when deploying for production.
 
 The sections below will describe how to configure each of them, starting with a native support for YAML-based configuration for convenience.
 
 (yaml-config-support)=
-
-### YAML Configuration support
+### YAML configuration support
 
 Holoscan supports loading arbitrary parameters from a YAML configuration file at runtime, making it convenient to configure each item listed above, or other custom parameters you wish to add on top of the existing API. For C++ applications, it also provides the ability to change the behavior of your application without needing to recompile it.
 
 :::{note}
-Usage of the YAML utility is optional. Configurations can be hardcoded in your program, or done using any parser of your choosing.
+Usage of the YAML utility is optional. Configurations can be hardcoded in your program, or done using any parser that you choose.
 :::
 
 Here is an example YAML configuration:
@@ -209,8 +208,8 @@ std::cout << "dict_param['key1']: " << dict_nested_param << std::endl;
 ````{tab-item} Python
 
 - The {py:func}`~holoscan.core.Fragment.config` method takes the path to the YAML configuration file. If the input path is relative, it will be relative to the current working directory.
-- The {py:func}`~holoscan.core.Fragment.kwargs` method return a regular python dict for a given key in the YAML file.
-  - *Advanced*: this method wraps the {py:func}`~holoscan.core.Fragment.from_config` method similar to the C++ equivalent, which returns an {py:class}`~holoscan.core.ArgList` object if the key is pointing to a map item, or an {py:class}`~holoscan.core.Arg` object if the key is pointing to a scalar item. An {py:class}`~holoscan.core.Arg` object can be cast to the desired type (e.g., `str(app.from_config("string_param"))`).
+- The {py:func}`~holoscan.core.Fragment.kwargs` method return a regular Python dict for a given key in the YAML file.
+  - **Advanced**: this method wraps the {py:func}`~holoscan.core.Fragment.from_config` method similar to the C++ equivalent, which returns an {py:class}`~holoscan.core.ArgList` object if the key is pointing to a map item, or an {py:class}`~holoscan.core.Arg` object if the key is pointing to a scalar item. An {py:class}`~holoscan.core.Arg` object can be cast to the desired type (e.g., `str(app.from_config("string_param"))`).
 - The {py:func}`~holoscan.core.Fragment.config_keys` method returns a set of the key names accessible via {py:func}`~holoscan.core.Fragment.from_config`.
 
 ```{code-block} python
@@ -244,7 +243,7 @@ print(f"dict_param['key_1']: {dict_nested_param}")
 # dict_param['key_1']: 'value_1'
 ```
 :::{warning}
-{py:func}`~holoscan.core.Fragment.from_config` cannot be used as inputs to the {py:mod}`built-in operators<holoscan.operators>` at this time, it's therefore recommended to use {py:func}`~holoscan.core.Fragment.kwargs` in Python.
+{py:func}`~holoscan.core.Fragment.from_config` cannot be used as inputs to the {py:mod}`built-in operators<holoscan.operators>` at this time. Therefore, it's recommended to use {py:func}`~holoscan.core.Fragment.kwargs` in Python.
 :::
 ````
 `````
@@ -304,7 +303,6 @@ Operators are defined in the `compose()` method of your application. They are no
 Operators have three type of fields which can be configured: parameters, conditions, and resources.
 
 (configuring-app-operator-parameters)=
-
 #### Configuring operator parameters
 
 Operators could have parameters defined in their `setup` method to better control their behavior (see details when [creating your own operators](./holoscan_create_operator.md)). The snippet below would be the implementation of this method for a minimal operator named `MyOp`, that takes a string and a boolean as parameters; we'll ignore any extra details for the sake of this example:
@@ -411,7 +409,7 @@ def compose(self):
   )
 
   # Note: We're using from_config above since we can't merge automatically with kwargs
-  # as this would create duplicated keys. However, we recommend using kwargs in python
+  # as this would create duplicated keys. However, we recommend using kwargs in Python
   # to avoid limitations with wrapped operators, so the code below is preferred.
 
   # Same as above
@@ -423,12 +421,11 @@ def compose(self):
 ````
 
 (configuring-app-operator-conditions)=
-
 #### Configuring operator conditions
 
 By default, operators with no input ports will continuously run, while operators with input ports will run as long as they receive inputs (as they're configured with the [`MessageAvailableCondition`](./components/conditions.md#messageavailablecondition)).
 
-To change that behavior, one or more other [conditions](./components/conditions.md) classes can be passed to the constructor of an operator to define when it should execute.
+To change that behavior, one or more other [conditions](./components/conditions.md)' classes can be passed to the constructor of an operator to define when it should execute.
 
 For example, we set three conditions on this operator `my_op`:
 
@@ -465,7 +462,7 @@ def compose(self):
 ````
 
 :::{tip}
-This is also illustrated in the [conditions](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions) examples.
+This is also illustrated in the [conditions](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions)' examples.
 :::
 
 :::{note}
@@ -473,7 +470,6 @@ You'll need to specify a unique name for the conditions if there are multiple co
 :::
 
 (configuring-app-operator-resources)=
-
 #### Configuring operator resources
 
 Some [resources](./components/resources.md) can be passed to the operator's constructor, typically an [allocator](./components/resources.md#allocator) passed as a regular parameter.
@@ -715,21 +711,17 @@ This is also illustrated in the [multithread](https://github.com/nvidia-holoscan
 :::
 
 (configuring-app-runtime)=
-
 ### Configuring runtime properties
 
 As described [below](building-and-running-your-application), applications can run simply by executing the C++ or Python application manually on a given node, or by [packaging it](./holoscan_packager.md) in a [HAP container](./cli/hap.md). With the latter, runtime properties need to be configured: refer to the [App Runner Configuration](./cli/run_config.md) for details.
 
 (application-workflows)=
-
 ## Application Workflows
 
 :::{note}
 Operators are initialized according to the [topological order](https://en.wikipedia.org/wiki/Topological_sorting)
 of its fragment-graph. When an application runs, the operators are executed in the same topological order.
-Topological ordering of the graph ensures that all the data dependencies of an operator are satisfied before its
-instantiation and execution. Currently, we do not support specifying a different and explicit
-instantiation and execution order of the operators.
+Topological ordering of the graph ensures that all the data dependencies of an operator are satisfied before its instantiation and execution. Currently, we do not support specifying a different and explicit instantiation and execution order of the operators.
 :::
 
 ### One-operator Workflow
@@ -965,9 +957,7 @@ add_flow(op3, op1);
 ```
 ````
 
-If there is a cycle in the graph with an implicit root operator which has no input port, then the initialization and execution
-orders of the operators are still topologically sorted as far as possible until the cycle needs to
-be explicitly broken. An example is given below:
+If there is a cycle in the graph with an implicit root operator which has no input port, then the initialization and execution orders of the operators are still topologically sorted as far as possible until the cycle needs to be explicitly broken. An example is given below:
 
 ![Fragment graph with a cycle and an implicit root operator](Cycle_Implicit_Root.png)
 
@@ -981,9 +971,9 @@ be explicitly broken. An example is given below:
 You can build your C++ application using CMake, by calling `find_package(holoscan)` in your `CMakeLists.txt` to load the SDK libraries. Your executable will need to link against:
 - `holoscan::core`
 - any operator defined outside your `main.cpp` which you wish to use in your app workflow, such as:
-  - SDK [built-in operators](./holoscan_operators_extensions.md#operators) under the `holoscan::ops` namespace
-  - operators created separately in your project with `add_library`
-  - operators imported externally using with `find_library` or `find_package`
+  - SDK [built-in operators](./holoscan_operators_extensions.md#operators) under the `holoscan::ops` namespace.
+  - operators created separately in your project with `add_library`.
+  - operators imported externally using with `find_library` or `find_package`.
 
 ```{code-block} cmake
 :caption: <src_dir>/CMakeLists.txt
@@ -1010,8 +1000,8 @@ target_link_libraries(my_app
 
 :::{tip}
 This is also illustrated in all the examples:
-- in `CMakeLists.txt` for the SDK installation directory - `/opt/nvidia/holoscan/examples`
-- in `CMakeLists.min.txt` for the SDK [source directory](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#readme)
+- in `CMakeLists.txt` for the SDK installation directory - `/opt/nvidia/holoscan/examples`.
+- in `CMakeLists.min.txt` for the SDK [source directory](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#readme).
 :::
 
 Once your `CMakeLists.txt` is ready in `<src_dir>`, you can build in `<build_dir>` with the command line below. You can optionally pass `Holoscan_ROOT` if the SDK installation you'd like to use differs from the `PATHS` given to `find_package(holoscan)` above.
@@ -1031,7 +1021,7 @@ Python applications do not require building. Simply ensure that:
 - Any external operators are available in modules in your `dist-packages` or contained in `PYTHONPATH`.
 
 :::{note}
-While python applications do not need to be built, they might depend on operators that wrap C++ operators. All python operators built-in in the SDK already ship with the python bindings pre-built. Follow {ref}`this section<python-wrapped-operators>` if you are wrapping C++ operators yourself to use in your python application.
+While Python applications do not need to be built, they might depend on operators that wrap C++ operators. All Python operators built-in in the SDK already ship with the Python bindings pre-built. Follow {ref}`this section<python-wrapped-operators>` if you are wrapping C++ operators yourself to use in your Python application.
 :::
 
 You can then run your application by running `python3 my_app.py`.
@@ -1040,7 +1030,7 @@ You can then run your application by running `python3 my_app.py`.
 `````
 
 :::{note}
-Given a CMake project, a pre-built executable, or a python application, you can also use the [Holoscan CLI](./cli/cli.md) to [package and run your Holoscan application](./holoscan_packager.md) in a OCI-compliant container image.
+Given a CMake project, a pre-built executable, or a Python application, you can also use the [Holoscan CLI](./cli/cli.md) to [package and run your Holoscan application](./holoscan_packager.md) in a OCI-compliant container image.
 :::
 
 ## Dynamic Application Metadata
@@ -1061,6 +1051,15 @@ app = holoscan::make_application<MyApplication>();
 app->is_metadata_enabled(true);
 
 app->run();
+```
+````
+````{tab-item} Python
+```cpp
+app = MyApplication()
+
+# Enable metadata feature before calling app.run() or app.run_async()
+app.is_metadata_enabled = True
+app.run()
 ```
 ````
 `````

@@ -10,10 +10,10 @@ The [Holoscan App Packager](./cli/package.md), included as part of the [Holoscan
 
 Ensure the following are installed in the environment where you want to run the [CLI](./cli/cli.md):
 
-- [**PIP dependencies**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/requirements.txt) (automatically installed with the holoscan python wheel)
+- [**PIP dependencies**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/requirements.txt): This is automatically installed with the Holoscan Python wheel.
 - [**NVIDIA Container Toolkit with Docker**](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#docker)
   - Developer Kits (aarch64): already included in IGX Software and JetPack
-  - x86_64: tested with NVIDIA Container Toolkit 1.13.3 w/Docker v24.0.1
+  - x86_64: tested with NVIDIA Container Toolkit 1.13.3 with Docker v24.0.1
 - **Docker BuildX plugin**
   1. Check if it is installed:
 
@@ -46,7 +46,7 @@ Ensure the following are installed in the environment where you want to run the 
      ```
 
 - [**QEMU**](https://github.com/multiarch/qemu-user-static) *(Optional)*
-  - used for packaging container images of different architectures than the host (example: x86_64 -> arm64)
+  - used for packaging container images of different architectures than the host (example: x86_64 -> arm64).
 
 ### CLI Installation
 
@@ -226,6 +226,136 @@ Additional arguments are required when launching the container to enable the pac
    ```bash
    holoscan package --platform x64-workstation --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
    ```
+
+### Additional Requirements for Non-Distributed Applications
+
+In addition to using HAP-defined environment variables, applications must also handle parsing the `—config` argument when packaging a non-distributed application.
+
+
+   - **Handle `--config` argument**
+
+     `````{tab-set}
+     ````{tab-item} C++
+
+     Define a `parse_arguments` function to handle parsing the data path and the config file path:
+
+     ```cpp
+      bool parse_arguments(int argc, char** argv, std::string& data_path, std::string& config_path) {
+        static struct option long_options[] = {
+            {"data", required_argument, 0, 'd'}, {"config", required_argument, 0, 'c'}, {0, 0, 0, 0}};
+
+        while (int c = getopt_long(argc, argv, "d:c:", long_options, NULL)) {
+          if (c == -1 || c == '?') break;
+
+          switch (c) {
+            case 'c':
+              config_path = optarg;
+              break;
+            case 'd':
+              data_path = optarg;
+              break;
+            default:
+              holoscan::log_error("Unhandled option '{}'", static_cast<char>(c));
+              return false;
+          }
+        }
+
+        return true;
+      }
+     ```
+
+     Use the `parse_arguments()` function defined above in the `main` function:
+
+     ```cpp
+      int main(int argc, char** argv) {
+      // Parse the arguments
+      std::string config_path = "";
+      std::string data_directory = "";
+      if (!parse_arguments(argc, argv, data_directory, config_path)) { return 1; }
+      if (data_directory.empty()) {
+        // Get the input data environment variable
+        auto input_path = std::getenv("HOLOSCAN_INPUT_PATH");
+        if (input_path != nullptr && input_path[0] != '\0') {
+          data_directory = std::string(input_path);
+        } else {
+          HOLOSCAN_LOG_ERROR(
+              "Input data not provided. Use --data or set HOLOSCAN_INPUT_PATH environment variable.");
+          exit(-1);
+        }
+      }
+
+      if (config_path.empty()) {
+        // Get the input data environment variable
+        auto config_file_path = std::getenv("HOLOSCAN_CONFIG_PATH");
+        if (config_file_path == nullptr || config_file_path[0] == '\0') {
+          auto config_file = std::filesystem::canonical(argv[0]).parent_path();
+          config_path = config_file / std::filesystem::path("app-config.yaml");
+        } else {
+          config_path = config_file_path;
+        }
+      }
+
+      auto app = holoscan::make_application<App>();
+
+      HOLOSCAN_LOG_INFO("Using configuration file from {}", config_path);
+      app->config(config_path);
+
+      HOLOSCAN_LOG_INFO("Using input data from {}", data_directory);
+      app->set_datapath(data_directory);
+
+      app->run();
+
+      return 0;
+      }
+     ```
+     ````
+
+     ````{tab-item} Python
+
+     Define a `parse_arguments` function to parse the arguments:
+
+     ```python
+      def parse_arguments() -> argparse.Namespace:
+          parser = argparse.ArgumentParser(description="My Application")
+          parser.add_argument(
+              "--data",
+              type=str,
+              required=False,
+              default=os.environ.get("HOLOSCAN_INPUT_PATH", None),
+              help="Input dataset",
+          )
+          parser.add_argument(
+              "--config",
+              type=str,
+              required=False,
+              default=os.environ.get(
+                  "HOLOSCAN_CONFIG_PATH",
+                  os.path.join(os.path.dirname(__file__), "app-config.yaml"),
+              ),
+              help="Application configurations",
+          )
+
+          args, _ = parser.parse_known_args()
+
+          return args
+     ```
+
+     Parse the arguments using `parse_arguments()` defined above and start the application:
+     ```python
+      if __name__ == "__main__":
+          args = parse_arguments()
+
+          if args.data is None:
+              logger.error(
+                  "Input data not provided. Use --data or set HOLOSCAN_INPUT_PATH environment variable."
+              )
+              sys.exit(-1)
+
+          app = MyApp(args.data)
+          app.config(args.config)
+          app.run()
+     ```
+     `````
 
 ### Common Issues When Using Holoscan Packager
 

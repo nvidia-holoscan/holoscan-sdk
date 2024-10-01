@@ -76,10 +76,16 @@ if(HOLOSCAN_BUILD_TESTS)
 
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
+
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING "${CONFIG_STRING}")
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_video_replayer_config.yaml)
   file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
+
+  # now also write a second config with dual_window set to true
+  string(REPLACE "dual_window: false" "dual_window: true" CONFIG_STRING "${CONFIG_STRING}")
+  set(DUAL_WINDOW_CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_video_replayer_dual_config.yaml)
+  file(WRITE ${DUAL_WINDOW_CONFIG_FILE} "${CONFIG_STRING}")
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT video_replayer_test.cpp
@@ -134,4 +140,12 @@ if(HOLOSCAN_BUILD_TESTS)
   PASS_REGULAR_EXPRESSION "Valid video output!"
   )
 
+  # Add the dual-window test and make sure it runs
+  add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DUAL_WINDOW_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer ${DUAL_WINDOW_CONFIG_FILE}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DUAL_WINDOW_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+  )
 endif()

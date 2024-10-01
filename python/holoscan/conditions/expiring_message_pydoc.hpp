@@ -49,24 +49,6 @@ name : str, optional
     The name of the condition.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the condition.
-
-Returns
--------
-str
-    The GXF type name of the condition
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the condition.
-)doc")
-
 PYDOC(receiver, R"doc(
 The receiver associated with the condition.
 )doc")
@@ -81,13 +63,6 @@ The maximum delay from first message to wait before submitting workload anyway.
 
 PYDOC(max_delay_ns, R"doc(
 The maximum delay from first message to wait before submitting workload anyway.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the condition
-
-This method is called only once when the condition is created for the first
-time, and uses a light-weight initialization.
 )doc")
 
 }  // namespace ExpiringMessageAvailableCondition

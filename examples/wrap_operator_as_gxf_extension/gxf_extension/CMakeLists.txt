@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +32,7 @@ wrap_operator_as_gxf_extension(
   EXTENSION_NAME "PingTxNativeOpExtension"
   EXTENSION_DESCRIPTION "Ping Tx Native Operator extension"
   EXTENSION_AUTHOR "NVIDIA"
-  EXTENSION_VERSION "0.5.0"
+  EXTENSION_VERSION "${HOLOSCAN_BUILD_VERSION}"
   EXTENSION_LICENSE "Apache-2.0"
   EXTENSION_TARGET_NAME "gxf_wrapped_ping_tx_native_op" # optional, defaults to EXTENSION_NAME lowercase
   EXTENSION_TARGET_PROPERTIES
@@ -57,7 +57,7 @@ wrap_operator_as_gxf_extension(
   EXTENSION_NAME "PingRxNativeOpExtension"
   EXTENSION_DESCRIPTION "Ping Rx Native Operator extension"
   EXTENSION_AUTHOR "NVIDIA"
-  EXTENSION_VERSION "0.5.0"
+  EXTENSION_VERSION "${HOLOSCAN_BUILD_VERSION}"
   EXTENSION_LICENSE "Apache-2.0"
   EXTENSION_TARGET_NAME "gxf_wrapped_ping_rx_native_op" # optional, defaults to EXTENSION_NAME lowercase
   EXTENSION_TARGET_PROPERTIES
@@ -67,19 +67,15 @@ wrap_operator_as_gxf_extension(
 
 ## Installing ping_tx_native_op
 
-# Set RPATH to find extensions and libs
-file(RELATIVE_PATH gxf_holoscan_wrapper_lib_relative_path
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}/gxf_extensions
-)
+file(RELATIVE_PATH install_lib_relative_path ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR})
 set(ping_tx_native_op_relative_path ../ping_tx_native_op)
 set_target_properties(gxf_wrapped_ping_tx_native_op_lib
   PROPERTIES
-  INSTALL_RPATH "\$ORIGIN/${ping_tx_native_op_relative_path}:\$ORIGIN/${gxf_holoscan_wrapper_lib_relative_path}"
+  INSTALL_RPATH "\$ORIGIN:\$ORIGIN/../HoloscanWrapperExtension:\$ORIGIN/${ping_tx_native_op_relative_path}:\$ORIGIN/${install_lib_relative_path}:\$ORIGIN/${install_lib_relative_path}/gxf_extensions"
 )
 set_target_properties(gxf_wrapped_ping_tx_native_op
   PROPERTIES
-  INSTALL_RPATH "\$ORIGIN:\$ORIGIN/${gxf_holoscan_wrapper_lib_relative_path}"
+  INSTALL_RPATH "\$ORIGIN:\$ORIGIN/../HoloscanWrapperExtension:\$ORIGIN/${install_lib_relative_path}:\$ORIGIN/${install_lib_relative_path}/gxf_extensions"
 )
 
 # Install following the relative folder path
@@ -93,18 +89,15 @@ install(TARGETS gxf_wrapped_ping_tx_native_op gxf_wrapped_ping_tx_native_op_lib
 ## Installing ping_rx_native_op
 
 # Set RPATH to find extensions and libs
-file(RELATIVE_PATH gxf_holoscan_wrapper_lib_relative_path
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}/gxf_extensions
-)
+file(RELATIVE_PATH install_lib_relative_path ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR})
 set(ping_rx_native_op_relative_path ../ping_rx_native_op)
 set_target_properties(gxf_wrapped_ping_rx_native_op_lib
   PROPERTIES
-  INSTALL_RPATH "\$ORIGIN/${ping_rx_native_op_relative_path}:\$ORIGIN/${gxf_holoscan_wrapper_lib_relative_path}"
+  INSTALL_RPATH "\$ORIGIN:\$ORIGIN/../HoloscanWrapperExtension:\$ORIGIN/${ping_rx_native_op_relative_path}:\$ORIGIN/${install_lib_relative_path}:\$ORIGIN/${install_lib_relative_path}/gxf_extensions"
 )
 set_target_properties(gxf_wrapped_ping_rx_native_op
   PROPERTIES
-  INSTALL_RPATH "\$ORIGIN:\$ORIGIN/${gxf_holoscan_wrapper_lib_relative_path}"
+  INSTALL_RPATH "\$ORIGIN:\$ORIGIN/../HoloscanWrapperExtension:\$ORIGIN/${install_lib_relative_path}:\$ORIGIN/${install_lib_relative_path}/gxf_extensions"
 )
 
 # Install following the relative folder path

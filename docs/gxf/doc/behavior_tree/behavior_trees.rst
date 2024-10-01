@@ -18,7 +18,7 @@ each other.
 General Concept
 ---------------
 
-Behavior trees consist of n-ary trees of entities that can have zero or more children. The conditional execution of parent entity is based on the status of execution of the children. A behavior tree is graphically represented as a directed tree in which
+Behavior trees consist of n-ary trees of entities that can have zero or more children. The conditional execution of parent entity is based on the status of execution of the children. A behavior tree is graphically represented as a directed tree in which
 the nodes are classified as root, control flow nodes, or execution nodes
 (tasks). For each pair of connected nodes, the outgoing node is called
 parent and the incoming node is called child.
@@ -26,9 +26,9 @@ parent and the incoming node is called child.
 The execution of a behavior tree starts from the root which sends ticks
 with a certain frequency to its child. When the execution of a node in
 the behavior tree is allowed, it returns to the parent a
-status running if its execution has not finished yet, success if it has
-achieved its goal, or failure otherwise. The behavior tree also uses a
-controller component for controlling the entity’s termination policy and
+status ``running`` if its execution has not finished yet, ``success`` if it has
+achieved its goal, or ``failure`` otherwise. The behavior tree also uses a
+controller component for controlling the entity's termination policy and
 the execution status. One of the controller behaviors currently
 implemented for Behavior Tree is
 :code:`EntityCountFailureRepeatController`, which repeats the entity on
@@ -59,14 +59,14 @@ desired constant status.
 | constant\_status   | The desired status to switch to during each tick time.   |
 +--------------------+----------------------------------------------------------+
 
-An example diagram depicting Constant behavior used in conjunction with a Sequence behavior defined for root entity is shown below
+An example diagram depicting Constant behavior used in conjunction with a Sequence behavior defined for root entity is shown below:
 
 .. image:: images/constant_behavior.png
    :width: 6.50000in
    :height: 2.31806in
 
 Here, the child1 is configured to return a constant status of success
-(GXF\_BEHAVIOR\_SUCCESS) and child2 returns failure (GXF\_BEHAVIOR\_FAILURE), resulting into the root node (configured to exhibit sequence behavior) returning GXF\_BEHAVIOR\_FAILURE.
+(``GXF\_BEHAVIOR\_SUCCESS``) and child2 returns failure (``GXF\_BEHAVIOR\_FAILURE``), resulting into the root node (configured to exhibit sequence behavior) returning ``GXF\_BEHAVIOR\_FAILURE``.
 
 The controller for each child can be configured to repeat the execution
 on failure. A code snippet of configuring the example described is shown below.
@@ -127,9 +127,9 @@ customized using the parameters below.
 +-----------------------+-------------------------------------------------------------------------------------------------------------------------------+
 
 The diagram below shows a graphical representation of a parallel
-behavior configured with failure\_threshold configured as -1. Hence, the
-root node returns GXF\_BEHAVIOR\_SUCCESS even if one child returns a
-failure status.
+behavior configured with ``failure\_threshold`` configured as ``-1``. Hence, the
+root node returns ``GXF\_BEHAVIOR\_SUCCESS`` even if one child returns a
+``failure`` status.
 
 .. image:: images/parallel_behavior.png
    :width: 6.50000in
@@ -161,7 +161,7 @@ A code snippet to configure the example described is shown below.
 Repeat Behavior
 ~~~~~~~~~~~~~~~
 
-Repeats its only child entity. By default, won’t repeat when the child
+Repeats its only child entity. By default, won't repeat when the child
 entity fails. This can be customized using the parameters below.
 
 +--------------------------+------------------------------------------------------------+
@@ -219,15 +219,15 @@ this codelet fails.
 +--------------+---------------------------------------------------------+
 
 The diagram below shows a graphical representation of a Selector
-behavior. The root entity starts child\_1, child\_2 and child\_3 in a
-sequence. Although child\_1 and child\_2 fail, the root entity will
-return success since child\_3 returns successfully.
+behavior. The root entity starts ``child\_1``, ``child\_2``, and ``child\_3`` in a
+sequence. Although ``child\_1`` and ``child\_2`` fail, the root entity will
+return ``success`` since ``child\_3`` returns successfully.
 
 .. image:: images/selector_behavior.png
   :width: 6.50000in
   :height: 3.08819in
 
-A code snippet to configure a selector behavior is as shown below -
+A code snippet to configure a selector behavior is as shown below.
 
 .. code-block:: yaml
 
@@ -281,15 +281,15 @@ one child entity fails.
 +--------------+---------------------------------------------------------+
 
 The diagram below shows a graphical representation of a Sequence
-behavior. The root entity starts child\_1, child\_2 and child\_3 in a
-sequence. Although child\_1 and child\_2 pass, the root entity will
-return failure since child\_3 returns failure.
+behavior. The root entity starts ``child\_1``, ``child\_2`` and ``child\_3`` in a
+sequence. Although ``child\_1`` and ``child\_2`` pass, the root entity will
+return failure since ``child\_3`` returns ``failure``.
 
 .. image:: images/sequence_behavior.png
   :width: 6.50000in
   :height: 3.08819in
 
-A code snippet to configure a sequence behavior is as shown below -
+A code snippet to configure a sequence behavior is as shown below.
 
 .. code-block:: yaml
 
@@ -312,7 +312,7 @@ A code snippet to configure a sequence behavior is as shown below -
 Switch Behavior
 ~~~~~~~~~~~~~~~
 
-Runs the child entity with the index defined as desired\_behavior.
+Runs the child entity with the index defined as ``desired\_behavior``.
 
 +---------------------+----------------------------------------------------------------+
 | Parameter           | Description                                                    |
@@ -325,7 +325,7 @@ Runs the child entity with the index defined as desired\_behavior.
 +---------------------+----------------------------------------------------------------+
 
 In the code snippet shown below, the desired behavior of the root entity
-is designated to be the the child at index 1. (scene). Hence, that is
+is designated to be the the child at index 1 (scene). Hence, that is
 the entity that is run.
 
 .. code-block:: yaml
@@ -369,7 +369,7 @@ Timer Behavior
 ~~~~~~~~~~~~~~
 
 Waits for a specified amount of time delay and switches to the
-configured result switch\_status afterwards.
+configured result ``switch\_status`` afterwards.
 
 +----------------+----------------------------------------------------------+
 | Parameter      | Description                                              |
@@ -390,7 +390,7 @@ configured delay period. The root entity hence returns failure.
   :width: 5.84167in
   :height: 3.34167in
 
-A code snippet for the same shown below -
+A code snippet for the same shown below.
 
 .. code-block:: yaml
 

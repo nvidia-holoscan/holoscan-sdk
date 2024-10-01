@@ -164,8 +164,8 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
       }
 
       std::vector<int> dims;
-      for (unsigned int i = 0; i < in_tensor_gxf.shape().rank(); ++i)
-        dims.push_back(in_tensor_gxf.shape().dimension(i));
+      for (unsigned int di = 0; di < in_tensor_gxf.shape().rank(); ++di)
+        dims.push_back(in_tensor_gxf.shape().dimension(di));
 
       size_t buffer_size = std::accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
       dims_per_tensor[in_tensors[i]] = std::move(dims);

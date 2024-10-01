@@ -137,7 +137,8 @@ class GXFExtensionRegistrar {
 
     const nvidia::gxf::Expected<void> result = factory_->add<T, Base>(tid, description);
     if (!result) {
-      HOLOSCAN_LOG_ERROR("Unable to add component to the GXF extension: {}", result.error());
+      HOLOSCAN_LOG_ERROR("Unable to add component to the GXF extension: {}",
+                         GxfResultStr(result.error()));
       return false;
     }
 
@@ -164,7 +165,8 @@ class GXFExtensionRegistrar {
 
     const nvidia::gxf::Expected<void> result = factory_->add<T>(tid, description);
     if (!result) {
-      HOLOSCAN_LOG_ERROR("Unable to add type to the GXF extension: {}", result.error());
+      HOLOSCAN_LOG_ERROR("Unable to add type to the GXF extension: {}",
+                         GxfResultStr(result.error()));
       return false;
     }
 
@@ -185,7 +187,8 @@ class GXFExtensionRegistrar {
 
     auto check_result = factory_->checkInfo();
     if (!check_result) {
-      HOLOSCAN_LOG_ERROR("Failed to check the GXF extension information: {}", check_result.error());
+      HOLOSCAN_LOG_ERROR("Failed to check the GXF extension information: {}",
+                         GxfResultStr(check_result.error()));
       return false;
     }
 
@@ -240,7 +243,8 @@ class GXFExtensionRegistrar {
     const nvidia::gxf::Expected<void> result = factory_->setInfo(
         extension_tid_, extension_name, extension_description, "NVIDIA", "1.0.0", "Apache 2.0");
     if (!result) {
-      HOLOSCAN_LOG_ERROR("Unable to set the GXF extension information: {}", result.error());
+      HOLOSCAN_LOG_ERROR("Unable to set the GXF extension information: {}",
+                         GxfResultStr(result.error()));
       return;
     }
   }

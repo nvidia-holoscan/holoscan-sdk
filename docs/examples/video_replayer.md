@@ -7,12 +7,12 @@ applications.
 
 In this example we'll cover:
 
-- how to load a video file from disk using **VideoStreamReplayerOp** operator
-- how to display video using **HolovizOp** operator
-- how to configure your operator's parameters using a YAML configuration file
+- How to load a video file from disk using **VideoStreamReplayerOp** operator.
+- How to display video using **HolovizOp** operator.
+- How to configure your operator's parameters using a YAML configuration file.
 
 :::{note}
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ## Operators and Workflow
@@ -41,22 +41,21 @@ The built-in video stream replayer operator can be used to replay a video stream
 
 This operator processes the encoded file sequentially and supports realtime, faster than realtime, or slower than realtime playback of prerecorded data. The input data can optionally be repeated to loop forever or only for a specified count. For more details, see {cpp:class}`~holoscan::ops::VideoStreamReplayerOp`.
 
-We will use the replayer to read gxf entities from disk and send the frames downstream to the Holoviz operator.
+We will use the replayer to read GXF entities from disk and send the frames downstream to the Holoviz operator.
 
 ## Holoviz Operator
 
-The built-in Holoviz operator provides the functionality to composite real time streams of frames with multiple different other layers like segmentation mask layers, geometry layers and GUI layers.
+The built-in Holoviz operator provides the functionality to composite realtime streams of frames with multiple different other layers like segmentation mask layers, geometry layers and GUI layers.
 
-We will use Holoviz to display frames that have been sent by the replayer operator to it's "receivers" port which can receive any number of inputs.  In more intricate workflows, this port can receive multiple streams of input data where, for example, one stream is the original video data while other streams detect objects in the video to create bounding boxes and/or text overlays.
+We will use Holoviz to display frames that have been sent by the replayer operator to its "receivers" port which can receive any number of inputs.  In more intricate workflows, this port can receive multiple streams of input data where, for example, one stream is the original video data, while other streams detect objects in the video to create bounding boxes and/or text overlays.
 
 
 (video-replayer-application-config)=
 ## Application Configuration File (YAML)
 
-The SDK supports reading an optional YAML configuration file and can be used to customize the application's
-workflow and operators.  For more complex workflows, it may be helpful to use the application configuration file to help separate operator parameter settings from your code.  See {ref}`configuring-an-application` for additional details.
+The SDK supports reading an optional YAML configuration file and can be used to customize the application's workflow and operators.  For more complex workflows, it may be helpful to use the application configuration file to help separate operator parameter settings from your code.  See {ref}`configuring-an-application` for additional details.
 
-:::{tip} For C++ applications, the configuration file can be a nice way to set the behavior of the application at runtime without having to recompile the code.
+:::{tip} For C++ applications, the configuration file offers a convenient way to set the behavior of the application at runtime without needing to recompile the code.
 :::
 
 This example uses the following configuration file to configure the parameters for the replayer and Holoviz operators.  The full list of parameters can
@@ -125,13 +124,11 @@ int main(int argc, char** argv) {
   return 0;
 }
 ```
-- The built-in **VideoStreamReplayerOp** and **HolovizOp** operators are included from lines 1 and 2 respectively.
-- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from
-  the YAML configuration file using the call to `from_config()` (line 11).
-- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the
-  YAML configuration file using the call to `from_config()` (line 12).
+- The built-in **VideoStreamReplayerOp** and **HolovizOp** operators are included from lines 1 and 2, respectively.
+- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from the YAML configuration file using the call to `from_config()` (line 11).
+- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the YAML configuration file using the call to `from_config()` (line 12).
 - The "output" port of "replayer" operator is connected to the "receivers" port of the "holoviz" operator and defines the application workflow (line 34).
-- The application's YAML configuration file contains the parameters for our operators, and is loaded on line 28. If no argument is passed to the executable, the application looks for a file with the name "video_replayer.yaml" in the same directory as the executable (lines 21-22), otherwise it treats the argument as the path to the app's YAML configuration file (lines 23-25).
+- The application's YAML configuration file contains the parameters for our operators, and is loaded on line 28. If no argument is passed to the executable, the application looks for a file with the name "video_replayer.yaml" in the same directory as the executable (lines 21-22), otherwise it treats the argument as the path to the application's YAML configuration file (lines 23-25).
 ````
 ````{tab-item} Python
 ```{code-block} python
@@ -187,15 +184,11 @@ if __name__ == "__main__":
     main(config_file=config_file)
 ```
 - The built-in **VideoStreamReplayerOp** and **HolovizOp** operators are imported on line 5.
-- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from
-  the YAML configuration file using `**self.kwargs()` (lines 28-30).
-- For the python script, the path to the gxf entity video data is not set in the application configuration file but
-determined by the code on lines 7 and 23 and is passed directly as the "directory" argument (line 29). This allows more
-flexibility for the user to run the script from any directory by setting the `HOLOSCAN_INPUT_PATH` directory (line 7).
-- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the
-  YAML configuration file using `**self.kwargs()` (line 31).
+- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from the YAML configuration file using `**self.kwargs()` (lines 28-30).
+- For the Python script, the path to the GXF entity video data is not set in the application configuration file, but determined by the code on lines 7 and 23 and is passed directly as the "directory" argument (line 29). This allows more flexibility for the user to run the script from any directory by setting the `HOLOSCAN_INPUT_PATH` directory (line 7).
+- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the YAML configuration file using `**self.kwargs()` (line 31).
 - The "output" port of "replayer" operator is connected to the "receivers" port of the "holoviz" operator and defines the application workflow (line 34).
-- The application's YAML configuration file contains the parameters for our operators, and is loaded on line 45. If no argument is passed to the python script, the application looks for a file with the name "video_replayer.yaml" in the same directory as the script (line 39), otherwise it treats the argument as the path to the app's YAML configuration file (lines 41-42).
+- The application's YAML configuration file contains the parameters for our operators, and is loaded on line 45. If no argument is passed to the Python script, the application looks for a file with the name "video_replayer.yaml" in the same directory as the script (line 39). Otherwise it treats the argument as the path to the app's YAML configuration file (lines 41-42).
 ````
 `````
 

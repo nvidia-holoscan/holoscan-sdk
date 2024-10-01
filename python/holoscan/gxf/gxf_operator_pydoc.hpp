@@ -61,14 +61,6 @@ PYDOC(gxf_cid, R"doc(
 The GXF component ID.
 )doc")
 
-PYDOC(setup, R"doc(
-Operator setup method.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the operator.
-)doc")
-
 PYDOC(description, R"doc(
 YAML formatted string describing the operator.
 )doc")

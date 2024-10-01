@@ -27,6 +27,14 @@
 
             "holoscan::viz::g_im_gui_context";
 
+            "holoscan::viz::SetKeyCallback(void*, void (*)(void*, holoscan::viz::Key, holoscan::viz::KeyAndButtonAction, holoscan::viz::KeyModifiers))";
+            "holoscan::viz::SetUnicodeCharCallback(void*, void (*)(void*, unsigned int))";
+            "holoscan::viz::SetMouseButtonCallback(void*, void (*)(void*, holoscan::viz::MouseButton, holoscan::viz::KeyAndButtonAction, holoscan::viz::KeyModifiers))";
+            "holoscan::viz::SetScrollCallback(void*, void (*)(void*, double, double))";
+            "holoscan::viz::SetCursorPosCallback(void*, void (*)(void*, double, double))";
+            "holoscan::viz::SetFramebufferSizeCallback(void*, void (*)(void*, int, int))";
+            "holoscan::viz::SetWindowSizeCallback(void*, void (*)(void*, int, int))";
+
             "holoscan::viz::SetCudaStream(CUstream_st*)";
 
             "holoscan::viz::GetPresentModes(unsigned int*, holoscan::viz::PresentMode*)";

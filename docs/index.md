@@ -88,6 +88,7 @@ gxf/doc/index.md
 
 flow_tracking
 gxf_job_statistics
+nsight_profiling
 latency_tool.rst
 ```
 

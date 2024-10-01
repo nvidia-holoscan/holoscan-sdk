@@ -22,8 +22,13 @@
 
 #include "gxf/std/codelet.hpp"
 #include "gxf/core/parameter_parser_std.hpp"
+#include "holoscan/profiler/profiler.hpp"
 
 namespace holoscan::gxf {
+
+PROF_DEFINE_EVENT(event_start, "start", 0x76, 0xB9, 0x00);
+PROF_DEFINE_EVENT(event_stop, "stop", 0xFE, 0x27, 0x12);
+PROF_DEFINE_EVENT(event_compute, "compute", 0x66, 0xA1, 0xFE);
 
 /**
  * @brief Class to wrap an Operator into a GXF Codelet.

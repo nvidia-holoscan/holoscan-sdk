@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,9 @@ target_link_libraries(gxf_ucx_holoscan_lib
 # Create extension
 add_library(gxf_ucx_holoscan SHARED
   ucx_holoscan_ext.cpp
+)
+target_compile_definitions(gxf_ucx_holoscan
+  PRIVATE HOLOSCAN_BUILD_VERSION=${HOLOSCAN_BUILD_VERSION}
 )
 target_link_libraries(gxf_ucx_holoscan
   PUBLIC  gxf_ucx_holoscan_lib

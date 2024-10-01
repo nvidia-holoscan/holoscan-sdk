@@ -30,6 +30,19 @@
 
 namespace holoscan::viz {
 
+InstanceHandle Create() {
+  Context* context = new Context();
+  return context;
+}
+
+void SetCurrent(InstanceHandle instance) {
+  Context::set(reinterpret_cast<Context*>(instance));
+}
+
+InstanceHandle GetCurrent() {
+  return Context::get_current();
+}
+
 void Init(GLFWwindow* window, InitFlags flags) {
   Context::get().init(window, flags);
 }
@@ -44,17 +57,32 @@ void Init(const char* displayName, uint32_t width, uint32_t height, uint32_t ref
   Context::get().init(displayName, width, height, refreshRate, flags);
 }
 
-InstanceHandle Create() {
-  Context* context = new Context();
-  return context;
+void SetKeyCallback(void* user_pointer, KeyCallbackFunction callback) {
+  Context::get().set_key_callback(user_pointer, callback);
 }
 
-void SetCurrent(InstanceHandle instance) {
-  Context::set(reinterpret_cast<Context*>(instance));
+void SetUnicodeCharCallback(void* user_pointer, UnicodeCharCallbackFunction callback) {
+  Context::get().set_unicode_char_callback(user_pointer, callback);
 }
 
-InstanceHandle GetCurrent() {
-  return Context::get_current();
+void SetMouseButtonCallback(void* user_pointer, MouseButtonCallbackFunction callback) {
+  Context::get().set_mouse_button_callback(user_pointer, callback);
+}
+
+void SetScrollCallback(void* user_pointer, ScrollCallbackFunction callback) {
+  Context::get().set_scroll_callback(user_pointer, callback);
+}
+
+void SetCursorPosCallback(void* user_pointer, CursorPosCallbackFunction callback) {
+  Context::get().set_cursor_pos_callback(user_pointer, callback);
+}
+
+void SetFramebufferSizeCallback(void* user_pointer, FramebufferSizeCallbackFunction callback) {
+  Context::get().set_framebuffer_size_callback(user_pointer, callback);
+}
+
+void SetWindowSizeCallback(void* user_pointer, WindowSizeCallbackFunction callback) {
+  Context::get().set_window_size_callback(user_pointer, callback);
 }
 
 void GetPresentModes(uint32_t* present_mode_count, PresentMode* present_modes) {
@@ -68,7 +96,7 @@ void GetPresentModes(uint32_t* present_mode_count, PresentMode* present_modes) {
   } else {
     if (!present_modes) {
       throw std::invalid_argument(
-          "`present_modes` must be a valid pointer if the value referenced by `present_mode_count` "
+          "`present_modes` must be a valid pointer if the value referenced by `present_mode_count`"
           "is not 0.");
     }
     *present_mode_count = std::min((size_t)*present_mode_count, supported_present_modes.size());

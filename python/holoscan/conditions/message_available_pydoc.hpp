@@ -53,24 +53,6 @@ name : str, optional
     The name of the condition.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the condition.
-
-Returns
--------
-str
-    The GXF type name of the condition
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the condition.
-)doc")
-
 PYDOC(receiver, R"doc(
 The receiver associated with the condition.
 )doc")
@@ -83,13 +65,6 @@ to permit execution.
 PYDOC(front_stage_max_size, R"doc(
 Threshold for the number of front stage messages. Execution is only allowed
 if the number of front stage messages does not exceed this count.
-)doc")
-
-PYDOC(initialize, R"doc(
-Initialize the condition
-
-This method is called only once when the condition is created for the first
-time, and uses a light-weight initialization.
 )doc")
 
 }  // namespace MessageAvailableCondition

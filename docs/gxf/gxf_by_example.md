@@ -2,10 +2,10 @@
 # GXF by Example
 
 :::{warning}
-This section is legacy (0.2) as we recommend developing extensions and applications using the C++ or Python APIs. Refer to the developer guide for up-to-date recommendations.
+This section is legacy (0.2), as we recommend developing extensions and applications using the C++ or Python APIs. Refer to the developer guide for up-to-date recommendations.
 :::
 
-## Innerworkings of a GXF Entity
+## Inner Workings of a GXF Entity
 
 Let us look at an example of a GXF entity to try to understand its general anatomy. As an example let's start with the entity definition for an image format converter entity named `format_converter_entity` as shown below.
 
@@ -87,13 +87,13 @@ Arrangement of components and entities in a Holoscan application
 :::
 
 In the image, as in the YAML, you will notice the use of `MessageAvailableSchedulingTerm`, `DownstreamReceptiveSchedulingTerm`, and `BlockMemoryPool`. These are components that play a "supporting" role to `in_tensor`, `out_tensor`, and `format_converter_component` components respectively. Specifically:
-- `MessageAvailableSchedulingTerm` is a component that takes a `Receiver`` (in this case `DoubleBufferReceiver` named `in_tensor`) and alerts the graph `Executor` that a message is available. This alert triggers `format_converter_component`.
+- `MessageAvailableSchedulingTerm` is a component that takes a `Receiver` (in this case `DoubleBufferReceiver` named `in_tensor`) and alerts the graph `Executor` that a message is available. This alert triggers `format_converter_component`.
 - `DownstreamReceptiveSchedulingTerm` is a component that takes a `Transmitter` (in this case `DoubleBufferTransmitter` named `out_tensor`) and alerts the graph `Executor` that a message has been placed on the output.
 - `BlockMemoryPool` provides two blocks of almost `5MB` allocated on the GPU device and is used by `format_converted_ent` to allocate the output tensor where the converted data will be placed within the format converted component.
 
-Together these components allow the entity to perform a specific function and coordinate communication with other entities in the graph via the declared scheduler.
+Together these components allow the entity to perform a specific function and coordinate communication with other entities in the graph, via the declared scheduler.
 
-More generally, an entity can be thought of as a collection of components where components can be passed to one another to perform specific subtasks (e.g. event triggering or message notification, format conversion, memory allocation), and an application as a graph of entities.
+More generally, an entity can be thought of as a collection of components where components can be passed to one another to perform specific subtasks (e.g., event triggering or message notification, format conversion, memory allocation), and an application as a graph of entities.
 
 The scheduler is a component of type `nvidia::gxf::System` which orchestrates the execution components in each entity at application runtime based on triggering rules.
 
@@ -120,7 +120,7 @@ In the above example, we used a `MessageAvailableSchedulingTerm` to trigger the 
       min_size: 1
 ```
 
-Similarly, `DownStreamReceptiveSchedulingTerm` checks whether the `out_tensor` transmitter queue has at least one outgoing message in it. If there are one or more outgoing messages,  `DownStreamReceptiveSchedulingTerm` will notify the scheduler which in turn attempts to place the message in the receiver queue of a downstream entity. If, however, the downstream entity has a full receiver queue, the message is held in the `out_tensor` queue as a means to handle back-pressure.
+Similarly, `DownStreamReceptiveSchedulingTerm` checks whether the `out_tensor` transmitter queue has at least one outgoing message in it. If there are one or more outgoing messages,  `DownStreamReceptiveSchedulingTerm` will notify the scheduler, which in turn attempts to place the message in the receiver queue of a downstream entity. If, however, the downstream entity has a full receiver queue, the message is held in the `out_tensor` queue as a means to handle back-pressure.
 
 ```{code-block} yaml
 :caption: DownstreamReceptiveSchedulingTerm
@@ -141,20 +141,20 @@ If we were to draw the entity in [{numref}`fig-entity-diagram`](fig-entity-diagr
 Receive and transmit `Queues` and `SchedulingTerm`s in entities.
 :::
 
-Up to this point, we have covered the "entity component system" at a high level and showed the functional parts of an entity, namely, the messaging queues and the scheduling terms that support the execution of components in the entity.  To complete the picture, the next section covers the anatomy and lifecycle of a component, and how to handle events within it.
+Up to this point, we have covered the "entity component system" at a high level and showed the functional parts of an entity; namely, the messaging queues and the scheduling terms that support the execution of components in the entity.  To complete the picture, the next section covers the anatomy and lifecycle of a component, and how to handle events within it.
 
 
 (creating-gxf-extension)=
 
 ## Creating a GXF Extension
 
-GXF components in Holoscan can perform a multitude of sub-tasks ranging from data transformations, to memory management, to entity scheduling. In this section, we will explore an `nvidia::gxf::Codelet` component which in Holoscan is known as a "GXF extension". {ref}`Holoscan (GXF) extensions <sdk-extensions>` are typically concerned with application-specific sub-tasks such as data transformations, AI model inference, and the like.
+GXF components in Holoscan can perform a multitude of sub-tasks ranging from data transformations, to memory management, to entity scheduling. In this section, we will explore an `nvidia::gxf::Codelet` component which in Holoscan is known as a "GXF extension." {ref}`Holoscan (GXF) extensions <sdk-extensions>` are typically concerned with application-specific sub-tasks such as data transformations, AI model inference, and the like.
 
 ### Extension Lifecycle
 
 The lifecycle of a `Codelet` is composed of the following five stages.
-1. `initialize` - called only once when the codelet is created for the first time, and use of light-weight initialization.
-2. `deinitialize` - called only once before the codelet is destroyed, and used for light-weight deinitialization.
+1. `initialize` - called only once when the codelet is created for the first time, and use of lightweight initialization.
+2. `deinitialize` - called only once before the codelet is destroyed, and used for lightweight deinitialization.
 3. `start` - called multiple times over the lifecycle of the codelet according to the order defined in the lifecycle, and used for heavy initialization tasks such as allocating memory resources.
 4. `stop` - called multiple times over the lifecycle of the codelet according to the order defined in the lifecycle, and used for heavy deinitialization tasks such as deallocation of all resources previously assigned in `start`.
 5. `tick` - called when the codelet is triggered, and is called multiple times over the codelet lifecycle; even multiple times between `start` and `stop`.
@@ -176,7 +176,7 @@ In this section, we will implement a simple recorder that will highlight the act
 
 #### Declare the Class That Will Implement the Extension Functionality
 
-The developer can create their Holoscan extension by extending the `Codelet` class, implementing the extension functionality by overriding the lifecycle methods, and defining the parameters the extension exposes at the application level via the `registerInterface` method. To define our recorder component we would need to implement some of the methods in the `Codelet`.
+The developer can create their Holoscan extension by extending the `Codelet` class, implementing the extension functionality by overriding the lifecycle methods, and defining the parameters the extension exposes at the application level via the `registerInterface` method. To define our recorder component, we would need to implement some of the methods in the `Codelet`.
 
 First, clone the Holoscan project from [here](https://github.com/nvidia-holoscan/holoscan-sdk) and create a folder to develop our extension such as under `gxf_extensions/my_recorder`.
 
@@ -237,6 +237,7 @@ class MyRecorder : public nvidia::gxf::Codelet {
 Next, we can start implementing our lifecycle methods in the `my_recorder.cpp` file, which we also create in `gxf_extensions/my_recorder` path.
 
 Our recorder will need to expose the `nvidia::gxf::Parameter` variables to the application so the parameters can be modified by configuration.
+
 ```{code-block} cpp
 :caption: registerInterface in gxf_extensions/my_recorder/my_recorder.cpp
 :linenos: true
@@ -285,7 +286,8 @@ Note that all the parameters exposed at the application level are mandatory exce
 
 #### Implement the Lifecycle Methods
 
-This extension does not need to perform any heavy-weight initialization tasks, so we will concentrate on `initialize()`, `tick()`, and `deinitialize()` methods which define the core functionality of our component. At initialization, we will create a file stream and keep track of the bytes we write on `tick()` via `binary_file_offset`.
+This extension does not need to perform any heavy-weight initialization tasks, so we will concentrate on `initialize()`, `tick()`, and `deinitialize()` methods, which define the core functionality of our component. At initialization, we will create a file stream and keep track of the bytes we write on `tick()` via `binary_file_offset`.
+
 ```{code-block} cpp
 :caption: initialize in gxf_extensions/my_recorder/my_recorder.cpp
 :linenos: true
@@ -345,7 +347,7 @@ gxf_result_t MyRecorder::deinitialize() {
 }
 ```
 
-In our recorder, no heavy-weight initialization tasks are required so we implement the following, however,  we would use `start()` and `stop()` methods for heavy-weight tasks such as memory allocation and deallocation.
+In our recorder, no heavyweight initialization tasks are required, so we implement the following; however,  we would use `start()` and `stop()` methods for heavyweight tasks such as memory allocation and deallocation.
 
 ```{code-block} cpp
 :caption: start/stop in gxf_extensions/my_recorder/my_recorder.cpp
@@ -481,7 +483,8 @@ install_gxf_extension(my_recorder) # this will also install my_recorder_lib
 ```
 Here, we create a library `my_recorder_lib` with the implementation of the lifecycle methods, and the extension `my_recorder` which exposes the C API necessary for the application runtime to interact with our component.
 
-To make our extension discoverable from the project root we add the line
+To make our extension discoverable from the project root we add the line:
+
 ```cmake
 add_subdirectory(my_recorder)
 ```
@@ -587,14 +590,16 @@ Above:
 - The recorder reads the data in the `input` receiver queue, uses `StdEntitySerializer` to convert the received `nvidia::gxf::Tensor` to a binary stream, and outputs to the `/tmp/tensor_out.gxf_[index|entities]` location specified in the parameters.
 - The `scheduler` component, while not explicitly connected to the application-specific entities, performs the orchestration of the components discussed in the [Data Flow and Triggering Rules](#data-flow-and-triggering-rules).
 
-Note the use of the `component_serializer` in our newly built recorder. This component is declared separately in the entity
+Note the use of the `component_serializer` in our newly built recorder. This component is declared separately in the following entity:
+
 ```YAML
 - name: entity_serializer
   type: nvidia::holoscan::stream_playback::VideoStreamSerializer   # inheriting from nvidia::gxf::EntitySerializer
   parameters:
     component_serializers: [component_serializer]
 ```
-and passed into `MyRecorder` via the `serializer` parameter which we exposed in the {ref}`extension development section (Declare the Parameters to Expose at the Application Level) <declare-the-parameters-to-expose-at-the-application-level>`.
+This is then passed into `MyRecorder` via the `serializer` parameter, which we exposed in the {ref}`extension development section (Declare the Parameters to Expose at the Application Level) <declare-the-parameters-to-expose-at-the-application-level>`.
+
 ```YAML
 - type: MyRecorder
   parameters:
@@ -645,12 +650,14 @@ To run our application in a local development container:
 
 1. Follow the instructions under the [Using a Development Container](https://github.com/nvidia-holoscan/holoscan-sdk#using-a-development-container) section steps 1-5 (try clearing the CMake cache by removing the `build` folder before compiling).
 
-   You can execute the following commands to build
+   You can execute the following commands to build: 
+
    ```bash
    ./run build
    # ./run clear_cache # if you want to clear build/install/cache folders
    ```
-3. Our test application can now be run in the development container using the command
+2. Our test application can now be run in the development container using the command:
+   
     ```bash
     ./apps/my_recorder_app_gxf/my_recorder_gxf
     ```

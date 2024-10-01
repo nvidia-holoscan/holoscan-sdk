@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,15 +43,6 @@ entity_serializer : holoscan.resources.ucx_entity_serializer
     The UCX entity serializer used by the UCX network context.
 name : str, optional
     The name of the network context.
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the network context.
-
-Returns
--------
-str
-    The GXF type name of the network context
 )doc")
 
 }  // namespace UcxContext

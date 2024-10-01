@@ -6,11 +6,11 @@ operators may have multiple input/output ports that send/receive a user-defined 
 
 In this example we will cover:
 
-- how to send/receive messages with a custom data type
-- how to add a port that can receive any number of inputs
+- How to send/receive messages with a custom data type.
+- How to add a port that can receive any number of inputs.
 
 :::{note}
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ## Operators and Workflow
@@ -350,7 +350,7 @@ class PingRxOp(Operator):
         input: "receivers"
 
     This is an example of a native operator that can dynamically have any
-    number of inputs connected to is "receivers" port.
+    number of inputs connected to its "receivers" port.
     """
 
     def __init__(self, fragment, *args, **kwargs):

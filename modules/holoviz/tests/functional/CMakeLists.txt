@@ -28,6 +28,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(stb)
 
 find_package(CUDAToolkit REQUIRED)
+find_package(X11 REQUIRED)
 find_package(Vulkan REQUIRED)
 
 add_executable(${PROJECT_NAME})
@@ -35,6 +36,7 @@ add_executable(holoscan::viz::functionaltests ALIAS ${PROJECT_NAME})
 
 target_sources(${PROJECT_NAME}
     PRIVATE
+        callback_test.cpp
         camera_pose_test.cpp
         geometry_layer_test.cpp
         test_fixture.cpp
@@ -66,6 +68,7 @@ target_include_directories(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
         glfw
+        X11::X11
         Vulkan::Vulkan
         holoscan::viz
         holoscan::viz::imgui

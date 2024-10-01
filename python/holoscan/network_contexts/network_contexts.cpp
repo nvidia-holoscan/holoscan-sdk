@@ -85,8 +85,6 @@ PYBIND11_MODULE(_network_contexts, m) {
            "fragment"_a,
            "serializer"_a = nullptr,
            "name"_a = "ucx_context"s,
-           doc::UcxContext::doc_UcxContext_python)
-      .def_property_readonly(
-          "gxf_typename", &UcxContext::gxf_typename, doc::UcxContext::doc_gxf_typename);
+           doc::UcxContext::doc_UcxContext_python);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

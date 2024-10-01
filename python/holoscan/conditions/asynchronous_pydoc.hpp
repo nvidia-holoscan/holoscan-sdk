@@ -44,15 +44,6 @@ name : str, optional
     The name of the condition.
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the condition.
-
-Returns
--------
-str
-    The GXF type name of the condition
-)doc")
-
 PYDOC(event_state, R"doc(
 Event state property
 
@@ -61,15 +52,6 @@ Event state property
 - AsynchronousEventState.EVENT_WAITING
 - AsynchronousEventState.EVENT_DONE
 - AsynchronousEventState.EVENT_NEVER
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the condition.
 )doc")
 
 }  // namespace AsynchronousCondition

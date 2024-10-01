@@ -37,20 +37,6 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-// PyAllocator trampoline class: provides override for virtual function is_available
-
-class PyAllocator : public Allocator {
- public:
-  /* Inherit the constructors */
-  using Allocator::Allocator;
-
-  /* Trampolines (need one for each virtual function) */
-  bool is_available(uint64_t size) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(bool, Allocator, is_available, size);
-  }
-};
-
 /* Trampoline classes for handling Python kwargs
  *
  * These add a constructor that takes a Fragment for which to initialize the resource.
@@ -125,11 +111,9 @@ void init_allocators(py::module_& m) {
       .value("DEVICE", MemoryStorageType::kDevice)
       .value("SYSTEM", MemoryStorageType::kSystem);
 
-  py::class_<Allocator, PyAllocator, gxf::GXFResource, std::shared_ptr<Allocator>>(
+  py::class_<Allocator, gxf::GXFResource, std::shared_ptr<Allocator>>(
       m, "Allocator", doc::Allocator::doc_Allocator)
       .def(py::init<>(), doc::Allocator::doc_Allocator)
-      .def_property_readonly(
-          "gxf_typename", &Allocator::gxf_typename, doc::Allocator::doc_gxf_typename)
       .def("is_available", &Allocator::is_available, "size"_a, doc::Allocator::doc_is_available)
       .def("allocate", &Allocator::allocate, "size"_a, "type"_a, doc::Allocator::doc_allocate)
       .def("free", &Allocator::free, "pointer"_a, doc::Allocator::doc_free)
@@ -145,10 +129,7 @@ void init_allocators(py::module_& m) {
            "num_blocks"_a,
            "dev_id"_a = 0,
            "name"_a = "block_memory_pool",
-           doc::BlockMemoryPool::doc_BlockMemoryPool)
-      .def_property_readonly(
-          "gxf_typename", &BlockMemoryPool::gxf_typename, doc::BlockMemoryPool::doc_gxf_typename)
-      .def("setup", &BlockMemoryPool::setup, "spec"_a, doc::BlockMemoryPool::doc_setup);
+           doc::BlockMemoryPool::doc_BlockMemoryPool);
 
   py::class_<CudaStreamPool, PyCudaStreamPool, Allocator, std::shared_ptr<CudaStreamPool>>(
       m, "CudaStreamPool", doc::CudaStreamPool::doc_CudaStreamPool)
@@ -161,10 +142,7 @@ void init_allocators(py::module_& m) {
           "reserved_size"_a = 1u,
           "max_size"_a = 0u,
           "name"_a = "cuda_stream_pool"s,
-          doc::CudaStreamPool::doc_CudaStreamPool)
-      .def_property_readonly(
-          "gxf_typename", &CudaStreamPool::gxf_typename, doc::CudaStreamPool::doc_gxf_typename)
-      .def("setup", &CudaStreamPool::setup, "spec"_a, doc::CudaStreamPool::doc_setup);
+          doc::CudaStreamPool::doc_CudaStreamPool);
 
   py::class_<UnboundedAllocator,
              PyUnboundedAllocator,
@@ -174,10 +152,6 @@ void init_allocators(py::module_& m) {
       .def(py::init<Fragment*, const std::string&>(),
            "fragment"_a,
            "name"_a = "unbounded_allocator"s,
-           doc::UnboundedAllocator::doc_UnboundedAllocator)
-      .def_property_readonly("gxf_typename",
-                             &UnboundedAllocator::gxf_typename,
-                             doc::UnboundedAllocator::doc_gxf_typename)
-      .def("setup", &UnboundedAllocator::setup, "spec"_a, doc::UnboundedAllocator::doc_setup);
+           doc::UnboundedAllocator::doc_UnboundedAllocator);
 }
 }  // namespace holoscan

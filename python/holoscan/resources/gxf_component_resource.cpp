@@ -104,13 +104,6 @@ void init_gxf_component_resource(py::module_& m) {
            "gxf_typename"_a,
            py::kw_only(),
            "name"_a = "gxf_component"s,
-           doc::GXFComponentResource::doc_GXFComponentResource)
-      .def_property_readonly("gxf_typename",
-                             &GXFComponentResource::gxf_typename,
-                             doc::GXFComponentResource::doc_gxf_typename)
-      .def("initialize",
-           &GXFComponentResource::initialize,
-           doc::GXFComponentResource::doc_initialize)
-      .def("setup", &GXFComponentResource::setup, "spec"_a, doc::GXFComponentResource::doc_setup);
+           doc::GXFComponentResource::doc_GXFComponentResource);
 }
 }  // namespace holoscan

@@ -179,6 +179,7 @@ class Vulkan::Impl {
       bool depth_write_enable = true);
 
   Window* window_ = nullptr;
+  Window::CallbackHandle framebuffer_size_callback_handle_;
   std::optional<SurfaceFormat> surface_format_;
   PresentMode present_mode_ = PresentMode::AUTO;
 
@@ -315,8 +316,6 @@ class Vulkan::Impl {
 Vulkan::Impl::~Impl() {
   try {
     if (device_) {
-      window_->restore_callbacks();
-
       device_.waitIdle();
 
       cleanup_transfer_jobs();
@@ -405,7 +404,8 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     HOLOSCAN_LOG_INFO("Using device {}: {} (UUID {:x})",
                       device_index,
                       properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName,
-                      fmt::join(properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID, ""));
+                      fmt::join(properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID,
+                      ""));
 
     // CUDA initialization
     CUuuid cuda_uuid;
@@ -572,7 +572,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
 
   // ImGui initialization
   init_im_gui(font_path, font_size_in_pixels);
-  window_->setup_callbacks(
+  framebuffer_size_callback_handle_ = window_->add_framebuffer_size_callback(
       [this](int width, int height) { this->on_framebuffer_size(width, height); });
   window_->init_im_gui();
 }

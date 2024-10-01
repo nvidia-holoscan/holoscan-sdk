@@ -41,24 +41,6 @@ name : str, optional
     The name of the serialization buffer
 )doc")
 
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
-)doc")
-
 }  // namespace SerializationBuffer
 
 namespace UcxSerializationBuffer {
@@ -76,24 +58,6 @@ buffer_size : int, optional
     The size of the buffer in bytes.
 name : str, optional
     The name of the serialization buffer
-)doc")
-
-PYDOC(gxf_typename, R"doc(
-The GXF type name of the resource.
-
-Returns
--------
-str
-    The GXF type name of the resource
-)doc")
-
-PYDOC(setup, R"doc(
-Define the component specification.
-
-Parameters
-----------
-spec : holoscan.core.ComponentSpec
-    Component specification associated with the resource.
 )doc")
 
 }  // namespace UcxSerializationBuffer

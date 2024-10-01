@@ -434,7 +434,7 @@ vk::ColorSpaceKHR to_vulkan_color_space(ColorSpace color_space) {
     case ColorSpace::SRGB_NONLINEAR:
       vk_color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
       break;
-    case ColorSpace::EXTENDED_SRGB_LINEAR_EXT:
+    case ColorSpace::EXTENDED_SRGB_LINEAR:
       vk_color_space = vk::ColorSpaceKHR::eExtendedSrgbLinearEXT;
       break;
     case ColorSpace::BT2020_LINEAR:
@@ -445,6 +445,9 @@ vk::ColorSpaceKHR to_vulkan_color_space(ColorSpace color_space) {
       break;
     case ColorSpace::PASS_THROUGH:
       vk_color_space = vk::ColorSpaceKHR::ePassThroughEXT;
+      break;
+    case ColorSpace::BT709_LINEAR:
+      vk_color_space = vk::ColorSpaceKHR::eBt709LinearEXT;
       break;
     default:
       throw std::runtime_error("Unhandled color space.");

@@ -41,6 +41,13 @@ class VideoReplayerApp : public holoscan::Application {
 
     // Define the workflow: replayer -> holoviz
     add_flow(replayer, visualizer, {{"output", "receivers"}});
+
+    // Check if the YAML dual_window parameter is set and add a second visualizer in that case
+    bool dual_window = from_config("dual_window").as<bool>();
+    if (dual_window) {
+      auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz"));
+      add_flow(replayer, visualizer2, {{"output", "receivers"}});
+    }
   }
 };
 
@@ -52,6 +59,13 @@ int main(int argc, char** argv) {
 
   auto app = holoscan::make_application<VideoReplayerApp>();
   app->config(config_path);
+
+  if (app->from_config("dual_window").as<bool>()) {
+    // use event-based scheduler to allow multiple operators to run in parallel
+    app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
+        "event-based-scheduler", app->from_config("event_based_scheduler")));
+  }
+
   app->run();
 
   return 0;

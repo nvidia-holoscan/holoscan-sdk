@@ -68,14 +68,20 @@ class GLFWWindow : public Window {
   /// holoscan::viz::Window virtual members
   ///@{
   void init_im_gui() override;
-  void setup_callbacks(std::function<void(int width, int height)> frame_buffer_size_cb) override;
-  void restore_callbacks() override;
+  CallbackHandle add_key_callback(KeyCallbackFunction callback) override;
+  CallbackHandle add_unicode_char_callback(UnicodeCharCallbackFunction callback) override;
+  CallbackHandle add_mouse_button_callback(MouseButtonCallbackFunction callback) override;
+  CallbackHandle add_scroll_callback(ScrollCallbackFunction callback) override;
+  CallbackHandle add_cursor_pos_callback(CursorPosCallbackFunction callback) override;
+  CallbackHandle add_framebuffer_size_callback(FramebufferSizeCallbackFunction callback) override;
+  CallbackHandle add_window_size_callback(WindowSizeCallbackFunction callback) override;
 
   const char** get_required_instance_extensions(uint32_t* count) override;
   const char** get_required_device_extensions(uint32_t* count) override;
   uint32_t select_device(vk::Instance instance,
                          const std::vector<vk::PhysicalDevice>& physical_devices) override;
   void get_framebuffer_size(uint32_t* width, uint32_t* height) override;
+  void get_window_size(uint32_t* width, uint32_t* height) override;
 
   vk::SurfaceKHR create_surface(vk::PhysicalDevice physical_device, vk::Instance instance) override;
 

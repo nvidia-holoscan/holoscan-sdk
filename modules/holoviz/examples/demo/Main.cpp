@@ -486,16 +486,18 @@ int main(int argc, char** argv) {
                                   {"fullscreen", no_argument, 0, 'f'},
                                   {"exclusive_display", no_argument, 0, 'e'},
                                   {"display", required_argument, 0, 'd'},
-                                  {"present_mode", required_argument, 0, 'd'},
+                                  {"present_mode", required_argument, 0, 'p'},
+                                  {"color_space", required_argument, 0, 'c'},
                                   {0, 0, 0, 0}};
   bool fullscreen = false;
   bool exclusive_display = false;
   std::string display_name;
   viz::PresentMode present_mode = viz::PresentMode::AUTO;
+  viz::ColorSpace color_space = viz::ColorSpace::SRGB_NONLINEAR;
   // parse options
   while (true) {
     int option_index = 0;
-    const int c = getopt_long(argc, argv, "hblfed:p:", long_options, &option_index);
+    const int c = getopt_long(argc, argv, "hblfed:p:c:", long_options, &option_index);
 
     if (c == -1) { break; }
 
@@ -513,6 +515,9 @@ int main(int argc, char** argv) {
                      "or fullscreen mode (either EDID, `xrandr` or `hwinfo --monitor` name)"
                   << "  -p, --present_mode MODE  determines how the rendered result will be "
                      "presented on the screen (`auto`, `fifo`, `immediate` or `mailbox`)"
+                  << "  -c, --color_space SPACE  specifies how the surface data is interpreted "
+                     "when presented on screen (`srgb_nonlinear`, `extended_srgb_linear`, "
+                     "`bt2020_linear`, `hdr10_st2084` or `bt709_linear`)"
                   << std::endl;
         return EXIT_SUCCESS;
 
@@ -543,14 +548,39 @@ int main(int argc, char** argv) {
                        [](unsigned char c) { return std::tolower(c); });
         if (lower_case_argument == "auto") {
           present_mode = viz::PresentMode::AUTO;
+          break;
         } else if (lower_case_argument == "fifo") {
           present_mode = viz::PresentMode::FIFO;
+          break;
         } else if (lower_case_argument == "immediate") {
           present_mode = viz::PresentMode::IMMEDIATE;
+          break;
         } else if (lower_case_argument == "mailbox") {
           present_mode = viz::PresentMode::MAILBOX;
+          break;
         } else {
           throw std::runtime_error("Unhandled present mode");
+        }
+      } break;
+      case 'c': {
+        std::string lower_case_argument;
+        std::transform(argument.begin(),
+                       argument.end(),
+                       std::back_inserter(lower_case_argument),
+                       [](unsigned char c) { return std::tolower(c); });
+
+        if (lower_case_argument == "srgb_nonlinear") {
+          color_space = viz::ColorSpace::SRGB_NONLINEAR;
+        } else if (lower_case_argument == "extended_srgb_linear") {
+          color_space = viz::ColorSpace::EXTENDED_SRGB_LINEAR;
+        } else if (lower_case_argument == "bt2020_linear") {
+          color_space = viz::ColorSpace::BT2020_LINEAR;
+        } else if (lower_case_argument == "hdr10_st2084") {
+          color_space = viz::ColorSpace::HDR10_ST2084;
+        } else if (lower_case_argument == "bt709_linear") {
+          color_space = viz::ColorSpace::BT709_LINEAR;
+        } else {
+          throw std::runtime_error("Unhandled color space");
         }
       } break;
       default:
@@ -586,6 +616,24 @@ int main(int argc, char** argv) {
                 "Holoviz Example",
                 flags,
                 display_name.empty() ? nullptr : display_name.c_str());
+    }
+
+    if (color_space != viz::ColorSpace::SRGB_NONLINEAR) {
+      uint32_t surface_format_count = 0;
+      viz::GetSurfaceFormats(&surface_format_count, nullptr);
+      std::vector<viz::SurfaceFormat> surface_formats(surface_format_count);
+      viz::GetSurfaceFormats(&surface_format_count, surface_formats.data());
+
+      auto surface_format_it = surface_formats.begin();
+      while (surface_format_it != surface_formats.end()) {
+        if (surface_format_it->color_space_ == color_space) { break; }
+        ++surface_format_it;
+      }
+      if (surface_format_it == surface_formats.end()) {
+        throw std::runtime_error("Color space not supported");
+      }
+
+      viz::SetSurfaceFormat(*surface_format_it);
     }
 
     if (benchmark_mode) {

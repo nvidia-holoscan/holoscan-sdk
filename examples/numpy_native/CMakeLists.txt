@@ -45,5 +45,5 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CONVOLVE_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "\[1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\]")
+                       PASS_REGULAR_EXPRESSION "\\[1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\\]")
 endif()

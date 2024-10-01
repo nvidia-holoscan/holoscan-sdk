@@ -64,10 +64,7 @@ The conditions that are marked as execution-driven, by contrast, require an appl
 An operator associated with `MessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::MessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.MessageAvailableCondition>`) is executed when the associated queue of the input port has at least a certain number of elements.
 This condition is associated with a specific input port of an operator through the `condition()` method on the return value (IOSpec) of the OperatorSpec's `input()` method.
 
-The minimum number of messages that permits the execution of the operator is specified by `min_size` parameter (default: `1`).
-An optional parameter for this condition is `front_stage_max_size`, the maximum front stage message count.
-If this parameter is set, the condition will only allow execution if the number of messages in the queue does not exceed this count.
-It can be used for operators which do not consume all messages from the queue.
+The minimum number of messages that permits the execution of the operator is specified by `min_size` parameter (default: `1`). An optional parameter for this condition is `front_stage_max_size`, the maximum front stage message count. If this parameter is set, the condition will only allow execution if the number of messages in the queue does not exceed this count. It can be used for operators which do not consume all messages from the queue.
 
 ## ExpiringMessageAvailableCondition
 

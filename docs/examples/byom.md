@@ -6,13 +6,11 @@ create their own AI applications.
 
 In this example we'll cover:
 
-- the usage of `FormatConverterOp`, `InferenceOp`, `SegmentationPostprocessorOp` operators
-to add AI inference into the workflow
-- how to modify the existing code in this example to create an ultrasound segmentation application
-to visualize the results from a spinal scoliosis segmentation model
+- The usage of `FormatConverterOp`, `InferenceOp`, `SegmentationPostprocessorOp` operators to add AI inference into the workflow.
+- How to modify the existing code in this example to create an ultrasound segmentation application to visualize the results from a spinal scoliosis segmentation model.
 
 :::{note}
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the debian package, alongside their executables.
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
 :::
 
 ## Operators and Workflow
@@ -29,19 +27,18 @@ The BYOM inference workflow
 
 :::
 
-The example code already contains the plumbing required to create the pipeline above where
-the video is loaded by `VideoStreamReplayer` and passed to two branches.
+The example code already contains the plumbing required to create the pipeline above where the video is loaded by `VideoStreamReplayer` and passed to two branches.
 The first branch goes directly to `Holoviz` to display the original video.
 The second branch in this workflow goes through AI inferencing and can be used to generate
 overlays such as bounding boxes, segmentation masks, or text to add additional information.
 
 This second branch has three operators we haven't yet encountered.
 
-- <b>Format Converter</b>: The input video stream goes through a preprocessing stage to convert the tensors to the appropriate shape/format before being fed into the AI model.  It is used here to convert the datatype of the image from `uint8` to `float32` and resized to match the model's expectations.<br><br>
+- **Format Converter**: The input video stream goes through a preprocessing stage to convert the tensors to the appropriate shape/format before being fed into the AI model.  It is used here to convert the datatype of the image from `uint8` to `float32` and resized to match the model's expectations.<br><br>
 
-- <b>Inference</b>: This operator performs AI inferencing on the input video stream with the provided model. It supports inferencing of multiple input video streams and models.<br><br>
+- **Inference**: This operator performs AI inferencing on the input video stream with the provided model. It supports inferencing of multiple input video streams and models.<br><br>
 
-- <b>Segmentation Postprocessor</b>: this postprocessing stage takes the output of inference, either with the final softmax layer (multiclass) or sigmoid (2-class), and emits a tensor with `uint8` values that contain the highest probability class index. The output of the segmentation postprocessor is then fed into the Holoviz visualizer to create the overlay.
+- **Segmentation Postprocessor**: This postprocessing stage takes the output of inference, either with the final softmax layer (multiclass) or sigmoid (2-class), and emits a tensor with `uint8` values that contain the highest probability class index. The output of the segmentation postprocessor is then fed into the Holoviz visualizer to create the overlay.
 
 ## Prerequisites
 
@@ -56,9 +53,9 @@ $ unzip holoscan_ultrasound_sample_data_20220608.zip -d <SDK_ROOT>/data/ultrasou
 
 You can also follow along using your own dataset by adjusting the operator parameters based on your input video and model, and converting your video and model to a format that is understood by Holoscan.
 
-### Input video
+### Input Video
 
-The video stream replayer supports reading video files that are encoded as gxf entities.  These files are provided with the ultrasound dataset as the `ultrasound_256x256.gxf_entities` and `ultrasound_256x256.gxf_index` files.
+The video stream replayer supports reading video files that are encoded as GXF entities.  These files are provided with the ultrasound dataset as the `ultrasound_256x256.gxf_entities` and `ultrasound_256x256.gxf_index` files.
 
 :::{note}
 To use your own video data, you can use the `convert_video_to_gxf_entities.py` script (installed in `/opt/nvidia/holoscan/bin` or [on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#convert_video_to_gxf_entitiespy)) to encode your video. Note that - using this script - the metadata in the generated GXF tensor files will indicate that the data should be copied to the GPU on read.
@@ -132,12 +129,12 @@ class BYOMApp(Application):
 ```
 - The built-in `FormatConvertOp`, `InferenceOp`, and `SegmentationPostprocessorOp` operators are imported on lines `7`, `9`, and `10`. These 3 operators make up the preprocessing, inference, and postprocessing stages of our AI pipeline respectively.
 - The `UnboundedAllocator` resource is imported on line `13`.  This is used by our application's operators for memory allocation.
-- The paths to the `identity` model are defined on lines `35-38`.  This model passes it's input tensor to it's output, and  acts as a placeholder for this example.
+- The paths to the `identity` model are defined on lines `35-38`.  This model passes its input tensor to its output, and  acts as a placeholder for this example.
 - The directory of the video files are defined on line `40`.
 ````
 `````
 
-Next, we look at the operators and their parameters defined in the application yaml file.
+Next, we look at the operators and their parameters defined in the application YAML file.
 
 <!-- Note that NVIDIA's public user guide doesn't seem to support the `lineno-start` tag, such as `:lineno-start: 43` in the code block, so we are removing it. -->
 
@@ -227,15 +224,11 @@ viz:  # Holoviz
 - The `pre_processor_map` parameter (lines `17-18`) maps the model name(s) to input tensor name(s).
 Here, "source_video" matches the output tensor name of the preprocessor (line `10`).
 The `inference_map` parameter maps the model name(s) to the output tensor name(s).
-Here, "output", matches the input tensor name of the postprocessor (line `23`).  For more details on
-`InferenceOp` parameters, see {ref}`customizing-multiai-op` or refer to {ref}`holoinfer`.
+Here, "output" matches the input tensor name of the postprocessor (line `23`).  For more details on `InferenceOp` parameters, see {ref}`customizing-multiai-op` or refer to {ref}`holoinfer`.
 
-- The `network_output_type` parameter is commented out on line `24` to remind ourselves that this second branch is currently
-not generating anything interesting.  If not specified, this parameter defaults to "softmax" for `SegmentationPostprocessorOp`.
+- The `network_output_type` parameter is commented out on line `24` to remind ourselves that this second branch is currently not generating anything interesting.  If not specified, this parameter defaults to "softmax" for `SegmentationPostprocessorOp`.
 
-- The color lookup table defined on lines `30-32` is used here
-to create a segmentation mask overlay.  The values of each entry in the table are RGBA values between 0.0 and 1.0.  For the alpha value,
-0.0 is fully transparent and 1.0 is fully opaque.
+- The color lookup table defined on lines `30-32` is used here to create a segmentation mask overlay.  The values of each entry in the table are RGBA values between 0.0 and 1.0.  For the alpha value, 0.0 is fully transparent and 1.0 is fully opaque.
 
 ````
 `````
@@ -289,7 +282,7 @@ if __name__ == "__main__":
 
 To create the ultrasound segmentation application, we need to swap out the input video and model to use the ultrasound files, and adjust the parameters to ensure the input video is resized correctly to the model's expectations.
 
-We will need to modify the python and yaml files to change our application to the ultrasound segmentation application.
+We will need to modify the Python and YAML files to change our application to the ultrasound segmentation application.
 
 
 `````{tab-set}
@@ -377,17 +370,15 @@ The second entry we just added is a green color and has an alpha value of `0.7` 
 ````
 `````
 
-The above changes are enough to update the byom example to the ultrasound segmentation application.<br>
+The above changes are enough to update the BYOM example to the ultrasound segmentation application.<br>
 
-In general, when deploying your own AI models, you will need to consider the operators in the second branch.
-This example uses a pretty typical AI workflow:
+In general, when deploying your own AI models, you will need to consider the operators in the second branch. This example uses a pretty typical AI workflow:
 
-- <b>Input</b>: This could be a video on disk, an input stream from a capture device, or other data stream.
-- <b>Preprocessing</b>: You may need to preprocess the input stream to convert tensors into the shape and format that
-is expected by your AI model (e.g., converting datatype and resizing).
-- <b>Inference</b>: Your model will need to be in onnx or trt format.
-- <b>Postprocessing</b>: An operator that postprocesses the output of the model to a format that can be readily used by downstream operators.
-- <b>Output</b>: The postprocessed stream can be displayed or used by other downstream operators.
+- **Input**: This could be a video on disk, an input stream from a capture device, or other data stream.
+- **Preprocessing**: You may need to preprocess the input stream to convert tensors into the shape and format that is expected by your AI model (e.g., converting datatype and resizing).
+- **Inference**: Your model will need to be in ONNX or TensorRT format.
+- **Postprocessing**: An operator that postprocesses the output of the model to a format that can be readily used by downstream operators.
+- **Output**: The postprocessed stream can be displayed or used by other downstream operators.
 
 The Holoscan SDK comes with a number of [built-in operators](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/src/operators) that you can use to configure your own workflow.
 If needed, you can write your own custom operators or visit [Holohub](https://nvidia-holoscan.github.io/holohub/) for additional implementations and ideas for operators.
@@ -418,20 +409,20 @@ sudo chmod a+w /opt/nvidia/holoscan/examples/bring_your_own_model/model
 (customizing-multiai-op)=
 ## Customizing the Inference Operator
 
-The builtin `InferenceOp` operator provides the functionality of the {ref}`holoinfer`.
+The built-in `InferenceOp` operator provides the functionality of the {ref}`holoinfer`.
 This operator has a `receivers` port that can connect to any number of upstream ports to allow for multiai inferencing, and one `transmitter` port to send results downstream.
 Below is a description of some of the operator's parameters and a general guidance on how to use them.
 
-- `backend`: if the input models are in `tensorrt engine file` format, select `trt` as the
+- `backend`: If the input models are in `tensorrt engine file` format, select `trt` as the
 backend.  If the input models are in `onnx` format select either `trt` or `onnx` as the backend.
 - `allocator`: Can be passed to this operator to specify how the output tensors are allocated.
-- `model_path_map`: contains dictionary keys with unique strings that refer to each model.  The values are set to the path to the model files on disk.  All models must be either in `onnx` or in `tensorrt engine file` format.  The Holoscan Inference Module will do the `onnx` to `tensorrt` model conversion if the TensorRT engine files do not exist.
-- `pre_processor_map`: this dictionary should contain the same keys as `model_path_map`, mapping to the output tensor name for each model.
-- `inference_map`: this dictionary should contain the same keys as `model_path_map`, mapping to the output tensor name for each model.
+- `model_path_map`: Contains dictionary keys with unique strings that refer to each model.  The values are set to the path to the model files on disk.  All models must be either in `onnx` or in `tensorrt engine file` format.  The Holoscan Inference Module will do the `onnx` to `tensorrt` model conversion if the TensorRT engine files do not exist.
+- `pre_processor_map`: This dictionary should contain the same keys as `model_path_map`, mapping to the output tensor name for each model.
+- `inference_map`: This dictionary should contain the same keys as `model_path_map`, mapping to the output tensor name for each model.
 - `enable_fp16`: Boolean variable indicating if half-precision should be used to speed up inferencing.  The default value is False, and uses single-precision (32-bit fp) values.
-- `input_on_cuda`: indicates whether input tensors are on device or host
-- `output_on_cuda`: indicates whether output tensors are on device or host
-- `transmit_on_cuda`: if True, it means the data transmission from the inference will be on **Device**, otherwise it means the data transmission from the inference will be on **Host**
+- `input_on_cuda`: Indicates whether input tensors are on device or host.
+- `output_on_cuda`: Indicates whether output tensors are on device or host.
+- `transmit_on_cuda`: If True, it means the data transmission from the inference will be on **Device**, otherwise it means the data transmission from the inference will be on **Host**.
 
 
 ## Common Pitfalls Deploying New Models
@@ -446,7 +437,7 @@ For example, if your inference data is RGB, but your model expects BGR, you will
 
 Similarly, default scaling for streaming data is `[0,1]`, but dependent on how your model was trained, you may be expecting `[0,255]`.
 
-For the above case you would add the following to your segmentation_preprocessor in the yaml file:
+For the above case, you would add the following to your segmentation_preprocessor in the YAML file:
 
 `scale_min: 0.0`
 `scale_max: 255.0`
@@ -455,5 +446,5 @@ For the above case you would add the following to your segmentation_preprocessor
 
 Models often have different output types such as `Sigmoid`, `Softmax`, or perhaps something else, and you may need to examine the last few layers of your model to determine which applies to your case.
 
-As in the case of our ultrasound segmentation example above, we added the following in our yaml file:
+As in the case of our ultrasound segmentation example above, we added the following in our YAML file:
 `network_output_type: softmax`

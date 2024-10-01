@@ -83,9 +83,7 @@ class PyUcxTransmitter : public UcxTransmitter {
 void init_transmitters(py::module_& m) {
   py::class_<Transmitter, gxf::GXFResource, std::shared_ptr<Transmitter>>(
       m, "Transmitter", doc::Transmitter::doc_Transmitter)
-      .def(py::init<>(), doc::Transmitter::doc_Transmitter)
-      .def_property_readonly(
-          "gxf_typename", &Transmitter::gxf_typename, doc::Transmitter::doc_gxf_typename);
+      .def(py::init<>(), doc::Transmitter::doc_Transmitter);
 
   py::class_<DoubleBufferTransmitter,
              PyDoubleBufferTransmitter,
@@ -97,14 +95,7 @@ void init_transmitters(py::module_& m) {
            "capacity"_a = 1UL,
            "policy"_a = 2UL,
            "name"_a = "double_buffer_transmitter"s,
-           doc::DoubleBufferTransmitter::doc_DoubleBufferTransmitter)
-      .def_property_readonly("gxf_typename",
-                             &DoubleBufferTransmitter::gxf_typename,
-                             doc::DoubleBufferTransmitter::doc_gxf_typename)
-      .def("setup",
-           &DoubleBufferTransmitter::setup,
-           "spec"_a,
-           doc::DoubleBufferTransmitter::doc_setup);
+           doc::DoubleBufferTransmitter::doc_DoubleBufferTransmitter);
 
   py::class_<UcxTransmitter, PyUcxTransmitter, Transmitter, std::shared_ptr<UcxTransmitter>>(
       m, "UcxTransmitter", doc::UcxTransmitter::doc_UcxTransmitter)
@@ -128,9 +119,6 @@ void init_transmitters(py::module_& m) {
            "local_port"_a = static_cast<uint32_t>(0),
            "maximum_connection_retries"_a = 10,
            "name"_a = "ucx_transmitter"s,
-           doc::UcxTransmitter::doc_UcxTransmitter)
-      .def_property_readonly(
-          "gxf_typename", &UcxTransmitter::gxf_typename, doc::UcxTransmitter::doc_gxf_typename)
-      .def("setup", &UcxTransmitter::setup, "spec"_a, doc::UcxTransmitter::doc_setup);
+           doc::UcxTransmitter::doc_UcxTransmitter);
 }
 }  // namespace holoscan

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_VIZ_CONTEXT_HPP
-#define HOLOSCAN_VIZ_CONTEXT_HPP
+#ifndef MODULES_HOLOVIZ_SRC_CONTEXT_HPP
+#define MODULES_HOLOVIZ_SRC_CONTEXT_HPP
 
 #include <cuda.h>
 
@@ -24,6 +24,7 @@
 #include <memory>
 #include <vector>
 
+#include "holoviz/callbacks.hpp"
 #include "holoviz/image_format.hpp"
 #include "holoviz/init_flags.hpp"
 #include "holoviz/present_mode.hpp"
@@ -108,6 +109,69 @@ class Context : public NonCopyable {
    */
   void init(const char* display_name, uint32_t width, uint32_t height, uint32_t refresh_rate,
             InitFlags flags);
+
+  /**
+   * Set the key callback. The callback function is called when a key is pressed, released or
+   * repeated.
+   *
+   * @param user_pointer user pointer value to be passed to the callback
+   * @param callback the new key callback or nullptr to remove the current callback
+   */
+  void set_key_callback(void* user_pointer, KeyCallbackFunction callback);
+
+  /**
+   * Set the Unicode character callback. The callback function is called when a Unicode character is
+   * input.
+   *
+   * @param user_pointer user pointer value to be passed to the callback
+   * @param callback the new Unicode character callback or nullptr to remove the current callback
+   */
+  void set_unicode_char_callback(void* user_pointer, UnicodeCharCallbackFunction callback);
+
+  /**
+   * Set the mouse button callback. The callback function is called when a mouse button is pressed
+   * or released.
+   *
+   * @param user_pointer user pointer value to be passed to the callback
+   * @param callback the new mouse button callback or nullptr to remove the current callback
+   */
+  void set_mouse_button_callback(void* user_pointer, MouseButtonCallbackFunction callback);
+
+  /**
+   * Set the scroll callback. The callback function is called when a scrolling device is used,
+   * such as a mouse scroll wheel or the scroll area of a touch pad.
+   *
+   * @param user_pointer user pointer value to be passed to the callback
+   * @param callback the new cursor callback or nullptr to remove the current callback
+   */
+  void set_scroll_callback(void* user_pointer, ScrollCallbackFunction callback);
+
+  /**
+   * Set the cursor position callback. The callback function is called when the cursor position
+   * changes. Coordinates are provided in screen coordinates, relative to the upper left edge of the
+   * content area.
+   *
+   * @param user_pointer user pointer value to be passed to the callback
+   * @param callback the new cursor callback or nullptr to remove the current callback
+   */
+  void set_cursor_pos_callback(void* user_pointer, CursorPosCallbackFunction callback);
+
+  /**
+   * Set the framebuffer size callback. The callback function is called when the framebuffer is
+   * resized.
+   *
+   * @param user_pointer user pointer value to be passed to the callback
+   * @param callback the new framebuffer size callback or nullptr to remove the current callback
+   */
+  void set_framebuffer_size_callback(void* user_pointer, FramebufferSizeCallbackFunction callback);
+
+  /**
+   * Set the window size callback. The callback function is called when the window is resized.
+   *
+   * @param user_pointer user pointer value to be passed to the callback
+   * @param callback the new window size callback or nullptr to remove the current callback
+   */
+  void set_window_size_callback(void* user_pointer, WindowSizeCallbackFunction callback);
 
   /**
    * Get the surface formats supported by the current window. Throws if no window is open.
@@ -242,4 +306,4 @@ class Context : public NonCopyable {
 
 }  // namespace holoscan::viz
 
-#endif /* HOLOSCAN_VIZ_CONTEXT_HPP */
+#endif /* MODULES_HOLOVIZ_SRC_CONTEXT_HPP */

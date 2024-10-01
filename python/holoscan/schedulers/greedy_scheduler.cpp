@@ -104,8 +104,7 @@ void init_greedy_scheduler(py::module_& m) {
       .def_property_readonly("stop_on_deadlock", &GreedyScheduler::stop_on_deadlock)
       .def_property_readonly("check_recession_period_ms",
                              &GreedyScheduler::check_recession_period_ms)
-      .def_property_readonly("stop_on_deadlock_timeout", &GreedyScheduler::stop_on_deadlock_timeout)
-      .def_property_readonly(
-          "gxf_typename", &GreedyScheduler::gxf_typename, doc::GreedyScheduler::doc_gxf_typename);
+      .def_property_readonly("stop_on_deadlock_timeout",
+                             &GreedyScheduler::stop_on_deadlock_timeout);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

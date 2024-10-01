@@ -80,16 +80,6 @@ void init_downstream_message_affordable(py::module_& m) {
            "min_size"_a = 1L,
            "name"_a = "noname_downstream_affordable_condition"s,
            doc::DownstreamMessageAffordableCondition::doc_DownstreamMessageAffordableCondition)
-      .def_property_readonly("gxf_typename",
-                             &DownstreamMessageAffordableCondition::gxf_typename,
-                             doc::DownstreamMessageAffordableCondition::doc_gxf_typename)
-      .def("setup",
-           &DownstreamMessageAffordableCondition::setup,
-           "spec"_a,
-           doc::DownstreamMessageAffordableCondition::doc_setup)
-      .def("initialize",
-           &DownstreamMessageAffordableCondition::initialize,
-           doc::DownstreamMessageAffordableCondition::doc_initialize)
       .def_property("min_size",
                     py::overload_cast<>(&DownstreamMessageAffordableCondition::min_size),
                     py::overload_cast<uint64_t>(&DownstreamMessageAffordableCondition::min_size),

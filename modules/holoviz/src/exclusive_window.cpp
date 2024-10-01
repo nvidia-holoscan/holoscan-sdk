@@ -57,11 +57,6 @@ ExclusiveWindow::ExclusiveWindow(const char* display_name, uint32_t width, uint3
 
 void ExclusiveWindow::init_im_gui() {}
 
-void ExclusiveWindow::setup_callbacks(
-    std::function<void(int width, int height)> frame_buffer_size_cb) {}
-
-void ExclusiveWindow::restore_callbacks() {}
-
 const char** ExclusiveWindow::get_required_instance_extensions(uint32_t* count) {
   static char const* extensions[]{VK_KHR_SURFACE_EXTENSION_NAME,
                                   VK_KHR_DISPLAY_EXTENSION_NAME,
@@ -109,6 +104,10 @@ uint32_t ExclusiveWindow::select_device(vk::Instance instance,
 void ExclusiveWindow::get_framebuffer_size(uint32_t* width, uint32_t* height) {
   *width = impl_->width_;
   *height = impl_->height_;
+}
+
+void ExclusiveWindow::get_window_size(uint32_t* width, uint32_t* height) {
+  get_framebuffer_size(width, height);
 }
 
 vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_device,

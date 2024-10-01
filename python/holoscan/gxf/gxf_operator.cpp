@@ -53,7 +53,8 @@ void init_gxf_operator(py::module_& m) {
   py::class_<ops::GXFOperator, ops::PyGXFOperator, Operator, std::shared_ptr<ops::GXFOperator>>(
       m, "GXFOperator", doc::GXFOperator::doc_GXFOperator)
       .def(py::init<>(), doc::GXFOperator::doc_GXFOperator)
-      // .def("initialize", &ops::GXFOperator::initialize)
+      .def_property_readonly(
+          "gxf_typename", &ops::GXFOperator::gxf_typename, doc::GXFOperator::doc_gxf_typename)
       .def_property_readonly(
           "gxf_context", &ops::GXFOperator::gxf_context, doc::GXFOperator::doc_gxf_context)
       .def_property("gxf_eid",
@@ -64,11 +65,6 @@ void init_gxf_operator(py::module_& m) {
                     py::overload_cast<>(&ops::GXFOperator::gxf_cid, py::const_),
                     py::overload_cast<gxf_uid_t>(&ops::GXFOperator::gxf_cid),
                     doc::GXFOperator::doc_gxf_cid)
-      .def("initialize",
-           &ops::GXFOperator::initialize,
-           doc::GXFOperator::doc_initialize)  // note: virtual function
-      .def(
-          "setup", &ops::GXFOperator::setup, doc::GXFOperator::doc_setup)  // note: virtual function
       .def_property_readonly(
           "description", &ops::GXFOperator::description, doc::GXFOperator::doc_description)
       .def(

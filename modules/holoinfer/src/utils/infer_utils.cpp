@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <utility>
@@ -89,6 +90,68 @@ bool check_equality(const T& first, const T& second) {
 template <typename T, typename... Y>
 bool check_equality(const T& first, const T& second, const Y&... args) {
   return (first == second) && check_equality(second, args...);
+}
+
+void log_tensor_dimension(const std::vector<int>& tensor_dim,
+                          const std::vector<int64_t>& input_model_dim,
+                          const std::string& current_tensor) {
+  HOLOSCAN_LOG_INFO("Input tensor {} dimensions: {}, Model input dimensions: {}",
+                    current_tensor,
+                    tensor_dim,
+                    input_model_dim);
+}
+
+InferStatus tensor_dimension_check(const MultiMappings& pre_processor_map,
+                                   const DimType& model_input_dimensions,
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor) {
+  InferStatus status = InferStatus(holoinfer_code::H_ERROR);
+
+  for (const auto& model_dms : model_input_dimensions) {
+    auto input_tensors = pre_processor_map.at(model_dms.first);
+    auto input_dimensions = model_dms.second;
+
+    for (size_t i = 0; i < input_tensors.size(); ++i) {
+      auto current_tensor = input_tensors[i];
+      auto tensor_dim = dims_per_tensor.at(current_tensor);
+      auto input_model_dim = input_dimensions[i];
+      size_t batch_flag = 0;
+
+      std::sort(tensor_dim.begin(), tensor_dim.end());
+      std::sort(input_model_dim.begin(), input_model_dim.end());
+
+      if (tensor_dim.size() != input_model_dim.size()) {
+        // only case when input tensor and model input dimensions can be different is when the model
+        // input is taking first dimension as a single batch and input tensor is ignoring the batch
+        // dimension
+        if (!(input_model_dim.size() - tensor_dim.size() == 1 && input_model_dim[0] == 1)) {
+          log_tensor_dimension(tensor_dim, input_model_dim, current_tensor);
+          HOLOSCAN_LOG_ERROR("Input tensor {} has rank: {}, Model expects the rank to be {}.",
+                             current_tensor,
+                             tensor_dim.size(),
+                             input_model_dim.size());
+          status.set_message("Dimension mismatch for input tensor.");
+          return status;
+        }
+        batch_flag = 1;
+      }
+
+      for (size_t j = 0; j < tensor_dim.size(); ++j) {
+        if (tensor_dim[j] != input_model_dim[j + batch_flag]) {
+          log_tensor_dimension(tensor_dim, input_model_dim, current_tensor);
+
+          HOLOSCAN_LOG_ERROR(
+              "Input tensor {} dimension mismatch: Input tensor has value {}. Model expects it to "
+              "be {}.",
+              current_tensor,
+              tensor_dim[j],
+              input_model_dim[j + batch_flag]);
+          status.set_message("Dimension mismatch for input tensor.");
+          return status;
+        }
+      }
+    }
+  }
+  return InferStatus();
 }
 
 InferStatus check_multi_mappings_size_value(const MultiMappings& input_map,

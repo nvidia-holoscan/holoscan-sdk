@@ -105,9 +105,6 @@ void init_event_based_scheduler(py::module_& m) {
       .def_property_readonly("max_duration_ms", &EventBasedScheduler::max_duration_ms)
       .def_property_readonly("stop_on_deadlock", &EventBasedScheduler::stop_on_deadlock)
       .def_property_readonly("stop_on_deadlock_timeout",
-                             &EventBasedScheduler::stop_on_deadlock_timeout)
-      .def_property_readonly("gxf_typename",
-                             &EventBasedScheduler::gxf_typename,
-                             doc::EventBasedScheduler::doc_gxf_typename);
+                             &EventBasedScheduler::stop_on_deadlock_timeout);
 }  // PYBIND11_MODULE
 }  // namespace holoscan
