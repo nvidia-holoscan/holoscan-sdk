@@ -18,9 +18,6 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/chrono.h>  // will include timedelta.h for us
 
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
 namespace py = pybind11;
 
 namespace holoscan {

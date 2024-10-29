@@ -259,7 +259,7 @@ void DeviceMemoryAllocator::destroyID(AllocationID id) {
   m_freeAllocationIndex = id.index;
 }
 
-const float DeviceMemoryAllocator::DEFAULT_PRIORITY = 0.5f;
+const float DeviceMemoryAllocator::DEFAULT_PRIORITY = 0.5F;
 
 void DeviceMemoryAllocator::init(VkDevice device, VkPhysicalDevice physicalDevice,
                                  VkDeviceSize blockSize, VkDeviceSize maxSize) {

@@ -31,8 +31,22 @@ void UcxContext::setup(ComponentSpec& spec) {
              "serializer",
              "Entity Serializer",
              "The entity serializer used by this network context.");
-
-  // TODO: implement OperatorSpec::resource for managing nvidia::gxf:Resource types
+  spec.param(reconnect_,
+             "reconnect",
+             "Reconnect",
+             "Try to reconnect if a connection is closed during run (default = true).",
+             true);
+  spec.param(cpu_data_only_,
+             "cpu_data_only",
+             "CPU data only",
+             "If true, the UCX context will only support transmission of CPU (host) data "
+             "(default = false).",
+             false);
+  spec.param(enable_async_,
+             "enable_async",
+             "enable async mode",
+             "Enable asynchronous transmit/receive.",
+             false);
   // spec.resource(gpu_device_, "Optional GPU device resource");
 }
 

@@ -132,3 +132,5 @@ python3 ${APP_DIR}/ping_distributed.py
 Add an additional `--gpu` to the command line to use a GPU tensor instead of a host one.
 
 Note that for this application "fragment1" sends the video frames and "fragment2" receives them (these fragment names were assigned during the `MyPingApp.compose` method for this application. In this case, "fragment2" has the receiver operator that logs messages to the terminal, so the process that runs that fragment will display the application output. We could omit the `--fragments` arguments altogether if we wanted to let holoscan automatically decide which nodes to run each fragment on. We chose to explicitly specify the fragments here so the user of the application knows which node to expect to see the output on.
+
+The `--track` argument can be specified to enable the distributed data flow tracking feature (to measure timings along various paths in the computation graph). Currently this should only be used when the fragments are run on a single node as time synchronization across multiple nodes is not yet automatically handled.

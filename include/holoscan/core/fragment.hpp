@@ -167,7 +167,7 @@ class Fragment {
    * @param prefix The prefix string that is prepended to the key of the configuration. (not
    * implemented yet)
    */
-  void config(const std::string& config_file, const std::string& prefix = "");
+  void config(const std::string& config_file, [[maybe_unused]] const std::string& prefix = "");
 
   /**
    * @brief Set the configuration of the fragment.
@@ -282,7 +282,7 @@ class Fragment {
    * converted to `bool` through `ArgList::as()` method:
    *
    * ```cpp
-   * bool is_rdma = from_config("aja.rdma").as<bool>();
+   * auto is_rdma = from_config("aja.rdma").as<bool>();
    * ```
    *
    * @param key The key of the configuration.

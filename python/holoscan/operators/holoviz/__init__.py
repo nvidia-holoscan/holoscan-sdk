@@ -172,7 +172,7 @@ class HolovizOp(_HolovizOp):
             if isinstance(receiver, str):
                 continue  # skip
                 # raise NotImpelementedError(
-                #     "TODO: need to enable access to self.spec for the OperatorSpec"  # noqa: FIX002
+                #     "TODO(unknown): need to enable access to self.spec for the OperatorSpec"  # noqa: FIX002
                 # )
                 # receiver = IOSpec(
                 #     op_spec=self.spec,

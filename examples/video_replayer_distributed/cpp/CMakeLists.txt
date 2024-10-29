@@ -72,7 +72,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME video_replayer_output)
-  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/video_replayer/)
+  set(VALIDATION_FRAMES_DIR ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/video_replayer/)
 
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
@@ -85,7 +85,7 @@ if(HOLOSCAN_BUILD_TESTS)
   add_custom_command(OUTPUT video_replayer_distributed_test.cpp
     PRE_LINK
     COMMAND patch -u -o video_replayer_distributed_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer_distributed.cpp
-            ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/video_replayer/cpp_video_replayer_distributed.patch
+    ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/video_replayer/cpp_video_replayer_distributed.patch
   )
 
   # Create the test executable
@@ -94,7 +94,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   target_include_directories(video_replayer_distributed_test
-    PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+    PRIVATE ${Holoscan-examples_SOURCE_DIR}/../tests)
 
   target_compile_definitions(video_replayer_distributed_test
     PRIVATE RECORD_OUTPUT RECORDING_DIR="${RECORDING_DIR}"
@@ -125,9 +125,22 @@ if(HOLOSCAN_BUILD_TESTS)
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
+  # repeat the default test, but with HOLOSCAN_UCX_ASYNCHRONOUS=False to set
+  # enable_async=false for UcxContext
+  add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_SYNCHRONOUS_MODE_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed_test --config ${CONFIG_FILE}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
+  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_SYNCHRONOUS_MODE_TEST PROPERTIES
+    ENVIRONMENT "HOLOSCAN_UCX_ASYNCHRONOUS=False"
+    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+  )
+
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_RENDER_TEST
-      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}

@@ -18,7 +18,6 @@ limitations under the License.
 import logging
 from argparse import Namespace
 from pathlib import Path
-from typing import List
 
 from ..common.artifact_sources import ArtifactSources
 from ..common.constants import DefaultValues
@@ -34,7 +33,7 @@ class PackagingArguments:
     """Processes input arguments for packager"""
 
     @property
-    def platforms(self) -> List[PlatformParameters]:
+    def platforms(self) -> list[PlatformParameters]:
         return self._platforms
 
     @property
@@ -56,7 +55,7 @@ class PackagingArguments:
         """
         self._logger = logging.getLogger("packager")
 
-        self._platforms: List[PlatformParameters]
+        self._platforms: list[PlatformParameters]
         self._build_parameters = PackageBuildParameters()
         self._artifact_sources = ArtifactSources()
 

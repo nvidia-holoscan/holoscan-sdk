@@ -70,7 +70,7 @@ static inline expected<typeT, RuntimeError> deserialize_trivial_type(Endpoint* e
   return encoded;
 }
 
-// TODO: currently not handling integer types separately
+// TODO(unknown): currently not handling integer types separately
 template <typename typeT>
 struct codec {
   static expected<size_t, RuntimeError> serialize(const typeT& value, Endpoint* endpoint) {

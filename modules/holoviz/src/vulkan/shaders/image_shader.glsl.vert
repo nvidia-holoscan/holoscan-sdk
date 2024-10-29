@@ -34,5 +34,5 @@ layout(push_constant) uniform constants {
 void main()
 {
     gl_Position = push_constants.vertex.matrix * vec4(i_position, 0.0, 1.0);
-    o_texCoord  = (i_position + vec2(1.f)) * vec2(0.5f);
+    o_texCoord  = (i_position + vec2(1.F)) * vec2(0.5F);
 }

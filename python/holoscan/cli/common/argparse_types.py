@@ -18,7 +18,6 @@ limitations under the License.
 import argparse
 import os
 from pathlib import Path
-from typing import List
 
 from .constants import SDK
 from .enum_types import Platform, PlatformConfiguration, SdkType
@@ -92,7 +91,7 @@ def valid_existing_path(path: str) -> Path:
     raise argparse.ArgumentTypeError(f"No such file/folder: '{file_path}'")
 
 
-def valid_platforms(platforms_str: str) -> List[Platform]:
+def valid_platforms(platforms_str: str) -> list[Platform]:
     """Helper type checking and type converting method for ArgumentParser.add_argument
     to convert platform strings to Platform enum if values are valid.
 

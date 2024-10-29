@@ -18,15 +18,17 @@
 #ifndef HOLOSCAN_CORE_APPLICATION_HPP
 #define HOLOSCAN_CORE_APPLICATION_HPP
 
-#include <iostream>     // for std::cout
-#include <memory>       // for std::shared_ptr
-#include <set>          // for std::set
-#include <string>       // for std::string
-#include <type_traits>  // for std::enable_if_t, std::is_constructible
-#include <utility>      // for std::pair
-#include <vector>       // for std::vector
+#include <iostream>       // for std::cout
+#include <memory>         // for std::shared_ptr
+#include <set>            // for std::set
+#include <string>         // for std::string
+#include <type_traits>    // for std::enable_if_t, std::is_constructible
+#include <unordered_map>  // for std::unordered_map
+#include <utility>        // for std::pair
+#include <vector>         // for std::vector
 
 #include "./fragment.hpp"
+#include "dataflow_tracker.hpp"
 
 #include "./app_worker.hpp"
 #include "./cli_parser.hpp"
@@ -285,6 +287,22 @@ class Application : public Fragment {
   void run() override;
 
   std::future<void> run_async() override;
+
+  /**
+   * @brief Returns a map of fragment names to DataFlowTracker* corresponding to respective
+   * fragments. The trackers will store cumulatively progressive timestamps, meaning a fragment
+   * tracker will store the timestamps of operators in the previous fragments as well.
+   *
+   * @param num_start_messages_to_skip The number of start messages to skip.
+   * @param num_last_messages_to_discard The number of last messages to discard.
+   * @param latency_threshold The latency threshold.
+   * @return std::unordered_map<std::string, DataFlowTracker*> Fragment name to DataFlowTracker*
+   * mapping.
+   */
+  std::unordered_map<std::string, DataFlowTracker*> track_distributed(
+      uint64_t num_start_messages_to_skip = kDefaultNumStartMessagesToSkip,
+      uint64_t num_last_messages_to_discard = kDefaultNumLastMessagesToDiscard,
+      int latency_threshold = kDefaultLatencyThreshold);
 
  protected:
   friend class AppDriver;

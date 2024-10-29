@@ -22,9 +22,6 @@
 #include "holoscan/logger/logger.hpp"
 #include "logger_pydoc.hpp"
 
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
 namespace py = pybind11;
 
 namespace holoscan {

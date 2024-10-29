@@ -28,8 +28,8 @@
 #include "holoscan/core/resources/gxf/serialization_buffer.hpp"
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -52,7 +52,7 @@ class PySerializationBuffer : public SerializationBuffer {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -73,7 +73,7 @@ class PyUcxSerializationBuffer : public UcxSerializationBuffer {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

@@ -138,7 +138,11 @@
 - {ref}`exhale_class_classholoscan_1_1AsynchronousCondition`
 - {ref}`exhale_class_classholoscan_1_1BooleanCondition`
 - {ref}`exhale_class_classholoscan_1_1CountCondition`
+- {ref}`exhale_class_classholoscan_1_1CudaBufferAvailableCondition`
+- {ref}`exhale_class_classholoscan_1_1CudaEventCondition`
+- {ref}`exhale_class_classholoscan_1_1CudaStreamCondition`
 - {ref}`exhale_class_classholoscan_1_1DownstreamMessageAffordableCondition`
+- {ref}`exhale_class_classholoscan_1_1ExpiringMessageAvailableCondition`
 - {ref}`exhale_class_classholoscan_1_1MessageAvailableCondition`
 - {ref}`exhale_class_classholoscan_1_1PeriodicCondition`
 
@@ -147,6 +151,7 @@
 - {ref}`exhale_class_classholoscan_1_1Allocator`
 - {ref}`exhale_class_classholoscan_1_1BlockMemoryPool`
 - {ref}`exhale_class_classholoscan_1_1Clock`
+- {ref}`exhale_class_classholoscan_1_1CudaAllocator`
 - {ref}`exhale_class_classholoscan_1_1CudaStreamPool`
 - {ref}`exhale_class_classholoscan_1_1DoubleBufferReceiver`
 - {ref}`exhale_class_classholoscan_1_1DoubleBufferTransmitter`
@@ -154,9 +159,11 @@
 - {ref}`exhale_class_classholoscan_1_1ManualClock`
 - {ref}`exhale_class_classholoscan_1_1RealtimeClock`
 - {ref}`exhale_class_classholoscan_1_1Receiver`
+- {ref}`exhale_class_classholoscan_1_1RMMAllocator`
 - {ref}`exhale_class_classholoscan_1_1SerializationBuffer`
 - {ref}`exhale_class_classholoscan_1_1StdComponentSerializer`
 - {ref}`exhale_class_classholoscan_1_1StdEntitySerializer`
+- {ref}`exhale_class_classholoscan_1_1StreamOrderedAllocator`
 - {ref}`exhale_class_classholoscan_1_1Transmitter`
 - {ref}`exhale_class_classholoscan_1_1UcxComponentSerializer`
 - {ref}`exhale_class_classholoscan_1_1UcxEntitySerializer`

@@ -20,9 +20,11 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -33,7 +35,7 @@
 #include "holoscan/core/operator.hpp"
 #include "tensor.hpp"
 
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -48,14 +50,20 @@ void init_application(py::module_& m) {
       .def(py::init<const std::vector<std::string>&>(),
            "argv"_a = std::vector<std::string>(),
            doc::Application::doc_Application)
-      .def_property("description",
-                    py::overload_cast<>(&Application::description),
-                    (Application & (Application::*)(const std::string&)&)&Application::description,
-                    doc::Application::doc_description)
-      .def_property("version",
-                    py::overload_cast<>(&Application::version),
-                    (Application & (Application::*)(const std::string&)&)&Application::version,
-                    doc::Application::doc_version)
+      .def_property(
+          "description",
+          py::overload_cast<>(&Application::description),
+          [](Application& app, const std::string& name) -> Application& {
+            return app.description(name);
+          },
+          doc::Application::doc_description)
+      .def_property(
+          "version",
+          py::overload_cast<>(&Application::version),
+          [](Application& app, const std::string& name) -> Application& {
+            return app.version(name);
+          },
+          doc::Application::doc_version)
       .def_property_readonly(
           "argv", [](PyApplication& app) { return app.py_argv(); }, doc::Application::doc_argv)
       .def_property_readonly("options",
@@ -72,9 +80,9 @@ void init_application(py::module_& m) {
            &Application::add_fragment,
            "frag"_a,
            doc::Application::doc_add_fragment)  // note: virtual function
-      // TODO: sphinx API doc build complains if more than one overloaded add_flow method has a
-      //       docstring specified. For now using the docstring defined for 3-argument
-      //       Operator-based version and describing the other variants in the Notes section.
+      // TODO(unknown): sphinx API doc build complains if more than one overloaded add_flow method
+      // has a docstring specified. For now using the docstring defined for 3-argument
+      // Operator-based version and describing the other variants in the Notes section.
       .def(  // note: virtual function
           "add_flow",
           py::overload_cast<const std::shared_ptr<Operator>&, const std::shared_ptr<Operator>&>(
@@ -101,10 +109,36 @@ void init_application(py::module_& m) {
       .def("compose",
            &Application::compose,
            doc::Application::doc_compose)  // note: virtual function
+      .def("compose_graph", &Application::compose_graph, doc::Application::doc_compose_graph)
       .def("run",
            &Application::run,
            doc::Application::doc_run,
            py::call_guard<py::gil_scoped_release>())  // note: virtual function/should release GIL
+      .def(
+          "track_distributed",
+          // This version of `track_distributed differs from the C++ API only in return type, using
+          //   std::unordered_map<std::string, std::reference_wrapper<DataFlowTracker>>
+          // instead of
+          //   std::unordered_map<std::string, DataFlowTracker*>
+          // to use the trackers from Python.
+          [](Application& app,
+             uint64_t num_start_messages_to_skip,
+             uint64_t num_last_messages_to_discard,
+             int latency_threshold)
+              -> std::unordered_map<std::string, std::reference_wrapper<DataFlowTracker>> {
+            auto tracker_pointers = app.track_distributed(
+                num_start_messages_to_skip, num_last_messages_to_discard, latency_threshold);
+            std::unordered_map<std::string, std::reference_wrapper<DataFlowTracker>> trackers;
+            for (const auto& [name, tracker_ptr] : tracker_pointers) {
+              trackers.emplace(name, std::ref(*tracker_ptr));
+            }
+            return trackers;
+          },
+          "num_start_messages_to_skip"_a = kDefaultNumStartMessagesToSkip,
+          "num_last_messages_to_discard"_a = kDefaultNumLastMessagesToDiscard,
+          "latency_threshold"_a = kDefaultLatencyThreshold,
+          // doc::Fragment::doc_track_distributed,
+          py::return_value_policy::reference_internal)
       .def(
           "__repr__",
           [](const py::object& obj) {
@@ -181,7 +215,7 @@ void PyApplication::run() {
     py_profile_func_ = sys_module.attr("getprofile")();
     py_trace_func_ = sys_module.attr("gettrace")();
 
-    auto py_thread_state = _PyThreadState_UncheckedGet();
+    auto* py_thread_state = _PyThreadState_UncheckedGet();
     c_profilefunc_ = py_thread_state->c_profilefunc;
     c_profileobj_ = py_thread_state->c_profileobj;
     c_tracefunc_ = py_thread_state->c_tracefunc;

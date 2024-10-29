@@ -382,7 +382,7 @@ uint32_t ResourceAllocator::getMemoryType(uint32_t typeBits,
     }
   }
   assert(0);
-  return ~0u;
+  return ~0U;
 }
 
 AccelNV ResourceAllocator::createAcceleration(VkAccelerationStructureCreateInfoNV& accel_) {

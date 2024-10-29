@@ -108,6 +108,10 @@ Required parameters and related features available with the Holoscan Inference M
                     "model_2_unique_identifier": "torch"
                     "model_3_unique_identifier": "torch"
             ```
+    - `trt_opt_profile`: This parameter is optional and is activated with TensorRT backend. This parameter is applicable on models with dynamic input shapes.
+        - Parameter is specified as a vector of 3 integers. First is the minimum batch size for the input, second is the optimum batch size and third value is the maximum batch size.
+        - Users can specify a batch profile for dynamic input. This profile is then used in engine creation. User must clear the cache to apply the updated optimization profile.
+        - Default value: {1,1,1}
 
 - Other features: The table below illustrates other features and supported values in the current release.
 

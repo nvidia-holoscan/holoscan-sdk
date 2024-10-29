@@ -31,7 +31,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
 
   target_include_directories(${CMAKE_TEST_NAME}
     PRIVATE
-    ${HOLOSCAN_TOP}/gxf_extensions # TODO: expose in targets instead
+    ${HOLOSCAN_TOP}/gxf_extensions # TODO(unknown): expose in targets instead
   )
 
   target_link_libraries(${CMAKE_TEST_NAME}

@@ -1,7 +1,7 @@
 # Holoscan SDK Examples
 
 This directory contains examples to help users learn how to use the Holoscan SDK for development.
-See [HoloHub](https://nvidia-holoscan.github.io/holohub) to find additional reference applications.
+See [HoloHub](https://github.com/nvidia-holoscan/holohub) to find additional reference applications.
 
 ## Build instructions
 

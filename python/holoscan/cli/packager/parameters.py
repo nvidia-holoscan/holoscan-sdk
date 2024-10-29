@@ -19,7 +19,7 @@ import logging
 import os
 import platform
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ..common.constants import SDK, Constants, DefaultValues
 from ..common.dockerutils import parse_docker_image_name_and_tag
@@ -46,7 +46,7 @@ class PlatformParameters:
         if self._version is None:
             self._version = version
 
-        self._data: Dict[str, Any] = {}
+        self._data: dict[str, Any] = {}
         self._data["tag"] = tag
         self._data["base_image"] = None
         self._data["build_image"] = None
@@ -60,6 +60,7 @@ class PlatformParameters:
         self._data["target_arch"] = "aarch64" if self._arch == Arch.arm64 else "x86_64"
         self._data["cuda_deb_arch"] = "sbsa" if self._arch == Arch.arm64 else "x86_64"
         self._data["holoscan_deb_arch"] = "arm64" if self._arch == Arch.arm64 else "amd64"
+        self._data["gpu_type"] = self.platform_config.value
 
     @property
     def tag(self) -> str:
@@ -166,7 +167,7 @@ class PlatformParameters:
         return self._platform_config
 
     @property
-    def to_jinja(self) -> Dict[str, Any]:
+    def to_jinja(self) -> dict[str, Any]:
         return self._data
 
     @property
@@ -365,11 +366,11 @@ class PackageBuildParameters:
             self._data["docs"] = value
 
     @property
-    def models(self) -> Dict[str, Path]:
+    def models(self) -> dict[str, Path]:
         return self._data.get("models", None)
 
     @models.setter
-    def models(self, value: Dict[str, Path]):
+    def models(self, value: dict[str, Path]):
         if value is not None:
             self._data["models"] = value
 
@@ -519,7 +520,7 @@ class PackageBuildParameters:
         self._data["includes"] = value
 
     @property
-    def to_jinja(self) -> Dict[str, Any]:
+    def to_jinja(self) -> dict[str, Any]:
         return self._data
 
     def _detect_application_type(self) -> ApplicationType:

@@ -73,7 +73,7 @@ RUN python3 -m pip install --no-cache-dir \
 ################################################################
 FROM $BASE_IMAGE AS docs-html
 
-# Copy over installed denpendencies from docs-base
+# Copy over installed dependencies from docs-base
 COPY --from=docs-base /usr/bin/dot /usr/bin/dot
 COPY --from=docs-base /usr/local/bin/doxygen /usr/local/bin/doxygen
 COPY --from=docs-base /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages

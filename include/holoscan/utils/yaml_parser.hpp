@@ -114,7 +114,7 @@ struct YAMLNodeParser<std::vector<typeT>> {
     std::vector<typeT> result(node.size());
     for (size_t i = 0; i < node.size(); i++) {
       const auto value = YAMLNodeParser<typeT>::parse(node[i]);
-      // TODO: check if value is valid
+      // TODO(unknown): check if value is valid
       result[i] = std::move(value);
     }
     return result;
@@ -140,7 +140,7 @@ struct YAMLNodeParser<std::array<typeT, N>> {
     std::array<typeT, N> result;
     for (size_t i = 0; i < node.size(); i++) {
       const auto value = YAMLNodeParser<typeT>::parse(node[i]);
-      // TODO: check if value is valid
+      // TODO(unknown): check if value is valid
       result[i] = std::move(value);
     }
     return result;

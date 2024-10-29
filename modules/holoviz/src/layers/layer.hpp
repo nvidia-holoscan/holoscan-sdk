@@ -90,9 +90,9 @@ class Layer {
    */
   struct View {
     /// offset of top-left corner. Top left coordinate is (0, 0) bottom right coordinate is (1, 1).
-    float offset_x = 0.f, offset_y = 0.f;
+    float offset_x = 0.F, offset_y = 0.F;
     /// width and height of the layer in normalized range. 1.0 is full size.
-    float width = 1.f, height = 1.f;
+    float width = 1.F, height = 1.F;
 
     /// transform matrix
     std::optional<nvmath::mat4f> matrix;

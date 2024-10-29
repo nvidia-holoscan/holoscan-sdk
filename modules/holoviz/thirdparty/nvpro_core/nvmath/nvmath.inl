@@ -1347,8 +1347,8 @@ inline void quaternion<T>::from_matrix(const matrix3<T>& mat)
     int k     = next[j];
     T   scale = sqrtf(mat(i, i) - mat(j, j) - mat(k, k) + 1);
     T*  q[]   = {&x, &y, &z};
-    *q[i]     = 0.5f * scale;
-    scale     = 0.5f / scale;
+    *q[i]     = 0.5F * scale;
+    scale     = 0.5F / scale;
     w         = scale * (mat(k, j) - mat(j, k));
     *q[j]     = scale * (mat(j, i) + mat(i, j));
     *q[k]     = scale * (mat(k, i) + mat(i, k));
@@ -1380,8 +1380,8 @@ inline void quaternion<T>::from_matrix(const matrix4<T>& mat)
     int k     = next[j];
     T   scale = sqrtf(mat(i, i) - mat(j, j) - mat(k, k) + 1);
     T*  q[]   = {&x, &y, &z};
-    *q[i]     = 0.5f * scale;
-    scale     = 0.5f / scale;
+    *q[i]     = 0.5F * scale;
+    scale     = 0.5F / scale;
     w         = scale * (mat(k, j) - mat(j, k));
     *q[j]     = scale * (mat(j, i) + mat(i, j));
     *q[k]     = scale * (mat(k, i) + mat(i, k));
@@ -1432,19 +1432,19 @@ inline void quaternion<T>::to_matrix(matrix4<T>& mat) const
   mat(0, 0) = 1 - (yy + zz);
   mat(0, 1) = xy - wz;
   mat(0, 2) = xz + wy;
-  mat(0, 3) = 0.0f;
+  mat(0, 3) = 0.0F;
   mat(1, 0) = xy + wz;
   mat(1, 1) = 1 - (xx + zz);
   mat(1, 2) = yz - wx;
-  mat(1, 3) = 0.0f;
+  mat(1, 3) = 0.0F;
   mat(2, 0) = xz - wy;
   mat(2, 1) = yz + wx;
   mat(2, 2) = 1 - (xx + yy);
-  mat(2, 3) = 0.0f;
-  mat(3, 0) = 0.0f;
-  mat(3, 1) = 0.0f;
-  mat(3, 2) = 0.0f;
-  mat(3, 3) = 1.0f;
+  mat(2, 3) = 0.0F;
+  mat(3, 0) = 0.0F;
+  mat(3, 1) = 0.0F;
+  mat(3, 2) = 0.0F;
+  mat(3, 3) = 1.0F;
 }
 
 template <class T>
@@ -1567,8 +1567,8 @@ inline quaternion<T> slerp_quats(T s, const quaternion<T>& q1, const quaternion<
     return p;
   }
   T sine    = sinf(angle);
-  T sineInv = 1.0f / sine;
-  T c1      = sinf((1.0f - s) * angle) * sineInv;
+  T sineInv = 1.0F / sine;
+  T c1      = sinf((1.0F - s) * angle) * sineInv;
   T c2      = sinf(s * angle) * sineInv;
   p.x       = c1 * q1.x + c2 * q2.x;
   p.y       = c1 * q1.y + c2 * q2.y;
@@ -2237,10 +2237,10 @@ template <class T>
 inline T get_angle(const vector3<T>& v1, const vector3<T>& v2)
 {
   float dp = dot(v1, v2);
-  if(dp > 1.0f)
-    dp = 1.0f;
-  else if(dp < -1.0f)
-    dp = -1.0f;
+  if(dp > 1.0F)
+    dp = 1.0F;
+  else if(dp < -1.0F)
+    dp = -1.0F;
   return acosf(dp);
 }
 
@@ -2254,8 +2254,8 @@ inline vector3<T> rotate_by(const vector3<T>& src, const quaternion<T>& q)
 template <class T>
 inline void quaternion<T>::to_euler_xyz(vector3<T>& r)
 {
-  double a = 2.0f * (w * x + y * z);
-  double b = 1.0 - 2.0f * (x * x + y * y);
+  double a = 2.0F * (w * x + y * z);
+  double b = 1.0 - 2.0F * (x * x + y * y);
   r.x      = (T)atan2(a, b);
 
   a   = 2.0 * (w * y - z * x);
@@ -2269,8 +2269,8 @@ inline void quaternion<T>::to_euler_xyz(vector3<T>& r)
 template <class T>
 inline void quaternion<T>::to_euler_xyz(T* r)
 {
-  double a = 2.0f * (w * x + y * z);
-  double b = 1.0 - 2.0f * (x * x + y * y);
+  double a = 2.0F * (w * x + y * z);
+  double b = 1.0 - 2.0F * (x * x + y * y);
   r[0]     = (T)atan2(a, b);
 
   a    = 2.0 * (w * y - z * x);
@@ -2291,7 +2291,7 @@ inline quaternion<T>::quaternion(const vector3<T>& eulerXYZ)
 template <class T>
 inline void quaternion<T>::from_euler_xyz(vector3<T> r)
 {
-  r *= 0.5f;
+  r *= 0.5F;
   w = cosf(r.x) * cosf(r.y) * cosf(r.z) + sinf(r.x) * sinf(r.y) * sinf(r.z);
   x = sinf(r.x) * cosf(r.y) * cosf(r.z) - cosf(r.x) * sinf(r.y) * sinf(r.z);
   y = cosf(r.x) * sinf(r.y) * cosf(r.z) + sinf(r.x) * cosf(r.y) * sinf(r.z);
@@ -2641,7 +2641,7 @@ inline vector3<T> project_point_on_plane(const vector3<T>& point, const plane<T>
 template <typename T>
 inline void normalize_plane(plane<T>& p)
 {
-  float inv_length = 1.0f / length(p.normal());
+  float inv_length = 1.0F / length(p.normal());
   p *= inv_length;
 }
 
@@ -2712,17 +2712,17 @@ vector3<T> get_perpendicular_vec(const vector3<T>& vec)
   // choose a basis vector roughly along the smallest component of the vector
   if(perp.x <= perp.y && perp.x <= perp.z)
   {
-    perp = vector3<T>(1.0f, 0, 0);
+    perp = vector3<T>(1.0F, 0, 0);
   }
   else
   {
     if(perp.y <= perp.x && perp.y <= perp.z)
     {
-      perp = vector3<T>(0, 1.0f, 0);
+      perp = vector3<T>(0, 1.0F, 0);
     }
     else
     {
-      perp = vector3<T>(0, 0, 1.0f);
+      perp = vector3<T>(0, 0, 1.0F);
     }
   }
 

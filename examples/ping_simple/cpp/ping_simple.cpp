@@ -32,7 +32,7 @@ class MyPingApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<MyPingApp>();
   app->run();
 

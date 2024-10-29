@@ -121,7 +121,10 @@
         "ranges": "cpp",
         "barrier": "cpp",
         "latch": "cpp",
-        "syncstream": "cpp"
+        "syncstream": "cpp",
+        "__functional_base_03": "cpp",
+        "annotated_ptr": "cpp",
+        "stream_ref": "cpp"
     },
     "git.alwaysSignOff": true,
     "git.untrackedChanges": "separate",

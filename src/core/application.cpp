@@ -22,11 +22,13 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/config.hpp"
+#include "holoscan/core/dataflow_tracker.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/operator.hpp"
@@ -220,6 +222,24 @@ std::future<void> Application::run_async() {
   return driver().run_async();
 }
 
+std::unordered_map<std::string, DataFlowTracker*> Application::track_distributed(
+    uint64_t num_start_messages_to_skip, uint64_t num_last_messages_to_discard,
+    int latency_threshold) {
+  if (!is_composed_) { compose_graph(); }
+  std::unordered_map<std::string, DataFlowTracker*> trackers;
+  auto& frag_graph = fragment_graph();
+  // iterate over all nodes in frag_graph
+  for (const auto& each_fragment : frag_graph.get_nodes()) {
+    // if track has not been called on the fragment, then call the tracker
+    if (!each_fragment->data_flow_tracker()) {
+      each_fragment->track(
+          num_start_messages_to_skip, num_last_messages_to_discard, latency_threshold);
+    }
+    trackers[each_fragment->name()] = each_fragment->data_flow_tracker();
+  }
+  return trackers;
+}
+
 AppDriver& Application::driver() {
   if (!app_driver_) { app_driver_ = std::make_shared<AppDriver>(this); }
   return *app_driver_;
@@ -374,7 +394,7 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
       // If it is, then we should use the default scheduler.
       // Otherwise, we should set new multi-thread scheduler.
 
-      // TODO: consider use of event-based scheduler?
+      // TODO(unknown): consider use of event-based scheduler?
       auto multi_thread_scheduler =
           std::dynamic_pointer_cast<holoscan::MultiThreadScheduler>(scheduler);
       if (!multi_thread_scheduler) { scheduler_setting = SchedulerType::kMultiThread; }
@@ -416,7 +436,7 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
         scheduler =
             fragment->make_scheduler<holoscan::EventBasedScheduler>("event-based-scheduler");
         unsigned int num_processors = std::thread::hardware_concurrency();
-        // TODO: check number of threads setting needed for event-based scheduler
+        // TODO(unknown): check number of threads setting needed for event-based scheduler
         // Currently, we use the number of operators in the fragment as the number of worker threads
         int64_t worker_thread_number =
             std::min(fragment->graph().get_nodes().size(), static_cast<size_t>(num_processors));

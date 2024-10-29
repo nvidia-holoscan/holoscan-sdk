@@ -88,18 +88,18 @@ TEST_P(VSync, Modes) {
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - start);
 
-  const float displayed_frames = float(video_mode->refreshRate) * elapsed.count() / 1000.f;
+  const float displayed_frames = float(video_mode->refreshRate) * elapsed.count() / 1000.F;
 
   switch (present_mode) {
     case viz::PresentMode::FIFO:
       // rendered frames should be within 10% of displayed frames
-      EXPECT_LE(std::abs((float(frames) / displayed_frames) - 1.f), 0.1f);
+      EXPECT_LE(std::abs((float(frames) / displayed_frames) - 1.F), 0.1F);
       break;
     case viz::PresentMode::AUTO:
     case viz::PresentMode::IMMEDIATE:
     case viz::PresentMode::MAILBOX:
       // no vsync, should render at least two times the refresh rate
-      EXPECT_GT(frames, displayed_frames * 2.f);
+      EXPECT_GT(frames, displayed_frames * 2.F);
       break;
   }
 

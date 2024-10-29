@@ -33,11 +33,8 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/operators/format_converter/format_converter.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -62,10 +59,10 @@ class PyFormatConverterOp : public FormatConverterOp {
   PyFormatConverterOp(Fragment* fragment, const py::args& args,
                       std::shared_ptr<holoscan::Allocator> pool, const std::string& out_dtype,
                       const std::string& in_dtype = "", const std::string& in_tensor_name = "",
-                      const std::string& out_tensor_name = "", float scale_min = 0.f,
-                      float scale_max = 1.f, uint8_t alpha_value = static_cast<uint8_t>(255),
+                      const std::string& out_tensor_name = "", float scale_min = 0.F,
+                      float scale_max = 1.F, uint8_t alpha_value = static_cast<uint8_t>(255),
                       int32_t resize_height = 0, int32_t resize_width = 0, int32_t resize_mode = 0,
-                      const std::vector<int> out_channel_order = std::vector<int>{},
+                      const std::vector<int>& out_channel_order = std::vector<int>{},
                       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                       const std::string& name = "format_converter")
       : FormatConverterOp(ArgList{Arg{"in_tensor_name", in_tensor_name},
@@ -85,7 +82,7 @@ class PyFormatConverterOp : public FormatConverterOp {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -122,8 +119,8 @@ PYBIND11_MODULE(_format_converter, m) {
            "in_dtype"_a = ""s,
            "in_tensor_name"_a = ""s,
            "out_tensor_name"_a = ""s,
-           "scale_min"_a = 0.f,
-           "scale_max"_a = 1.f,
+           "scale_min"_a = 0.F,
+           "scale_max"_a = 1.F,
            "alpha_value"_a = static_cast<uint8_t>(255),
            "resize_height"_a = 0,
            "resize_width"_a = 0,

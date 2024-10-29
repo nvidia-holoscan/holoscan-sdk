@@ -56,8 +56,8 @@ RUN apt-get update \
 FROM base AS torch-dependencies
 
 ARG GPU_TYPE
-ARG TORCHVISION_VERSION=0.16.0_23.08
-ARG LIBTORCH_VERSION=2.1.0_23.08
+ARG TORCHVISION_VERSION=0.20.0_24.08
+ARG LIBTORCH_VERSION=2.5.0_24.08
 
 # Install openmpi
 RUN apt update && \
@@ -92,6 +92,7 @@ RUN curl -S -# -o hpcx.tbz -L \
     tar -xvjf hpcx.tbz hpcx-v2.15-gcc-inbox-ubuntu22.04-cuda12-gdrcopy2-nccl2.17-{{target_arch}}/ucc/lib/libucc.so.1.0.0 && \
     rm -f hpcx.tbz && \
     find . -name libucc.so.1.0.0 -exec mv -f {} /opt/hpcx/libucc.so.1 \;
+
 # End collect torch dependencies
 {% endif %}
 
@@ -100,16 +101,16 @@ RUN curl -S -# -o hpcx.tbz -L \
 # Collect onnx dependencies
 FROM base AS onnx-dependencies
 ARG GPU_TYPE
-ARG ONNX_RUNTIME_VERSION=1.15.1_23.08
+ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
 
 WORKDIR /opt/onnxruntime
 
 # Download onnx binaries
-RUN curl -S -L -# -o ort.tgz \
-    https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-12.2-$(uname -m).tar.gz
+RUN curl -S -L -# -o ort.tar.gz \
+    https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-$(uname -m).tar.gz
 RUN mkdir -p ${ONNX_RUNTIME_VERSION}
-RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2 && \
-    rm -f ort.tgz5
+RUN ls -l && tar -xvzf ort.tar.gz -C ${ONNX_RUNTIME_VERSION} --strip-components 2 && \
+    rm -f ort.tar.gz
 WORKDIR /
 # End collect onnx dependencies
 {% endif %}
@@ -229,8 +230,22 @@ RUN apt update \
         libopenblas0="0.3.20+ds-*" \
         libevent-core-2.1-7 \
         libevent-pthreads-2.1-7 \
-        cuda-cupti-12-2 \
+        cuda-cupti-12-6 \
+        libcudnn9-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install NVIDIA Performance Libraries on arm64 dGPU platform
+# as a runtime requirement for the Holoinfer `libtorch` backend (2.5.0).
+{% if target_arch == "aarch64" and gpu_type == "dgpu" %}
+RUN curl -L https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/cuda-keyring_1.1-1_all.deb -O \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y \
+        nvpl-blas=0.2.0.1-* \
+        nvpl-lapack=0.2.2.1-* \
+    && rm -rf /var/lib/apt/lists/*
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/sbsa-linux-gnu/
+{% endif %}
 
 #  mkl - dependency for libtorch plugin on x86_64 (match pytorch container version)
 RUN if [ "{{ cuda_deb_arch }}" = "x86_64" ]; then \
@@ -244,12 +259,12 @@ RUN if [ "{{ cuda_deb_arch }}" = "x86_64" ]; then \
     fi
 
 # Copy Libtorch
-ARG LIBTORCH_VERSION=2.1.0_23.08
+ARG LIBTORCH_VERSION=2.5.0_24.08
 ENV LIBTORCH=/opt/libtorch/${LIBTORCH_VERSION}/lib
 COPY --from=torch-dependencies ${LIBTORCH} ${LIBTORCH}
 
 # Copy TorchVision
-ARG TORCHVISION_VERSION=0.16.0_23.08
+ARG TORCHVISION_VERSION=0.20.0_24.08
 ENV TORCHVISION=/opt/torchvision/${TORCHVISION_VERSION}/lib
 COPY --from=torch-dependencies ${TORCHVISION} ${TORCHVISION}
 
@@ -267,20 +282,24 @@ WORKDIR /
 
 {% if 'onnx' in includes %}
 # Install onnx dependencies
-ARG ONNX_RUNTIME_VERSION=1.15.1_23.08
+ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
 ENV ONNX_RUNTIME=/opt/onnxruntime/${ONNX_RUNTIME_VERSION}/lib
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${ONNX_RUNTIME}
 
 # Copy ONNX Runtime
 COPY --from=onnx-dependencies ${ONNX_RUNTIME} ${ONNX_RUNTIME}
 
-RUN if [ "${GPU_TYPE}" = "dgpu" ]; then apt-get update \
+{% if gpu_type == "dgpu" %}
+RUN apt-get update \
     && apt-get install --no-install-recommends --no-install-suggests --allow-downgrades -y \
-        libnvinfer-plugin8="8.6.*+cuda12.0" \
-        libnvonnxparsers8="8.6.*+cuda12.0" \
-        ; fi \
+        libnvinfer10="10.3.*+cuda12.5" \
+        libnvinfer-plugin10="10.3.*+cuda12.5" \
+        libnvonnxparsers10="10.3.*+cuda12.5" \
+        libcusparselt0="0.6.2.3-*" \
+        libcudnn9-cuda-12  \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/lib/*/libcudnn*train.so*
+{% endif %}
 ### End install onnx dependencies
 {% endif %}
 
@@ -357,6 +376,7 @@ RUN apt-get install -y --no-install-recommends --no-install-suggests \
 RUN apt-get install -y --no-install-recommends --no-install-suggests \
         holoscan={{ holoscan_sdk_filename }} \
     # && apt-get remove -y g++ g++-11 gcc gcc-11 gcc-11-base build-essential \
+    && apt-get purge -y cuda-keyring \
     && rm -rf /var/lib/apt/lists/*
 
 {% endif %}

@@ -384,6 +384,12 @@ class Tracker:
             latency metric calculations.
         """
         self.app = app
+
+        # Check the number of fragment nodes to see if it is a distributed app.
+        # Use compose_graph(), not compose() to protect against repeated compose() calls.
+        self.app.compose_graph()
+        self.is_distributed_app = len(app.fragment_graph.get_nodes()) > 0
+
         self.enable_logging = filename is not None
         if self.enable_logging:
             self.logging_kwargs = dict(
@@ -397,14 +403,25 @@ class Tracker:
         )
 
     def __enter__(self):
-        self.tracker = self.app.track(**self.tracker_kwargs)
-        if self.enable_logging:
-            self.tracker.enable_logging(**self.logging_kwargs)
-        return self.tracker
+        if self.is_distributed_app:
+            self.trackers = self.app.track_distributed(**self.tracker_kwargs)
+            for tracker in self.trackers.values():
+                if self.enable_logging:
+                    tracker.enable_logging(**self.logging_kwargs)
+            return self.trackers
+        else:
+            self.tracker = self.app.track(**self.tracker_kwargs)
+            if self.enable_logging:
+                self.tracker.enable_logging(**self.logging_kwargs)
+            return self.tracker
 
     def __exit__(self, exc_type, exc_value, exc_tb):
         if self.enable_logging:
-            self.tracker.end_logging()
+            if self.is_distributed_app:
+                for tracker in self.trackers.values():
+                    tracker.end_logging()
+            else:
+                self.tracker.end_logging()
 
 
 _registry_context = _RegistryContext()

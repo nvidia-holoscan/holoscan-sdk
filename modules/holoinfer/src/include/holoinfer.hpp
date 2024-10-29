@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _HOLOSCAN_INFER_API_H
-#define _HOLOSCAN_INFER_API_H
+#ifndef MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_HPP
+#define MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_HPP
 
 #include <iostream>
 #include <map>
@@ -27,6 +27,8 @@
 
 namespace holoscan {
 namespace inference {
+
+class ManagerProcessor;
 
 /**
  * Inference Context class
@@ -46,13 +48,17 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
 
   /**
    * Executes the inference
-   * Toolkit supports one input per model, in float32 type
+   * Toolkit supports one input per model, in float32 type.
+   * The provided CUDA stream is used to prepare the input data and will be used to operate on the
+   * output data, any execution of CUDA work should be in sync with this stream.
    *
    * @param inference_specs   Pointer to inference specifications
+   * @param cuda_stream CUDA stream
    *
    * @return InferStatus with appropriate holoinfer_code and message.
    */
-  InferStatus execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs);
+  InferStatus execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                cudaStream_t cuda_stream = 0);
 
   /**
    * Gets output dimension per model
@@ -100,12 +106,15 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    * output as a vector of float32 type
    * @param dimension_map Map is updated with model name as key mapped to dimension of processed
    * data as a vector
+   * @param process_with_cuda Flag defining if processing should be done with CUDA
+   * @param cuda_stream CUDA stream to use when procseeing is done with CUDA
    *
    * @return InferStatus with appropriate holoinfer_code and message.
    */
   InferStatus process(const MultiMappings& tensor_oper_map, const MultiMappings& in_out_tensor_map,
                       DataMap& processed_result_map,
-                      const std::map<std::string, std::vector<int>>& dimension_map);
+                      const std::map<std::string, std::vector<int>>& dimension_map,
+                      bool process_with_cuda, cudaStream_t cuda_stream = 0);
 
   /**
    * Get output data per Tensor
@@ -122,9 +131,13 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    * @return Map of model as key mapped to the output dimension (of processed data) as a vector
    */
   DimType get_processed_data_dims() const;
+
+ private:
+  /// Pointer to manager class for multi data processing
+  std::shared_ptr<ManagerProcessor> process_manager_;
 };
 
 }  // namespace inference
 }  // namespace holoscan
 
-#endif
+#endif /* MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_HPP */

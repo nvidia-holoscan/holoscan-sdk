@@ -26,8 +26,8 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -49,13 +49,13 @@ class PyBooleanCondition : public BooleanCondition {
   using BooleanCondition::BooleanCondition;
 
   // Define a constructor that fully initializes the object.
-  PyBooleanCondition(Fragment* fragment, bool enable_tick = true,
-                     const std::string& name = "noname_boolean_condition")
+  explicit PyBooleanCondition(Fragment* fragment, bool enable_tick = true,
+                              const std::string& name = "noname_boolean_condition")
       : BooleanCondition(Arg{"enable_tick", enable_tick}) {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

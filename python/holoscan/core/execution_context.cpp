@@ -25,13 +25,12 @@
 #include "execution_context_pydoc.hpp"
 #include "holoscan/core/execution_context.hpp"
 
-using pybind11::literals::operator""_a;
-
 namespace py = pybind11;
 
 namespace holoscan {
 
 void init_execution_context(py::module_& m) {
+  // NOLINTNEXTLINE(bugprone-unused-raii)
   py::class_<ExecutionContext, std::shared_ptr<ExecutionContext>>(
       m, "ExecutionContext", doc::ExecutionContext::doc_ExecutionContext);
 

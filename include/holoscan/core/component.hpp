@@ -41,12 +41,12 @@
                  std::is_same_v<::holoscan::ArgList, std::decay_t<ArgT>>)>>
 #define HOLOSCAN_COMPONENT_FORWARD_ARGS(class_name) \
   HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()             \
-  class_name(ArgT&& arg, ArgsT&&... args)           \
+  explicit class_name(ArgT&& arg, ArgsT&&... args)  \
       : Component(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...)
 
 #define HOLOSCAN_COMPONENT_FORWARD_ARGS_SUPER(class_name, super_class_name) \
   HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()                                     \
-  class_name(ArgT&& arg, ArgsT&&... args)                                   \
+  explicit class_name(ArgT&& arg, ArgsT&&... args)                          \
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...)
 
 namespace holoscan {

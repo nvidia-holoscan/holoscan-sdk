@@ -19,7 +19,6 @@ import argparse
 import os
 import pathlib
 from pathlib import PosixPath
-from typing import List
 
 import pytest
 
@@ -114,7 +113,7 @@ class TestValidPlatforms:
             ),
         ],
     )
-    def test_valid_platforms(self, platforms: List[Platform]):
+    def test_valid_platforms(self, platforms: list[Platform]):
         platform_strs = ",".join(x.value for x in platforms)
         result = valid_platforms(platform_strs)
 

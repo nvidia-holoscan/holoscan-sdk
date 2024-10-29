@@ -30,9 +30,6 @@
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
 namespace py = pybind11;
 
 namespace holoscan {

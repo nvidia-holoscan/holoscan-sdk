@@ -27,7 +27,13 @@
 #include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
 #include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
+#include "../env_wrapper.hpp"
+#include "distributed_app_fixture.hpp"
+#include "utility_apps.hpp"
+
 static HoloscanTestConfig test_config;
+
+class DistributedDemosaicOpApp : public DistributedApp {};
 
 class GenerateAndDemosaicFragment : public holoscan::Fragment {
  public:
@@ -46,12 +52,11 @@ class GenerateAndDemosaicFragment : public holoscan::Fragment {
                                                  make_condition<CountCondition>(3));
 
     auto cuda_stream_pool = make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5);
-    bool generate_alpha = false;
-    int32_t out_channels = generate_alpha ? 4 : 3;
+    int32_t out_channels = 3;
     ArgList demosaic_arglist = ArgList{
         Arg("in_tensor_name", tensor_name),
         Arg("out_tensor_name", tensor_name),
-        Arg("generate_alpha", generate_alpha),
+        Arg("generate_alpha", false),
         Arg("bayer_grid_pos", 2),
         Arg("interpolation_mode", 0),
         // The pool size is set to 10 to prevent memory allocation errors during testing.
@@ -112,7 +117,7 @@ class DistributedDummyDemosaicApp : public holoscan::Application {
   }
 };
 
-TEST(DistributedDemosaicOpApp, TestDistributedDummyDemosaicApp) {
+TEST_F(DistributedDemosaicOpApp, TestDistributedDummyDemosaicApp) {
   using namespace holoscan;
 
   auto app = make_application<DistributedDummyDemosaicApp>();
@@ -120,7 +125,9 @@ TEST(DistributedDemosaicOpApp, TestDistributedDummyDemosaicApp) {
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Graph activation failed") == std::string::npos)

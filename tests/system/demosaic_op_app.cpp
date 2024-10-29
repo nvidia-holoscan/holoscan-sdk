@@ -45,12 +45,11 @@ class DummyDemosaicApp : public holoscan::Application {
 
     auto cuda_stream_pool = make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5);
     if (explicit_stream_pool_init_) { cuda_stream_pool->initialize(); }
-    bool generate_alpha = false;
-    int32_t out_channels = generate_alpha ? 4 : 3;
+    int32_t out_channels = 3;
     ArgList demosaic_arglist = ArgList{
         Arg("in_tensor_name", tensor_name),
         Arg("out_tensor_name", tensor_name),
-        Arg("generate_alpha", generate_alpha),
+        Arg("generate_alpha", false),
         Arg("bayer_grid_pos", 2),
         Arg("interpolation_mode", 0),
         Arg("pool", make_resource<BlockMemoryPool>("pool", 1, rows_ * columns_ * out_channels, 2)),

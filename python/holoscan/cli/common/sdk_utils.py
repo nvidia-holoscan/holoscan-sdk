@@ -19,7 +19,7 @@ import importlib.metadata
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 from packaging.version import Version
 
@@ -59,7 +59,7 @@ def detect_sdk(sdk: Optional[SdkType] = None) -> SdkType:
 
 def detect_sdk_version(
     sdk: SdkType, artifact_sources: ArtifactSources, sdk_version: Optional[Version] = None
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, Optional[str]]:
     """
     Detects SDK version to use based on installed PyPI package or user input.
     For Holoscan SDK(Type), detect only the Holoscan version with optional user-provided version.

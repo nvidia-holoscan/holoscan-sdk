@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP
-#define HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP
+#ifndef MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP
+#define MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP
 
 #include <cuda_runtime_api.h>
 #include <sys/stat.h>
@@ -65,16 +65,82 @@ class DeviceFree {
 };
 
 /**
- * @brief Cuda Device Buffer Class
+ * Base class for a buffer containing typed data.
  */
-class DeviceBuffer {
+class Buffer {
  public:
   /**
    * @brief Construction with default type
    *
    * @param type Data type, defaults to float32
+   * @param device_id GPU device ID, defaults to 0
    */
-  explicit DeviceBuffer(holoinfer_datatype type = holoinfer_datatype::h_Float32);
+  explicit Buffer(holoinfer_datatype type = holoinfer_datatype::h_Float32, int device_id = 0)
+      : type_(type), device_id_(device_id) {}
+
+  virtual ~Buffer() = default;
+
+  /**
+   * @brief Get the data buffer
+   *
+   * @return Void pointer to the buffer
+   */
+  virtual void* data() = 0;
+
+  /**
+   * @brief Get the size of the allocated buffer in elements
+   *
+   * @return size in elements
+   */
+  virtual size_t size() const = 0;
+
+  /**
+   * @brief Get the bytes allocated
+   *
+   * @return allocated bytes
+   */
+  virtual size_t get_bytes() const = 0;
+
+  /**
+   * @brief Resize the underlying buffer, this is a no-op if the buffer is already large enough.
+   *
+   * @param number_of_elements Number of elements to be resized with
+   */
+  virtual void resize(size_t number_of_elements) = 0;
+
+  /**
+   * @brief Get the datatype
+   *
+   * @return datatype
+   */
+  holoinfer_datatype get_datatype() const { return type_; }
+
+  /**
+   * @brief Get the device ID
+   *
+   * @return device ID
+   */
+  int get_device() const { return device_id_; }
+
+ protected:
+  /// Datatype of the elements in the buffer
+  holoinfer_datatype type_;
+  /// Device ID
+  int device_id_;
+};
+
+/**
+ * @brief Cuda Device Buffer Class
+ */
+class DeviceBuffer : public Buffer {
+ public:
+  /**
+   * @brief Construction with default type
+   *
+   * @param type Data type, defaults to float32
+   * @param device_id GPU device ID, defaults to 0
+   */
+  explicit DeviceBuffer(holoinfer_datatype type = holoinfer_datatype::h_Float32, int device_id = 0);
 
   /**
    * @brief Construction with type and size
@@ -85,105 +151,101 @@ class DeviceBuffer {
   DeviceBuffer(size_t size, holoinfer_datatype type);
 
   /**
-   * @brief Get the data buffer
-   *
-   * @return Void pointer to the buffer
-   */
-  void* data();
-
-  /**
-   * @brief Get the size of the allocated buffer
-   *
-   * @return size
-   */
-  size_t size() const;
-
-  /**
-   * @brief Get the bytes allocated
-   *
-   * @return allocated bytes
-   */
-  size_t get_bytes() const;
-
-  /**
-   * @brief Resize the underlying buffer
-   *
-   * @param number_of_elements Number of elements to be resized with
-   */
-  void resize(size_t number_of_elements);
-
-  /**
    * @brief Destructor
    */
   ~DeviceBuffer();
 
+  /// Buffer class virtual members implemented by this class
+  ///@{
+  void* data() override;
+  size_t size() const override;
+  size_t get_bytes() const override;
+  void resize(size_t number_of_elements) override;
+  ///@}
+
  private:
   size_t size_{0}, capacity_{0};
-  holoinfer_datatype type_ = holoinfer_datatype::h_Float32;
   void* buffer_ = nullptr;
   DeviceAllocator allocator_;
   DeviceFree free_;
 };
 
-class HostBuffer {
+class HostBuffer : public Buffer {
  public:
-  /// @brief Constructor
-  /// @param data_type  data type of the buffer
+  /**
+   * @brief Constructor
+   *
+   * @param data_type  data type of the buffer
+   */
   explicit HostBuffer(holoinfer_datatype data_type = holoinfer_datatype::h_Float32)
-      : type_(data_type) {}
+      : Buffer(data_type, -1) {}
 
-  /// @brief Get the buffer data on the host
-  /// @return void pointer to the buffer
-  void* data() { return static_cast<void*>(buffer_.data()); }
-
-  /// @brief Get the number of elements in the buffer
-  /// @return size
-  size_t size() const { return number_of_elements_; }
+  /// Buffer class virtual members implemented by this class
+  ///@{
+  void* data() override;
+  size_t size() const override;
+  size_t get_bytes() const override;
+  void resize(size_t number_of_elements) override;
+  ///@}
 
   /// @brief Set the data type and resize the buffer
   /// @param in_type input data type
-  void set_type(holoinfer_datatype in_type) {
-    type_ = in_type;
-    resize(size());
-  }
-
-  /// @brief Resize the underlying buffer on host
-  /// @param number_of_elements Number of elements to be resized with
-  void resize(size_t number_of_elements) {
-    buffer_.clear();
-    number_of_elements_ = number_of_elements;
-    buffer_.resize(number_of_elements * get_element_size(type_));
-  }
+  void set_type(holoinfer_datatype in_type);
 
  private:
   /// @brief Data buffer on host, stored as a vector of bytes
   std::vector<byte> buffer_;
   /// @brief Number of elements in the buffer
   size_t number_of_elements_{0};
-  /// @brief Datatype of the elements in the buffer
-  holoinfer_datatype type_;
 };
 
 /**
- * @brief HoloInfer DataBuffer Class. Holds CPU based buffer as float32 vector and device buffer as
- * a shared pointer.
+ * @brief HoloInfer DataBuffer Class. Holds CPU based buffer and device buffer.
  */
 class DataBuffer {
  public:
   /**
    * @brief Constructor
+   *
+   * @param type Data type, defaults to float32
+   * @param device_id GPU device ID, defaults to 0
    */
   explicit DataBuffer(holoinfer_datatype data_type = holoinfer_datatype::h_Float32,
                       int device_id = 0);
-  std::shared_ptr<DeviceBuffer> device_buffer;
-  HostBuffer host_buffer;
 
-  holoinfer_datatype get_datatype() const { return type_; }
-  int get_device() const { return device_id_; }
+  std::shared_ptr<Buffer> device_buffer_;
+  std::shared_ptr<Buffer> host_buffer_;
+
+  holoinfer_datatype get_datatype() const { return host_buffer_->get_datatype(); }
 
  private:
-  holoinfer_datatype type_;
-  int device_id_;
+  /// Helper class for backwards compatibility, forwards calls to other buffer class.
+  class BufferForward : public Buffer {
+   public:
+    explicit BufferForward(std::shared_ptr<Buffer>& buffer) : buffer_(buffer) {}
+    BufferForward() = delete;
+
+    /// Buffer class virtual members implemented by this class
+    ///@{
+    void* data() override { return buffer_->data(); }
+    size_t size() const override { return buffer_->size(); }
+    size_t get_bytes() const override { return buffer_->get_bytes(); }
+    void resize(size_t number_of_elements) override { buffer_->resize(number_of_elements); }
+    ///@}
+
+   private:
+    const std::shared_ptr<Buffer>& buffer_;
+  };
+
+ public:
+  /// @deprecated since 2.6, use `device_buffer_` instead
+  const std::shared_ptr<BufferForward> device_buffer{
+      std::make_shared<BufferForward>(device_buffer_)};
+  /// @deprecated since 2.6, use `host_buffer_` instead
+  BufferForward host_buffer{host_buffer_};
+
+ private:
+  holoinfer_datatype data_type_;
 };
 
 using DataMap = std::map<std::string, std::shared_ptr<DataBuffer>>;
@@ -208,6 +270,8 @@ struct InferenceSpecs {
    * @param device_map Map with model name as key, GPU ID for inference as value
    * @param temporal_map Map with model name as key, frame number to skip for inference as value
    * @param activation_map Map with key as model name and activation state for inference as value
+   * @param trt_opt_profile Vector of values for TensorRT optimization profile during engine
+   * creation
    * @param is_engine_path Input path to model is trt engine
    * @param oncpu Perform inference on CPU
    * @param parallel_proc Perform parallel inference of multiple models
@@ -218,9 +282,9 @@ struct InferenceSpecs {
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
-                 const Mappings& temporal_map, const Mappings& activation_map, bool is_engine_path,
-                 bool oncpu, bool parallel_proc, bool use_fp16, bool cuda_buffer_in,
-                 bool cuda_buffer_out)
+                 const Mappings& temporal_map, const Mappings& activation_map,
+                 const std::vector<int32_t>& trt_opt_profile, bool is_engine_path, bool oncpu,
+                 bool parallel_proc, bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
@@ -229,6 +293,7 @@ struct InferenceSpecs {
         device_map_(device_map),
         temporal_map_(temporal_map),
         activation_map_(activation_map),
+        trt_opt_profile_(trt_opt_profile),
         is_engine_path_(is_engine_path),
         oncuda_(!oncpu),
         parallel_processing_(parallel_proc),
@@ -272,7 +337,7 @@ struct InferenceSpecs {
    */
   void set_activation_map(const Mappings& activation_map) {
     for (const auto& [key, value] : activation_map) {
-      if (activation_map_.find(key) != activation_map.end()) { activation_map_.at(key) = value; }
+      if (activation_map_.find(key) != activation_map_.end()) { activation_map_.at(key) = value; }
     }
   }
 
@@ -299,6 +364,9 @@ struct InferenceSpecs {
 
   /// @brief Map with key as model name and activation state for inference as value
   Mappings activation_map_;
+
+  /// @brief TensorRT optimization profile during engine creation for dynamic inputs
+  std::vector<int32_t> trt_opt_profile_;
 
   /// @brief Flag showing if input model path is path to engine files
   bool is_engine_path_ = false;
@@ -343,4 +411,4 @@ InferStatus allocate_buffers(DataMap& buffers, std::vector<int64_t>& dims,
 }  // namespace inference
 }  // namespace holoscan
 
-#endif /* HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP */
+#endif /* MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP */

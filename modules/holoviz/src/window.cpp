@@ -24,7 +24,7 @@ namespace holoscan::viz {
 Window::Window() {
   // setup camera
   CameraManip.setLookat(
-      nvmath::vec3f(0.f, 0.f, 1.f), nvmath::vec3f(0.f, 0.f, 0.f), nvmath::vec3f(0.f, 1.f, 0.f));
+      nvmath::vec3f(0.F, 0.F, 1.F), nvmath::vec3f(0.F, 0.F, 0.F), nvmath::vec3f(0.F, 1.F, 0.F));
 }
 
 void Window::end() {
@@ -38,7 +38,7 @@ void Window::set_camera(const nvmath::vec3f& eye, const nvmath::vec3f& look_at,
 }
 
 void Window::get_view_matrix(nvmath::mat4f* view_matrix) {
-  *view_matrix = nvmath::perspectiveVK(CameraManip.getFov(), 1.f /*aspectRatio*/, 0.1f, 1000.0f) *
+  *view_matrix = nvmath::perspectiveVK(CameraManip.getFov(), 1.F /*aspectRatio*/, 0.1F, 1000.0F) *
                  CameraManip.getMatrix();
 }
 

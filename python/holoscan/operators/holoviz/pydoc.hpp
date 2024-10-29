@@ -260,7 +260,7 @@ The details of the dictionary is as follows:
     `depth_map_color`. (default: `auto_detect`).
   - type: ``str``
 
-- **color**: RGBA color of rendered geometry (default: ``[1.f, 1.f, 1.f, 1.f]``)
+- **color**: RGBA color of rendered geometry (default: ``[1.F, 1.F, 1.F, 1.F]``)
 
   - type: ``List[float]``
 - **line_width**: line width for geometry made of lines (default: ``1.0``)

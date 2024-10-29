@@ -27,11 +27,8 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -53,7 +50,7 @@ class PyDownstreamMessageAffordableCondition : public DownstreamMessageAffordabl
   using DownstreamMessageAffordableCondition::DownstreamMessageAffordableCondition;
 
   // Define a constructor that fully initializes the object.
-  PyDownstreamMessageAffordableCondition(
+  explicit PyDownstreamMessageAffordableCondition(
       Fragment* fragment,
       // std::shared_ptr<gxf::GXFResource> transmitter,
       // add transmitter here? gxf_uid_t eid,
@@ -63,7 +60,7 @@ class PyDownstreamMessageAffordableCondition : public DownstreamMessageAffordabl
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // transmitter_ = transmitter;  // e.g. DoubleBufferTransmitter
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

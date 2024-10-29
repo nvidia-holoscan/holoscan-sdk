@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,8 @@ void PingMultiTxOp::setup(OperatorSpec& spec) {
   spec.output<int>("out2");
 }
 
-void PingMultiTxOp::compute(InputContext&, OutputContext& op_output, ExecutionContext&) {
+void PingMultiTxOp::compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+                            [[maybe_unused]] ExecutionContext& context) {
   int value1 = 1;
   op_output.emit(value1, "out1");
 

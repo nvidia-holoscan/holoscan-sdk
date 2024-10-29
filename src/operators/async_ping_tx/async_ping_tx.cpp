@@ -73,7 +73,8 @@ void AsyncPingTxOp::start() {
   async_thread_ = std::thread([this] { async_ping(); });
 }
 
-void AsyncPingTxOp::compute(InputContext&, OutputContext& op_output, ExecutionContext&) {
+void AsyncPingTxOp::compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+                            [[maybe_unused]] ExecutionContext& context) {
   ++index_;
   if (index_ == count_) {
     // Reached max count of ticks

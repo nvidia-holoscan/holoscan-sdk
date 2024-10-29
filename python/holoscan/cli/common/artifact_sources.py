@@ -17,7 +17,7 @@ limitations under the License.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import requests
 from packaging.version import Version
@@ -46,19 +46,20 @@ class ArtifactSources:
         )
         ArtifactSources.ManifestFileUrl = f"https://edge.urm.nvidia.com/artifactory/sw-holoscan-cli-generic/{ArtifactSources.HoloscanVersion}/artifacts.json"
         self._logger = logging.getLogger("common")
-        self._supported_holoscan_versions = ["2.4.0", "2.5.0"]
+        self._supported_holoscan_versions = ["2.6.0"]
 
     @property
-    def holoscan_versions(self) -> List[str]:
-        return self._supported_holoscan_versions
+    def holoscan_versions(self) -> list[str]:
+        # logic to dynamically fetch the supported versions
+        return self._supported_holoscan_versions  # for now, return the hardcoded value
 
     def base_image(self, version) -> str:
         return self._data[version][SdkType.Holoscan.value][ArtifactSources.SectionBaseImages]
 
-    def build_images(self, version) -> Dict[Any, str]:
+    def build_images(self, version) -> dict[Any, str]:
         return self._data[version][SdkType.Holoscan.value][ArtifactSources.SectionBuildImages]
 
-    def health_probe(self, version) -> Dict[Any, str]:
+    def health_probe(self, version) -> dict[Any, str]:
         return self._data[version][ArtifactSources.SectionHealthProbe]
 
     def load(self, uri: str):

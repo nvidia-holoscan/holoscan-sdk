@@ -37,7 +37,7 @@
 #include "holoscan/core/scheduler.hpp"
 #include "kwarg_handling.hpp"
 
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -59,10 +59,11 @@ void init_fragment(py::module_& m) {
       m, "Fragment", py::dynamic_attr(), doc::Fragment::doc_Fragment)
       .def(py::init<py::object>(), doc::Fragment::doc_Fragment)
       // notation for this name setter is a bit tricky (couldn't seem to do it with overload_cast)
-      .def_property("name",
-                    py::overload_cast<>(&Fragment::name, py::const_),
-                    (Fragment & (Fragment::*)(const std::string&)&)&Fragment::name,
-                    doc::Fragment::doc_name)
+      .def_property(
+          "name",
+          py::overload_cast<>(&Fragment::name, py::const_),
+          [](Fragment& f, const std::string& name) -> Fragment& { return f.name(name); },
+          doc::Fragment::doc_name)
       .def_property("application",
                     py::overload_cast<>(&Fragment::application, py::const_),
                     py::overload_cast<Application*>(&Fragment::application),
@@ -101,9 +102,9 @@ void init_fragment(py::module_& m) {
            &Fragment::add_operator,
            "op"_a,
            doc::Fragment::doc_add_operator)  // note: virtual function
-      // TODO: sphinx API doc build complains if more than one overloaded add_flow method has a
-      //       docstring specified. For now using the docstring defined for 3-argument
-      //       Operator-based version and describing the other variants in the Notes section.
+      // TODO(unknown): sphinx API doc build complains if more than one overloaded add_flow method
+      // has a docstring specified. For now using the docstring defined for 3-argument
+      // Operator-based version and describing the other variants in the Notes section.
       .def(  // note: virtual function
           "add_flow",
           py::overload_cast<const std::shared_ptr<Operator>&, const std::shared_ptr<Operator>&>(
@@ -133,11 +134,11 @@ void init_fragment(py::module_& m) {
            py::overload_cast<>(&Fragment::network_context),
            doc::Fragment::doc_network_context)
       .def("track",
-           &Application::track,
+           &Fragment::track,
            "num_start_messages_to_skip"_a = kDefaultNumStartMessagesToSkip,
            "num_last_messages_to_discard"_a = kDefaultNumLastMessagesToDiscard,
            "latency_threshold"_a = kDefaultLatencyThreshold,
-           doc::Application::doc_track,
+           doc::Fragment::doc_track,
            py::return_value_policy::reference_internal)
       .def_property("is_metadata_enabled",
                     py::overload_cast<>(&Fragment::is_metadata_enabled, py::const_),
@@ -158,7 +159,7 @@ void init_fragment(py::module_& m) {
           R"doc(Return repr(self).)doc");
 }
 
-PyFragment::PyFragment(py::object op) : Fragment() {
+PyFragment::PyFragment(const py::object& op) {
   py::gil_scoped_acquire scope_guard;
   py_compose_ = py::getattr(op, "compose");
 }

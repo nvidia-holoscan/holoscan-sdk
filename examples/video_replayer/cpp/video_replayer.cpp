@@ -27,12 +27,16 @@ class VideoReplayerApp : public holoscan::Application {
 
     // Sets the data directory to use from the environment variable if it is set
     ArgList args;
-    auto data_directory = std::getenv("HOLOSCAN_INPUT_PATH");
+    auto* data_directory = std::getenv("HOLOSCAN_INPUT_PATH");  // NOLINT(*)
     if (data_directory != nullptr && data_directory[0] != '\0') {
       auto video_directory = std::filesystem::path(data_directory);
       video_directory /= "racerx";
       args.add(Arg("directory", video_directory.string()));
     }
+    // create an allocator supporting both host and device memory pools
+    // (The video stream is copied to an intermediate host buffer before being copied to the GPU)
+    args.add(Arg("allocator",
+                 make_resource<RMMAllocator>("rmm_allocator", from_config("rmm_allocator"))));
 
     // Define the replayer and holoviz operators and configure using yaml configuration
     auto replayer =
@@ -43,7 +47,7 @@ class VideoReplayerApp : public holoscan::Application {
     add_flow(replayer, visualizer, {{"output", "receivers"}});
 
     // Check if the YAML dual_window parameter is set and add a second visualizer in that case
-    bool dual_window = from_config("dual_window").as<bool>();
+    auto dual_window = from_config("dual_window").as<bool>();
     if (dual_window) {
       auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz"));
       add_flow(replayer, visualizer2, {{"output", "receivers"}});

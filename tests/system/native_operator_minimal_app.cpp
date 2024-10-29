@@ -58,7 +58,8 @@ class MinimalOp : public Operator {
     spec.param(value_, "value", "value", "value stored by the operator", 2.5);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("MinimalOp: count: {}", count_++);
     HOLOSCAN_LOG_INFO("MinimalOp: value: {}", value_.get());
   };
@@ -82,7 +83,8 @@ class ComplexValueParameterOp : public Operator {
                {2.5, -3.0});
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("ComplexValueParameterOp: count: {}", count_++);
     auto cval = cplx_value_.get();
     HOLOSCAN_LOG_INFO("ComplexValueParameterOp: value: {}{}{}j",

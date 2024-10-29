@@ -15,8 +15,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
-from typing import List
-
 
 class HoloscanSdkError(Exception):
     """Base class for exceptions in this module."""
@@ -119,7 +117,7 @@ class UnmatchedDeviceError(HoloscanSdkError):
     """
     Raise when the shared memory value is invalid."""
 
-    def __init__(self, unmatched_devices: List[str], *args: object) -> None:
+    def __init__(self, unmatched_devices: list[str], *args: object) -> None:
         super().__init__(
             f"The following devices cannot be found in /dev/: {str.join(',', unmatched_devices)}"
         )

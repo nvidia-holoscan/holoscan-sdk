@@ -73,7 +73,6 @@ Application* Fragment::application() const {
 }
 
 void Fragment::config(const std::string& config_file, const std::string& prefix) {
-  (void)prefix;  // prefix is used for from_config() method.
   if (config_) { HOLOSCAN_LOG_WARN("Config object was already created. Overwriting..."); }
 
   // If the application is executed with `--config` option or HOLOSCAN_CONFIG_PATH environment,

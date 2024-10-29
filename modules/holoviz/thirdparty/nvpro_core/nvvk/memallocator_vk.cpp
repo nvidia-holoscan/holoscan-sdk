@@ -104,7 +104,7 @@ MemAllocateInfo& MemAllocateInfo::setTilingOptimal(bool isTilingOptimal) {
   return *this;
 }
 
-MemAllocateInfo& MemAllocateInfo::setPriority(const float priority /*= 0.5f*/) {
+MemAllocateInfo& MemAllocateInfo::setPriority(const float priority /*= 0.5F*/) {
   m_priority = priority;
   return *this;
 }
@@ -122,7 +122,7 @@ uint32_t getMemoryType(const VkPhysicalDeviceMemoryProperties& memoryProperties,
     }
   }
   assert(0);
-  return ~0u;
+  return ~0U;
 }
 
 bool fillBakedAllocateInfo(const VkPhysicalDeviceMemoryProperties& physMemProps,

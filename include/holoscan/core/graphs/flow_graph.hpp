@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,7 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
 
   bool is_root(const NodeType& node) override;
 
-  bool is_user_defined_root(const NodeType& node) {
+  bool is_user_defined_root(const NodeType& node) override {
     return get_nodes().empty() ? false : get_nodes()[0] == node;
   }
 

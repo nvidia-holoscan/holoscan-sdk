@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_HPP
-#define HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_HPP
+#ifndef HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_V4L2_VIDEO_CAPTURE_HPP
+#define HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_V4L2_VIDEO_CAPTURE_HPP
 
 #include <linux/videodev2.h>
 #include <memory>
@@ -103,7 +103,7 @@ class V4L2VideoCaptureOp : public Operator {
   void setup(OperatorSpec& spec) override;
   void start() override;
   void initialize() override;
-  void compute(InputContext& op_input, OutputContext& op_output,
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override;
   void stop() override;
 
@@ -148,4 +148,4 @@ class V4L2VideoCaptureOp : public Operator {
 
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_HPP */
+#endif /* HOLOSCAN_OPERATORS_V4L2_VIDEO_CAPTURE_V4L2_VIDEO_CAPTURE_HPP */

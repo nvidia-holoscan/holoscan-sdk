@@ -26,8 +26,6 @@
 #include "tensor.hpp"
 #include "operator.hpp"
 
-namespace py = pybind11;
-
 namespace holoscan {
 
 PYBIND11_MODULE(_core, m) {

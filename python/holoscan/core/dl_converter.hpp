@@ -28,12 +28,6 @@
 
 #include "holoscan/core/domain/tensor.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
 namespace py = pybind11;
 
 namespace holoscan {
@@ -58,7 +52,7 @@ struct ArrayInterfaceMemoryBuffer {
  * @param obj The Python object to set the array interface object.
  * @param ctx The context of the DLManagedTensor.
  */
-void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorContext> ctx);
+void set_array_interface(const py::object& obj, const std::shared_ptr<DLManagedTensorContext>& ctx);
 
 /**
  * @brief Provide `__dlpack__` method

@@ -76,7 +76,7 @@ void MetadataDictionary::set(const std::string& key, std::shared_ptr<MetadataObj
       return;
     }
   }
-  (*dictionary_)[key] = object;
+  (*dictionary_)[key] = std::move(object);
 }
 
 bool MetadataDictionary::has_key(const std::string& key) const {

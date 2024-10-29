@@ -136,6 +136,9 @@ add_holoscan_library(core
     core/conditions/gxf/asynchronous.cpp
     core/conditions/gxf/boolean.cpp
     core/conditions/gxf/count.cpp
+    core/conditions/gxf/cuda_buffer_available.cpp
+    core/conditions/gxf/cuda_event.cpp
+    core/conditions/gxf/cuda_stream.cpp
     core/conditions/gxf/downstream_affordable.cpp
     core/conditions/gxf/periodic.cpp
     core/conditions/gxf/message_available.cpp
@@ -147,6 +150,7 @@ add_holoscan_library(core
     core/errors.cpp
     core/executors/gxf/gxf_executor.cpp
     core/executors/gxf/gxf_parameter_adaptor.cpp
+    core/flow_tracking_annotation.cpp
     core/fragment.cpp
     core/fragment_scheduler.cpp
     core/graphs/flow_graph.cpp
@@ -176,17 +180,22 @@ add_holoscan_library(core
     core/resources/gxf/annotated_double_buffer_transmitter.cpp
     core/resources/gxf/block_memory_pool.cpp
     core/resources/gxf/clock.cpp
+    core/resources/gxf/cuda_allocator.cpp
     core/resources/gxf/cuda_stream_pool.cpp
     core/resources/gxf/double_buffer_receiver.cpp
     core/resources/gxf/double_buffer_transmitter.cpp
     core/resources/gxf/dfft_collector.cpp
     core/resources/gxf/gxf_component_resource.cpp
+    core/resources/gxf/holoscan_ucx_receiver.cpp
+    core/resources/gxf/holoscan_ucx_transmitter.cpp
     core/resources/gxf/manual_clock.cpp
     core/resources/gxf/realtime_clock.cpp
     core/resources/gxf/receiver.cpp
+    core/resources/gxf/rmm_allocator.cpp
     core/resources/gxf/serialization_buffer.cpp
     core/resources/gxf/std_component_serializer.cpp
     core/resources/gxf/std_entity_serializer.cpp
+    core/resources/gxf/stream_ordered_allocator.cpp
     core/resources/gxf/transmitter.cpp
     core/resources/gxf/ucx_component_serializer.cpp
     core/resources/gxf/ucx_entity_serializer.cpp
@@ -228,6 +237,7 @@ target_link_libraries(core
         GXF::app
         GXF::core
         GXF::cuda
+        GXF::rmm
         GXF::serialization  # for nvidia::gxf::Endpoint
         GXF::std
         GXF::ucx

@@ -36,10 +36,10 @@ __global__ void GenDepthMapCoordsKernel(uint32_t width, uint32_t height, float i
 
   dst += offset * 3;
 
-  dst[0] = float(launch_index.x) * inv_width - 0.5f;
-  dst[1] = float(launch_index.y) * inv_height - 0.5f;
+  dst[0] = float(launch_index.x) * inv_width - 0.5F;
+  dst[1] = float(launch_index.y) * inv_height - 0.5F;
   if constexpr (std::is_same<T, uint8_t>::value) {
-    dst[2] = float(src[offset]) / 255.f;
+    dst[2] = float(src[offset]) / 255.F;
   } else if constexpr (std::is_same<T, float>::value) {
     dst[2] = src[offset];
   }
@@ -96,8 +96,8 @@ void GenDepthMapCoords(ImageFormat depth_format, uint32_t width, uint32_t height
   const dim3 launch_grid((width + (block_dim.x - 1)) / block_dim.x,
                          (height + (block_dim.y - 1)) / block_dim.y);
 
-  const float inv_width = 1.f / float(width);
-  const float inv_height = 1.f / float(height);
+  const float inv_width = 1.F / float(width);
+  const float inv_height = 1.F / float(height);
 
   switch (depth_format) {
     case ImageFormat::R8_UNORM:

@@ -25,6 +25,7 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
+#include "holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp"
 #include "holoscan/core/resources/gxf/ucx_receiver.hpp"  // for kDefaultUcxPort
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
 
@@ -98,7 +99,7 @@ void UcxTransmitter::setup(ComponentSpec& spec) {
 
   spec.param(buffer_, "buffer", "Serialization Buffer", "");
 
-  // TODO: implement OperatorSpec::resource for managing nvidia::gxf:Resource types
+  // TODO(unknown): implement OperatorSpec::resource for managing nvidia::gxf:Resource types
   // spec.resource(gpu_device_, "Optional GPU device resource");
 }
 
@@ -139,6 +140,13 @@ std::string UcxTransmitter::local_address() {
 
 uint32_t UcxTransmitter::local_port() {
   return local_port_.get();
+}
+
+void UcxTransmitter::track() {
+  auto transmitter_ptr = static_cast<holoscan::HoloscanUcxTransmitter*>(gxf_cptr_);
+  if (transmitter_ptr) transmitter_ptr->track();
+  else
+    HOLOSCAN_LOG_ERROR("Failed to track UcxTransmitter");
 }
 
 }  // namespace holoscan

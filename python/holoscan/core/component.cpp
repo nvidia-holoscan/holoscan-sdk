@@ -29,7 +29,7 @@
 #include "holoscan/core/component.hpp"
 #include "holoscan/core/fragment.hpp"
 
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -45,7 +45,7 @@ void PyComponentSpec::py_param(const std::string& name, const py::object& defaul
   std::string headline{""s};
   std::string description{""s};
   for (const auto& [nm, value] : kwargs) {
-    std::string param_name = nm.cast<std::string>();
+    auto param_name = nm.cast<std::string>();
     if (param_name == "headline") {
       headline = value.cast<std::string>();
     } else if (param_name == "description") {

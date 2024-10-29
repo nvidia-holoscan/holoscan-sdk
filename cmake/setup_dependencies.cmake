@@ -44,6 +44,7 @@ superbuild_depend(grpc)
 superbuild_depend(hwloc)
 superbuild_depend(magic_enum)
 superbuild_depend(spdlog_rapids)
+superbuild_depend(rmm)  # fetches spdlog
 superbuild_depend(tensorrt)
 superbuild_depend(threads)
 superbuild_depend(ucx)

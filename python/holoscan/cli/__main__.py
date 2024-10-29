@@ -21,7 +21,7 @@ import logging
 import logging.config
 import os
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 from .common.enum_types import Platform, PlatformConfiguration
 
@@ -34,7 +34,7 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 LOG_CONFIG_FILENAME = "logging.json"
 
 
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     from .packager.package_command import create_package_parser
     from .runner.run_command import create_run_parser
 
@@ -127,7 +127,7 @@ def set_up_logging(level: Optional[str], config_path: Union[str, Path] = LOG_CON
     logging.config.dictConfig(config_dict)
 
 
-def main(argv: Optional[List[str]] = None):
+def main(argv: Optional[list[str]] = None):
     args = parse_args(argv)
 
     set_up_logging(args.log_level)

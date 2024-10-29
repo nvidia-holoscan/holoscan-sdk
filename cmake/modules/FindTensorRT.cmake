@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,14 +34,14 @@ mark_as_advanced(TensorRT_INCLUDE_DIR)
 
 # Find version
 function(read_version name str)
-    string(REGEX MATCH "${name} ([0-9]\\d*)" _ ${str})
+    string(REGEX MATCH "${name} ([0-9]+)" _ "${str}")
     set(${name} ${CMAKE_MATCH_1} PARENT_SCOPE)
 endfunction()
 
 file(READ "${TensorRT_INCLUDE_DIR}/NvInferVersion.h" _TRT_VERSION_FILE)
-read_version(NV_TENSORRT_MAJOR ${_TRT_VERSION_FILE})
-read_version(NV_TENSORRT_MINOR ${_TRT_VERSION_FILE})
-read_version(NV_TENSORRT_PATCH ${_TRT_VERSION_FILE})
+read_version(NV_TENSORRT_MAJOR "${_TRT_VERSION_FILE}")
+read_version(NV_TENSORRT_MINOR "${_TRT_VERSION_FILE}")
+read_version(NV_TENSORRT_PATCH "${_TRT_VERSION_FILE}")
 set(TensorRT_VERSION "${NV_TENSORRT_MAJOR}.${NV_TENSORRT_MINOR}.${NV_TENSORRT_PATCH}")
 unset(_TRT_VERSION_FILE)
 
@@ -60,9 +60,7 @@ endmacro()
 
 find_trt_library(nvinfer)
 find_trt_library(nvinfer_plugin)
-find_trt_library(nvcaffe_parser)
 find_trt_library(nvonnxparser)
-find_trt_library(nvparsers)
 
 # Generate TensorRT_FOUND
 include(FindPackageHandleStandardArgs)

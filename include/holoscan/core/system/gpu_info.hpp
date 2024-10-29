@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,7 +59,7 @@ struct GPUInfo {
   uint64_t memory_total = 0;  ///< The total memory (in bytes)
   uint64_t memory_free = 0;   ///< The free memory (in bytes)
   uint64_t memory_used = 0;   ///< The used memory (in bytes)
-  float memory_usage = 0.0f;  ///< The memory usage (in percent)
+  float memory_usage = 0.0F;  ///< The memory usage (in percent)
   uint32_t power_limit = 0;   ///< The power limit (in milliwatts)
   uint32_t power_usage = 0;   ///< The power usage (in milliwatts)
   uint32_t temperature = 0;   ///< The temperature (in degrees Celsius)

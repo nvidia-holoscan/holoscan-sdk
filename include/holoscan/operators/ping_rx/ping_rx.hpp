@@ -41,7 +41,8 @@ class PingRxOp : public Operator {
 
   void setup(OperatorSpec& spec) override;
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override;
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override;
 };
 
 }  // namespace holoscan::ops

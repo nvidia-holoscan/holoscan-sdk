@@ -23,6 +23,15 @@ replayer:
   realtime: true  # default: true
   count: 0        # default: 0 (no frame count restriction)
 
+# Initial size below is set to 8 MB which is sufficient for
+# a 1920 * 1080 RGBA image (uint8_t).
+rmm_allocator:
+  device_memory_initial_size: "8MB"
+  device_memory_max_size: "8MB"
+  host_memory_initial_size: "8MB"
+  host_memory_max_size: "8MB"
+  dev_id: 0
+
 holoviz:
   width: 854
   height: 480

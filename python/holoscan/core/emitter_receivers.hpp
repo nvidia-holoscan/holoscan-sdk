@@ -39,8 +39,6 @@
 #include "io_context.hpp"
 #include "tensor.hpp"  // for PyTensor
 
-using std::string_literals::operator""s;
-
 namespace py = pybind11;
 
 namespace holoscan {
@@ -367,10 +365,10 @@ struct emitter_receiver<CloudPickleSerializedObject> {
  * A Python operator receiving a C++ nullptr will convert it to Python's None.
  */
 template <>
-struct emitter_receiver<nullptr_t> {
+struct emitter_receiver<std::nullptr_t> {
   static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
                    const int64_t acq_timestamp = -1) {
-    op_output.emit<nullptr_t>(nullptr, name.c_str(), acq_timestamp);
+    op_output.emit<std::nullptr_t>(nullptr, name.c_str(), acq_timestamp);
     return;
   }
   static py::object receive(std::any result, const std::string& name, PyInputContext& op_input) {

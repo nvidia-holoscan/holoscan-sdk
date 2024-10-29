@@ -155,12 +155,12 @@ vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_devic
     HOLOSCAN_LOG_WARN("Did not find a display mode with the desired properties {}x{} {:.3f} Hz",
                       impl_->desired_width_,
                       impl_->desired_height_,
-                      static_cast<float>(impl_->desired_refresh_rate_) / 1000.f);
+                      static_cast<float>(impl_->desired_refresh_rate_) / 1000.F);
   }
   HOLOSCAN_LOG_INFO("Using display mode {}x{} {:.3f} Hz",
                     mode_properties.parameters.visibleRegion.width,
                     mode_properties.parameters.visibleRegion.height,
-                    static_cast<float>(mode_properties.parameters.refreshRate) / 1000.f);
+                    static_cast<float>(mode_properties.parameters.refreshRate) / 1000.F);
 
   impl_->width_ = mode_properties.parameters.visibleRegion.width;
   impl_->height_ = mode_properties.parameters.visibleRegion.height;
@@ -213,7 +213,7 @@ vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_devic
   surface_create_info.planeIndex = plane_index;
   surface_create_info.planeStackIndex = planes[plane_index].currentStackIndex;
   surface_create_info.transform = vk::SurfaceTransformFlagBitsKHR::eIdentity;
-  surface_create_info.globalAlpha = 1.0f;
+  surface_create_info.globalAlpha = 1.0F;
   surface_create_info.alphaMode = selected_alpha_mode;
   surface_create_info.imageExtent = vk::Extent2D{mode_properties.parameters.visibleRegion.width,
                                                  mode_properties.parameters.visibleRegion.height};
@@ -232,7 +232,7 @@ bool ExclusiveWindow::is_minimized() {
 void ExclusiveWindow::im_gui_new_frame() {
   ImGuiIO& io = ImGui::GetIO();
   io.DisplaySize = ImVec2(static_cast<float>(impl_->width_), static_cast<float>(impl_->height_));
-  io.DisplayFramebufferScale = ImVec2(1.f, 1.f);
+  io.DisplayFramebufferScale = ImVec2(1.F, 1.F);
 
   ImGui::NewFrame();
 }

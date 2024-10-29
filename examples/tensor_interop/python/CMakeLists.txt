@@ -51,7 +51,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME python_tensor_interop_output)
-  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/tensor_interop/)
+  set(VALIDATION_FRAMES_DIR ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/tensor_interop/)
 
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
@@ -65,7 +65,7 @@ if(HOLOSCAN_BUILD_TESTS)
   add_custom_command(OUTPUT tensor_interop_test.py
   PRE_LINK
   COMMAND patch -u -o tensor_interop_test.py ${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.py
-      ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/tensor_interop/python_tensor_interop.patch
+    ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/tensor_interop/python_tensor_interop.patch
   )
 
   add_custom_target(python_tensor_interop_test ALL
@@ -82,7 +82,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_PYTHON_TENSOR_INTEROP_RENDER_TEST
-      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}

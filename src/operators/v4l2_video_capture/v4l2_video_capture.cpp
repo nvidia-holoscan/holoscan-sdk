@@ -210,11 +210,8 @@ void V4L2VideoCaptureOp::start() {
   v4l2_start();
 }
 
-void V4L2VideoCaptureOp::compute(InputContext& op_input, OutputContext& op_output,
+void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                                  ExecutionContext& context) {
-  // Avoid warning about unused variable
-  (void)op_input;
-
   // Read buffer.
   struct v4l2_buffer buf;
   CLEAR(buf);

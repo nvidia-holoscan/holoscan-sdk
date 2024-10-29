@@ -21,13 +21,14 @@ set(HOLOSCAN_GXF_COMPONENTS
     gxe
     logger
     multimedia
+    rmm
     sample # dependency of GXF::app
     serialization
     std
     ucx
 )
 
-find_package(GXF 4.0 CONFIG REQUIRED
+find_package(GXF 4.1 CONFIG REQUIRED
     COMPONENTS ${HOLOSCAN_GXF_COMPONENTS}
 )
 message(STATUS "Found GXF: ${GXF_DIR}")
@@ -92,7 +93,7 @@ foreach(component ${HOLOSCAN_GXF_COMPONENTS})
             )
 
             # Patch `gxe` executable RUNPATH to find required GXF libraries in the self-contained HSDK installation.
-            # GXF 4.0 libraries are entirely self-contained and do not require RPATH updates.
+            # GXF libraries are entirely self-contained and do not require RPATH updates.
             find_program(PATCHELF_EXECUTABLE patchelf)
             if(PATCHELF_EXECUTABLE)
                 execute_process(

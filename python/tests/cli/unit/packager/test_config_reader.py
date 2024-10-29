@@ -17,7 +17,6 @@ limitations under the License.
 
 import pathlib
 import tempfile
-from typing import Dict
 
 import pytest
 import yaml
@@ -261,7 +260,7 @@ class TestApplicationConfiguration:
             assert model in result.models
             assert result.models[model] == str(build_parameters.models_dir / model)
 
-    def _generate_yaml(self) -> Dict:
+    def _generate_yaml(self) -> dict:
         data = {
             "application": {
                 "title": "App Title",

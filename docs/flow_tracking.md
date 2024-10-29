@@ -2,15 +2,12 @@
 # Data Flow Tracking
 
 :::{warning}
-Data Flow Tracking is currently not supported between multiple fragments in a [distributed application](./holoscan_create_distributed_app.md).
+Data Flow Tracking is currently only supported between multiple fragments in a [distributed application](./holoscan_create_distributed_app.md) in a single machine.
 :::
 
-The Holoscan SDK provides the Data Flow Tracking APIs as a mechanism to profile your application and
-analyze the fine-grained timing properties and data flow between operators in the graph of a fragment.
+The Holoscan SDK provides the Data Flow Tracking APIs as a mechanism to profile your application and analyze the fine-grained timing properties and data flow between operators in the graph of a fragment.
 
-Currently, data flow tracking is only supported between the root operators and leaf operators of a
-graph and in simple cycles in a graph (support for tracking data flow between any pair of operators
-in a graph is planned for the future).
+Currently, data flow tracking is only supported between the root operators and leaf operators of a graph and in simple cycles in a graph (support for tracking data flow between any pair of operators in a graph is planned for the future).
 
 - A *root operator* is an operator without any predecessor nodes.
 - A *leaf operator* (also known as a *sink operator*) is an operator without any successor nodes.
@@ -32,10 +29,7 @@ The API also provides the ability to retrieve the number of messages sent from t
 
 ## Enabling Data Flow Tracking
 
-Before an application ({cpp:class}`C++ <holoscan::Application>`/{py:class}`python <holoscan.core.Application>`) is run with the `run()` method,
-data flow tracking can be enabled by calling the `track()` method in
-{cpp:func}`C++ <holoscan::Fragment::track>` and using the `Tracker` class in
-{py:class}`python <holoscan.core.Tracker>`.
+Before an application ({cpp:class}`C++ <holoscan::Application>`/{py:class}`python <holoscan.core.Application>`) is run with the `run()` method, data flow tracking can be enabled. For single fragment applications, this can be done by calling the `track()` method in {cpp:func}`C++ <holoscan::Fragment::track>` and using the `Tracker` class in {py:class}`python <holoscan.core.Tracker>`.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -64,10 +58,37 @@ with Tracker(app) as tracker:
 ````
 `````
 
+## Enabling Data Flow Tracking for Distributed Applications
+
+For distributed (multi-fragment) applications, a separate tracker object is used for each Fragment so the API is slightly different than in the single fragment case.
+
+
+`````{tab-set}
+````{tab-item} C++
+```{code-block} cpp
+:emphasize-lines: 2
+:name: holoscan-enable-data-flow-tracking-cpp
+auto app = holoscan::make_application<MyPingApp>();
+auto trackers = app->track_distributed(); // Enable data flow tracking for a distributed app
+// Change tracker and application configurations
+...
+app->run();
+```
+Note that instead of a returning a single `DataFlowTracker*` like `track`, the `track_distributed` method returns a `std::unordered_map<std::string, DataFlowTracker*>` where the keys are the names of the fragments.
+````
+````{tab-item} Python
+```{code-block} python
+with Tracker(app) as trackers:
+    app.run()
+```
+The `Tracker` context manager detects whether the app is distributed and returns a `dict[str, DataFlowTracker]` as `trackers` in the distributed case. For a single fragment application, the returned value is just a single `DataFlowTracker` object.
+````
+`````
+
 ## Retrieving Data Flow Tracking Results
 
 After an application has been run, data flow tracking results can be accessed by
-various functions:
+various methods on the DataFlowTracker ({cpp:class}`C++ <holoscan::DataFlowTracker>`/{py:class}`python <holoscan.core.DataFlowTracker>`) class.
 
 1. `print()` ({cpp:func}`C++ <holoscan::DataFlowTracker::print>`/{py:func}`python <holoscan.core.DataFlowTracker.print>`)
    - Prints all data flow tracking results including end-to-end latencies and the number of
@@ -117,7 +138,7 @@ tracker.print();
 from holoscan.core import Tracker
 ...
 app = MyPingApp()
-with Tracker(app) as tracker:
+with Tracker(app) as trackers:
   # Change tracker and application configurations
   ...
   app.run()
@@ -126,9 +147,49 @@ with Tracker(app) as tracker:
 ````
 `````
 
+If this was a distributed application, there would instead be a separate `DataFlowTracker` for each fragment. The overall flow tracking results for all fragments can be printed as in the following:
+
+`````{tab-set}
+````{tab-item} C++
+```{code-block} cpp
+:emphasize-lines: 6-10
+:name: holoscan-enable-data-flow-tracking-results-cpp
+auto app = holoscan::make_application<MyPingApp>();
+auto trackers = app->track_distributed(); // Enable data flow tracking for a distributed app
+// Change application configurations
+...
+app->run();
+// print the data flow tracking results
+for (const auto& [name, tracker] : trackers) {
+  std::cout << "Fragment: " << name << std::endl;
+  tracker->print();
+}
+```
+````
+````{tab-item} Python
+```{code-block} python
+:emphasize-lines: 6-9
+:name: holoscan-one-operator-workflow-python
+from holoscan.core import Tracker
+...
+app = MyPingApp()
+with Tracker(app) as trackers:
+  # Change tracker and application configurations
+  ...
+  app.run()
+  # print the data flow tracking results
+  for fragment_name, tracker in trackers.items():
+      print(f"Fragment: {fragment_name}")
+      tracker.print()
+```
+````
+`````
+
 ## Customizing Data Flow Tracking
 
-Data flow tracking can be customized using a few, optional configuration parameters. The `track()` method ({cpp:func}`C++ <holoscan::Fragment::track>`/{py:class}`Tracker class in python <holoscan.core.Tracker>`) can be configured to skip a few messages at the beginning of an application's execution as a *warm-up* period. It is also possible to discard a few messages at the end of an application's run as a *wrap-up* period. Additionally, outlier end-to-end latencies can be ignored by setting a latency threshold value which is the minimum latency below which the observed latencies are ignored.
+Data flow tracking can be customized using a few, optional configuration parameters. The `track()` method ({cpp:func}`C++ <holoscan::Fragment::track>`//{py:func}`Python <holoscan.core.Application.track>`) (or `track_distributed` method ({cpp:func}`C++ <holoscan::Application::track_distributed>`/{py:func}`Python <holoscan.core.Application.track_distributed>`)` for distributed apps) can be configured to skip a few messages at the beginning of an application's execution as a *warm-up* period. It is also possible to discard a few messages at the end of an application's run as a *wrap-up* period. Additionally, outlier end-to-end latencies can be ignored by setting a latency threshold value (in ms) which is the minimum latency below which the observed latencies are ignored.
+
+For Python, it is recommended to use the {py:class}`Tracker<holoscan.core.Tracker>` context manager class instead of the `track` or `track_distributed` methods. This class will autodetect if the application is a single fragment or distributed app, using the appropriate method for each.
 
 :::{tip}
 For effective benchmarking, it is common practice to include warm-up and cool-down periods by skipping the initial and final messages.
@@ -147,8 +208,8 @@ Fragment::track(uint64_t num_start_messages_to_skip = kDefaultNumStartMessagesTo
 ```{code-block} python
 :caption: Optional parameters to `Tracker`
 Tracker(num_start_messages_to_skip=num_start_messages_to_skip,
-            num_last_messages_to_discard=num_last_messages_to_discard,
-            latency_threshold=latency_threshold)
+        num_last_messages_to_discard=num_last_messages_to_discard,
+        latency_threshold=latency_threshold)
 ```
 ````
 `````
@@ -182,7 +243,7 @@ app->run();
 ````
 ````{tab-item} Python
 ```{code-block} python
-:emphasize-lines: 2
+:emphasize-lines: 4
 :name: holoscan-flow-tracking-logging-python
 from holoscan.core import Tracker
 ...

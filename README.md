@@ -18,7 +18,7 @@ The Holoscan User Guide includes:
 - Requirements and setup steps;
 - Detailed SDK documentation, including a developer introduction, examples, and API details.
 
-We also recommend visiting [NVIDIA HoloHub](https://nvidia-holoscan.github.io/holohub/) to view
+We also recommend visiting [NVIDIA HoloHub](https://github.com/nvidia-holoscan/holohub) to view
 community projects and reusable components available for your Holoscan project.
 
 ## Obtaining the Holoscan SDK
@@ -54,7 +54,7 @@ and may include them in Holoscan SDK releases at our discretion. Please refer to
 
 ### Relation to NVIDIA Clara
 
-In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). Starting with version 0.4.0, the Holoscan SDK is built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Domain specific content will be hosted on the [HoloHub](https://nvidia-holoscan.github.io/holohub) repository.
+In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). Starting with version 0.4.0, the Holoscan SDK is built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Domain specific content will be hosted on the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository.
 
 ### Repository structure
 

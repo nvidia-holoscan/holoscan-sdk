@@ -24,6 +24,7 @@
 
 #include "../config.hpp"
 #include "../utils.hpp"
+#include "common/assert.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/config.hpp"
@@ -37,9 +38,11 @@
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
+#include "holoscan/core/resources/gxf/rmm_allocator.hpp"
 #include "holoscan/core/resources/gxf/serialization_buffer.hpp"
 #include "holoscan/core/resources/gxf/std_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
+#include "holoscan/core/resources/gxf/stream_ordered_allocator.hpp"
 #include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp"
@@ -47,7 +50,6 @@
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
 #include "holoscan/core/resources/gxf/ucx_transmitter.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
-#include "common/assert.hpp"
 
 using namespace std::string_literals;
 
@@ -91,6 +93,45 @@ TEST_F(ResourceClassesWithGXFContext, TestCudaStreamPool) {
 
 TEST_F(ResourceClassesWithGXFContext, TestCudaStreamPoolDefaultConstructor) {
   auto resource = F.make_resource<CudaStreamPool>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestRMMAllocator) {
+  const std::string name{"rmm-pool"};
+  ArgList arglist{
+      Arg{"device_memory_initial_size", std::string{"10MB"}},
+      Arg{"device_memory_max_size", std::string{"20MB"}},
+      Arg{"host_memory_initial_size", std::string{"10MB"}},
+      Arg{"host_memory_max_size", std::string{"20MB"}},
+      Arg{"dev_id", static_cast<int32_t>(0)},
+  };
+  auto resource = F.make_resource<RMMAllocator>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<RMMAllocator>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::RMMAllocator"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestRMMAllocatorDefaultConstructor) {
+  auto resource = F.make_resource<RMMAllocator>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestStreamOrderedAllocator) {
+  const std::string name{"rmm-pool"};
+  ArgList arglist{
+      Arg{"device_memory_initial_size", std::string{"10MB"}},
+      Arg{"device_memory_max_size", std::string{"20MB"}},
+      Arg{"release_threadhold", std::string{"0B"}},
+      Arg{"dev_id", static_cast<int32_t>(0)},
+  };
+  auto resource = F.make_resource<StreamOrderedAllocator>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<StreamOrderedAllocator>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::StreamOrderedAllocator"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestStreamOrderedAllocatorDefaultConstructor) {
+  auto resource = F.make_resource<StreamOrderedAllocator>();
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferReceiver) {
@@ -380,7 +421,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxReceiver) {
   auto resource = F.make_resource<UcxReceiver>(name, arglist);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxReceiver>(arglist)));
-  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxReceiver"s);
+  EXPECT_EQ(std::string(resource->gxf_typename()), "holoscan::HoloscanUcxReceiver"s);
   EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
@@ -409,7 +450,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitter) {
   auto resource = F.make_resource<UcxTransmitter>(name, arglist);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<UcxTransmitter>(arglist)));
-  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::UcxTransmitter"s);
+  EXPECT_EQ(std::string(resource->gxf_typename()), "holoscan::HoloscanUcxTransmitter"s);
   EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 

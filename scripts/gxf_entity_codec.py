@@ -19,13 +19,14 @@ limitations under the License.
 import os
 import struct
 import time
+from collections.abc import Generator, Sequence
 from enum import Enum
 from io import BufferedIOBase, BytesIO
-from typing import Any, Generator, List, Sequence, Tuple, Union
+from typing import Any, Union
 
 import numpy as np
 
-ArrayLike = Union[np.ndarray, List[float]]
+ArrayLike = Union[np.ndarray, list[float]]
 ReadOnlyBuffer = bytes
 WriteableBuffer = Union[bytearray, memoryview]
 ReadableBuffer = Union[ReadOnlyBuffer, WriteableBuffer]
@@ -54,7 +55,7 @@ class EntityIndex:
     def __init__(
         self,
         *,
-        data: Tuple[int, int, int] = None,
+        data: tuple[int, int, int] = None,
         buffer: Sequence = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -87,7 +88,7 @@ class EntityIndex:
     def read(
         self,
         *,
-        data: Tuple[int, int, int] = None,
+        data: tuple[int, int, int] = None,
         buffer: ReadableBuffer = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -170,7 +171,7 @@ class EntityHeader:
     def __init__(
         self,
         *,
-        data: Tuple[int, int, int, int, int, int] = None,
+        data: tuple[int, int, int, int, int, int] = None,
         buffer: Sequence = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -208,7 +209,7 @@ class EntityHeader:
     def deserialize(
         self,
         *,
-        data: Tuple[int, int, int, int, int, int] = None,
+        data: tuple[int, int, int, int, int, int] = None,
         buffer: ReadableBuffer = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -310,7 +311,7 @@ class ComponentHeader:
     def __init__(
         self,
         *,
-        data: Tuple[int, int, int, int] = None,
+        data: tuple[int, int, int, int] = None,
         buffer: Sequence = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -336,7 +337,7 @@ class ComponentHeader:
     def deserialize(
         self,
         *,
-        data: Tuple[int, int, int, int] = None,
+        data: tuple[int, int, int, int] = None,
         buffer: ReadableBuffer = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -462,7 +463,7 @@ class TensorHeader:
     def __init__(
         self,
         *,
-        data: Tuple[int, int, int, int, Tuple[int, ...], Tuple[int, ...]] = None,
+        data: tuple[int, int, int, int, tuple[int, ...], tuple[int, ...]] = None,
         buffer: Sequence = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -487,11 +488,11 @@ class TensorHeader:
         return self._rank
 
     @property
-    def dims(self) -> Tuple[int, ...]:
+    def dims(self) -> tuple[int, ...]:
         return self._dims
 
     @property
-    def strides(self) -> Tuple[int, ...]:
+    def strides(self) -> tuple[int, ...]:
         return self._strides
 
     @property
@@ -504,7 +505,7 @@ class TensorHeader:
     def deserialize(
         self,
         *,
-        data: Tuple[int, int, int, int, Tuple[int, ...], Tuple[int, ...]] = None,
+        data: tuple[int, int, int, int, tuple[int, ...], tuple[int, ...]] = None,
         buffer: ReadableBuffer = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -585,7 +586,7 @@ class Tensor:
     def __init__(
         self,
         *,
-        data: Tuple[TensorHeader, ArrayLike] = None,
+        data: tuple[TensorHeader, ArrayLike] = None,
         buffer: Sequence = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -611,7 +612,7 @@ class Tensor:
     def read(
         self,
         *,
-        data: Tuple[TensorHeader, ArrayLike] = None,
+        data: tuple[TensorHeader, ArrayLike] = None,
         buffer: ReadableBuffer = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -678,7 +679,7 @@ class Entity:
     def __init__(
         self,
         *,
-        data: Tuple[EntityHeader, List["Component"]] = None,
+        data: tuple[EntityHeader, list["Component"]] = None,
         buffer: Sequence = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -691,7 +692,7 @@ class Entity:
         return self._header
 
     @property
-    def components(self) -> List["Component"]:
+    def components(self) -> list["Component"]:
         return self._components
 
     @property
@@ -726,7 +727,7 @@ class Entity:
     def read(
         self,
         *,
-        data: Tuple[EntityHeader, List["Component"]] = None,
+        data: tuple[EntityHeader, list["Component"]] = None,
         buffer: ReadableBuffer = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -793,7 +794,7 @@ class Component:
     def __init__(
         self,
         *,
-        data: Tuple[ComponentHeader, str, Tensor] = None,
+        data: tuple[ComponentHeader, str, Tensor] = None,
         buffer: Sequence = None,
         reader: BufferedIOBase = None,
         offset: int = 0,
@@ -823,7 +824,7 @@ class Component:
     def read(
         self,
         *,
-        data: Tuple[ComponentHeader, str, Tensor] = None,
+        data: tuple[ComponentHeader, str, Tensor] = None,
         buffer: ReadableBuffer = None,
         reader: BufferedIOBase = None,
         offset: int = 0,

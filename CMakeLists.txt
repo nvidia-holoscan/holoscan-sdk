@@ -32,6 +32,7 @@ option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Datasets" ON)
 option(HOLOSCAN_BUILD_TESTS "Build Holoscan SDK Tests" ON)
 option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan SDK" OFF)
 option(HOLOSCAN_INSTALL_EXAMPLE_SOURCE "Install the example source code" ON)
+option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
 
 # ##############################################################################
 # # Prerequisite statements
@@ -254,6 +255,12 @@ install(DIRECTORY ${cli11_SOURCE_DIR}/include/CLI/
     COMPONENT holoscan-core
 )
 
+# Copy bundled spdlog headers
+install(DIRECTORY ${spdlog_SOURCE_DIR}/include/spdlog/
+    DESTINATION include/3rdparty/spdlog
+    COMPONENT holoscan-core
+)
+
 # Copy version file
 install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/version_config.hpp
     DESTINATION include/holoscan
@@ -268,6 +275,7 @@ install(DIRECTORY
   ${GXF_INCLUDE_DIR}/gxf/cuda
   ${GXF_INCLUDE_DIR}/gxf/logger
   ${GXF_INCLUDE_DIR}/gxf/multimedia
+  ${GXF_INCLUDE_DIR}/gxf/rmm
   ${GXF_INCLUDE_DIR}/gxf/serialization
   ${GXF_INCLUDE_DIR}/gxf/std
   ${GXF_INCLUDE_DIR}/gxf/ucx
@@ -436,6 +444,11 @@ if(HOLOSCAN_BUILD_TESTS)
     # add Holoviz tests
     add_test(NAME HOLOVIZ_FUNCTIONAL_TEST COMMAND holoscan::viz::functionaltests)
     add_test(NAME HOLOVIZ_UNIT_TEST COMMAND holoscan::viz::unittests)
+endif()
+
+# If enabling clang-tidy
+if(HOLOSCAN_ENABLE_CLANG_TIDY)
+  set(CMAKE_CXX_CLANG_TIDY "clang-tidy;--checks=*,-llvmlibc-restrict-system-libc-headers,-fuchsia-default-arguments-calls,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-readability-magic-numbers,-cppcoreguidelines-avoid-magic-numbers,-altera-unroll-loops,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-altera-id-dependent-backward-branch,-fuchsia-default-arguments-declarations,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument;--extra-arg=-std=c++17")
 endif()
 
 if(HOLOSCAN_BUILD_PYTHON)

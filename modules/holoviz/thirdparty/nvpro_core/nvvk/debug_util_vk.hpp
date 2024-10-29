@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -94,7 +94,7 @@ public:
   {
     if(s_enabled)
     {
-      VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0f, 1.0f, 1.0f, 1.0f}};
+      VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0F, 1.0F, 1.0F, 1.0F}};
       vkCmdBeginDebugUtilsLabelEXT(cmdBuf, &s);
     }
   }
@@ -109,7 +109,7 @@ public:
   {
     if(s_enabled)
     {
-      VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0f, 1.0f, 1.0f, 1.0f}};
+      VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0F, 1.0F, 1.0F, 1.0F}};
       vkCmdInsertDebugUtilsLabelEXT(cmdBuf, &s);
     }
   }
@@ -123,7 +123,7 @@ public:
     {
       if(s_enabled)
       {
-        VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0f, 1.0f, 1.0f, 1.0f}};
+        VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0F, 1.0F, 1.0F, 1.0F}};
         vkCmdBeginDebugUtilsLabelEXT(cmdBuf, &s);
       }
     }
@@ -138,7 +138,7 @@ public:
     {
       if(s_enabled)
       {
-        VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0f, 1.0f, 1.0f, 1.0f}};
+        VkDebugUtilsLabelEXT s{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, nullptr, label.c_str(), {1.0F, 1.0F, 1.0F, 1.0F}};
         vkCmdInsertDebugUtilsLabelEXT(m_cmdBuf, &s);
       }
     }

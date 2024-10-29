@@ -229,6 +229,12 @@ num_last_messages_to_discard : int
 latency_threshold : int
     The minimum end-to-end latency in milliseconds to account for in the
     end-to-end latency metric calculations
+
+Returns
+-------
+tracker : holoscan.core.DataFlowTracker
+    The data flow tracker object that can be used to display metrics data for profiling along the
+    different paths through the computation graph.
 )doc")
 
 PYDOC(run, R"doc(

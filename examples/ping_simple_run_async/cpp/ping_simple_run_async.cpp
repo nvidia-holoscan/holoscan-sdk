@@ -33,12 +33,16 @@ class App : public holoscan::Application {
     add_flow(tx, rx);
 
     // Save a reference to the tx operator so we can access it later
-    target_op = tx;
+    target_op_ = tx;
   }
-  std::shared_ptr<holoscan::Operator> target_op;
+
+  std::shared_ptr<holoscan::Operator> target_op() { return target_op_; }
+
+ private:
+  std::shared_ptr<holoscan::Operator> target_op_;
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<App>();
   auto future = app->run_async();
   HOLOSCAN_LOG_INFO("Application is running asynchronously.");
@@ -50,14 +54,13 @@ int main(int argc, char** argv) {
       if (status == std::future_status::ready) {
         HOLOSCAN_LOG_INFO("# Application finished");
         return;
+      }
+      // Print the current index of the tx operator
+      auto tx = std::dynamic_pointer_cast<holoscan::ops::PingTxOp>(app->target_op());
+      if (tx) {
+        HOLOSCAN_LOG_INFO("# Application still running... PingTxOp index: {}", tx->index());
       } else {
-        // Print the current index of the tx operator
-        auto tx = std::dynamic_pointer_cast<holoscan::ops::PingTxOp>(app->target_op);
-        if (tx) {
-          HOLOSCAN_LOG_INFO("# Application still running... PingTxOp index: {}", tx->index());
-        } else {
-          HOLOSCAN_LOG_INFO("# Application still running... PingTxOp index: {}", "N/A");
-        }
+        HOLOSCAN_LOG_INFO("# Application still running... PingTxOp index: {}", "N/A");
       }
       std::this_thread::yield();
     }

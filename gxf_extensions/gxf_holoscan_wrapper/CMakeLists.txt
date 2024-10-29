@@ -42,7 +42,7 @@ target_include_directories(gxf_holoscan_wrapper_lib
     PUBLIC
     # Include headers from the parent directory (./gxf_extensions)
     # so that the headers can be included as <gxf_holoscan_wrapper/operator_wrapper.hpp>
-    # TODO: need to find better way to do this
+    # TODO(unknown): need to find better way to do this
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )

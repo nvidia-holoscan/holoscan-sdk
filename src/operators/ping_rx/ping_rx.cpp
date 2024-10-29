@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,8 @@ void PingRxOp::setup(OperatorSpec& spec) {
   spec.input<int>("in");
 }
 
-void PingRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+void PingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+                       [[maybe_unused]] ExecutionContext& context) {
   auto value = op_input.receive<int>("in").value();
   HOLOSCAN_LOG_INFO("Rx message value: {}", value);
 }

@@ -469,7 +469,7 @@ class ArgList {
    * Example:
    *
    * ```cpp
-   * bool is_rdma = from_config("aja.rdma").as<bool>();
+   * auto is_rdma = from_config("aja.rdma").as<bool>();
    * ```
    *
    * @tparam typeT The type to cast the argument to.

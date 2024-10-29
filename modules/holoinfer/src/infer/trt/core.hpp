@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +36,8 @@ class TrtInfer : public InferBase {
   /**
    * @brief Constructor
    */
-  TrtInfer(const std::string& model_path, const std::string& model_name, int device_id,
+  TrtInfer(const std::string& model_path, const std::string& model_name,
+           const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
            bool enable_fp16, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out);
 
   /**
@@ -46,12 +47,19 @@ class TrtInfer : public InferBase {
 
   /**
    * @brief Does the Core inference with TRT backend
+   * The provided CUDA data event is used to prepare the input data any execution of CUDA work
+   * should be in sync with this event. If the inference is using CUDA it should record a CUDA
+   * event and pass it back in `cuda_event_inference`.
+   *
    * @param input_data Input DataBuffer
    * @param output_buffer Output DataBuffer, is populated with inferred results
+   * @param cuda_event_data CUDA event recorded after data transfer
+   * @param cuda_event_inference CUDA event recorded after inference
    * @return InferStatus
    * */
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
-                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer);
+                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                           cudaEvent_t cuda_event_data, cudaEvent_t *cuda_event_inference);
 
   /**
    * @brief Get input data dimensions to the model
@@ -100,6 +108,9 @@ class TrtInfer : public InferBase {
   /// @brief Vector of output data types
   std::vector<holoinfer_datatype> out_data_types_;
 
+  /// @brief Vector of trt optimization profile
+  std::vector<int32_t> trt_opt_profile_;
+
   /// @brief Use FP16 in TRT engine file generation
   bool enable_fp16_;
 
@@ -145,8 +156,17 @@ class TrtInfer : public InferBase {
   /// @brief Generated engine file path. The extension is unique per GPU model
   std::string engine_path_;
 
-  /// @brief Cuda stream
+  /// Cuda stream
   cudaStream_t cuda_stream_ = nullptr;
+  /// CUDA event for device
+  cudaEvent_t cuda_event_ = nullptr;
+
+  /// Use CUDA graphs if set
+  bool use_cuda_graph_ = true;
+  /// This is set when the model is executed the first time, used for CUDA graph logic
+  bool first_phase_ = true;
+  /// CUDA graph instance
+  cudaGraphExec_t cuda_graph_instance_ = nullptr;
 
   /// @brief Inference runtime
   std::unique_ptr<nvinfer1::IRuntime> infer_runtime_;

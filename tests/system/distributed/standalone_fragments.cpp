@@ -24,6 +24,8 @@
 
 #include <holoscan/holoscan.hpp>
 
+#include "distributed_app_fixture.hpp"
+
 namespace holoscan {
 
 namespace {
@@ -36,7 +38,8 @@ class DummyOp : public Operator {
 
   void setup(OperatorSpec& spec) override {}
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("Operator: {}, Index: {}", name(), index_);
     // Sleep for 100ms to simulate some work
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -92,7 +95,7 @@ class StandaloneFragmentApp : public holoscan::Application {
 // Tests
 ///////////////////////////////////////////////////////////////////////////////
 
-TEST(DistributedApp, TestStandaloneFragments) {
+TEST_F(DistributedApp, TestStandaloneFragments) {
   // Test that two fragments can be run independently in a distributed app (issue 4616519).
   const std::vector<std::string> args{"test_app", "--driver", "--worker", "--fragments", "all"};
   auto app = make_application<StandaloneFragmentApp>(args);
@@ -100,7 +103,9 @@ TEST(DistributedApp, TestStandaloneFragments) {
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Operator: tx, Index: 10") != std::string::npos)

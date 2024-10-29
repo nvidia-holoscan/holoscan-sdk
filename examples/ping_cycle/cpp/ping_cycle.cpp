@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,8 @@ class PingMxOp : public Operator {
     spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this value", 2);
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("in");
 
     int out_value = 1;
@@ -67,7 +68,7 @@ class MyPingApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<MyPingApp>();
   app->run();
 

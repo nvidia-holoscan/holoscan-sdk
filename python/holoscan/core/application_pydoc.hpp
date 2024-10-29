@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYHOLOSCAN_CORE_APPLICATION_PYDOC_HPP
-#define PYHOLOSCAN_CORE_APPLICATION_PYDOC_HPP
+#ifndef HOLOSCAN_CORE_APPLICATION_PYDOC_HPP
+#define HOLOSCAN_CORE_APPLICATION_PYDOC_HPP
 
 #include <string>
 
@@ -125,8 +125,13 @@ frag : holoscan.core.Fragment
 PYDOC(compose, R"doc(
 The compose method of the application.
 
-This method should be called after `config`, but before `run` in order to
-compose the computation graph.
+This method should be called after ``config``, but before the graph starts running in order to
+compose the computation graph. This method will be called automatically by ``Application.run``, so
+it is not normally necessary to call it directly.
+)doc")
+
+PYDOC(compose_graph, R"doc(
+This is a wrapper around compose that only calls compose if the graph is not already composed.
 )doc")
 
 PYDOC(run, R"doc(
@@ -136,12 +141,11 @@ This method runs the computation. It must have first been initialized via
 `config` and `compose`.
 )doc")
 
-PYDOC(track, R"doc(
-The track method of the application.
+PYDOC(track_distributed, R"doc(
+The track method of a distributed application.
 
-This method enables data frame flow tracking and returns
-a DataFlowTracker object which can be used to display metrics data
-for profiling an application.
+This method enables data frame flow tracking and returns a DataFlowTracker object which can be used
+to display metrics data for profiling an application.
 
 Parameters
 ----------
@@ -152,9 +156,17 @@ num_last_messages_to_discard : int
 latency_threshold : int
     The minimum end-to-end latency in milliseconds to account for in the
     end-to-end latency metric calculations
+
+Returns
+-------
+trackers : dict[str, holoscan.core.DataFlowTracker]
+    A dictionary where the keys are the fragment names and the values are the corresponding data
+    flow tracker for that fragment. These can be used to display metrics data for profiling along
+    the different paths through the computation graph.
 )doc")
+
 }  // namespace Application
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_CORE_APPLICATION_PYDOC_HPP
+#endif /* HOLOSCAN_CORE_APPLICATION_PYDOC_HPP */

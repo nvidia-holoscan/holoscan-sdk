@@ -91,8 +91,7 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
   if (!builder) { return false; }
 
-  auto explicit_batch =
-      1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+  auto explicit_batch = 1;
   auto network =
       std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(explicit_batch));
   if (!network) { return false; }

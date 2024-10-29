@@ -1,37 +1,42 @@
 --- ../examples/video_replayer/python/video_replayer.py	2023-11-16 01:35:53.593301380 +0000
 +++ examples/video_replayer/python/video_replayer_test.py	2023-11-20 03:25:57.853150634 +0000
-@@ -19,7 +19,8 @@
- import sys
+@@ -18,8 +18,13 @@ limitations under the License.
+ import os
  
  from holoscan.core import Application
 -from holoscan.operators import HolovizOp, VideoStreamReplayerOp
-+from holoscan.operators import HolovizOp, VideoStreamReplayerOp, VideoStreamRecorderOp, FormatConverterOp
-+from holoscan.resources import UnboundedAllocator
+-from holoscan.resources import RMMAllocator
++from holoscan.operators import (
++    FormatConverterOp,
++    HolovizOp,
++    VideoStreamRecorderOp,
++    VideoStreamReplayerOp,
++)
++from holoscan.resources import RMMAllocator, UnboundedAllocator
  
  sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
  
-@@ -50,6 +51,24 @@
+@@ -58,6 +63,23 @@ class VideoReplayerApp(Application):
          # Define the workflow
          self.add_flow(replayer, visualizer, {("output", "receivers")})
  
 +        recorder_format_converter = FormatConverterOp(
-+            self, 
-+            name="recorder_format_converter", 
++            self,
++            name="recorder_format_converter",
 +            in_dtype="rgba8888",
 +            out_dtype="rgb888",
-+            pool=UnboundedAllocator(self, name="pool")
++            pool=UnboundedAllocator(self, name="pool"),
 +        )
-+        recorder = VideoStreamRecorderOp(
-+            self, 
-+            name="recorder",
-+            **self.kwargs("recorder")
-+        )
++
++        recorder = VideoStreamRecorderOp(self, name="recorder", **self.kwargs("recorder"))
 +
 +        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
 +
-+        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(
++            visualizer, recorder_format_converter, {("render_buffer_output", "source_video")}
++        )
 +        self.add_flow(recorder_format_converter, recorder)
 +
- 
- if __name__ == "__main__":
-     config_file = os.path.join(os.path.dirname(__file__), "video_replayer.yaml")
+         # Check if the YAML dual_window parameter is set and add a second visualizer in that case
+         dual_window = self.kwargs("dual_window").get("dual_window", False)
+         if dual_window:

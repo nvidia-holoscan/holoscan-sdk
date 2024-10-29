@@ -183,7 +183,8 @@ class InputContext {
    *     spec.input<std::shared_ptr<ValueData>>("in");
    *   }
    *
-   *   void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+   *   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+   *                [[maybe_unused]] ExecutionContext& context) override {
    *     auto value = op_input.receive<std::shared_ptr<ValueData>>("in");
    *     if (value.has_value()) {
    *       HOLOSCAN_LOG_INFO("Message received (value: {})", value->data());
@@ -323,29 +324,17 @@ class InputContext {
 
   inline bool populate_tensor_map(const holoscan::gxf::Entity& gxf_entity,
                                   holoscan::TensorMap& tensor_map) {
-    auto components_expected = gxf_entity.findAll();
-    auto components = components_expected.value();
-
-    for (const auto& component : components) {
-      const auto component_name = component->name();
-
-      // Skip non-tensor components based on specific names
-      std::string_view component_name_view(component_name);
-      if (component_name_view == "metadata_" || component_name_view == "message_label" ||
-          component_name_view == "cuda_stream_id_") {
-        continue;
-      }
-
-      // Attempt to get the Tensor component
-      std::shared_ptr<holoscan::Tensor> holoscan_tensor =
-          gxf_entity.get<holoscan::Tensor>(component_name);
-
-      if (holoscan_tensor) {
-        tensor_map.insert({component_name, holoscan_tensor});
-      } else {
-        HOLOSCAN_LOG_DEBUG("Unable to get tensor component '{}'", component_name);
+    auto tensor_components_expected = gxf_entity.findAllHeap<nvidia::gxf::Tensor>();
+    for (const auto& gxf_tensor : tensor_components_expected.value()) {
+      // Do zero-copy conversion to holoscan::Tensor (as in gxf_entity.get<holoscan::Tensor>())
+      auto maybe_dl_ctx = (*gxf_tensor->get()).toDLManagedTensorContext();
+      if (!maybe_dl_ctx) {
+        HOLOSCAN_LOG_ERROR(
+            "Failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
         return false;
       }
+      auto holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
+      tensor_map.insert({gxf_tensor->name(), holoscan_tensor});
     }
     return true;
   }
@@ -421,7 +410,7 @@ class InputContext {
         auto gxf_entity = std::any_cast<holoscan::gxf::Entity>(value);
         bool is_tensor_map_populated = populate_tensor_map(gxf_entity, tensor_map);
         if (!is_tensor_map_populated) {
-          auto error_message = fmt::format(
+          error_message = fmt::format(
               "Unable to populate the TensorMap from the received GXF Entity for input '{}:{}'",
               name,
               index);
@@ -605,7 +594,8 @@ class OutputContext {
    *     spec.output<ValueData>("out");
    *   }
    *
-   *   void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+   *   void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+   *                [[maybe_unused]] ExecutionContext& context) override {
    *     auto value = std::make_shared<ValueData>(7);
    *     op_output.emit(value, "out");
    *   }
@@ -649,8 +639,8 @@ class OutputContext {
    *     spec.output<holoscan::gxf::Entity>("out");
    *   }
    *
-   *   void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&)
-   * override
+   *   void compute(InputContext& op_input, OutputContext& op_output,
+   *                [[maybe_unused]] ExecutionContext& context) override
    *   {
    *     // The type of `in_message` is 'holoscan::gxf::Entity'.
    *     auto in_message = op_input.receive<holoscan::gxf::Entity>("in");
@@ -713,7 +703,8 @@ class OutputContext {
    *     spec.output<holoscan::gxf::Entity>("out");
    *   }
    *
-   *   void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override
+   *   void compute(InputContext& op_input, OutputContext& op_output,
+   *                [[maybe_unused]] ExecutionContext& context) override
    *   {
    *     // The type of `in_message` is 'holoscan::gxf::Entity'.
    *     auto in_message = op_input.receive<holoscan::gxf::Entity>("in");

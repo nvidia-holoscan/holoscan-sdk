@@ -19,6 +19,7 @@
     holoscan.resources.Allocator
     holoscan.resources.BlockMemoryPool
     holoscan.resources.Clock
+    holoscan.resources.CudaAllocator
     holoscan.resources.CudaStreamPool
     holoscan.resources.DoubleBufferReceiver
     holoscan.resources.DoubleBufferTransmitter
@@ -27,9 +28,11 @@
     holoscan.resources.MemoryStorageType
     holoscan.resources.RealtimeClock
     holoscan.resources.Receiver
+    holoscan.resources.RMMAllocator
     holoscan.resources.SerializationBuffer
     holoscan.resources.StdComponentSerializer
     holoscan.resources.StdEntitySerializer
+    holoscan.resources.StreamOrderedAllocator
     holoscan.resources.Transmitter
     holoscan.resources.UnboundedAllocator
     holoscan.resources.UcxComponentSerializer
@@ -46,6 +49,7 @@ from ._resources import (
     Allocator,
     BlockMemoryPool,
     Clock,
+    CudaAllocator,
     CudaStreamPool,
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
@@ -53,9 +57,11 @@ from ._resources import (
     MemoryStorageType,
     RealtimeClock,
     Receiver,
+    RMMAllocator,
     SerializationBuffer,
     StdComponentSerializer,
     StdEntitySerializer,
+    StreamOrderedAllocator,
     Transmitter,
     UcxComponentSerializer,
     UcxEntitySerializer,
@@ -73,6 +79,7 @@ __all__ = [
     "Allocator",
     "BlockMemoryPool",
     "Clock",
+    "CudaAllocator",
     "CudaStreamPool",
     "DoubleBufferReceiver",
     "DoubleBufferTransmitter",
@@ -81,9 +88,11 @@ __all__ = [
     "MemoryStorageType",
     "RealtimeClock",
     "Receiver",
+    "RMMAllocator",
     "SerializationBuffer",
     "StdComponentSerializer",
     "StdEntitySerializer",
+    "StreamOrderedAllocator",
     "Transmitter",
     "UcxComponentSerializer",
     "UcxEntitySerializer",

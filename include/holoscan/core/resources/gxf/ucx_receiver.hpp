@@ -42,7 +42,7 @@ class UcxReceiver : public Receiver {
   UcxReceiver() = default;
   UcxReceiver(const std::string& name, nvidia::gxf::Receiver* component);
 
-  const char* gxf_typename() const override { return "nvidia::gxf::UcxReceiver"; }
+  const char* gxf_typename() const override { return "holoscan::HoloscanUcxReceiver"; }
 
   void setup(ComponentSpec& spec) override;
   void initialize() override;
@@ -58,12 +58,15 @@ class UcxReceiver : public Receiver {
 
   nvidia::gxf::UcxReceiver* get() const;
 
+  /// @brief Enable tracking in the underlying holoscan::HoloscanUcxReceiver class
+  void track();
+
  private:
   Parameter<std::string> address_;
   Parameter<uint32_t> port_;
   Parameter<std::shared_ptr<holoscan::UcxSerializationBuffer>> buffer_;
-  // TODO: support GPUDevice nvidia::gxf::Resource
-  // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
+  // TODO(unknown): support GPUDevice nvidia::gxf::Resource
+  // // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
 };
 
 }  // namespace holoscan

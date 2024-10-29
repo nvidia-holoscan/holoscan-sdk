@@ -26,7 +26,8 @@ void ForwardOp::setup(OperatorSpec& spec) {
   spec.output<std::any>("out");
 }
 
-void ForwardOp::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) {
+void ForwardOp::compute(InputContext& op_input, OutputContext& op_output,
+                        [[maybe_unused]] ExecutionContext& context) {
   auto in_message = op_input.receive<std::any>("in");
   if (in_message) {
     auto value = in_message.value();

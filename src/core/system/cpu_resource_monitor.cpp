@@ -167,7 +167,7 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
       if (idle_diff > 0 && total_diff > 0) {
         cpu_info.cpu_usage = static_cast<float>(1.0 - (static_cast<double>(idle_diff) /
                                                        static_cast<double>(total_diff))) *
-                             100.0f;
+                             100.0F;
       }
 
       // Update the last total stats
@@ -188,7 +188,7 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
           fmt::format("Invalid cpu_info.memory_total value: {}", memory_total));
     }
     cpu_info.memory_usage =
-        static_cast<float>(1.0 - (static_cast<double>(mem_info[2]) / memory_total)) * 100.0f;
+        static_cast<float>(1.0 - (static_cast<double>(mem_info[2]) / memory_total)) * 100.0F;
   }
 
   if (metric_flags & CPUMetricFlag::SHARED_MEMORY_USAGE) {
@@ -200,7 +200,7 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
     cpu_info.shared_memory_available = shm_info[2];
     cpu_info.shared_memory_usage = static_cast<float>(1.0 - (static_cast<double>(shm_info[2]) /
                                                              static_cast<double>(shm_info[0]))) *
-                                   100.0f;
+                                   100.0F;
   }
 
   return cpu_info;

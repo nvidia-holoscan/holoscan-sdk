@@ -45,7 +45,8 @@ class PingTxOp : public Operator {
     spec.output<int>("out2");
   }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = std::make_shared<int>(1);
     op_output.emit(value1, "out1");
 
@@ -64,7 +65,8 @@ class PingRxOp : public Operator {
     spec.input<std::vector<std::vector<int>>>("receivers", IOSpec::kAnySize);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value_vector = op_input.receive<std::vector<int>>("receivers").value();
 
     HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: {})", count_++, value_vector.size());

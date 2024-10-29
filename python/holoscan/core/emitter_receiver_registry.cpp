@@ -34,13 +34,13 @@ const EmitterReceiverRegistry::EmitterReceiver& EmitterReceiverRegistry::get_emi
     HOLOSCAN_LOG_WARN("No emitter_receiver for type '{}' exists", index.name());
     return EmitterReceiverRegistry::none_emitter_receiver;
   }
-  auto& emitter_receiver = emitter_receiver_map_.at(maybe_name.value());
+  const auto& emitter_receiver = emitter_receiver_map_.at(maybe_name.value());
   return emitter_receiver;
 }
 
 bool EmitterReceiverRegistry::has_emitter_receiver(const std::type_index& index) const {
   auto maybe_name = index_to_name(index);
-  if (maybe_name) { return emitter_receiver_map_.count(maybe_name.value()) > 0 ? true : false; }
+  if (maybe_name) { return emitter_receiver_map_.count(maybe_name.value()) > 0; }
   return false;
 }
 
@@ -51,7 +51,7 @@ const EmitterReceiverRegistry::EmitterReceiver& EmitterReceiverRegistry::get_emi
     HOLOSCAN_LOG_WARN("No emitter_receiver for name '{}' exists", name);
     return EmitterReceiverRegistry::none_emitter_receiver;
   }
-  auto& emitter_receiver = loc->second;
+  const auto& emitter_receiver = loc->second;
   return emitter_receiver;
 }
 
@@ -62,7 +62,7 @@ const EmitterReceiverRegistry::EmitFunc& EmitterReceiverRegistry::get_emitter(
     HOLOSCAN_LOG_WARN("No emitter for name '{}' exists", name);
     return EmitterReceiverRegistry::none_emit;
   }
-  auto& emitter_receiver = loc->second;
+  const auto& emitter_receiver = loc->second;
   return emitter_receiver.first;
 }
 
@@ -73,7 +73,7 @@ const EmitterReceiverRegistry::EmitFunc& EmitterReceiverRegistry::get_emitter(
     HOLOSCAN_LOG_WARN("No emitter for type '{}' exists", index.name());
     return EmitterReceiverRegistry::none_emit;
   }
-  auto& emitter = emitter_receiver_map_.at(maybe_name.value()).first;
+  const auto& emitter = emitter_receiver_map_.at(maybe_name.value()).first;
   return emitter;
 }
 
@@ -84,7 +84,7 @@ const EmitterReceiverRegistry::ReceiveFunc& EmitterReceiverRegistry::get_receive
     HOLOSCAN_LOG_WARN("No receiver for name '{}' exists", name);
     return EmitterReceiverRegistry::none_receive;
   }
-  auto& emitter_receiver = loc->second;
+  const auto& emitter_receiver = loc->second;
   return emitter_receiver.second;
 }
 
@@ -95,7 +95,7 @@ const EmitterReceiverRegistry::ReceiveFunc& EmitterReceiverRegistry::get_receive
     HOLOSCAN_LOG_WARN("No receiver for type '{}' exists", index.name());
     return EmitterReceiverRegistry::none_receive;
   }
-  auto& receiver = emitter_receiver_map_.at(maybe_name.value()).second;
+  const auto& receiver = emitter_receiver_map_.at(maybe_name.value()).second;
   return receiver;
 }
 
@@ -122,7 +122,7 @@ expected<std::string, RuntimeError> EmitterReceiverRegistry::index_to_name(
 std::vector<std::string> EmitterReceiverRegistry::registered_types() const {
   std::vector<std::string> names;
   names.reserve(emitter_receiver_map_.size());
-  for (auto& [key, _] : emitter_receiver_map_) { names.emplace_back(key); }
+  for (const auto& [key, _] : emitter_receiver_map_) { names.emplace_back(key); }
   return names;
 }
 

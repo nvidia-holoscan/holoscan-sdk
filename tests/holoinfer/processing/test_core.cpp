@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,7 +65,11 @@ HoloInfer::InferStatus ProcessingTests::setup_processor() {
 }
 
 HoloInfer::InferStatus ProcessingTests::execute_processor() {
-  auto status = holoscan_processor_context_->process(
-      process_operations, processed_map, data_per_tensor, dims_per_tensor);
+  auto status = holoscan_processor_context_->process(process_operations,
+                                                     processed_map,
+                                                     data_per_tensor,
+                                                     dims_per_tensor,
+                                                     process_with_cuda,
+                                                     cuda_stream);
   return status;
 }

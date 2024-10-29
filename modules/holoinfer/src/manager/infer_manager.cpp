@@ -38,6 +38,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   auto temporal_map = inference_specs->get_temporal_map();
   auto backend_type = inference_specs->backend_type_;
   auto backend_map = inference_specs->get_backend_map();
+  auto trt_opt_profile = inference_specs->trt_opt_profile_;
   cuda_buffer_in_ = inference_specs->cuda_buffer_in_;
   cuda_buffer_out_ = inference_specs->cuda_buffer_out_;
 
@@ -80,11 +81,11 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   try {
     if (device_map.find("gpu-dt") != device_map.end()) {
       auto dev_id = std::stoi(device_map.at("gpu-dt"));
-      device_gpu_dt = dev_id;
-      HOLOSCAN_LOG_INFO("ID of data transfer GPU updated to: {}", device_gpu_dt);
+      device_gpu_dt_ = dev_id;
+      HOLOSCAN_LOG_INFO("ID of data transfer GPU updated to: {}", device_gpu_dt_);
     }
 
-    unique_gpu_ids.insert(device_gpu_dt);
+    unique_gpu_ids.insert(device_gpu_dt_);
 
     for (auto const& [_, gpu_id] : device_map) {
       auto dev_id = std::stoi(gpu_id);
@@ -113,48 +114,48 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
     for (auto gid = 1; gid < vec_unique_gpu_ids.size(); ++gid) {
       int gpu_access_from_gpudt = 0, gpu_access_to_gpudt = 0;
       check_cuda(
-          cudaDeviceCanAccessPeer(&gpu_access_from_gpudt, device_gpu_dt, vec_unique_gpu_ids[gid]));
+          cudaDeviceCanAccessPeer(&gpu_access_from_gpudt, device_gpu_dt_, vec_unique_gpu_ids[gid]));
       check_cuda(
-          cudaDeviceCanAccessPeer(&gpu_access_to_gpudt, vec_unique_gpu_ids[gid], device_gpu_dt));
+          cudaDeviceCanAccessPeer(&gpu_access_to_gpudt, vec_unique_gpu_ids[gid], device_gpu_dt_));
 
       if (gpu_access_from_gpudt == 1 && gpu_access_to_gpudt == 1) {
         HOLOSCAN_LOG_INFO("Setting GPU P2P access between GPU {} and GPU {}",
-                          device_gpu_dt,
+                          device_gpu_dt_,
                           vec_unique_gpu_ids[gid]);
-        check_cuda(cudaSetDevice(device_gpu_dt));
+        check_cuda(cudaSetDevice(device_gpu_dt_));
         cudaError_t cstatus = cudaDeviceEnablePeerAccess(vec_unique_gpu_ids[gid], 0);
         if (cstatus != cudaSuccess && cstatus != cudaErrorPeerAccessAlreadyEnabled) {
           HOLOSCAN_LOG_ERROR("Cuda error, {}", cudaGetErrorString(cstatus));
           HOLOSCAN_LOG_ERROR("Error enabling P2P access from GPU {} and GPU {}.",
-                             device_gpu_dt,
+                             device_gpu_dt_,
                              vec_unique_gpu_ids[gid]);
           status.set_message("Enabling P2P access failed.");
           return status;
         }
         check_cuda(cudaSetDevice(vec_unique_gpu_ids[gid]));
-        cstatus = cudaDeviceEnablePeerAccess(device_gpu_dt, 0);
+        cstatus = cudaDeviceEnablePeerAccess(device_gpu_dt_, 0);
         if (cstatus != cudaSuccess && cstatus != cudaErrorPeerAccessAlreadyEnabled) {
           HOLOSCAN_LOG_ERROR("Cuda error, {}", cudaGetErrorString(cstatus));
           HOLOSCAN_LOG_ERROR("Error enabling P2P access from GPU {} and GPU {}.",
                              vec_unique_gpu_ids[gid],
-                             device_gpu_dt);
+                             device_gpu_dt_);
           status.set_message("Enabling P2P access failed.");
           return status;
         }
       } else {
         HOLOSCAN_LOG_WARN("P2P access between GPU {} and GPU {} is not available.",
-                          device_gpu_dt,
+                          device_gpu_dt_,
                           vec_unique_gpu_ids[gid]);
         HOLOSCAN_LOG_INFO(
             "There can be any reason related to GPU type, GPU family or system setup (PCIE "
             "configuration).");
         HOLOSCAN_LOG_INFO("May be GPU {} and GPU {} are not in the same PCIE configuration.",
-                          device_gpu_dt,
+                          device_gpu_dt_,
                           vec_unique_gpu_ids[gid]);
         HOLOSCAN_LOG_WARN(
             "Multi GPU inference feature will use Host (CPU memory) to transfer data across GPUs."
             "This may result in an additional latency.");
-        mgpu_p2p_transfer = false;
+        mgpu_p2p_transfer_ = false;
       }
     }
   }
@@ -179,7 +180,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
         return status;
       }
 
-      auto device_id = device_gpu_dt;
+      auto device_id = device_gpu_dt_;
       if (device_map.find(model_name) != device_map.end()) {
         device_id = std::stoi(device_map.at(model_name));
         HOLOSCAN_LOG_INFO("Device id: {} for Model: {}", device_id, model_name);
@@ -237,7 +238,9 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           holo_infer_context_.insert({model_name,
                                       std::make_unique<TrtInfer>(model_path,
                                                                  model_name,
+                                                                 trt_opt_profile,
                                                                  device_id,
+                                                                 device_gpu_dt_,
                                                                  inference_specs->use_fp16_,
                                                                  inference_specs->is_engine_path_,
                                                                  cuda_buffer_in_,
@@ -337,7 +340,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           return status;
         }
       }
-      check_cuda(cudaSetDevice(device_gpu_dt));
+      check_cuda(cudaSetDevice(device_gpu_dt_));
 
       auto output_node_size = holo_infer_context_.at(model_name)->get_output_dims().size();
       auto input_node_size = holo_infer_context_.at(model_name)->get_input_dims().size();
@@ -384,7 +387,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
         }
         HOLOSCAN_LOG_INFO("HoloInfer buffer created for {}", out_tensor_names[d]);
 
-        if (device_id != device_gpu_dt) {
+        if (device_id != device_gpu_dt_) {
           check_cuda(cudaSetDevice(device_id));
 
           auto astatus =
@@ -395,23 +398,23 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 
-          check_cuda(cudaSetDevice(device_gpu_dt));
+          check_cuda(cudaSetDevice(device_gpu_dt_));
         }
       }
       mgpu_output_buffer_.insert({model_name, std::move(dm)});
 
-      if (device_id != device_gpu_dt) {
+      if (device_id != device_gpu_dt_) {
         // For Multi-GPU feature: allocate input and output cuda streams
-        check_cuda(cudaSetDevice(device_gpu_dt));
+        check_cuda(cudaSetDevice(device_gpu_dt_));
         std::vector<cudaStream_t> in_streams_gpudt(in_tensor_names.size());
         std::map<std::string, cudaStream_t> in_streams_map_gpudt, out_streams_map_gpudt;
 
-        // cuda stream creation per tensor and populating input_streams_gpudt map
+        // cuda stream creation per tensor and populating input_streams_gpudt_ map
         for (auto in = 0; in < in_tensor_names.size(); in++) {
           check_cuda(cudaStreamCreate(&in_streams_gpudt[in]));
           in_streams_map_gpudt.insert({in_tensor_names[in], in_streams_gpudt[in]});
         }
-        input_streams_gpudt.insert({model_name, std::move(in_streams_map_gpudt)});
+        input_streams_gpudt_.insert({model_name, std::move(in_streams_map_gpudt)});
 
         std::vector<cudaStream_t> out_streams_gpudt(out_tensor_names.size());
         // cuda stream creation per output tensor and populating out_streams_map_gpudt map
@@ -419,7 +422,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           check_cuda(cudaStreamCreate(&out_streams_gpudt[out]));
           out_streams_map_gpudt.insert({out_tensor_names[out], out_streams_gpudt[out]});
         }
-        output_streams_gpudt.insert({model_name, std::move(out_streams_map_gpudt)});
+        output_streams_gpudt_.insert({model_name, std::move(out_streams_map_gpudt)});
 
         check_cuda(cudaSetDevice(device_id));
         std::vector<cudaStream_t> in_streams_dev(in_tensor_names.size());
@@ -430,7 +433,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           check_cuda(cudaStreamCreate(&in_streams_dev[in]));
           in_streams_map_dev.insert({in_tensor_names[in], in_streams_dev[in]});
         }
-        input_streams_device.insert({model_name, std::move(in_streams_map_dev)});
+        input_streams_device_.insert({model_name, std::move(in_streams_map_dev)});
 
         std::vector<cudaStream_t> out_streams(out_tensor_names.size());
 
@@ -440,7 +443,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           out_streams_map_dev.insert({out_tensor_names[out], out_streams[out]});
         }
 
-        output_streams_device.insert({model_name, std::move(out_streams_map_dev)});
+        output_streams_device_.insert({model_name, std::move(out_streams_map_dev)});
         // stream allocation ends
 
         // allocate input buffers only for multi-gpu inference use case for allocation on GPUs other
@@ -465,11 +468,25 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           }
         }
         mgpu_input_buffer_.insert({model_name, std::move(dm_in)});
-        check_cuda(cudaSetDevice(device_gpu_dt));
+        check_cuda(cudaSetDevice(device_gpu_dt_));
       }
 
       models_input_dims_.insert({model_name, holo_infer_context_.at(model_name)->get_input_dims()});
+
+      if (vec_unique_gpu_ids.size() > 1) {
+        // create the CUDA event used to synchronize the streams
+        auto event_per_gpu = mgpu_cuda_event_.insert({model_name, {}}).first;
+        cudaEvent_t cuda_event;
+        for (auto&& gid : vec_unique_gpu_ids) {
+          check_cuda(cudaSetDevice(gid));
+          check_cuda(cudaEventCreateWithFlags(&cuda_event, cudaEventDisableTiming));
+          event_per_gpu->second.insert({gid, cuda_event});
+        }
+        check_cuda(cudaSetDevice(device_gpu_dt_));
+      }
     }
+
+    check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
   } catch (const std::runtime_error& rt) {
     raise_error("Inference Manager", "Setting Inference parameters: " + std::string(rt.what()));
   } catch (...) {
@@ -487,6 +504,8 @@ void ManagerInfer::cleanup() {
   }
 
   for (auto& [_, infer_p] : infer_param_) { infer_p.reset(); }
+
+  if (cuda_event_) { cudaEventDestroy(cuda_event_); }
 }
 
 ManagerInfer::~ManagerInfer() {
@@ -494,8 +513,9 @@ ManagerInfer::~ManagerInfer() {
 }
 
 InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
-                                             DataMap& input_preprocess_data,
-                                             DataMap& output_inferred_data) {
+                                             const DataMap& input_preprocess_data,
+                                             const DataMap& output_inferred_data,
+                                             cudaStream_t cuda_stream) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
 
   // Find if the current model exists in infer_param_
@@ -518,22 +538,10 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
     return status;
   }
 
-  auto device_id = infer_param_.at(model_name)->get_device_id();
-  check_cuda(cudaSetDevice(device_id));
+  const auto device_id = infer_param_.at(model_name)->get_device_id();
 
   // input and output buffer for current inference
   std::vector<std::shared_ptr<DataBuffer>> indata, outdata;
-
-  DataMap in_preprocess_data;
-  if (device_id != device_gpu_dt) {
-    if (mgpu_input_buffer_.find(model_name) == mgpu_input_buffer_.end()) {
-      HOLOSCAN_LOG_ERROR("Mapping for model {} not found on device {}.", model_name, device_id);
-      status.set_message("Inference manager, Mapping not found for " + model_name +
-                         " in multi gpu inference.");
-      return status;
-    }
-    in_preprocess_data = mgpu_input_buffer_.at(model_name);
-  }
 
   for (const auto& in_tensor : input_tensors) {
     if (input_preprocess_data.find(in_tensor) == input_preprocess_data.end()) {
@@ -541,59 +549,69 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
                          " does not exist.");
       return status;
     }
-
-    //  by default memory mapped for all backends
-    if (device_id != device_gpu_dt) {
-      check_cuda(cudaSetDevice(device_id));
-      auto device_buff = in_preprocess_data.at(in_tensor)->device_buffer->data();
-      auto buffsize = in_preprocess_data.at(in_tensor)->device_buffer->get_bytes();
-
-      check_cuda(cudaSetDevice(device_gpu_dt));
-      auto in_streams_gpudt = input_streams_gpudt.at(model_name);
-
-      auto device_gpu_dt_buff_in = input_preprocess_data.at(in_tensor)->device_buffer->data();
-      auto stream = in_streams_gpudt.at(in_tensor);
-      if (mgpu_p2p_transfer) {
-        check_cuda(cudaMemcpyPeerAsync(
-            device_buff, device_id, device_gpu_dt_buff_in, device_gpu_dt, buffsize, stream));
-      } else {
-        // transfer from gpu-dt to host
-        auto host_buff_in = input_preprocess_data.at(in_tensor)->host_buffer.data();
-        check_cuda(cudaMemcpyAsync(
-            host_buff_in, device_gpu_dt_buff_in, buffsize, cudaMemcpyDeviceToHost, stream));
-      }
-    } else {
-      indata.push_back(input_preprocess_data.at(in_tensor));
-    }
   }
 
-  if (device_id != device_gpu_dt) {
-    check_cuda(cudaSetDevice(device_gpu_dt));
-    auto in_streams_gpudt = input_streams_gpudt.at(model_name);
-
-    for (auto& [_, stream] : in_streams_gpudt) { check_cuda(cudaStreamSynchronize(stream)); }
-
-    // If P2P is disabled, transfer data from host to device_id
-    if (!mgpu_p2p_transfer) {
-      check_cuda(cudaSetDevice(device_id));
-
-      // transfer from host to device_id
-      auto input_streams_dev = input_streams_device.at(model_name);
-      for (const auto& in_tensor : input_tensors) {
-        auto device_buff = in_preprocess_data.at(in_tensor)->device_buffer->data();
-        auto host_buff_in = input_preprocess_data.at(in_tensor)->host_buffer.data();
-        auto buffsize = in_preprocess_data.at(in_tensor)->device_buffer->get_bytes();
-        auto dstream = input_streams_dev.at(in_tensor);
-
-        check_cuda(
-            cudaMemcpyAsync(device_buff, host_buff_in, buffsize, cudaMemcpyHostToDevice, dstream));
-      }
-
-      for (auto& [_, dstream] : input_streams_dev) { check_cuda(cudaStreamSynchronize(dstream)); }
+  // Transfer memory from data transfer GPU to inference device. This is using a separate stream
+  // for each tensor and synchronizes the copies with the CUDA stream passed in as a parameter.
+  if (device_id != device_gpu_dt_) {
+    if (mgpu_input_buffer_.find(model_name) == mgpu_input_buffer_.end()) {
+      HOLOSCAN_LOG_ERROR("Mapping for model {} not found on device {}.", model_name, device_id);
+      status.set_message("Inference manager, Mapping not found for " + model_name +
+                         " in multi gpu inference.");
+      return status;
     }
 
+    check_cuda(cudaSetDevice(device_gpu_dt_));
+
+    const DataMap& in_preprocess_data = mgpu_input_buffer_.at(model_name);
+
+    const auto& input_streams_dev = input_streams_device_.at(model_name);
+    const auto& in_streams_gpudt = input_streams_gpudt_.at(model_name);
+    const cudaEvent_t cuda_event_d = mgpu_cuda_event_.at(model_name).at(device_id);
+    const cudaEvent_t cuda_event_dt = mgpu_cuda_event_.at(model_name).at(device_gpu_dt_);
+
     for (const auto& in_tensor : input_tensors) {
+      const auto device_buff = in_preprocess_data.at(in_tensor)->device_buffer_->data();
+      const auto buffsize = in_preprocess_data.at(in_tensor)->device_buffer_->get_bytes();
+
+      const auto device_gpu_dt_buff_in =
+          input_preprocess_data.at(in_tensor)->device_buffer_->data();
+
+      const cudaStream_t stream_d = input_streams_dev.at(in_tensor);
+      const cudaStream_t stream_dt = in_streams_gpudt.at(in_tensor);
+      check_cuda(cudaEventRecord(cuda_event_dt, cuda_stream));
+      check_cuda(cudaStreamWaitEvent(stream_dt, cuda_event_dt));
+
+      if (mgpu_p2p_transfer_) {
+        // direct p2p transfer
+        check_cuda(cudaMemcpyPeerAsync(
+            device_buff, device_id, device_gpu_dt_buff_in, device_gpu_dt_, buffsize, stream_dt));
+        check_cuda(cudaEventRecord(cuda_event_dt, stream_dt));
+        check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_dt));
+      } else {
+        // transfer from gpu-dt to host
+        /// @todo check if using pinned memory is faster
+        input_preprocess_data.at(in_tensor)->host_buffer_->resize(buffsize);
+        auto host_buff_in = input_preprocess_data.at(in_tensor)->host_buffer_->data();
+        check_cuda(cudaMemcpyAsync(
+            host_buff_in, device_gpu_dt_buff_in, buffsize, cudaMemcpyDeviceToHost, stream_dt));
+        check_cuda(cudaEventRecord(cuda_event_dt, stream_dt));
+
+        // transfer from host to device_id
+        check_cuda(cudaSetDevice(device_id));
+        check_cuda(cudaStreamWaitEvent(stream_d, cuda_event_dt));
+        check_cuda(
+            cudaMemcpyAsync(device_buff, host_buff_in, buffsize, cudaMemcpyHostToDevice, stream_d));
+        check_cuda(cudaEventRecord(cuda_event_d, stream_d));
+        check_cuda(cudaSetDevice(device_gpu_dt_));
+        check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_d));
+      }
+
       indata.push_back(in_preprocess_data.at(in_tensor));
+    }
+  } else {
+    for (const auto& in_tensor : input_tensors) {
+      indata.push_back(input_preprocess_data.at(in_tensor));
     }
   }
 
@@ -603,17 +621,21 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
       return status;
     }
 
-    if (device_id != device_gpu_dt) {
-      check_cuda(cudaSetDevice(device_id));
-      auto out_inferred_data = mgpu_output_buffer_.at(model_name);
+    if (device_id != device_gpu_dt_) {
+      const DataMap& out_inferred_data = mgpu_output_buffer_.at(model_name);
       outdata.push_back(out_inferred_data.at(out_tensor));
     } else {
       outdata.push_back(output_inferred_data.at(out_tensor));
     }
   }
 
+  check_cuda(cudaEventRecord(cuda_event_, cuda_stream));
+
   check_cuda(cudaSetDevice(device_id));
-  auto i_status = holo_infer_context_.at(model_name)->do_inference(indata, outdata);
+  cudaEvent_t cuda_event_inference = nullptr;
+  auto i_status = holo_infer_context_.at(model_name)
+                      ->do_inference(indata, outdata, cuda_event_, &cuda_event_inference);
+  check_cuda(cudaSetDevice(device_gpu_dt_));
 
   if (i_status.get_code() == holoinfer_code::H_ERROR) {
     i_status.display_message();
@@ -621,70 +643,70 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
     return status;
   }
 
+  if (cuda_event_inference) { check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_inference)); }
+
   // Output data setup after inference
   // by default memory mapped for all backends
-  if (device_id != device_gpu_dt && cuda_buffer_out_) {
-    auto out_inferred_data = mgpu_output_buffer_.at(model_name);
-    auto out_streams = output_streams_device.at(model_name);
+  if ((device_id != device_gpu_dt_) && cuda_buffer_out_) {
+    const DataMap& out_inferred_data = mgpu_output_buffer_.at(model_name);
+    const auto& out_streams = output_streams_device_.at(model_name);
+    const auto& out_streams_gpudt = output_streams_gpudt_.at(model_name);
+    const cudaEvent_t cuda_event_d = mgpu_cuda_event_.at(model_name).at(device_id);
+    const cudaEvent_t cuda_event_dt = mgpu_cuda_event_.at(model_name).at(device_gpu_dt_);
 
     for (auto& out_tensor : output_tensors) {
-      check_cuda(cudaSetDevice(device_id));
-      auto buffsize = out_inferred_data.at(out_tensor)->device_buffer->get_bytes();
+      auto buffsize = out_inferred_data.at(out_tensor)->device_buffer_->get_bytes();
 
-      check_cuda(cudaSetDevice(device_gpu_dt));
-      auto buffer_size_gpu_dt = output_inferred_data.at(out_tensor)->device_buffer->get_bytes();
+      auto buffer_size_gpu_dt = output_inferred_data.at(out_tensor)->device_buffer_->get_bytes();
       if (buffer_size_gpu_dt != buffsize) {
-        output_inferred_data.at(out_tensor)->device_buffer->resize(buffsize);
+        output_inferred_data.at(out_tensor)->device_buffer_->resize(buffsize);
       }
-      auto device_gpu_dt_buff = output_inferred_data.at(out_tensor)->device_buffer->data();
+      auto device_gpu_dt_buff = output_inferred_data.at(out_tensor)->device_buffer_->data();
 
-      check_cuda(cudaSetDevice(device_id));
-      auto device_buff = out_inferred_data.at(out_tensor)->device_buffer->data();
-      buffsize = out_inferred_data.at(out_tensor)->device_buffer->get_bytes();
+      auto device_buff = out_inferred_data.at(out_tensor)->device_buffer_->data();
+      buffsize = out_inferred_data.at(out_tensor)->device_buffer_->get_bytes();
 
-      auto stream = out_streams.at(out_tensor);
-      if (mgpu_p2p_transfer) {
+      const cudaStream_t stream_d = out_streams.at(out_tensor);
+      const cudaStream_t stream_dt = out_streams_gpudt.at(out_tensor);
+      check_cuda(cudaEventRecord(cuda_event_dt, cuda_stream));
+      if (mgpu_p2p_transfer_) {
+        // direct p2p transfer
+        check_cuda(cudaStreamWaitEvent(stream_dt, cuda_event_dt));
         check_cuda(cudaMemcpyPeerAsync(
-            device_gpu_dt_buff, device_gpu_dt, device_buff, device_id, buffsize, stream));
+            device_gpu_dt_buff, device_gpu_dt_, device_buff, device_id, buffsize, stream_dt));
+        check_cuda(cudaEventRecord(cuda_event_dt, stream_dt));
+        check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_dt));
       } else {
         // transfer from device to host
-        auto host_buff_out = out_inferred_data.at(out_tensor)->host_buffer.data();
-        check_cuda(
-            cudaMemcpyAsync(host_buff_out, device_buff, buffsize, cudaMemcpyDeviceToHost, stream));
-      }
-    }
-
-    for (auto& [_, stream] : out_streams) { check_cuda(cudaStreamSynchronize(stream)); }
-
-    // if p2p is disabled, then move the data from host to gpu-dt
-    if (!mgpu_p2p_transfer) {
-      check_cuda(cudaSetDevice(device_gpu_dt));
-      auto out_streams_gpudt = output_streams_gpudt.at(model_name);
-
-      // transfer from host to gpu-dt
-      for (auto& out_tensor : output_tensors) {
-        auto device_gpu_dt_buff = output_inferred_data.at(out_tensor)->device_buffer->data();
-        auto host_buff_out = out_inferred_data.at(out_tensor)->host_buffer.data();
-        auto buffsize = output_inferred_data.at(out_tensor)->device_buffer->get_bytes();
-        auto stream = out_streams_gpudt.at(out_tensor);
-
+        /// @todo check if using pinned memory is faster
+        out_inferred_data.at(out_tensor)->host_buffer_->resize(buffsize);
+        auto host_buff_out = out_inferred_data.at(out_tensor)->host_buffer_->data();
+        check_cuda(cudaSetDevice(device_id));
+        check_cuda(cudaStreamWaitEvent(stream_d, cuda_event_dt));
         check_cuda(cudaMemcpyAsync(
-            device_gpu_dt_buff, host_buff_out, buffsize, cudaMemcpyHostToDevice, stream));
-      }
+            host_buff_out, device_buff, buffsize, cudaMemcpyDeviceToHost, stream_d));
+        check_cuda(cudaEventRecord(cuda_event_d, stream_d));
 
-      for (auto& [_, stream] : out_streams_gpudt) { check_cuda(cudaStreamSynchronize(stream)); }
+        // transfer from host to gpu-dt
+        check_cuda(cudaSetDevice(device_gpu_dt_));
+        check_cuda(cudaStreamWaitEvent(stream_dt, cuda_event_d));
+        check_cuda(cudaMemcpyAsync(
+            device_buff, host_buff_out, buffsize, cudaMemcpyHostToDevice, stream_dt));
+        check_cuda(cudaEventRecord(cuda_event_dt, stream_dt));
+        check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_dt));
+      }
     }
   }
 
-  check_cuda(cudaSetDevice(device_gpu_dt));
   return InferStatus();
 }
 
-InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs) {
+InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                            cudaStream_t cuda_stream) {
   InferStatus status = InferStatus();
 
-  auto permodel_preprocess_data = inference_specs->data_per_tensor_;
-  auto permodel_output_data = inference_specs->output_per_model_;
+  const auto& permodel_preprocess_data = inference_specs->data_per_tensor_;
+  const auto& permodel_output_data = inference_specs->output_per_model_;
 
   if (permodel_preprocess_data.size() == 0) {
     status.set_code(holoinfer_code::H_ERROR);
@@ -715,7 +737,7 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
     if (activation_map.find(model_instance) != activation_map.end()) {
       try {
         auto activation_value = std::stoul(activation_map.at(model_instance));
-        HOLOSCAN_LOG_INFO("Activation value: {} for Model: {}", activation_value, model_instance);
+        HOLOSCAN_LOG_DEBUG("Activation value: {} for Model: {}", activation_value, model_instance);
         if (activation_value > 1) {
           HOLOSCAN_LOG_WARN("Activation map can have either a value of 0 or 1 for a model.");
           HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
@@ -733,8 +755,8 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
     auto temporal_id = infer_param_.at(model_instance)->get_temporal_id();
     if (process_model && (frame_counter_ % temporal_id == 0)) {
       if (!parallel_processing_) {
-        InferStatus infer_status =
-            run_core_inference(model_instance, permodel_preprocess_data, permodel_output_data);
+        InferStatus infer_status = run_core_inference(
+            model_instance, permodel_preprocess_data, permodel_output_data, cuda_stream);
         if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
           status.set_code(holoinfer_code::H_ERROR);
           infer_status.display_message();
@@ -749,20 +771,25 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
                                                        this,
                                                        model_instance,
                                                        permodel_preprocess_data,
-                                                       permodel_output_data))});
+                                                       permodel_output_data,
+                                                       cuda_stream))});
       }
     }
   }
 
   if (parallel_processing_) {
+    std::string failed_models;
     for (auto& inf_fut : inference_futures) {
       InferStatus infer_status = inf_fut.second.get();
       if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
         status.set_code(holoinfer_code::H_ERROR);
         infer_status.display_message();
-        status.set_message("Inference manager, Inference failed in execution for " + inf_fut.first);
-        return status;
+        failed_models += " " + inf_fut.first;
       }
+    }
+    if (status.get_code() != holoinfer_code::H_SUCCESS) {
+        status.set_message("Inference manager, Inference failed in execution for" + failed_models);
+        return status;
     }
   }
 
@@ -798,7 +825,8 @@ InferContext::InferContext() {
   } catch (const std::bad_alloc&) { throw; }
 }
 
-InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs) {
+InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                            cudaStream_t cuda_stream) {
   InferStatus status = InferStatus();
 
   if (g_managers.find(unique_id_) == g_managers.end()) {
@@ -810,7 +838,7 @@ InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inf
   try {
     g_manager = g_managers.at(unique_id_);
 
-    status = g_manager->execute_inference(inference_specs);
+    status = g_manager->execute_inference(inference_specs, cuda_stream);
   } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
     status.set_message(std::string("Inference manager, Error in inference setup: ") + e.what());

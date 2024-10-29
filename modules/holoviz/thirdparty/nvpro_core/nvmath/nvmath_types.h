@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2002-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2002-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -211,7 +211,7 @@ struct vector3
   vector3(const vector2<T>& u)
       : x(u.x)
       , y(u.y)
-      , z(1.0f)
+      , z(1.0F)
   {
   }
   vector3(const vector2<T>& u, T v)
@@ -391,15 +391,15 @@ struct vector4
   vector4(const vector2<T>& u)
       : x(u.x)
       , y(u.y)
-      , z(0.0f)
-      , w(1.0f)
+      , z(0.0F)
+      , w(1.0F)
   {
   }
   vector4(const vector2<T>& u, const T zz)
       : x(u.x)
       , y(u.y)
       , z(zz)
-      , w(1.0f)
+      , w(1.0F)
   {
   }
   vector4(const vector2<T>& u, const T zz, const T ww)
@@ -413,7 +413,7 @@ struct vector4
       : x(u.x)
       , y(u.y)
       , z(u.z)
-      , w(1.0f)
+      , w(1.0F)
   {
   }
   vector4(const vector3<T>& u, const T w)
@@ -715,11 +715,11 @@ struct matrix4
     memcpy(mat_array + 4, M.mat_array + 3, sizeof(T) * 3);
     mat_array[7] = 0.0;
     memcpy(mat_array + 8, M.mat_array + 6, sizeof(T) * 3);
-    mat_array[11] = 0.0f;
-    mat_array[12] = 0.0f;
-    mat_array[13] = 0.0f;
-    mat_array[14] = 0.0f;
-    mat_array[15] = 1.0f;
+    mat_array[11] = 0.0F;
+    mat_array[12] = 0.0F;
+    mat_array[13] = 0.0F;
+    mat_array[14] = 0.0F;
+    mat_array[15] = 1.0F;
   }
   matrix4(const matrix4<T>& M) { memcpy(mat_array, M.mat_array, sizeof(T) * 16); }
 
@@ -858,10 +858,10 @@ struct matrix4
     return *this;
   }
 
-  //TL: some additional methods that look like OpenGL...
-  // they behave the same as the OpenGL matrix system
-  // But: using vector3<T> class; rotation is in Radians
-  // TODO: optimize
+  // TL: some additional methods that look like OpenGL...
+  //  they behave the same as the OpenGL matrix system
+  //  But: using vector3<T> class; rotation is in Radians
+  //  TODO(unknown): optimize
   matrix4<T>& identity()
   {
     mat_array[0]  = T(1);

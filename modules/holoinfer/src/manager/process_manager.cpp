@@ -63,7 +63,7 @@ InferStatus ManagerProcessor::process_multi_tensor_operation(
         HOLOSCAN_LOG_ERROR("Tensor {} not found in dimension map.", tensor);
         return status;
       }
-      void* input_data = inferred_result_map.at(tensor)->host_buffer.data();
+      void* input_data = inferred_result_map.at(tensor)->host_buffer_->data();
       const std::vector<int> dimensions = dimension_map.at(tensor);
       all_tensor_data[tensor] = input_data;
       all_tensor_dims[tensor] = dimensions;
@@ -79,9 +79,12 @@ InferStatus ManagerProcessor::process_multi_tensor_operation(
   return InferStatus();
 }
 
-InferStatus ManagerProcessor::process(
-    const MultiMappings& tensor_oper_map, const MultiMappings& in_out_tensor_map,
-    DataMap& inferred_result_map, const std::map<std::string, std::vector<int>>& dimension_map) {
+InferStatus ManagerProcessor::process(const MultiMappings& tensor_oper_map,
+                                      const MultiMappings& in_out_tensor_map,
+                                      DataMap& inferred_result_map,
+                                      const std::map<std::string, std::vector<int>>& dimension_map,
+                                      bool process_with_cuda,
+                                      cudaStream_t cuda_stream) {
   for (const auto& current_tensor_operation : tensor_oper_map) {
     auto& tensor_name = current_tensor_operation.first;
     auto operations = current_tensor_operation.second;
@@ -117,7 +120,13 @@ InferStatus ManagerProcessor::process(
             "Process manager, Dimension map does not contain results from " + tensor_name);
       }
 
-      void* input_data = inferred_result_map.at(tensor_name)->host_buffer.data();
+      void* input_data;
+      if (process_with_cuda) {
+        input_data = inferred_result_map.at(tensor_name)->device_buffer_->data();
+      } else {
+        input_data = inferred_result_map.at(tensor_name)->host_buffer_->data();
+      }
+
       const std::vector<int> dimensions = dimension_map.at(tensor_name);
 
       for (auto& operation : operations) {
@@ -183,7 +192,9 @@ InferStatus ManagerProcessor::process(
                                                             processed_dims,
                                                             processed_data_map_,
                                                             out_tensor_names,
-                                                            custom_strings);
+                                                            custom_strings,
+                                                            process_with_cuda,
+                                                            cuda_stream);
 
         if (status.get_code() != holoinfer_code::H_SUCCESS) {
           status.display_message();
@@ -217,7 +228,7 @@ DimType ManagerProcessor::get_processed_data_dims() const {
 
 ProcessorContext::ProcessorContext() {
   try {
-    process_manager = std::make_unique<ManagerProcessor>();
+    process_manager_ = std::make_shared<ManagerProcessor>();
   } catch (const std::bad_alloc&) {
     HOLOSCAN_LOG_ERROR("Holoscan Outdata context: Memory allocation error.");
     throw;
@@ -225,24 +236,30 @@ ProcessorContext::ProcessorContext() {
 }
 
 DimType ProcessorContext::get_processed_data_dims() const {
-  return process_manager->get_processed_data_dims();
+  return process_manager_->get_processed_data_dims();
 }
 
 DataMap ProcessorContext::get_processed_data() const {
-  return process_manager->get_processed_data();
+  return process_manager_->get_processed_data();
 }
 
 InferStatus ProcessorContext::process(const MultiMappings& tensor_to_oper_map,
                                       const MultiMappings& in_out_tensor_map,
                                       DataMap& inferred_result_map,
-                                      const std::map<std::string, std::vector<int>>& model_dims) {
-  return process_manager->process(
-      tensor_to_oper_map, in_out_tensor_map, inferred_result_map, model_dims);
+                                      const std::map<std::string, std::vector<int>>& model_dims,
+                                      bool process_with_cuda,
+                                      cudaStream_t cuda_stream) {
+  return process_manager_->process(tensor_to_oper_map,
+                                  in_out_tensor_map,
+                                  inferred_result_map,
+                                  model_dims,
+                                  process_with_cuda,
+                                  cuda_stream);
 }
 
 InferStatus ProcessorContext::initialize(const MultiMappings& process_operations,
                                          const std::string config_path = {}) {
-  return process_manager->initialize(process_operations, config_path);
+  return process_manager_->initialize(process_operations, config_path);
 }
 
 }  // namespace inference

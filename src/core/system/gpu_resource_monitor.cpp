@@ -145,6 +145,7 @@ GPUResourceMonitor::GPUResourceMonitor(uint64_t metric_flags) : metric_flags_(me
 }
 
 GPUResourceMonitor::~GPUResourceMonitor() {
+  // suppress potential exceptions from logging within close()
   close();
 }
 
@@ -256,7 +257,7 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
       gpu_info.memory_total = memory.total;
       gpu_info.memory_free = memory.free;
       gpu_info.memory_used = memory.used;
-      gpu_info.memory_usage = memory.total ? 100.0 * memory.used / memory.total : 0.0f;
+      gpu_info.memory_usage = memory.total ? 100.0 * memory.used / memory.total : 0.0F;
     }
 
     if (metric_flags & GPUMetricFlag::POWER_LIMIT) {
@@ -539,7 +540,10 @@ bool GPUResourceMonitor::init_nvml() {
   HOLOSCAN_NVML_CALL_RETURN_VALUE_MSG(nvmlInit(), false, "Could not initialize NVML");
 
   // Get the GPU count and initialize the GPU info vector
-  HOLOSCAN_NVML_CALL(nvmlDeviceGetCount(&gpu_count_));
+  if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetCount(&gpu_count_)) != 0) {
+    HOLOSCAN_LOG_ERROR("Could not get the number of GPUs");
+    gpu_count_ = 0;
+  }
 
   // Initialize nvml devices vector
   nvml_devices_.resize(gpu_count_, nullptr);
@@ -598,8 +602,13 @@ bool GPUResourceMonitor::init_cuda_runtime() {
   HOLOSCAN_LOG_DEBUG("CUDA Runtime API library loaded from '{}'", libcudart_path);
   bind_cuda_runtime_methods();
   int gpu_count = 0;
-  HOLOSCAN_CUDA_CALL_RETURN_VALUE_MSG(
-      cudaGetDeviceCount(&gpu_count), false, "Could not get the number of GPUs");
+  auto holoscan_cuda_err = HOLOSCAN_CUDA_CALL_CHECK_HANDLE(cudaGetDeviceCount(&gpu_count));
+  if (holoscan_cuda_err != 0) {
+    HOLOSCAN_LOG_WARN("Could not get the number of GPUs");
+    shutdown_cuda_runtime();
+    gpu_count_ = 0;
+    return false;
+  }
   gpu_count_ = gpu_count;
 
   return true;
@@ -609,7 +618,13 @@ void GPUResourceMonitor::shutdown_nvml() noexcept {
   if (handle_) {
     if (nvmlShutdown) {
       nvml::nvmlReturn_t result = nvmlShutdown();
-      if (result != 0) { HOLOSCAN_LOG_ERROR("Could not shutdown NVML"); }
+      if (result != 0) {
+        // ignore potential exception from logging
+        // (shutdown_nvml is called from ~GPUResourceMonitor)
+        try {
+          HOLOSCAN_LOG_ERROR("Could not shutdown NVML");
+        } catch (const std::exception& e) {}
+      }
     }
     dlclose(handle_);
     handle_ = nullptr;

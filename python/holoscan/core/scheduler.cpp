@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,8 +28,6 @@
 #include "kwarg_handling.hpp"
 #include "scheduler_pydoc.hpp"
 
-using pybind11::literals::operator""_a;
-
 namespace py = pybind11;
 
 namespace holoscan {
@@ -41,12 +39,12 @@ class PyScheduler : public Scheduler {
 
   // Define a kwargs-based constructor that can create an ArgList
   // for passing on to the variadic-template based constructor.
-  PyScheduler(const py::args& args, const py::kwargs& kwargs) : Scheduler() {
+  PyScheduler(const py::args& args, const py::kwargs& kwargs) {
     using std::string_literals::operator""s;
 
     int n_fragments = 0;
-    for (auto& item : args) {
-      py::object arg_value = item.cast<py::object>();
+    for (const auto& item : args) {
+      auto arg_value = item.cast<py::object>();
       if (py::isinstance<Fragment>(arg_value)) {
         if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
         fragment_ = arg_value.cast<Fragment*>();
@@ -56,8 +54,8 @@ class PyScheduler : public Scheduler {
       }
     }
     for (const auto& [name, value] : kwargs) {
-      std::string kwarg_name = name.cast<std::string>();
-      py::object kwarg_value = value.cast<py::object>();
+      auto kwarg_name = name.cast<std::string>();
+      auto kwarg_value = value.cast<py::object>();
       if (kwarg_name == "name"s) {
         if (py::isinstance<py::str>(kwarg_value)) {
           name_ = kwarg_value.cast<std::string>();
@@ -96,10 +94,11 @@ void init_scheduler(py::module_& m) {
       m, "Scheduler", doc::Scheduler::doc_Scheduler)
       .def(py::init<const py::args&, const py::kwargs&>(),
            doc::Scheduler::doc_Scheduler_args_kwargs)
-      .def_property("name",
-                    py::overload_cast<>(&Scheduler::name, py::const_),
-                    (Scheduler & (Scheduler::*)(const std::string&)&)&Scheduler::name,
-                    doc::Scheduler::doc_name)
+      .def_property(
+          "name",
+          py::overload_cast<>(&Scheduler::name, py::const_),
+          [](Scheduler& s, const std::string& name) -> Scheduler& { return s.name(name); },
+          doc::Scheduler::doc_name)
       .def_property_readonly(
           "fragment", py::overload_cast<>(&Scheduler::fragment), doc::Scheduler::doc_fragment)
       .def_property("spec",

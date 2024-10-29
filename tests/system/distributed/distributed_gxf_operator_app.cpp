@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <utility>
 
 #include <holoscan/holoscan.hpp>
 #include <holoscan/core/gxf/gxf_extension_registrar.hpp>
@@ -25,6 +26,10 @@
 #include <holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp>
 
 #include "receive_tensor_gxf.hpp"
+
+#include "../env_wrapper.hpp"
+#include "distributed_app_fixture.hpp"
+#include "utility_apps.hpp"
 
 namespace holoscan {
 
@@ -106,13 +111,17 @@ class GXFOperatorsDistributedApp : public holoscan::Application {
 // Tests
 ///////////////////////////////////////////////////////////////////////////////
 
-TEST(DistributedGXFOperatorApps, TestDistributedAppGXFOperatorReceive) {
+class DistributedGXFOperatorApps : public DistributedApp {};
+
+TEST_F(DistributedGXFOperatorApps, TestDistributedAppGXFOperatorReceive) {
   auto app = make_application<GXFOperatorsDistributedApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Failed to access in tensor") == std::string::npos)

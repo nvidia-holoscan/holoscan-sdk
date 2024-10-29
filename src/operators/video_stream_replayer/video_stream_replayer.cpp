@@ -80,7 +80,7 @@ void VideoStreamReplayerOp::setup(OperatorSpec& spec) {
              "frame_rate",
              "Frame rate",
              "Frame rate to replay. If zero value is specified, it follows timings in timestamps.",
-             0.f);
+             0.F);
   spec.param(realtime_,
              "realtime",
              "Realtime playback",
@@ -220,11 +220,8 @@ VideoStreamReplayerOp::~VideoStreamReplayerOp() {
   }
 }
 
-void VideoStreamReplayerOp::compute(InputContext& op_input, OutputContext& op_output,
-                                    ExecutionContext& context) {
-  // avoid warning about unused variable
-  (void)op_input;
-
+void VideoStreamReplayerOp::compute([[maybe_unused]] InputContext& op_input,
+                                    OutputContext& op_output, ExecutionContext& context) {
   for (size_t i = 0; i < batch_size_; i++) {
     // Read entity index from index file
     // Break if index not found and clear stream errors

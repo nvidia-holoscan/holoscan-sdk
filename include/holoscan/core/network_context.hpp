@@ -54,7 +54,7 @@
  */
 #define HOLOSCAN_NETWORK_CONTEXT_FORWARD_ARGS(class_name) \
   HOLOSCAN_NETWORK_CONTEXT_FORWARD_TEMPLATE()             \
-  class_name(ArgT&& arg, ArgsT&&... args)                 \
+  explicit class_name(ArgT&& arg, ArgsT&&... args)        \
       : NetworkContext(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 /**
@@ -71,12 +71,13 @@
  */
 #define HOLOSCAN_NETWORK_CONTEXT_FORWARD_ARGS_SUPER(class_name, super_class_name) \
   HOLOSCAN_NETWORK_CONTEXT_FORWARD_TEMPLATE()                                     \
-  class_name(ArgT&& arg, ArgsT&&... args)                                         \
+  explicit class_name(ArgT&& arg, ArgsT&&... args)                                \
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
 
-// TODO: NetworkContext is identical in implementation to Scheduler, so put the functionality in
+// TODO(unknown): NetworkContext is identical in implementation to Scheduler, so put the
+// functionality in
 //       a common base class.
 
 /**
@@ -221,7 +222,7 @@ class NetworkContext : public Component {
    *
    * @param spec The reference to the component specification.
    */
-  virtual void setup(ComponentSpec& spec) { (void)spec; }
+  virtual void setup([[maybe_unused]] ComponentSpec& spec) {}
 
   /**
    * @brief Initialize the network context.

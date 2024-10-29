@@ -962,8 +962,8 @@ void FormatConverterOp::setup(OperatorSpec& spec) {
              "Name of the output tensor.",
              std::string(""));
   spec.param(out_dtype_str_, "out_dtype", "OutputDataType", "Destination data type.");
-  spec.param(scale_min_, "scale_min", "Scale min", "Minimum value of the scale.", 0.f);
-  spec.param(scale_max_, "scale_max", "Scale max", "Maximum value of the scale.", 1.f);
+  spec.param(scale_min_, "scale_min", "Scale min", "Minimum value of the scale.", 0.F);
+  spec.param(scale_max_, "scale_max", "Scale max", "Maximum value of the scale.", 1.F);
   spec.param(alpha_value_,
              "alpha_value",
              "Alpha value",

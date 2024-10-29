@@ -62,6 +62,7 @@ class HoloInferTests {
   std::vector<std::string> out_tensor_names = {"m1_infer", "m2_infer"};
 
   std::string model_folder = "../tests/holoinfer/test_models/";
+  std::vector<int32_t> batch_sizes = {1, 1, 1};
 
   std::map<std::string, std::string> model_path_map = {
       {"model_1", model_folder + "identity_model.onnx"},
@@ -172,7 +173,8 @@ class HoloInferTests {
       {30, "TRT backend, Parallel inference on multi-GPU with Input on host"},
       {31, "TRT backend, Parallel inference on multi-GPU with Output on host"},
       {32, "TRT backend, multi rank test (rank 5)"},
-      {33, "TRT backend, multi rank test (rank 9)"}};
+      {33, "TRT backend, multi rank test (rank 9)"},
+      {34, "Torch backend, Basic inference"}};
 };
 
 #endif /* HOLOINFER_INFERENCE_TESTS_HPP */

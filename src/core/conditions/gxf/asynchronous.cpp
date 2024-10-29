@@ -31,10 +31,6 @@ nvidia::gxf::AsynchronousSchedulingTerm* AsynchronousCondition::get() const {
   return static_cast<nvidia::gxf::AsynchronousSchedulingTerm*>(gxf_cptr_);
 }
 
-void AsynchronousCondition::setup(ComponentSpec& spec) {
-  (void)spec;  // no parameters to set
-}
-
 void AsynchronousCondition::event_state(AsynchronousEventState state) {
   auto asynchronous_scheduling_term = get();
   if (asynchronous_scheduling_term) { asynchronous_scheduling_term->setEventState(state); }

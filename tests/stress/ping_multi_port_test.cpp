@@ -28,7 +28,11 @@ class ValueData {
   explicit ValueData(int value) : data_(value) {
     HOLOSCAN_LOG_TRACE("ValueData::ValueData(): {}", data_);
   }
-  ~ValueData() { HOLOSCAN_LOG_TRACE("ValueData::~ValueData(): {}", data_); }
+  ~ValueData() {
+    try {
+      HOLOSCAN_LOG_TRACE("ValueData::~ValueData(): {}", data_);
+    } catch (const std::exception& e) {}
+  }
 
   void data(int value) { data_ = value; }
 
@@ -51,7 +55,8 @@ class PingTxOp : public Operator {
     spec.output<std::shared_ptr<ValueData>>("out2");
   }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = std::make_shared<ValueData>(index_++);
     op_output.emit(value1, "out1");
 
@@ -75,7 +80,8 @@ class PingMxOp : public Operator {
     spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this value", 2);
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = op_input.receive<std::shared_ptr<ValueData>>("in1").value();
     auto value2 = op_input.receive<std::shared_ptr<ValueData>>("in2").value();
 
@@ -107,7 +113,8 @@ class PingRxOp : public Operator {
     spec.input<std::vector<std::shared_ptr<ValueData>>>("receivers", IOSpec::kAnySize);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value_vector =
         op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
 

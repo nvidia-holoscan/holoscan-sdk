@@ -177,7 +177,10 @@ bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
     if (dev_id_value.has_value()) {
       int32_t device_id = dev_id_value.value();
 
-      auto devices = gxf_graph_entity_->findAll<nvidia::gxf::GPUDevice>();
+      // Can just cap to a single device in findAll as we only want to check if there are any
+      // device resources in the entity. The default for the second template argument to findAll is
+      // kMaxComponents from gxf.h (1024 in GXF 4.1), so setting 1 reduces stack memory use.
+      auto devices = gxf_graph_entity_->findAll<nvidia::gxf::GPUDevice, 1>();
       if (devices.size() > 0) {
         HOLOSCAN_LOG_WARN("Existing entity already has a GPUDevice resource");
       }
@@ -198,7 +201,8 @@ bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
       if (dev_handle.is_null()) {
         HOLOSCAN_LOG_ERROR("Failed to create GPUDevice for resource '{}'", name_);
       } else {
-        // TODO: warn and handle case if the resource was already in a different entity group
+        // TODO(unknown): warn and handle case if the resource was already in a different entity
+        // group
 
         // The GPUDevice and this resource have the same eid.
         // Make their eid is added to the newly created entity group.

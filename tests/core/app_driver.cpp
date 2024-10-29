@@ -70,10 +70,16 @@ TEST(AppDriver, TestSetUcxToExcludeCudaIpc) {
 TEST(AppDriver, TestExcludeCudaIpcTransportOnIgpu) {
   const char* env_orig = std::getenv("UCX_TLS");
 
-  holoscan::GPUResourceMonitor gpu_resource_monitor;
-  gpu_resource_monitor.update();
-  bool is_integrated =
-      (gpu_resource_monitor.num_gpus() > 0) && gpu_resource_monitor.is_integrated_gpu(0);
+  bool is_integrated = false;
+  // Ensure that GPUResourceMonitor is instantiated in a separate scope to avoid nested nvmlInit()
+  // calls (AppDriver::exclude_cuda_ipc_transport_on_igpu() creates a GPUResourceMonitor instance).
+  {
+    // Check if we are running on an integrated GPU.
+    holoscan::GPUResourceMonitor gpu_resource_monitor;
+    gpu_resource_monitor.update();
+    is_integrated =
+        (gpu_resource_monitor.num_gpus() > 0) && gpu_resource_monitor.is_integrated_gpu(0);
+  }
 
   // if unset and on iGPU, will be set to ^cuda_ipc
   if (env_orig) { unsetenv("UCX_TLS"); }

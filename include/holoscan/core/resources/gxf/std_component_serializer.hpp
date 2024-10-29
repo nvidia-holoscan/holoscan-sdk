@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-// TODO: provide get() method once upstream issue with missing GXF header is resolved
+// TODO(unknown): provide get() method once upstream issue with missing GXF header is resolved
 // #include <gxf/serialization/std_component_serializer.hpp>
 
 #include "../../gxf/gxf_resource.hpp"

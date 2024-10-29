@@ -48,7 +48,7 @@ class UcxTransmitter : public Transmitter {
   UcxTransmitter() = default;
   UcxTransmitter(const std::string& name, nvidia::gxf::Transmitter* component);
 
-  const char* gxf_typename() const override { return "nvidia::gxf::UcxTransmitter"; }
+  const char* gxf_typename() const override { return "holoscan::HoloscanUcxTransmitter"; }
 
   void setup(ComponentSpec& spec) override;
   void initialize() override;
@@ -70,6 +70,9 @@ class UcxTransmitter : public Transmitter {
 
   nvidia::gxf::UcxTransmitter* get() const;
 
+  /// @brief Enable tracking in the underlying holoscan::HoloscanUcxTransmitter class
+  void track();
+
  private:
   Parameter<std::string> receiver_address_;
   Parameter<std::string> local_address_;
@@ -77,7 +80,7 @@ class UcxTransmitter : public Transmitter {
   Parameter<uint32_t> local_port_;
   Parameter<uint32_t> maximum_connection_retries_;
   Parameter<std::shared_ptr<holoscan::UcxSerializationBuffer>> buffer_;
-  // TODO: support GPUDevice nvidia::gxf::Resource
+  // TODO(unknown): support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
 };
 

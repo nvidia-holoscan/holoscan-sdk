@@ -19,6 +19,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>  // needed for py::cast to work with std::vector types
 
+#include <complex>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -32,8 +33,8 @@
 #include "kwarg_handling.hpp"
 #include "kwarg_handling_pydoc.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -64,10 +65,9 @@ inline YAML::Node cast_to_yaml_node<int8_t>(const py::handle& obj) {
 }
 
 void set_scalar_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& out) {
-  std::string dtype_name = dt.attr("name").cast<std::string>();
-  if (dtype_name == "float16") {  // currently promoting float16 scalars to float
-    out = cast_to_yaml_node<float>(obj);
-  } else if (dtype_name == "float32") {
+  auto dtype_name = dt.attr("name").cast<std::string>();
+  if (dtype_name == "float16" || dtype_name == "float32") {
+    // currently promoting float16 scalars to float
     out = cast_to_yaml_node<float>(obj);
   } else if (dtype_name == "float64") {
     out = cast_to_yaml_node<double>(obj);
@@ -92,7 +92,6 @@ void set_scalar_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& o
   } else {
     throw std::runtime_error("unsupported dtype: "s + dtype_name + ", leaving Arg uninitialized"s);
   }
-  return;
 }
 
 template <typename T>
@@ -101,7 +100,7 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   // for short arrays containing parameter settings to operators/resources
   if (obj.attr("ndim").cast<int>() == 1) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-    for (const auto& item : obj) yaml_node.push_back(cast_to_yaml_node<T>(item));
+    for (const auto& item : obj) { yaml_node.push_back(cast_to_yaml_node<T>(item)); }
     out = yaml_node;
   } else if (obj.attr("ndim").cast<int>() == 2) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
@@ -118,6 +117,7 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   }
 }
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 template <typename T>
 void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
   // not intended for images or other large tensors, just
@@ -142,7 +142,7 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
       std::vector<T> v;
       size_t length = py::len(seq);
       v.reserve(length);
-      for (const auto& item : seq) v.push_back(item.cast<T>());
+      for (const auto& item : seq) { v.push_back(item.cast<T>()); }
       out = v;
     }
   } else {
@@ -161,11 +161,12 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
     } else {
       // 1d vector to handle a sequence of elements
       YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-      for (const auto& item : seq) yaml_node.push_back(cast_to_yaml_node<T>(item));
+      for (const auto& item : seq) { yaml_node.push_back(cast_to_yaml_node<T>(item)); }
       out = yaml_node;
     }
   }
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
   py::sequence seq;
@@ -200,7 +201,7 @@ void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
       throw std::runtime_error("Nested sequence of unsupported type.");
     }
   } else {
-    auto item = item0;
+    const auto& item = item0;
     if (py::isinstance<py::bool_>(item)) {
       set_vector_arg_via_py_sequence<bool>(seq, out);
     } else if (py::isinstance<py::int_>(item)) {
@@ -215,14 +216,12 @@ void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
       set_vector_arg_via_py_sequence<std::shared_ptr<Condition>>(seq, out);
     }
   }
-  return;
 }
 
 void set_vector_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& out) {
-  std::string dtype_name = dt.attr("name").cast<std::string>();
-  if (dtype_name == "float16") {  // currently promoting float16 scalars to float
-    set_vector_arg_via_numpy_array<float>(obj, out);
-  } else if (dtype_name == "float32") {
+  auto dtype_name = dt.attr("name").cast<std::string>();
+  if (dtype_name == "float16" || dtype_name == "float32") {
+    // currently promoting float16 scalars to float
     set_vector_arg_via_numpy_array<float>(obj, out);
   } else if (dtype_name == "float64") {
     set_vector_arg_via_numpy_array<double>(obj, out);
@@ -244,13 +243,12 @@ void set_vector_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& o
     set_vector_arg_via_numpy_array<uint32_t>(obj, out);
   } else if (dtype_name == "uint64") {
     set_vector_arg_via_numpy_array<uint64_t>(obj, out);
-  } else if (dtype_name.find("str") == 0) {
-    py::list list_obj = obj.attr("tolist")().cast<py::list>();
+  } else if (dtype_name.find("str") == 0) {  // NOLINT(abseil-string-find-startswith)
+    auto list_obj = obj.attr("tolist")().cast<py::list>();
     // TODO(grelee): set_vector_arg_via_seqeuence(list_obj, out);
   } else {
     throw std::runtime_error("unsupported dtype: "s + dtype_name + ", leaving Arg uninitialized"s);
   }
-  return;
 }
 
 template <typename T>
@@ -262,43 +260,47 @@ py::object vector_arg_to_py_object(Arg& arg) {
   }
 }
 
-py::object yaml_node_to_py_object(YAML::Node node) {
+// NOLINTBEGIN(misc-no-recursion)
+py::object yaml_node_to_py_object(const YAML::Node& node) {
   if (node.IsSequence()) {
     py::list list;
     for (const auto& item : node) { list.append(yaml_node_to_py_object(item)); }
     return list;
-  } else if (node.IsMap()) {
+  }
+  if (node.IsMap()) {
     py::dict dict;
     for (const auto& item : node) {
       dict[py::str(item.first.as<std::string>())] = yaml_node_to_py_object(item.second);
     }
     return dict;
-  } else if (node.IsScalar()) {
+  }
+  if (node.IsScalar()) {
     // Check if it is null.
     if (node.IsNull()) { return py::none(); }
     // Check if it is an integer.
     {
-      int64_t t;
+      int64_t t{};
       if (YAML::convert<int64_t>::decode(node, t)) { return py::int_(t); }
     }
     // Check if it is a float.
     {
-      double t;
+      double t{};
       if (YAML::convert<double>::decode(node, t)) { return py::float_(t); }
     }
     // Check if it is a boolean.
     {
-      bool t;
+      bool t{};
       if (YAML::convert<bool>::decode(node, t)) { return py::bool_(t); }
     }
     // Check if it is a string.
     {
-      std::string t;
+      std::string t{};
       if (YAML::convert<std::string>::decode(node, t)) { return py::str(t); }
     }
   }
   return py::none();
 }
+// NOLINTEND(misc-no-recursion)
 
 py::object arg_to_py_object(Arg& arg) {
   // Takes an Arg as input and returns an appropriate Python object equivalent.
@@ -306,6 +308,7 @@ py::object arg_to_py_object(Arg& arg) {
   auto t = arg.arg_type();
   auto container_type = t.container_type();
   auto element_type = t.element_type();
+  // NOLINTBEGIN(clang-diagnostic-switch)
   if (container_type == ArgContainerType::kNative) {
     switch (element_type) {
       case ArgElementType::kBoolean:
@@ -330,6 +333,10 @@ py::object arg_to_py_object(Arg& arg) {
         return py::cast(std::any_cast<uint32_t>(arg.value()));
       case ArgElementType::kUnsigned64:
         return py::cast(std::any_cast<uint64_t>(arg.value()));
+      case ArgElementType::kComplex64:
+        return py::cast(std::any_cast<std::complex<float>>(arg.value()));
+      case ArgElementType::kComplex128:
+        return py::cast(std::any_cast<std::complex<double>>(arg.value()));
       case ArgElementType::kString:
         return py::cast(std::any_cast<std::string>(arg.value()));
       case ArgElementType::kYAMLNode: {
@@ -362,11 +369,16 @@ py::object arg_to_py_object(Arg& arg) {
         return vector_arg_to_py_object<uint32_t>(arg);
       case ArgElementType::kUnsigned64:
         return vector_arg_to_py_object<uint64_t>(arg);
+      case ArgElementType::kComplex64:
+        return vector_arg_to_py_object<std::complex<float>>(arg);
+      case ArgElementType::kComplex128:
+        return vector_arg_to_py_object<std::complex<double>>(arg);
       case ArgElementType::kString:
         return vector_arg_to_py_object<std::string>(arg);
     }
     // Not handled here: kHandle, kCustom, kIOSpec, kCondition, kResource, kYAMLNode
   }
+  // NOLINTEND(clang-diagnostic-switch)
 
   throw std::runtime_error(fmt::format(
       "Unable to convert Arg (name: {}, container_type: {}, element_type: {}) to Python object",
@@ -375,7 +387,7 @@ py::object arg_to_py_object(Arg& arg) {
       static_cast<int>(element_type)));
 }
 
-Arg py_object_to_arg(py::object obj, std::string name = "") {
+Arg py_object_to_arg(py::object obj, const std::string& name = ""s) {
   Arg out(name);
   if (py::isinstance<py::str>(obj)) {
     out = cast_to_yaml_node<std::string>(obj);
@@ -396,7 +408,7 @@ Arg py_object_to_arg(py::object obj, std::string name = "") {
     out = cast_to_yaml_node<double>(obj);
   } else if (PyComplex_Check(obj.ptr())) {
     throw std::runtime_error("complex value cannot be converted to Arg");
-  } else if (PyNumber_Check(obj.ptr())) {
+  } else if (PyNumber_Check(obj.ptr()) == 1) {
     py::module_ np = py::module_::import("numpy");
     auto numpy_generic = np.attr("generic");
     if (py::isinstance(obj, numpy_generic)) {
@@ -404,10 +416,9 @@ Arg py_object_to_arg(py::object obj, std::string name = "") {
       py::dtype dt = np.attr("dtype")(obj);
       set_scalar_arg_via_dtype(obj, dt, out);
       return out;
-    } else {
-      // cast any other unknown numeric type to double
-      out = cast_to_yaml_node<double>(obj);
     }
+    // cast any other unknown numeric type to double
+    out = cast_to_yaml_node<double>(obj);
   } else if (py::isinstance<Resource>(obj)) {
     out = obj.cast<std::shared_ptr<Resource>>();
   } else if (py::isinstance<Condition>(obj)) {

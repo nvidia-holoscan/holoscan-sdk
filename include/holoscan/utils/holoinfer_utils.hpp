@@ -32,6 +32,34 @@ namespace HoloInfer = holoscan::inference;
 namespace holoscan::utils {
 
 /**
+ * Buffer wrapping a GXF tensor
+ */
+class GxfTensorBuffer : public HoloInfer::Buffer {
+ public:
+  /**
+   * @brief Constructor
+   *
+   * @param entity GXF entity holding the tensor
+   * @param tensor GXF tensor
+   */
+  explicit GxfTensorBuffer(const holoscan::gxf::Entity& entity,
+                           const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor);
+  GxfTensorBuffer() = delete;
+
+  /// Buffer class virtual members implemented by this class
+  ///@{
+  void* data() override;
+  size_t size() const override;
+  size_t get_bytes() const override;
+  void resize(size_t number_of_elements) override;
+  ///@}
+
+ private:
+  holoscan::gxf::Entity entity_;
+  nvidia::gxf::Handle<nvidia::gxf::Tensor> tensor_;
+};
+
+/**
  * Extracts data from GXF Receivers.
  *
  * @param op_input Input context
@@ -42,7 +70,7 @@ namespace holoscan::utils {
  * @param cuda_buffer_out Flag defining the location of output memory (Device or Host)
  * @param module Module that called for data extraction
  * @param context GXF execution context
- * @param cuda_stream_handler Cuda steam handler
+ * @param cuda_stream_handler Cuda stream handler
  * @return GXF result code
  */
 gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::string>& in_tensors,
@@ -66,7 +94,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
  * @param cuda_buffer_out Flag to demonstrate if memory storage of output message is on CUDA
  * @param allocator GXF Memory allocator
  * @param module Module that called for data transmission
- * @param cuda_stream_handler Cuda steam handler
+ * @param cuda_stream_handler Cuda stream handler
  * @return GXF result code
  */
 gxf_result_t transmit_data_per_model(gxf_context_t& cont,

@@ -18,7 +18,7 @@ limitations under the License.
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 logger = logging.getLogger("packager")
 
@@ -30,7 +30,7 @@ class Models:
     subdirectory.
     """
 
-    def build(self, models_path: Path) -> Optional[Dict[str, Path]]:
+    def build(self, models_path: Path) -> Optional[dict[str, Path]]:
         """Checks if the given path is a file or a directory.
 
         Args:
@@ -42,7 +42,7 @@ class Models:
         """
         if models_path is not None:
             logger.info(f"Scanning for models in {models_path}...")
-            models: Dict[str, Path] = {}
+            models: dict[str, Path] = {}
             if models_path.is_file():
                 self._configure_model_file(models_path, models)
             elif models_path.is_dir():
@@ -52,7 +52,7 @@ class Models:
         else:
             return None
 
-    def _configure_model_dir(self, models_path: Path, models: Dict[str, Path]):
+    def _configure_model_dir(self, models_path: Path, models: dict[str, Path]):
         """
         Iterate through the given directory to scan for models.
         If files are found within the directory, we simply assume that all files within the given
@@ -79,7 +79,7 @@ class Models:
                 models[model_name] = model_path
                 logger.debug(f"Model {model_name}={model_path} added.")
 
-    def _configure_model_file(self, models_path: Path, models: Dict[str, Path]):
+    def _configure_model_file(self, models_path: Path, models: dict[str, Path]):
         """
         Adds a new model to 'models' object where the model name is the name of the given file,
         and the value is the path to the given model file.

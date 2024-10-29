@@ -24,6 +24,8 @@
 #include <utility>
 #include <vector>
 
+#include <holoinfer_utils.hpp>
+
 namespace holoscan {
 namespace inference {
 
@@ -79,7 +81,8 @@ class OnnxInferImpl {
 
   // Wrapped Public APIs
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
-                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer);
+                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                           cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference);
   void populate_model_details();
   void print_model_details();
   int set_holoscan_inf_onnx_session_options();
@@ -96,7 +99,7 @@ Ort::Value create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer,
   size_t input_tensor_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
 
   return Ort::Value::CreateTensor<T>(memory_info_,
-                                     static_cast<T*>(input_buffer->host_buffer.data()),
+                                     static_cast<T*>(input_buffer->host_buffer_->data()),
                                      input_tensor_size,
                                      dims.data(),
                                      dims.size());
@@ -105,7 +108,7 @@ Ort::Value create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer,
 template <typename T>
 void transfer_to_host(std::shared_ptr<DataBuffer>& output_buffer, Ort::Value& output_tensor,
                       const size_t& output_tensor_size) {
-  memcpy(output_buffer->host_buffer.data(),
+  memcpy(output_buffer->host_buffer_->data(),
          output_tensor.GetTensorMutableData<T>(),
          output_tensor_size * sizeof(T));
 }
@@ -294,16 +297,21 @@ void OnnxInferImpl::transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>&
 }
 
 InferStatus OnnxInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
-                                    std::vector<std::shared_ptr<DataBuffer>>& output_buffer) {
-  return impl_->do_inference(input_buffer, output_buffer);
+                                    std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                                    cudaEvent_t cuda_event_data,
+                                    cudaEvent_t* cuda_event_inference) {
+  return impl_->do_inference(input_buffer, output_buffer, cuda_event_data, cuda_event_inference);
 }
 
 InferStatus OnnxInferImpl::do_inference(
     const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
-    std::vector<std::shared_ptr<DataBuffer>>& output_buffer) {
+    std::vector<std::shared_ptr<DataBuffer>>& output_buffer, cudaEvent_t cuda_event_data,
+    cudaEvent_t* cuda_event_inference) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
 
   try {
+    check_cuda(cudaEventSynchronize(cuda_event_data));
+
     input_tensors_.clear();
     output_tensors_.clear();
 
@@ -317,7 +325,7 @@ InferStatus OnnxInferImpl::do_inference(
     }
 
     for (size_t a = 0; a < input_buffer.size(); a++) {
-      if (input_buffer[a]->host_buffer.size() == 0) {
+      if (input_buffer[a]->host_buffer_->size() == 0) {
         status.set_message("ONNX inference core: Input Host buffer empty.");
         return status;
       }
@@ -332,7 +340,7 @@ InferStatus OnnxInferImpl::do_inference(
     }
 
     for (unsigned int a = 0; a < output_buffer.size(); a++) {
-      if (output_buffer[a]->host_buffer.size() == 0) {
+      if (output_buffer[a]->host_buffer_->size() == 0) {
         status.set_message("ONNX inference core: Output Host buffer empty.");
         return status;
       }

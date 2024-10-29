@@ -130,7 +130,7 @@ class Entity : public nvidia::gxf::Entity {
 
 // Modified version of the Tensor version of gxf::Entity::get
 // Retrieves a VideoBuffer instead
-// TODO: Support gxf::VideoBuffer natively in Holoscan
+// TODO(unknown): Support gxf::VideoBuffer natively in Holoscan
 nvidia::gxf::Handle<nvidia::gxf::VideoBuffer> get_videobuffer(Entity entity,
                                                               const char* name = nullptr);
 

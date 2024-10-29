@@ -62,16 +62,17 @@ struct OperatorTimestampLabel {
    * @brief Construct a new OperatorTimestampLabel object from an Operator pointer with a receive
    * timestamp equal to the current time and publish timestamp equal to -1.
    *
-   * @param op The pointer to the operator for which the timestamp label is created.
+   * @param op_name The fully qualified name of the operator for which the timestamp label is
+   * created.
    */
-  explicit OperatorTimestampLabel(Operator* op)
-      : operator_ptr(op), rec_timestamp(get_current_time_us()), pub_timestamp(-1) {}
+  explicit OperatorTimestampLabel(const std::string& op_name)
+      : operator_name(op_name), rec_timestamp(get_current_time_us()), pub_timestamp(-1) {}
 
-  OperatorTimestampLabel(Operator* op, int64_t rec_t, int64_t pub_t)
-      : operator_ptr(op), rec_timestamp(rec_t), pub_timestamp(pub_t) {}
+  OperatorTimestampLabel(const std::string& op_name, int64_t rec_t, int64_t pub_t)
+      : operator_name(op_name), rec_timestamp(rec_t), pub_timestamp(pub_t) {}
 
   OperatorTimestampLabel(const OperatorTimestampLabel& o)
-      : operator_ptr(o.operator_ptr),
+      : operator_name(o.operator_name),
         rec_timestamp(o.rec_timestamp),
         pub_timestamp(o.pub_timestamp) {}
 
@@ -79,7 +80,8 @@ struct OperatorTimestampLabel {
 
   void set_pub_timestamp_to_current() { pub_timestamp = get_current_time_us(); }
 
-  Operator* operator_ptr = nullptr;
+  // Operator* operator_ptr = nullptr;
+  std::string operator_name = "";
 
   // The timestamp when an Operator receives from an input
   // For a root Operator, it is the start of the compute call
@@ -105,10 +107,25 @@ class MessageLabel {
   MessageLabel() {
     // By default, allocate DEFAULT_NUM_PATHS paths in the message_paths
     message_paths.reserve(DEFAULT_NUM_PATHS);
+    message_path_operators.reserve(DEFAULT_NUM_PATHS);
   }
 
   MessageLabel(const MessageLabel& m)
       : message_paths(m.message_paths), message_path_operators(m.message_path_operators) {}
+
+  /**
+   * @brief Construct a new Message Label object from a vector of TimestampedPaths. This constructor
+   * automatically fills the message_path_operators vector from the argument of the constructor.
+   *
+   * @param m_paths The vector of TimestampedPaths to create the MessageLabel from.
+   */
+  explicit MessageLabel(const std::vector<TimestampedPath> m_paths) : message_paths(m_paths) {
+    for (auto& path : m_paths) {
+      PathOperators new_path_operators;
+      for (auto& op : path) { new_path_operators.insert(op.operator_name); }
+      message_path_operators.push_back(new_path_operators);
+    }
+  }
 
   MessageLabel& operator=(const MessageLabel& m) {
     if (this != &m) {
@@ -123,7 +140,7 @@ class MessageLabel {
    *
    * @return The number of paths in a MessageLabel.
    */
-  int num_paths() { return message_paths.size(); }
+  int num_paths() const { return message_paths.size(); }
 
   /**
    * @brief Get all the names of the path in formatted string, which is comma-separated values of
@@ -133,7 +150,7 @@ class MessageLabel {
    */
   std::vector<std::string> get_all_path_names();
 
-  std::vector<TimestampedPath> paths() { return message_paths; }
+  std::vector<TimestampedPath> paths() const { return message_paths; }
 
   /**
    * @brief Get the current end-to-end latency of a path in microseconds.
@@ -217,7 +234,7 @@ class MessageLabel {
    * @param op_name The name of the operator to check
    * @return List of path indexes where the operator is present
    */
-  std::vector<int> has_operator(std::string op_name);
+  std::vector<int> has_operator(const std::string& op_name) const;
 
   /**
    * @brief Add a new Operator timestamp to all the paths in a message label.

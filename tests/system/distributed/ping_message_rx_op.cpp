@@ -88,7 +88,8 @@ void PingMessageRxOp::setup(OperatorSpec& spec) {
   }
 }
 
-void PingMessageRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+void PingMessageRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+                              [[maybe_unused]] ExecutionContext& context) {
   // NOTE: Values in PingMessageRxOp::compute and PingMessageTxOp::compute must remain consistent.
   //       If any value is changed in PingMessageTxOp, please also update the check here.
   bool valid_value = false;

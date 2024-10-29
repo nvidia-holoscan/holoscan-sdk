@@ -30,11 +30,8 @@
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/operators/video_stream_replayer/video_stream_replayer.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -59,7 +56,7 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
   PyVideoStreamReplayerOp(
       Fragment* fragment, const py::args& args, const std::string& directory,
       const std::string& basename, size_t batch_size = 1UL, bool ignore_corrupted_entities = true,
-      float frame_rate = 0.f, bool realtime = true, bool repeat = false, uint64_t count = 0UL,
+      float frame_rate = 0.F, bool realtime = true, bool repeat = false, uint64_t count = 0UL,
       std::optional<std::shared_ptr<holoscan::Allocator>> allocator = std::nullopt,
       std::optional<std::shared_ptr<holoscan::Resource>> entity_serializer = std::nullopt,
       const std::string& name = "video_stream_replayer")
@@ -79,7 +76,7 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -115,7 +112,7 @@ PYBIND11_MODULE(_video_stream_replayer, m) {
            "basename"_a,
            "batch_size"_a = 1UL,
            "ignore_corrupted_entities"_a = true,
-           "frame_rate"_a = 1.f,
+           "frame_rate"_a = 1.F,
            "realtime"_a = true,
            "repeat"_a = false,
            "count"_a = 0UL,

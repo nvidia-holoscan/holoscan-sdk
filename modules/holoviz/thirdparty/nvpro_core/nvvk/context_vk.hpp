@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -107,7 +107,7 @@ struct ContextCreateInfo
   // by default-constructor three queues are requested,
   // if you want more/different setups manipulate the requestedQueues vector
   // or use this function.
-  void addRequestedQueue(VkQueueFlags flags, uint32_t count = 1, float priority = 1.0f);
+  void addRequestedQueue(VkQueueFlags flags, uint32_t count = 1, float priority = 1.0F);
 
   // Configure additional device creation with these variables and functions
 
@@ -183,9 +183,9 @@ struct ContextCreateInfo
   VkQueueFlags defaultQueueGCT    = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
   VkQueueFlags defaultQueueT      = VK_QUEUE_TRANSFER_BIT;
   VkQueueFlags defaultQueueC      = VK_QUEUE_COMPUTE_BIT;
-  float        defaultPriorityGCT = 1.0f;
-  float        defaultPriorityT   = 1.0f;
-  float        defaultPriorityC   = 1.0f;
+  float        defaultPriorityGCT = 1.0F;
+  float        defaultPriorityT   = 1.0F;
+  float        defaultPriorityC   = 1.0F;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -363,7 +363,7 @@ public:
     VkQueue  queue       = VK_NULL_HANDLE;
     uint32_t familyIndex = ~0;
     uint32_t queueIndex  = ~0;
-    float    priority    = 1.0f;
+    float    priority    = 1.0F;
 
     operator VkQueue() const { return queue; }
     operator uint32_t() const { return familyIndex; }
@@ -384,7 +384,7 @@ public:
 
   // additional queues must be created once through this function
   // returns new Queue and pops entry from available Queues that were requested via info.requestedQueues
-  Queue createQueue(VkQueueFlags requiredFlags, const std::string& debugName, float priority = 1.0f);
+  Queue createQueue(VkQueueFlags requiredFlags, const std::string& debugName, float priority = 1.0F);
 
   operator VkDevice() const { return m_device; }
 
@@ -424,7 +424,7 @@ private:
     uint32_t score       = 0;  // the lower the score, the more 'specialized' it is
     uint32_t familyIndex = ~0;
     uint32_t queueIndex  = ~0;
-    float    priority    = 1.0f;
+    float    priority    = 1.0F;
   };
   using QueueScoreList = std::vector<QueueScore>;
 

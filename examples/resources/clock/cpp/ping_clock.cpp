@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,14 +34,16 @@ class TimedPingRxOp : public Operator {
 
   void setup(OperatorSpec& spec) override;
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override;
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override;
 };
 
 void TimedPingRxOp::setup(OperatorSpec& spec) {
   spec.input<int>("in");
 }
 
-void TimedPingRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+void TimedPingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+                            [[maybe_unused]] ExecutionContext& context) {
   auto value = op_input.receive<int>("in").value();
   HOLOSCAN_LOG_INFO("Rx message value: {}", value);
 
@@ -108,7 +110,7 @@ class MyPingApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<MyPingApp>();
   app->run();
 

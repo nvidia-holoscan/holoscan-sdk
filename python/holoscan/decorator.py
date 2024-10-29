@@ -28,7 +28,7 @@ import ast
 import inspect
 import textwrap
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import cupy as cp
 import numpy as np
@@ -91,9 +91,9 @@ class Input:
     name: str
     arg_map: Optional[Union[str, dict[str, str]]] = ()
     condition_type: Optional[ConditionType] = None
-    condition_kwargs: Dict[str, Any] = field(default_factory=dict)
+    condition_kwargs: dict[str, Any] = field(default_factory=dict)
     connector_type: Optional[IOSpec.ConnectorType] = None
-    connector_kwargs: Dict[str, Any] = field(default_factory=dict)
+    connector_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def create_input(self, spec: OperatorSpec) -> IOSpec:
         iospec = spec.input(self.name)
@@ -130,11 +130,11 @@ class Output:
     """
 
     name: str
-    tensor_names: Optional[Union[str, Tuple[str]]] = ()
+    tensor_names: Optional[Union[str, tuple[str]]] = ()
     condition_type: Optional[ConditionType] = None
-    condition_kwargs: Dict[str, Any] = field(default_factory=dict)
+    condition_kwargs: dict[str, Any] = field(default_factory=dict)
     connector_type: Optional[IOSpec.ConnectorType] = None
-    connector_kwargs: Dict[str, Any] = field(default_factory=dict)
+    connector_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def create_output(self, spec: OperatorSpec) -> IOSpec:
         iospec = spec.output(self.name)
@@ -210,8 +210,8 @@ def _has_function_returns_value(func):
 
 def create_op(
     function_or_class=None,
-    inputs: Union[str, Input, Tuple[Union[str, Input]]] = (),
-    outputs: Union[str, Output, Tuple[Union[str, Output]]] = (),
+    inputs: Union[str, Input, tuple[Union[str, Input]]] = (),
+    outputs: Union[str, Output, tuple[Union[str, Output]]] = (),
     cast_tensors=True,
 ):
     """Decorator for creating an operator from a function or a class.
@@ -488,7 +488,7 @@ def create_op(
                         out = self.func(*self.func_args, **self.fixed_kwargs, **self.dynamic_kwargs)
 
                     # if the output is a tuple and there is >1 port, we distribute the outputs
-                    if isinstance(out, Tuple) and (len(self.output_tensor_map) > 1):
+                    if isinstance(out, tuple) and (len(self.output_tensor_map) > 1):
                         # for tuple case, each port should correspond to each output tuple element
                         if any([len(names) > 1 for names in self.output_tensor_map.values()]):
                             raise ValueError(

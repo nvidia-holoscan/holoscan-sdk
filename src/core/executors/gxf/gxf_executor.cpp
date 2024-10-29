@@ -64,6 +64,8 @@
 #include "holoscan/core/resources/gxf/dfft_collector.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
+#include "holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp"
+#include "holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp"
 #include "holoscan/core/services/common/forward_op.hpp"
 #include "holoscan/core/services/common/virtual_operator.hpp"
 #include "holoscan/core/signal_handler.hpp"
@@ -102,8 +104,8 @@ std::pair<uint64_t, uint64_t> get_capacity_and_policy(
 }
 
 bool has_ucx_connector(std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
-  auto has_ucx_receiver = graph_entity->try_get("nvidia::gxf::UcxReceiver");
-  auto has_ucx_transmitter = graph_entity->try_get("nvidia::gxf::UcxTransmitter");
+  auto has_ucx_receiver = graph_entity->try_get("holoscan::HoloscanUcxReceiver");
+  auto has_ucx_transmitter = graph_entity->try_get("holoscan::HoloscanUcxTransmitter");
   return has_ucx_receiver || has_ucx_transmitter;
 }
 
@@ -113,6 +115,7 @@ static const std::vector<std::string> kDefaultGXFExtensions{
     "libgxf_std.so",
     "libgxf_cuda.so",
     "libgxf_multimedia.so",
+    "libgxf_rmm.so",
     "libgxf_serialization.so",
     "libgxf_ucx.so",  // UcxContext, UcxReceiver, UcxTransmitter, etc.
 };
@@ -385,7 +388,7 @@ void bind_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t ei
                      const char* rx_name, IOSpec::ConnectorType rx_type, Operator* op) {
   // Can't currently use GraphEntity API for this OperatorWrapper/bind_port code path
   if (rx_type != IOSpec::ConnectorType::kDefault) {
-    // TODO: update bind_port code path for types other than ConnectorType::kDefault
+    // TODO(unknown): update bind_port code path for types other than ConnectorType::kDefault
     throw std::runtime_error(fmt::format(
         "Unable to support types other than ConnectorType::kDefault (rx_name: '{}')", rx_name));
   }
@@ -469,14 +472,6 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
   const char* rx_name = io_spec->name().c_str();  // input port name
   auto rx_type = io_spec->connector_type();
 
-  if (fragment->data_flow_tracker()) {
-    if ((rx_type != IOSpec::ConnectorType::kDefault) &&
-        (rx_type != IOSpec::ConnectorType::kDoubleBuffer)) {
-      throw std::runtime_error(
-          "Currently the data flow tracking feature requires ConnectorType::kDefault or "
-          "ConnectorType::kDoubleBuffer.");
-    }
-  }
   auto graph_entity = op->graph_entity();
 
   // If this executor is used by OperatorWrapper (bind_port == true) to wrap Native Operator,
@@ -556,9 +551,6 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
         break;
       case IOSpec::ConnectorType::kUCX:
         rx_resource = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
-        if (fragment->data_flow_tracker()) {
-          HOLOSCAN_LOG_ERROR("data flow tracking not implemented for UCX ports");
-        }
         break;
       default:
         HOLOSCAN_LOG_ERROR("Unsupported GXF connector_type: '{}'", static_cast<int>(rx_type));
@@ -587,20 +579,23 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
     rx_resource->add_to_graph_entity(op);
 
     if (fragment->data_flow_tracker()) {
-      holoscan::AnnotatedDoubleBufferReceiver* dbl_ptr;
+      holoscan::AnnotatedDoubleBufferReceiver* dbl_buffer_ptr;
+      holoscan::HoloscanUcxReceiver* ucx_ptr;
       switch (rx_type) {
         case IOSpec::ConnectorType::kDefault:
         case IOSpec::ConnectorType::kDoubleBuffer:
-          dbl_ptr =
+          dbl_buffer_ptr =
               reinterpret_cast<holoscan::AnnotatedDoubleBufferReceiver*>(rx_resource->gxf_cptr());
-          dbl_ptr->op(op);
+          dbl_buffer_ptr->op(op);
           break;
         case IOSpec::ConnectorType::kUCX:
-          HOLOSCAN_LOG_ERROR("UCX-based receiver doesn't currently support data flow tracking");
+          std::dynamic_pointer_cast<UcxReceiver>(rx_resource)->track();
+          ucx_ptr = reinterpret_cast<holoscan::HoloscanUcxReceiver*>(rx_resource->gxf_cptr());
+          ucx_ptr->op(op);
           break;
         default:
           HOLOSCAN_LOG_ERROR(
-              "Annotated data flow tracking not implemented for GXF "
+              "Data flow tracking not implemented for GXF "
               "connector_type: '{}'",
               static_cast<int>(rx_type));
       }
@@ -660,7 +655,7 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
         // No condition
         break;
       default:
-        throw std::runtime_error("Unsupported condition type");  // TODO: use std::expected
+        throw std::runtime_error("Unsupported condition type");  // TODO(unknown): use std::expected
     }
   }
 }
@@ -679,7 +674,7 @@ namespace {
 void bind_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid, IOSpec* io_spec,
                       const char* tx_name, IOSpec::ConnectorType tx_type, Operator* op) {
   if (tx_type != IOSpec::ConnectorType::kDefault) {
-    // TODO: update bind_port code path for types other than ConnectorType::kDefault
+    // TODO(unknown): update bind_port code path for types other than ConnectorType::kDefault
     throw std::runtime_error(fmt::format(
         "Unable to support types other than ConnectorType::kDefault (tx_name: '{}')", tx_name));
   }
@@ -761,14 +756,6 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
   const char* tx_name = io_spec->name().c_str();
   auto tx_type = io_spec->connector_type();
 
-  if (fragment->data_flow_tracker()) {
-    if ((tx_type != IOSpec::ConnectorType::kDefault) &&
-        (tx_type != IOSpec::ConnectorType::kDoubleBuffer)) {
-      throw std::runtime_error(
-          "Currently the data flow tracking feature requires ConnectorType::kDefault or "
-          "ConnectorType::kDoubleBuffer.");
-    }
-  }
   auto graph_entity = op->graph_entity();
   // If this executor is used by OperatorWrapper (bind_port == true) to wrap Native Operator,
   // then we need to call `bind_output_port` to set the existing GXF Transmitter for this output.
@@ -803,9 +790,6 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
         break;
       case IOSpec::ConnectorType::kUCX:
         tx_resource = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
-        if (fragment->data_flow_tracker()) {
-          HOLOSCAN_LOG_ERROR("data flow tracking not implemented for UCX ports");
-        }
         break;
       default:
         HOLOSCAN_LOG_ERROR("Unsupported GXF connector_type: '{}'", static_cast<int>(tx_type));
@@ -820,20 +804,23 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
     tx_resource->add_to_graph_entity(op);
 
     if (fragment->data_flow_tracker()) {
-      holoscan::AnnotatedDoubleBufferTransmitter* dbl_ptr;
+      holoscan::AnnotatedDoubleBufferTransmitter* dbl_buffer_ptr;
+      holoscan::HoloscanUcxTransmitter* ucx_ptr;
       switch (tx_type) {
         case IOSpec::ConnectorType::kDefault:
         case IOSpec::ConnectorType::kDoubleBuffer:
-          dbl_ptr = reinterpret_cast<holoscan::AnnotatedDoubleBufferTransmitter*>(
+          dbl_buffer_ptr = reinterpret_cast<holoscan::AnnotatedDoubleBufferTransmitter*>(
               tx_resource->gxf_cptr());
-          dbl_ptr->op(op);
+          dbl_buffer_ptr->op(op);
           break;
         case IOSpec::ConnectorType::kUCX:
-          HOLOSCAN_LOG_ERROR("UCX-based receiver doesn't currently support data flow tracking");
+          std::dynamic_pointer_cast<UcxTransmitter>(tx_resource)->track();
+          ucx_ptr = reinterpret_cast<holoscan::HoloscanUcxTransmitter*>(tx_resource->gxf_cptr());
+          ucx_ptr->op(op);
           break;
         default:
           HOLOSCAN_LOG_ERROR(
-              "Annotated data flow tracking not implemented for GXF "
+              "Data flow tracking not implemented for GXF "
               "connector_type: '{}'",
               static_cast<int>(tx_type));
       }
@@ -877,7 +864,7 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
         // No condition
         break;
       default:
-        throw std::runtime_error("Unsupported condition type");  // TODO: use std::expected
+        throw std::runtime_error("Unsupported condition type");  // TODO(unknown): use std::expected
     }
   }
 }
@@ -1432,7 +1419,8 @@ bool GXFExecutor::initialize_fragment() {
         }
       }
     }
-    const auto& op = worklist.front();
+    // Get (copy) shared pointer before popping it from the worklist.
+    auto op = worklist.front();
     worklist.pop_front();
 
     auto op_spec = op->spec();
@@ -1806,7 +1794,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
         bool codelet_statistics =
             AppDriver::get_bool_env_var("HOLOSCAN_GXF_JOB_STATISTICS_CODELET", false);
         uint32_t event_history_count =
-            AppDriver::get_int_env_var("HOLOSCAN_GXF_JOB_STATISTICS_COUNT", 100u);
+            AppDriver::get_int_env_var("HOLOSCAN_GXF_JOB_STATISTICS_COUNT", 100U);
 
         // GXF issue 4552622: can't create FilePath Arg, so we call setParameter below instead
         std::vector<nvidia::gxf::Arg> jobstats_args{
@@ -1855,11 +1843,22 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
 
       // Identify leaf and root operators and add to the DFFTCollector object
       for (auto& op : graph.get_nodes()) {
-        if (op->is_leaf()) {
-          dfft_collector_ptr->add_leaf_op(op.get());
-        } else if (op->is_root() || op->is_user_defined_root()) {
-          dfft_collector_ptr->add_root_op(op.get());
-        }
+        bool is_current_op_leaf =
+            op->is_leaf() ||
+            holoscan::Operator::is_all_operator_successor_virtual(op, fragment_->graph());
+        bool is_current_op_root =
+            op->is_root() || op->is_user_defined_root() ||
+            holoscan::Operator::is_all_operator_predecessor_virtual(op, fragment_->graph());
+        HOLOSCAN_LOG_DEBUG("fragment: {}, operator {}, id: {}, leaf: {}, root: {}",
+                           fragment_->name(),
+                           op->name(),
+                           op->id(),
+                           is_current_op_leaf,
+                           is_current_op_root);
+        if (is_current_op_leaf) { dfft_collector_ptr->add_leaf_op(op.get()); }
+        // root and leaf operators may also be the same if there is only one operator in a
+        // fragment
+        if (is_current_op_root) { dfft_collector_ptr->add_root_op(op.get()); }
       }
     }
 
@@ -1981,16 +1980,14 @@ void GXFExecutor::run_gxf_graph() {
   auto context = context_;
 
   // Install signal handler
-  auto sig_handler = [](void* context, int signum) {
-    (void)signum;
+  auto sig_handler = [](void* context, [[maybe_unused]] int signum) {
     gxf_result_t code = GxfGraphInterrupt(context);
     if (code != GXF_SUCCESS) {
       HOLOSCAN_LOG_ERROR("GxfGraphInterrupt Error: {}", GxfResultStr(code));
       HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
       SignalHandler::unregister_signal_handler(context, signum);
       // Register the global signal handler.
-      SignalHandler::register_global_signal_handler(signum, [](int sig) {
-        (void)sig;
+      SignalHandler::register_global_signal_handler(signum, []([[maybe_unused]] int sig) {
         HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
         exit(1);
       });
@@ -2015,7 +2012,7 @@ void GXFExecutor::run_gxf_graph() {
   }
   is_gxf_graph_activated_ = false;
 
-  // TODO: do we want to move the log level of these info messages to debug?
+  // TODO(unknown): do we want to move the log level of these info messages to debug?
   HOLOSCAN_LOG_INFO("{}Graph execution finished.", frag_name_display);
 
   // clean up any shared pointers to graph entities within operators, scheulder, network context
@@ -2091,6 +2088,12 @@ void GXFExecutor::register_extensions() {
     extension_factory.add_component<holoscan::AnnotatedDoubleBufferTransmitter,
                                     nvidia::gxf::DoubleBufferTransmitter>(
         "Holoscan's annotated double buffer transmitter", {0x444505a86c014d90, 0xab7503bcd0782877});
+
+    extension_factory.add_component<holoscan::HoloscanUcxReceiver, nvidia::gxf::UcxReceiver>(
+        "Holoscan's annotated ucx receiver", {0x9c8026256e4a4303, 0x865df1fe4428ed32});
+
+    extension_factory.add_component<holoscan::HoloscanUcxTransmitter, nvidia::gxf::UcxTransmitter>(
+        "Holoscan's annotated ucx transmitter", {0x01dbcc609f0942f9, 0x8e04927ac35a6f24});
 
     extension_factory.add_type<holoscan::MessageLabel>("Holoscan message Label",
                                                        {0x6e09e888ccfa4a32, 0xbc501cd20c8b4337});

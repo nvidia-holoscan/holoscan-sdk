@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "./forward_def.hpp"
+#include "holoscan/core/flow_tracking_annotation.hpp"
 
 namespace holoscan {
 
@@ -199,6 +200,9 @@ class DataFlowTracker {
   // Making AnnotatedDoubleBufferReceiver friend class to access update_latency and write_to_logfile
   // because the cyclic paths are updated from there, instead of DFFTCollector
   friend class AnnotatedDoubleBufferReceiver;
+
+  friend gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
+                                         const char* name);
 
   /**
    * @brief Update the tracker with the current latency for a given path.

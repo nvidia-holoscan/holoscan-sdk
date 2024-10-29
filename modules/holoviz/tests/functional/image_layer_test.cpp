@@ -296,43 +296,43 @@ TEST_P(ImageLayer, Image) {
     for (uint32_t y = 0; y < height_; ++y) {
       for (uint32_t x = 0; x < width_; ++x) {
         // RGB -> YUV conversion
-        const float r = color_data_[y * (width_ * 3) + x * 3 + 0] / 255.f;
-        const float g = color_data_[y * (width_ * 3) + x * 3 + 1] / 255.f;
-        const float b = color_data_[y * (width_ * 3) + x * 3 + 2] / 255.f;
+        const float r = color_data_[y * (width_ * 3) + x * 3 + 0] / 255.F;
+        const float g = color_data_[y * (width_ * 3) + x * 3 + 1] / 255.F;
+        const float b = color_data_[y * (width_ * 3) + x * 3 + 2] / 255.F;
         float Kr, Kg, Kb;
         switch (yuv_model_conversion) {
           case viz::YuvModelConversion::YUV_601:
-            Kr = 0.299f;
-            Kb = 0.114f;
+            Kr = 0.299F;
+            Kb = 0.114F;
             break;
           case viz::YuvModelConversion::YUV_709:
-            Kb = 0.0722f;
-            Kr = 0.2126f;
+            Kb = 0.0722F;
+            Kr = 0.2126F;
             break;
           case viz::YuvModelConversion::YUV_2020:
-            Kb = 0.0593f;
-            Kr = 0.2627f;
+            Kb = 0.0593F;
+            Kr = 0.2627F;
             break;
           default:
             ASSERT_TRUE(false) << "Unhandled yuv model conversion";
             break;
         }
-        // since Kr + Kg + Kb = 1.f, calculate Kg
-        Kg = 1.f - Kb - Kr;
+        // since Kr + Kg + Kb = 1.F, calculate Kg
+        Kg = 1.F - Kb - Kr;
 
         float luma = Kr * r + Kg * g + Kb * b;  // 0 ... 1
-        float u = (b - luma) / (1.f - Kb);      // -1 ... 1
-        float v = (r - luma) / (1.f - Kr);      // -1 ... 1
+        float u = (b - luma) / (1.F - Kb);      // -1 ... 1
+        float v = (r - luma) / (1.F - Kr);      // -1 ... 1
 
         switch (yuv_range) {
           case viz::YuvRange::ITU_FULL:
-            u = u * 0.5f + 0.5f;
-            v = v * 0.5f + 0.5f;
+            u = u * 0.5F + 0.5F;
+            v = v * 0.5F + 0.5F;
             break;
           case viz::YuvRange::ITU_NARROW:
-            luma = 16.f / 255.f + luma * (219.f / 255.f);
-            u = 128.f / 255.f + u * 0.5f * (224.f / 255.f);
-            v = 128.f / 255.f + v * 0.5f * (224.f / 255.f);
+            luma = 16.F / 255.F + luma * (219.F / 255.F);
+            u = 128.F / 255.F + u * 0.5F * (224.F / 255.F);
+            v = 128.F / 255.F + v * 0.5F * (224.F / 255.F);
             break;
           default:
             ASSERT_TRUE(false) << "Unhandled yuv range";
@@ -341,105 +341,105 @@ TEST_P(ImageLayer, Image) {
 
         switch (image_format) {
           case viz::ImageFormat::Y8U8Y8V8_422_UNORM:
-            converted_data[y * (width_ * 2) + x * 2] = uint8_t(luma * 255.f + 0.5f);
+            converted_data[y * (width_ * 2) + x * 2] = uint8_t(luma * 255.F + 0.5F);
             if ((x & 1) == 0) {
-              converted_data[y * (width_ * 2) + (x * 2) + 1] = uint8_t(u * 255.f + 0.5f);
-              converted_data[y * (width_ * 2) + (x * 2) + 3] = uint8_t(v * 255.f + 0.5f);
+              converted_data[y * (width_ * 2) + (x * 2) + 1] = uint8_t(u * 255.F + 0.5F);
+              converted_data[y * (width_ * 2) + (x * 2) + 3] = uint8_t(v * 255.F + 0.5F);
             }
             break;
           case viz::ImageFormat::U8Y8V8Y8_422_UNORM:
-            converted_data[y * (width_ * 2) + (x * 2) + 1] = uint8_t(luma * 255.f + 0.5f);
+            converted_data[y * (width_ * 2) + (x * 2) + 1] = uint8_t(luma * 255.F + 0.5F);
             if ((x & 1) == 0) {
-              converted_data[y * (width_ * 2) + (x * 2) + 0] = uint8_t(u * 255.f + 0.5f);
-              converted_data[y * (width_ * 2) + (x * 2) + 2] = uint8_t(v * 255.f + 0.5f);
+              converted_data[y * (width_ * 2) + (x * 2) + 0] = uint8_t(u * 255.F + 0.5F);
+              converted_data[y * (width_ * 2) + (x * 2) + 2] = uint8_t(v * 255.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
-            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            converted_data[y * width_ + x] = uint8_t(luma * 255.F + 0.5F);
             if (((x & 1) == 0) && ((y & 1) == 0)) {
               converted_data[offset_plane_1 + ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 0] =
-                  uint8_t(u * 255.f + 0.5f);
+                  uint8_t(u * 255.F + 0.5F);
               converted_data[offset_plane_1 + ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 1] =
-                  uint8_t(v * 255.f + 0.5f);
+                  uint8_t(v * 255.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
-            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            converted_data[y * width_ + x] = uint8_t(luma * 255.F + 0.5F);
             if ((x & 1) == 0) {
               converted_data[offset_plane_1 + (y * (width_ / 2) + (x / 2)) * 2 + 0] =
-                  uint8_t(u * 255.f + 0.5f);
+                  uint8_t(u * 255.F + 0.5F);
               converted_data[offset_plane_1 + (y * (width_ / 2) + (x / 2)) * 2 + 1] =
-                  uint8_t(v * 255.f + 0.5f);
+                  uint8_t(v * 255.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
-            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            converted_data[y * width_ + x] = uint8_t(luma * 255.F + 0.5F);
             if (((x & 1) == 0) && ((y & 1) == 0)) {
               converted_data[offset_plane_1 + (y / 2) * (width_ / 2) + (x / 2)] =
-                  uint8_t(u * 255.f + 0.5f);
+                  uint8_t(u * 255.F + 0.5F);
               converted_data[offset_plane_2 + (y / 2) * (width_ / 2) + (x / 2)] =
-                  uint8_t(v * 255.f + 0.5f);
+                  uint8_t(v * 255.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
-            converted_data[y * width_ + x] = uint8_t(luma * 255.f + 0.5f);
+            converted_data[y * width_ + x] = uint8_t(luma * 255.F + 0.5F);
             if ((x & 1) == 0) {
               converted_data[offset_plane_1 + y * (width_ / 2) + (x / 2)] =
-                  uint8_t(u * 255.f + 0.5f);
+                  uint8_t(u * 255.F + 0.5F);
               converted_data[offset_plane_2 + y * (width_ / 2) + (x / 2)] =
-                  uint8_t(v * 255.f + 0.5f);
+                  uint8_t(v * 255.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
             reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
-                uint16_t(luma * 65535.f + 0.5f);
+                uint16_t(luma * 65535.F + 0.5F);
             if (((x & 1) == 0) && ((y & 1) == 0)) {
               reinterpret_cast<uint16_t*>(
                   converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
                                          ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 0] =
-                  uint16_t(u * 65535.f + 0.5f);
+                  uint16_t(u * 65535.F + 0.5F);
               reinterpret_cast<uint16_t*>(
                   converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
                                          ((y / 2) * (width_ / 2) + (x / 2)) * 2 + 1] =
-                  uint16_t(v * 65535.f + 0.5f);
+                  uint16_t(v * 65535.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
             reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
-                uint16_t(luma * 65535.f + 0.5f);
+                uint16_t(luma * 65535.F + 0.5F);
             if ((x & 1) == 0) {
               reinterpret_cast<uint16_t*>(
                   converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
                                          (y * (width_ / 2) + (x / 2)) * 2 + 0] =
-                  uint16_t(u * 65535.f + 0.5f);
+                  uint16_t(u * 65535.F + 0.5F);
               reinterpret_cast<uint16_t*>(
                   converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
                                          (y * (width_ / 2) + (x / 2)) * 2 + 1] =
-                  uint16_t(v * 65535.f + 0.5f);
+                  uint16_t(v * 65535.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
             reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
-                uint16_t(luma * 65535.f + 0.5f);
+                uint16_t(luma * 65535.F + 0.5F);
             if (((x & 1) == 0) && ((y & 1) == 0)) {
               reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
                                                                  (y / 2) * (width_ / 2) + (x / 2)] =
-                  uint16_t(u * 65535.f + 0.5f);
+                  uint16_t(u * 65535.F + 0.5F);
               reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_2 / sizeof(uint16_t) +
                                                                  (y / 2) * (width_ / 2) + (x / 2)] =
-                  uint16_t(v * 65535.f + 0.5f);
+                  uint16_t(v * 65535.F + 0.5F);
             }
             break;
           case viz::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
             reinterpret_cast<uint16_t*>(converted_data.data())[y * width_ + x] =
-                uint16_t(luma * 65535.f + 0.5f);
+                uint16_t(luma * 65535.F + 0.5F);
             if ((x & 1) == 0) {
               reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_1 / sizeof(uint16_t) +
                                                                  y * (width_ / 2) + (x / 2)] =
-                  uint16_t(u * 65535.f + 0.5f);
+                  uint16_t(u * 65535.F + 0.5F);
               reinterpret_cast<uint16_t*>(converted_data.data())[offset_plane_2 / sizeof(uint16_t) +
                                                                  y * (width_ / 2) + (x / 2)] =
-                  uint16_t(v * 65535.f + 0.5f);
+                  uint16_t(v * 65535.F + 0.5F);
             }
             break;
           default:
@@ -452,12 +452,12 @@ TEST_P(ImageLayer, Image) {
     std::swap(color_data_, converted_data);
 
     depth_format = viz::ImageFormat::D32_SFLOAT;
-    depth_data_ = std::vector<float>(width_ * height_ * 1 * sizeof(float), 0.f);
+    depth_data_ = std::vector<float>(width_ * height_ * 1 * sizeof(float), 0.F);
   } else {
     color_format = image_format;
     depth_format = viz::ImageFormat::D32_SFLOAT;
     SetupData(image_format);
-    depth_data_ = std::vector<float>(width_ * height_ * 1 * sizeof(float), 0.f);
+    depth_data_ = std::vector<float>(width_ * height_ * 1 * sizeof(float), 0.F);
   }
 
   std::vector<uint32_t> lut;
@@ -522,7 +522,7 @@ TEST_P(ImageLayer, Image) {
             break;
           case viz::ImageFormat::R32_SFLOAT:
             lut_index =
-                static_cast<uint32_t>(reinterpret_cast<float*>(color_data_.data())[index] + 0.5f);
+                static_cast<uint32_t>(reinterpret_cast<float*>(color_data_.data())[index] + 0.5F);
             break;
           default:
             ASSERT_TRUE(false) << "Unhandled LUT image format";
@@ -539,19 +539,19 @@ TEST_P(ImageLayer, Image) {
             offset = color_data_[index];
             break;
           case viz::ImageFormat::R8_UNORM:
-            offset = (static_cast<float>(color_data_[index]) / 255.f) * (lut_size_ - 1);
+            offset = (static_cast<float>(color_data_[index]) / 255.F) * (lut_size_ - 1);
             break;
           case viz::ImageFormat::R8_SNORM:
-            offset = (static_cast<float>(color_data_[index]) / 127.f) * (lut_size_ - 1);
+            offset = (static_cast<float>(color_data_[index]) / 127.F) * (lut_size_ - 1);
             break;
           case viz::ImageFormat::R16_UNORM:
             offset = (static_cast<float>(reinterpret_cast<uint16_t*>(color_data_.data())[index]) /
-                      65535.f) *
+                      65535.F) *
                      (lut_size_ - 1);
             break;
           case viz::ImageFormat::R16_SNORM:
             offset = (static_cast<float>(reinterpret_cast<int16_t*>(color_data_.data())[index]) /
-                      32767.f) *
+                      32767.F) *
                      (lut_size_ - 1);
             break;
           case viz::ImageFormat::R32_SFLOAT:
@@ -567,7 +567,7 @@ TEST_P(ImageLayer, Image) {
         const uint32_t val1 = lut[std::max(
             0,
             std::min(int32_t(lut_size_) - 1,
-                     int32_t((offset + (1.0f / float(lut_size_))) * (lut_size_ - 1))))];
+                     int32_t((offset + (1.0F / float(lut_size_))) * (lut_size_ - 1))))];
         float dummy;
         const float frac = std::modf(offset, &dummy);
 
@@ -587,8 +587,8 @@ TEST_P(ImageLayer, Image) {
         const float a = a0 + frac * (a1 - a0);
 
         reinterpret_cast<uint32_t*>(converted_data.data())[index] =
-            uint32_t(r + 0.5f) | (uint32_t(g + 0.5f) << 8) | (uint32_t(b + 0.5f) << 16) |
-            (uint32_t(a + 0.5f) << 24);
+            uint32_t(r + 0.5F) | (uint32_t(g + 0.5F) << 8) | (uint32_t(b + 0.5F) << 16) |
+            (uint32_t(a + 0.5F) << 24);
       }
     }
   } else if (convert_color) {
@@ -630,23 +630,23 @@ TEST_P(ImageLayer, Image) {
         case viz::ImageFormat::R8G8B8_SNORM:
         case viz::ImageFormat::R8G8B8A8_SNORM:
           converted_data[index] = uint8_t(
-              (float(reinterpret_cast<int8_t*>(color_data_.data())[index]) / 127.f) * 255.f + 0.5f);
+              (float(reinterpret_cast<int8_t*>(color_data_.data())[index]) / 127.F) * 255.F + 0.5F);
           break;
         case viz::ImageFormat::R16_UNORM:
         case viz::ImageFormat::R16G16B16A16_UNORM:
           converted_data[index] = uint8_t(
-              (float(reinterpret_cast<uint16_t*>(color_data_.data())[index]) / 65535.f) * 255.f +
-              0.5f);
+              (float(reinterpret_cast<uint16_t*>(color_data_.data())[index]) / 65535.F) * 255.F +
+              0.5F);
           break;
         case viz::ImageFormat::R16_SNORM:
         case viz::ImageFormat::R16G16B16A16_SNORM:
           converted_data[index] = uint8_t(
-              (float(reinterpret_cast<int16_t*>(color_data_.data())[index]) / 32767.f) * 255.f +
-              0.5f);
+              (float(reinterpret_cast<int16_t*>(color_data_.data())[index]) / 32767.F) * 255.F +
+              0.5F);
           break;
         case viz::ImageFormat::R32_SFLOAT:
           converted_data[index] =
-              uint8_t(reinterpret_cast<float*>(color_data_.data())[index] * 255.f + 0.5f);
+              uint8_t(reinterpret_cast<float*>(color_data_.data())[index] * 255.F + 0.5F);
           break;
         case viz::ImageFormat::R8_SRGB:
         case viz::ImageFormat::R8G8B8_SRGB:
@@ -665,20 +665,20 @@ TEST_P(ImageLayer, Image) {
           const uint32_t value = reinterpret_cast<uint32_t*>(color_data_.data())[index / 4];
           const uint32_t component = index % 4;
           if (component == 3) {
-            converted_data[index] = uint8_t((float(value >> 30) / 3.f) * 255.f + 0.5f);
+            converted_data[index] = uint8_t((float(value >> 30) / 3.F) * 255.F + 0.5F);
           } else {
             converted_data[index] =
-                uint8_t((float((value >> (component * 10)) & 0x3FF) / 1023.f) * 255.f + 0.5f);
+                uint8_t((float((value >> (component * 10)) & 0x3FF) / 1023.F) * 255.F + 0.5F);
           }
         } break;
         case viz::ImageFormat::A2R10G10B10_UNORM_PACK32: {
           const uint32_t value = reinterpret_cast<uint32_t*>(color_data_.data())[index / 4];
           const uint32_t component = index % 4;
           if (component == 3) {
-            converted_data[index] = uint8_t((float(value >> 30) / 3.f) * 255.f + 0.5f);
+            converted_data[index] = uint8_t((float(value >> 30) / 3.F) * 255.F + 0.5F);
           } else {
             converted_data[index] =
-                uint8_t((float((value >> ((2 - component) * 10)) & 0x3FF) / 1023.f) * 255.f + 0.5f);
+                uint8_t((float((value >> ((2 - component) * 10)) & 0x3FF) / 1023.F) * 255.F + 0.5F);
           }
         } break;
         default:
@@ -696,13 +696,13 @@ TEST_P(ImageLayer, Image) {
       case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
         for (size_t index = 0; index < elements; index += components) {
           for (size_t component = 0; component < components; ++component) {
-            float value = float(converted_data[index + component]) / 255.f;
-            if (value < 0.04045f) {
-              value /= 12.92f;
+            float value = float(converted_data[index + component]) / 255.F;
+            if (value < 0.04045F) {
+              value /= 12.92F;
             } else {
-              value = std::pow(((value + 0.055f) / 1.055f), 2.4f);
+              value = std::pow(((value + 0.055F) / 1.055F), 2.4F);
             }
-            converted_data[index + component] = uint8_t((value * 255.f) + 0.5f);
+            converted_data[index + component] = uint8_t((value * 255.F) + 0.5F);
           }
         }
         break;
@@ -1207,10 +1207,10 @@ TEST_P(ImageLayerSwizzle, Swizzle) {
       }
     }
     if (pixel[3] != 0xFF) {
-      float alpha = float(pixel[3]) / 255.f;
-      color_data_[index * 4 + 0] = uint8_t(float(pixel[0]) * alpha + 0.5f);
-      color_data_[index * 4 + 1] = uint8_t(float(pixel[1]) * alpha + 0.5f);
-      color_data_[index * 4 + 2] = uint8_t(float(pixel[2]) * alpha + 0.5f);
+      float alpha = float(pixel[3]) / 255.F;
+      color_data_[index * 4 + 0] = uint8_t(float(pixel[0]) * alpha + 0.5F);
+      color_data_[index * 4 + 1] = uint8_t(float(pixel[1]) * alpha + 0.5F);
+      color_data_[index * 4 + 2] = uint8_t(float(pixel[2]) * alpha + 0.5F);
       color_data_[index * 4 + 3] = pixel[3];
     } else {
       color_data_[index * 4 + 0] = pixel[0];

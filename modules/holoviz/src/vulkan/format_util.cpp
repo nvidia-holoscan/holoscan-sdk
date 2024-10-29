@@ -30,7 +30,7 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::R8_UNORM:
     case ImageFormat::R8_SNORM:
     case ImageFormat::R8_SRGB:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R16_UINT:
@@ -38,7 +38,7 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::R16_UNORM:
     case ImageFormat::R16_SNORM:
     case ImageFormat::R16_SFLOAT:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::R32_UINT:
@@ -46,18 +46,18 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     // packed formats are treated as single component formats
     case ImageFormat::A2B10G10R10_UNORM_PACK32:
     case ImageFormat::A2R10G10B10_UNORM_PACK32:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint32_t);
       break;
     case ImageFormat::R32_SFLOAT:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(float);
       break;
     case ImageFormat::R8G8B8_UNORM:
     case ImageFormat::R8G8B8_SNORM:
     case ImageFormat::R8G8B8_SRGB:
-      *channels = 3u;
-      *hw_channels = 4u;
+      *channels = 3U;
+      *hw_channels = 4U;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R8G8B8A8_UNORM:
@@ -67,41 +67,41 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::B8G8R8A8_SRGB:
     case ImageFormat::A8B8G8R8_UNORM_PACK32:
     case ImageFormat::A8B8G8R8_SRGB_PACK32:
-      *channels = *hw_channels = 4u;
+      *channels = *hw_channels = 4U;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::R16G16B16A16_UNORM:
     case ImageFormat::R16G16B16A16_SNORM:
     case ImageFormat::R16G16B16A16_SFLOAT:
-      *channels = *hw_channels = 4u;
+      *channels = *hw_channels = 4U;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::R32G32B32A32_SFLOAT:
-      *channels = *hw_channels = 4u;
+      *channels = *hw_channels = 4U;
       *component_size = sizeof(float);
       break;
     case ImageFormat::D16_UNORM:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::X8_D24_UNORM:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint32_t);
       break;
     case ImageFormat::D32_SFLOAT:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint32_t);
       break;
     case ImageFormat::Y8U8Y8V8_422_UNORM:
     case ImageFormat::U8Y8V8Y8_422_UNORM:
-      *channels = *hw_channels = 2u;
+      *channels = *hw_channels = 2U;
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
       if (plane == 0) {
-        *channels = *hw_channels = 1u;
+        *channels = *hw_channels = 1U;
       } else if (plane == 1) {
-        *channels = *hw_channels = 2u;
+        *channels = *hw_channels = 2U;
         if (width_divisor) { *width_divisor = 2; }
         if (height_divisor) { *height_divisor = 2; }
       } else {
@@ -111,9 +111,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       break;
     case ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
       if (plane == 0) {
-        *channels = *hw_channels = 1u;
+        *channels = *hw_channels = 1U;
       } else if (plane == 1) {
-        *channels = *hw_channels = 2u;
+        *channels = *hw_channels = 2U;
         if (width_divisor) { *width_divisor = 2; }
       } else {
         throw std::invalid_argument("Unhandled plane index");
@@ -121,7 +121,7 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *component_size = sizeof(uint8_t);
       break;
     case ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint8_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
@@ -132,7 +132,7 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       }
       break;
     case ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint8_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
@@ -143,9 +143,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       break;
     case ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
       if (plane == 0) {
-        *channels = *hw_channels = 1u;
+        *channels = *hw_channels = 1U;
       } else if (plane == 1) {
-        *channels = *hw_channels = 2u;
+        *channels = *hw_channels = 2U;
         if (width_divisor) { *width_divisor = 2; }
         if (height_divisor) { *height_divisor = 2; }
       } else {
@@ -155,9 +155,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       break;
     case ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
       if (plane == 0) {
-        *channels = *hw_channels = 1u;
+        *channels = *hw_channels = 1U;
       } else if (plane == 1) {
-        *channels = *hw_channels = 2u;
+        *channels = *hw_channels = 2U;
         if (width_divisor) { *width_divisor = 2; }
       } else {
         throw std::invalid_argument("Unhandled plane index");
@@ -165,7 +165,7 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *component_size = sizeof(uint16_t);
       break;
     case ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
@@ -176,7 +176,7 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       }
       break;
     case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
-      *channels = *hw_channels = 1u;
+      *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {

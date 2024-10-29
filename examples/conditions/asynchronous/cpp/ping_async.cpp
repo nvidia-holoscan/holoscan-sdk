@@ -60,7 +60,7 @@ class App : public holoscan::Application {
   bool async_transmit_ = false;
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<App>();
 
   // Get the configuration
@@ -69,12 +69,12 @@ int main(int argc, char** argv) {
   app->config(config_path);
 
   // set customizable application parameters via the YAML
-  bool async_receive = app->from_config("async_receive").as<bool>();
-  bool async_transmit = app->from_config("async_transmit").as<bool>();
+  auto async_receive = app->from_config("async_receive").as<bool>();
+  auto async_transmit = app->from_config("async_transmit").as<bool>();
   app->set_async_receive(async_receive);
   app->set_async_transmit(async_transmit);
 
-  std::string scheduler = app->from_config("scheduler").as<std::string>();
+  auto scheduler = app->from_config("scheduler").as<std::string>();
   holoscan::ArgList scheduler_args{holoscan::Arg("stop_on_deadlock", true),
                                    holoscan::Arg("stop_on_deadlock_timeout", 500L)};
   if (scheduler == "multi_thread") {

@@ -52,7 +52,8 @@ class AsyncPingTxOp : public Operator {
   void setup(OperatorSpec& spec) override;
   void initialize() override;
   void start() override;
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override;
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override;
   void stop() override;
 
   void async_ping();

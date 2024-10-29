@@ -93,7 +93,23 @@ gxf_result_t CudaStreamHandler::fromMessage(
 }
 
 gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
-                                              const std::vector<nvidia::gxf::Entity>& messages) {
+                           const std::vector<holoscan::gxf::Entity>& messages) {
+  // call the common internal version using the pointer to the vector data, this only works
+  // if the size of the nvidia and holoscan gxf::Entity versions is identical
+  static_assert(sizeof(holoscan::gxf::Entity) == sizeof(nvidia::gxf::Entity));
+  return from_messages(context, messages.size(), messages.data());
+}
+
+gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
+                           const std::vector<nvidia::gxf::Entity>& messages) {
+  // call the common internal version using the pointer to the vector data, this only works
+  // if the size of the nvidia and holoscan gxf::Entity versions is identical
+  static_assert(sizeof(holoscan::gxf::Entity) == sizeof(nvidia::gxf::Entity));
+  return from_messages(context, messages.size(), messages.data());
+}
+
+gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context, size_t message_count,
+                                              const nvidia::gxf::Entity* messages) {
   const gxf_result_t result = allocate_internal_stream(context);
   if (result != GXF_SUCCESS) { return result; }
 
@@ -107,8 +123,8 @@ gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
   // iterate through all messages and use events to chain incoming streams with the internal
   // stream
   auto event_it = cuda_events_.begin();
-  for (auto& msg : messages) {
-    const auto maybe_cuda_stream_id = msg.get<nvidia::gxf::CudaStreamId>();
+  for (size_t index = 0; index < message_count; ++index) {
+    const auto maybe_cuda_stream_id = messages[index].get<nvidia::gxf::CudaStreamId>();
     if (maybe_cuda_stream_id) {
       const auto maybe_cuda_stream_handle = nvidia::gxf::Handle<nvidia::gxf::CudaStream>::Create(
           context, maybe_cuda_stream_id.value()->stream_cid);

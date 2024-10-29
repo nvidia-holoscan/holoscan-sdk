@@ -65,17 +65,19 @@ set(CPACK_COMPONENTS_ALL
 # - cuda-cudart-dev: needed for holoscan core and some operators
 #   Note: only cuda-cudart (non dev) needed at runtime
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-  "cuda-nvcc-12-2 | cuda-nvcc-12-9 | cuda-nvcc-12-8 | cuda-nvcc-12-7 | cuda-nvcc-12-6 | cuda-nvcc-12-5 | cuda-nvcc-12-4 | cuda-nvcc-12-3 | cuda-nvcc-12-1 | cuda-nvcc-12-0, \
-  cuda-cudart-dev-12-2 | libcudart.so.12-dev"
+  "cuda-nvcc-12-6 | cuda-nvcc-12-9 | cuda-nvcc-12-8 | cuda-nvcc-12-7 | cuda-nvcc-12-5 | cuda-nvcc-12-4 | cuda-nvcc-12-3 | cuda-nvcc-12-2 |cuda-nvcc-12-1 | cuda-nvcc-12-0, \
+  cuda-cudart-dev-12-6 | libcudart.so.12-dev"
 )
-# - libnvinfer-bin: meta package including required nvinfer libs, cublas, and cudnn.
+
+# Recommended packages for core runtime functionality:
+# - libnvinfer-bin: meta package including required nvinfer libs.
 #   Needed for all inference backends
-#   Note: only libnvonnxparsers and libnvinfer-plugin needed at runtime
-# - libcublas: needed by all inference backends
+#   Note: only libnvinfer, libnvonnxparsers, libnvinfer-plugin needed at runtime
+# - libcublas: needed by CuPy, libtorch, and OnnxRuntime
 #   Note: also a dependency of the libnvinfer packages
 # - cuda-nvrtc: libtorch & CuPy dependency
 #   Note: also a dependency of cuda-nvcc
-#   Note: should be able to use libnvrtc.so.12, but doesn't work
+#   Note: should be able to use libnvrtc.so.12, but doesn't work as of Holoscan SDK 2.4
 # - libcufft: needed by cupy and OnnxRuntime inference backend
 # - libcurand: needed by libtorch and cupy
 # - libcusolver: needed by cupy
@@ -83,22 +85,26 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
 # - libnpp-dev: needed for format_converter and bayer_demosaic operators
 #   Note: only libnpp (non dev) needed at runtime
 # - libnvjitlink: needed by cupy
+# - nccl2: needed by cupy and Torch
 # - libgomp1: needed by cupy
 # - libvulkan1: needed for holoviz operator
 # - libegl1: needed for holoviz operator in headless mode
 # - libv4l-0: needed for v4l2 operator
 # - python3-cloudpickle: needed for python distributed applications
 # - python3-pip: needed for holoscan CLI (packager, runner)
+# - libnuma1: needed for holoscan::core on ARM64
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
-libnvinfer-bin (>=8.6), libnvinfer-bin (<<9), \
-libcublas-12-2 | libcublas.so.12, \
-cuda-nvrtc-12-2 | cuda-nvrtc-12-9 | cuda-nvrtc-12-8 | cuda-nvrtc-12-7 | cuda-nvrtc-12-6 | cuda-nvrtc-12-5 | cuda-nvrtc-12-4 | cuda-nvrtc-12-3 | cuda-nvrtc-12-1 | cuda-nvrtc-12-0, \
-libcufft-12-2 | libcufft.so.11, \
-libcurand-12-2 | libcurand.so.10, \
-libcusolver-12-2 | libcusolver.so.11, \
-libcusparse-12-2 | libcusparse.so.12, \
-libnpp-dev-12-2 | libnpp.so.12-dev, \
-libnvjitlink-12-2 | libnvjitlink.so.12, \
+libnvinfer-bin (>=10.3), \
+libcublas-12-6 | libcublas.so.12, \
+cudnn9-cuda-12-6 | libcudnn.so.9, \
+cuda-nvrtc-12-6 | cuda-nvrtc-12-9 | cuda-nvrtc-12-8 | cuda-nvrtc-12-7 | cuda-nvrtc-12-5 | cuda-nvrtc-12-4 | cuda-nvrtc-12-3 | cuda-nvrtc-12-2 | cuda-nvrtc-12-1 | cuda-nvrtc-12-0, \
+libcufft-12-6 | libcufft.so.11, \
+libcurand-12-6 | libcurand.so.10, \
+libcusolver-12-6 | libcusolver.so.11, \
+libcusparse-12-6 | libcusparse.so.12, \
+libnpp-dev-12-6 | libnpp.so.12-dev, \
+libnvjitlink-12-6 | libnvjitlink.so.12, \
+libnccl2 | libnccl.so.2, \
 libgomp1, \
 libvulkan1, \
 libegl1, \
@@ -106,9 +112,27 @@ libv4l-0, \
 python3-cloudpickle, \
 python3-pip"
 )
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "${CPACK_DEBIAN_PACKAGE_RECOMMENDS}, \
+libnuma1")
+endif()
+
+# Packages for optional features:
+# - libcupti: needed for Torch inference backend
+# - libnvToolsExt: needed for Torch inference backend
+# - libcudnn: needed for Torch and OnnxRuntime
+# - libcusparselt: needed for Torch inference backend
 # - libpng, libjpeg, libopenblas: needed for Torch inference backend.
 # - libjpeg needed by v4l2 for mjpeg support
-set(CPACK_DEBIAN_PACKAGE_SUGGESTS "libpng16-16, libjpeg-turbo8, libopenblas0")
+set(CPACK_DEBIAN_PACKAGE_SUGGESTS "\
+cuda-cupti-12-6 | libcupti.so.12, \
+cuda-nvtx-12-6 | libnvToolsExt.so.1, \
+libcudnn9-cuda-12 | libcudnn.so.9, \
+libcusparselt0 | libcusparselt.so.0, \
+libpng16-16, \
+libjpeg-turbo8, \
+libopenblas0"
+)
 
 include(CPack)
 

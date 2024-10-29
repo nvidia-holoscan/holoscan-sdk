@@ -159,6 +159,11 @@ void InferenceOp::setup(OperatorSpec& spec) {
              DataVecMap());
   spec.param(in_tensor_names_, "in_tensor_names", "Input Tensors", "Input tensors", {});
   spec.param(out_tensor_names_, "out_tensor_names", "Output Tensors", "Output tensors", {});
+  spec.param(trt_opt_profile_,
+             "trt_opt_profile",
+             "TensorRT Opt Profile",
+             "Optimization profile for input tensors",
+             {1, 1, 1});
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
   spec.param(infer_on_cpu_, "infer_on_cpu", "Inference on CPU", "Use CPU.", false);
   spec.param(is_engine_path_, "is_engine_path", "Input path is engine file", "", false);
@@ -206,6 +211,7 @@ void InferenceOp::start() {
                                                     device_map_.get().get_map(),
                                                     temporal_map_.get().get_map(),
                                                     activation_map_.get().get_map(),
+                                                    trt_opt_profile_.get(),
                                                     is_engine_path_.get(),
                                                     infer_on_cpu_.get(),
                                                     parallel_inference_.get(),
@@ -233,6 +239,7 @@ void InferenceOp::start() {
 }
 
 void InferenceOp::stop() {
+  inference_specs_.reset();
   holoscan_infer_context_.reset();
 }
 
@@ -273,7 +280,8 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
 
     inference_specs_->set_activation_map(activation_map_.get().get_map());
 
-    auto status = holoscan_infer_context_->execute_inference(inference_specs_);
+    auto status = holoscan_infer_context_->execute_inference(
+        inference_specs_, cuda_stream_handler_.get_cuda_stream(cont));
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, "Inference Operator: Inference execution");
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {

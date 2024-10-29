@@ -32,27 +32,24 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/operators/inference_processor/inference_processor.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
 namespace holoscan::ops {
 
-InferenceProcessorOp::DataMap _dict_to_processor_datamap(py::dict dict) {
+InferenceProcessorOp::DataMap _dict_to_processor_datamap(const py::dict& dict) {
   InferenceProcessorOp::DataMap data_map;
-  for (auto& [key, value] : dict) {
+  for (const auto& [key, value] : dict) {
     data_map.insert(key.cast<std::string>(), value.cast<std::string>());
   }
   return data_map;
 }
 
-InferenceProcessorOp::DataVecMap _dict_to_processor_datavecmap(py::dict dict) {
+InferenceProcessorOp::DataVecMap _dict_to_processor_datavecmap(const py::dict& dict) {
   InferenceProcessorOp::DataVecMap data_vec_map;
-  for (auto& [key, value] : dict) {
+  for (const auto& [key, value] : dict) {
     data_vec_map.insert(key.cast<std::string>(), value.cast<std::vector<std::string>>());
   }
   return data_vec_map;
@@ -76,15 +73,15 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
   // Define a constructor that fully initializes the object.
   PyInferenceProcessorOp(Fragment* fragment, const py::args& args,
                          std::shared_ptr<::holoscan::Allocator> allocator,
-                         py::dict process_operations,  // InferenceProcessorOp::DataVecMap
-                         py::dict processed_map,       // InferenceProcessorOp::DataVecMap
+                         const py::dict& process_operations,  // InferenceProcessorOp::DataVecMap
+                         const py::dict& processed_map,       // InferenceProcessorOp::DataVecMap
                          const std::vector<std::string>& in_tensor_names,
                          const std::vector<std::string>& out_tensor_names,
                          bool input_on_cuda = false, bool output_on_cuda = false,
                          bool transmit_on_cuda = false, bool disable_transmitter = false,
                          std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
-                         const std::string& config_path = std::string(""),
-                         const std::string& name = "postprocessor")
+                         const std::string& config_path = ""s,
+                         const std::string& name = "postprocessor"s)
       : InferenceProcessorOp(ArgList{Arg{"allocator", allocator},
                                      Arg{"in_tensor_names", in_tensor_names},
                                      Arg{"out_tensor_names", out_tensor_names},
@@ -105,8 +102,8 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
 
     // Workaround to maintain backwards compatibility with the v0.5 API:
     // convert any single str values to List[str].
-    py::dict processed_map_dict = processed_map.cast<py::dict>();
-    for (auto& [key, value] : processed_map_dict) {
+    auto processed_map_dict = processed_map.cast<py::dict>();
+    for (const auto& [key, value] : processed_map_dict) {
       if (py::isinstance<py::str>(value)) {
         // warn about deprecated non-list input
         auto key_str = key.cast<std::string>();
@@ -131,7 +128,7 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
 
     spec_ = std::make_shared<OperatorSpec>(fragment);
 
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

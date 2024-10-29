@@ -102,7 +102,18 @@ class CudaStreamHandler {
                            const nvidia::gxf::Expected<nvidia::gxf::Entity>& message);
 
   /**
-   * Get the CUDA stream for the operation from the incoming messages
+   * Get the CUDA stream for the operation from the incoming messages (holoscan::gxf::Entity
+   * variant)
+   *
+   * @param context
+   * @param messages
+   * @return gxf_result_t
+   */
+  gxf_result_t from_messages(gxf_context_t context,
+                             const std::vector<holoscan::gxf::Entity>& messages);
+
+  /**
+   * Get the CUDA stream for the operation from the incoming messages (nvidia::gxf::Entity variant)
    *
    * @param context
    * @param messages
@@ -192,6 +203,9 @@ class CudaStreamHandler {
    * @return gxf_result_t
    */
   gxf_result_t allocate_internal_stream(gxf_context_t context);
+
+  gxf_result_t from_messages(gxf_context_t context, size_t message_count,
+                             const nvidia::gxf::Entity* messages);
 
   /// if set then it's required that the CUDA stream pool is specified, if this is not the case
   /// an error is generated

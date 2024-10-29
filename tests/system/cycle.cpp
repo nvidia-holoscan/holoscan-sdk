@@ -59,7 +59,8 @@ class OneOutOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<gxf::Entity>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext& context) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
     auto out_message = gxf::Entity::New(&context);
     op_output.emit(out_message);
 

@@ -87,7 +87,8 @@ class PyOperator : public Operator {
 
   // Define a kwargs-based constructor that can create an ArgList
   // for passing on to the variadic-template based constructor.
-  PyOperator(py::object op, Fragment* fragment, const py::args& args, const py::kwargs& kwargs);
+  PyOperator(const py::object& op, Fragment* fragment, const py::args& args,
+             const py::kwargs& kwargs);
 
   // Override spec() method
   std::shared_ptr<PyOperatorSpec> py_shared_spec();
@@ -150,11 +151,11 @@ class PyOperator : public Operator {
                ExecutionContext& context) override;
 
  private:
-  py::object py_op_ = py::none();
-  py::object py_initialize_ = py::none();
-  py::object py_start_ = py::none();
-  py::object py_stop_ = py::none();
-  py::object py_compute_ = py::none();
+  py::object py_op_ = py::none();          ///> cache the Python operator
+  py::object py_initialize_ = py::none();  ///> cache the initialize method
+  py::object py_start_ = py::none();       ///> cache the start method
+  py::object py_stop_ = py::none();        ///> cache the stop method
+  py::object py_compute_ = py::none();     ///> cache the compute method
 
   /// Python application pointer to access the trace/profile functions
   PyApplication* py_app_ = nullptr;

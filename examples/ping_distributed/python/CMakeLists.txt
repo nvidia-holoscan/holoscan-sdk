@@ -39,16 +39,16 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-  add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST
-    COMMAND python3 ping_distributed.py
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
-    FAIL_REGULAR_EXPRESSION "AssertionError:"
-    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
-    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
-  )
+add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST
+COMMAND python3 ping_distributed.py
+WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST PROPERTIES
+PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+FAIL_REGULAR_EXPRESSION "AssertionError:"
+FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
+)
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST
     COMMAND python3 ping_distributed.py --gpu
@@ -59,6 +59,17 @@ if(HOLOSCAN_BUILD_TESTS)
     FAIL_REGULAR_EXPRESSION "AssertionError:"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
     FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
+  )
+
+  add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_FLOW_TRACKING_TEST
+    COMMAND python3 ping_distributed.py --track
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_FLOW_TRACKING_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
+    PASS_REGULAR_EXPRESSION "Data Flow Tracking Results"
+    PASS_REGULAR_EXPRESSION "Fragment: fragment2"
+    PASS_REGULAR_EXPRESSION "Fragment: fragment1"
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST

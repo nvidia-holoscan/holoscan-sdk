@@ -50,20 +50,20 @@ void main()
   } else {
     if ((push_constants.fragment.flags & PUSH_CONSTANT_FRAGMENT_FLAG_LUT) != 0) {
       const float index = texture(colorSampler, i_texCoord).x;
-      color = textureLod(lutSampler, vec2(index, 0.f), 0);
+      color = textureLod(lutSampler, vec2(index, 0.F), 0);
     } else if ((push_constants.fragment.flags & PUSH_CONSTANT_FRAGMENT_FLAG_LUT_U) != 0) {
       const uint index = texture(coloruSampler, i_texCoord).x;
-      color = textureLod(lutSampler, vec2(float(index), 0.f), 0);
+      color = textureLod(lutSampler, vec2(float(index), 0.F), 0);
     } else if ((push_constants.fragment.flags & PUSH_CONSTANT_FRAGMENT_FLAG_LUT_S) != 0) {
       const uint index = texture(coloriSampler, i_texCoord).x;
-      color = textureLod(lutSampler, vec2(float(index), 0.f), 0);
+      color = textureLod(lutSampler, vec2(float(index), 0.F), 0);
     }
   }
 
   color.a *= push_constants.fragment.opacity;
 
   // discard transparent fragments
-  if (color.a == 0.f)
+  if (color.a == 0.F)
       discard;
 
   o_color = color;

@@ -23,6 +23,8 @@
 #include <thread>
 #include <utility>
 
+#include <gxf/ucx/ucx_serialization_buffer.hpp>
+
 #include "holoscan/utils/timer.hpp"
 
 namespace nvidia {
@@ -55,6 +57,9 @@ Expected<void> UcxHoloscanComponentSerializer::configureSerializers() {
         return serializeMetadataDictionary(*static_cast<holoscan::MetadataDictionary*>(component),
                                            endpoint);
       });
+  result &= setSerializer<holoscan::MessageLabel>([this](void* component, Endpoint* endpoint) {
+    return serializeMessageLabel(*static_cast<holoscan::MessageLabel*>(component), endpoint);
+  });
   return result;
 }
 
@@ -69,6 +74,11 @@ Expected<void> UcxHoloscanComponentSerializer::configureDeserializers() {
         return deserializeMetadataDictionary(endpoint).assign_to(
             *static_cast<holoscan::MetadataDictionary*>(component));
       });
+
+  result &= setDeserializer<holoscan::MessageLabel>([this](void* component, Endpoint* endpoint) {
+    return deserializeMessageLabel(endpoint).assign_to(
+        *static_cast<holoscan::MessageLabel*>(component));
+  });
   return result;
 }
 
@@ -183,6 +193,111 @@ UcxHoloscanComponentSerializer::deserializeMetadataDictionary(Endpoint* endpoint
     metadata.set(maybe_key.value(), std::make_shared<holoscan::Message>(maybe_value.value()));
   }
   return metadata;
+}
+
+Expected<size_t> UcxHoloscanComponentSerializer::serializeMessageLabel(
+    const holoscan::MessageLabel& messagelabel, Endpoint* endpoint) {
+  GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::serializeMessageLabel");
+  size_t total_size = 0;
+
+  // Get the total number of paths in message label and write it first
+  int total_paths = messagelabel.num_paths();
+  auto maybe_size = endpoint->writeTrivialType<int>(&total_paths);
+  if (!maybe_size) { return ForwardError(maybe_size); }
+  total_size += maybe_size.value();
+
+  // for every path in message label, write the number of operators in the path first.
+  // then, write all operator timestamps in a path
+  for (const auto& path : messagelabel.paths()) {
+    uint32_t num_operators = path.size();
+    maybe_size = endpoint->writeTrivialType<uint32_t>(&num_operators);
+    if (!maybe_size) { return ForwardError(maybe_size); }
+    total_size += maybe_size.value();
+    for (const auto& optimestamp : path) {
+      maybe_size = serializeOperatorTimestampLabel(optimestamp, endpoint);
+      if (!maybe_size) { return ForwardError(maybe_size); }
+      total_size += maybe_size.value();
+    }
+  }
+  // check the total_size <= 8KB - This is an UCX transfer limitation for non-tensor data
+  auto ucx_buf = dynamic_cast<nvidia::gxf::UcxSerializationBuffer*>(endpoint);
+  if (!ucx_buf) {
+    GXF_LOG_ERROR("Dynamic cast of Endpoint* to nvidia::gxf::UcxSerializationBuffer* failed");
+    return Unexpected{GXF_FAILURE};
+  }
+  size_t buffer_capacity = ucx_buf->capacity();
+  if (total_size > buffer_capacity) {
+    GXF_LOG_ERROR(
+        "MessageLabel size of %zu bytes exceeds the current UCX serialization buffer capacity of "
+        "%zu bytes. You can try to increase the buffer capacity by setting the "
+        "HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE environment variable, but the limit it is "
+        "possible to set will depend on the maximum header size supported by the underlying "
+        "ucp_send_am_nbx function of UCX.",
+        total_size,
+        buffer_capacity);
+    return Unexpected{GXF_FAILURE};
+  }
+  return total_size;
+}
+
+Expected<holoscan::MessageLabel> UcxHoloscanComponentSerializer::deserializeMessageLabel(
+    Endpoint* endpoint) {
+  GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::deserializeHoloscanMessageLabel");
+  holoscan::MessageLabel messagelabel;
+
+  int total_paths;
+  auto size = endpoint->readTrivialType<int>(&total_paths);
+  if (!size) { return ForwardError(size); }
+  for (int i = 0; i < total_paths; i++) {
+    uint32_t num_operators;
+    auto size = endpoint->readTrivialType<uint32_t>(&num_operators);
+    if (!size) { return ForwardError(size); }
+    holoscan::MessageLabel::TimestampedPath path;
+    for (int j = 0; j < num_operators; j++) {
+      auto maybe_optimestamp = deserializeOperatorTimestampLabel(endpoint);
+      if (!maybe_optimestamp) { return ForwardError(maybe_optimestamp); }
+      path.push_back(maybe_optimestamp.value());
+    }
+    messagelabel.add_new_path(path);
+  }
+  return messagelabel;
+}
+
+Expected<size_t> UcxHoloscanComponentSerializer::serializeOperatorTimestampLabel(
+    const holoscan::OperatorTimestampLabel& operatortimestamplabel, Endpoint* endpoint) {
+  GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::serializeOperatorTimestampLabel");
+  auto maybe_size = serialize_string(operatortimestamplabel.operator_name, endpoint);
+  if (!maybe_size) { return ForwardError(maybe_size); }
+  size_t total_size = maybe_size.value();
+  maybe_size = endpoint->writeTrivialType<int64_t>(&operatortimestamplabel.rec_timestamp);
+  if (!maybe_size) { return ForwardError(maybe_size); }
+  total_size += maybe_size.value();
+  maybe_size = endpoint->writeTrivialType<int64_t>(&operatortimestamplabel.pub_timestamp);
+  if (!maybe_size) { return ForwardError(maybe_size); }
+  total_size += maybe_size.value();
+  return total_size;
+}
+
+Expected<holoscan::OperatorTimestampLabel>
+UcxHoloscanComponentSerializer::deserializeOperatorTimestampLabel(Endpoint* endpoint) {
+  GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::deserializeOperatorTimestampLabel");
+  holoscan::OperatorTimestampLabel operatortimestamplabel;
+
+  auto maybe_operator_name = deserialize_string(endpoint);
+  if (!maybe_operator_name) { return ForwardError(maybe_operator_name); }
+  operatortimestamplabel.operator_name = maybe_operator_name.value();
+
+  int64_t maybe_rec_timestamp;
+  auto size = endpoint->readTrivialType<int64_t>(&maybe_rec_timestamp);
+  if (!size) { return ForwardError(size); }
+  operatortimestamplabel.rec_timestamp = maybe_rec_timestamp;
+
+  int64_t maybe_pub_timestamp;
+  size = endpoint->readTrivialType<int64_t>(&maybe_pub_timestamp);
+  if (!size) { return ForwardError(size); }
+  operatortimestamplabel.pub_timestamp = maybe_pub_timestamp;
+
+  return operatortimestamplabel;
 }
 
 }  // namespace gxf

@@ -30,7 +30,7 @@ If not installed, or an older version is installed, you should install the appro
 ```bash
 # You can choose different versions/OS or download directly from the
 # Download Center in the webpage linked above
-MOFED_VERSION="23.10-2.1.3.1"
+MOFED_VERSION="24.07-0.6.1.0"
 OS="ubuntu22.04"
 MOFED_PACKAGE="MLNX_OFED_LINUX-${MOFED_VERSION}-${OS}-$(uname -m)"
 wget --progress=dot:giga https://www.mellanox.com/downloads/ofed/MLNX_OFED-${MOFED_VERSION}/${MOFED_PACKAGE}.tgz

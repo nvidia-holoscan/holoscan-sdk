@@ -81,6 +81,8 @@ in_tensor_names : sequence of str, optional
     Input tensors.
 out_tensor_names : sequence of str, optional
     Output tensors.
+trt_opt_profile : sequence of int, optional
+    TensorRT optimization profile for models with dynamic inputs.
 infer_on_cpu : bool, optional
     Whether to run the computation on the CPU instead of GPU. Default value is ``False``.
 parallel_inference : bool, optional

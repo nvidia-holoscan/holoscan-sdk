@@ -28,11 +28,8 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -54,13 +51,12 @@ class PyPingTensorRxOp : public holoscan::ops::PingTensorRxOp {
 
   // Define a constructor that fully initializes the object.
   PyPingTensorRxOp(Fragment* fragment, const py::args& args,
-                   const std::string& name = "ping_tensor_rx")
-      : PingTensorRxOp() {
+                   const std::string& name = "ping_tensor_rx") {
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

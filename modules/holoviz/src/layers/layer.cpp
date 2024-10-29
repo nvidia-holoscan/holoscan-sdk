@@ -24,7 +24,7 @@ namespace holoscan::viz {
 
 struct Layer::Impl {
   int32_t priority_ = 0;
-  float opacity_ = 1.f;
+  float opacity_ = 1.F;
   std::vector<View> views_;
 };
 
@@ -53,7 +53,7 @@ float Layer::get_opacity() const {
 }
 
 void Layer::set_opacity(float opacity) {
-  if ((opacity < 0.f) || (opacity > 1.f)) {
+  if ((opacity < 0.F) || (opacity > 1.F)) {
     throw std::invalid_argument("Layer opacity should be in the range [0.0 ... 1.0]");
   }
   impl_->opacity_ = opacity;

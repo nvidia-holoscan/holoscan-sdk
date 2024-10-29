@@ -41,7 +41,7 @@ std::string get_full_component_name(gxf_context_t context, gxf_uid_t cid) {
   gxf_uid_t eid;
   HOLOSCAN_GXF_CALL_FATAL(GxfComponentEntity(context, cid, &eid));
   const char* ename;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(context, eid, &ename));
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGetName(context, eid, &ename));
 
   std::stringstream sstream;
   sstream << ename << "/" << cname;

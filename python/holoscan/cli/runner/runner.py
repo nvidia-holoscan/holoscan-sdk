@@ -25,7 +25,7 @@ import tempfile
 from argparse import Namespace
 from glob import glob
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from ..common.dockerutils import create_or_use_network, docker_run, image_exists
 from ..common.exceptions import ManifestReadError, UnmatchedDeviceError
@@ -41,7 +41,7 @@ from .resources import get_shared_memory_size
 logger = logging.getLogger("runner")
 
 
-def _fetch_map_manifest(map_name: str) -> Tuple[dict, dict]:
+def _fetch_map_manifest(map_name: str) -> tuple[dict, dict]:
     """
     Execute HAP/MAP and fetch the manifest files.
 
@@ -164,7 +164,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
     )
 
 
-def _lookup_devices(devices: List[str]) -> List[str]:
+def _lookup_devices(devices: list[str]) -> list[str]:
     """
     Looks up matching devices in /dev and returns a list
     of fully qualified device paths.

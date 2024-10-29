@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,10 +31,10 @@ namespace holoscan {
 
 struct SystemResourceRequirement {
   std::string fragment_name;
-  float cpu = -1.0f;
-  float cpu_limit = -1.0f;
-  float gpu = -1.0f;
-  float gpu_limit = -1.0f;
+  float cpu = -1.0F;
+  float cpu_limit = -1.0F;
+  float gpu = -1.0F;
+  float gpu_limit = -1.0F;
   uint64_t memory = 0;
   uint64_t memory_limit = 0;
   uint64_t shared_memory = 0;

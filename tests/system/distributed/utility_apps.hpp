@@ -42,7 +42,8 @@ class SingleOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.param(id_, "id", "id", "id", 0L); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("SingleOp {}.{}: {} - {}", fragment()->name(), name(), id_.get(), index_++);
     // sleep for 0.1 seconds
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -63,7 +64,8 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<gxf::Entity>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext& context) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
     auto out_message = gxf::Entity::New(&context);
 
     op_output.emit(out_message);
@@ -82,7 +84,8 @@ class PingTxTwoOutputsOp : public Operator {
     spec.output<gxf::Entity>("out2");
   }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext& context) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
     auto out_message1 = gxf::Entity::New(&context);
     auto out_message2 = gxf::Entity::New(&context);
 
@@ -108,7 +111,7 @@ class PingMxOp : public Operator {
     auto in_message = op_input.receive<gxf::Entity>("in");
     auto out_message = gxf::Entity::New(&context);
 
-    // TODO: Send a tensor. For now, the output message is just an empty Entity.
+    // TODO(unknown): Send a tensor. For now, the output message is just an empty Entity.
     // out_message.add(tensor, "tensor");
 
     op_output.emit(out_message);
@@ -124,7 +127,8 @@ class PingRxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.input<gxf::Entity>("in"); }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto in_message = op_input.receive<gxf::Entity>("in");
     HOLOSCAN_LOG_INFO("Rx {}.{} message received count: {}", fragment()->name(), name(), count_++);
   };
@@ -144,7 +148,8 @@ class PingRxTwoInputsOp : public Operator {
     spec.input<gxf::Entity>("in2");
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto in_message1 = op_input.receive<gxf::Entity>("in1");
     auto in_message2 = op_input.receive<gxf::Entity>("in2");
     HOLOSCAN_LOG_INFO("Rx {}.{} message received count: {}", fragment()->name(), name(), count_++);
@@ -164,7 +169,8 @@ class PingMultiReceiversParamRxOp : public Operator {
     spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value_vector = op_input.receive<std::vector<gxf::Entity>>("receivers").value();
     HOLOSCAN_LOG_INFO("RxParam {}.{} message received (count: {}, size: {})",
                       fragment()->name(),

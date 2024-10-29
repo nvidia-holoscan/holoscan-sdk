@@ -401,11 +401,11 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
         physical_device_
             .getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
 
-    HOLOSCAN_LOG_INFO("Using device {}: {} (UUID {:x})",
-                      device_index,
-                      properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName,
-                      fmt::join(properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID,
-                      ""));
+    HOLOSCAN_LOG_INFO(
+        "Using device {}: {} (UUID {:x})",
+        device_index,
+        std::string{properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName},
+        fmt::join(properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID, ""));
 
     // CUDA initialization
     CUuuid cuda_uuid;
@@ -458,7 +458,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     vk::CommandBuffer cmd_buf = cmd_buf_get.createCommandBuffer();
 
     const std::vector<float> vertices{
-        -1.0f, -1.0f, 0.f, 1.0f, -1.0f, 0.f, 1.0f, 1.0f, 0.f, -1.0f, 1.0f, 0.f};
+        -1.0F, -1.0F, 0.F, 1.0F, -1.0F, 0.F, 1.0F, 1.0F, 0.F, -1.0F, 1.0F, 0.F};
     nvvk_.vertex_buffer_ =
         nvvk_.alloc_.createBuffer(cmd_buf, vertices, vk::BufferUsageFlagBits::eVertexBuffer);
     const std::vector<uint16_t> indices{0, 2, 1, 2, 0, 3};
@@ -518,7 +518,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     info.minLod = -1000;
     info.maxLod = 1000;
-    info.maxAnisotropy = 1.0f;
+    info.maxAnisotropy = 1.0F;
     sampler_imgui_ = nvvk_.alloc_.acquireSampler(info);
   }
   nvvk::DescriptorSetBindings desc_set_layout_bind_imgui;
@@ -682,7 +682,7 @@ void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;
     // add the Roboto Bold fond as the default font
-    font_size_in_pixels = 25.f;
+    font_size_in_pixels = 25.F;
     font = io.Fonts->AddFontFromMemoryTTF(
         roboto_bold_ttf, sizeof(roboto_bold_ttf), font_size_in_pixels, &font_config);
     if (!font) { throw std::runtime_error("Failed to add default font."); }
@@ -690,7 +690,7 @@ void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_
 
   // the size of the ImGui default font is 13 pixels, set the global font scale so that the
   // GUI text has the same size as with the default font.
-  io.FontGlobalScale = 13.f / font_size_in_pixels;
+  io.FontGlobalScale = 13.F / font_size_in_pixels;
 
   // build the font atlast
   if (!io.Fonts->Build()) { throw std::runtime_error("Failed to build font atlas."); }
@@ -761,8 +761,8 @@ void Vulkan::Impl::begin_render_pass() {
 
   // Clearing values
   std::array<vk::ClearValue, 2> clear_values;
-  clear_values[0].color = vk::ClearColorValue(std::array<float, 4>({0.f, 0.f, 0.f, 0.f}));
-  clear_values[1].depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
+  clear_values[0].color = vk::ClearColorValue(std::array<float, 4>({0.F, 0.F, 0.F, 0.F}));
+  clear_values[1].depthStencil = vk::ClearDepthStencilValue(1.0F, 0);
 
   // Begin rendering
   vk::RenderPassBeginInfo render_pass_begin_info;
@@ -775,7 +775,7 @@ void Vulkan::Impl::begin_render_pass() {
 
   // set the dynamic viewport
   vk::Viewport viewport{
-      0.0f, 0.0f, static_cast<float>(size_.width), static_cast<float>(size_.height), 0.0f, 1.0f};
+      0.0F, 0.0F, static_cast<float>(size_.width), static_cast<float>(size_.height), 0.0F, 1.0F};
   cmd_buf.setViewport(0, viewport);
 
   vk::Rect2D scissor{{0, 0}, {size_.width, size_.height}};
@@ -1226,7 +1226,7 @@ uint32_t Vulkan::Impl::get_memory_type(uint32_t typeBits,
   }
   std::string err = "Unable to find memory type " + vk::to_string(properties);
   HOLOSCAN_LOG_ERROR("{}", err.c_str());
-  return ~0u;
+  return ~0U;
 }
 
 vk::UniquePipeline Vulkan::Impl::create_pipeline(
@@ -1429,7 +1429,7 @@ void Vulkan::Impl::set_viewport(float x, float y, float width, float height) {
   const vk::CommandBuffer cmd_buf = command_buffers_[get_active_image_index()].get();
 
   vk::Viewport viewport{
-      x * fb_width, y * fb_height, width * fb_width, height * fb_height, 0.0f, 1.0f};
+      x * fb_width, y * fb_height, width * fb_width, height * fb_height, 0.0F, 1.0F};
   cmd_buf.setViewport(0, viewport);
 
   // height can be negative to flip the rendering, but scissor needs to be positive.
@@ -1437,10 +1437,10 @@ void Vulkan::Impl::set_viewport(float x, float y, float width, float height) {
     height = -height;
     y -= height;
   }
-  vk::Rect2D scissor{{std::max(0, static_cast<int32_t>(x * fb_width + .5f)),
-                      std::max(0, static_cast<int32_t>(y * fb_height + .5f))},
-                     {static_cast<uint32_t>(width * fb_width + .5f),
-                      static_cast<uint32_t>(height * fb_height + .5f)}};
+  vk::Rect2D scissor{{std::max(0, static_cast<int32_t>(x * fb_width + .5F)),
+                      std::max(0, static_cast<int32_t>(y * fb_height + .5F))},
+                     {static_cast<uint32_t>(width * fb_width + .5F),
+                      static_cast<uint32_t>(height * fb_height + .5F)}};
   cmd_buf.setScissor(0, scissor);
 }
 
@@ -1513,7 +1513,7 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const vo
 
     const uint32_t src_pitch = width * channels * component_size;
     const uint32_t dst_pitch = width * hw_channels * component_size;
-    const vk::DeviceSize data_size = dst_pitch * height;
+    const vk::DeviceSize data_size = static_cast<uint64_t>(dst_pitch) * height;
 
     void* mapping =
         nvvk_.alloc_.getStaging()->cmdToImage(cmd_buf,
@@ -1942,9 +1942,9 @@ void Vulkan::Impl::draw_imgui(vk::DescriptorSet desc_set, Buffer* vertex_buffer,
                first_index,
                vertex_offset,
                opacity,
-               std::array<float, 4>({1.f, 1.f, 1.f, 1.f}),
-               1.f,
-               0.f,
+               std::array<float, 4>({1.F, 1.F, 1.F, 1.F}),
+               1.F,
+               0.F,
                view_matrix);
 }
 
@@ -1961,7 +1961,7 @@ void Vulkan::Impl::draw_indexed(vk::Pipeline pipeline, vk::PipelineLayout pipeli
     vertex_buffer->access_with_vulkan(nvvk_.batch_submission_);
   }
 
-  if (line_width > 0.f) { cmd_buf.setLineWidth(line_width); }
+  if (line_width > 0.F) { cmd_buf.setLineWidth(line_width); }
 
   if (desc_set) {
     cmd_buf.bindDescriptorSets(

@@ -17,7 +17,7 @@ limitations under the License.
 
 import logging
 import re
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from ..common.constants import Constants, DefaultValues
 from ..common.exceptions import InvalidSharedMemoryValueError
@@ -91,7 +91,7 @@ def _read_shm_size_from_config(pkg_info: dict, worker: bool, driver: bool, fragm
 
 
 def _find_maximum_shared_memory_value_from_matching_fragments(
-    resources_fragments: Dict, fragments: str
+    resources_fragments: dict, fragments: str
 ) -> Optional[float]:
     """Scan matching fragments for the maximum shared memory value.
 
@@ -116,7 +116,7 @@ def _find_maximum_shared_memory_value_from_matching_fragments(
 
 
 def _find_maximum_shared_memory_value_from_all_fragments(
-    resources_fragments: Dict,
+    resources_fragments: dict,
 ) -> Optional[float]:
     """Scan all fragments for the maximum shared memory value.
 

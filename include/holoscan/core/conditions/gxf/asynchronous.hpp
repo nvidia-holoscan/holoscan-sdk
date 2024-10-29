@@ -58,7 +58,6 @@ class AsynchronousCondition : public gxf::GXFCondition {
   AsynchronousCondition(const std::string& name, nvidia::gxf::AsynchronousSchedulingTerm* term);
 
   const char* gxf_typename() const override { return "nvidia::gxf::AsynchronousSchedulingTerm"; }
-  void setup(ComponentSpec& spec) override;
 
   /**
    * @brief Set the condition's asynchronous event state.

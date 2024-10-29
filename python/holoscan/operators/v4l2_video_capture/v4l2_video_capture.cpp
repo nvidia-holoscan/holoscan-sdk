@@ -33,11 +33,8 @@
 #include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
 // #include "holoscan/core/gxf/gxf_operator.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -63,8 +60,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
                        std::shared_ptr<::holoscan::Allocator> allocator,
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
                        uint32_t height = 0, uint32_t num_buffers = 4,
-                       const std::string& pixel_format = "auto",
-                       bool pass_through = false,
+                       const std::string& pixel_format = "auto", bool pass_through = false,
                        const std::string& name = "v4l2_video_capture",
                        std::optional<uint32_t> exposure_time = std::nullopt,
                        std::optional<uint32_t> gain = std::nullopt)
@@ -81,7 +77,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

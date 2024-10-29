@@ -29,8 +29,8 @@
 #include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -43,12 +43,11 @@ class PyStdComponentSerializer : public StdComponentSerializer {
 
   // Define a constructor that fully initializes the object.
   explicit PyStdComponentSerializer(Fragment* fragment,
-                                    const std::string& name = "std_component_serializer")
-      : StdComponentSerializer() {
+                                    const std::string& name = "std_component_serializer") {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -60,13 +59,12 @@ class PyUcxComponentSerializer : public UcxComponentSerializer {
   // Define a constructor that fully initializes the object.
   explicit PyUcxComponentSerializer(Fragment* fragment,
                                     std::shared_ptr<holoscan::Allocator> allocator = nullptr,
-                                    const std::string& name = "ucx_component_serializer")
-      : UcxComponentSerializer() {
+                                    const std::string& name = "ucx_component_serializer") {
     if (allocator) { this->add_arg(Arg{"allocator", allocator}); }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -78,13 +76,12 @@ class PyUcxHoloscanComponentSerializer : public UcxHoloscanComponentSerializer {
   // Define a constructor that fully initializes the object.
   explicit PyUcxHoloscanComponentSerializer(
       Fragment* fragment, std::shared_ptr<holoscan::Allocator> allocator = nullptr,
-      const std::string& name = "ucx_holoscan_component_serializer")
-      : UcxHoloscanComponentSerializer() {
+      const std::string& name = "ucx_holoscan_component_serializer") {
     if (allocator) { this->add_arg(Arg{"allocator", allocator}); }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

@@ -29,7 +29,7 @@ class Layer : public TestHeadless {};
 
 TEST_F(Layer, Opacity) {
   const viz::ImageFormat kFormat = viz::ImageFormat::R8G8B8A8_UNORM;
-  const float opacity = 0.4f;
+  const float opacity = 0.4F;
 
   SetupData(kFormat);
 
@@ -38,7 +38,7 @@ TEST_F(Layer, Opacity) {
   data_with_opacity.resize(width_ * height_ * sizeof(uint32_t));
   for (size_t index = 0; index < width_ * height_ * 4; ++index) {
     data_with_opacity.data()[index] =
-        uint8_t((static_cast<float>(color_data_[index]) / 255.f * opacity) * 255.f + 0.5f);
+        uint8_t((static_cast<float>(color_data_[index]) / 255.F * opacity) * 255.F + 0.5F);
   }
 
   EXPECT_NO_THROW(viz::Begin());
@@ -88,7 +88,7 @@ TEST_F(Layer, Priority) {
 
     std::vector<float> depth_data;
     ReadDepthData(depth_data);
-    EXPECT_EQ(depth_data.data()[0], 0.f);
+    EXPECT_EQ(depth_data.data()[0], 0.F);
   }
 }
 
@@ -103,13 +103,13 @@ TEST_F(Layer, View) {
 
   // top left - red image
   EXPECT_NO_THROW(viz::BeginImageLayer());
-  EXPECT_NO_THROW(viz::LayerAddView(0.f, 0.f, 0.5f, 0.5f));
+  EXPECT_NO_THROW(viz::LayerAddView(0.F, 0.F, 0.5F, 0.5F));
   EXPECT_NO_THROW(viz::ImageHost(1, 1, kFormat, reinterpret_cast<const void*>(&red)));
   EXPECT_NO_THROW(viz::EndLayer());
 
   // top right - green image
   EXPECT_NO_THROW(viz::BeginImageLayer());
-  EXPECT_NO_THROW(viz::LayerAddView(0.5f, 0.0f, 0.5f, 0.5f));
+  EXPECT_NO_THROW(viz::LayerAddView(0.5F, 0.0F, 0.5F, 0.5F));
   EXPECT_NO_THROW(viz::ImageHost(1, 1, kFormat, reinterpret_cast<const void*>(&green)));
   EXPECT_NO_THROW(viz::EndLayer());
 
@@ -118,11 +118,11 @@ TEST_F(Layer, View) {
   // - bottom right, half size - blue triangles
   constexpr uint32_t triangles = 2;
   std::array<float, triangles * 3 * 2> data{
-      0.f, 0.f, 1.f, 0.f, 1.f, 1.f, 0.f, 0.f, 1.f, 1.f, 0.f, 1.f};
+      0.F, 0.F, 1.F, 0.F, 1.F, 1.F, 0.F, 0.F, 1.F, 1.F, 0.F, 1.F};
   EXPECT_NO_THROW(viz::BeginGeometryLayer());
-  EXPECT_NO_THROW(viz::LayerAddView(0.f, 0.5f, 0.5f, .5f));
-  EXPECT_NO_THROW(viz::LayerAddView(0.625f, 0.625f, 0.25f, .25f));
-  EXPECT_NO_THROW(viz::Color(0.f, 0.f, 1.f, 1.f));
+  EXPECT_NO_THROW(viz::LayerAddView(0.F, 0.5F, 0.5F, .5F));
+  EXPECT_NO_THROW(viz::LayerAddView(0.625F, 0.625F, 0.25F, .25F));
+  EXPECT_NO_THROW(viz::Color(0.F, 0.F, 1.F, 1.F));
   EXPECT_NO_THROW(
       viz::Primitive(viz::PrimitiveTopology::TRIANGLE_LIST, triangles, data.size(), data.data()));
   EXPECT_NO_THROW(viz::EndLayer());
@@ -154,26 +154,26 @@ TEST_F(Layer, Errors) {
   EXPECT_THROW(viz::EndLayer(), std::runtime_error);
 
   // it's an error to call layer functions without an active layer
-  EXPECT_THROW(viz::LayerOpacity(1.f), std::runtime_error);
+  EXPECT_THROW(viz::LayerOpacity(1.F), std::runtime_error);
   EXPECT_THROW(viz::LayerPriority(0), std::runtime_error);
-  EXPECT_THROW(viz::LayerAddView(0.f, 0.f, 1.f, 1.f), std::runtime_error);
+  EXPECT_THROW(viz::LayerAddView(0.F, 0.F, 1.F, 1.F), std::runtime_error);
 
   EXPECT_NO_THROW(viz::Begin());
   EXPECT_NO_THROW(viz::BeginImageLayer());
 
   // passing case
-  EXPECT_NO_THROW(viz::LayerOpacity(1.0f));
+  EXPECT_NO_THROW(viz::LayerOpacity(1.0F));
   // it's an error to set negative opacity
-  EXPECT_THROW(viz::LayerOpacity(-0.1f), std::invalid_argument);
+  EXPECT_THROW(viz::LayerOpacity(-0.1F), std::invalid_argument);
   // it's an error to set opacity higher than 1.0
-  EXPECT_THROW(viz::LayerOpacity(1.1f), std::invalid_argument);
+  EXPECT_THROW(viz::LayerOpacity(1.1F), std::invalid_argument);
 
   // passing case
-  EXPECT_NO_THROW(viz::LayerAddView(0.f, 0.f, 1.f, 1.f));
+  EXPECT_NO_THROW(viz::LayerAddView(0.F, 0.F, 1.F, 1.F));
   // it's an error to add a layer view with zero width
-  EXPECT_THROW(viz::LayerAddView(0.f, 0.f, 0.f, 1.f), std::invalid_argument);
+  EXPECT_THROW(viz::LayerAddView(0.F, 0.F, 0.F, 1.F), std::invalid_argument);
   // it's an error to add a layer view with zero height
-  EXPECT_THROW(viz::LayerAddView(0.f, 0.f, 1.f, 0.f), std::invalid_argument);
+  EXPECT_THROW(viz::LayerAddView(0.F, 0.F, 1.F, 0.F), std::invalid_argument);
 
   EXPECT_NO_THROW(viz::EndLayer());
   EXPECT_NO_THROW(viz::End());

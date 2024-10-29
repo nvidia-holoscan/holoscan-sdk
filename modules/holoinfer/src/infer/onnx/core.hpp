@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,12 +55,17 @@ class OnnxInfer : public InferBase {
   /**
    * @brief Does the Core inference using Onnxruntime. Input and output buffer are supported on
    * Host. Inference is supported on host and device.
+   * The provided CUDA data event is used to prepare the input data any execution of CUDA work
+   * should be in sync with this event. If the inference is using CUDA it should record a CUDA
+   * event and pass it back in `cuda_event_inference`.
+   *
    * @param input_data Input DataBuffer
    * @param output_buffer Output DataBuffer, is populated with inferred results
    * @return InferStatus
    * */
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
-                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer);
+                           std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                           cudaEvent_t cuda_event_data, cudaEvent_t *cuda_event_inference);
 
   /**
    * @brief Populate class parameters with model details and values

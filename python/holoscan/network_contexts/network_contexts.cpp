@@ -29,11 +29,8 @@
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 #include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -56,14 +53,14 @@ class PyUcxContext : public UcxContext {
   using UcxContext::UcxContext;
 
   // Define a constructor that fully initializes the object.
-  PyUcxContext(Fragment* fragment, std::shared_ptr<UcxEntitySerializer> serializer = nullptr,
-               const std::string& name = "ucx_context")
-      : UcxContext() {
+  explicit PyUcxContext(Fragment* fragment,
+                        std::shared_ptr<UcxEntitySerializer> serializer = nullptr,
+                        const std::string& name = "ucx_context") {
     if (serializer) { this->add_arg(Arg{"serializer", serializer}); }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 // End of trampoline classes for handling Python kwargs

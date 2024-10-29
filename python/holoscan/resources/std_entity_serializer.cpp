@@ -27,8 +27,8 @@
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -41,12 +41,11 @@ class PyStdEntitySerializer : public StdEntitySerializer {
 
   // Define a constructor that fully initializes the object.
   explicit PyStdEntitySerializer(Fragment* fragment,
-                                 const std::string& name = "std_entity_serializer")
-      : StdEntitySerializer() {
+                                 const std::string& name = "std_entity_serializer") {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

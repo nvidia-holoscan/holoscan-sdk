@@ -70,12 +70,12 @@ if(HOLOSCAN_BUILD_TESTS)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME holoviz_geometry_output)
-  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/holoviz_geometry/)
+  set(VALIDATION_FRAMES_DIR ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/holoviz_geometry/)
 
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
   # Patch the current example to enable recording the rendering window
-  set(_patch_file ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/holoviz_geometry/cpp_holoviz_geometry.patch)
+  set(_patch_file ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/holoviz_geometry/cpp_holoviz_geometry.patch)
   add_custom_command(OUTPUT holoviz_geometry_test.cpp
     PRE_LINK
     COMMAND patch -u -o holoviz_geometry_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.cpp
@@ -116,7 +116,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_CPP_HOLOVIZ_GEOMETRY_RENDER_TEST
-      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}

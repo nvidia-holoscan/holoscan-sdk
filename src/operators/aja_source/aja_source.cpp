@@ -450,18 +450,19 @@ void AJASourceOp::initialize() {
 
 void AJASourceOp::start() {
   // Determine whether or not we're using the iGPU.
-  // TODO: This assumes we're using the first GPU device (as does the rest of the operator).
+  // TODO(unknown): This assumes we're using the first GPU device (as does the rest of the
+  // operator).
   cudaDeviceProp prop;
   cudaGetDeviceProperties(&prop, 0);
   is_igpu_ = prop.integrated;
 
   float framerate;
   if (framerate_ == 23) {
-    framerate = 23.98f;
+    framerate = 23.98F;
   } else if (framerate_ == 29) {
-    framerate = 29.97f;
+    framerate = 29.97F;
   } else if (framerate_ == 59) {
-    framerate = 59.94f;
+    framerate = 59.94F;
   } else {
     framerate = framerate_;
   }

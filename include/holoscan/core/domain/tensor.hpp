@@ -30,7 +30,7 @@
 
 namespace holoscan {
 
-// TODO: keep old class name as an alias?
+// TODO(unknown): keep old class name as an alias?
 //       also differs in that DLManagedTensorContext has additional members dl_shape and dl_strides
 // using DLManagedTensorCtx = nvidia::gxf::DLManagedTensorContext;
 using DLManagedTensorContext = nvidia::gxf::DLManagedTensorContext;

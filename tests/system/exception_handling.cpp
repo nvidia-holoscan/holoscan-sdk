@@ -85,7 +85,8 @@ class MinimalThrowOp : public Operator {
     }
   };
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     if (throw_type_.get() == ThrowMethod::kCompute) {
       throw std::runtime_error("Exception occurred in MinimalThrowOp::compute");
     }

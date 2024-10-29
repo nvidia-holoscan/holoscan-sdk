@@ -29,8 +29,8 @@
 #include "holoscan/core/resources/gxf/receiver.hpp"
 #include "holoscan/core/resources/gxf/ucx_receiver.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -42,13 +42,14 @@ class PyDoubleBufferReceiver : public DoubleBufferReceiver {
   using DoubleBufferReceiver::DoubleBufferReceiver;
 
   // Define a constructor that fully initializes the object.
-  PyDoubleBufferReceiver(Fragment* fragment, uint64_t capacity = 1UL, uint64_t policy = 2UL,
-                         const std::string& name = "double_buffer_receiver")
+  explicit PyDoubleBufferReceiver(Fragment* fragment, uint64_t capacity = 1UL,
+                                  uint64_t policy = 2UL,
+                                  const std::string& name = "double_buffer_receiver")
       : DoubleBufferReceiver(ArgList{Arg{"capacity", capacity}, Arg{"policy", policy}}) {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -58,10 +59,11 @@ class PyUcxReceiver : public UcxReceiver {
   using UcxReceiver::UcxReceiver;
 
   // Define a constructor that fully initializes the object.
-  PyUcxReceiver(Fragment* fragment, std::shared_ptr<UcxSerializationBuffer> buffer = nullptr,
-                uint64_t capacity = 1UL, uint64_t policy = 2UL,
-                const std::string& address = std::string("0.0.0.0"),
-                uint32_t port = kDefaultUcxPort, const std::string& name = "ucx_receiver")
+  explicit PyUcxReceiver(Fragment* fragment,
+                         std::shared_ptr<UcxSerializationBuffer> buffer = nullptr,
+                         uint64_t capacity = 1UL, uint64_t policy = 2UL,
+                         const std::string& address = std::string("0.0.0.0"),
+                         uint32_t port = kDefaultUcxPort, const std::string& name = "ucx_receiver")
       : UcxReceiver(ArgList{Arg{"capacity", capacity},
                             Arg{"policy", policy},
                             Arg{"address", address},
@@ -70,7 +72,7 @@ class PyUcxReceiver : public UcxReceiver {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

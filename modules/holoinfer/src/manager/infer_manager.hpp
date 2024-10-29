@@ -71,23 +71,32 @@ class ManagerInfer {
   /**
    * @brief Prepares and launches single/multiple inference
    *
+   * The provided CUDA stream is used to prepare the input data and will be used to operate on the
+   * output data, any execution of CUDA work should be in sync with this stream.
+   *
    * @param inference_specs specifications for inference
+   * @param cuda_stream CUDA stream
    *
    * @return InferStatus with appropriate code and message
    */
-  InferStatus execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs);
+  InferStatus execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                cudaStream_t cuda_stream);
 
   /**
    * @brief Executes Core inference for a particular model and generates inferred data
+   * The provided CUDA stream is used to prepare the input data and will be used to operate on the
+   * output data, any execution of CUDA work should be in sync with this stream.
    *
    * @param model_name Input model to do the inference on
    * @param permodel_preprocess_data Input DataMap with model name as key and DataBuffer as value
    * @param permodel_output_data Output DataMap with tensor name as key and DataBuffer as value
+   * @param cuda_stream CUDA stream
    *
    * @return InferStatus with appropriate code and message
    */
-  InferStatus run_core_inference(const std::string& model_name, DataMap& permodel_preprocess_data,
-                                 DataMap& permodel_output_data);
+  InferStatus run_core_inference(const std::string& model_name,
+                                 const DataMap& permodel_preprocess_data,
+                                 const DataMap& permodel_output_data, cudaStream_t cuda_stream);
   /**
    * @brief Cleans up internal context per model
    *
@@ -119,23 +128,27 @@ class ManagerInfer {
   bool cuda_buffer_out_ = false;
 
   /// @brief Flag to demonstrate if multi-GPU feature has Peer to Peer transfer enabled.
-  bool mgpu_p2p_transfer = true;
+  bool mgpu_p2p_transfer_ = true;
 
   /// @brief Map to store cuda streams associated with each input tensor in each model on GPU-dt.
   /// Will be used with Multi-GPU feature.
-  std::map<std::string, std::map<std::string, cudaStream_t>> input_streams_gpudt;
+  std::map<std::string, std::map<std::string, cudaStream_t>> input_streams_gpudt_;
 
   /// @brief Map to store cuda streams associated with each output tensor in each model on GPU-dt.
   /// Will be used with Multi-GPU feature.
-  std::map<std::string, std::map<std::string, cudaStream_t>> output_streams_gpudt;
+  std::map<std::string, std::map<std::string, cudaStream_t>> output_streams_gpudt_;
 
   /// @brief Map to store cuda streams associated with each input tensor in each model on the
   /// inference device.  Will be used with Multi-GPU feature.
-  std::map<std::string, std::map<std::string, cudaStream_t>> input_streams_device;
+  std::map<std::string, std::map<std::string, cudaStream_t>> input_streams_device_;
 
   /// @brief Map to store cuda streams associated with each output tensor in each model on the
   /// inference device. Will be used with Multi-GPU feature.
-  std::map<std::string, std::map<std::string, cudaStream_t>> output_streams_device;
+  std::map<std::string, std::map<std::string, cudaStream_t>> output_streams_device_;
+
+  /// @brief Map to store a CUDA event for each device for each model. Will be used with Multi-GPU
+  /// feature.
+  std::map<std::string, std::map<int, cudaEvent_t>> mgpu_cuda_event_;
 
   /// Map storing parameters per model
   std::map<std::string, std::unique_ptr<Params>> infer_param_;
@@ -156,7 +169,10 @@ class ManagerInfer {
   unsigned int frame_counter_ = 0;
 
   /// Data transfer GPU. Default: 0. Not configurable in this release.
-  int device_gpu_dt = 0;
+  int device_gpu_dt_ = 0;
+
+  /// CUDA event on data transfer GPU, used to synchronize inference execution with data transfer.
+  cudaEvent_t cuda_event_ = nullptr;
 
   /// Map storing inferred output dimension per tensor
   DimType models_output_dims_;

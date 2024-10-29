@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
 
 add_holoscan_operator(aja aja_source.cpp)
 
-# TODO: try making AJA::ajantv2 private, need to remove headers from the operator headers
+# TODO(unknown): try making AJA::ajantv2 private, need to remove headers from the operator headers
 target_link_libraries(op_aja
     PUBLIC
         holoscan::core

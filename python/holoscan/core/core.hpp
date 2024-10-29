@@ -27,9 +27,6 @@
 
 #include "holoscan/core/domain/tensor.hpp"
 
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
 namespace py = pybind11;
 
 namespace holoscan {

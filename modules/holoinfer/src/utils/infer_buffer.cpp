@@ -61,8 +61,8 @@ InferStatus allocate_buffers(DataMap& buffers, std::vector<int64_t>& dims,
         fmt::format("Data buffer creation failed for {} with error {}", keyname, e.what()));
     return status;
   }
-  data_buffer->host_buffer.resize(buffer_size);
-  if (allocate_cuda) { data_buffer->device_buffer->resize(buffer_size); }
+  data_buffer->host_buffer_->resize(buffer_size);
+  if (allocate_cuda) { data_buffer->device_buffer_->resize(buffer_size); }
   buffers.insert({keyname, std::move(data_buffer)});
   return InferStatus();
 }
@@ -72,25 +72,30 @@ bool DeviceAllocator::operator()(void** ptr, size_t size) const {
 }
 
 void DeviceFree::operator()(void* ptr) const {
-  cudaFree(ptr);
+  if (ptr) { cudaFree(ptr); }
 }
 
 DataBuffer::DataBuffer(holoinfer_datatype data_type, int device_id)
-    : type_(data_type), device_id_(device_id) {
+    : data_type_(data_type) {
   try {
-    device_buffer = std::make_shared<DeviceBuffer>(type_);
+    device_buffer_ = std::make_shared<DeviceBuffer>(data_type_, device_id);
   } catch (std::exception& e) {
     throw std::runtime_error(
         fmt::format("Device buffer creation failed in DataBuffer constructor with {}", e.what()));
   }
-  host_buffer.set_type(type_);
+  try {
+    host_buffer_ = std::make_shared<HostBuffer>(data_type_);
+  } catch (std::exception& e) {
+    throw std::runtime_error(
+        fmt::format("Host buffer creation failed in DataBuffer constructor with {}", e.what()));
+  }
 }
 
-DeviceBuffer::DeviceBuffer(holoinfer_datatype type)
-    : size_(0), capacity_(0), type_(type), buffer_(nullptr) {}
+DeviceBuffer::DeviceBuffer(holoinfer_datatype type, int device_id)
+    : Buffer(type, device_id), size_(0), capacity_(0), buffer_(nullptr) {}
 
 DeviceBuffer::DeviceBuffer(size_t size, holoinfer_datatype type)
-    : size_(size), capacity_(size), type_(type) {
+    : Buffer(type), size_(size), capacity_(size) {
   if (!allocator_(&buffer_, this->get_bytes())) { throw std::bad_alloc(); }
 }
 
@@ -117,6 +122,31 @@ void DeviceBuffer::resize(size_t number_of_elements) {
 
 DeviceBuffer::~DeviceBuffer() {
   free_(buffer_);
+}
+
+void* HostBuffer::data() {
+  return static_cast<void*>(buffer_.data());
+}
+
+size_t HostBuffer::size() const {
+  return number_of_elements_;
+}
+
+size_t HostBuffer::get_bytes() const {
+  return buffer_.size();
+}
+
+void HostBuffer::set_type(holoinfer_datatype in_type) {
+  type_ = in_type;
+  resize(size());
+}
+
+void HostBuffer::resize(size_t number_of_elements) {
+  if (number_of_elements != number_of_elements_) {
+    buffer_.clear();
+    number_of_elements_ = number_of_elements;
+    buffer_.resize(number_of_elements * get_element_size(type_));
+  }
 }
 
 }  // namespace inference

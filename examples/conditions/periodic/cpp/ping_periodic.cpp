@@ -30,7 +30,8 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<std::shared_ptr<std::string>>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = std::make_shared<std::string>("Periodic ping...");
     op_output.emit(value, "out");
   };
@@ -44,7 +45,8 @@ class PingRxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.input<std::shared_ptr<std::string>>("in"); }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto in_value = op_input.receive<std::shared_ptr<std::string>>("in").value();
 
     HOLOSCAN_LOG_INFO("Rx message received: {}", in_value->c_str());
@@ -77,7 +79,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<App>();
 
   // Get the configuration

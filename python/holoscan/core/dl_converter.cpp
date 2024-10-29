@@ -30,12 +30,15 @@
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
+
 namespace holoscan {
 
-void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorContext> ctx) {
+void set_array_interface(const py::object& obj,
+                         const std::shared_ptr<DLManagedTensorContext>& ctx) {
   DLTensor& dl_tensor = ctx->tensor.dl_tensor;
 
-  if (dl_tensor.data) {
+  if (dl_tensor.data != nullptr) {
     // Prepare the array interface items
 
     // Main items
@@ -46,11 +49,12 @@ void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorC
     const char* type_str = maybe_type_str.value();
     py::tuple shape = array2pytuple<pybind11::int_>(dl_tensor.shape, dl_tensor.ndim);
     py::str typestr = py::str(type_str);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     py::tuple data = pybind11::make_tuple(py::int_(reinterpret_cast<uint64_t>(dl_tensor.data)),
                                           py::bool_(false));
     // Optional items
     py::object strides = py::none();
-    if (dl_tensor.strides) {
+    if (dl_tensor.strides != nullptr) {
       const int32_t strides_length = dl_tensor.ndim;
       py::tuple strides_tuple(strides_length);
       // The array interface's stride is using bytes, not element size, so we need to multiply it by
@@ -115,6 +119,7 @@ void set_array_interface(const py::object& obj, std::shared_ptr<DLManagedTensorC
   }
 }
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 py::capsule py_dlpack(Tensor* tensor, py::object stream) {
   // TOIMPROVE: need to get current stream pointer and call with the stream
   cudaStream_t curr_stream_ptr = nullptr;  // legacy stream
@@ -130,11 +135,13 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream) {
       throw std::runtime_error(
           "Invalid stream, valid stream should be -1 (non-blocking), 1 (legacy default stream), 2 "
           "(per-thread default stream), or a positive integer (stream pointer)");
-    } else if (stream_id <= 2) {
+    }
+    if (stream_id <= 2) {
       // Allow the stream id 0 as a special case for the default stream.
       // This is to support the legacy behavior.
       stream_ptr = nullptr;
     } else {
+      // NOLINTNEXTLINE(performance-no-int-to-ptr,cppcoreguidelines-pro-type-reinterpret-cast)
       stream_ptr = reinterpret_cast<cudaStream_t>(stream_id);
     }
   } else {
@@ -144,7 +151,7 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream) {
 
   // Wait for the current stream to finish before the provided stream starts consuming the memory.
   if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
-    cudaEvent_t curr_stream_event;
+    cudaEvent_t curr_stream_event{};
     HOLOSCAN_CUDA_CALL_THROW_ERROR(
         cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming),
         "Failure during call to cudaEventCreateWithFlags");
@@ -165,10 +172,10 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream) {
     // Should call `PyCapsule_IsValid` to check if the capsule is valid before calling
     // `PyCapsule_GetPointer`. Otherwise, it will raise a hard-to-debug exception.
     // (such as `SystemError: <class 'xxx'> returned a result with an error set`)
-    if (PyCapsule_IsValid(ptr, "dltensor")) {
+    if (PyCapsule_IsValid(ptr, "dltensor") != 0) {
       // The destructor will be called when the capsule is deleted.
       // We need to call the deleter function to free the memory.
-      DLManagedTensor* dl_managed_tensor =
+      auto* dl_managed_tensor =
           static_cast<DLManagedTensor*>(PyCapsule_GetPointer(ptr, "dltensor"));
       // Call deleter function to free the memory only if the capsule name is "dltensor".
       if (dl_managed_tensor != nullptr) { dl_managed_tensor->deleter(dl_managed_tensor); }
@@ -177,6 +184,7 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream) {
 
   return dlpack_capsule;
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 py::tuple py_dlpack_device(Tensor* tensor) {
   auto& dl_tensor = tensor->dl_ctx()->tensor.dl_tensor;

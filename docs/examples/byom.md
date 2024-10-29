@@ -172,7 +172,7 @@ Next, we look at the operators and their parameters defined in the application Y
 ```
 - An instance of the `UnboundedAllocator` resource class is created (line `2`) and used by subsequent operators for
 memory allocation.  This allocator allocates memory dynamically on the host as needed.  For applications where latency
-becomes an issue, there is the `BlockMemoryPool` allocator.
+becomes an issue, an allocator supporting a memory pool such as  `BlockMemoryPool` or `RMMAllocator` could be used instead.
 - The preprocessor operator (line `8`) takes care of converting the input video from the source video to a format that can be used by the AI model.
 - The inference operator (line `12`) feeds the output from the preprocessor to the AI model to perform inference.
 - The postprocessor operator (line `20`) postprocesses the output from the inference operator before passing it downstream to the visualizer.
@@ -381,7 +381,7 @@ In general, when deploying your own AI models, you will need to consider the ope
 - **Output**: The postprocessed stream can be displayed or used by other downstream operators.
 
 The Holoscan SDK comes with a number of [built-in operators](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/src/operators) that you can use to configure your own workflow.
-If needed, you can write your own custom operators or visit [Holohub](https://nvidia-holoscan.github.io/holohub/) for additional implementations and ideas for operators.
+If needed, you can write your own custom operators or visit [Holohub](https://github.com/nvidia-holoscan/holohub) for additional implementations and ideas for operators.
 
 ## Running the Application
 

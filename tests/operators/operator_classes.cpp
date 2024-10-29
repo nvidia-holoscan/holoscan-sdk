@@ -127,8 +127,8 @@ TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
       Arg{"in_dtype", ""s},
       Arg{"out_tensor_name", "out"s},
       Arg{"out_dtype", "float32"s},
-      Arg{"scale_min", 0.f},
-      Arg{"scale_max", 1.f},
+      Arg{"scale_min", 0.F},
+      Arg{"scale_max", 1.F},
       Arg{"alpha_value", static_cast<uint8_t>(255)},
       Arg{"resize_width", 0},
       Arg{"resize_height", 0},
@@ -178,7 +178,7 @@ TEST_F(OperatorClassesWithGXFContext, TestVideoStreamReplayerOp) {
       Arg{"basename", "racerx"s},
       Arg{"batch_size", static_cast<size_t>(1UL)},
       Arg{"ignore_corrupted_entities", true},
-      Arg{"frame_rate", 0.f},
+      Arg{"frame_rate", 0.F},
       Arg{"realtime", true},
       Arg{"repeat", false},
   };
@@ -221,13 +221,13 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
   ArgList kwargs = F.from_config("holoviz");
 
   std::vector<std::vector<float>> color_lut = {
-      {0.65f, 0.81f, 0.89f, 0.1f},
-      {0.2f, 0.63f, 0.17f, 0.7f},
-      {0.98f, 0.6f, 0.6f, 0.7f},
-      {0.89f, 0.1f, 0.11f, 0.7f},
-      {0.99f, 0.75f, 0.44f, 0.7f},
-      {1.0f, 0.5f, 0.0f, 0.7f},
-      {0.0f, 0.0f, 0.0f, 0.1f},
+      {0.65F, 0.81F, 0.89F, 0.1F},
+      {0.2F, 0.63F, 0.17F, 0.7F},
+      {0.98F, 0.6F, 0.6F, 0.7F},
+      {0.89F, 0.1F, 0.11F, 0.7F},
+      {0.99F, 0.75F, 0.44F, 0.7F},
+      {1.0F, 0.5F, 0.0F, 0.7F},
+      {0.0F, 0.0F, 0.0F, 0.1F},
   };
   kwargs.add(Arg{"color_lut", color_lut});
 

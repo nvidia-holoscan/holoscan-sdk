@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # For install_gxf_extension
-# TODO: move that function to its own CMake module/file
+# TODO(unknown): move that function to its own CMake module/file
 include(GenerateGXEApp)
 
 list(APPEND CMAKE_INSTALL_RPATH_LIST

@@ -15,7 +15,7 @@
 
 [tool.codespell]
 skip = "_deps,build*,.cache,html,_build,_static,generated,latex,install*,.git,xml,vale"
-ignore-words-list = "nd,bu,dne,unexpect"
+ignore-words-list = "bu,dne,nd,thirdparty,unexpect"
 
 [tool.ruff]
 exclude = [
@@ -33,7 +33,7 @@ exclude = [
 ]
 line-length = 100
 fix = false  # don't automatically apply fixes (can override with ruff --fix)
-target-version = "py38"
+target-version = "py39"
 
 
 [tool.ruff.lint]

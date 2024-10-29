@@ -59,41 +59,41 @@ void HoloInferTests::inference_tests() {
   inference_specs_->output_per_model_.insert({"m2_infer", dm});
 
   // Test: TRT backend, Empty input cuda buffer 1
-  auto dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer->size();
-  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer->resize(0);
-  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer = nullptr;
+  auto dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer_->size();
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer_->resize(0);
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer_ = nullptr;
   status = do_inference();
   holoinfer_assert(
       status, test_module, 5, test_identifier_infer.at(5), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer =
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer_ =
       std::make_shared<HoloInfer::DeviceBuffer>();
 
   // Test: TRT backend, Empty input cuda buffer 2
   status = do_inference();
   holoinfer_assert(
       status, test_module, 6, test_identifier_infer.at(6), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer->resize(dbs);
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->device_buffer_->resize(dbs);
 
   // Test: TRT backend, Empty output cuda buffer 1
-  dbs = inference_specs_->output_per_model_.at("m2_infer")->device_buffer->size();
-  inference_specs_->output_per_model_.at("m2_infer")->device_buffer->resize(0);
+  dbs = inference_specs_->output_per_model_.at("m2_infer")->device_buffer_->size();
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer_->resize(0);
   status = do_inference();
   holoinfer_assert(
       status, test_module, 7, test_identifier_infer.at(7), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: TRT backend, Empty output cuda buffer 2
-  inference_specs_->output_per_model_.at("m2_infer")->device_buffer = nullptr;
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer_ = nullptr;
   status = do_inference();
   holoinfer_assert(
       status, test_module, 8, test_identifier_infer.at(8), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->output_per_model_.at("m2_infer")->device_buffer =
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer_ =
       std::make_shared<HoloInfer::DeviceBuffer>();
 
   // Test: TRT backend, Empty output cuda buffer 3
   status = do_inference();
   holoinfer_assert(
       status, test_module, 9, test_identifier_infer.at(9), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->output_per_model_.at("m2_infer")->device_buffer->resize(dbs);
+  inference_specs_->output_per_model_.at("m2_infer")->device_buffer_->resize(dbs);
 
   // Test: TRT backend, Basic end-to-end cuda inference
   status = do_inference();
@@ -133,20 +133,20 @@ void HoloInferTests::inference_tests() {
 
   // Test: TRT backend, Empty host input
   size_t re_dbs = 0;
-  dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.size();
-  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(re_dbs);
+  dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->size();
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(re_dbs);
   status = do_inference();
   holoinfer_assert(
       status, test_module, 15, test_identifier_infer.at(15), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(dbs);
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(dbs);
 
   // Test: TRT backend, Empty host output
-  dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer.size();
-  inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(re_dbs);
+  dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->size();
+  inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(re_dbs);
   status = do_inference();
   holoinfer_assert(
       status, test_module, 16, test_identifier_infer.at(16), HoloInfer::holoinfer_code::H_ERROR);
-  inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(dbs);
+  inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
 
   if (use_onnxruntime) {
     // Test: ONNX backend, Basic parallel inference on CPU
@@ -194,26 +194,26 @@ void HoloInferTests::inference_tests() {
                        HoloInfer::holoinfer_code::H_SUCCESS);
 
       // Test: ONNX backend, Empty host input
-      dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.size();
-      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(0);
+      dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->size();
+      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(0);
       status = do_inference();
       holoinfer_assert(status,
                        test_module,
                        21,
                        test_identifier_infer.at(21),
                        HoloInfer::holoinfer_code::H_ERROR);
-      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer.resize(dbs);
+      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(dbs);
 
       // Test: ONNX backend, Empty host output
-      dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer.size();
-      inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(0);
+      dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->size();
+      inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(0);
       status = do_inference();
       holoinfer_assert(status,
                        test_module,
                        22,
                        test_identifier_infer.at(22),
                        HoloInfer::holoinfer_code::H_ERROR);
-      inference_specs_->output_per_model_.at("m2_infer")->host_buffer.resize(dbs);
+      inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
     } else {
       // Test: ONNX backend on ARM, Basic sequential inference on GPU
       infer_on_cpu = false;
@@ -287,6 +287,10 @@ void HoloInferTests::inference_tests() {
                        31,
                        test_identifier_infer.at(31),
                        HoloInfer::holoinfer_code::H_SUCCESS);
+    } else {
+      // make sure the last error is reset, else Torch tests below will fail since they check for
+      // the last error without doing a CUDA call before.
+      cudaGetLastError();
     }
     device_map.at("model_1") = "0";
 
@@ -358,6 +362,48 @@ void HoloInferTests::inference_tests() {
 
     in_tensor_dimensions["m1_pre_proc"] = original_dim;
     in_tensor_dimensions["m2_pre_proc"] = original_dim;
+  }
+
+  if (use_torch) {
+    // Test: torch backend, Basic inference
+    backend = "torch";
+
+    auto backup_path_map = std::move(model_path_map);
+    auto backup_pre_map = std::move(pre_processor_map);
+    auto backup_infer_map = std::move(inference_map);
+    auto backup_in_tensor_dimensions = std::move(in_tensor_dimensions);
+    auto backup_device_map = std::move(device_map);
+
+    model_path_map = {{"test_model", model_folder + "identity_model.pt"}};
+    pre_processor_map = {{"test_model", {"input"}}};
+    inference_map = {{"test_model", {"output"}}};
+    in_tensor_dimensions = {{"input", {3, 10, 10}}};
+    device_map = {};
+
+    YAML::Node torch_inference;
+    torch_inference["inference"]["input_nodes"]["input"]["dtype"] = "kFloat32";
+    torch_inference["inference"]["input_nodes"]["input"]["dim"] = "3 10 10";
+    torch_inference["inference"]["output_nodes"]["output"]["dtype"] = "kFloat32";
+
+    std::ofstream torch_config_file(model_folder + "identity_model.yaml");
+    torch_config_file << torch_inference;
+    torch_config_file.close();
+
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     34,
+                     test_identifier_infer.at(34),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Restore all changes to previous state
+    std::filesystem::remove(model_folder + "identity_model.yaml");
+    model_path_map = std::move(backup_path_map);
+    pre_processor_map = std::move(backup_pre_map);
+    inference_map = std::move(backup_infer_map);
+    in_tensor_dimensions = std::move(backup_in_tensor_dimensions);
+    device_map = std::move(backup_device_map);
   }
 
   // cleaning engine files

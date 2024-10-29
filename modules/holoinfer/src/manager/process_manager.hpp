@@ -65,11 +65,14 @@ class ManagerProcessor {
    * @param inferred_result_map Map with output tensor name as key, and related DataBuffer as
    * value
    * @param dimension_map Map with tensor name as key and related output dimension as value.
+   * @param process_with_cuda Flag defining if processing should be done with CUDA
+   * @param cuda_stream CUDA stream to use when processing is done with CUDA
    * @return InferStatus with appropriate code and message
    */
   InferStatus process(const MultiMappings& tensor_oper_map, const MultiMappings& in_out_tensor_map,
                       DataMap& inferred_result_map,
-                      const std::map<std::string, std::vector<int>>& dimension_map);
+                      const std::map<std::string, std::vector<int>>& dimension_map,
+                      bool process_with_cuda, cudaStream_t cuda_stream);
 
   /*
    * @brief Executes post processing operations for multi tensor I/O
@@ -109,9 +112,6 @@ class ManagerProcessor {
   /// Map with tensor name as key and related Dimension as value
   DimType processed_dims_map_;
 };
-
-/// Pointer to manager class for multi data processing
-std::unique_ptr<ManagerProcessor> process_manager;
 
 }  // namespace inference
 }  // namespace holoscan

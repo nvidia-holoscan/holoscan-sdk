@@ -43,18 +43,13 @@ class GXFParameterAdaptor {
       std::function<gxf_result_t(gxf_context_t context, gxf_uid_t uid, const char* key,
                                  const ArgType& arg_type, const std::any& any_value)>;
 
-  inline static AdaptFunc none_param_handler = [](gxf_context_t context, gxf_uid_t uid,
-                                                  const char* key, const ArgType& arg_type,
-                                                  const std::any& any_value) {
-    (void)context;
-    (void)uid;
-    (void)key;
-    (void)arg_type;
-    (void)any_value;
-    HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", key);
+  inline static AdaptFunc none_param_handler =
+      []([[maybe_unused]] gxf_context_t context, [[maybe_unused]] gxf_uid_t uid, const char* key,
+         [[maybe_unused]] const ArgType& arg_type, [[maybe_unused]] const std::any& any_value) {
+        HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", key);
 
-    return GXF_FAILURE;
-  };
+        return GXF_FAILURE;
+      };
 
   /**
    * @brief Get the instance of GXFParameterAdaptor.
@@ -126,13 +121,11 @@ class GXFParameterAdaptor {
 
   template <typename typeT>
   void add_param_handler() {
-    const AdaptFunc& func = [](gxf_context_t context,
-                               gxf_uid_t uid,
+    const AdaptFunc& func = []([[maybe_unused]] gxf_context_t context,
+                               [[maybe_unused]] gxf_uid_t uid,
                                const char* key,
                                const ArgType& arg_type,
                                const std::any& any_value) {
-      (void)context;  // avoid `-Werror=unused-but-set-parameter` due to `constexpr`
-      (void)uid;      // avoid `-Werror=unused-but-set-parameter` due to `constexpr`
       try {
         auto& param = *std::any_cast<Parameter<typeT>*>(any_value);
 
@@ -159,13 +152,11 @@ class GXFParameterAdaptor {
       return GXF_FAILURE;
     };
 
-    const AdaptFunc& arg_func = [](gxf_context_t context,
-                                   gxf_uid_t uid,
+    const AdaptFunc& arg_func = []([[maybe_unused]] gxf_context_t context,
+                                   [[maybe_unused]] gxf_uid_t uid,
                                    const char* key,
                                    const ArgType& arg_type,
                                    const std::any& any_value) {
-      (void)context;  // avoid `-Werror=unused-but-set-parameter` due to `constexpr`
-      (void)uid;      // avoid `-Werror=unused-but-set-parameter` due to `constexpr`
       try {
         typeT value = std::any_cast<typeT>(any_value);
         gxf_result_t result = set_gxf_parameter_value(context, uid, key, arg_type, value);

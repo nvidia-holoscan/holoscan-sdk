@@ -52,7 +52,7 @@ TEST_F(ImGuiLayer, Window) {
 }
 
 TEST_F(ImGuiLayer, Errors) {
-  std::vector<float> data{0.5f, 0.5f};
+  std::vector<float> data{0.5F, 0.5F};
 
   EXPECT_NO_THROW(viz::Begin());
 

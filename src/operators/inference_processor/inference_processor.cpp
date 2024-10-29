@@ -27,6 +27,7 @@
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/utils/cuda_macros.hpp"
 #include "holoscan/utils/holoinfer_utils.hpp"
 
 template <>
@@ -177,10 +178,6 @@ void InferenceProcessorOp::start() {
   try {
     // Check for the validity of parameters from configuration
 
-    if (input_on_cuda_.get() || output_on_cuda_.get()) {
-      HoloInfer::raise_error(module_, "CUDA based data not supported in processor");
-    }
-
     auto status = HoloInfer::processor_validity_check(
         processed_map_.get().get_map(), in_tensor_names_.get(), out_tensor_names_.get());
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
@@ -206,12 +203,20 @@ void InferenceProcessorOp::start() {
   }
 }
 
+void InferenceProcessorOp::stop() {
+  data_per_tensor_.clear();
+  holoscan_postprocess_context_.reset();
+}
+
 void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_output,
                                    ExecutionContext& context) {
   // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
   auto allocator =
       nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(), allocator_->gxf_cid());
   auto cont = context.context();
+
+  // process with CUDA if input is on CUDA
+  const bool process_with_cuda = input_on_cuda_.get();
 
   try {
     // Extract relevant data from input GXF Receivers, and update inference specifications
@@ -229,10 +234,13 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
     // Execute processing
-    auto status = holoscan_postprocess_context_->process(process_operations_.get().get_map(),
-                                                         processed_map_.get().get_map(),
-                                                         data_per_tensor_,
-                                                         dims_per_tensor_);
+    auto status =
+        holoscan_postprocess_context_->process(process_operations_.get().get_map(),
+                                               processed_map_.get().get_map(),
+                                               data_per_tensor_,
+                                               dims_per_tensor_,
+                                               process_with_cuda,
+                                               cuda_stream_handler_.get_cuda_stream(cont));
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
       status.display_message();
       HoloInfer::report_error(module_, "Tick, post_process");
@@ -253,7 +261,7 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
                                                       op_output,
                                                       out_tensor_names_.get(),
                                                       processed_dims_map,
-                                                      output_on_cuda_.get(),
+                                                      process_with_cuda,
                                                       transmit_on_cuda_.get(),
                                                       allocator.value(),
                                                       module_,

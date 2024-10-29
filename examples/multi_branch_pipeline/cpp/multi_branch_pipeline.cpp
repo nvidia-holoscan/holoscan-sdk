@@ -49,7 +49,8 @@ class PingTxOp : public Operator {
                static_cast<int64_t>(1));
   }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = initial_value_.get() + count_ * increment_.get();
     op_output.emit(value, "out");
     count_ += 1;
@@ -103,7 +104,8 @@ class IncrementOp : public Operator {
                static_cast<int64_t>(0));
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     int64_t value = op_input.receive<int64_t>("in").value();
     // increment value by the specified increment
     int64_t new_value = value + increment_.get();
@@ -122,7 +124,8 @@ class PingRxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.input<int64_t>("in"); }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int64_t>("in").value();
     HOLOSCAN_LOG_INFO("receiver '{}' received value: {}", name(), value);
   };
@@ -177,7 +180,7 @@ class MultiRateApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<MultiRateApp>();
 
   // Get the configuration
@@ -185,7 +188,7 @@ int main(int argc, char** argv) {
   config_path += "/multi_branch_pipeline.yaml";
   app->config(config_path);
 
-  std::string scheduler = app->from_config("scheduler").as<std::string>();
+  auto scheduler = app->from_config("scheduler").as<std::string>();
   if (scheduler == "multi_thread") {
     // use MultiThreadScheduler instead of the default GreedyScheduler
     app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(

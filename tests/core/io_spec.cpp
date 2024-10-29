@@ -210,13 +210,13 @@ TEST(IOSpec, TestIOSpecConnectorUcxReceiver) {
   ASSERT_TRUE(spec.connector() != nullptr);
   EXPECT_EQ(typeid(spec.connector()), typeid(std::make_shared<Resource>()));
   auto receiver = std::dynamic_pointer_cast<UcxReceiver>(spec.connector());
-  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("nvidia::gxf::UcxReceiver"));
+  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("holoscan::HoloscanUcxReceiver"));
 
   // two arguments
   spec.connector(IOSpec::ConnectorType::kUCX, Arg("capacity", 2), Arg("policy", 1));
   EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kUCX);
   receiver = std::dynamic_pointer_cast<UcxReceiver>(spec.connector());
-  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("nvidia::gxf::UcxReceiver"));
+  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("holoscan::HoloscanUcxReceiver"));
 
   // arglist
   spec.connector(IOSpec::ConnectorType::kUCX,
@@ -226,7 +226,7 @@ TEST(IOSpec, TestIOSpecConnectorUcxReceiver) {
                          Arg("port", static_cast<uint32_t>(13337))});
   EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kUCX);
   receiver = std::dynamic_pointer_cast<UcxReceiver>(spec.connector());
-  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("nvidia::gxf::UcxReceiver"));
+  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("holoscan::HoloscanUcxReceiver"));
 }
 
 TEST(IOSpec, TestIOSpecConnectorDoubleBufferTransmitter) {
@@ -277,13 +277,15 @@ TEST(IOSpec, TestIOSpecConnectorUcxTransmitter) {
   ASSERT_TRUE(spec.connector() != nullptr);
   EXPECT_EQ(typeid(spec.connector()), typeid(std::make_shared<Resource>()));
   auto transmitter = std::dynamic_pointer_cast<UcxTransmitter>(spec.connector());
-  EXPECT_EQ(std::string(transmitter->gxf_typename()), std::string("nvidia::gxf::UcxTransmitter"));
+  EXPECT_EQ(std::string(transmitter->gxf_typename()),
+            std::string("holoscan::HoloscanUcxTransmitter"));
 
   // two arguments
   spec.connector(IOSpec::ConnectorType::kUCX, Arg("capacity", 2), Arg("policy", 1));
   EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kUCX);
   transmitter = std::dynamic_pointer_cast<UcxTransmitter>(spec.connector());
-  EXPECT_EQ(std::string(transmitter->gxf_typename()), std::string("nvidia::gxf::UcxTransmitter"));
+  EXPECT_EQ(std::string(transmitter->gxf_typename()),
+            std::string("holoscan::HoloscanUcxTransmitter"));
 
   // arglist
   spec.connector(IOSpec::ConnectorType::kUCX,
@@ -295,7 +297,8 @@ TEST(IOSpec, TestIOSpecConnectorUcxTransmitter) {
                          Arg("local_port", static_cast<uint32_t>(0))});
   EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kUCX);
   transmitter = std::dynamic_pointer_cast<UcxTransmitter>(spec.connector());
-  EXPECT_EQ(std::string(transmitter->gxf_typename()), std::string("nvidia::gxf::UcxTransmitter"));
+  EXPECT_EQ(std::string(transmitter->gxf_typename()),
+            std::string("holoscan::HoloscanUcxTransmitter"));
 }
 
 TEST(IOSpec, TestIOSpecQueueSize) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,7 +97,7 @@ TEST(ComponentSpec, TestComponentSpecDefaultLValue) {
   ComponentSpec spec;
 
   // add a parameter without any value
-  uint32_t default_val = 15u;
+  uint32_t default_val = 15U;
   MetaParameter empty_int = Parameter<uint32_t>();
   spec.param(empty_int, "beta3", "headline3", "description3", default_val);
   auto params = spec.params();

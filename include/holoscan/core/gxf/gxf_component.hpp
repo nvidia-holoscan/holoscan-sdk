@@ -78,7 +78,7 @@ class GXFComponent {
   gxf_uid_t gxf_cid_ = 0;
   std::shared_ptr<nvidia::gxf::GraphEntity> gxf_graph_entity_;
   std::string gxf_cname_;
-  // TODO: remove gxf_cptr_ and use the Component Handle everywhere instead?
+  // TODO(unknown): remove gxf_cptr_ and use the Component Handle everywhere instead?
   nvidia::gxf::Handle<nvidia::gxf::Component> gxf_component_;
   void* gxf_cptr_ = nullptr;
 };

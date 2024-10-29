@@ -56,9 +56,12 @@ class TestPlatforms:
         input_args.holoscan_sdk_file = Path("some-random-file")
 
         platform = Platform(self._artifact_source)
-        with tempfile.TemporaryDirectory(
-            prefix="holoscan_test", dir=tempfile.gettempdir()
-        ) as temp_dir, pytest.raises(IncompatiblePlatformConfigurationError):
+        with (
+            tempfile.TemporaryDirectory(
+                prefix="holoscan_test", dir=tempfile.gettempdir()
+            ) as temp_dir,
+            pytest.raises(IncompatiblePlatformConfigurationError),
+        ):
             platform.configure_platforms(
                 input_args, temp_dir, application_verison, ApplicationType.CppCMake
             )
@@ -83,9 +86,12 @@ class TestPlatforms:
         input_args.monai_deploy_sdk_file = Path("some-random-file")
 
         platform = Platform(self._artifact_source)
-        with tempfile.TemporaryDirectory(
-            prefix="holoscan_test", dir=tempfile.gettempdir()
-        ) as temp_dir, pytest.raises(IncompatiblePlatformConfigurationError):
+        with (
+            tempfile.TemporaryDirectory(
+                prefix="holoscan_test", dir=tempfile.gettempdir()
+            ) as temp_dir,
+            pytest.raises(IncompatiblePlatformConfigurationError),
+        ):
             platform.configure_platforms(
                 input_args, temp_dir, application_verison, ApplicationType.CppCMake
             )

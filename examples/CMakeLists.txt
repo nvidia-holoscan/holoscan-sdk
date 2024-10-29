@@ -12,42 +12,87 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+cmake_minimum_required(VERSION 3.20)
+project(Holoscan-examples NONE)
+
+# If we build outside of the SDK main build we set the default value to true
+if(NOT DEFINED HOLOSCAN_BUILD_PYTHON)
+  set(HOLOSCAN_BUILD_PYTHON ON)
+endif()
+
+option(HOLOSCAN_CPP_EXAMPLES "Build C++ examples" ON)
+option(HOLOSCAN_PYTHON_EXAMPLES "Build Python examples" ${HOLOSCAN_BUILD_PYTHON})
+
+# Check if the data target exists otherwise define it
+if(NOT TARGET racerx_data)
+  # RacerX sample data
+  add_library(racerx_data INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/../data/racerx/racerx-small.mp4")
+
+  # Setup the installation rule
+  install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/racerx DESTINATION data COMPONENT holoscan-data)
+
+  # Download the datasets
+  list(APPEND CMAKE_PROGRAM_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../scripts)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/modules/HoloscanDownloadData.cmake)
+
+  set(RACERX_DATA_VERSION "20231009")
+  set(RACERX_DATA_MD5 "86cd7e5477bb9eaa0cfc0547912d77b2")
+
+  # Download the racerX sample data
+  holoscan_download_data(racerx
+      URL https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_racerx_video/versions/${RACERX_DATA_VERSION}/zip
+      URL_MD5 ${RACERX_DATA_MD5}
+      DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../data
+      BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/../data/racerx/racerx-small.mp4"
+    )
+
+  # Add dependency to force the download
+  add_dependencies(racerx_data racerx_download)
+endif()
+
+# Enable testing
+include(CTest)
+
 if(HOLOSCAN_BUILD_AJA)
   add_subdirectory(aja_capture)
 endif()
+
+# C++ only examples
+if(HOLOSCAN_CPP_EXAMPLES)
+  add_subdirectory(wrap_operator_as_gxf_extension)
+  add_subdirectory(ping_any)
+  add_subdirectory(ping_conditional)
+  add_subdirectory(ping_cycle)
+endif()
+
+# Python Only examples
+if(HOLOSCAN_PYTHON_EXAMPLES)
+  add_subdirectory(cupy_native)
+  add_subdirectory(numpy_native)
+  add_subdirectory(python_decorator)
+endif()
+
+# C++ and Python examples
 add_subdirectory(bring_your_own_model)
 add_subdirectory(cli_packager)
 add_subdirectory(conditions)
-if(HOLOSCAN_BUILD_PYTHON)
-  add_subdirectory(cupy_native)
-endif()
 add_subdirectory(flow_tracker)
 add_subdirectory(hello_world)
 add_subdirectory(holoviz)
 add_subdirectory(import_gxf_components)
 add_subdirectory(multithread)
 add_subdirectory(multi_branch_pipeline)
-if(HOLOSCAN_BUILD_PYTHON)
-  add_subdirectory(numpy_native)
-endif()
-add_subdirectory(ping_any)
-add_subdirectory(ping_conditional)
-add_subdirectory(ping_cycle)
 add_subdirectory(ping_simple)
 add_subdirectory(ping_simple_run_async)
 add_subdirectory(ping_custom_op)
 add_subdirectory(ping_multi_port)
 add_subdirectory(ping_distributed)
 add_subdirectory(ping_vector)
-if(HOLOSCAN_BUILD_PYTHON)
-  add_subdirectory(python_decorator)
-endif()
 add_subdirectory(resources)
 add_subdirectory(tensor_interop)
 add_subdirectory(v4l2_camera)
 add_subdirectory(video_replayer)
 add_subdirectory(video_replayer_distributed)
-add_subdirectory(wrap_operator_as_gxf_extension)
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
 # Generates the install CMakeLists.txt to compile all the cpp examples

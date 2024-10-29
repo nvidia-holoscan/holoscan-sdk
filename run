@@ -487,6 +487,9 @@ Arguments:
         a CMakeCache.txt does not exist in the build directory or if CMake detects a reconfigure
         is needed.
         Default: false
+  --tidy [true | false] : Build the SDK with clang-tidy (will be slower)
+        Default: false
+        Associated environment variable: HOLOSCAN_ENABLE_CLANG_TIDY
 '
 }
 build() {
@@ -514,6 +517,7 @@ build() {
     local install_prefix="${CMAKE_INSTALL_PREFIX:-$(get_install_dir)}"
     local reconfigure=false
     local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-'ON'}"
+    local enable_clang_tidy="${HOLOSCAN_ENABLE_CLANG_TIDY:-'OFF'}"
     local config_args=""
 
     # Parse args
@@ -524,6 +528,15 @@ build() {
             build_libtorch_val=$(get_boolean "$2")
             if [ "$build_libtorch_val" == "false" ]; then
                 build_libtorch='OFF'
+            fi
+            reconfigure=true
+            shift
+            shift
+        ;;
+        --tidy)
+            tidy_val=$(get_boolean "$2")
+            if [ "$tidy_val" == "true" ]; then
+                enable_clang_tidy='ON'
             fi
             reconfigure=true
             shift
@@ -657,6 +670,7 @@ build() {
             if [ ! -f '${build_path}/build.ninja' ] || ${reconfigure} ; then
                 cmake -S . -B ${build_path} -G Ninja \
                     -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
+                    -D HOLOSCAN_ENABLE_CLANG_TIDY=${enable_clang_tidy} \
                     -D CMAKE_CUDA_ARCHITECTURES='${cuda_archs}' \
                     -D CMAKE_BUILD_TYPE=${build_type} \
                     ${config_args}
@@ -981,7 +995,7 @@ launch() {
     if [ -n "$video_id" ]; then
         groups+=" --group-add $video_id"
     fi
-    render_id=$(get_group_id rnder)
+    render_id=$(get_group_id render)
     if [ -n "$render_id" ]; then
         groups+=" --group-add $render_id"
     fi

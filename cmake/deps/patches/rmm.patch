@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+diff --git CMakeLists.txt CMakeLists.txt
+index 56454d4b..0a59296 100644
+--- CMakeLists.txt
++++ CMakeLists.txt
+@@ -12,7 +12,7 @@
+ # the License.
+ # =============================================================================
+ 
+-cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
++cmake_minimum_required(VERSION 3.24.0 FATAL_ERROR)
+ 
+ include(rapids_config.cmake)
+ 
+@@ -131,6 +131,7 @@ endif()
+ 
+ # ##################################################################################################
+ # * install targets --------------------------------------------------------------------------------
++if(OFF) # disable exports in Holoscan SDK build
+ 
+ include(CPack)
+ 
+@@ -167,6 +168,7 @@ rapids_export(
+   NAMESPACE rmm::
+   DOCUMENTATION doc_string)
+ 
++endif()
+ # ##################################################################################################
+ # * make documentation -----------------------------------------------------------------------------
+ 
+diff --git include/rmm/cuda_stream_view.hpp include/rmm/cuda_stream_view.hpp
+index a34897d..231aae9 100644
+--- include/rmm/cuda_stream_view.hpp
++++ include/rmm/cuda_stream_view.hpp
+@@ -18,6 +18,7 @@
+
+ #include <rmm/detail/error.hpp>
+
++#define LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE
+ #include <cuda/stream_ref>
+ #include <cuda_runtime_api.h>
+
+diff --git include/rmm/logger.hpp include/rmm/logger.hpp
+index 6213221..edaf605 100644
+--- include/rmm/logger.hpp
++++ include/rmm/logger.hpp
+@@ -16,6 +16,7 @@
+
+ #pragma once
+
++#define FMT_HEADER_ONLY
+ #include <fmt/format.h>
+ #include <fmt/ostream.h>
+ #include <spdlog/sinks/basic_file_sink.h>
+
+diff --git include/rmm/mr/device/cuda_async_memory_resource.hpp include/rmm/mr/device/cuda_async_memory_resource.hpp
+index ac6b7207..702efae6 100644
+--- include/rmm/mr/device/cuda_async_memory_resource.hpp
++++ include/rmm/mr/device/cuda_async_memory_resource.hpp
+@@ -85,22 +85,22 @@ class cuda_async_memory_resource final : public device_memory_resource {
+    * resource should support interprocess communication (IPC). Default is
+    * `cudaMemHandleTypeNone` for no IPC support.
+    */
+-  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+-  template <class Optional,
+-            cuda::std::enable_if_t<cuda::std::is_same_v<cuda::std::remove_cvref_t<Optional>,
+-                                                        thrust::optional<std::size_t>>,
+-                                   int> = 0>
+-  [[deprecated("Use std::optional instead of thrust::optional.")]]  //
+-  explicit cuda_async_memory_resource(
+-    Optional initial_pool_size,
+-    Optional release_threshold                                  = {},
+-    thrust::optional<allocation_handle_type> export_handle_type = {})
+-    : cuda_async_memory_resource(initial_pool_size.value_or(std::nullopt),
+-                                 release_threshold.value_or(std::nullopt),
+-                                 export_handle_type.value_or(std::nullopt))
++  // // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
++  // template <class Optional,
++  //           cuda::std::enable_if_t<cuda::std::is_same_v<cuda::std::remove_cvref_t<Optional>,
++  //                                                       thrust::optional<std::size_t>>,
++  //                                  int> = 0>
++  // [[deprecated("Use std::optional instead of thrust::optional.")]]  //
++  // explicit cuda_async_memory_resource(
++  //   Optional initial_pool_size,
++  //   Optional release_threshold                                  = {},
++  //   thrust::optional<allocation_handle_type> export_handle_type = {})
++  //   : cuda_async_memory_resource(initial_pool_size.value_or(std::nullopt),
++  //                                release_threshold.value_or(std::nullopt),
++  //                                export_handle_type.value_or(std::nullopt))
+ 
+-  {
+-  }
++  // {
++  // }
+ 
+   /**
+    * @brief Constructs a cuda_async_memory_resource with the optionally specified initial pool size

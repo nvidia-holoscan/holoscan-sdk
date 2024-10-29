@@ -91,7 +91,7 @@ class ProcessTensorOp : public Operator {
     TensorMap out_message;
 
     for (auto& [key, tensor] : in_message) {  // Process with 'tensor' here.
-      cudaError_t cuda_status;
+      cudaError_t cuda_status{};
       size_t data_size = tensor->nbytes();
       std::vector<uint8_t> in_data(data_size);
       CUDA_TRY(cudaMemcpy(in_data.data(), tensor->data(), data_size, cudaMemcpyDeviceToHost));
@@ -172,7 +172,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<App>();
   app->run();
 

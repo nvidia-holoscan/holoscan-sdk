@@ -25,7 +25,7 @@ FROM ${BUILD_IMAGE} AS build
 # Base Image
 ############################################################
 # CUDA-base image is ~250 MB and contains the CUDA runtime + sets PATH and LD_LIBRARY_PATH
-FROM nvcr.io/nvidia/cuda:12.2.0-base-ubuntu22.04 AS base
+FROM nvcr.io/nvidia/cuda:12.6.0-base-ubuntu22.04 AS base
 
 # Variables inherited by all downstream stages
 ARG HOST_INSTALL_DIR
@@ -56,21 +56,35 @@ FROM base AS runtime_cpp_no_mkl
 #  libv4l2 - V4L2 operator dependency
 #  libpng16-16 - torchvision dependency
 #  libjpeg8 - torchvision dependency
-#  libnvonnxparsers - TensorRT dependency
 #  libnccl2 - libtorch & CuPy dependency
-#  libnvinfer-plugin - TensorRT dependency (Also installs libnvinfer8, libcublas, and libcudnn)
-#  libcublas - TensorRT & OnnxRT dependency, installed by libnvinfer8 (Installed explicitly to ensure correct version)
+#  libnvinfer-plugin - TensorRT dependency
+#  libnvonnxparsers - TensorRT dependency
+#  libnvinfer - TensorRT dependency (Installed explicitly to match required version)
+#  libcublas - OnnxRT dependency
 #  libnpp - Needed by format_converter & bayer_demosaic
 #  libcufft - Holoscan-python-core/OnnxRT dependency
 #  libcurand - libtorch & CuPy dependency
 #  libcusparse - libtorch & CuPy dependency
+#  libcusparseLt - libtorch dependency (Patch package file installs to match TensorRT base container)
 #  cuda-nvrtc - libtorch & CuPy dependency
 #  libnvjitlink - libtorch & CuPy dependency
 #  libcusolver - libtorch & CuPy dependency
 #  cuda-cupti - libtorch & CuPy dependency
 #  cuda-nvtx - libtorch & CuPy dependency
+#  cudnn9-cuda - libtorch & ONNX Runtime dependency
 #  libcudnn_train.so is removed since training is not needed in a runtime environment (saves ~200 MB)
+ARG GPU_TYPE
 RUN apt-get update \
+    && if [ $(uname -m) = "aarch64" ] && [ ${GPU_TYPE} = "dgpu" ]; then \
+        dpkg-divert --rename --divert /usr/local/cuda/lib64/libcusparseLt.so.0.6.2.3 \
+            /usr/lib/sbsa-linux-gnu/libcusparseLt.so.0.6.2.3 \
+        && dpkg-divert --rename --divert /usr/local/cuda/lib64/libcusparseLt.so.0 \
+            /usr/lib/sbsa-linux-gnu/libcusparseLt.so.0 \
+        && dpkg-divert --rename --divert /usr/local/cuda/lib64/libcusparseLt.so \
+            /usr/lib/sbsa-linux-gnu/libcusparseLt.so \
+        && dpkg-divert --rename --divert /usr/local/cuda/include/cusparseLt.h \
+            /usr/include/cusparseLt.h \
+        ; fi \
     && apt-get install --no-install-recommends --allow-downgrades -y \
         libx11-6="2:1.7.5-*" \
         libxcursor1="1:1.2.0-*" \
@@ -89,36 +103,50 @@ RUN apt-get update \
         libv4l-0="1.22.1-*" \
         libpng16-16="1.6.37-*" \
         libjpeg-turbo8="2.1.2-*" \
-        libnvinfer-plugin8="8.6.*+cuda12.0" \
-        libnvonnxparsers8="8.6.*+cuda12.0" \
-        libnccl2="2.19*+cuda12.2" \
-        libcublas-12-2 \
-        libnpp-12-2 \
-        libcufft-12-2 \
-        libcurand-12-2 \
-        libcusparse-12-2 \
-        cuda-nvrtc-12-2 \
-        libnvjitlink-12-2 \
-        libcusolver-12-2 \
-        cuda-cupti-12-2 \
-        cuda-nvtx-12-2 \
+        libnvinfer-plugin10="10.3.*+cuda12.5" \
+        libnvinfer10="10.3.*+cuda12.5" \
+        libnvonnxparsers10="10.3.*+cuda12.5" \
+        libnccl2="2.22*+cuda12.6" \
+        libcublas-12-6 \
+        libnpp-12-6 \
+        libcufft-12-6 \
+        libcurand-12-6 \
+        libcusparse-12-6 \
+        libcusparselt0="0.6.2.3-*" \
+        cuda-nvrtc-12-6 \
+        libnvjitlink-12-6 \
+        libcusolver-12-6 \
+        cuda-cupti-12-6 \
+        cuda-nvtx-12-6 \
+        cudnn9-cuda-12-6 \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/lib/*/libcudnn*train.so*
 
+# Install NVIDIA Performance Libraries on arm64 dGPU platform
+# as a runtime requirement for the Holoinfer `libtorch` backend (2.5.0).
+ARG GPU_TYPE
+RUN if [ $(uname -m) = "aarch64" ] && [ ${GPU_TYPE} = "dgpu" ]; then \
+    apt-get update \
+    && apt-get install --no-install-recommends -y \
+        nvpl-blas=0.2.0.1-* \
+        nvpl-lapack=0.2.2.1-* \
+    && rm -rf /var/lib/apt/lists/* \
+    ; fi
+
 # Copy ONNX Runtime
-ARG ONNX_RUNTIME_VERSION=1.15.1_23.08
+ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
 ENV ONNX_RUNTIME=/opt/onnxruntime/${ONNX_RUNTIME_VERSION}/lib
 COPY --from=build ${ONNX_RUNTIME} ${ONNX_RUNTIME}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${ONNX_RUNTIME}"
 
 # Copy Libtorch
-ARG LIBTORCH_VERSION=2.1.0_23.08
+ARG LIBTORCH_VERSION=2.5.0_24.08
 ENV LIBTORCH=/opt/libtorch/${LIBTORCH_VERSION}/lib
 COPY --from=build ${LIBTORCH} ${LIBTORCH}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${LIBTORCH}"
 
 # Copy TorchVision
-ARG TORCHVISION_VERSION=0.16.0_23.08
+ARG TORCHVISION_VERSION=0.20.0_24.08
 ENV TORCHVISION=/opt/torchvision/${TORCHVISION_VERSION}/lib
 COPY --from=build ${TORCHVISION} ${TORCHVISION}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${TORCHVISION}"
@@ -130,8 +158,6 @@ COPY --from=build /opt/hpcx/ompi/lib/libopen-rte.so.40 $INSTALL_PATH/lib/libopen
 COPY --from=build /opt/hpcx/ompi/lib/libopen-pal.so.40 $INSTALL_PATH/lib/libopen-pal.so.40
 
 # Install GRDAPI (needed by Holoscan-core)
-ENV os=ubuntu2204
-ENV tag=8.6.1-cuda-12.0
 RUN if [ $(uname -m) = "aarch64" ]; then \
         GDR_REPO_ARCH=aarch64 DEB_ARCH=arm64 CUDA_REPO_ARCH=arm64 ; \
     else \
@@ -139,8 +165,6 @@ RUN if [ $(uname -m) = "aarch64" ]; then \
     fi \
     && apt-get update -y \
     && apt-get install --no-install-recommends -y curl \
-    && curl -O https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/${CUDA_REPO_ARCH}/cuda-keyring_1.0-1_all.deb \
-    && dpkg -i cuda-keyring_1.0-1_all.deb \
     && curl -O https://developer.download.nvidia.com/compute/redist/gdrcopy/CUDA%2012.2/ubuntu22_04/${GDR_REPO_ARCH}/libgdrapi_2.4-1_${DEB_ARCH}.Ubuntu22_04.deb \
     && dpkg -i libgdrapi_2.4-1_${DEB_ARCH}.Ubuntu22_04.deb \
     && rm -f libgdrapi_2.4-1_${DEB_ARCH}.Ubuntu22_04.deb \
@@ -164,7 +188,7 @@ WORKDIR $INSTALL_PATH
 #############################################################
 # Runtime C++ + pip + MKL
 #
-# MKL is an x8_64 C++ Holoscan dependency installed with PIP,
+# MKL is an x86_64 C++ Holoscan dependency installed with PIP,
 # so Python must be installed. However, this stage does NOT
 # support running Python Holoscan apps.
 #############################################################

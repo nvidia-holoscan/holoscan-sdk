@@ -27,7 +27,8 @@ void PingTensorRxOp::setup(OperatorSpec& spec) {
   spec.input<TensorMap>("in");
 }
 
-void PingTensorRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+void PingTensorRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+                             [[maybe_unused]] ExecutionContext& context) {
   auto maybe_in_message = op_input.receive<holoscan::TensorMap>("in");
   if (!maybe_in_message) {
     HOLOSCAN_LOG_ERROR("Failed to receive message from port 'in'");

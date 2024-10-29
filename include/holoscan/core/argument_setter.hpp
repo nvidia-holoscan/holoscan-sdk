@@ -59,10 +59,8 @@ class ArgumentSetter {
   /**
    * @brief Default @ref SetterFunc for Arg.
    */
-  inline static SetterFunc none_argument_setter = [](ParameterWrapper& param_wrap, Arg& arg) {
-    (void)param_wrap;
-    (void)arg;
-
+  inline static SetterFunc none_argument_setter = []([[maybe_unused]] ParameterWrapper& param_wrap,
+                                                     Arg& arg) {
     HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", arg.name());
   };
 
@@ -266,7 +264,8 @@ class ArgumentSetter {
                           typename holoscan::type_info<typeT>::derived_type>(arg_value);
                       // Initialize the condition in case the condition created by
                       // Fragment::make_condition<T>() is added to the operator as an argument.
-                      // TODO: would like this to be assigned to the same entity as the operator
+                      // TODO(unknown): would like this to be assigned to the same entity as the
+                      // operator
                       if (converted_value) { converted_value->initialize(); }
 
                       param = converted_value;
@@ -282,7 +281,8 @@ class ArgumentSetter {
                           typename holoscan::type_info<typeT>::derived_type>(arg_value);
                       // Initialize the resource in case the resource created by
                       // Fragment::make_resource<T>() is added to the operator as an argument.
-                      // TODO: would like this to be assigned to the same entity as the operator
+                      // TODO(unknown): would like this to be assigned to the same entity as the
+                      // operator
                       if (converted_value) { converted_value->initialize(); }
 
                       param = converted_value;
@@ -391,7 +391,8 @@ class ArgumentSetter {
 
                         // Initialize the condition in case the condition created by
                         // Fragment::make_condition<T>() is added to the operator as an argument.
-                        // TODO: would like this to be assigned to the same entity as the operator
+                        // TODO(unknown): would like this to be assigned to the same entity as the
+                        // operator
                         if (condition) { condition->initialize(); }
 
                         converted_value.push_back(condition);
@@ -414,7 +415,8 @@ class ArgumentSetter {
 
                         // Initialize the resource in case the resource created by
                         // Fragment::make_resource<T>() is added to the operator as an argument.
-                        // TODO: would like this to be assigned to the same entity as the operator
+                        // TODO(unknown): would like this to be assigned to the same entity as the
+                        // operator
                         if (resource) { resource->initialize(); }
 
                         converted_value.push_back(resource);

@@ -30,41 +30,36 @@
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
 namespace holoscan {
 
 int64_t get_duration_ns(const py::object& duration) {
-  if (py::isinstance<py::int_>(duration)) {
-    return py::cast<int64_t>(duration);
-  } else {
-    // Must acquire GIL before calling C API functions like PyDelta_Check
-    py::gil_scoped_acquire scope_guard;
+  if (py::isinstance<py::int_>(duration)) { return py::cast<int64_t>(duration); }
+  // Must acquire GIL before calling C API functions like PyDelta_Check
+  py::gil_scoped_acquire scope_guard;
 
-    // Must initialize PyDateTime_IMPORT here in order to be able to use PyDelta_Check below
-    // see: https://docs.python.org/3/c-api/datetime.html?highlight=pydelta_check#datetime-objects
-    if (!PyDateTimeAPI) { PyDateTime_IMPORT; }
+  // Must initialize PyDateTime_IMPORT here in order to be able to use PyDelta_Check below
+  // see: https://docs.python.org/3/c-api/datetime.html?highlight=pydelta_check#datetime-objects
+  if (PyDateTimeAPI == nullptr) { PyDateTime_IMPORT; }
 
-    if (PyDelta_Check(duration.ptr())) {
-      // timedelta stores integer days, seconds, microseconds
-      int64_t days, seconds, microseconds;
-      days = PyDateTime_DELTA_GET_DAYS(duration.ptr());
-      seconds = PyDateTime_DELTA_GET_SECONDS(duration.ptr());
-      if (days) {
-        int seconds_per_day = 24 * 3600;
-        seconds += days * seconds_per_day;
-      }
-      microseconds = PyDateTime_DELTA_GET_MICROSECONDS(duration.ptr());
-      if (seconds) { microseconds += 1000000 * seconds; }
-      int64_t delta_ns = 1000 * microseconds;
-      return delta_ns;
-    } else {
-      throw std::runtime_error("expected an integer or datetime.timedelta type");
+  if (PyDelta_Check(duration.ptr())) {
+    // timedelta stores integer days, seconds, microseconds
+    int64_t days = PyDateTime_DELTA_GET_DAYS(duration.ptr());
+    int64_t seconds = PyDateTime_DELTA_GET_SECONDS(duration.ptr());
+    if (days > 0) {
+      int seconds_per_day = 24 * 3600;
+      seconds += days * seconds_per_day;
     }
+    int64_t microseconds = PyDateTime_DELTA_GET_MICROSECONDS(duration.ptr());
+    if (seconds > 0) { microseconds += 1000000 * seconds; }
+    int64_t delta_ns = 1000 * microseconds;
+    return delta_ns;
   }
+  throw std::runtime_error("expected an integer or datetime.timedelta type");
 }
 
 class PyRealtimeClock : public RealtimeClock {
@@ -82,15 +77,15 @@ class PyRealtimeClock : public RealtimeClock {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 
   /* Trampolines (need one for each virtual function) */
-  double time() const override {
+  [[nodiscard]] double time() const override {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(double, RealtimeClock, time);
   }
-  int64_t timestamp() const override {
+  [[nodiscard]] int64_t timestamp() const override {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(int64_t, RealtimeClock, timestamp);
   }
@@ -116,15 +111,15 @@ class PyManualClock : public ManualClock {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 
   /* Trampolines (need one for each virtual function) */
-  double time() const override {
+  [[nodiscard]] double time() const override {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(double, ManualClock, time);
   }
-  int64_t timestamp() const override {
+  [[nodiscard]] int64_t timestamp() const override {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(int64_t, ManualClock, timestamp);
   }
@@ -139,6 +134,7 @@ class PyManualClock : public ManualClock {
 };
 
 void init_clocks(py::module_& m) {
+  // NOLINTNEXTLINE(bugprone-unused-raii)
   py::class_<Clock, gxf::GXFResource, std::shared_ptr<Clock>>(m, "Clock", doc::Clock::doc_Clock);
 
   py::class_<RealtimeClock, PyRealtimeClock, Clock, std::shared_ptr<RealtimeClock>>(

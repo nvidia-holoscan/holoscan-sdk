@@ -45,7 +45,8 @@ class MinimalNativeResourceOp : public Operator {
 
   MinimalNativeResourceOp() = default;
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto res = resource<MinimalNativeResource>("string_native_resource");
     if (res) {
       HOLOSCAN_LOG_INFO("MinimalNativeResource - string_native_resource.string_param: {}",
@@ -85,7 +86,7 @@ class MinimalNativeResourceApp : public holoscan::Application {
 
 }  // namespace holoscan
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<holoscan::MinimalNativeResourceApp>();
   app->run();
 

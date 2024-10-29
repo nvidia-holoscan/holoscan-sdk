@@ -27,7 +27,7 @@ namespace nvh {
 
 inline float sign(float s)
 {
-  return (s < 0.f) ? -1.f : 1.f;
+  return (s < 0.F) ? -1.F : 1.F;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -78,7 +78,7 @@ void CameraManipulator::setLookat(const nvmath::vec3f& eye, const nvmath::vec3f&
 //   over time.
 void CameraManipulator::updateAnim()
 {
-  auto elapse = static_cast<float>(getSystemTime() - m_start_time) / 1000.f;
+  auto elapse = static_cast<float>(getSystemTime() - m_start_time) / 1000.F;
 
   // Key animation
   if(m_key_vec != nvmath::vec3f(0, 0, 0))
@@ -94,10 +94,10 @@ void CameraManipulator::updateAnim()
   if(m_anim_done)
     return;
 
-  float t = std::min(elapse / float(m_duration), 1.0f);
+  float t = std::min(elapse / float(m_duration), 1.0F);
   // Evaluate polynomial (smoother step from Perlin)
-  t = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-  if(t >= 1.0f)
+  t = t * t * t * (t * (t * 6.0F - 15.0F) + 10.0F);
+  if(t >= 1.0F)
   {
     m_current   = m_goal;
     m_anim_done = true;
@@ -233,8 +233,8 @@ void CameraManipulator::keyMotion(float dx, float dy, int action)
   }
 
   auto d = nvmath::normalize(m_current.ctr - m_current.eye);
-  dx *= m_speed * 2.f;
-  dy *= m_speed * 2.f;
+  dx *= m_speed * 2.F;
+  dy *= m_speed * 2.F;
 
   nvmath::vec3f key_vec;
   if(action == Dolly)
@@ -321,12 +321,12 @@ void CameraManipulator::wheel(int value, const Inputs& inputs)
 // Set and clamp FOV between 0.01 and 179 degrees
 void CameraManipulator::setFov(float _fov)
 {
-  m_current.fov = std::min(std::max(_fov, 0.01f), 179.0f);
+  m_current.fov = std::min(std::max(_fov, 0.01F), 179.0F);
 }
 
 nvmath::vec3f CameraManipulator::computeBezier(float t, nvmath::vec3f& p0, nvmath::vec3f& p1, nvmath::vec3f& p2)
 {
-  float u  = 1.f - t;
+  float u  = 1.F - t;
   float tt = t * t;
   float uu = u * u;
 
@@ -344,15 +344,15 @@ void CameraManipulator::findBezierPoints()
   nvmath::vec3f p1, pc;
 
   // point of interest
-  nvmath::vec3f pi = (m_goal.ctr + m_current.ctr) * 0.5f;
+  nvmath::vec3f pi = (m_goal.ctr + m_current.ctr) * 0.5F;
 
-  nvmath::vec3f p02    = (p0 + p2) * 0.5f;                            // mid p0-p2
-  float         radius = (length(p0 - pi) + length(p2 - pi)) * 0.5f;  // Radius for p1
+  nvmath::vec3f p02    = (p0 + p2) * 0.5F;                            // mid p0-p2
+  float         radius = (length(p0 - pi) + length(p2 - pi)) * 0.5F;  // Radius for p1
   nvmath::vec3f p02pi(p02 - pi);                                      // Vector from interest to mid point
   p02pi.normalize();
   p02pi *= radius;
   pc   = pi + p02pi;                        // Calculated point to go through
-  p1   = 2.f * pc - p0 * 0.5f - p2 * 0.5f;  // Computing p1 for t=0.5
+  p1   = 2.F * pc - p0 * 0.5F - p2 * 0.5F;  // Computing p1 for t=0.5
   p1.y = p02.y;                             // Clamping the P1 to be in the same height as p0-p2
 
   m_bezier[0] = p0;
@@ -372,7 +372,7 @@ void CameraManipulator::pan(float dx, float dy)
   }
 
   nvmath::vec3f z(m_current.eye - m_current.ctr);
-  float         length = static_cast<float>(nvmath::length(z)) / 0.785f;  // 45 degrees
+  float         length = static_cast<float>(nvmath::length(z)) / 0.785F;  // 45 degrees
   z                    = nvmath::normalize(z);
   nvmath::vec3f x      = nvmath::cross(m_current.up, z);
   x                    = nvmath::normalize(x);
@@ -453,7 +453,7 @@ void CameraManipulator::dolly(float dx, float dy)
   float         length = static_cast<float>(nvmath::length(z));
 
   // We are at the point of interest, and don't know any direction, so do nothing!
-  if(length < 0.000001f)
+  if(length < 0.000001F)
     return;
 
   // Use the larger movement.
@@ -468,7 +468,7 @@ void CameraManipulator::dolly(float dx, float dy)
   if(m_mode == Examine)
   {
     // Don't move over the point of interest.
-    if(factor >= 1.0f)
+    if(factor >= 1.0F)
       return;
 
     z *= factor;
@@ -476,7 +476,7 @@ void CameraManipulator::dolly(float dx, float dy)
   else
   {
     // Normalize the Z vector and make it faster
-    z *= factor / length * 10.0f;
+    z *= factor / length * 10.0F;
   }
 
   // Not going up
@@ -533,7 +533,7 @@ const std::string& CameraManipulator::getHelp()
 //
 void CameraManipulator::fit(const nvmath::vec3f& boxMin, const nvmath::vec3f& boxMax, bool instantFit /*= true*/, bool tight /*=false*/, float aspect /*=1.0f*/)
 {
-  const nvmath::vec3f boxHalfSize = (boxMax - boxMin) * .5f;
+  const nvmath::vec3f boxHalfSize = (boxMax - boxMin) * .5F;
   const nvmath::vec3f boxCenter   = boxMin + boxHalfSize;
 
   float offset = 0;
@@ -544,10 +544,10 @@ void CameraManipulator::fit(const nvmath::vec3f& boxMin, const nvmath::vec3f& bo
   {
     // Using the bounding sphere
     float radius = nvmath::length(boxHalfSize);
-    if(aspect > 1.f)
-      offset = radius / sin(nv_to_rad * yfov * 0.5f);
+    if(aspect > 1.F)
+      offset = radius / sin(nv_to_rad * yfov * 0.5F);
     else
-      offset = radius / sin(nv_to_rad * xfov * 0.5f);
+      offset = radius / sin(nv_to_rad * xfov * 0.5F);
   }
   else
   {
@@ -563,8 +563,8 @@ void CameraManipulator::fit(const nvmath::vec3f& boxMin, const nvmath::vec3f& bo
       if(vct.z < 0)  // Take only points in front of the center
       {
         // Keep the largest offset to see that vertex
-        offset = std::max(fabs(vct.y) / tan(nv_to_rad * yfov * 0.5f) + fabs(vct.z), offset);
-        offset = std::max(fabs(vct.x) / tan(nv_to_rad * xfov * 0.5f) + fabs(vct.z), offset);
+        offset = std::max(fabs(vct.y) / tan(nv_to_rad * yfov * 0.5F) + fabs(vct.z), offset);
+        offset = std::max(fabs(vct.x) / tan(nv_to_rad * xfov * 0.5F) + fabs(vct.z), offset);
       }
     }
   }

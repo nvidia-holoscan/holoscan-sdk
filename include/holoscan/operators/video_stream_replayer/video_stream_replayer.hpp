@@ -61,6 +61,27 @@ namespace holoscan::ops {
  * - **entity_serializer**: The entity serializer used for deserialization. The default is to use
  *   a default-initialized ``holoscan::gxzf::StdEntitySerializer``. If this argument is
  *   specified, then the `allocator` argument is ignored.
+ *
+ * ==Device Memory Requirements==
+ *
+ * This operator reads data from a file to an intermediate host buffer and then transfers the data
+ * to the GPU. Because both host and device memory is needed, an allocator supporting both memory
+ * types must be used. Options for this are `UnboundedAllocator` and the `RMMAllocator`. When using
+ * RMMAllocator, the following memory blocks are needed:
+ *  1. One block of host memory equal in size to a single uncompressed video frame
+ *    is needed. Note that for RMMAllocator, the memory sizes should be specified in MiB, so the
+ *    minimum value can be obtained by:
+ *
+ * ```cpp
+ * #include <cmath>
+ *
+ * ceil(static_cast<double>(height * width * channels * element_size_bytes) / (1024 * 1024));
+ * ```
+ *
+ *  2. One block of device memory equal in size to the host memory block.
+ *
+ * When declaring an RMMAllocator memory pool, `host_memory_initial_size` and
+ * `device_memory_initial_size` must be greater than or equal to the values discussed above.
  */
 class VideoStreamReplayerOp : public holoscan::Operator {
  public:
@@ -73,7 +94,7 @@ class VideoStreamReplayerOp : public holoscan::Operator {
   void setup(OperatorSpec& spec) override;
 
   void initialize() override;
-  void compute(InputContext& op_input, OutputContext& op_output,
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override;
 
  private:

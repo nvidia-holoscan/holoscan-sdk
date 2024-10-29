@@ -44,5 +44,5 @@ void main()
     Out.color    = i_color;
     Out.texCoord = i_texCoord;
 
-    gl_Position = push_constants.vertex.matrix * vec4(i_position.x, i_position.y, 0.f, 1.0);
+    gl_Position = push_constants.vertex.matrix * vec4(i_position.x, i_position.y, 0.F, 1.0);
 }

@@ -59,7 +59,7 @@ class VideoStreamRecorderOp : public holoscan::Operator {
 
   void initialize() override;
   // void deinitialize() override;
-  void compute(InputContext& op_input, OutputContext& op_output,
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                ExecutionContext& context) override;
   void stop() override;
 

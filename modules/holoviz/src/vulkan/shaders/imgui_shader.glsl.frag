@@ -44,7 +44,7 @@ void main()
     color.a *= push_constants.fragment.opacity;
 
     // discard transparent fragments
-    if (color.a == 0.f)
+    if (color.a == 0.F)
         discard;
 
     o_color = color;

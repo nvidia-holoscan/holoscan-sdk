@@ -44,8 +44,8 @@
 #include "operator.hpp"  // for PyOperator
 #include "tensor.hpp"    // for PyTensor
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -61,9 +61,10 @@ class PyRegistryContext {
   EmitterReceiverRegistry& registry_ = EmitterReceiverRegistry::get_instance();
 };
 
+// NOLINTBEGIN(altera-struct-pack-align)
 template <>
 struct codec<std::shared_ptr<GILGuardedPyObject>> {
-  static expected<size_t, RuntimeError> serialize(std::shared_ptr<GILGuardedPyObject> value,
+  static expected<size_t, RuntimeError> serialize(const std::shared_ptr<GILGuardedPyObject>& value,
                                                   Endpoint* endpoint) {
     HOLOSCAN_LOG_TRACE("py_emit: cloudpickle serialization of Python object over a UCX connector");
     std::string serialized_string;
@@ -96,6 +97,7 @@ struct codec<std::shared_ptr<GILGuardedPyObject>> {
     return std::move(maybe_obj.value());
   }
 };
+// NOLINTEND(altera-struct-pack-align)
 
 static void register_py_object_codec() {
   auto& codec_registry = CodecRegistry::get_instance();
@@ -103,8 +105,9 @@ static void register_py_object_codec() {
       "std::shared_ptr<GILGuardedPyObject>"s);
 }
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 py::object PyInputContext::py_receive(const std::string& name, const std::string& kind) {
-  auto py_op = py_op_.cast<PyOperator*>();
+  auto* py_op = py_op_.cast<PyOperator*>();
   auto py_op_spec = py_op->py_shared_spec();
 
   bool should_return_tuple = false;
@@ -160,16 +163,16 @@ py::object PyInputContext::py_receive(const std::string& name, const std::string
 
     // Check element type (querying the first element using the name '{name}:0')
     auto& element = any_result[0];
-    auto& element_type = element.type();
+    const auto& element_type = element.type();
     auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
     const auto& receiver_func = registry.get_receiver(element_type);
 
     py::tuple result_tuple(any_result.size());
     int counter = 0;
     try {
-      for (auto& any_item : any_result) {
-        auto& item_type = any_item.type();
-        if (item_type == typeid(kNoReceivedMessage) || item_type == typeid(nullptr_t)) {
+      for (const auto& any_item : any_result) {
+        const auto& item_type = any_item.type();
+        if (item_type == typeid(kNoReceivedMessage) || item_type == typeid(std::nullptr_t)) {
           // add None to the tuple
           PyTuple_SET_ITEM(result_tuple.ptr(), counter++, py::none().release().ptr());
           continue;
@@ -188,18 +191,17 @@ py::object PyInputContext::py_receive(const std::string& name, const std::string
           e.what());
     }
     return result_tuple;
-  } else {
-    auto maybe_result = receive<std::any>(name.c_str());
-    if (!maybe_result.has_value()) {
-      HOLOSCAN_LOG_DEBUG("Unable to receive input (std::any) with name '{}'", name);
-      return py::none();
-    }
-    auto result = maybe_result.value();
-    auto& result_type = result.type();
-    auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
-    const auto& receiver_func = registry.get_receiver(result_type);
-    return receiver_func(result, name, *this);
   }
+  auto maybe_result = receive<std::any>(name.c_str());
+  if (!maybe_result.has_value()) {
+    HOLOSCAN_LOG_DEBUG("Unable to receive input (std::any) with name '{}'", name);
+    return py::none();
+  }
+  auto result = maybe_result.value();
+  const auto& result_type = result.type();
+  auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
+  const auto& receiver_func = registry.get_receiver(result_type);
+  return receiver_func(result, name, *this);
 }
 
 void PyOutputContext::py_emit(py::object& data, const std::string& name,
@@ -275,10 +277,10 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   } else {
     // If this operator doesn't have a UCX connector, can still determine if the app is
     // a multi-fragment app via the application pointer assigned to the fragment.
-    auto py_op = py_op_.cast<PyOperator*>();
+    auto* py_op = py_op_.cast<PyOperator*>();
     auto py_op_spec = py_op->py_shared_spec();
-    auto app_ptr = py_op_spec->fragment()->application();
-    if (app_ptr) {
+    auto* app_ptr = py_op_spec->fragment()->application();
+    if (app_ptr != nullptr) {
       // a non-empty fragment graph means that the application is multi-fragment
       if (!(app_ptr->fragment_graph().is_empty())) { is_distributed_app = true; }
     }
@@ -311,10 +313,10 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   HOLOSCAN_LOG_DEBUG("py_emit: emitting a std::shared_ptr<GILGuardedPyObject>");
   const auto& emit_func = registry.get_emitter(typeid(std::shared_ptr<GILGuardedPyObject>));
   emit_func(data, name, *this, acq_timestamp);
-  return;
 }
 
 void init_io_context(py::module_& m) {
+  // NOLINTNEXTLINE(bugprone-unused-raii)
   py::class_<Message>(m, "Message", doc::Message::doc_Message);
 
   py::class_<InputContext, std::shared_ptr<InputContext>> input_context(
@@ -368,7 +370,7 @@ void init_io_context(py::module_& m) {
   // types. For user-defined operators that need to add additional types, the registry can be
   // imported from holoscan.core. See the holoscan.operators.HolovizOp source for an example.
   m.def("register_types", [](EmitterReceiverRegistry& registry) {
-    registry.add_emitter_receiver<nullptr_t>("nullptr_t"s, true);
+    registry.add_emitter_receiver<std::nullptr_t>("nullptr_t"s, true);
     registry.add_emitter_receiver<CloudPickleSerializedObject>("CloudPickleSerializedObject"s,
                                                                true);
     registry.add_emitter_receiver<std::string>("std::string"s, true);
@@ -398,6 +400,7 @@ void init_io_context(py::module_& m) {
            "Return a reference to the static EmitterReceiverRegistry",
            py::return_value_policy::reference_internal);
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 PyInputContext::PyInputContext(ExecutionContext* execution_context, Operator* op,
                                std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,

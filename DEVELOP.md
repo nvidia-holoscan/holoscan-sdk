@@ -81,15 +81,16 @@ To build the Holoscan SDK on a local environment, the following versions of dev 
 
 | Dependency | Min version | Needed by | Dockerfile stage |
 |---|---|---|---|
-| CUDA | 12.2 | Core SDK | base |
+| CUDA | 12.6 | Core SDK | base |
 | gRPC | 1.54.2 | Core SDK | grpc-builder |
-| UCX | 1.15.0 | Core SDK | ucx-builder |
-| GXF | 4.0 | Core SDK | gxf-downloader |
-| MOFED | 23.07 | ConnectX | mofed-installer |
-| TensorRT | 8.6.1 | Inference operator | base |
-| ONNX Runtime | 1.15.1 | Inference operator | onnxruntime-downloader |
-| LibTorch | 2.1.0 | Inference operator<br>(torch plugin) | torch-downloader-[x86_64\|arm64] |
-| TorchVision | 0.16.0 | Inference operator<br>(torch plugin) | torchvision-downloader-[x86_64\|arm64] |
+| UCX | 1.17.0 | Core SDK | base |
+| GXF | 4.1 | Core SDK | gxf-downloader |
+| MOFED | 24.07 | ConnectX | mofed-installer |
+| TensorRT | 10.3 | Inference operator | base |
+| NVPL | 24.03 | LibTorch | build |
+| ONNX Runtime | 1.18.1 | Inference operator | onnxruntime-downloader |
+| LibTorch | 2.5.0 | Inference operator<br>(torch plugin) | torch-downloader-[x86_64\|arm64] |
+| TorchVision | 0.20.0 | Inference operator<br>(torch plugin) | torchvision-downloader-[x86_64\|arm64] |
 | Vulkan SDK | 1.3.216 | Holoviz operator | vulkansdk-builder |
 | Vulkan loader and<br>validation layers | 1.3.204 | Holoviz operator | dev |
 | spirv-tools | 2022.1 | Holoviz operator | dev |

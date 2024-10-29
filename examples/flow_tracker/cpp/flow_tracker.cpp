@@ -28,9 +28,21 @@ class ValueData {
   }
   ~ValueData() { HOLOSCAN_LOG_TRACE("ValueData::~ValueData(): {}", data_); }
 
+  // Use default copy constructor
+  ValueData(const ValueData&) = default;
+
+  // Use default move constructor
+  ValueData(ValueData&&) noexcept = default;
+
+  // Use default copy assignment operator
+  ValueData& operator=(const ValueData&) = default;
+
+  // Use default move assignment operator
+  ValueData& operator=(ValueData&&) noexcept = default;
+
   void data(int value) { data_ = value; }
 
-  int data() const { return data_; }
+  [[nodiscard]] int data() const { return data_; }
 
  private:
   int data_;
@@ -46,10 +58,13 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<ValueData>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = ValueData(index_++);
     op_output.emit(value1, "out");
   };
+
+ private:
   int index_ = 1;
 };
 
@@ -65,7 +80,8 @@ class PingMxOp : public Operator {
     spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this value", 2);
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<ValueData>("in").value();
 
     HOLOSCAN_LOG_INFO("Middle message received (count: {})", count_++);
@@ -97,7 +113,8 @@ class PingRxOp : public Operator {
     spec.input<std::vector<ValueData>>("receivers", IOSpec::kAnySize);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value_vector = op_input.receive<std::vector<ValueData>>("receivers").value();
 
     HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: {})", count_++, value_vector.size());
@@ -138,7 +155,7 @@ class MyPingApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<MyPingApp>();
   // Skip 2 messages at the start and 3 messages at the end
   auto& tracker = app->track(2, 3, 0);

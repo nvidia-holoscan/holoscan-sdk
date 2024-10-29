@@ -74,7 +74,8 @@ class PingTensorTxOp : public Operator {
 
   void initialize() override;
   void setup(OperatorSpec& spec) override;
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext& context) override;
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override;
 
   nvidia::gxf::PrimitiveType element_type() {
     if (element_type_.has_value()) { return element_type_.value(); }

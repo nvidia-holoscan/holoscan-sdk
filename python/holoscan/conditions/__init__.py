@@ -19,6 +19,9 @@
     holoscan.conditions.AsynchronousCondition
     holoscan.conditions.BooleanCondition
     holoscan.conditions.CountCondition
+    holoscan.conditions.CudaBufferAvailableCondition
+    holoscan.conditions.CudaEventCondition
+    holoscan.conditions.CudaStreamCondition
     holoscan.conditions.DownstreamMessageAffordableCondition
     holoscan.conditions.ExpiringMessageAvailableCondition
     holoscan.conditions.MessageAvailableCondition
@@ -30,6 +33,9 @@ from ._conditions import (
     AsynchronousEventState,
     BooleanCondition,
     CountCondition,
+    CudaBufferAvailableCondition,
+    CudaEventCondition,
+    CudaStreamCondition,
     DownstreamMessageAffordableCondition,
     ExpiringMessageAvailableCondition,
     MessageAvailableCondition,
@@ -41,6 +47,9 @@ __all__ = [
     "AsynchronousEventState",
     "BooleanCondition",
     "CountCondition",
+    "CudaBufferAvailableCondition",
+    "CudaEventCondition",
+    "CudaStreamCondition",
     "DownstreamMessageAffordableCondition",
     "ExpiringMessageAvailableCondition",
     "MessageAvailableCondition",

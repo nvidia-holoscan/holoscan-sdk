@@ -34,6 +34,7 @@
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 #include "holoscan/core/services/app_worker/server.hpp"
+#include "holoscan/utils/cuda_macros.hpp"
 
 #include "holoscan/logger/logger.hpp"
 
@@ -120,9 +121,18 @@ bool AppWorker::execute_fragments(
     }
   }
 
+  int gpu_count = 0;
+  cudaError_t cuda_err = HOLOSCAN_CUDA_CALL_WARN_MSG(
+      cudaGetDeviceCount(&gpu_count), "Initializing UcxContext with support for CPU data only");
+  if (cuda_err == cudaSuccess) {
+    HOLOSCAN_LOG_DEBUG("Detected {} GPU(s), initializing UcxContext with GPU support", gpu_count);
+  }
+
   // Add the UCX network context
+  bool enable_async = AppDriver::get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", true);
   for (auto& fragment : scheduled_fragments) {
-    auto network_context = fragment->make_network_context<holoscan::UcxContext>("ucx_context");
+    auto network_context = fragment->make_network_context<holoscan::UcxContext>(
+        "ucx_context", Arg("cpu_data_only", gpu_count == 0), Arg("enable_async", enable_async));
     fragment->network_context(network_context);
   }
 

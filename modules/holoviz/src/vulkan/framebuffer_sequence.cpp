@@ -242,15 +242,15 @@ void FramebufferSequence::update(uint32_t width, uint32_t height, PresentMode pr
       // everyone must support FIFO mode
       vk_present_mode = vk::PresentModeKHR::eFifo;
       // try to find a non-blocking alternative to FIFO
-      for (auto present_mode : present_modes) {
-        if (present_mode == vk::PresentModeKHR::eMailbox) {
+      for (auto mode : present_modes) {
+        if (mode == vk::PresentModeKHR::eMailbox) {
           // prefer mailbox due to no tearing
-          vk_present_mode = present_mode;
+          vk_present_mode = mode;
           break;
         }
-        if (present_mode == vk::PresentModeKHR::eImmediate) {
+        if (mode == vk::PresentModeKHR::eImmediate) {
           // immediate mode is non-blocking, but has tearing
-          vk_present_mode = present_mode;
+          vk_present_mode = mode;
         }
       }
     } else {

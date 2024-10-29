@@ -30,8 +30,8 @@
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -74,7 +74,7 @@ class PyMultiThreadScheduler : public MultiThreadScheduler {
       this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
     }
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

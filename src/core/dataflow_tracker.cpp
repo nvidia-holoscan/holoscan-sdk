@@ -60,9 +60,13 @@ void DataFlowTracker::print() const {
     std::cout << "\n";
   }
 
-  std::cout << "Number of source messages [format: source operator->transmitter name: number of "
-               "messages]:\n";
-  for (const auto& it : source_messages_) { std::cout << it.first << ": " << it.second << "\n"; }
+  if (source_messages_.empty()) {
+    std::cout << "No source messages found.\n";
+  } else {
+    std::cout << "Number of source messages [format: source operator->transmitter name: number of "
+                 "messages]:\n";
+    for (const auto& it : source_messages_) { std::cout << it.first << ": " << it.second << "\n"; }
+  }
 
   std::cout.flush();  // flush standard output; otherwise output may not be printed
 }

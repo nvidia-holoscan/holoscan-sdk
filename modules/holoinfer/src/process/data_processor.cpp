@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include "data_processor.hpp"
 
 #include <functional>
@@ -240,7 +241,7 @@ InferStatus DataProcessor::scale_intensity_cpu(const std::vector<int>& dimension
         {out_tensor_name, std::make_shared<DataBuffer>(holoinfer_datatype::h_UInt8)});
 
     // allocate memory for the first time
-    processed_data_map.at(out_tensor_name)->host_buffer.resize(dsize * channels);
+    processed_data_map.at(out_tensor_name)->host_buffer_->resize(dsize * channels);
 
     //  Data in HWC format for Holoviz, input is CHW format
     processed_dims.push_back(static_cast<int64_t>(dimensions[1]));
@@ -249,7 +250,7 @@ InferStatus DataProcessor::scale_intensity_cpu(const std::vector<int>& dimension
   }
 
   auto processed_data =
-      static_cast<uint8_t*>(processed_data_map.at(out_tensor_name)->host_buffer.data());
+      static_cast<uint8_t*>(processed_data_map.at(out_tensor_name)->host_buffer_->data());
   auto input_data = static_cast<const float*>(indata);
   float max = 0, min = 100000;
 
@@ -294,17 +295,18 @@ InferStatus DataProcessor::scale_intensity_cpu(const std::vector<int>& dimension
   return InferStatus();
 }
 
-InferStatus DataProcessor::compute_max_per_channel_cpu(
+InferStatus DataProcessor::compute_max_per_channel_scaled(
     const std::vector<int>& dimensions, const void* indata, std::vector<int64_t>& processed_dims,
-    DataMap& processed_data_map, const std::vector<std::string>& output_tensors) {
+    DataMap& processed_data_map, const std::vector<std::string>& output_tensors,
+    bool process_with_cuda, cudaStream_t cuda_stream) {
   if (output_tensors.size() == 0) {
     return InferStatus(holoinfer_code::H_ERROR,
-                       "Data processor, Output tensor size 0 in compute_max_per_channel.");
+                       "Data processor, Output tensor size 0 in compute_max_per_channel_scaled.");
   }
   if (dimensions.size() != 4) {
-    return InferStatus(
-        holoinfer_code::H_ERROR,
-        "Data processor, Input dimensions expected in NHWC format in compute_max_per_channel.");
+    return InferStatus(holoinfer_code::H_ERROR,
+                       "Data processor, Input dimensions expected in NHWC format in "
+                       "compute_max_per_channel_scaled.");
   }
   auto out_tensor_name = output_tensors[0];  // only one output tensor supported
   // Assuming NHWC format
@@ -314,49 +316,64 @@ InferStatus DataProcessor::compute_max_per_channel_cpu(
 
   if (processed_data_map.find(out_tensor_name) == processed_data_map.end()) {
     // By default, create the float data type.
-    HOLOSCAN_LOG_INFO("Allocating memory for {} in compute_max_per_channel", out_tensor_name);
-    processed_data_map.insert({out_tensor_name, std::make_shared<DataBuffer>()});
+    HOLOSCAN_LOG_INFO("Allocating memory for {} in compute_max_per_channel_scaled",
+                      out_tensor_name);
+    const auto [db, success] =
+        processed_data_map.insert({out_tensor_name, std::make_shared<DataBuffer>()});
 
-    // allocate memory for the first time
-    if (processed_data_map.at(out_tensor_name)->host_buffer.size() == 0) {
-      // this is custom allocation for max per channel. (x, y)
-      processed_data_map.at(out_tensor_name)->host_buffer.resize(2 * out_channels);
+    // this is custom allocation for max per channel. (x, y)
+    if (process_with_cuda) {
+      db->second->device_buffer_->resize(2 * out_channels);
+    } else {
+      db->second->host_buffer_->resize(2 * out_channels);
     }
     processed_dims.push_back(1);  // CHECK: if disabled, get_data_from_tensor fails.
     processed_dims.push_back(static_cast<int64_t>(2 * out_channels));
   }
 
-  auto outdata = processed_data_map.at(out_tensor_name)->host_buffer.data();
+  if (process_with_cuda) {
+    void* outdata = processed_data_map.at(out_tensor_name)->device_buffer_->data();
 
-  auto input_data = static_cast<const float*>(indata);
-  auto processed_data = static_cast<float*>(outdata);
-  std::vector<unsigned int> max_x_per_channel, max_y_per_channel;
+    max_per_channel_scaled_cuda(rows,
+                                cols,
+                                out_channels,
+                                reinterpret_cast<const float*>(indata),
+                                reinterpret_cast<float*>(outdata),
+                                cuda_stream);
+  } else {
+    void* outdata = processed_data_map.at(out_tensor_name)->host_buffer_->data();
 
-  max_x_per_channel.resize(out_channels, 0);
-  max_y_per_channel.resize(out_channels, 0);
-  std::vector<float> maxV(out_channels, -1999);
+    auto input_data = static_cast<const float*>(indata);
+    auto processed_data = static_cast<float*>(outdata);
+    std::vector<unsigned int> max_x_per_channel, max_y_per_channel;
 
-  for (unsigned int i = 0; i < rows; i++) {
-    for (unsigned int j = 0; j < cols; j++) {
-      for (unsigned int c = 1; c < out_channels; c++) {
-        unsigned int index = i * cols * out_channels + j * out_channels + c;
-        float v1 = input_data[index];
-        if (maxV[c] < v1) {
-          maxV[c] = v1;
-          max_x_per_channel[c] = i;
-          max_y_per_channel[c] = j;
+    max_x_per_channel.resize(out_channels, 0);
+    max_y_per_channel.resize(out_channels, 0);
+    std::vector<float> maxV(out_channels, -1999);
+
+    for (unsigned int i = 0; i < rows; i++) {
+      for (unsigned int j = 0; j < cols; j++) {
+        for (unsigned int c = 1; c < out_channels; c++) {
+          unsigned int index = i * cols * out_channels + j * out_channels + c;
+          float v1 = input_data[index];
+          if (maxV[c] < v1) {
+            maxV[c] = v1;
+            max_x_per_channel[c] = i;
+            max_y_per_channel[c] = j;
+          }
         }
       }
     }
-  }
 
-  for (unsigned int i = 0; i < out_channels; i++) {
-    processed_data[2 * i] = static_cast<float>(max_x_per_channel[i]) / static_cast<float>(rows);
-    processed_data[2 * i + 1] = static_cast<float>(max_y_per_channel[i]) / static_cast<float>(cols);
-  }
+    for (unsigned int i = 0; i < out_channels; i++) {
+      processed_data[2 * i] = static_cast<float>(max_x_per_channel[i]) / static_cast<float>(rows);
+      processed_data[2 * i + 1] =
+          static_cast<float>(max_y_per_channel[i]) / static_cast<float>(cols);
+    }
 
-  max_x_per_channel.clear();
-  max_y_per_channel.clear();
+    max_x_per_channel.clear();
+    max_y_per_channel.clear();
+  }
   return InferStatus();
 }
 
@@ -365,7 +382,8 @@ InferStatus DataProcessor::process_operation(const std::string& operation,
                                              std::vector<int64_t>& processed_dims,
                                              DataMap& processed_data_map,
                                              const std::vector<std::string>& output_tensors,
-                                             const std::vector<std::string>& custom_strings) {
+                                             const std::vector<std::string>& custom_strings,
+                                             bool process_with_cuda, cudaStream_t cuda_stream) {
   if (indata == nullptr) {
     return InferStatus(holoinfer_code::H_ERROR,
                        "Data processor, Operation " + operation + ", Invalid input buffer");
@@ -375,8 +393,14 @@ InferStatus DataProcessor::process_operation(const std::string& operation,
     return InferStatus(holoinfer_code::H_ERROR,
                        "Data processor, Operation " + operation + " not found in map");
   try {
-    return oper_to_fp_.at(operation)(
-        indims, indata, processed_dims, processed_data_map, output_tensors, custom_strings);
+    return oper_to_fp_.at(operation)(indims,
+                                     indata,
+                                     processed_dims,
+                                     processed_data_map,
+                                     output_tensors,
+                                     custom_strings,
+                                     process_with_cuda,
+                                     cuda_stream);
   } catch (...) {
     return InferStatus(holoinfer_code::H_ERROR,
                        "Data processor, Exception in running " + operation);

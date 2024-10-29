@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,15 +46,15 @@ struct CPUInfo {
   int32_t num_cores = 0;                 ///< The number of cores
   int32_t num_cpus = 0;                  ///< The number of CPUs
   int32_t num_processors = 0;            ///< The number of available processors
-  float cpu_usage = 0.0f;                ///< The CPU usage (in percent)
+  float cpu_usage = 0.0F;                ///< The CPU usage (in percent)
   uint64_t memory_total = 0;             ///< The total memory (in bytes)
   uint64_t memory_free = 0;              ///< The free memory (in bytes)
   uint64_t memory_available = 0;         ///< The available memory (in bytes)
-  float memory_usage = 0.0f;             ///< The memory usage (in percent)
+  float memory_usage = 0.0F;             ///< The memory usage (in percent)
   uint64_t shared_memory_total = 0;      ///< The total shared memory (in bytes)
   uint64_t shared_memory_free = 0;       ///< The free shared memory (in bytes)
   uint64_t shared_memory_available = 0;  ///< The available shared memory (in bytes)
-  float shared_memory_usage = 0.0f;      ///< The shared memory usage (in percent)
+  float shared_memory_usage = 0.0F;      ///< The shared memory usage (in percent)
 };
 }  // namespace holoscan
 

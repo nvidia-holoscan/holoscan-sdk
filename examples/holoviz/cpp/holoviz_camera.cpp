@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// NOLINTFILE(concurrency-mt-unsafe)
+
 #include <getopt.h>
 
 #include <chrono>
@@ -42,7 +44,8 @@ class CameraPoseRxOp : public Operator {
 
   void start() override { start_time_ = std::chrono::steady_clock::now(); }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<std::shared_ptr<nvidia::gxf::Pose3D>>("input").value();
 
     // print once every second
@@ -106,7 +109,7 @@ class GeometrySourceOp : public Operator {
     std::memcpy(tensor->pointer(), data.data(), N * C * sizeof(float));
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output,
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
     auto entity = gxf::Entity::New(&context);
     auto specs = std::vector<HolovizOp::InputSpec>();
@@ -115,57 +118,57 @@ class GeometrySourceOp : public Operator {
     // Each triangle is defined by a set of 3 (x, y, z) coordinate pairs.
     add_data<6, 3>(entity,
                    "back",
-                   {{{-1.f, -1.f, -1.f},
-                     {1.f, -1.f, -1.f},
-                     {1.f, 1.f, -1.f},
-                     {1.f, 1.f, -1.f},
-                     {-1.f, 1.f, -1.f},
-                     {-1.f, -1.f, -1.f}}},
+                   {{{-1.F, -1.F, -1.F},
+                     {1.F, -1.F, -1.F},
+                     {1.F, 1.F, -1.F},
+                     {1.F, 1.F, -1.F},
+                     {-1.F, 1.F, -1.F},
+                     {-1.F, -1.F, -1.F}}},
                    context);
     add_data<6, 3>(entity,
                    "front",
-                   {{{-1.f, -1.f, 1.f},
-                     {1.f, -1.f, 1.f},
-                     {1.f, 1.f, 1.f},
-                     {1.f, 1.f, 1.f},
-                     {-1.f, 1.f, 1.f},
-                     {-1.f, -1.f, 1.f}}},
+                   {{{-1.F, -1.F, 1.F},
+                     {1.F, -1.F, 1.F},
+                     {1.F, 1.F, 1.F},
+                     {1.F, 1.F, 1.F},
+                     {-1.F, 1.F, 1.F},
+                     {-1.F, -1.F, 1.F}}},
                    context);
     add_data<6, 3>(entity,
                    "right",
-                   {{{1.f, -1.f, -1.f},
-                     {1.f, -1.f, 1.f},
-                     {1.f, 1.f, 1.f},
-                     {1.f, 1.f, 1.f},
-                     {1.f, 1.f, -1.f},
-                     {1.f, -1.f, -1.f}}},
+                   {{{1.F, -1.F, -1.F},
+                     {1.F, -1.F, 1.F},
+                     {1.F, 1.F, 1.F},
+                     {1.F, 1.F, 1.F},
+                     {1.F, 1.F, -1.F},
+                     {1.F, -1.F, -1.F}}},
                    context);
     add_data<6, 3>(entity,
                    "left",
-                   {{{-1.f, -1.f, -1.f},
-                     {-1.f, -1.f, 1.f},
-                     {-1.f, 1.f, 1.f},
-                     {-1.f, 1.f, 1.f},
-                     {-1.f, 1.f, -1.f},
-                     {-1.f, -1.f, -1.f}}},
+                   {{{-1.F, -1.F, -1.F},
+                     {-1.F, -1.F, 1.F},
+                     {-1.F, 1.F, 1.F},
+                     {-1.F, 1.F, 1.F},
+                     {-1.F, 1.F, -1.F},
+                     {-1.F, -1.F, -1.F}}},
                    context);
     add_data<6, 3>(entity,
                    "top",
-                   {{{-1.f, 1.f, -1.f},
-                     {-1.f, 1.f, 1.f},
-                     {1.f, 1.f, 1.f},
-                     {1.f, 1.f, 1.f},
-                     {1.f, 1.f, -1.f},
-                     {-1.f, 1.f, -1.f}}},
+                   {{{-1.F, 1.F, -1.F},
+                     {-1.F, 1.F, 1.F},
+                     {1.F, 1.F, 1.F},
+                     {1.F, 1.F, 1.F},
+                     {1.F, 1.F, -1.F},
+                     {-1.F, 1.F, -1.F}}},
                    context);
     add_data<6, 3>(entity,
                    "bottom",
-                   {{{-1.f, -1.f, -1.f},
-                     {-1.f, -1.f, 1.f},
-                     {1.f, -1.f, 1.f},
-                     {1.f, -1.f, 1.f},
-                     {1.f, -1.f, -1.f},
-                     {-1.f, -1.f, -1.f}}},
+                   {{{-1.F, -1.F, -1.F},
+                     {-1.F, -1.F, 1.F},
+                     {1.F, -1.F, 1.F},
+                     {1.F, -1.F, 1.F},
+                     {1.F, -1.F, -1.F},
+                     {-1.F, -1.F, -1.F}}},
                    context);
 
     // emit the tensors
@@ -173,10 +176,17 @@ class GeometrySourceOp : public Operator {
 
     // every second, switch camera
     if (std::chrono::steady_clock::now() - start_time_ > std::chrono::seconds(1)) {
+      // NOLINTBEGIN(cert-msc30-c,cert-msc50-cpp,concurrency-mt-unsafe)
+      // NOLINTBEGIN(bugprone-narrowing-conversions,cppcoreguidelines-narrowing-conversions)
       const int camera = std::rand() % sizeof(cameras_) / sizeof(cameras_[0]);
+      // NOLINTEND(bugprone-narrowing-conversions,cppcoreguidelines-narrowing-conversions)
+      // NOLINTEND(cert-msc30-c,cert-msc50-cpp,concurrency-mt-unsafe)
+
+      // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
       camera_eye_ = cameras_[camera][0];
       camera_look_at_ = cameras_[camera][1];
       camera_up_ = cameras_[camera][2];
+      // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
 
       op_output.emit(camera_eye_, "camera_eye_output");
       op_output.emit(camera_look_at_, "camera_look_at_output");
@@ -195,13 +205,16 @@ class GeometrySourceOp : public Operator {
 
   std::chrono::steady_clock::time_point start_time_;
 
+  // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
   // define some cameras we switch between
   static constexpr std::array<float, 3> cameras_[4][3]{
-      {{0.f, 0.f, 5.f}, {1.f, 1.f, 0.f}, {0.f, 1.f, 0.f}},
-      {{1.f, 1.f, -3.f}, {0.f, 0.f, 0.f}, {0.f, 1.f, 0.f}},
-      {{3.f, -4.f, 0.f}, {0.f, 1.f, 1.f}, {1.f, 0.f, 0.f}},
-      {{-2.f, 0.f, -3.f}, {-1.f, 0.f, -1.f}, {0.f, 0.f, 1.f}}};
+      {{0.F, 0.F, 5.F}, {1.F, 1.F, 0.F}, {0.F, 1.F, 0.F}},
+      {{1.F, 1.F, -3.F}, {0.F, 0.F, 0.F}, {0.F, 1.F, 0.F}},
+      {{3.F, -4.F, 0.F}, {0.F, 1.F, 1.F}, {1.F, 0.F, 0.F}},
+      {{-2.F, 0.F, -3.F}, {-1.F, 0.F, -1.F}, {0.F, 0.F, 1.F}}};
 
+  // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
   std::array<float, 3> camera_eye_ = cameras_[0][0];
   std::array<float, 3> camera_look_at_ = cameras_[0][1];
   std::array<float, 3> camera_up_ = cameras_[0][2];
@@ -250,17 +263,21 @@ class HolovizCameraApp : public holoscan::Application {
 
     // Parameters defining the triangle primitives
     const std::array<const char*, 6> spec_names{"back", "front", "left", "right", "top", "bottom"};
-    for (int index = 0; index < spec_names.size(); ++index) {
+    unsigned int index = 0;
+    for (const auto* spec_name : spec_names) {
       auto& spec = input_spec.emplace_back(
-          ops::HolovizOp::InputSpec(spec_names[index], ops::HolovizOp::InputType::TRIANGLES_3D));
-      spec.color_ = {
-          float((index + 1) & 1), float(((index + 1) / 2) & 1), float(((index + 1) / 4) & 1), 1.0f};
+          ops::HolovizOp::InputSpec(spec_name, ops::HolovizOp::InputType::TRIANGLES_3D));
+      spec.color_ = {static_cast<float>((index + 1) & 1U),
+                     static_cast<float>(((index + 1) / 2) & 1U),
+                     static_cast<float>(((index + 1) / 4) & 1U),
+                     1.0F};
+      index++;
     }
 
     auto visualizer = make_operator<ops::HolovizOp>(
         "holoviz",
-        Arg("width", 1024u),
-        Arg("height", 1024u),
+        Arg("width", 1024U),
+        Arg("height", 1024U),
         Arg("tensors", input_spec),
         Arg("enable_camera_pose_output", true),
         Arg("camera_pose_output_type", std::string("extrinsics_model")),
@@ -285,16 +302,21 @@ class HolovizCameraApp : public holoscan::Application {
 
 int main(int argc, char** argv) {
   // Parse args
-  struct option long_options[] = {
-      {"help", no_argument, 0, 'h'}, {"count", required_argument, 0, 'c'}, {0, 0, 0, 0}};
+  // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+  struct option long_options[] = {{"help", no_argument, nullptr, 'h'},
+                                  {"count", required_argument, nullptr, 'c'},
+                                  {nullptr, 0, nullptr, 0}};
+  // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
   uint64_t count = -1;
   while (true) {
     int option_index = 0;
-    const int c = getopt_long(argc, argv, "hc:", long_options, &option_index);
+    // NOLINTBEGIN(concurrency-mt-unsafe)
+    const int c = getopt_long(argc, argv, "hc:", static_cast<option*>(long_options), &option_index);
+    // NOLINTEND(concurrency-mt-unsafe)
 
     if (c == -1) { break; }
 
-    const std::string argument(optarg ? optarg : "");
+    const std::string argument(optarg != nullptr ? optarg : "");
     switch (c) {
       case 'h':
       case '?':
@@ -313,7 +335,7 @@ int main(int argc, char** argv) {
         count = std::stoull(argument);
         break;
       default:
-        throw std::runtime_error(fmt::format("Unhandled option `{}`", char(c)));
+        throw std::runtime_error(fmt::format("Unhandled option `{}`", static_cast<char>(c)));
     }
   }
 

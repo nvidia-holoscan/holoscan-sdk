@@ -178,9 +178,9 @@ void Texture::upload(CUstream ext_stream, const std::array<CUdeviceptr, 3>& devi
           // allocate temporary memory, note this is using the stream ordered memory allocator which
           // is not syncing globally like the normal `cuMemAlloc`
           tmp_device_ptr.reset([size = tmp_pitch * height, stream] {
-            CUdeviceptr device_ptr;
-            CudaCheck(cuMemAllocAsync(&device_ptr, size, stream));
-            return std::pair<CUdeviceptr, CUstream>(device_ptr, stream);
+            CUdeviceptr dev_ptr;
+            CudaCheck(cuMemAllocAsync(&dev_ptr, size, stream));
+            return std::pair<CUdeviceptr, CUstream>(dev_ptr, stream);
           }());
 
           CUDA_MEMCPY2D memcpy_2d{};

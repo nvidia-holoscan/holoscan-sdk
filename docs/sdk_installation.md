@@ -19,10 +19,11 @@ Developer Kit | User Guide | OS | GPU Mode
 ------------- | ---------- | --- | ---
 [NVIDIA IGX Orin][igx] | [Guide][igx-guide] | [IGX Software][igx-sw] 1.0 Production Release | iGPU **or*** dGPU
 [NVIDIA Jetson AGX Orin and Orin Nano][jetson-orin] | [Guide][jetson-guide] | [JetPack][jp] 6.0 | iGPU
-[NVIDIA Clara AGX][clara-agx]<br>_Only supporting the NGC container_ | [Guide][clara-guide] | [HoloPack][sdkm] 1.2 | iGPU **or*** dGPU
+[NVIDIA Clara AGX][clara-agx]<br>_Only supporting the NGC container_ | [Guide][clara-guide] | [HoloPack][sdkm] 1.2<br>_[Upgrade to 535+ drivers required][cagx-upgrade]_ | dGPU
 
 [clara-agx]: https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments
 [clara-guide]: https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md
+[cagx-upgrade]: https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md#update-nvidia-drivers
 [sdkm]: https://developer.nvidia.com/drive/sdk-manager
 [igx]: https://www.nvidia.com/en-us/edge-computing/products/igx/
 [igx-guide]: https://developer.nvidia.com/igx-orin-developer-kit-user-guide
@@ -81,11 +82,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.5.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.5.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -198,7 +199,7 @@ For x86_64, ensure that the [CUDA Runtime is installed](https://developer.nvidia
 |  | NGC dev Container | Debian Package | Python Wheels |
 |---|:---:|:---:|:---:|
 | Runtime libraries | **Included** | **Included** | **Included** |
-| Python module | 3.10 | 3.10 | **3.8 to 3.11** |
+| Python module | 3.10 | 3.10 | **3.9 to 3.12** |
 | C++ headers and<br>CMake config | **Included** | **Included** | N/A |
 | Examples (+ source) | **Included** | **Included** | [retrieve from<br>GitHub][examples] |
 | Sample datasets | **Included** | [retrieve from<br>NGC][data] | [retrieve from<br>NGC][data] |
@@ -225,14 +226,14 @@ For x86_64, ensure that the [CUDA Runtime is installed](https://developer.nvidia
 [^1]: [CUDA 12](https://docs.nvidia.com/cuda/archive/12.1.1/cuda-installation-guide-linux/index.html) is required. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^2]: Debian installation on x86_64 requires the [latest cuda-keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) to automatically install all dependencies.
 [^3]: NPP 12 needed for the FormatConverter and BayerDemosaic operators. Already installed on NVIDIA developer kits with IGX Software and JetPack.
-[^4]: TensorRT 8.6.1+ and cuDNN needed for the Inference operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.
+[^4]: TensorRT 10.3+ needed for the Inference operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^5]: Vulkan 1.3.204+ loader needed for the HoloViz operator (+ libegl1 for headless rendering). Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^6]: V4L2 1.22+ needed for the V4L2 operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.  V4L2 also requires libjpeg.
-[^7]: Torch support requires LibTorch 2.1+, TorchVision 0.16+, OpenBLAS 0.3.20+, OpenMPI (aarch64 only), MKL 2021.1.1 (x86_64 only), libpng and libjpeg.
+[^7]: Torch support requires LibTorch 2.5+, TorchVision 0.20+, OpenBLAS 0.3.20+, OpenMPI v4.1.7a1+, UCC 1.4+, MKL 2021.1.1 (x86_64 only), NVIDIA Performance Libraries (aarch64 dGPU only), libpng, and libjpeg. Note that container builds use OpenMPI and UCC originating from the NVIDIA HPC-X package bundle.
 [^8]: To install LibTorch and TorchVision, either build them from source, download our [pre-built packages](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/), or copy them from the holoscan container (in `/opt`).
-[^9]: ONNXRuntime 1.15.1+ needed for the Inference operator. Note that ONNX models are also supported through the TensoRT backend of the Inference Operator.
+[^9]: ONNXRuntime 1.18.1+ needed for the Inference operator. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
 [^10]: To install ONNXRuntime, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/) with CUDA 12 and TensoRT execution provider support, or copy it from the holoscan container (in `/opt/onnxruntime`).
-[^11]: Tested with MOFED 23.10
+[^11]: Tested with MOFED 24.07
 
 ### Need more control over the SDK?
 

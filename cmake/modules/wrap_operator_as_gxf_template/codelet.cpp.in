@@ -20,8 +20,10 @@
 
 namespace @CODELET_NAMESPACE@ {
 
+// NOLINTBEGIN(readability-redundant-member-init)
 @CODELET_NAME@::@CODELET_NAME@() : holoscan::gxf::OperatorWrapper() {
   op_ = std::make_shared<@OPERATOR_CLASS@>();
 }
+// NOLINTEND(readability-redundant-member-init)
 
 }  // namespace @CODELET_NAMESPACE@

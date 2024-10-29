@@ -1019,7 +1019,7 @@ class HolovizDepthMapSinkOp(Operator):
         spec.input("in")
 
     def compute(self, op_input, op_output, context):
-        # TODO: Holoviz outputs a video buffer, but there is no support for video buffers in Python  # noqa: FIX002, E501
+        # TODO(unknown): Holoviz outputs a video buffer, but there is no support for video buffers in Python  # noqa: FIX002, E501
         # yet
         pass
         # message = op_input.receive("in")

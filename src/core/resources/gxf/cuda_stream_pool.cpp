@@ -64,9 +64,9 @@ nvidia::gxf::CudaStreamPool* CudaStreamPool::get() const {
 }
 
 void CudaStreamPool::setup(ComponentSpec& spec) {
-  // TODO: The dev_id parameter was removed in GXF 3.0 and replaced with a GPUDevice Resource
-  // Note: We are currently working around this with special handling of the "dev_id" parameter
-  // in GXFResource::initialize().
+  // TODO(unknown): The dev_id parameter was removed in GXF 3.0 and replaced with a GPUDevice
+  // Resource Note: We are currently working around this with special handling of the "dev_id"
+  // parameter in GXFResource::initialize().
   spec.param(
       dev_id_, "dev_id", "Device Id", "Create CUDA Stream on which device.", kDefaultDeviceId);
   spec.param(stream_flags_,

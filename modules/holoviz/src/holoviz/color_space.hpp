@@ -20,7 +20,6 @@
 
 #include <cstdint>
 
-#include "holoviz/color_space.hpp"
 #include "holoviz/image_format.hpp"
 
 namespace holoscan::viz {

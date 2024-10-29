@@ -71,22 +71,22 @@ TEST_P(PrimitiveTopology, Primitive) {
   switch (topology) {
     case viz::PrimitiveTopology::POINT_LIST:
       primitive_count = 1;
-      data.push_back(0.5f);
-      data.push_back(0.5f);
+      data.push_back(0.5F);
+      data.push_back(0.5F);
       color_crc = {0x3088e839};
       depth_crc = {0x748e4c96};
       break;
     case viz::PrimitiveTopology::LINE_LIST:
       primitive_count = 2;
-      data.push_back(0.1f);
-      data.push_back(0.1f);
-      data.push_back(0.9f);
-      data.push_back(0.9f);
+      data.push_back(0.1F);
+      data.push_back(0.1F);
+      data.push_back(0.9F);
+      data.push_back(0.9F);
 
-      data.push_back(0.7f);
-      data.push_back(0.3f);
-      data.push_back(0.2f);
-      data.push_back(0.4f);
+      data.push_back(0.7F);
+      data.push_back(0.3F);
+      data.push_back(0.2F);
+      data.push_back(0.4F);
       color_crc = {
           0xe96c7246,  // Quadro
           0x5f7bf4d3   // non-Quadro
@@ -98,13 +98,13 @@ TEST_P(PrimitiveTopology, Primitive) {
       break;
     case viz::PrimitiveTopology::LINE_STRIP:
       primitive_count = 2;
-      data.push_back(0.1f);
-      data.push_back(0.1f);
-      data.push_back(0.7f);
-      data.push_back(0.9f);
+      data.push_back(0.1F);
+      data.push_back(0.1F);
+      data.push_back(0.7F);
+      data.push_back(0.9F);
 
-      data.push_back(0.3f);
-      data.push_back(0.2f);
+      data.push_back(0.3F);
+      data.push_back(0.2F);
       color_crc = {
           0x162496c0,  // Quadro
           0x9118f5cb   // non-Quadro
@@ -116,31 +116,31 @@ TEST_P(PrimitiveTopology, Primitive) {
       break;
     case viz::PrimitiveTopology::TRIANGLE_LIST:
       primitive_count = 2;
-      data.push_back(0.1f);
-      data.push_back(0.1f);
-      data.push_back(0.5f);
-      data.push_back(0.9f);
-      data.push_back(0.9f);
-      data.push_back(0.1f);
+      data.push_back(0.1F);
+      data.push_back(0.1F);
+      data.push_back(0.5F);
+      data.push_back(0.9F);
+      data.push_back(0.9F);
+      data.push_back(0.1F);
 
-      data.push_back(0.05f);
-      data.push_back(0.7f);
-      data.push_back(0.15f);
-      data.push_back(0.8f);
-      data.push_back(0.25f);
-      data.push_back(0.6f);
+      data.push_back(0.05F);
+      data.push_back(0.7F);
+      data.push_back(0.15F);
+      data.push_back(0.8F);
+      data.push_back(0.25F);
+      data.push_back(0.6F);
       color_crc = {0x9de9f5f3};
       depth_crc = {0x101577b};
       break;
     case viz::PrimitiveTopology::CROSS_LIST:
       primitive_count = 2;
-      data.push_back(0.5f);
-      data.push_back(0.5f);
-      data.push_back(0.1f);
+      data.push_back(0.5F);
+      data.push_back(0.5F);
+      data.push_back(0.1F);
 
-      data.push_back(0.1f);
-      data.push_back(0.3f);
-      data.push_back(0.01f);
+      data.push_back(0.1F);
+      data.push_back(0.3F);
+      data.push_back(0.01F);
       color_crc = {
           0xb507fa88,  // Quadro
           0xf298654    // non-Quadro
@@ -152,15 +152,15 @@ TEST_P(PrimitiveTopology, Primitive) {
       break;
     case viz::PrimitiveTopology::RECTANGLE_LIST:
       primitive_count = 2;
-      data.push_back(0.1f);
-      data.push_back(0.1f);
-      data.push_back(0.9f);
-      data.push_back(0.9f);
+      data.push_back(0.1F);
+      data.push_back(0.1F);
+      data.push_back(0.9F);
+      data.push_back(0.9F);
 
-      data.push_back(0.3f);
-      data.push_back(0.2f);
-      data.push_back(0.5f);
-      data.push_back(0.3f);
+      data.push_back(0.3F);
+      data.push_back(0.2F);
+      data.push_back(0.5F);
+      data.push_back(0.3F);
       color_crc = {
           0x19a05481,  // Quadro
           0xf1f8f1b3   // non-Quadro
@@ -172,15 +172,15 @@ TEST_P(PrimitiveTopology, Primitive) {
       break;
     case viz::PrimitiveTopology::OVAL_LIST:
       primitive_count = 2;
-      data.push_back(0.5f);
-      data.push_back(0.5f);
-      data.push_back(0.2f);
-      data.push_back(0.1f);
+      data.push_back(0.5F);
+      data.push_back(0.5F);
+      data.push_back(0.2F);
+      data.push_back(0.1F);
 
-      data.push_back(0.6f);
-      data.push_back(0.4f);
-      data.push_back(0.05f);
-      data.push_back(0.07f);
+      data.push_back(0.6F);
+      data.push_back(0.4F);
+      data.push_back(0.05F);
+      data.push_back(0.07F);
       color_crc = {
           0x2341eef6,  // Quadro
           0xae3f0636   // non-Quadro
@@ -192,27 +192,27 @@ TEST_P(PrimitiveTopology, Primitive) {
       break;
     case viz::PrimitiveTopology::POINT_LIST_3D:
       primitive_count = 1;
-      data.push_back(-0.5f);
-      data.push_back(0.5f);
-      data.push_back(0.8f);
+      data.push_back(-0.5F);
+      data.push_back(0.5F);
+      data.push_back(0.8F);
       color_crc = {0xd8f49994};
       depth_crc = {0x4e371ba0};
       break;
     case viz::PrimitiveTopology::LINE_LIST_3D:
       primitive_count = 2;
-      data.push_back(-0.1f);
-      data.push_back(-0.1f);
-      data.push_back(0.1f);
-      data.push_back(0.9f);
-      data.push_back(0.9f);
-      data.push_back(0.3f);
+      data.push_back(-0.1F);
+      data.push_back(-0.1F);
+      data.push_back(0.1F);
+      data.push_back(0.9F);
+      data.push_back(0.9F);
+      data.push_back(0.3F);
 
-      data.push_back(-0.7f);
-      data.push_back(-0.3f);
-      data.push_back(0.2f);
-      data.push_back(0.2f);
-      data.push_back(0.4f);
-      data.push_back(0.5f);
+      data.push_back(-0.7F);
+      data.push_back(-0.3F);
+      data.push_back(0.2F);
+      data.push_back(0.2F);
+      data.push_back(0.4F);
+      data.push_back(0.5F);
       color_crc = {
           0xc7762cc5,  // Quadro
           0xe9f3dbc3   // non-Quadro
@@ -224,16 +224,16 @@ TEST_P(PrimitiveTopology, Primitive) {
       break;
     case viz::PrimitiveTopology::LINE_STRIP_3D:
       primitive_count = 2;
-      data.push_back(-0.1f);
-      data.push_back(-0.1f);
-      data.push_back(0.1f);
-      data.push_back(0.7f);
-      data.push_back(0.9f);
-      data.push_back(0.3f);
+      data.push_back(-0.1F);
+      data.push_back(-0.1F);
+      data.push_back(0.1F);
+      data.push_back(0.7F);
+      data.push_back(0.9F);
+      data.push_back(0.3F);
 
-      data.push_back(-0.3f);
-      data.push_back(-0.2f);
-      data.push_back(0.2f);
+      data.push_back(-0.3F);
+      data.push_back(-0.2F);
+      data.push_back(0.2F);
       color_crc = {
           0x135ba8af,  // Quadro
           0x322d3fdd   // non-Quadro
@@ -245,25 +245,25 @@ TEST_P(PrimitiveTopology, Primitive) {
       break;
     case viz::PrimitiveTopology::TRIANGLE_LIST_3D:
       primitive_count = 2;
-      data.push_back(-0.1f);
-      data.push_back(-0.1f);
-      data.push_back(0.f);
-      data.push_back(0.5f);
-      data.push_back(0.9f);
-      data.push_back(0.1f);
-      data.push_back(0.9f);
-      data.push_back(0.1f);
-      data.push_back(0.2f);
+      data.push_back(-0.1F);
+      data.push_back(-0.1F);
+      data.push_back(0.F);
+      data.push_back(0.5F);
+      data.push_back(0.9F);
+      data.push_back(0.1F);
+      data.push_back(0.9F);
+      data.push_back(0.1F);
+      data.push_back(0.2F);
 
-      data.push_back(-0.05f);
-      data.push_back(-0.7f);
-      data.push_back(0.3f);
-      data.push_back(0.15f);
-      data.push_back(0.8f);
-      data.push_back(0.2f);
-      data.push_back(0.25f);
-      data.push_back(0.6f);
-      data.push_back(0.5f);
+      data.push_back(-0.05F);
+      data.push_back(-0.7F);
+      data.push_back(0.3F);
+      data.push_back(0.15F);
+      data.push_back(0.8F);
+      data.push_back(0.2F);
+      data.push_back(0.25F);
+      data.push_back(0.6F);
+      data.push_back(0.5F);
       color_crc = {0xf372dff7};
       depth_crc = {0x90e4e07d};
       break;
@@ -277,15 +277,15 @@ TEST_P(PrimitiveTopology, Primitive) {
 
   for (uint32_t i = 0; i < 3; ++i) {
     if (i == 1) {
-      EXPECT_NO_THROW(viz::Color(1.f, 0.5f, 0.25f, 0.75f));
+      EXPECT_NO_THROW(viz::Color(1.F, 0.5F, 0.25F, 0.75F));
     } else if (i == 2) {
-      EXPECT_NO_THROW(viz::PointSize(4.f));
-      EXPECT_NO_THROW(viz::LineWidth(3.f));
+      EXPECT_NO_THROW(viz::PointSize(4.F));
+      EXPECT_NO_THROW(viz::LineWidth(3.F));
     }
 
     EXPECT_NO_THROW(viz::Primitive(topology, primitive_count, data.size(), data.data()));
 
-    for (auto&& item : data) { item += 0.1f; }
+    for (auto&& item : data) { item += 0.1F; }
   }
   EXPECT_NO_THROW(viz::EndLayer());
 
@@ -311,9 +311,9 @@ TEST_F(GeometryLayer, Text) {
   EXPECT_NO_THROW(viz::Begin());
 
   EXPECT_NO_THROW(viz::BeginGeometryLayer());
-  EXPECT_NO_THROW(viz::Text(0.4f, 0.4f, 0.4f, "Text"));
-  EXPECT_NO_THROW(viz::Color(0.5f, 0.9f, 0.7f, 0.9f));
-  EXPECT_NO_THROW(viz::Text(0.1f, 0.1f, 0.2f, "Colored"));
+  EXPECT_NO_THROW(viz::Text(0.4F, 0.4F, 0.4F, "Text"));
+  EXPECT_NO_THROW(viz::Color(0.5F, 0.9F, 0.7F, 0.9F));
+  EXPECT_NO_THROW(viz::Text(0.1F, 0.1F, 0.2F, "Colored"));
   EXPECT_NO_THROW(viz::EndLayer());
 
   EXPECT_NO_THROW(viz::End());
@@ -325,7 +325,7 @@ TEST_F(GeometryLayer, TextClipped) {
   EXPECT_NO_THROW(viz::Begin());
 
   EXPECT_NO_THROW(viz::BeginGeometryLayer());
-  EXPECT_NO_THROW(viz::Text(1.1f, 0.4f, 0.4f, "Text"));
+  EXPECT_NO_THROW(viz::Text(1.1F, 0.4F, 0.4F, "Text"));
 
   EXPECT_NO_THROW(viz::End());
 
@@ -335,7 +335,7 @@ TEST_F(GeometryLayer, TextClipped) {
 class GeometryLayerWithFont : public TestHeadless {
  protected:
   void SetUp() override {
-    ASSERT_NO_THROW(viz::SetFont("../modules/holoviz/src/fonts/Roboto-Bold.ttf", 12.f));
+    ASSERT_NO_THROW(viz::SetFont("../modules/holoviz/src/fonts/Roboto-Bold.ttf", 12.F));
 
     // call base class
     ::TestHeadless::SetUp();
@@ -345,7 +345,7 @@ class GeometryLayerWithFont : public TestHeadless {
     // call base class
     ::TestHeadless::TearDown();
 
-    ASSERT_NO_THROW(viz::SetFont("", 0.f));
+    ASSERT_NO_THROW(viz::SetFont("", 0.F));
   }
 };
 
@@ -353,7 +353,7 @@ TEST_F(GeometryLayerWithFont, Text) {
   EXPECT_NO_THROW(viz::Begin());
 
   EXPECT_NO_THROW(viz::BeginGeometryLayer());
-  EXPECT_NO_THROW(viz::Text(0.1f, 0.1f, 0.7f, "Font"));
+  EXPECT_NO_THROW(viz::Text(0.1F, 0.1F, 0.7F, "Font"));
   EXPECT_NO_THROW(viz::EndLayer());
 
   EXPECT_NO_THROW(viz::End());
@@ -407,7 +407,7 @@ TEST_P(DepthMapRenderMode, DepthMap) {
     case viz::ImageFormat::D32_SFLOAT: {
       std::vector<float> depth_data(map_width * map_height);
       for (size_t index = 0; index < depth_data.size(); ++index) {
-        depth_data[index] = index * 4 / 255.f;
+        depth_data[index] = index * 4 / 255.F;
       }
       EXPECT_EQ(cuMemcpyHtoD(
                     depth_ptr.get(), depth_data.data(), depth_data.size() * depth_component_size),
@@ -471,18 +471,18 @@ INSTANTIATE_TEST_SUITE_P(GeometryLayer, DepthMapRenderMode,
                                                           viz::ImageFormat::D32_SFLOAT)));
 
 TEST_F(GeometryLayer, Reuse) {
-  std::vector<float> data{0.5f, 0.5f};
+  std::vector<float> data{0.5F, 0.5F};
 
   for (uint32_t i = 0; i < 2; ++i) {
     EXPECT_NO_THROW(viz::Begin());
 
     EXPECT_NO_THROW(viz::BeginGeometryLayer());
-    EXPECT_NO_THROW(viz::Color(0.1f, 0.2f, 0.3f, 0.4f));
-    EXPECT_NO_THROW(viz::LineWidth(2.f));
-    EXPECT_NO_THROW(viz::PointSize(3.f));
+    EXPECT_NO_THROW(viz::Color(0.1F, 0.2F, 0.3F, 0.4F));
+    EXPECT_NO_THROW(viz::LineWidth(2.F));
+    EXPECT_NO_THROW(viz::PointSize(3.F));
     EXPECT_NO_THROW(
         viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 1, data.size(), data.data()));
-    EXPECT_NO_THROW(viz::Text(0.4f, 0.4f, 0.1f, "Text"));
+    EXPECT_NO_THROW(viz::Text(0.4F, 0.4F, 0.1F, "Text"));
     EXPECT_NO_THROW(viz::EndLayer());
 
     EXPECT_NO_THROW(viz::End());
@@ -490,17 +490,17 @@ TEST_F(GeometryLayer, Reuse) {
 }
 
 TEST_F(GeometryLayer, Errors) {
-  std::vector<float> data{0.5f, 0.5f};
+  std::vector<float> data{0.5F, 0.5F};
 
   EXPECT_NO_THROW(viz::Begin());
 
   // it's an error to call geometry functions without calling BeginGeometryLayer first
-  EXPECT_THROW(viz::Color(0.f, 0.f, 0.f, 1.f), std::runtime_error);
-  EXPECT_THROW(viz::LineWidth(1.0f), std::runtime_error);
-  EXPECT_THROW(viz::PointSize(1.0f), std::runtime_error);
+  EXPECT_THROW(viz::Color(0.F, 0.F, 0.F, 1.F), std::runtime_error);
+  EXPECT_THROW(viz::LineWidth(1.0F), std::runtime_error);
+  EXPECT_THROW(viz::PointSize(1.0F), std::runtime_error);
   EXPECT_THROW(viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 1, data.size(), data.data()),
                std::runtime_error);
-  EXPECT_THROW(viz::Text(0.5f, 0.5f, 0.1f, "Text"), std::runtime_error);
+  EXPECT_THROW(viz::Text(0.5F, 0.5F, 0.1F, "Text"), std::runtime_error);
 
   // it's an error to call BeginGeometryLayer again without calling EndLayer
   EXPECT_NO_THROW(viz::BeginGeometryLayer());
@@ -509,12 +509,12 @@ TEST_F(GeometryLayer, Errors) {
 
   // it's an error to call geometry functions when a different layer is active
   EXPECT_NO_THROW(viz::BeginImageLayer());
-  EXPECT_THROW(viz::Color(0.f, 0.f, 0.f, 1.f), std::runtime_error);
-  EXPECT_THROW(viz::LineWidth(1.0f), std::runtime_error);
-  EXPECT_THROW(viz::PointSize(1.0f), std::runtime_error);
+  EXPECT_THROW(viz::Color(0.F, 0.F, 0.F, 1.F), std::runtime_error);
+  EXPECT_THROW(viz::LineWidth(1.0F), std::runtime_error);
+  EXPECT_THROW(viz::PointSize(1.0F), std::runtime_error);
   EXPECT_THROW(viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 1, data.size(), data.data()),
                std::runtime_error);
-  EXPECT_THROW(viz::Text(0.5f, 0.5f, 0.1f, "Text"), std::runtime_error);
+  EXPECT_THROW(viz::Text(0.5F, 0.5F, 0.1F, "Text"), std::runtime_error);
   EXPECT_NO_THROW(viz::EndLayer());
 
   EXPECT_NO_THROW(viz::BeginGeometryLayer());
@@ -537,7 +537,7 @@ TEST_F(GeometryLayer, Errors) {
   };
 
   for (auto&& cur : required) {
-    std::vector<float> data(cur.values, 0.f);
+    std::vector<float> data(cur.values, 0.F);
     // Primitive function errors, first call the passing function
     EXPECT_NO_THROW(viz::Primitive(cur.topology, 1, data.size(), data.data()));
     // it's an error to call Primitive with a data size which is too small for the primitive count
@@ -555,11 +555,11 @@ TEST_F(GeometryLayer, Errors) {
                std::invalid_argument);
 
   // Text function errors, first call the passing function
-  EXPECT_NO_THROW(viz::Text(0.5f, 0.5f, 0.1f, "Text"));
+  EXPECT_NO_THROW(viz::Text(0.5F, 0.5F, 0.1F, "Text"));
   // it's an error to call Text with a size of zero
-  EXPECT_THROW(viz::Text(0.5f, 0.5f, 0.0f, "Text"), std::invalid_argument);
+  EXPECT_THROW(viz::Text(0.5F, 0.5F, 0.0F, "Text"), std::invalid_argument);
   // it's an error to call Text with null text pointer
-  EXPECT_THROW(viz::Text(0.5f, 0.5f, 0.1f, nullptr), std::invalid_argument);
+  EXPECT_THROW(viz::Text(0.5F, 0.5F, 0.1F, nullptr), std::invalid_argument);
 
   // Depth map function errors, first call the passing function
   const uint32_t map_width = 8;

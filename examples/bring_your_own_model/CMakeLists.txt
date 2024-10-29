@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if(HOLOSCAN_BUILD_PYTHON)
+if(HOLOSCAN_PYTHON_EXAMPLES)
   add_subdirectory(python)
 endif()
 add_subdirectory(model)

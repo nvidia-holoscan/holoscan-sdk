@@ -23,12 +23,12 @@ The Holoscan SDK does not only provide a framework to build and run applications
 
 The list of existing operators is available [here](./holoscan_operators_extensions.md), which points to the C++ or Python API documentation for more details. Specific documentation is available for the [visualization](./visualization.md) (codename: HoloViz) and [inference](./inference.md) (codename: HoloInfer) operators.
 
-Additionally, [HoloHub](https://nvidia-holoscan.github.io/holohub) is a central repository for users and developers to share reusable operators and sample applications with the Holoscan community, extending the capabilities of the SDK:
+Additionally, [HoloHub](https://github.com/nvidia-holoscan/holohub) is a central repository for users and developers to share reusable operators and sample applications with the Holoscan community, extending the capabilities of the SDK:
 
 - Just like the SDK operators, the HoloHub operators can be used in your own Holoscan applications.
 - The HoloHub sample applications can be used as reference implementations to complete the examples available in the SDK.
 
-Take a glance at [HoloHub](https://nvidia-holoscan.github.io/holohub) to find components you might want to leverage in your application, improve upon existing work, or contribute your own additions to the Holoscan platform.
+Take a glance at [HoloHub](https://github.com/nvidia-holoscan/holohub) to find components you might want to leverage in your application, improve upon existing work, or contribute your own additions to the Holoscan platform.
 
 ## 5. Write and run your own application
 

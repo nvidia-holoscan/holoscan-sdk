@@ -63,10 +63,10 @@ uint32_t current_format_index = 0;
 
 bool show_ui = true;
 bool unlimited_fps = false;
-float fps = 15.f;
+float fps = 15.F;
 int color_index = 0;
-float line_width = 1.f;
-float point_size = 1.f;
+float line_width = 1.F;
+float point_size = 1.F;
 
 // cuda
 CUcontext cuda_context = nullptr;
@@ -85,9 +85,9 @@ void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* wid
     tmp_image_data.reserve(*width * *height);
     for (int index = 0; index < *width * *height; ++index) {
       const uint8_t* src = &file_image_data[index * *components];
-      tmp_image_data.push_back(static_cast<uint8_t>(0.2126f * static_cast<float>(src[0]) +
-                                                    0.7152f * static_cast<float>(src[1]) +
-                                                    0.0722f * static_cast<float>(src[2]) + 0.5f));
+      tmp_image_data.push_back(static_cast<uint8_t>(0.2126F * static_cast<float>(src[0]) +
+                                                    0.7152F * static_cast<float>(src[1]) +
+                                                    0.0722F * static_cast<float>(src[2]) + 0.5F));
     }
     image_data = tmp_image_data.data();
     *components = 1;
@@ -176,13 +176,13 @@ void generateSourceData() {
     case viz::ImageFormat::R8_UNORM:
       element_size = sizeof(uint8_t);
       write_depth = [](void* data, size_t index, float value) {
-        reinterpret_cast<uint8_t*>(data)[index] = value * 63.f;
+        reinterpret_cast<uint8_t*>(data)[index] = value * 63.F;
       };
       break;
     case viz::ImageFormat::D32_SFLOAT:
       element_size = sizeof(float);
       write_depth = [](void* data, size_t index, float value) {
-        reinterpret_cast<float*>(data)[index] = value / 4.f;
+        reinterpret_cast<float*>(data)[index] = value / 4.F;
       };
       break;
     default:
@@ -213,13 +213,13 @@ void generateSourceData() {
 
     for (uint32_t y = 0; y < map_height; ++y) {
       for (uint32_t x = 0; x < map_width; ++x) {
-        const float depth = (std::sin((float(x) / float(map_width)) * 3.14f * 4.f) *
-                                 std::cos((float(y) / float(map_height)) * 3.14f * 3.f) +
-                             1.f) *
+        const float depth = (std::sin((float(x) / float(map_width)) * 3.14F * 4.F) *
+                                 std::cos((float(y) / float(map_height)) * 3.14F * 3.F) +
+                             1.F) *
                             offset;
 
         write_depth(depth_data.get(), y * map_width + x, depth);
-        const uint8_t color = depth * 63.f;
+        const uint8_t color = depth * 63.F;
         color_data[y * map_width + x] = color | ((color << (8 + (x & 1))) & 0xFF00) |
                                         ((color << (16 + (y & 1) * 2)) & 0xFF0000) | 0xFF204060;
       }
@@ -283,23 +283,23 @@ void tick() {
 
           {
             uint32_t& item = palette[color_index];
-            float color[]{(item & 0xFF) / 255.f,
-                          ((item >> 8) & 0xFF) / 255.f,
-                          ((item >> 16) & 0xFF) / 255.f,
-                          ((item >> 24) & 0xFF) / 255.f};
+            float color[]{(item & 0xFF) / 255.F,
+                          ((item >> 8) & 0xFF) / 255.F,
+                          ((item >> 16) & 0xFF) / 255.F,
+                          ((item >> 24) & 0xFF) / 255.F};
             ImGui::ColorEdit4("##color", color, ImGuiColorEditFlags_DefaultOptions_);
-            item = static_cast<uint32_t>((color[0] * 255.f) + 0.5f) +
-                   (static_cast<uint32_t>((color[1] * 255.f) + 0.5f) << 8) +
-                   (static_cast<uint32_t>((color[2] * 255.f) + 0.5f) << 16) +
-                   (static_cast<uint32_t>((color[3] * 255.f) + 0.5f) << 24);
+            item = static_cast<uint32_t>((color[0] * 255.F) + 0.5F) +
+                   (static_cast<uint32_t>((color[1] * 255.F) + 0.5F) << 8) +
+                   (static_cast<uint32_t>((color[2] * 255.F) + 0.5F) << 16) +
+                   (static_cast<uint32_t>((color[3] * 255.F) + 0.5F) << 24);
           }
         }
         break;
       case RenderMode::LINES:
-        ImGui::SliderFloat("Line width", &line_width, 1.f, 20.f);
+        ImGui::SliderFloat("Line width", &line_width, 1.F, 20.F);
         break;
       case RenderMode::POINTS:
-        ImGui::SliderFloat("Point size", &point_size, 1.f, 20.f);
+        ImGui::SliderFloat("Point size", &point_size, 1.F, 20.F);
         break;
     }
 
@@ -435,7 +435,8 @@ int main(int argc, char** argv) {
   // parse options
   while (true) {
     int option_index = 0;
-    const int c = getopt_long(argc, argv, "hd:c:bl", long_options, &option_index);
+    const int c =
+        getopt_long(argc, argv, "hd:c:bl", static_cast<option*>(long_options), &option_index);
 
     if (c == -1) { break; }
 
@@ -501,7 +502,7 @@ int main(int argc, char** argv) {
 
             std::cout << size << " " << format_items[current_format_index] << " "
                       << render_mode_items[int(current_render_mode)] << " "
-                      << float(iterations) / (float(elapsed.count()) / 1000.f) << " fps"
+                      << float(iterations) / (float(elapsed.count()) / 1000.F) << " fps"
                       << std::endl;
           }
         }
@@ -511,7 +512,7 @@ int main(int argc, char** argv) {
         if (!viz::WindowIsMinimized()) {
           tick();
           if (!unlimited_fps) {
-            std::this_thread::sleep_for(std::chrono::duration<float, std::milli>(1000.f / fps));
+            std::this_thread::sleep_for(std::chrono::duration<float, std::milli>(1000.F / fps));
           }
         }
       }

@@ -40,7 +40,8 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override;
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override;
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override;
 
   int index() const { return index_; }
 

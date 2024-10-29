@@ -30,11 +30,8 @@
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -56,7 +53,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
   using ExpiringMessageAvailableCondition::ExpiringMessageAvailableCondition;
 
   // Define a constructor that fully initializes the object.
-  PyExpiringMessageAvailableCondition(
+  explicit PyExpiringMessageAvailableCondition(
       Fragment* fragment,
       // std::shared_ptr<gxf::GXFResource> receiver,
       int64_t max_batch_size, int64_t max_delay_ns, std::shared_ptr<Clock> clock = nullptr,
@@ -71,7 +68,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // receiver = receiver;  // e.g. DoubleBufferReceiver
-    setup(*spec_.get());
+    setup(*spec_);
   }
 
   template <typename Rep, typename Period>
@@ -91,7 +88,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // receiver = receiver;  // e.g. DoubleBufferReceiver
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -103,9 +100,9 @@ void init_expiring_message_available(py::module_& m) {
       m,
       "ExpiringMessageAvailableCondition",
       doc::ExpiringMessageAvailableCondition::doc_ExpiringMessageAvailableCondition)
-      // TODO: sphinx API doc build complains if more than one ExpiringMessageAvailableCondition
-      //       init method has a docstring specified. For now just set the docstring for the
-      //       overload using datetime.timedelta for the max_delay.
+      // TODO(unknown): sphinx API doc build complains if more than one
+      // ExpiringMessageAvailableCondition init method has a docstring specified. For now just set
+      // the docstring for the overload using datetime.timedelta for the max_delay.
       .def(py::init<Fragment*, int64_t, int64_t, std::shared_ptr<Clock>, const std::string&>(),
            "fragment"_a,
            "max_batch_size"_a,

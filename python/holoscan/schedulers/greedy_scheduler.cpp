@@ -30,8 +30,8 @@
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -53,10 +53,11 @@ class PyGreedyScheduler : public GreedyScheduler {
   using GreedyScheduler::GreedyScheduler;
 
   // Define a constructor that fully initializes the object.
-  PyGreedyScheduler(Fragment* fragment, std::shared_ptr<Clock> clock = nullptr,
-                    bool stop_on_deadlock = true, int64_t max_duration_ms = -1LL,
-                    double check_recession_period_ms = 5.0, int64_t stop_on_deadlock_timeout = 0LL,
-                    const std::string& name = "greedy_scheduler")
+  explicit PyGreedyScheduler(Fragment* fragment, std::shared_ptr<Clock> clock = nullptr,
+                             bool stop_on_deadlock = true, int64_t max_duration_ms = -1LL,
+                             double check_recession_period_ms = 5.0,
+                             int64_t stop_on_deadlock_timeout = 0LL,
+                             const std::string& name = "greedy_scheduler")
       : GreedyScheduler(ArgList{Arg{"stop_on_deadlock", stop_on_deadlock},
                                 Arg{"check_recession_period_ms", check_recession_period_ms},
                                 Arg{"stop_on_deadlock_timeout", stop_on_deadlock_timeout}}) {
@@ -72,7 +73,7 @@ class PyGreedyScheduler : public GreedyScheduler {
     }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     HOLOSCAN_LOG_TRACE("in PyGreedyScheduler constructor");
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 void init_greedy_scheduler(py::module_& m) {

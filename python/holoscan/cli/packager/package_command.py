@@ -18,7 +18,6 @@ limitations under the License.
 import argparse
 import logging
 from argparse import ArgumentParser, _SubParsersAction
-from typing import List
 
 from packaging.version import Version
 
@@ -36,7 +35,7 @@ logger = logging.getLogger("packager")
 
 
 def create_package_parser(
-    subparser: _SubParsersAction, command: str, parents: List[ArgumentParser]
+    subparser: _SubParsersAction, command: str, parents: list[ArgumentParser]
 ) -> ArgumentParser:
     parser: ArgumentParser = subparser.add_parser(
         command, formatter_class=argparse.HelpFormatter, parents=parents, add_help=False

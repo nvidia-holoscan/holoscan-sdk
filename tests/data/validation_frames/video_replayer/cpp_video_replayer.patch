@@ -13,7 +13,7 @@
  class VideoReplayerApp : public holoscan::Application {
   public:
    void compose() override {
-@@ -48,6 +54,9 @@ class VideoReplayerApp : public holoscan::Application {
+@@ -52,6 +58,9 @@ class VideoReplayerApp : public holoscan::Application {
        auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz"));
        add_flow(replayer, visualizer2, {{"output", "receivers"}});
      }

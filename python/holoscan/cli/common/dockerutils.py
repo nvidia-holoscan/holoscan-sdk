@@ -22,7 +22,7 @@ import posixpath
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from python_on_whales import docker
 
@@ -35,7 +35,7 @@ from .utils import get_gpu_count, get_requested_gpus
 logger = logging.getLogger("common")
 
 
-def parse_docker_image_name_and_tag(image_name: str) -> Tuple[Optional[str], Optional[str]]:
+def parse_docker_image_name_and_tag(image_name: str) -> tuple[Optional[str], Optional[str]]:
     """Parse a given Docker image name and tag.
 
     Args:
@@ -157,7 +157,7 @@ def docker_run(
     app_info: dict,
     pkg_info: dict,
     quiet: bool,
-    commands: List[str],
+    commands: list[str],
     network: str,
     network_interface: Optional[str],
     use_all_nics: bool,
@@ -166,7 +166,7 @@ def docker_run(
     render: bool,
     user: str,
     terminal: bool,
-    devices: List[str],
+    devices: list[str],
     platform_config: str,
     shared_memory_size: str = "1GB",
     is_root: bool = False,

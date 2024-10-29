@@ -20,7 +20,6 @@ import logging
 import os
 import tempfile
 from argparse import Namespace
-from typing import List
 
 from ..common.enum_types import ApplicationType
 from ..common.utils import print_manifest_json
@@ -32,7 +31,7 @@ from .parameters import PlatformBuildResults
 logger = logging.getLogger("packager")
 
 
-def _build_image(args: PackagingArguments, temp_dir: str) -> List[PlatformBuildResults]:
+def _build_image(args: PackagingArguments, temp_dir: str) -> list[PlatformBuildResults]:
     """Creates dockerfile and builds HAP/MONAI Application Package (HAP/MAP) image
     Args:
         args (dict): Input arguments for Packager

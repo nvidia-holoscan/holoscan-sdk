@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,7 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 # Here we are using rapids_cpm_find() function instead of rapids_cpm_spdlog() function
 # (https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_spdlog.html), to
 # override the default options.
-set(version 1.10.0)
+set(version 1.14.1)
 
 rapids_cpm_find(spdlog ${version}
     GLOBAL_TARGETS spdlog::spdlog spdlog::spdlog_header_only

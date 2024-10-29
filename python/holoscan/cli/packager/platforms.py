@@ -18,7 +18,7 @@ limitations under the License.
 import logging
 from argparse import Namespace
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 from ..common.artifact_sources import ArtifactSources
 from ..common.constants import Constants
@@ -44,7 +44,7 @@ class Platform:
         temp_dir: str,
         version: str,
         application_type: ApplicationType,
-    ) -> Tuple[SdkType, str, str, List[PlatformParameters]]:
+    ) -> tuple[SdkType, str, str, list[PlatformParameters]]:
         """Configures a list of platforms that need to be built.
         1. Detect the SDK to use
         2. Detect the version of the SDK to use
@@ -146,7 +146,7 @@ class Platform:
         platform_parameters: PlatformParameters,
         sdk_version: str,
         base_image: Optional[str] = None,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Ensure user provided base image exists in Docker or locate the base image to use based on
         request platform.
@@ -233,9 +233,9 @@ class Platform:
         application_type: ApplicationType,
         holoscan_sdk_file: Optional[Path] = None,
         monai_deploy_sdk_file: Optional[Path] = None,
-    ) -> Tuple[
-        Tuple[bool, Union[Path, str]],
-        Tuple[Union[Optional[Path], Optional[str]], Union[Optional[Path], Optional[str]]],
+    ) -> tuple[
+        tuple[bool, Union[Path, str]],
+        tuple[Union[Optional[Path], Optional[str]], Union[Optional[Path], Optional[str]]],
     ]:
         """
         Detects the SDK distributable to use based on internal mapping or user input.
@@ -297,7 +297,7 @@ class Platform:
         sdk_version: str,
         application_type: ApplicationType,
         sdk_file: Optional[Path] = None,
-    ) -> Tuple[bool, Union[Path, str]]:
+    ) -> tuple[bool, Union[Path, str]]:
         """
         Validates Holoscan SDK redistributable file if specified.
         Otherwise, attempt to download the SDK file from internet.
@@ -376,7 +376,7 @@ class Platform:
 
     def _get_monai_deploy_sdk(
         self, monai_deploy_app_sdk_version: Optional[str], sdk_file: Optional[Path] = None
-    ) -> Tuple[bool, Union[Optional[Path], Optional[str]]]:
+    ) -> tuple[bool, Union[Optional[Path], Optional[str]]]:
         """
         Validates MONAI Deploy SDK redistributable file if specified.
         Otherwise, Docker build stage will install the SDK from PyPI.

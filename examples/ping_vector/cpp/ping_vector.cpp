@@ -29,14 +29,18 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<std::vector<int>>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = index_++;
 
     std::vector<int> output;
+    output.reserve(5);
     for (int i = 0; i < 5; i++) { output.push_back(value1++); }
 
     op_output.emit(output, "out");
   };
+
+ private:
   int index_ = 1;
 };
 
@@ -61,10 +65,10 @@ class PingMxOp : public Operator {
 
     std::vector<int> values2;
     std::vector<int> values3;
-    for (int i = 0; i < values1.size(); i++) {
-      HOLOSCAN_LOG_INFO("Middle message value: {}", values1[i]);
-      values2.push_back(values1[i] * multiplier_);
-      values3.push_back(values1[i] * multiplier_ * multiplier_);
+    for (const auto& val : values1) {
+      HOLOSCAN_LOG_INFO("Middle message value: {}", val);
+      values2.push_back(val * multiplier_);
+      values3.push_back(val * multiplier_ * multiplier_);
     }
 
     op_output.emit(values1, "out1");
@@ -93,7 +97,8 @@ class PingRxOp : public Operator {
     spec.input<std::vector<std::vector<int>>>("receivers", IOSpec::kAnySize);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto receiver_vector = op_input.receive<std::vector<std::vector<int>>>("receivers").value();
     auto input_vector = op_input.receive<std::vector<int>>("in").value();
     auto dup_input_vector = op_input.receive<std::vector<int>>("dup_in").value();
@@ -106,15 +111,15 @@ class PingRxOp : public Operator {
         dup_input_vector.size(),
         receiver_vector.size());
 
-    for (int i = 0; i < input_vector.size(); i++) {
+    for (int i = 0; i < input_vector.size(); i++) {  // NOLINT(*)
       HOLOSCAN_LOG_INFO("Rx message input value[{}]: {}", i, input_vector[i]);
     }
 
-    for (int i = 0; i < dup_input_vector.size(); i++) {
+    for (int i = 0; i < dup_input_vector.size(); i++) {  // NOLINT(*)
       HOLOSCAN_LOG_INFO("Rx message duplicated input value[{}]: {}", i, dup_input_vector[i]);
     }
 
-    for (int i = 0; i < receiver_vector.size(); i++) {
+    for (int i = 0; i < receiver_vector.size(); i++) {  // NOLINT(*)
       for (int j = 0; j < receiver_vector[i].size(); j++) {
         HOLOSCAN_LOG_INFO("Rx message receiver value[{}][{}]: {}", i, j, receiver_vector[i][j]);
       }
@@ -146,7 +151,7 @@ class MyPingApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<MyPingApp>();
   app->run();
 

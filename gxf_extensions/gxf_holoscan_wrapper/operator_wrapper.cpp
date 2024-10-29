@@ -22,9 +22,9 @@
 #include <vector>
 
 #include "gxf/cuda/cuda_stream_pool.hpp"
+#include "gxf/std/block_memory_pool.hpp"
 #include "gxf/std/scheduling_term.hpp"
 #include "gxf/std/unbounded_allocator.hpp"
-// #include "gxf/std/block_memory_pool.hpp" // TODO: uncomment when available in GXF SDK package
 
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/conditions/gxf/asynchronous.hpp"

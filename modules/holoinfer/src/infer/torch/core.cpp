@@ -35,6 +35,7 @@ class TorchInferImpl {
  public:
   TorchInferImpl(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
                  bool cuda_buf_out);
+  ~TorchInferImpl();
 
   std::string model_path_{""};
   size_t input_nodes_{0}, output_nodes_{0};
@@ -58,8 +59,9 @@ class TorchInferImpl {
   torch::DeviceType input_device_;
   torch::DeviceType output_device_;
 
-  c10::cuda::CUDAStream infer_stream = c10::cuda::getStreamFromPool();
-  std::unique_ptr<c10::cuda::CUDAStreamGuard> stream_guard;
+  c10::cuda::CUDAStream infer_stream_ = c10::cuda::getStreamFromPool();
+  std::unique_ptr<c10::cuda::CUDAStreamGuard> stream_guard_;
+  cudaEvent_t cuda_event_ = nullptr;
 
   void print_model_details();
 
@@ -84,6 +86,16 @@ torch::Tensor create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer
     return torch::empty({0});
   }
 
+  if (input_device == torch::kCPU) {
+    if (input_buffer->host_buffer_->size() != input_tensor_size) {
+      HOLOSCAN_LOG_ERROR("Torch: Input host buffer size mismatch.");
+      return torch::empty({0});
+    }
+  } else if (input_buffer->device_buffer_->size() != input_tensor_size) {
+    HOLOSCAN_LOG_ERROR("Torch: Input device buffer size mismatch.");
+    return torch::empty({0});
+  }
+
   int64_t width = dims[dims.size() - 1], height = dims[dims.size() - 2],
           channels = dims[dims.size() - 3];
 
@@ -94,11 +106,11 @@ torch::Tensor create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer
   if (input_device == torch::kCPU) {
     if (infer_device == torch::kCPU) {
       std::memcpy(tensor.data_ptr(),
-                  reinterpret_cast<void*>(input_buffer->host_buffer.data()),
+                  reinterpret_cast<void*>(input_buffer->host_buffer_->data()),
                   input_tensor_size * sizeof(T));
     } else {
       auto cstatus = cudaMemcpyAsync(tensor.data_ptr(),
-                                     reinterpret_cast<void*>(input_buffer->host_buffer.data()),
+                                     reinterpret_cast<void*>(input_buffer->host_buffer_->data()),
                                      input_tensor_size * sizeof(T),
                                      cudaMemcpyHostToDevice,
                                      cstream);
@@ -106,16 +118,14 @@ torch::Tensor create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer
         HOLOSCAN_LOG_ERROR("Torch: HtoD transfer failed: {}", cudaGetErrorString(cstatus));
         return torch::empty({0});
       }
-      cstatus = cudaStreamSynchronize(cstream);
-      if (cstatus != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Cuda stream synchronization failed: {}", cudaGetErrorString(cstatus));
-        return torch::empty({0});
-      }
+      // When copying from pagable memory to device memory cudaMemcpyAsync() is copying the memory
+      // to staging memory first and therefore is synchronous with the host execution. No need to
+      // synchronize here.
     }
   } else {
     if (infer_device == torch::kCPU) {
       auto cstatus = cudaMemcpyAsync(tensor.data_ptr(),
-                                     reinterpret_cast<void*>(input_buffer->device_buffer->data()),
+                                     reinterpret_cast<void*>(input_buffer->device_buffer_->data()),
                                      input_tensor_size * sizeof(T),
                                      cudaMemcpyDeviceToHost,
                                      cstream);
@@ -123,14 +133,11 @@ torch::Tensor create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer
         HOLOSCAN_LOG_ERROR("Torch: DtoH transfer failed: {}", cudaGetErrorString(cstatus));
         return torch::empty({0});
       }
-      cstatus = cudaStreamSynchronize(cstream);
-      if (cstatus != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Cuda stream synchronization failed: {}", cudaGetErrorString(cstatus));
-        return torch::empty({0});
-      }
+      // When copying from device memory to pagable memory the call is synchronous with the host
+      // execution. No need to synchronize here.
     } else {
       auto cstatus = cudaMemcpyAsync(tensor.data_ptr(),
-                                     input_buffer->device_buffer->data(),
+                                     input_buffer->device_buffer_->data(),
                                      input_tensor_size * sizeof(T),
                                      cudaMemcpyDeviceToDevice,
                                      cstream);
@@ -149,7 +156,7 @@ torch::Tensor create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer
 torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& input_buffer,
                                             const std::vector<int64_t>& dims) {
   auto data_type = input_buffer->get_datatype();
-  auto cstream = infer_stream.stream();
+  auto cstream = infer_stream_.stream();
 
   switch (data_type) {
     case holoinfer_datatype::h_Float32:
@@ -183,9 +190,9 @@ InferStatus transfer_from_tensor(std::shared_ptr<DataBuffer>& output_buffer,
                                  cudaStream_t cstream) {
   size_t output_tensor_size = output_tensor.numel();
   if (output_device == torch::kCUDA) {
-    output_buffer->device_buffer->resize(output_tensor_size);
+    output_buffer->device_buffer_->resize(output_tensor_size);
   } else {
-    output_buffer->host_buffer.resize(output_tensor_size);
+    output_buffer->host_buffer_->resize(output_tensor_size);
   }
 
   // Populate dims for data transmission
@@ -198,11 +205,11 @@ InferStatus transfer_from_tensor(std::shared_ptr<DataBuffer>& output_buffer,
 
   if (output_device == torch::kCPU) {
     if (infer_device == torch::kCPU) {
-      memcpy(output_buffer->host_buffer.data(),
+      memcpy(output_buffer->host_buffer_->data(),
              output_tensor.data_ptr(),
              output_tensor_size * sizeof(T));
     } else {
-      auto cstatus = cudaMemcpyAsync(output_buffer->host_buffer.data(),
+      auto cstatus = cudaMemcpyAsync(output_buffer->host_buffer_->data(),
                                      output_tensor.data_ptr(),
                                      output_tensor_size * sizeof(T),
                                      cudaMemcpyDeviceToHost,
@@ -211,16 +218,12 @@ InferStatus transfer_from_tensor(std::shared_ptr<DataBuffer>& output_buffer,
         HOLOSCAN_LOG_ERROR("Torch: DtoH transfer failed: {}", cudaGetErrorString(cstatus));
         return InferStatus(holoinfer_code::H_ERROR, "Torch core, DtoH transfer.");
       }
-      cstatus = cudaStreamSynchronize(cstream);
-      if (cstatus != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Torch: Cuda stream synchronization failed: {}",
-                           cudaGetErrorString(cstatus));
-        return InferStatus(holoinfer_code::H_ERROR, "Torch core, Stream synchronization.");
-      }
+      // When copying from device memory to pagable memory the call is synchronous with the host
+      // execution. No need to synchronize here.
     }
   } else {
     if (infer_device == torch::kCPU) {
-      auto cstatus = cudaMemcpyAsync(output_buffer->device_buffer->data(),
+      auto cstatus = cudaMemcpyAsync(output_buffer->device_buffer_->data(),
                                      output_tensor.data_ptr(),
                                      output_tensor_size * sizeof(T),
                                      cudaMemcpyHostToDevice,
@@ -229,14 +232,11 @@ InferStatus transfer_from_tensor(std::shared_ptr<DataBuffer>& output_buffer,
         HOLOSCAN_LOG_ERROR("Torch: HtoD transfer failed: {}", cudaGetErrorString(cstatus));
         return InferStatus(holoinfer_code::H_ERROR, "Torch core, HtoD transfer.");
       }
-      cstatus = cudaStreamSynchronize(cstream);
-      if (cstatus != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Torch: Cuda stream synchronization failed: {}",
-                           cudaGetErrorString(cstatus));
-        return InferStatus(holoinfer_code::H_ERROR, "Torch core, Stream synchronization.");
-      }
+      // When copying from pagable memory to device memory cudaMemcpyAsync() is copying the memory
+      // to staging memory first and therefore is synchronous with the host execution. No need to
+      // synchronize here.
     } else {
-      auto cstatus = cudaMemcpyAsync(output_buffer->device_buffer->data(),
+      auto cstatus = cudaMemcpyAsync(output_buffer->device_buffer_->data(),
                                      output_tensor.data_ptr(),
                                      output_tensor_size * sizeof(T),
                                      cudaMemcpyDeviceToDevice,
@@ -255,7 +255,7 @@ InferStatus TorchInferImpl::transfer_to_output(
     const size_t& index) {
   auto data_type = output_buffer[index]->get_datatype();
   out_torch_tensor = out_torch_tensor.contiguous().flatten();
-  auto cstream = infer_stream.stream();
+  auto cstream = infer_stream_.stream();
 
   switch (data_type) {
     case holoinfer_datatype::h_Float32:
@@ -404,8 +404,9 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
                                bool cuda_buf_out)
     : model_path_(model_file_path) {
   try {
-    infer_stream = c10::cuda::getStreamFromPool(true);
-    stream_guard = std::make_unique<c10::cuda::CUDAStreamGuard>(infer_stream);
+    infer_stream_ = c10::cuda::getStreamFromPool(true);
+    stream_guard_ = std::make_unique<c10::cuda::CUDAStreamGuard>(infer_stream_);
+    check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
 
     auto status = populate_model_details();
     if (status.get_code() != holoinfer_code::H_SUCCESS) {
@@ -437,11 +438,21 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
   } catch (...) { throw; }
 }
 
+TorchInferImpl::~TorchInferImpl() {
+  if (cuda_event_) { cudaEventDestroy(cuda_event_); }
+}
+
 InferStatus TorchInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
-                                     std::vector<std::shared_ptr<DataBuffer>>& output_buffer) {
+                                     std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                                     cudaEvent_t cuda_event_data,
+                                     cudaEvent_t* cuda_event_inference) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
 
-  impl_->stream_guard->reset_stream(impl_->infer_stream);
+  // synchronize the CUDA stream used for inference with the CUDA event recorded when preparing
+  // the input data
+  check_cuda(cudaStreamWaitEvent(impl_->infer_stream_.stream(), cuda_event_data));
+
+  impl_->stream_guard_->reset_stream(impl_->infer_stream_);
 
   if (impl_->input_nodes_ != input_buffer.size()) {
     status.set_message("Torch inference core: Input buffer size not equal to input nodes.");
@@ -458,11 +469,6 @@ InferStatus TorchInfer::do_inference(const std::vector<std::shared_ptr<DataBuffe
     impl_->inputs_.clear();
 
     for (size_t a = 0; a < input_buffer.size(); a++) {
-      if (input_buffer[a]->host_buffer.size() == 0) {
-        status.set_message("Torch inference core: Input Host buffer empty.");
-        return status;
-      }
-
       auto i_tensor = impl_->create_tensor(input_buffer[a], impl_->input_dims_[a]);
 
       if (i_tensor.numel() == 0) {
@@ -514,7 +520,7 @@ InferStatus TorchInfer::do_inference(const std::vector<std::shared_ptr<DataBuffe
               torch::Tensor current_tensor = dict_outputs.at(impl_->output_names_[a]).toTensor();
               auto status = impl_->transfer_to_output(output_buffer, std::move(current_tensor), a);
               if (status.get_code() != holoinfer_code::H_SUCCESS) {
-                HOLOSCAN_LOG_ERROR("Transfer of Tensor {} failed in inferece core.",
+                HOLOSCAN_LOG_ERROR("Transfer of Tensor {} failed in inference core.",
                                    impl_->output_names_[a]);
                 return status;
               }
@@ -556,11 +562,17 @@ InferStatus TorchInfer::do_inference(const std::vector<std::shared_ptr<DataBuffe
       for (unsigned int a = 0; a < output_buffer.size(); a++) {
         torch::Tensor current_tensor = impl_->output_tensors_[a];
         auto status = impl_->transfer_to_output(output_buffer, std::move(current_tensor), a);
-        HOLOSCAN_LOG_ERROR("Transfer of Tensor {} failed in inferece core.",
-                           impl_->output_names_[a]);
-        return status;
+        if (status.get_code() != holoinfer_code::H_SUCCESS) {
+          HOLOSCAN_LOG_ERROR("Transfer of Tensor {} failed in inference core.",
+                             impl_->output_names_[a]);
+          return status;
+        }
       }
     }
+
+    // record a CUDA event and pass it back to the caller
+    check_cuda(cudaEventRecord(impl_->cuda_event_, impl_->infer_stream_.stream()));
+    *cuda_event_inference = impl_->cuda_event_;
   } catch (const c10::Error& exception) {
     HOLOSCAN_LOG_ERROR(exception.what());
     throw;

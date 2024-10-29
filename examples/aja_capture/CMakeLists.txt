@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_subdirectory(cpp)
+if(HOLOSCAN_CPP_EXAMPLES)
+  add_subdirectory(cpp)
+endif()
 
-if(HOLOSCAN_BUILD_PYTHON)
+if(HOLOSCAN_PYTHON_EXAMPLES)
   add_subdirectory(python)
 endif()
 

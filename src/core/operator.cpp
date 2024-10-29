@@ -68,6 +68,30 @@ bool Operator::is_leaf() {
   return fragment()->graph().is_leaf(op_shared_ptr);
 }
 
+bool Operator::is_all_operator_successor_virtual(OperatorNodeType op, OperatorGraph& graph) {
+  auto next_nodes = graph.get_next_nodes(op);
+  for (auto& next_node : next_nodes) {
+    if (next_node->operator_type() != Operator::OperatorType::kVirtual) { return false; }
+  }
+  return true;
+}
+
+bool Operator::is_all_operator_predecessor_virtual(OperatorNodeType op, OperatorGraph& graph) {
+  auto prev_nodes = graph.get_previous_nodes(op);
+  for (auto& prev_node : prev_nodes) {
+    if (prev_node->operator_type() != Operator::OperatorType::kVirtual) { return false; }
+  }
+  return true;
+}
+
+std::string Operator::qualified_name() {
+  if (!this->fragment()->name().empty()) {
+    return fmt::format("{}.{}", this->fragment()->name(), name());
+  } else {
+    return name();
+  }
+}
+
 std::pair<std::string, std::string> Operator::parse_port_name(const std::string& op_port_name) {
   auto pos = op_port_name.find('.');
   if (pos == std::string::npos) { return std::make_pair(op_port_name, ""); }
@@ -120,7 +144,8 @@ holoscan::MessageLabel Operator::get_consolidated_input_label() {
                               1000;
 
       // Set the receive timestamp for the root operator
-      OperatorTimestampLabel new_op_label(this, get_current_time_us() - cur_exec_time, -1);
+      OperatorTimestampLabel new_op_label(
+          this->qualified_name(), get_current_time_us() - cur_exec_time, -1);
 
       m.add_new_op_timestamp(new_op_label);
     } else {

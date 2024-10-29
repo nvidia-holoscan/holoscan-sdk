@@ -120,7 +120,8 @@ nvidia::gxf::PrimitiveType PingTensorTxOp::primitive_type(const std::string& dat
   throw std::runtime_error(std::string("Unrecognized data_type: ") + data_type);
 }
 
-void PingTensorTxOp::compute(InputContext&, OutputContext& op_output, ExecutionContext& context) {
+void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+                             ExecutionContext& context) {
   // the type of out_message is TensorMap
   TensorMap out_message;
 

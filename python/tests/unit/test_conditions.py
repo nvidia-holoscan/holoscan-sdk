@@ -24,6 +24,9 @@ from holoscan.conditions import (
     AsynchronousEventState,
     BooleanCondition,
     CountCondition,
+    CudaBufferAvailableCondition,
+    CudaEventCondition,
+    CudaStreamCondition,
     DownstreamMessageAffordableCondition,
     ExpiringMessageAvailableCondition,
     MessageAvailableCondition,
@@ -296,6 +299,86 @@ args:
     def test_invalid_recess_period_type(self, app):
         with pytest.raises(TypeError):
             PeriodicCondition(app, recess_period="100s", name="periodic")
+
+
+class TestCudaEventCondition:
+    def test_kwarg_based_initialization(self, app):  # , capfd):
+        name = "cuda_event_condition"
+        event_name = "cuda_event"
+        cond = CudaEventCondition(
+            fragment=app,
+            event_name=event_name,
+            name=name,
+        )
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, Condition)
+        assert cond.gxf_typename == "nvidia::gxf::CudaEventSchedulingTerm"
+
+        assert f"""
+name: {name}
+fragment: ""
+args:
+  - name: event_name
+    type: std::string
+    value: {event_name}
+""" in repr(cond)
+
+        # assert no warnings or errors logged
+        # captured = capfd.readouterr()
+        # assert "error" not in captured.err
+        # assert "warning" not in captured.err
+        pass
+
+    def test_default_initialization(self, app):
+        CudaEventCondition(app)
+
+
+class TestCudaStreamCondition:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "cuda_stream_condition"
+        cond = CudaStreamCondition(fragment=app, name=name)
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, Condition)
+        assert cond.gxf_typename == "nvidia::gxf::CudaStreamSchedulingTerm"
+
+        assert f"""
+name: {name}
+fragment: ""
+args:
+  []
+""" in repr(cond)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization(self, app):
+        CudaStreamCondition(app)
+
+
+class TestCudaBufferAvailableCondition:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "cuda_buffer_available_condition"
+        cond = CudaBufferAvailableCondition(fragment=app, name=name)
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, Condition)
+        assert cond.gxf_typename == "nvidia::gxf::CudaBufferAvailableSchedulingTerm"
+
+        assert f"""
+name: {name}
+fragment: ""
+args:
+  []
+""" in repr(cond)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization(self, app):
+        CudaBufferAvailableCondition(app)
 
 
 ####################################################################################################

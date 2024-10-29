@@ -50,7 +50,8 @@ class ForwardTestOp : public Operator {
     spec.output<int>("data");
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("data").value();
     op_output.emit(value, "data");
   }
@@ -70,7 +71,8 @@ class ForwardTestOpTwoOutputs : public Operator {
     spec.output<int>("data2");
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("data").value();
     op_output.emit(value, "data");
     op_output.emit(value, "data2");
@@ -91,7 +93,8 @@ class ForwardTestOpTwoInputs : public Operator {
     spec.output<int>("data");
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("data").value();
     auto value2 = op_input.receive<int>("data2").value();
     op_output.emit(value + value2, "data");

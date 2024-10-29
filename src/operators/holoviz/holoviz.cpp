@@ -762,7 +762,7 @@ HolovizOp::InputSpec::InputSpec(const std::string& tensor_name, const std::strin
 void HolovizOp::setup(OperatorSpec& spec) {
   constexpr uint32_t DEFAULT_WIDTH = 1920;
   constexpr uint32_t DEFAULT_HEIGHT = 1080;
-  constexpr float DEFAULT_FRAMERATE = 60.f;
+  constexpr float DEFAULT_FRAMERATE = 60.F;
   static const std::string DEFAULT_WINDOW_TITLE("Holoviz");
   static const std::string DEFAULT_DISPLAY_NAME("");
   constexpr bool DEFAULT_EXCLUSIVE_DISPLAY = false;
@@ -899,13 +899,13 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Type of data output at `camera_pose_output`. Supported values are "
              "`projection_matrix` and `extrinsics_model`.",
              std::string("projection_matrix"));
-  spec.param(camera_eye_, "camera_eye", "Camera Eye", "Camera eye position", {{0.f, 0.f, 1.f}});
+  spec.param(camera_eye_, "camera_eye", "Camera Eye", "Camera eye position", {{0.F, 0.F, 1.F}});
   spec.param(camera_look_at_,
              "camera_look_at",
              "Camera Look At",
              "Camera look at position",
-             {{0.f, 0.f, 0.f}});
-  spec.param(camera_up_, "camera_up", "Camera Up", "Camera up vector", {{0.f, 1.f, 0.f}});
+             {{0.F, 0.F, 0.F}});
+  spec.param(camera_up_, "camera_up", "Camera Up", "Camera up vector", {{0.F, 1.F, 0.F}});
 
   spec.param(key_callback_,
              "key_callback",
@@ -1088,7 +1088,7 @@ void HolovizOp::set_input_spec_geometry(const InputSpec& input_spec) {
   set_input_spec(input_spec);
 
   // now set geometry layer specific properties
-  std::array<float, 4> color{1.f, 1.f, 1.f, 1.f};
+  std::array<float, 4> color{1.F, 1.F, 1.F, 1.F};
   for (size_t index = 0; index < std::min(input_spec.color_.size(), color.size()); ++index) {
     color[index] = input_spec.color_[index];
   }
@@ -1292,9 +1292,8 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
                                        buffer_info.bytes_size,
                                        cudaMemcpyDeviceToHost,
                                        cuda_stream_handler_.get_cuda_stream(context.context())));
-    // wait for the CUDA memory copy to finish
-    HOLOSCAN_CUDA_CALL(
-        cudaStreamSynchronize(cuda_stream_handler_.get_cuda_stream(context.context())));
+    // When copying from device memory to pagable memory the call is synchronous with the host
+    // execution. No need to synchronize here.
 
     buffer_info.buffer_ptr = host_buffer.data();
   }
@@ -1318,7 +1317,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
     }
     uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
     constexpr uint32_t values_per_coordinate = 3;
-    float coords[values_per_coordinate]{0.f, 0.f, 0.05f};
+    float coords[values_per_coordinate]{0.F, 0.F, 0.05F};
     for (uint32_t index = 0; index < coordinates; ++index) {
       uint32_t component_index = 0;
       // copy from source array
@@ -1361,7 +1360,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates;
         coordinate_count = primitive_count;
         values_per_coordinate = 2;
-        default_coord = {0.f, 0.f};
+        default_coord = {0.F, 0.F};
         break;
       case InputType::LINES:
         // line primitives, two coordinates (x0, y0) and (x1, y1) per primitive
@@ -1373,7 +1372,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates / 2;
         coordinate_count = primitive_count * 2;
         values_per_coordinate = 2;
-        default_coord = {0.f, 0.f};
+        default_coord = {0.F, 0.F};
         break;
       case InputType::LINE_STRIP:
         // line strip primitive, a line primitive i is defined by each coordinate (xi, yi) and
@@ -1386,7 +1385,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates - 1;
         coordinate_count = coordinates;
         values_per_coordinate = 2;
-        default_coord = {0.f, 0.f};
+        default_coord = {0.F, 0.F};
         break;
       case InputType::TRIANGLES:
         // triangle primitive, three coordinates (x0, y0), (x1, y1) and (x2, y2) per primitive
@@ -1398,7 +1397,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates / 3;
         coordinate_count = primitive_count * 3;
         values_per_coordinate = 2;
-        default_coord = {0.f, 0.f};
+        default_coord = {0.F, 0.F};
         break;
       case InputType::CROSSES:
         // cross primitive, a cross is defined by the center coordinate and the size (xi, yi,
@@ -1412,7 +1411,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates;
         coordinate_count = primitive_count;
         values_per_coordinate = 3;
-        default_coord = {0.f, 0.f, 0.05f};
+        default_coord = {0.F, 0.F, 0.05F};
         break;
       case InputType::RECTANGLES:
         // axis aligned rectangle primitive, each rectangle is defined by two coordinates (xi,
@@ -1425,7 +1424,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates / 2;
         coordinate_count = primitive_count * 2;
         values_per_coordinate = 2;
-        default_coord = {0.f, 0.f};
+        default_coord = {0.F, 0.F};
         break;
       case InputType::OVALS:
         // oval primitive, an oval primitive is defined by the center coordinate and the axis
@@ -1438,7 +1437,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates;
         coordinate_count = primitive_count;
         values_per_coordinate = 4;
-        default_coord = {0.f, 0.f, 0.05f, 0.05f};
+        default_coord = {0.F, 0.F, 0.05F, 0.05F};
         break;
       case InputType::POINTS_3D:
         // point primitives, one coordinate (x, y, z) per primitive
@@ -1450,7 +1449,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates;
         coordinate_count = primitive_count;
         values_per_coordinate = 3;
-        default_coord = {0.f, 0.f, 0.f};
+        default_coord = {0.F, 0.F, 0.F};
         break;
       case InputType::LINES_3D:
         // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
@@ -1462,7 +1461,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates / 2;
         coordinate_count = primitive_count * 2;
         values_per_coordinate = 3;
-        default_coord = {0.f, 0.f, 0.f};
+        default_coord = {0.F, 0.F, 0.F};
         break;
       case InputType::LINE_STRIP_3D:
         // line primitives, two coordinates (x0, y0, z0) and (x1, y1, z1) per primitive
@@ -1475,7 +1474,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates - 1;
         coordinate_count = coordinates;
         values_per_coordinate = 3;
-        default_coord = {0.f, 0.f};
+        default_coord = {0.F, 0.F};
         break;
       case InputType::TRIANGLES_3D:
         // triangle primitive, three coordinates (x0, y0, z0), (x1, y1, z1) and (x2, y2, z2)
@@ -1489,7 +1488,7 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
         primitive_count = coordinates / 3;
         coordinate_count = primitive_count * 3;
         values_per_coordinate = 3;
-        default_coord = {0.f, 0.f};
+        default_coord = {0.F, 0.F};
         break;
       default:
         throw std::runtime_error(
@@ -1656,7 +1655,7 @@ void HolovizOp::start() {
   std::lock_guard<std::mutex> guard(mutex_);
 
   // set the font to be used
-  if (!font_path_.get().empty()) { viz::SetFont(font_path_.get().c_str(), 25.f); }
+  if (!font_path_.get().empty()) { viz::SetFont(font_path_.get().c_str(), 25.F); }
 
   // create Holoviz instance
   instance_ = viz::Create();
@@ -1675,7 +1674,7 @@ void HolovizOp::start() {
 
   if (use_exclusive_display_) {
     viz::Init(
-        display_name_.get().c_str(), width_, height_, uint32_t(framerate_ * 1000.f), init_flags);
+        display_name_.get().c_str(), width_, height_, uint32_t(framerate_ * 1000.F), init_flags);
   } else {
     viz::Init(width_,
               height_,
@@ -1810,15 +1809,6 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   // nothing to do if minimized
   if (viz::WindowIsMinimized()) { return; }
 
-  // create vector of nvidia::gxf::Entity as expected by the code below
-  std::vector<nvidia::gxf::Entity> messages;
-  messages.reserve(receivers_messages.size());
-  for (auto& receivers_message : receivers_messages) {
-    // cast each holoscan::gxf:Entity to its base class
-    nvidia::gxf::Entity message = static_cast<nvidia::gxf::Entity>(receivers_message);
-    messages.push_back(message);
-  }
-
   // handle camera messages
   if (camera_eye_message || camera_eye_message || camera_up_message) {
     if (camera_eye_message) { camera_eye_cur_ = camera_eye_message.value(); }
@@ -1849,8 +1839,8 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   // then get all tensors and video buffers of all messages, check if an input spec for the tensor
   // is already there, if not try to detect the input spec from the tensor or video buffer
   // information
-  for (auto&& message : messages) {
-    const auto tensors = message.findAll<nvidia::gxf::Tensor>();
+  for (auto&& message : receivers_messages) {
+    const auto tensors = message.nvidia::gxf::Entity::findAll<nvidia::gxf::Tensor>();
     for (auto&& tensor : tensors.value()) {
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(tensor->name());
@@ -1896,7 +1886,8 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   }
 
   // get the CUDA stream from the input message
-  const gxf_result_t result = cuda_stream_handler_.from_messages(context.context(), messages);
+  const gxf_result_t result =
+      cuda_stream_handler_.from_messages(context.context(), receivers_messages);
   if (result != GXF_SUCCESS) {
     throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
   }
@@ -1920,22 +1911,24 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
     nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>> maybe_input_video =
         nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
-    auto message = messages.begin();
-    while (message != messages.end()) {
-      maybe_input_tensor = message->get<nvidia::gxf::Tensor>(input_spec.tensor_name_.c_str());
+    auto message = receivers_messages.begin();
+    while (message != receivers_messages.end()) {
+      maybe_input_tensor =
+          message->nvidia::gxf::Entity::get<nvidia::gxf::Tensor>(input_spec.tensor_name_.c_str());
       if (maybe_input_tensor) {
         // pick the first one with that name
         break;
       }
 
       // check for video if no tensor found
-      maybe_input_video = message->get<nvidia::gxf::VideoBuffer>(input_spec.tensor_name_.c_str());
+      maybe_input_video = message->nvidia::gxf::Entity::get<nvidia::gxf::VideoBuffer>(
+          input_spec.tensor_name_.c_str());
       if (maybe_input_video) {  // pick the first one with that name
         break;
       }
       ++message;
     }
-    if (message == messages.end()) {
+    if (message == receivers_messages.end()) {
       throw std::runtime_error(
           fmt::format("Failed to retrieve input '{}'", input_spec.tensor_name_));
     }

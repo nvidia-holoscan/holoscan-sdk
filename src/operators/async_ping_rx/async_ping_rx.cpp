@@ -71,7 +71,8 @@ void AsyncPingRxOp::start() {
   async_thread_ = std::thread([this] { async_ping(); });
 }
 
-void AsyncPingRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+void AsyncPingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+                            [[maybe_unused]] ExecutionContext& context) {
   auto value = op_input.receive<int>("in").value();
   HOLOSCAN_LOG_INFO("Rx message value: {}", value);
 

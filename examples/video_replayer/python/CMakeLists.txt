@@ -52,7 +52,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME python_video_replayer_output)
-  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/video_replayer/)
+  set(VALIDATION_FRAMES_DIR ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/video_replayer/)
 
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
@@ -73,7 +73,7 @@ if(HOLOSCAN_BUILD_TESTS)
   add_custom_command(OUTPUT video_replayer_test.py
     PRE_LINK
     COMMAND patch -u -o video_replayer_test.py ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.py
-        ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/video_replayer/python_video_replayer.patch
+      ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/video_replayer/python_video_replayer.patch
   )
 
   add_custom_target(python_video_replayer_test ALL
@@ -92,7 +92,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_RENDER_TEST
-      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}

@@ -35,6 +35,7 @@
 // macro.
 #include "holoscan/operators/gxf_codelet/gxf_codelet.hpp"
 
+// NOLINTBEGIN(cppcoreguidelines-macro-usage)
 #ifdef CUDA_TRY
 #undef CUDA_TRY
 #define CUDA_TRY(stmt)                                                                  \
@@ -50,6 +51,7 @@
     }                                                                                   \
   }
 #endif
+// NOLINTEND(cppcoreguidelines-macro-usage)
 
 // Define an operator that wraps the GXF Codelet that sends a tensor
 // (`nvidia::gxf::test::SendTensor` class in send_tensor_gxf.hpp)
@@ -129,14 +131,14 @@ class ProcessTensorOp : public holoscan::Operator {
   }
 
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     // The type of `in_message` is 'holoscan::TensorMap'.
     auto in_message = op_input.receive<holoscan::TensorMap>("in").value();
     // The type of out_message is TensorMap.
     holoscan::TensorMap out_message;
 
     for (auto& [key, tensor] : in_message) {  // Process with 'tensor' here.
-      cudaError_t cuda_status;
+      cudaError_t cuda_status{};
       size_t data_size = tensor->nbytes();
       std::vector<uint8_t> in_data(data_size);
       CUDA_TRY(cudaMemcpy(in_data.data(), tensor->data(), data_size, cudaMemcpyDeviceToHost));
@@ -210,7 +212,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<App>();
   app->run();
 

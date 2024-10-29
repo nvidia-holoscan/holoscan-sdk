@@ -35,7 +35,8 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<std::shared_ptr<int>>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     int value = 0;
     op_output.emit(value, "out");
   };
@@ -58,7 +59,8 @@ class DelayOp : public Operator {
     spec.param(silent_, "silent", "Silent mode?", "Whether to log info on receive", false);
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("in").value();
 
     // increment value by the specified increment
@@ -104,7 +106,8 @@ class PingRxOp : public Operator {
     spec.input<std::vector<int>>("values", IOSpec::kAnySize);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     std::vector<int> value_vector;
     std::vector<std::string> name_vector;
     value_vector = op_input.receive<std::vector<int>>("values").value();
@@ -114,7 +117,7 @@ class PingRxOp : public Operator {
       HOLOSCAN_LOG_INFO("number of received values: {}", value_vector.size());
     }
     int total = 0;
-    for (auto vp : value_vector) { total += vp; }
+    for (const auto& vp : value_vector) { total += vp; }
     if (!silent_) { HOLOSCAN_LOG_INFO("sum of received values: {}", total); }
   };
 
@@ -159,7 +162,7 @@ class App : public holoscan::Application {
   bool silent_ = false;
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<App>();
 
   // Get the configuration
@@ -168,23 +171,23 @@ int main(int argc, char** argv) {
   app->config(config_path);
 
   // Turn on data flow tracking if it is specified in the YAML
-  bool tracking = app->from_config("tracking").as<bool>();
+  auto tracking = app->from_config("tracking").as<bool>();
   holoscan::DataFlowTracker* tracker = nullptr;
   if (tracking) { tracker = &app->track(0, 0, 0); }
 
   // set customizable application parameters via the YAML
-  int num_delay_ops = app->from_config("num_delay_ops").as<int>();
-  double delay = app->from_config("delay").as<double>();
-  double delay_step = app->from_config("delay_step").as<double>();
-  int count = app->from_config("count").as<int>();
-  bool silent = app->from_config("silent").as<bool>();
+  auto num_delay_ops = app->from_config("num_delay_ops").as<int>();
+  auto delay = app->from_config("delay").as<double>();
+  auto delay_step = app->from_config("delay_step").as<double>();
+  auto count = app->from_config("count").as<int>();
+  auto silent = app->from_config("silent").as<bool>();
   app->set_num_delays(num_delay_ops);
   app->set_delay(delay);
   app->set_delay_step(delay_step);
   app->set_count(count);
   app->set_silent(silent);
 
-  std::string scheduler = app->from_config("scheduler").as<std::string>();
+  auto scheduler = app->from_config("scheduler").as<std::string>();
   if (scheduler == "multi_thread") {
     // use MultiThreadScheduler instead of the default GreedyScheduler
     app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(

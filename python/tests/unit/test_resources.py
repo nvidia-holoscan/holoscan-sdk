@@ -23,6 +23,7 @@ from holoscan.resources import (
     Allocator,
     BlockMemoryPool,
     Clock,
+    CudaAllocator,
     CudaStreamPool,
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
@@ -30,9 +31,11 @@ from holoscan.resources import (
     MemoryStorageType,
     RealtimeClock,
     Receiver,
+    RMMAllocator,
     SerializationBuffer,
     StdComponentSerializer,
     StdEntitySerializer,
+    StreamOrderedAllocator,
     Transmitter,
     UcxComponentSerializer,
     UcxEntitySerializer,
@@ -132,6 +135,65 @@ class TestUnboundedAllocator:
 
     def test_default_initialization(self, app):
         UnboundedAllocator(app)
+
+
+class TestRMMAllocator:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "rmm-pool"
+        pool = RMMAllocator(
+            fragment=app,
+            name=name,
+            # can specify with or without space between number and unit
+            # supported units are B, KB, MB, GB, and TB.
+            device_memory_initial_size="16 MB",
+            device_memory_max_size="32MB",
+            host_memory_initial_size="16.0 MB",
+            host_memory_max_size="32768 KB",
+            dev_id=0,
+        )
+        assert isinstance(pool, CudaAllocator)
+        assert isinstance(pool, Allocator)
+        assert isinstance(pool, GXFResource)
+        assert isinstance(pool, ResourceBase)
+        assert pool.id == -1
+        assert pool.gxf_typename == "nvidia::gxf::RMMAllocator"
+
+        assert f"name: {name}" in repr(pool)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
+    def test_default_initialization(self, app):
+        RMMAllocator(app)
+
+
+class TestStreamOrderedAllocator:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "stream-orered-pool"
+        pool = StreamOrderedAllocator(
+            fragment=app,
+            name=name,
+            device_memory_initial_size="16MB",
+            device_memory_max_size="32MB",
+            release_threshold="0B",
+            dev_id=0,
+        )
+        assert isinstance(pool, CudaAllocator)
+        assert isinstance(pool, Allocator)
+        assert isinstance(pool, GXFResource)
+        assert isinstance(pool, ResourceBase)
+        assert pool.id == -1
+        assert pool.gxf_typename == "nvidia::gxf::StreamOrderedAllocator"
+
+        assert f"name: {name}" in repr(pool)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
+    def test_default_initialization(self, app):
+        StreamOrderedAllocator(app)
 
 
 class TestStdDoubleBufferReceiver:
@@ -408,7 +470,7 @@ class TestUcxReceiver:
         assert isinstance(res, ResourceBase)
         assert isinstance(res, Receiver)
         assert res.id == -1
-        assert res.gxf_typename == "nvidia::gxf::UcxReceiver"
+        assert res.gxf_typename == "holoscan::HoloscanUcxReceiver"
         assert f"name: {name}" in repr(res)
 
         # assert no warnings or errors logged
@@ -442,7 +504,7 @@ class TestUcxTransmitter:
         assert isinstance(res, ResourceBase)
         assert isinstance(res, Transmitter)
         assert res.id == -1
-        assert res.gxf_typename == "nvidia::gxf::UcxTransmitter"
+        assert res.gxf_typename == "holoscan::HoloscanUcxTransmitter"
         assert f"name: {name}" in repr(res)
 
         # assert no warnings or errors logged

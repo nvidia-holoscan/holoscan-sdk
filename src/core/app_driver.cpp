@@ -50,6 +50,7 @@
 #include "holoscan/core/signal_handler.hpp"
 #include "holoscan/core/system/network_utils.hpp"
 #include "holoscan/core/system/system_resource_manager.hpp"
+#include "holoscan/utils/cuda_macros.hpp"
 #include "services/app_worker/client.hpp"
 
 #include "holoscan/logger/logger.hpp"
@@ -212,10 +213,7 @@ void AppDriver::run() {
       if (connection_result) {
         HOLOSCAN_LOG_INFO("Connected to driver");
         // Install signal handler for app worker
-        auto sig_handler = [this](void* context, int signum) {
-          (void)signum;
-          (void)context;
-
+        auto sig_handler = [this]([[maybe_unused]] void* context, [[maybe_unused]] int signum) {
           HOLOSCAN_LOG_ERROR("Interrupted by user for app worker");
 
           auto worker_server = app_->worker().server();
@@ -244,10 +242,7 @@ void AppDriver::run() {
       }
     } else {
       // Install signal handler for app driver
-      auto sig_handler = [this](void* context, int signum) {
-        (void)signum;
-        (void)context;
-
+      auto sig_handler = [this]([[maybe_unused]] void* context, [[maybe_unused]] int signum) {
         HOLOSCAN_LOG_ERROR("Interrupted by user for app driver");
 
         // If the app is already in error state, we set global signal handler.
@@ -255,8 +250,7 @@ void AppDriver::run() {
           HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
           SignalHandler::unregister_signal_handler(context, signum);
           // Register the global signal handler.
-          SignalHandler::register_global_signal_handler(signum, [](int sig) {
-            (void)sig;
+          SignalHandler::register_global_signal_handler(signum, []([[maybe_unused]] int sig) {
             HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
             exit(1);
           });
@@ -681,7 +675,8 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
         }
       }
     }
-    const auto& frag = worklist.front();
+    // Get (copy) shared pointer before popping it from the worklist.
+    auto frag = worklist.front();
     const auto& frag_name = frag->name();
     worklist.pop_front();
 
@@ -1249,9 +1244,18 @@ std::future<void> AppDriver::launch_fragments_async(
   // Disable CUDA Interprocess Communication (issue 4318442)
   set_ucx_to_exclude_cuda_ipc();
 
+  int gpu_count = 0;
+  cudaError_t cuda_err = HOLOSCAN_CUDA_CALL_WARN_MSG(
+      cudaGetDeviceCount(&gpu_count), "Initializing UcxContext with support for CPU data only");
+  if (cuda_err == cudaSuccess) {
+    HOLOSCAN_LOG_DEBUG("Detected {} GPU(s), initializing UcxContext with GPU support", gpu_count);
+  }
+
   // Add the UCX network context
+  bool enable_async = get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", true);
   for (auto& fragment : target_fragments) {
-    auto network_context = fragment->make_network_context<holoscan::UcxContext>("ucx_context");
+    auto network_context = fragment->make_network_context<holoscan::UcxContext>(
+        "ucx_context", Arg("cpu_data_only", gpu_count == 0), Arg("enable_async", enable_async));
     fragment->network_context(network_context);
   }
 

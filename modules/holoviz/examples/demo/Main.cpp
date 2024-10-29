@@ -75,15 +75,15 @@ bool show_ui = true;
 bool show_image_layer = true;
 Source current_source = Source::DEVICE;
 uint32_t current_format_index = 2;
-float image_layer_opacity = 1.f;
+float image_layer_opacity = 1.F;
 int image_layer_priority = 0;
 
 bool show_geometry_layer = true;
-float geometry_layer_opacity = 1.f;
+float geometry_layer_opacity = 1.F;
 int geometry_layer_priority = 1;
 
 bool show_geometry_3d_layer = true;
-float geometry_3d_layer_opacity = 1.f;
+float geometry_3d_layer_opacity = 1.F;
 int geometry_3d_layer_priority = 2;
 
 uint32_t width = 1920;
@@ -93,7 +93,7 @@ uint32_t height = 1080;
 std::chrono::steady_clock::time_point start;
 std::chrono::milliseconds elapsed;
 uint32_t iterations = 0;
-float fps = 0.f;
+float fps = 0.F;
 
 // cuda
 CUcontext cuda_context = nullptr;
@@ -131,7 +131,7 @@ void tick() {
                    reinterpret_cast<int*>(&current_format_index),
                    format_items,
                    IM_ARRAYSIZE(format_items));
-      ImGui::SliderFloat("Opacity##image", &image_layer_opacity, 0.f, 1.f);
+      ImGui::SliderFloat("Opacity##image", &image_layer_opacity, 0.F, 1.F);
       ImGui::SliderInt("Priority##image", &image_layer_priority, -10, 10);
 
       // color picker for first item of LUT
@@ -140,29 +140,29 @@ void tick() {
         ImGui::SliderInt("LUT index", &color_index, 0, palette.size() - 1);
 
         uint32_t& item = palette[color_index];
-        float color[]{(item & 0xFF) / 255.f,
-                      ((item >> 8) & 0xFF) / 255.f,
-                      ((item >> 16) & 0xFF) / 255.f,
-                      ((item >> 24) & 0xFF) / 255.f};
+        float color[]{(item & 0xFF) / 255.F,
+                      ((item >> 8) & 0xFF) / 255.F,
+                      ((item >> 16) & 0xFF) / 255.F,
+                      ((item >> 24) & 0xFF) / 255.F};
         ImGui::ColorEdit4("##color", color, ImGuiColorEditFlags_DefaultOptions_);
-        item = static_cast<uint32_t>((color[0] * 255.f) + 0.5f) +
-               (static_cast<uint32_t>((color[1] * 255.f) + 0.5f) << 8) +
-               (static_cast<uint32_t>((color[2] * 255.f) + 0.5f) << 16) +
-               (static_cast<uint32_t>((color[3] * 255.f) + 0.5f) << 24);
+        item = static_cast<uint32_t>((color[0] * 255.F) + 0.5F) +
+               (static_cast<uint32_t>((color[1] * 255.F) + 0.5F) << 8) +
+               (static_cast<uint32_t>((color[2] * 255.F) + 0.5F) << 16) +
+               (static_cast<uint32_t>((color[3] * 255.F) + 0.5F) << 24);
       }
     }
 
     ImGui::Separator();
     ImGui::Checkbox("Geometry layer", &show_geometry_layer);
     if (show_geometry_layer) {
-      ImGui::SliderFloat("Opacity##geom", &geometry_layer_opacity, 0.f, 1.f);
+      ImGui::SliderFloat("Opacity##geom", &geometry_layer_opacity, 0.F, 1.F);
       ImGui::SliderInt("Priority##geom", &geometry_layer_priority, -10, 10);
     }
 
     ImGui::Separator();
     ImGui::Checkbox("3D Geometry layer", &show_geometry_3d_layer);
     if (show_geometry_3d_layer) {
-      ImGui::SliderFloat("Opacity##geom3d", &geometry_3d_layer_opacity, 0.f, 1.f);
+      ImGui::SliderFloat("Opacity##geom3d", &geometry_3d_layer_opacity, 0.F, 1.F);
       ImGui::SliderInt("Priority##geom3d", &geometry_3d_layer_priority, -10, 10);
     }
 
@@ -216,61 +216,61 @@ void tick() {
     viz::LayerOpacity(geometry_layer_opacity);
     viz::LayerPriority(geometry_layer_priority);
 
-    const float text_size = 0.05f;
+    const float text_size = 0.05F;
 
-    viz::Color(1.f, 0.f, 0.f, 1.f);
-    viz::Text(0.65f, 0.05f, text_size, "POINT_LIST");
+    viz::Color(1.F, 0.F, 0.F, 1.F);
+    viz::Text(0.65F, 0.05F, text_size, "POINT_LIST");
     {
-      const float data[]{0.9f, 0.1f, 0.95f, 0.05f};
-      viz::PointSize(5.f);
+      const float data[]{0.9F, 0.1F, 0.95F, 0.05F};
+      viz::PointSize(5.F);
       viz::Primitive(viz::PrimitiveTopology::POINT_LIST, 2, sizeof(data) / sizeof(data[0]), data);
     }
 
-    viz::Color(0.f, 1.f, 0.f, 1.f);
-    viz::Text(0.65f, 0.2f, text_size, "LINE_LIST");
+    viz::Color(0.F, 1.F, 0.F, 1.F);
+    viz::Text(0.65F, 0.2F, text_size, "LINE_LIST");
     {
-      const float data[]{0.9f, 0.25f, 0.95f, 0.2f, 0.92f, 0.27f, 0.93f, 0.23f};
-      viz::LineWidth(2.f);
+      const float data[]{0.9F, 0.25F, 0.95F, 0.2F, 0.92F, 0.27F, 0.93F, 0.23F};
+      viz::LineWidth(2.F);
       viz::Primitive(viz::PrimitiveTopology::LINE_LIST, 2, sizeof(data) / sizeof(data[0]), data);
     }
 
-    viz::Color(1.f, 1.f, 0.f, 1.f);
-    viz::Text(0.65f, 0.35f, text_size, "LINE_STRIP");
+    viz::Color(1.F, 1.F, 0.F, 1.F);
+    viz::Text(0.65F, 0.35F, text_size, "LINE_STRIP");
     {
-      const float data[]{0.9f, 0.35f, 0.95f, 0.3f, 0.97f, 0.37f, 0.93f, 0.35f};
-      viz::LineWidth(1.f);
+      const float data[]{0.9F, 0.35F, 0.95F, 0.3F, 0.97F, 0.37F, 0.93F, 0.35F};
+      viz::LineWidth(1.F);
       viz::Primitive(viz::PrimitiveTopology::LINE_STRIP, 3, sizeof(data) / sizeof(data[0]), data);
     }
 
-    viz::Color(0.f, 0.f, 1.f, 1.f);
-    viz::Text(0.65f, 0.5f, text_size, "TRIANGLE_LIST");
+    viz::Color(0.F, 0.F, 1.F, 1.F);
+    viz::Text(0.65F, 0.5F, text_size, "TRIANGLE_LIST");
     {
       const float data[]{
-          0.9f, 0.45f, 0.92f, 0.45f, 0.91f, 0.5f, 0.95f, 0.45f, 0.95f, 0.55f, 0.975f, 0.50f};
+          0.9F, 0.45F, 0.92F, 0.45F, 0.91F, 0.5F, 0.95F, 0.45F, 0.95F, 0.55F, 0.975F, 0.50F};
       viz::Primitive(
           viz::PrimitiveTopology::TRIANGLE_LIST, 2, sizeof(data) / sizeof(data[0]), data);
     }
 
-    viz::Color(1.f, 0.f, 1.f, 1.f);
-    viz::Text(0.65f, 0.65f, text_size, "CROSS_LIST");
+    viz::Color(1.F, 0.F, 1.F, 1.F);
+    viz::Text(0.65F, 0.65F, text_size, "CROSS_LIST");
     {
-      const float data[]{0.9f, 0.7f, 0.08f, 0.95f, 0.65f, 0.05f};
+      const float data[]{0.9F, 0.7F, 0.08F, 0.95F, 0.65F, 0.05F};
       viz::Primitive(viz::PrimitiveTopology::CROSS_LIST, 2, sizeof(data) / sizeof(data[0]), data);
     }
 
-    viz::Color(0.f, 1.f, 1.f, 1.f);
-    viz::Text(0.65f, 0.8f, text_size, "RECTANGLE_LIST");
+    viz::Color(0.F, 1.F, 1.F, 1.F);
+    viz::Text(0.65F, 0.8F, text_size, "RECTANGLE_LIST");
     {
-      const float data[]{0.9f, 0.75f, 0.98f, 0.85f, 0.95f, 0.8f, 0.97f, 0.83f};
+      const float data[]{0.9F, 0.75F, 0.98F, 0.85F, 0.95F, 0.8F, 0.97F, 0.83F};
       viz::Primitive(
           viz::PrimitiveTopology::RECTANGLE_LIST, 2, sizeof(data) / sizeof(data[0]), data);
     }
 
-    viz::Color(1.f, 1.f, 1.f, 1.f);
-    viz::Text(0.65f, 0.95f, text_size, "OVAL_LIST");
+    viz::Color(1.F, 1.F, 1.F, 1.F);
+    viz::Text(0.65F, 0.95F, text_size, "OVAL_LIST");
     {
-      const float data[]{0.9f, 0.95f, 0.1f, 0.1f, 0.95f, 0.975f, 0.05f, 0.1f};
-      viz::LineWidth(3.f);
+      const float data[]{0.9F, 0.95F, 0.1F, 0.1F, 0.95F, 0.975F, 0.05F, 0.1F};
+      viz::LineWidth(3.F);
       viz::Primitive(viz::PrimitiveTopology::OVAL_LIST, 2, sizeof(data) / sizeof(data[0]), data);
     }
 
@@ -283,12 +283,12 @@ void tick() {
     viz::LayerPriority(geometry_3d_layer_priority);
 
     {
-      const float x_min = -0.25f;
-      const float x_max = 0.25f;
-      const float y_min = -0.25f;
-      const float y_max = 0.25f;
-      const float z_min = -0.25f;
-      const float z_max = 0.25f;
+      const float x_min = -0.25F;
+      const float x_max = 0.25F;
+      const float y_min = -0.25F;
+      const float y_max = 0.25F;
+      const float z_min = -0.25F;
+      const float z_max = 0.25F;
       const float data[]{
           x_min, y_min, z_min, x_max, y_min, z_min, x_min, y_max, z_min, x_max, y_max, z_min,
           x_min, y_min, z_max, x_max, y_min, z_max, x_min, y_max, z_max, x_max, y_max, z_max,
@@ -296,20 +296,20 @@ void tick() {
           x_min, y_max, z_max, x_min, y_min, z_max, x_max, y_max, z_max, x_max, y_min, z_max,
           x_min, y_max, z_min, x_min, y_max, z_max, x_min, y_min, z_min, x_min, y_min, z_max,
           x_max, y_max, z_min, x_max, y_max, z_max, x_max, y_min, z_min, x_max, y_min, z_max};
-      viz::Color(0.75f, 0.f, 0.25f, 1.f);
-      viz::LineWidth(4.f);
+      viz::Color(0.75F, 0.F, 0.25F, 1.F);
+      viz::LineWidth(4.F);
       viz::Primitive(
           viz::PrimitiveTopology::LINE_LIST_3D, 12, sizeof(data) / sizeof(data[0]), data);
 
-      viz::Color(0.f, 1.f, 0.f, 1.f);
-      viz::PointSize(6.f);
+      viz::Color(0.F, 1.F, 0.F, 1.F);
+      viz::PointSize(6.F);
       viz::Primitive(
           viz::PrimitiveTopology::POINT_LIST_3D, 24, sizeof(data) / sizeof(data[0]), data);
     }
     {
-      const float data[]{-0.125f, -0.125f, 0.f, 0.125f, -0.125f, 0.f, 0.125f, 0.125f, 0.f};
+      const float data[]{-0.125F, -0.125F, 0.F, 0.125F, -0.125F, 0.F, 0.125F, 0.125F, 0.F};
 
-      viz::Color(0.f, 0.f, 1.f, 1.f);
+      viz::Color(0.F, 0.F, 1.F, 1.F);
       viz::Primitive(
           viz::PrimitiveTopology::TRIANGLE_LIST_3D, 1, sizeof(data) / sizeof(data[0]), data);
     }
@@ -324,7 +324,7 @@ void tick() {
   elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                                   start);
   if (!benchmark_mode && (elapsed.count() > 1000)) {
-    fps = static_cast<float>(iterations) / (static_cast<float>(elapsed.count()) / 1000.f);
+    fps = static_cast<float>(iterations) / (static_cast<float>(elapsed.count()) / 1000.F);
     start = std::chrono::steady_clock::now();
     iterations = 0;
   }
@@ -420,12 +420,12 @@ void loadImage() {
       dst_r8 += 1;
 
       // BT.601 full range RGB -> YUV
-      dst_y8[0] = (0.f + (0.299f * r) + (0.587f * g) + (0.114 * b)) + 0.5f;
+      dst_y8[0] = (0.F + (0.299F * r) + (0.587F * g) + (0.114F * b)) + 0.5F;
       dst_y8 += 1;
 
       if (!(x & 1) && !(y & 1)) {
-        dst_u8v8[0] = (128.f - (0.168736f * r) - (0.331264f * g) + (0.5f * b)) + 0.5f;
-        dst_u8v8[1] = (128.f + (0.5f * r) - (0.418688f * g) - (0.081312f * b)) + 0.5f;
+        dst_u8v8[0] = (128.F - (0.168736F * r) - (0.331264F * g) + (0.5F * b)) + 0.5F;
+        dst_u8v8[1] = (128.F + (0.5F * r) - (0.418688F * g) - (0.081312F * b)) + 0.5F;
         dst_u8v8 += 2;
       }
 
@@ -497,7 +497,8 @@ int main(int argc, char** argv) {
   // parse options
   while (true) {
     int option_index = 0;
-    const int c = getopt_long(argc, argv, "hblfed:p:c:", long_options, &option_index);
+    const int c =
+        getopt_long(argc, argv, "hblfed:p:c:", static_cast<option*>(long_options), &option_index);
 
     if (c == -1) { break; }
 
@@ -610,7 +611,7 @@ int main(int argc, char** argv) {
       if (fullscreen) { flags = viz::InitFlags::FULLSCREEN; }
 
       display_width = 1024;
-      display_height = uint32_t(static_cast<float>(height) / static_cast<float>(width) * 1024.f);
+      display_height = uint32_t(static_cast<float>(height) / static_cast<float>(width) * 1024.F);
       viz::Init(display_width,
                 display_height,
                 "Holoviz Example",
@@ -644,7 +645,7 @@ int main(int argc, char** argv) {
           start = std::chrono::steady_clock::time_point();
           do { tick(); } while (elapsed.count() < 2000);
           std::cout << current_source << " " << format_items[current_format_index] << " "
-                    << float(iterations) / (float(elapsed.count()) / 1000.f) << " fps" << std::endl;
+                    << float(iterations) / (float(elapsed.count()) / 1000.F) << " fps" << std::endl;
         }
       }
     } else if (headless_mode) {

@@ -29,7 +29,7 @@ namespace holoscan {
 
 OperatorTimestampLabel& OperatorTimestampLabel::operator=(const OperatorTimestampLabel& o) {
   if (this != &o) {
-    this->operator_ptr = o.operator_ptr;
+    this->operator_name = o.operator_name;
     this->rec_timestamp = o.rec_timestamp;
     this->pub_timestamp = o.pub_timestamp;
   }
@@ -68,15 +68,11 @@ std::string MessageLabel::to_string() const {
 std::string MessageLabel::to_string(MessageLabel::TimestampedPath path) {
   auto msg_buf = fmt::memory_buffer();
   for (auto& it : path) {
-    if (!it.operator_ptr) {
-      HOLOSCAN_LOG_ERROR("MessageLabel::to_string - Operator pointer is null");
-    } else {
-      fmt::format_to(std::back_inserter(msg_buf),
-                     "({},{},{}) -> ",
-                     it.operator_ptr->name(),
-                     std::to_string(it.rec_timestamp),
-                     std::to_string(it.pub_timestamp));
-    }
+    fmt::format_to(std::back_inserter(msg_buf),
+                   "({},{},{}) -> ",
+                   it.operator_name,
+                   std::to_string(it.rec_timestamp),
+                   std::to_string(it.pub_timestamp));
   }
   msg_buf.resize(msg_buf.size() - 3);
   fmt::format_to(std::back_inserter(msg_buf), "\n");
@@ -100,7 +96,7 @@ void MessageLabel::add_new_op_timestamp(holoscan::OperatorTimestampLabel o_times
     message_paths[0].push_back(o_timestamp);
 
     PathOperators new_path_operators;
-    new_path_operators.insert(o_timestamp.operator_ptr->name());
+    new_path_operators.insert(o_timestamp.operator_name);
     message_path_operators.push_back(new_path_operators);
   } else {
     for (int i = 0; i < num_paths(); i++) {
@@ -110,7 +106,7 @@ void MessageLabel::add_new_op_timestamp(holoscan::OperatorTimestampLabel o_times
       message_paths[i].push_back(o_timestamp);
 
       // Add the new operator to the set of operators in the path
-      message_path_operators[i].insert(o_timestamp.operator_ptr->name());
+      message_path_operators[i].insert(o_timestamp.operator_name);
     }
   }
 }
@@ -122,7 +118,7 @@ void MessageLabel::update_last_op_publish() {
 void MessageLabel::add_new_path(MessageLabel::TimestampedPath path) {
   message_paths.push_back(path);
   PathOperators new_path_operators;
-  for (auto& op : path) { new_path_operators.insert(op.operator_ptr->name()); }
+  for (auto& op : path) { new_path_operators.insert(op.operator_name); }
   message_path_operators.push_back(new_path_operators);
 }
 
@@ -133,13 +129,7 @@ MessageLabel::TimestampedPath MessageLabel::get_path(int index) {
 std::string MessageLabel::get_path_name(int index) {
   auto pathstring = fmt::memory_buffer();
   for (auto& oplabel : message_paths[index]) {
-    if (!oplabel.operator_ptr) {
-      HOLOSCAN_LOG_ERROR(
-          "MessageLabel::get_path_name - Operator pointer is null. Path until now: {}.",
-          fmt::to_string(pathstring));
-    } else {
-      fmt::format_to(std::back_inserter(pathstring), "{},", oplabel.operator_ptr->name());
-    }
+    fmt::format_to(std::back_inserter(pathstring), "{},", oplabel.operator_name);
   }
   pathstring.resize(pathstring.size() - 1);
   return fmt::to_string(pathstring);
@@ -157,7 +147,7 @@ void MessageLabel::set_operator_rec_timestamp(int path_index, int op_index, int6
   message_paths[path_index][op_index].rec_timestamp = rec_timestamp;
 }
 
-std::vector<int> MessageLabel::has_operator(std::string op_name) {
+std::vector<int> MessageLabel::has_operator(const std::string& op_name) const {
   std::vector<int> valid_paths;
   valid_paths.reserve(DEFAULT_NUM_PATHS);
 

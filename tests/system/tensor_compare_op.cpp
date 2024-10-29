@@ -32,7 +32,8 @@ void TensorCompareOp::setup(OperatorSpec& spec) {
   spec.input<TensorMap>("input2");
 }
 
-void TensorCompareOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+void TensorCompareOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+                              [[maybe_unused]] ExecutionContext& context) {
   auto input1 = op_input.receive<TensorMap>("input1").value();
   if (input1.size() != 1) {
     HOLOSCAN_LOG_ERROR("Expected one tensor at `input1`");

@@ -118,6 +118,7 @@ void HoloInferTests::setup_specifications() {
                                                                  device_map,
                                                                  temporal_map,
                                                                  activation_map,
+                                                                 batch_sizes,
                                                                  is_engine_path,
                                                                  infer_on_cpu,
                                                                  parallel_inference,
@@ -151,8 +152,8 @@ HoloInfer::InferStatus HoloInferTests::prepare_for_inference() {
     size_t buffer_size =
         std::accumulate(td.second.begin(), td.second.end(), 1, std::multiplies<size_t>());
 
-    db->device_buffer->resize(buffer_size);
-    db->host_buffer.resize(buffer_size);
+    db->device_buffer_->resize(buffer_size);
+    db->host_buffer_->resize(buffer_size);
     inference_specs_->data_per_tensor_.insert({td.first, std::move(db)});
   }
 

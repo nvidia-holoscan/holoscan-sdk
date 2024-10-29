@@ -29,8 +29,6 @@
 #include "holoscan/core/fragment.hpp"
 #include "kwarg_handling.hpp"
 
-using pybind11::literals::operator""_a;
-
 namespace py = pybind11;
 
 namespace holoscan {
@@ -42,12 +40,12 @@ class PyCondition : public Condition {
 
   // Define a kwargs-based constructor that can create an ArgList
   // for passing on to the variadic-template based constructor.
-  PyCondition(const py::args& args, const py::kwargs& kwargs) : Condition() {
+  PyCondition(const py::args& args, const py::kwargs& kwargs) {
     using std::string_literals::operator""s;
 
     int n_fragments = 0;
-    for (auto& item : args) {
-      py::object arg_value = item.cast<py::object>();
+    for (const auto& item : args) {
+      auto arg_value = item.cast<py::object>();
       if (py::isinstance<Fragment>(arg_value)) {
         if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
         fragment_ = arg_value.cast<Fragment*>();
@@ -57,8 +55,8 @@ class PyCondition : public Condition {
       }
     }
     for (const auto& [name, value] : kwargs) {
-      std::string kwarg_name = name.cast<std::string>();
-      py::object kwarg_value = value.cast<py::object>();
+      auto kwarg_name = name.cast<std::string>();
+      auto kwarg_value = value.cast<py::object>();
       if (kwarg_name == "name"s) {
         if (py::isinstance<py::str>(kwarg_value)) {
           name_ = kwarg_value.cast<std::string>();
@@ -107,10 +105,11 @@ void init_condition(py::module_& m) {
       m, "Condition", doc::Condition::doc_Condition)
       .def(py::init<const py::args&, const py::kwargs&>(),
            doc::Condition::doc_Condition_args_kwargs)
-      .def_property("name",
-                    py::overload_cast<>(&Condition::name, py::const_),
-                    (Condition & (Condition::*)(const std::string&)&)&Condition::name,
-                    doc::Condition::doc_name)
+      .def_property(
+          "name",
+          py::overload_cast<>(&Condition::name, py::const_),
+          [](Condition& c, const std::string& name) -> Condition& { return c.name(name); },
+          doc::Condition::doc_name)
       .def_property_readonly(
           "fragment", py::overload_cast<>(&Condition::fragment), doc::Condition::doc_fragment)
       .def_property("spec",

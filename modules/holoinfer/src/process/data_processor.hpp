@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _HOLOSCAN_DATA_PROCESSOR_H
-#define _HOLOSCAN_DATA_PROCESSOR_H
+#ifndef MODULES_HOLOINFER_SRC_PROCESS_DATA_PROCESSOR_HPP
+#define MODULES_HOLOINFER_SRC_PROCESS_DATA_PROCESSOR_HPP
 
 #include <bits/stdc++.h>
 #include <cstring>
@@ -39,10 +39,10 @@ namespace inference {
 /// Declaration of function callback used by DataProcessor. processor_FP is defined for operations
 /// with fixed (currently one) input and output size, and for operations that do not need any
 /// configuration
-using processor_FP =
-    std::function<InferStatus(const std::vector<int>&, const void*, std::vector<int64_t>&, DataMap&,
-                              const std::vector<std::string>& output_tensors,
-                              const std::vector<std::string>& custom_strings)>;
+using processor_FP = std::function<InferStatus(
+    const std::vector<int>&, const void*, std::vector<int64_t>&, DataMap&,
+    const std::vector<std::string>& output_tensors, const std::vector<std::string>& custom_strings,
+    bool process_with_cuda, cudaStream_t cuda_stream)>;
 
 // Declaration of function callback for transforms that need configuration (via a yaml file).
 // Transforms additionally support multiple inputs and outputs from the processing.
@@ -73,7 +73,7 @@ class DataProcessor {
   InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
 
   /**
-   * @brief Executes an operation via function callback. (Currently CPU based)
+   * @brief Executes an operation via function callback.
    *
    * @param operation Operation to perform. Refer to user docs for a list of supported operations
    * @param in_dims Dimension of the input tensor
@@ -82,13 +82,16 @@ class DataProcessor {
    * @param processed_data_map Output data map, that will be populated
    * @param output_tensors Tensor names to be populated in the out_data_map
    * @param custom_strings Strings to display for custom print operations
+   * @param process_with_cuda Flag defining if processing should be done with CUDA
+   * @param cuda_stream CUDA stream to use when procseeing is done with CUDA
    * @return InferStatus with appropriate code and message
    */
   InferStatus process_operation(const std::string& operation, const std::vector<int>& in_dims,
                                 const void* in_data, std::vector<int64_t>& processed_dims,
                                 DataMap& processed_data_map,
                                 const std::vector<std::string>& output_tensors,
-                                const std::vector<std::string>& custom_strings);
+                                const std::vector<std::string>& custom_strings,
+                                bool process_with_cuda, cudaStream_t cuda_stream);
 
   /**
    * @brief Executes a transform via function callback. (Currently CPU based)
@@ -107,7 +110,8 @@ class DataProcessor {
                                 DataMap& processed_data, DimType& processed_dims);
 
   /**
-   * @brief Computes max per channel in input data and scales it to [0, 1]. (CPU based)
+   * @brief Computes max per channel in input data and scales it to [0, 1]. (supports both GPU and
+   * CPU data)
    *
    * @param operation Operation to perform. Refer to user docs for a list of supported operations
    * @param in_dims Dimension of the input tensor
@@ -115,10 +119,13 @@ class DataProcessor {
    * @param out_dims Dimension of the output tensor
    * @param out_data_map Output data buffer map
    * @param output_tensors Output tensor names, used to populate out_data_map
+   * @param process_with_cuda Flag defining if processing should be done with CUDA
+   * @param cuda_stream CUDA stream to use when procseeing is done with CUDA
    */
-  InferStatus compute_max_per_channel_cpu(const std::vector<int>& in_dims, const void* in_data,
-                                          std::vector<int64_t>& out_dims, DataMap& out_data_map,
-                                          const std::vector<std::string>& output_tensors);
+  InferStatus compute_max_per_channel_scaled(const std::vector<int>& in_dims, const void* in_data,
+                                             std::vector<int64_t>& out_dims, DataMap& out_data_map,
+                                             const std::vector<std::string>& output_tensors,
+                                             bool process_with_cuda, cudaStream_t cuda_stream);
 
   /**
    * @brief Scales intensity using min-max values and histogram. (CPU based)
@@ -182,7 +189,7 @@ class DataProcessor {
   /// Operation is the key and its related implementation platform as the value.
   /// Operations are defined with fixed number of input and outputs. Currently one for each.
   inline static const std::map<std::string, holoinfer_data_processor> supported_compute_operations_{
-      {"max_per_channel_scaled", holoinfer_data_processor::h_HOST},
+      {"max_per_channel_scaled", holoinfer_data_processor::h_CUDA_AND_HOST},
       {"scale_intensity_cpu", holoinfer_data_processor::h_HOST}};
 
   /// Map defining supported transforms by DataProcessor Class.
@@ -210,29 +217,32 @@ class DataProcessor {
   /// Mapped function call for the function pointer of max_per_channel_scaled
   processor_FP max_per_channel_scaled_fp_ =
       [this](auto& in_dims, const void* in_data, std::vector<int64_t>& out_dims, DataMap& out_data,
-             auto& output_tensors, auto& custom_strings) {
-        return compute_max_per_channel_cpu(in_dims, in_data, out_dims, out_data, output_tensors);
+             auto& output_tensors, auto& custom_strings, bool process_with_cuda,
+             cudaStream_t cuda_stream) {
+        return compute_max_per_channel_scaled(
+            in_dims, in_data, out_dims, out_data, output_tensors, process_with_cuda, cuda_stream);
       };
 
   /// Mapped function call for the function pointer of scale_intensity_cpu
   processor_FP scale_intensity_cpu_fp_ = [this](auto& in_dims, const void* in_data,
                                                 std::vector<int64_t>& out_dims, DataMap& out_data,
-                                                auto& output_tensors, auto& custom_strings) {
+                                                auto& output_tensors, auto& custom_strings,
+                                                bool process_with_cuda, cudaStream_t cuda_stream) {
     return scale_intensity_cpu(in_dims, in_data, out_dims, out_data, output_tensors);
   };
 
   /// Mapped function call for the function pointer of print
-  processor_FP print_results_fp_ = [this](auto& in_dims, const void* in_data,
-                                          std::vector<int64_t>& out_dims, DataMap& out_data,
-                                          auto& output_tensors, auto& custom_strings) {
-    return print_results(in_dims, in_data);
-  };
+  processor_FP print_results_fp_ =
+      [this](auto& in_dims, const void* in_data, std::vector<int64_t>& out_dims, DataMap& out_data,
+             auto& output_tensors, auto& custom_strings, bool process_with_cuda,
+             cudaStream_t cuda_stream) { return print_results(in_dims, in_data); };
 
   /// Mapped function call for the function pointer of printing custom binary classification
   /// results
   processor_FP print_custom_binary_classification_fp_ =
       [this](auto& in_dims, const void* in_data, std::vector<int64_t>& out_dims, DataMap& out_data,
-             auto& output_tensors, auto& custom_strings) {
+             auto& output_tensors, auto& custom_strings, bool process_with_cuda,
+             cudaStream_t cuda_stream) {
         return print_custom_binary_classification(in_dims, in_data, custom_strings);
       };
 
@@ -240,16 +250,16 @@ class DataProcessor {
   /// results to the CSV file using the Data Exporter API.
   processor_FP export_binary_classification_to_csv_fp_ =
       [this](auto& in_dims, const void* in_data, std::vector<int64_t>& out_dims, DataMap& out_data,
-             auto& output_tensors, auto& custom_strings) {
+             auto& output_tensors, auto& custom_strings, bool process_with_cuda,
+             cudaStream_t cuda_stream) {
         return export_binary_classification_to_csv(in_dims, in_data, custom_strings);
       };
 
   /// Mapped function call for the function pointer of print int32
-  processor_FP print_results_i32_fp_ = [this](auto& in_dims, const void* in_data,
-                                              std::vector<int64_t>& out_dims, DataMap& out_data,
-                                              auto& output_tensors, auto& custom_strings) {
-    return print_results_int32(in_dims, in_data);
-  };
+  processor_FP print_results_i32_fp_ =
+      [this](auto& in_dims, const void* in_data, std::vector<int64_t>& out_dims, DataMap& out_data,
+             auto& output_tensors, auto& custom_strings, bool process_with_cuda,
+             cudaStream_t cuda_stream) { return print_results_int32(in_dims, in_data); };
 
   /// Map with supported operation as the key and related function pointer as value
   const std::map<std::string, processor_FP> oper_to_fp_{
@@ -272,6 +282,19 @@ class DataProcessor {
   const std::map<std::string, transforms_FP> transform_to_fp_{
       {"generate_boxes", generate_boxes_fp_}};
 
+  /**
+   * @brief Computes max per channel in input data and scales it to [0, 1], CUDA version
+   *
+   * @param rows rows
+   * @param cols Dimension of the input tensor
+   * @param channels Input data buffer
+   * @param indata Input data
+   * @param outdata Output data
+   * @param cuda_stream CUDA stream to use when procseeing is done with CUDA
+   */
+  void max_per_channel_scaled_cuda(size_t rows, size_t cols, size_t channels, const float* indata,
+                                   float* outdata, cudaStream_t cuda_stream);
+
   /// Configuration path
   std::string config_path_ = {};
 
@@ -281,4 +304,4 @@ class DataProcessor {
 }  // namespace inference
 }  // namespace holoscan
 
-#endif
+#endif /* MODULES_HOLOINFER_SRC_PROCESS_DATA_PROCESSOR_HPP */

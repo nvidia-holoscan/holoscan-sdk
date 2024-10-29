@@ -59,8 +59,9 @@ class PingTxOp : public holoscan::Operator {
     spec.output<std::shared_ptr<ValueData>>("out2");
   }
 
-  void compute(holoscan::InputContext&, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext&) override {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value1 = std::make_shared<ValueData>(index_++);
     op_output.emit(value1, "out1");
 
@@ -81,8 +82,9 @@ class PingNullSharedPtrTxOp : public holoscan::Operator {
     spec.output<std::shared_ptr<ValueData>>("out2");
   }
 
-  void compute(holoscan::InputContext&, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext&) override {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value1 = std::make_shared<ValueData>(index_++);
     op_output.emit(nullptr, "out1");
 
@@ -103,8 +105,9 @@ class PingRawNullPtrTxOp : public holoscan::Operator {
     spec.output<const char*>("out2");
   }
 
-  void compute(holoscan::InputContext&, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext&) override {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     static const char values[] = {
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     op_output.emit(nullptr, "out1");
@@ -135,8 +138,8 @@ class PingTensorMapTxOp : public holoscan::Operator {
     Operator::initialize();
   }
 
-  void compute(holoscan::InputContext&, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               holoscan::OutputContext& op_output, holoscan::ExecutionContext& context) override {
     const nvidia::gxf::Shape out_shape1{1, 2, 3};
     const nvidia::gxf::Shape out_shape2{3, 2, 1};
     const nvidia::gxf::Shape out_shape3{2, 3, 4};
@@ -221,7 +224,7 @@ class PingMxOp : public holoscan::Operator {
   }
 
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext&) override {
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value1 = op_input.receive<std::shared_ptr<ValueData>>("in1").value();
     auto value2 = op_input.receive<std::shared_ptr<ValueData>>("in2").value();
 
@@ -263,8 +266,9 @@ class PingRxOp : public holoscan::Operator {
     }
   }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
-               holoscan::ExecutionContext&) override {
+  void compute(holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     if (should_receive_vector_) {
       auto value_vector =
           op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
@@ -323,8 +327,9 @@ class PingRawPtrRxOp : public holoscan::Operator {
     }
   }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
-               holoscan::ExecutionContext&) override {
+  void compute(holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     if (should_receive_vector_) {
       auto maybe_value_vector = op_input.receive<std::vector<const char*>>("receivers");
 
@@ -389,8 +394,9 @@ class PingTensorMapRxOp : public holoscan::Operator {
     }
   }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
-               holoscan::ExecutionContext&) override {
+  void compute(holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     if (should_receive_vector_) {
       auto value_vector = op_input.receive<std::vector<holoscan::TensorMap>>("receivers").value();
 
@@ -452,8 +458,9 @@ class PingEntityRxOp : public holoscan::Operator {
     }
   }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
-               holoscan::ExecutionContext&) override {
+  void compute(holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     if (should_receive_vector_) {
       auto value_vector = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers").value();
 

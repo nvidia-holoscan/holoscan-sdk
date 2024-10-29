@@ -43,7 +43,7 @@ if(HOLOSCAN_BUILD_TESTS AND TEST_AJA)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME python_aja_capture_output)
-  set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/aja_capture/)
+  set(VALIDATION_FRAMES_DIR ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/aja_capture/)
 
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
@@ -57,7 +57,7 @@ if(HOLOSCAN_BUILD_TESTS AND TEST_AJA)
   add_custom_command(OUTPUT aja_capture_test.py
     PRE_LINK
     COMMAND patch -u -o aja_capture_test.py ${CMAKE_CURRENT_SOURCE_DIR}/aja_capture.py
-        ${CMAKE_SOURCE_DIR}/tests/data/validation_frames/aja_capture/python_aja_capture.patch
+      ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/aja_capture/python_aja_capture.patch
   )
 
   add_custom_target(python_aja_capture_test ALL
@@ -76,7 +76,7 @@ if(HOLOSCAN_BUILD_TESTS AND TEST_AJA)
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_PYTHON_AJA_CAPTURE_RENDER_TEST
-      COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/video_validation.py
+      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}

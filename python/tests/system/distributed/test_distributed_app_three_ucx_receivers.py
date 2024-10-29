@@ -16,14 +16,16 @@ limitations under the License.
 """  # noqa: E501
 
 # # Uncomment the following line to use the real HolovizOp and VideoStreamReplayerOp operators
-# import os
+import os
+import shutil
+import tempfile
 
 import numpy as np
 import pytest
 from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec
+from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec, Tracker
 from utils import remove_ignored_errors
 
 # # Uncomment the following line to use the real HolovizOp and VideoStreamReplayerOp operators
@@ -174,7 +176,7 @@ class DistributedVideoReplayerApp(Application):
 NUM_MSGS = 100
 
 
-def launch_app(use_new_receivers=True):
+def launch_app(use_new_receivers=True, data_flow_tracking=False, logfile=None):
     env_var_settings = {
         # set the recession period to 5 ms to reduce debug messages
         ("HOLOSCAN_CHECK_RECESSION_PERIOD_MS", "5"),
@@ -194,14 +196,42 @@ def launch_app(use_new_receivers=True):
         #                                 "video_replayer_distributed.yaml")
         # app.config(config_file_path)
 
-        app.run()
+        if data_flow_tracking:
+            with Tracker(app, filename=logfile) as trackers:
+                app.run()
+                for fragment_name, tracker in trackers.items():
+                    print(f"Fragment: {fragment_name}")
+                    tracker.print()
+        else:
+            app.run()
 
 
-@pytest.mark.parametrize("use_new_receivers", [True, False])
-def test_distributed_app_three_ucx_receivers(use_new_receivers, capfd):
+@pytest.mark.parametrize("use_new_receivers,", [True, False])
+@pytest.mark.parametrize("data_flow_tracking", [True, False])
+def test_distributed_app_three_ucx_receivers(use_new_receivers, data_flow_tracking, capfd):
     global NUM_MSGS
 
-    launch_app(use_new_receivers=use_new_receivers)
+    # only record the log for the use_new_receivers case so we also test the no-logging code path
+    write_logfile = data_flow_tracking and use_new_receivers
+    logfile_directory = tempfile.mkdtemp() if write_logfile else None
+    try:
+        logfile = logfile_directory + "/holoscan.log" if write_logfile else None
+        launch_app(
+            use_new_receivers=use_new_receivers,
+            data_flow_tracking=data_flow_tracking,
+            logfile=logfile,
+        )
+        if data_flow_tracking and logfile is not None:
+            # verify that the logfile was created and is not empty
+            assert os.path.isfile(logfile)
+            with open(logfile) as f:
+                log_content = "".join(f.readlines())
+            assert "fragment1.replayer" in log_content
+            assert "fragment1.triangle" in log_content
+            assert "fragment1.rectangle" in log_content
+    finally:
+        if logfile_directory is not None:
+            shutil.rmtree(logfile_directory)
 
     # assert that no errors were logged
     captured = capfd.readouterr()
@@ -217,6 +247,14 @@ def test_distributed_app_three_ucx_receivers(use_new_receivers, capfd):
 
     # assert that the expected number of messages were received
     assert f"Received message {NUM_MSGS} (size: 3)" in captured.out
+
+    if data_flow_tracking:
+        # assert that the data flow tracking messages were printed
+        assert captured.out.count("Data Flow Tracking Results:") == 2
+        # three paths: rectangle, replayer and triangle all connect to HolovizOp
+        assert captured.out.count("Total paths: 3") == 2
+        assert "Fragment: fragment1" in captured.out
+        assert "Fragment: fragment2" in captured.out
 
 
 if __name__ == "__main__":

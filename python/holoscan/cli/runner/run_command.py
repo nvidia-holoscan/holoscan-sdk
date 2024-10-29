@@ -18,7 +18,6 @@ limitations under the License.
 import logging
 import os
 from argparse import ArgumentParser, HelpFormatter, _SubParsersAction
-from typing import List
 
 from ..common import argparse_types
 from ..common.argparse_types import valid_existing_path
@@ -27,7 +26,7 @@ logger = logging.getLogger("runner")
 
 
 def create_run_parser(
-    subparser: _SubParsersAction, command: str, parents: List[ArgumentParser]
+    subparser: _SubParsersAction, command: str, parents: list[ArgumentParser]
 ) -> ArgumentParser:
     parser: ArgumentParser = subparser.add_parser(
         command, formatter_class=HelpFormatter, parents=parents, add_help=False

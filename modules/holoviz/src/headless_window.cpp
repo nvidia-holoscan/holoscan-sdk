@@ -83,7 +83,7 @@ bool HeadlessWindow::is_minimized() {
 void HeadlessWindow::im_gui_new_frame() {
   ImGuiIO& io = ImGui::GetIO();
   io.DisplaySize = ImVec2(static_cast<float>(impl_->width_), static_cast<float>(impl_->height_));
-  io.DisplayFramebufferScale = ImVec2(1.f, 1.f);
+  io.DisplayFramebufferScale = ImVec2(1.F, 1.F);
 
   ImGui::NewFrame();
 }

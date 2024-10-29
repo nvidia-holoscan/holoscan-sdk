@@ -31,8 +31,6 @@
 #include "kwarg_handling.hpp"
 #include "resource_pydoc.hpp"
 
-using pybind11::literals::operator""_a;
-
 namespace py = pybind11;
 
 namespace holoscan {
@@ -46,15 +44,14 @@ class PyResource : public Resource {
   // for passing on to the variadic-template based constructor.
   PyResource(py::object resource, Fragment* fragment, const py::args& args,
              const py::kwargs& kwargs)
-      : Resource() {
+      : py_resource_(std::move(resource)) {
     using std::string_literals::operator""s;
 
-    py_resource_ = std::move(resource);
     fragment_ = fragment;
 
     int n_fragments = 0;
-    for (auto& item : args) {
-      py::object arg_value = item.cast<py::object>();
+    for (const auto& item : args) {
+      auto arg_value = item.cast<py::object>();
       if (py::isinstance<Fragment>(arg_value)) {
         if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
         fragment_ = arg_value.cast<Fragment*>();
@@ -64,8 +61,8 @@ class PyResource : public Resource {
       }
     }
     for (const auto& [name, value] : kwargs) {
-      std::string kwarg_name = name.cast<std::string>();
-      py::object kwarg_value = value.cast<py::object>();
+      auto kwarg_name = name.cast<std::string>();
+      auto kwarg_value = value.cast<py::object>();
       if (kwarg_name == "name"s) {
         if (py::isinstance<py::str>(kwarg_value)) {
           name_ = kwarg_value.cast<std::string>();
@@ -116,10 +113,11 @@ void init_resource(py::module_& m) {
   resource_class
       .def(py::init<py::object, Fragment*, const py::args&, const py::kwargs&>(),
            doc::Resource::doc_Resource_args_kwargs)
-      .def_property("name",
-                    py::overload_cast<>(&Resource::name, py::const_),
-                    (Resource & (Resource::*)(const std::string&)&)&Resource::name,
-                    doc::Resource::doc_name)
+      .def_property(
+          "name",
+          py::overload_cast<>(&Resource::name, py::const_),
+          [](Resource& r, const std::string& name) -> Resource& { return r.name(name); },
+          doc::Resource::doc_name)
       .def_property_readonly(
           "fragment", py::overload_cast<>(&Resource::fragment), doc::Resource::doc_fragment)
       .def_property("spec",

@@ -399,8 +399,8 @@ TEST(Yaml, TestYamlCplxDecode) {
   // works with spaces around + and with "j" to indicate imaginary component
   YAML::Node node = YAML::Load("2.0 + 1.5j");
   std::complex<float> cf = node.as<std::complex<float>>();
-  EXPECT_EQ(cf.real(), 2.0f);
-  EXPECT_EQ(cf.imag(), 1.5f);
+  EXPECT_EQ(cf.real(), 2.0F);
+  EXPECT_EQ(cf.imag(), 1.5F);
 
   // works without white space and with "i" to indicate imaginary component
   node = YAML::Load("-2.102-3i");

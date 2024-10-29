@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-find_package(ucx 1.14.0 REQUIRED)
+find_package(ucx 1.17.0 REQUIRED)
 
 install(
   DIRECTORY ${UCX_LIBRARIES}

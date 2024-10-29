@@ -42,9 +42,9 @@ template <typename T>
 void set_vector_arg_via_py_sequence(const py::sequence&, Arg&);
 
 void set_vector_arg_via_iterable(const py::object&, Arg&);
-Arg py_object_to_arg(py::object, std::string);
+Arg py_object_to_arg(py::object, const std::string&);
 ArgList kwargs_to_arglist(const py::kwargs&);
-py::object yaml_node_to_py_object(YAML::Node node);
+py::object yaml_node_to_py_object(const YAML::Node& node);
 py::object arg_to_py_object(Arg&);
 py::dict arglist_to_kwargs(ArgList&);
 

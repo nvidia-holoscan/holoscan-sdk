@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,10 +29,10 @@
 
 # Find headers
 find_path(ONNXRuntime_INCLUDE_DIR
-  NAMES onnxruntime/core/session/onnxruntime_c_api.h
+  NAMES onnxruntime/onnxruntime_c_api.h
 )
 list(APPEND ONNXRuntime_INCLUDE_DIRS "${ONNXRuntime_INCLUDE_DIR}")
-list(APPEND ONNXRuntime_INCLUDE_DIRS "${ONNXRuntime_INCLUDE_DIR}/onnxruntime/core/session")
+list(APPEND ONNXRuntime_INCLUDE_DIRS "${ONNXRuntime_INCLUDE_DIR}/onnxruntime")
 mark_as_advanced(ONNXRuntime_INCLUDE_DIR)
 mark_as_advanced(ONNXRuntime_INCLUDE_DIRS)
 

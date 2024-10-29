@@ -24,7 +24,7 @@
 
 bool key_exists(const holoscan::ArgList& config, const std::string& key) {
   bool exists = false;
-  for (auto& arg : config) {
+  for (const auto& arg : config) {
     if (arg.name() == key) {
       exists = true;
       break;
@@ -43,8 +43,8 @@ class App : public holoscan::Application {
 
     if (key_exists(from_config("source"), "width") && key_exists(from_config("source"), "height")) {
       // width and height given, use BlockMemoryPool (better latency)
-      const uint64_t width = from_config("source.width").as<uint64_t>();
-      const uint64_t height = from_config("source.height").as<uint64_t>();
+      auto width = from_config("source.width").as<uint64_t>();
+      auto height = from_config("source.height").as<uint64_t>();
       const uint8_t n_channels = 4;
       uint64_t block_size = width * height * n_channels;
       auto allocator = make_resource<BlockMemoryPool>("pool", 0, block_size, 1);
@@ -55,9 +55,11 @@ class App : public holoscan::Application {
       // Set Holoviz width and height from source resolution
       auto viz_args = from_config("visualizer");
       for (auto& arg : from_config("source")) {
-        if (arg.name() == "width") viz_args.add(arg);
-        else if (arg.name() == "height")
+        if (arg.name() == "width") {
           viz_args.add(arg);
+        } else if (arg.name() == "height") {
+          viz_args.add(arg);
+        }
       }
       visualizer =
           make_operator<ops::HolovizOp>("visualizer", viz_args, Arg("allocator") = allocator);

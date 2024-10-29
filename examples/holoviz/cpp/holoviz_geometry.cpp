@@ -74,7 +74,7 @@ class GeometrySourceOp : public Operator {
     std::memcpy(tensor->pointer(), data.data(), N * C * sizeof(float));
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output,
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
     auto entity = gxf::Entity::New(&context);
     auto specs = std::vector<HolovizOp::InputSpec>();
@@ -91,14 +91,14 @@ class GeometrySourceOp : public Operator {
     // box: (x1, y1), (x2, y2).
     add_data<8, 2>(entity,
                    "boxes",
-                   {{{0.1f, 0.2f},
-                     {0.8f, 0.5f},
-                     {0.2f, 0.4f},
-                     {0.3f, 0.6f},
-                     {0.3f, 0.5f},
-                     {0.4f, 0.7f},
-                     {0.5f, 0.7f},
-                     {0.6f, 0.9f}}},
+                   {{{0.1F, 0.2F},
+                     {0.8F, 0.5F},
+                     {0.2F, 0.4F},
+                     {0.3F, 0.6F},
+                     {0.3F, 0.5F},
+                     {0.4F, 0.7F},
+                     {0.5F, 0.7F},
+                     {0.6F, 0.9F}}},
                    context);
 
     /////////////////////////////////////////
@@ -107,19 +107,19 @@ class GeometrySourceOp : public Operator {
     // Each triangle is defined by a set of 3 (x, y) coordinate pairs.
     add_data<6, 2>(entity,
                    "triangles",
-                   {{{0.1f, 0.8f},
-                     {0.18f, 0.75f},
-                     {0.14f, 0.66f},
-                     {0.3f, 0.8f},
-                     {0.38f, 0.75f},
-                     {0.34f, 0.56f}}},
+                   {{{0.1F, 0.8F},
+                     {0.18F, 0.75F},
+                     {0.14F, 0.66F},
+                     {0.3F, 0.8F},
+                     {0.38F, 0.75F},
+                     {0.34F, 0.56F}}},
                    context);
 
     ///////////////////////////////////////
     // Create a tensor defining two crosses
     ///////////////////////////////////////
     // Each cross is defined by an (x, y, size) 3-tuple
-    add_data<2, 3>(entity, "crosses", {{{0.25f, 0.25f, 0.05f}, {0.75f, 0.25f, 0.10f}}}, context);
+    add_data<2, 3>(entity, "crosses", {{{0.25F, 0.25F, 0.05F}, {0.75F, 0.25F, 0.10F}}}, context);
 
     ///////////////////////////////////////
     // Create a tensor defining three ovals
@@ -127,9 +127,9 @@ class GeometrySourceOp : public Operator {
     // Each oval is defined by an (x, y, size_x, size_y) 4-tuple
     add_data<3, 4>(entity,
                    "ovals",
-                   {{{0.25f, 0.65f, 0.10f, 0.05f},
-                     {0.25f, 0.65f, 0.10f, 0.05f},
-                     {0.75f, 0.65f, 0.05f, 0.10f}}},
+                   {{{0.25F, 0.65F, 0.10F, 0.05F},
+                     {0.25F, 0.65F, 0.10F, 0.05F},
+                     {0.75F, 0.65F, 0.05F, 0.10F}}},
                    context);
 
     ////////////////////////////////////////
@@ -138,12 +138,14 @@ class GeometrySourceOp : public Operator {
     // Set of (x, y) points with 50 points equally spaced along x whose y
     // coordinate varies sinusoidally over time.
     constexpr uint32_t POINTS = 50;
-    constexpr float PI = 3.14f;
-    std::array<std::array<float, 2>, POINTS> point_coords;
-    for (uint32_t i = 0; i < POINTS; ++i) {
-      point_coords[i][0] = (1.f / POINTS) * i;
-      point_coords[i][1] =
-          0.8f + 0.1f * std::sin(8.f * PI * point_coords[i][0] + count_ / 60.f * 2.f * PI);
+    constexpr float PI = 3.14F;
+    std::array<std::array<float, 2>, POINTS> point_coords{};
+    uint32_t i = 0;
+    for (auto& point : point_coords) {
+      point[0] = static_cast<float>(i) / static_cast<float>(POINTS);
+      point[1] = 0.8F + 0.1F * std::sin(8.F * PI * point[0] +
+                                        static_cast<float>(count_) / 60.F * 2.F * PI);
+      i++;
     }
 
     add_data(entity, "points", point_coords, context);
@@ -152,13 +154,13 @@ class GeometrySourceOp : public Operator {
     // Create a tensor for "label_coords"
     /////////////////////////////////////
     // Set of two (x, y) points marking the location of text labels
-    add_data<2, 2>(entity, "label_coords", {{{0.10f, 0.1f}, {0.70f, 0.1f}}}, context);
+    add_data<2, 2>(entity, "label_coords", {{{0.10F, 0.1F}, {0.70F, 0.1F}}}, context);
 
     /////////////////////////////////////
     // Create a tensor for "dynamic_text"
     /////////////////////////////////////
     // Set of two (x, y) points marking the location of text labels
-    add_data<2, 2>(entity, "dynamic_text", {{{0.f, 0.f}}}, context);
+    add_data<2, 2>(entity, "dynamic_text", {{{0.F, 0.F}}}, context);
 
     // emit the tensors
     op_output.emit(entity, "outputs");
@@ -217,7 +219,7 @@ class HolovizGeometryApp : public holoscan::Application {
     using namespace holoscan;
 
     ArgList args;
-    auto data_directory = std::getenv("HOLOSCAN_INPUT_PATH");
+    auto* data_directory = std::getenv("HOLOSCAN_INPUT_PATH");  // NOLINT(*)
     if (data_directory != nullptr && data_directory[0] != '\0') {
       auto video_directory = std::filesystem::path(data_directory);
       video_directory /= "racerx";
@@ -230,7 +232,7 @@ class HolovizGeometryApp : public holoscan::Application {
         make_operator<ops::VideoStreamReplayerOp>("replayer",
                                                   Arg("directory", std::string("../data/racerx")),
                                                   Arg("basename", std::string("racerx")),
-                                                  Arg("frame_rate", 0.f),
+                                                  Arg("frame_rate", 0.F),
                                                   Arg("repeat", true),
                                                   Arg("realtime", true),
                                                   Arg("count", count_),
@@ -244,15 +246,15 @@ class HolovizGeometryApp : public holoscan::Application {
 
     auto& video_spec =
         input_spec.emplace_back(ops::HolovizOp::InputSpec("", ops::HolovizOp::InputType::COLOR));
-    video_spec.line_width_ = 2.f;
-    video_spec.opacity_ = 0.5f;
+    video_spec.line_width_ = 2.F;
+    video_spec.opacity_ = 0.5F;
     video_spec.priority_ = priority++;
 
     // Parameters defining the rectangle primitives
     auto& boxes_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("boxes", ops::HolovizOp::InputType::RECTANGLES));
-    boxes_spec.line_width_ = 2.f;
-    boxes_spec.color_ = {1.0f, 0.0f, 1.0f, 0.5f};
+    boxes_spec.line_width_ = 2.F;
+    boxes_spec.color_ = {1.0F, 0.0F, 1.0F, 0.5F};
     boxes_spec.priority_ = priority++;
 
     // line strip reuses the rectangle coordinates. This will make
@@ -260,55 +262,55 @@ class HolovizGeometryApp : public holoscan::Application {
     // each box.
     auto& line_strip_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("boxes", ops::HolovizOp::InputType::LINE_STRIP));
-    line_strip_spec.line_width_ = 3.f;
-    line_strip_spec.color_ = {0.4f, 0.4f, 1.0f, 0.7f};
+    line_strip_spec.line_width_ = 3.F;
+    line_strip_spec.color_ = {0.4F, 0.4F, 1.0F, 0.7F};
     line_strip_spec.priority_ = priority++;
 
     // Lines also reuses the boxes coordinates so will plot a set of
     // disconnected line segments along the box diagonals.
     auto& lines_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("boxes", ops::HolovizOp::InputType::LINES));
-    lines_spec.line_width_ = 3.f;
-    lines_spec.color_ = {0.4f, 1.0f, 0.4f, 0.7f};
+    lines_spec.line_width_ = 3.F;
+    lines_spec.color_ = {0.4F, 1.0F, 0.4F, 0.7F};
     lines_spec.priority_ = priority++;
 
     // Parameters defining the triangle primitives
     auto& triangles_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("triangles", ops::HolovizOp::InputType::TRIANGLES));
-    triangles_spec.color_ = {1.0f, 0.0f, 0.0f, 0.5f};
+    triangles_spec.color_ = {1.0F, 0.0F, 0.0F, 0.5F};
     triangles_spec.priority_ = priority++;
 
     // Parameters defining the crosses primitives
     auto& crosses_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("crosses", ops::HolovizOp::InputType::CROSSES));
-    crosses_spec.line_width_ = 3.f;
-    crosses_spec.color_ = {0.0f, 1.0f, 0.0f, 1.0f};
+    crosses_spec.line_width_ = 3.F;
+    crosses_spec.color_ = {0.0F, 1.0F, 0.0F, 1.0F};
     crosses_spec.priority_ = priority++;
 
     // Parameters defining the ovals primitives
     auto& ovals_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("ovals", ops::HolovizOp::InputType::OVALS));
-    ovals_spec.opacity_ = 0.5f;
-    ovals_spec.line_width_ = 2.f;
-    ovals_spec.color_ = {1.0f, 1.0f, 1.0f, 1.0f};
+    ovals_spec.opacity_ = 0.5F;
+    ovals_spec.line_width_ = 2.F;
+    ovals_spec.color_ = {1.0F, 1.0F, 1.0F, 1.0F};
     ovals_spec.priority_ = priority++;
 
     // Parameters defining the points primitives
     auto& points_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("points", ops::HolovizOp::InputType::POINTS));
-    points_spec.point_size_ = 4.f;
-    points_spec.color_ = {1.0f, 1.0f, 1.0f, 1.0f};
+    points_spec.point_size_ = 4.F;
+    points_spec.color_ = {1.0F, 1.0F, 1.0F, 1.0F};
     points_spec.priority_ = priority++;
 
     // Parameters defining the label_coords primitives
     auto& label_coords_spec = input_spec.emplace_back(
         ops::HolovizOp::InputSpec("label_coords", ops::HolovizOp::InputType::TEXT));
-    label_coords_spec.color_ = {1.0f, 1.0f, 1.0f, 1.0f};
+    label_coords_spec.color_ = {1.0F, 1.0F, 1.0F, 1.0F};
     label_coords_spec.text_ = {"label_1", "label_2"};
     label_coords_spec.priority_ = priority++;
 
     auto visualizer = make_operator<ops::HolovizOp>(
-        "holoviz", Arg("width", 854u), Arg("height", 480u), Arg("tensors", input_spec));
+        "holoviz", Arg("width", 854U), Arg("height", 480U), Arg("tensors", input_spec));
 
     // Define the workflow: source -> holoviz
     add_flow(source, visualizer, {{"outputs", "receivers"}});
@@ -322,16 +324,21 @@ class HolovizGeometryApp : public holoscan::Application {
 
 int main(int argc, char** argv) {
   // Parse args
-  struct option long_options[] = {
-      {"help", no_argument, 0, 'h'}, {"count", required_argument, 0, 'c'}, {0, 0, 0, 0}};
+  // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+  struct option long_options[] = {{"help", no_argument, nullptr, 'h'},
+                                  {"count", required_argument, nullptr, 'c'},
+                                  {nullptr, 0, nullptr, 0}};
+  // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
   uint64_t count = 0;
   while (true) {
     int option_index = 0;
-    const int c = getopt_long(argc, argv, "hc:", long_options, &option_index);
+    // NOLINTBEGIN(concurrency-mt-unsafe)
+    const int c = getopt_long(argc, argv, "hc:", static_cast<option*>(long_options), &option_index);
+    // NOLINTEND(concurrency-mt-unsafe)
 
     if (c == -1) { break; }
 
-    const std::string argument(optarg ? optarg : "");
+    const std::string argument(optarg != nullptr ? optarg : "");
     switch (c) {
       case 'h':
         std::cout << "Usage: " << argv[0] << " [options]" << std::endl

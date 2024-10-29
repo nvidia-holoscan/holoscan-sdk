@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +60,8 @@ class ProcessingTests {
   std::unique_ptr<HoloInfer::ProcessorContext> holoscan_processor_context_;
   HoloInfer::DataMap data_per_tensor;
   std::map<std::string, std::vector<int>> dims_per_tensor;
+  bool process_with_cuda = false;
+  cudaStream_t cuda_stream = 0;
   std::string config_path = "";
 
   const std::map<unsigned int, std::string> test_identifier_process = {

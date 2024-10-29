@@ -35,15 +35,14 @@
 #include "tensor.hpp"
 #include "tensor_pydoc.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
 namespace {
 
-static constexpr const char* dlpack_capsule_name{"dltensor"};
-static constexpr const char* used_dlpack_capsule_name{"used_dltensor"};
+constexpr const char* dlpack_capsule_name{"dltensor"};
+constexpr const char* used_dlpack_capsule_name{"used_dltensor"};
 }  // namespace
 
 namespace holoscan {
@@ -89,6 +88,7 @@ void init_tensor(py::module_& m) {
       .def_property_readonly(
           "data",
           [](const Tensor& t) {
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
             return static_cast<int64_t>(reinterpret_cast<uintptr_t>(t.data()));
           },
           doc::Tensor::doc_data)
@@ -178,7 +178,10 @@ LazyDLManagedTensorDeleter::LazyDLManagedTensorDeleter() {
       // Register on_exit() to be called when the application exits.
       // Note that the child process will not call on_exit() when fork() is called and exit() is
       // called in the child process.
-      std::atexit(on_exit);
+      if (std::atexit(on_exit) != 0) {
+        HOLOSCAN_LOG_ERROR("Failed to register exit handler for LazyDLManagedTensorDeleter");
+        // std::exit(EXIT_FAILURE);
+      }
     }
 
     s_is_running = true;
@@ -234,10 +237,10 @@ void LazyDLManagedTensorDeleter::run() {
     lock.unlock();
     // Call the deleter function for each pointer in the queue
     while (!local_queue.empty()) {
-      auto dl_managed_tensor_ptr = local_queue.front();
+      auto* dl_managed_tensor_ptr = local_queue.front();
       // Note: the deleter function can be nullptr (e.g. when the tensor is created from
       // __cuda_array_interface__ protocol)
-      if (dl_managed_tensor_ptr && dl_managed_tensor_ptr->deleter != nullptr) {
+      if (dl_managed_tensor_ptr != nullptr && dl_managed_tensor_ptr->deleter != nullptr) {
         // Call the deleter function with GIL acquired
         py::gil_scoped_acquire scope_guard;
         dl_managed_tensor_ptr->deleter(dl_managed_tensor_ptr);
@@ -365,6 +368,7 @@ py::object PyTensor::from_dlpack_pyobj(const py::object& obj) {
   return py_tensor;
 }
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, bool cuda) {
   auto memory_buf = std::make_shared<ArrayInterfaceMemoryBuffer>();
   memory_buf->obj_ref = obj;  // hold obj to prevent it from being garbage collected
@@ -392,7 +396,8 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
     }
   }
   auto data_array = array_interface["data"].cast<std::vector<int64_t>>();
-  auto data_ptr = reinterpret_cast<void*>(data_array[0]);
+  // NOLINTNEXTLINE(performance-no-int-to-ptr,cppcoreguidelines-pro-type-reinterpret-cast)
+  auto* data_ptr = reinterpret_cast<void*>(data_array[0]);
   // bool data_readonly = data_array[1] > 0;
   // auto version = array_interface["version"].cast<int64_t>();
 
@@ -446,16 +451,18 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
           "Invalid stream, valid stream should be  None (no synchronization), 1 (legacy default "
           "stream), 2 "
           "(per-thread defaultstream), or a positive integer (stream pointer)");
-    } else if (stream_id <= 2) {
+    }
+    if (stream_id <= 2) {
       stream_ptr = nullptr;
     } else {
+      // NOLINTNEXTLINE(performance-no-int-to-ptr,cppcoreguidelines-pro-type-reinterpret-cast)
       stream_ptr = reinterpret_cast<cudaStream_t>(stream_id);
     }
 
     cudaStream_t curr_stream_ptr = nullptr;  // legacy stream
 
     if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
-      cudaEvent_t curr_stream_event;
+      cudaEvent_t curr_stream_event{};
       HOLOSCAN_CUDA_CALL_THROW_ERROR(
           cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming),
           "Failure during call to cudaEventCreateWithFlags");
@@ -470,18 +477,20 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
     }
   }
   // Create DLManagedTensor object
-  auto dl_managed_tensor_ctx = new DLManagedTensorContext;
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+  auto* dl_managed_tensor_ctx = new DLManagedTensorContext;
   auto& dl_managed_tensor = dl_managed_tensor_ctx->tensor;
 
   dl_managed_tensor_ctx->memory_ref = memory_buf;
 
   dl_managed_tensor.manager_ctx = dl_managed_tensor_ctx;
   dl_managed_tensor.deleter = [](DLManagedTensor* self) {
-    auto dl_managed_tensor_ctx = static_cast<DLManagedTensorContext*>(self->manager_ctx);
+    auto* dl_managed_tensor_ctx = static_cast<DLManagedTensorContext*>(self->manager_ctx);
     // Note: since 'memory_ref' is maintaining python object reference, we should acquire GIL in
     // case this function is called from another non-python thread, before releasing 'memory_ref'.
     py::gil_scoped_acquire scope_guard;
     dl_managed_tensor_ctx->memory_ref.reset();
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     delete dl_managed_tensor_ctx;
   };
 
@@ -494,6 +503,7 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
 
   return tensor;
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
   // Pybind11 doesn't have a way to get/set a pointer with a name so we have to use the C API
@@ -507,7 +517,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
   auto dlpack_device = py::cast<py::tuple>(dlpack_device_func());
   // https://dmlc.github.io/dlpack/latest/c_api.html#_CPPv48DLDevice
   DLDeviceType device_type = static_cast<DLDeviceType>(dlpack_device[0].cast<int>());
-  int32_t device_id = dlpack_device[1].cast<int32_t>();
+  auto device_id = dlpack_device[1].cast<int32_t>();
 
   DLDevice device = {device_type, device_id};
 
@@ -551,7 +561,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
 
   PyObject* dlpack_capsule_ptr = dlpack_obj.ptr();
 
-  if (!PyCapsule_IsValid(dlpack_capsule_ptr, dlpack_capsule_name)) {
+  if (PyCapsule_IsValid(dlpack_capsule_ptr, dlpack_capsule_name) == 0) {
     const char* capsule_name = PyCapsule_GetName(dlpack_capsule_ptr);
     throw std::runtime_error(
         fmt::format("Received an invalid DLPack capsule ('{}'). You might have already consumed "
@@ -559,7 +569,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
                     capsule_name));
   }
 
-  DLManagedTensor* dl_managed_tensor =
+  auto* dl_managed_tensor =
       static_cast<DLManagedTensor*>(PyCapsule_GetPointer(dlpack_capsule_ptr, dlpack_capsule_name));
 
   // Set device
@@ -596,7 +606,7 @@ py::tuple PyTensor::dlpack_device(const py::object& obj) {
   return py_dlpack_device(tensor.get());
 }
 
-bool is_tensor_like(py::object value) {
+bool is_tensor_like(const py::object& value) {
   return ((py::hasattr(value, "__dlpack__") && py::hasattr(value, "__dlpack_device__")) ||
           py::isinstance<holoscan::PyTensor>(value) ||
           py::hasattr(value, "__cuda_array_interface__") ||

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,7 +41,7 @@ TEST(Component, TestComponentAddArg) {
 
   // add ConstArg
   Arg a2 = Arg("alpha2");
-  a2 = 3.0f;
+  a2 = 3.0F;
   const Arg ca2 = a2;
   C.add_arg(ca2);
 

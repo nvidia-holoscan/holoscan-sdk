@@ -16,7 +16,7 @@ limitations under the License.
 """  # noqa: E501
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 class ApplicationManifest:
@@ -52,19 +52,19 @@ class ApplicationManifest:
         self._data["command"] = value
 
     @property
-    def environment(self) -> Dict[str, str]:
+    def environment(self) -> dict[str, str]:
         return self._data["environment"]
 
     @environment.setter
-    def environment(self, value: Dict[str, str]):
+    def environment(self, value: dict[str, str]):
         self._data["environment"] = value
 
     @property
-    def input(self) -> Dict[str, str]:  # noqa: A003
+    def input(self) -> dict[str, str]:  # noqa: A003
         return self._data["input"]
 
     @input.setter
-    def input(self, value: Dict[str, str]):  # noqa: A003
+    def input(self, value: dict[str, str]):  # noqa: A003
         self._data["input"] = value
 
     @property
@@ -76,11 +76,11 @@ class ApplicationManifest:
         self._data["liveness"] = value
 
     @property
-    def output(self) -> Dict[str, str]:
+    def output(self) -> dict[str, str]:
         return self._data["output"]
 
     @output.setter
-    def output(self, value: Dict[str, str]):
+    def output(self, value: dict[str, str]):
         self._data["output"] = value
 
     @property
@@ -135,7 +135,7 @@ class ApplicationManifest:
             self._data["workingDirectory"] = value
 
     @property
-    def data(self) -> Dict[str, Any]:
+    def data(self) -> dict[str, Any]:
         """Returns all values for serializing to JSON"""
         return self._data
 
@@ -190,11 +190,11 @@ class PackageManifest:
             self._data["modelRoot"] = value
 
     @property
-    def models(self) -> Dict[str, str]:
+    def models(self) -> dict[str, str]:
         return self._data["models"]
 
     @models.setter
-    def models(self, value: Dict[str, str]):
+    def models(self, value: dict[str, str]):
         self._data["models"] = value
 
     @property
@@ -215,6 +215,6 @@ class PackageManifest:
         self._data["version"] = value
 
     @property
-    def data(self) -> Dict[str, Any]:
+    def data(self) -> dict[str, Any]:
         """Returns all values for serializing to JSON"""
         return self._data

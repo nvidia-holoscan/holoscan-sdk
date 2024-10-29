@@ -138,7 +138,7 @@ void TestBase::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
       channels = 1;
       component_size = sizeof(float);
       color_data_.resize(width_ * height_ * channels * component_size);
-      Fill<float>(color_data_.data(), width_ * height_, 0.f, float(lut_size_ - 1));
+      Fill<float>(color_data_.data(), width_ * height_, 0.F, float(lut_size_ - 1));
       break;
     case viz::ImageFormat::R8G8B8_UNORM:
     case viz::ImageFormat::R8G8B8_SRGB:
@@ -199,7 +199,7 @@ void TestBase::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
       channels = 1;
       component_size = sizeof(float);
       depth_data_.resize(width_ * height_ * channels * component_size);
-      Fill<float>(depth_data_.data(), width_ * height_, 0.f, std::numeric_limits<float>::max());
+      Fill<float>(depth_data_.data(), width_ * height_, 0.F, std::numeric_limits<float>::max());
       break;
     case viz::ImageFormat::A2B10G10R10_UNORM_PACK32:
     case viz::ImageFormat::A2R10G10B10_UNORM_PACK32:
@@ -325,11 +325,11 @@ bool TestBase::CompareDepthResult() {
       // convert to single channel uint8_t assuming depth is between 0...1
       std::vector<uint8_t> image_data(depth_data_.size());
       for (size_t index = 0; index < depth_data_.size(); ++index) {
-        image_data[index] = static_cast<uint8_t>(depth_data_[index] * 255.f + 0.5f);
+        image_data[index] = static_cast<uint8_t>(depth_data_[index] * 255.F + 0.5F);
       }
       stbi_write_png(ref_file_name.c_str(), width_, height_, 1, image_data.data(), 0);
       for (size_t index = 0; index < depth_data.size(); ++index) {
-        image_data[index] = static_cast<uint8_t>(depth_data[index] * 255.f + 0.5f);
+        image_data[index] = static_cast<uint8_t>(depth_data[index] * 255.F + 0.5F);
       }
       stbi_write_png(fail_file_name.c_str(), width_, height_, 1, image_data.data(), 0);
 
@@ -415,7 +415,7 @@ bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
     // convert to single channel uint8_t assuming depth is between 0...1
     std::vector<uint8_t> image_data(read_data.size());
     for (size_t index = 0; index < read_data.size(); ++index) {
-      image_data[index] = static_cast<uint8_t>(read_data[index] * 255.f + 0.5f);
+      image_data[index] = static_cast<uint8_t>(read_data[index] * 255.F + 0.5F);
     }
 
     stbi_write_png(image_file_name.c_str(), width_, height_, 1, image_data.data(), 0);

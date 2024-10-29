@@ -131,7 +131,7 @@ TEST(Init, VulkanLoaderFail) {
 
 TEST(Init, Errors) {
   // should thrown when specifying an invalid font file
-  EXPECT_NO_THROW(viz::SetFont("NonExistingFile.ttf", 12.f));
+  EXPECT_NO_THROW(viz::SetFont("NonExistingFile.ttf", 12.F));
   EXPECT_THROW(viz::Init(128, 64, "Holoviz test", viz::InitFlags::HEADLESS), std::runtime_error);
   EXPECT_NO_THROW(viz::Shutdown());
 

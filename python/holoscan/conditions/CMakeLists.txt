@@ -18,8 +18,11 @@ holoscan_pybind11_module(conditions
     boolean.cpp
     conditions.cpp
     count.cpp
+    cuda_buffer_available.cpp
+    cuda_event.cpp
+    cuda_stream.cpp
     downstream_message_affordable.cpp
-    message_available.cpp
     expiring_message.cpp
+    message_available.cpp
     periodic.cpp
 )

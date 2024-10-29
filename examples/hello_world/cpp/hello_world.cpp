@@ -28,8 +28,8 @@ class HelloWorldOp : public Operator {
 
   void setup(OperatorSpec& spec) override {}
 
-  void compute(InputContext& op_input, OutputContext& op_output,
-               ExecutionContext& context) override {
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     std::cout << std::endl;
     std::cout << "Hello World!" << std::endl;
     std::cout << std::endl;
@@ -51,7 +51,7 @@ class HelloWorldApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<HelloWorldApp>();
   app->run();
 

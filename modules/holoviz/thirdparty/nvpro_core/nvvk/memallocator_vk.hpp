@@ -90,7 +90,7 @@ class MemAllocateInfo {
   // Make the allocation exportable
   MemAllocateInfo& setExportable(bool exportable);
   // Prioritize the allocation (values 0.0 - 1.0); this may guide eviction strategies
-  MemAllocateInfo& setPriority(const float priority = 0.5f);
+  MemAllocateInfo& setPriority(const float priority = 0.5F);
 
   VkImage getDedicatedImage() const { return m_dedicatedImage; }
   VkBuffer getDedicatedBuffer() const { return m_dedicatedBuffer; }
@@ -110,7 +110,7 @@ class MemAllocateInfo {
   uint32_t m_deviceMask{0};
   std::vector<VkMemoryRequirements> m_memReqs;
   VkMemoryPropertyFlags m_memProps{0};
-  float m_priority{0.5f};
+  float m_priority{0.5F};
 
   std::string m_debugName;
 

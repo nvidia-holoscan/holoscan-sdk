@@ -446,7 +446,7 @@ protected:
     bool                  isLinear    = false;
     bool                  isDedicated = false;
     bool                  isFirst     = false;  // first memory block of a type
-    float                 priority    = 0.0f;
+    float                 priority    = 0.0F;
     VkMemoryAllocateFlags allocateFlags{};
     uint32_t              allocateDeviceMask = 0;
 

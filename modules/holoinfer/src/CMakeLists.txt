@@ -17,76 +17,16 @@
 
 project(holoinfer VERSION ${HOLOSCAN_BUILD_VERSION} LANGUAGES CXX CUDA)
 
+add_subdirectory(infer)
+
 find_package(CUDAToolkit REQUIRED)
-
-if(HOLOSCAN_BUILD_LIBTORCH)
-    # It is necessary to set the TORCH_CUDA_ARCH_LIST explicitly for newer versions of Torch (circa v2.3.0)
-    set(TORCH_CUDA_ARCH_LIST "3.5 5.0 8.0 8.6 8.9 9.0")
-    find_package(Torch REQUIRED)
-    find_package(TorchVision REQUIRED)
-    add_library(holoinfer_torch SHARED infer/torch/core.cpp)
-    add_library(holoscan::infer::torch ALIAS holoinfer_torch)
-    set_target_properties(holoinfer_torch PROPERTIES
-        OUTPUT_NAME holoscan_infer_torch
-        EXPORT_NAME infer::torch
-        SOVERSION ${PROJECT_VERSION_MAJOR}
-        VERSION ${PROJECT_VERSION}
-        INSTALL_RPATH_USE_LINK_PATH true # find libtorch and torchvision in install tree
-    )
-    target_link_libraries(holoinfer_torch
-        PRIVATE
-            torch
-            -Wl,--no-as-needed TorchVision::TorchVision # torch plugin
-            holoscan::logger
-            GXF::core
-            yaml-cpp
-            holoscan_security_flags
-    )
-    target_include_directories(holoinfer_torch
-        PRIVATE
-            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        PUBLIC
-            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-            $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
-            $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>
-            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>
-        )
-endif()
-
-if(HOLOSCAN_BUILD_ORT)
-    find_package(ONNXRuntime REQUIRED)
-    add_library(holoinfer_ort SHARED infer/onnx/core.cpp)
-    add_library(holoscan::infer::onnx_runtime ALIAS holoinfer_ort)
-    set_target_properties(holoinfer_ort PROPERTIES
-        OUTPUT_NAME holoscan_infer_onnx_runtime
-        EXPORT_NAME infer::onnx_runtime
-        SOVERSION ${PROJECT_VERSION_MAJOR}
-        VERSION ${PROJECT_VERSION}
-        INSTALL_RPATH_USE_LINK_PATH true # find onnxruntime in install tree
-    )
-    target_link_libraries(holoinfer_ort
-        PRIVATE
-            ONNXRuntime::ONNXRuntime
-            CUDA::cudart
-            holoscan::logger
-            GXF::core
-            yaml-cpp
-            holoscan_security_flags
-    )
-    target_include_directories(holoinfer_ort
-        PRIVATE
-            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        PUBLIC
-            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>
-        )
-endif()
 
 set(holoinfer_src
     infer/trt/core.cpp
     infer/trt/utils.cpp
     params/infer_param.cpp
     process/data_processor.cpp
+    process/data_processor.cu
     process/transforms/generate_boxes.cpp
     manager/infer_manager.cpp
     manager/process_manager.cpp
@@ -119,6 +59,7 @@ target_link_libraries(${PROJECT_NAME}
         ${CMAKE_DL_LIBS} # to dlopen holoinfer_torch
         CUDA::cudart
         holoscan::logger
+        TensorRT::nvinfer_plugin
         TensorRT::nvonnxparser
         holoscan_security_flags
 )

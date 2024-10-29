@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -85,7 +85,7 @@ struct GraphicsPipelineState
     rasterizationState.depthBiasConstantFactor = {};
     rasterizationState.depthBiasClamp          = {};
     rasterizationState.depthBiasSlopeFactor    = {};
-    rasterizationState.lineWidth               = 1.f;
+    rasterizationState.lineWidth               = 1.F;
 
     inputAssemblyState.flags = {};
     setValue(inputAssemblyState.topology, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -99,7 +99,7 @@ struct GraphicsPipelineState
     colorBlendState.pAttachments    = {};
     for(int i = 0; i < 4; i++)
     {
-      colorBlendState.blendConstants[i] = 0.f;
+      colorBlendState.blendConstants[i] = 0.F;
     }
 
 

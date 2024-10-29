@@ -31,8 +31,7 @@
 #include "io_spec_pydoc.hpp"
 #include "kwarg_handling.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -87,9 +86,9 @@ void init_io_spec(py::module_& m) {
           },
           doc::IOSpec::doc_condition,
           py::return_value_policy::reference_internal)
-      // TODO: sphinx API doc build complains if more than one connector
-      //       method has a docstring specified. For now just set the docstring for the
-      //       first overload only and add information about the rest in the Notes section.
+      // TODO(unknown): sphinx API doc build complains if more than one connector
+      // method has a docstring specified. For now just set the docstring for the
+      // first overload only and add information about the rest in the Notes section.
       .def(
           "connector",
           // Note: The return type needs to be specified explicitly because pybind11 can't deduce it
@@ -114,12 +113,12 @@ void init_io_spec(py::module_& m) {
   // Define IOSize constants in IOSpec module
   iospec
       .def_property_readonly_static(
-          "ANY_SIZE", [](py::object) { return IOSpec::kAnySize; }, "Any size")
+          "ANY_SIZE", [](const py::object&) { return IOSpec::kAnySize; }, "Any size")
       .def_property_readonly_static(
           "PRECEDING_COUNT",
-          [](py::object) { return IOSpec::kPrecedingCount; },
+          [](const py::object&) { return IOSpec::kPrecedingCount; },
           "Number of preceding connections")
       .def_property_readonly_static(
-          "SIZE_ONE", [](py::object) { return IOSpec::kSizeOne; }, "Size one");
+          "SIZE_ONE", [](const py::object&) { return IOSpec::kSizeOne; }, "Size one");
 }
 }  // namespace holoscan

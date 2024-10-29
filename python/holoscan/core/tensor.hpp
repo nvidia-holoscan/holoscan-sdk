@@ -182,7 +182,7 @@ class PyTensor : public Tensor {
   static py::tuple dlpack_device(const py::object& obj);
 };
 
-bool is_tensor_like(py::object value);
+bool is_tensor_like(const py::object& value);
 
 }  // namespace holoscan
 

@@ -19,7 +19,6 @@ import json
 import logging
 import socket
 import subprocess
-from typing import List, Tuple
 
 import psutil
 from packaging import version
@@ -108,7 +107,7 @@ def compare_versions(version1, version2):
         return 0
 
 
-def get_host_ip_addresses() -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+def get_host_ip_addresses() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """
     Returns a tuple containing interface name and its IPv4 address as the first item
     and another item with interface name and its IPv6 address.

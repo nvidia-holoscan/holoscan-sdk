@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@
 #include <gxf/core/entity.hpp>
 #include <gxf/core/handle.hpp>
 
-#include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
+#include "gxf/std/double_buffer_transmitter.hpp"
 
 namespace holoscan {
 
@@ -64,6 +64,7 @@ class AnnotatedDoubleBufferTransmitter : public nvidia::gxf::DoubleBufferTransmi
 
   /// The concatenated name of the operator and this transmitter.
   std::string op_transmitter_name_pair_;
+  int is_op_root_ = -1;  ///< Indicates whether associated operator is a root operator.
 };
 
 }  // namespace holoscan

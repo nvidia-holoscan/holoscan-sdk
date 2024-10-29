@@ -29,8 +29,8 @@
 #include "holoscan/core/resources/gxf/transmitter.hpp"
 #include "holoscan/core/resources/gxf/ucx_transmitter.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -42,13 +42,14 @@ class PyDoubleBufferTransmitter : public DoubleBufferTransmitter {
   using DoubleBufferTransmitter::DoubleBufferTransmitter;
 
   // Define a constructor that fully initializes the object.
-  PyDoubleBufferTransmitter(Fragment* fragment, uint64_t capacity = 1UL, uint64_t policy = 2UL,
-                            const std::string& name = "double_buffer_transmitter")
+  explicit PyDoubleBufferTransmitter(Fragment* fragment, uint64_t capacity = 1UL,
+                                     uint64_t policy = 2UL,
+                                     const std::string& name = "double_buffer_transmitter")
       : DoubleBufferTransmitter(ArgList{Arg{"capacity", capacity}, Arg{"policy", policy}}) {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -58,13 +59,14 @@ class PyUcxTransmitter : public UcxTransmitter {
   using UcxTransmitter::UcxTransmitter;
 
   // Define a constructor that fully initializes the object.
-  PyUcxTransmitter(Fragment* fragment, std::shared_ptr<UcxSerializationBuffer> buffer = nullptr,
-                   uint64_t capacity = 1UL, uint64_t policy = 2UL,
-                   const std::string& receiver_address = std::string("0.0.0.0"),
-                   const std::string& local_address = std::string("0.0.0.0"),
-                   uint32_t port = kDefaultUcxPort, uint32_t local_port = 0,
-                   uint32_t maximum_connection_retries = 10,
-                   const std::string& name = "ucx_transmitter")
+  explicit PyUcxTransmitter(Fragment* fragment,
+                            std::shared_ptr<UcxSerializationBuffer> buffer = nullptr,
+                            uint64_t capacity = 1UL, uint64_t policy = 2UL,
+                            const std::string& receiver_address = std::string("0.0.0.0"),
+                            const std::string& local_address = std::string("0.0.0.0"),
+                            uint32_t port = kDefaultUcxPort, uint32_t local_port = 0,
+                            uint32_t maximum_connection_retries = 10,
+                            const std::string& name = "ucx_transmitter")
       : UcxTransmitter(ArgList{Arg{"capacity", capacity},
                                Arg{"policy", policy},
                                Arg{"receiver_address", receiver_address},
@@ -76,7 +78,7 @@ class PyUcxTransmitter : public UcxTransmitter {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

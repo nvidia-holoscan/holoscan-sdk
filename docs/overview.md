@@ -22,7 +22,7 @@ The Holoscan SDK provides a list of examples to illustrate specific capabilities
 
 5. **Repository of Operators and Applications**
 
-[HoloHub](https://nvidia-holoscan.github.io/holohub) is a central repository for users and developers to share reusable operators and sample applications with the Holoscan community. Being open-source, these operators and applications can also be used as reference implementations to complete the built-in operators and examples available in the SDK.
+[HoloHub](https://github.com/nvidia-holoscan/holohub) is a central repository for users and developers to share reusable operators and sample applications with the Holoscan community. Being open-source, these operators and applications can also be used as reference implementations to complete the built-in operators and examples available in the SDK.
 
 6. **Tooling to Package and Deploy Applications**
 
@@ -44,5 +44,5 @@ The Holoscan SDK documentation is composed of:
 - [Release notes](https://github.com/nvidia-holoscan/holoscan-sdk/releases) on Github
 
 :::{note}
-In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). Starting with version 0.4.0, the Holoscan SDK is built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Domain specific content will be hosted on the [HoloHub](https://nvidia-holoscan.github.io/holohub) repository.
+In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). Starting with version 0.4.0, the Holoscan SDK is built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Domain specific content will be hosted on the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository.
 :::

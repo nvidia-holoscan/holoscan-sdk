@@ -34,11 +34,8 @@
 #include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -65,7 +62,7 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
                    std::optional<int32_t> batch_size = std::nullopt, int32_t rows = 32,
                    std::optional<int32_t> columns = 64,
                    std::optional<int32_t> channels = std::nullopt,
-                   const std::variant<std::string, py::dtype> dtype = "uint8_t",
+                   const std::variant<std::string, py::dtype>& dtype = "uint8_t",
                    const std::string& tensor_name = "tensor",
                    const std::string& name = "ping_tensor_tx")
       : PingTensorTxOp(ArgList{Arg{"storage_type", storage_type},
@@ -81,15 +78,12 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
     } else {
       auto dt = std::get<py::dtype>(dtype);
       std::string data_type;
-      std::string dtype_name = dt.attr("name").cast<std::string>();
-      if (dtype_name == "float16") {  // currently promoting float16 scalars to float
-        data_type = "float";
-      } else if (dtype_name == "float32") {
+      auto dtype_name = dt.attr("name").cast<std::string>();
+      if (dtype_name == "float16" || dtype_name == "float32") {
+        // currently promoting float16 scalars to float
         data_type = "float";
       } else if (dtype_name == "float64") {
         data_type = "double";
-      } else if (dtype_name == "bool") {
-        data_type = "uint8_t";
       } else if (dtype_name == "int8") {
         data_type = "int8_t";
       } else if (dtype_name == "int16") {
@@ -98,7 +92,7 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
         data_type = "int32_t";
       } else if (dtype_name == "int64") {
         data_type = "int64_t";
-      } else if (dtype_name == "uint8") {
+      } else if (dtype_name == "bool" || dtype_name == "uint8") {
         data_type = "uint8_t";
       } else if (dtype_name == "uint16") {
         data_type = "uint16_t";
@@ -118,7 +112,7 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

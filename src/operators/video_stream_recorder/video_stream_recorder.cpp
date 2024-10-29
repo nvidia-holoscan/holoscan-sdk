@@ -148,11 +148,9 @@ void VideoStreamRecorderOp::stop() {
   }
 }
 
-void VideoStreamRecorderOp::compute(InputContext& op_input, OutputContext& op_output,
+void VideoStreamRecorderOp::compute(InputContext& op_input,
+                                    [[maybe_unused]] OutputContext& op_output,
                                     ExecutionContext& context) {
-  // avoid warning about unused variable
-  (void)op_output;
-
   auto entity = op_input.receive<gxf::Entity>("input").value();
 
   // dynamic cast from holoscan::Resource to holoscan::StdEntitySerializer

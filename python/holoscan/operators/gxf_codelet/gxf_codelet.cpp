@@ -30,11 +30,8 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/operators/gxf_codelet/gxf_codelet.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -56,12 +53,11 @@ class PyGXFCodeletOp : public GXFCodeletOp {
   using GXFCodeletOp::GXFCodeletOp;
 
   // Define a constructor that fully initializes the object.
-  PyGXFCodeletOp(py::object op, Fragment* fragment, const std::string& gxf_typename,
+  PyGXFCodeletOp(const py::object& op, Fragment* fragment, const std::string& gxf_typename,
                  const py::args& args, const std::string& name, const py::kwargs& kwargs)
-      : GXFCodeletOp(gxf_typename.c_str()) {
-    py_op_ = op;
-    py_initialize_ = py::getattr(op, "initialize");  // cache the initialize method
-
+      : GXFCodeletOp(gxf_typename.c_str()),
+        py_op_(op),
+        py_initialize_(py::getattr(op, "initialize")) {
     add_positional_condition_and_resource_args(this, args);
     add_kwargs(this, kwargs);
 
@@ -84,7 +80,7 @@ class PyGXFCodeletOp : public GXFCodeletOp {
     GXFCodeletOp::initialize();
   }
 
- protected:
+ private:
   py::object py_op_ = py::none();
   py::object py_initialize_ = py::none();
 };

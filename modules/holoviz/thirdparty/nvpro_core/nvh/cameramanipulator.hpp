@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2018-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 //--------------------------------------------------------------------
@@ -90,7 +90,7 @@ public:
     nvmath::vec3f eye = nvmath::vec3f(10, 10, 10);
     nvmath::vec3f ctr = nvmath::vec3f(0, 0, 0);
     nvmath::vec3f up  = nvmath::vec3f(0, 1, 0);
-    float         fov = 60.0f;
+    float         fov = 60.0F;
 
     bool operator!=(const Camera& rhr) const
     {
@@ -140,7 +140,7 @@ public:
   // Set the position, interest from the matrix.
   // instantSet = true will not interpolate to the new position
   // centerDistance is the distance of the center from the eye
-  void setMatrix(const nvmath::mat4f& mat_, bool instantSet = true, float centerDistance = 1.f);
+  void setMatrix(const nvmath::mat4f& mat_, bool instantSet = true, float centerDistance = 1.F);
 
   // Changing the default speed movement
   void setSpeed(float speed) { m_speed = speed; }
@@ -181,7 +181,7 @@ public:
   const std::string& getHelp();
 
   // Fitting the camera position and interest to see the bounding box
-  void fit(const nvmath::vec3f& boxMin, const nvmath::vec3f& boxMax, bool instantFit = true, bool tight = false, float aspect = 1.0f);
+  void fit(const nvmath::vec3f& boxMin, const nvmath::vec3f& boxMax, bool instantFit = true, bool tight = false, float aspect = 1.0F);
 
 protected:
   CameraManipulator();
@@ -222,13 +222,13 @@ protected:
   int m_height = 1;
 
   // Other
-  float         m_speed      = 3.f;
-  nvmath::vec2f m_mouse      = nvmath::vec2f(0.f, 0.f);
-  nvmath::vec2f m_clipPlanes = nvmath::vec2f(0.001f, 100000000.f);
+  float         m_speed      = 3.F;
+  nvmath::vec2f m_mouse      = nvmath::vec2f(0.F, 0.F);
+  nvmath::vec2f m_clipPlanes = nvmath::vec2f(0.001F, 100000000.F);
 
   bool  m_button = false;  // Button pressed
   bool  m_moving = false;  // Mouse is moving
-  float m_tbsize = 0.8f;   // Trackball size;
+  float m_tbsize = 0.8F;   // Trackball size;
 
   Modes m_mode = Examine;
 

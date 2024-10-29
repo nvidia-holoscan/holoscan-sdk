@@ -15,13 +15,14 @@
  * limitations under the License.
  */
 
+#include "holoscan/core/resources/gxf/dfft_collector.hpp"
+
 #include <iostream>
+#include <utility>
 
 #include "gxf/std/clock.hpp"
 #include "gxf/std/codelet.hpp"
-
 #include "holoscan/core/operator.hpp"
-#include "holoscan/core/resources/gxf/dfft_collector.hpp"
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
@@ -55,7 +56,7 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
   if (leaf_ops_.find(codelet_id) != leaf_ops_.end() &&
       codelet.value()->getExecutionCount() > leaf_last_execution_count_[codelet_id]) {
     leaf_last_execution_count_[codelet_id] = codelet.value()->getExecutionCount();
-    MessageLabel m = leaf_ops_[codelet_id]->get_consolidated_input_label();
+    MessageLabel m = std::move(leaf_ops_[codelet_id]->get_consolidated_input_label());
     leaf_ops_[codelet_id]->reset_input_message_labels();
 
     if (m.num_paths()) {
@@ -66,8 +67,9 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
       }
       data_flow_tracker_->write_to_logfile(m.to_string());
     }
-
-  } else if (root_ops_.find(codelet_id) != root_ops_.end()) {
+  }
+  // leaf can also be root, especially for distributed app
+  if (root_ops_.find(codelet_id) != root_ops_.end()) {
     holoscan::Operator* cur_op = root_ops_[codelet_id];
     for (auto& it : cur_op->num_published_messages_map()) {
       data_flow_tracker_->update_source_messages_number(it.first, it.second);

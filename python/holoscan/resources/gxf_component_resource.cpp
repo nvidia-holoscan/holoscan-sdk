@@ -29,8 +29,8 @@
 
 #include "../operators/operator_util.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -44,12 +44,12 @@ class PyGXFComponentResource : public GXFComponentResource {
   using GXFComponentResource::GXFComponentResource;
 
   // Define a constructor that fully initializes the object.
-  PyGXFComponentResource(py::object component, Fragment* fragment, const std::string& gxf_typename,
-                         const std::string& name, const py::kwargs& kwargs)
-      : GXFComponentResource(gxf_typename.c_str()) {
-    py_component_ = component;
-    py_initialize_ = py::getattr(component, "initialize");  // cache the initialize method
-
+  PyGXFComponentResource(const py::object& component, Fragment* fragment,
+                         const std::string& gxf_typename, const std::string& name,
+                         const py::kwargs& kwargs)
+      : GXFComponentResource(gxf_typename.c_str()),
+        py_component_(component),
+        py_initialize_(py::getattr(component, "initialize")) {
     // We don't need to call `add_positional_condition_and_resource_args(this, args);` because
     // Holoscan resources don't accept the positional arguments for Condition and Resource.
     add_kwargs(this, kwargs);
@@ -73,9 +73,9 @@ class PyGXFComponentResource : public GXFComponentResource {
     GXFComponentResource::initialize();
   }
 
- protected:
+ private:
   py::object py_component_ = py::none();
-  py::object py_initialize_ = py::none();
+  py::object py_initialize_ = py::none();  // cache the initialize method
 };
 
 /* Trampoline classes for handling Python kwargs

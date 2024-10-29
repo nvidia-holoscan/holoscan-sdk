@@ -94,9 +94,9 @@ void ImGuiLayer::render(Vulkan* vulkan) {
   // setup the base view matrix in a way that coordinates are in the range [0...1]
   nvmath::mat4f view_matrix_base;
   view_matrix_base.identity();
-  view_matrix_base.translate({-1.f, -1.f, 0.f});
+  view_matrix_base.translate({-1.F, -1.F, 0.F});
   view_matrix_base.scale(
-      {2.f / impl_->draw_data_->DisplaySize.x, 2.f / impl_->draw_data_->DisplaySize.y, 1.f});
+      {2.F / impl_->draw_data_->DisplaySize.x, 2.F / impl_->draw_data_->DisplaySize.y, 1.F});
 
   std::vector<Layer::View> views = get_views();
   if (views.empty()) { views.push_back(Layer::View()); }

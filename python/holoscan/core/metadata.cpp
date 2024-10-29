@@ -31,18 +31,18 @@
 #include "kwarg_handling.hpp"
 #include "metadata_pydoc.hpp"
 
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
 // use a special class to differentiate a default value from Python's None
-class _NoneValue {};
+class MetaNoneValue {};
 
 namespace holoscan {
 
 void set_scalar_metadata_via_dtype(const py::object& obj, const py::dtype& dt,
                                    MetadataObject& out) {
-  std::string dtype_name = dt.attr("name").cast<std::string>();
+  auto dtype_name = dt.attr("name").cast<std::string>();
   if (dtype_name == "float32") {
     out.set_value(obj.cast<float>());
   } else if (dtype_name == "float64") {
@@ -72,7 +72,6 @@ void set_scalar_metadata_via_dtype(const py::object& obj, const py::dtype& dt,
   } else {
     throw std::runtime_error("unsupported dtype: "s + dtype_name);
   }
-  return;
 }
 
 template <typename T>
@@ -82,16 +81,16 @@ void set_vector_metadata_via_numpy_array(const py::array& obj, MetadataObject& o
   if (obj.attr("ndim").cast<int>() == 1) {
     std::vector<T> v;
     v.reserve(obj.attr("size").cast<size_t>());
-    for (auto item : obj) v.push_back(item.cast<T>());
+    for (const auto& item : obj) { v.push_back(item.cast<T>()); }
     out.set_value(v);
   } else if (obj.attr("ndim").cast<int>() == 2) {
     std::vector<std::vector<T>> v;
-    std::vector<py::ssize_t> shape = obj.attr("shape").cast<std::vector<py::ssize_t>>();
+    auto shape = obj.attr("shape").cast<std::vector<py::ssize_t>>();
     v.reserve(static_cast<size_t>(shape[0]));
-    for (auto item : obj) {
+    for (const auto& item : obj) {
       std::vector<T> vv;
       vv.reserve(static_cast<size_t>(shape[1]));
-      for (auto inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+      for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
       v.push_back(vv);
     }
     out.set_value(v);
@@ -110,10 +109,10 @@ void set_vector_metadata_via_py_sequence(const py::sequence& seq, MetadataObject
     // Handle list of list and other sequence of sequence types.
     std::vector<std::vector<T>> v;
     v.reserve(static_cast<size_t>(py::len(seq)));
-    for (auto item : seq) {
+    for (const auto& item : seq) {
       std::vector<T> vv;
       vv.reserve(static_cast<size_t>(py::len(item)));
-      for (auto inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+      for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
       v.push_back(vv);
     }
     out.set_value(v);
@@ -122,7 +121,7 @@ void set_vector_metadata_via_py_sequence(const py::sequence& seq, MetadataObject
     std::vector<T> v;
     size_t length = py::len(seq);
     v.reserve(length);
-    for (auto item : seq) v.push_back(item.cast<T>());
+    for (const auto& item : seq) { v.push_back(item.cast<T>()); }
     out.set_value(v);
   }
 }
@@ -160,7 +159,7 @@ void set_vector_metadata_via_iterable(const py::object& obj, MetadataObject& out
       throw std::runtime_error("Nested sequence of unsupported type.");
     }
   } else {
-    auto item = item0;
+    const auto& item = item0;
     if (py::isinstance<py::bool_>(item)) {
       set_vector_metadata_via_py_sequence<bool>(seq, out);
     } else if (py::isinstance<py::int_>(item)) {
@@ -171,12 +170,11 @@ void set_vector_metadata_via_iterable(const py::object& obj, MetadataObject& out
       set_vector_metadata_via_py_sequence<std::string>(seq, out);
     }
   }
-  return;
 }
 
 void set_vector_metadata_via_dtype(const py::object& obj, const py::dtype& dt,
                                    MetadataObject& out) {
-  std::string dtype_name = dt.attr("name").cast<std::string>();
+  auto dtype_name = dt.attr("name").cast<std::string>();
   if (dtype_name == "float32") {
     set_vector_metadata_via_numpy_array<float>(obj, out);
   } else if (dtype_name == "float64") {
@@ -206,7 +204,6 @@ void set_vector_metadata_via_dtype(const py::object& obj, const py::dtype& dt,
   } else {
     throw std::runtime_error("unsupported dtype: "s + dtype_name);
   }
-  return;
 }
 
 void py_object_to_metadata_object(MetadataObject& meta_obj, const py::object& value,
@@ -246,9 +243,9 @@ void py_object_to_metadata_object(MetadataObject& meta_obj, const py::object& va
     auto data_ptr = std::make_shared<GILGuardedPyObject>(value);
     meta_obj.set_value(data_ptr);
   }
-  return;
 }
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 py::object metadata_obj_to_pyobject(MetadataObject& meta_obj) {
   std::any value = meta_obj.value();
   const auto& id = value.type();
@@ -258,97 +255,112 @@ py::object metadata_obj_to_pyobject(MetadataObject& meta_obj) {
   }
   // For C++ types, support casting T, vector<T>, and vector<vector<<T>> types
   // where T is either std::string, bool or various integer or floating point types.
-  if (id == typeid(std::string)) {
-    return py::cast(std::any_cast<std::string>(value));
-  } else if (id == typeid(float)) {
-    return py::cast(std::any_cast<float>(value));
-  } else if (id == typeid(double)) {
-    return py::cast(std::any_cast<double>(value));
-  } else if (id == typeid(bool)) {
-    return py::cast(std::any_cast<bool>(value));
-  } else if (id == typeid(int64_t)) {
-    return py::cast(std::any_cast<int64_t>(value));
-  } else if (id == typeid(uint64_t)) {
-    return py::cast(std::any_cast<uint64_t>(value));
-  } else if (id == typeid(int32_t)) {
-    return py::cast(std::any_cast<int32_t>(value));
-  } else if (id == typeid(uint32_t)) {
-    return py::cast(std::any_cast<uint32_t>(value));
-  } else if (id == typeid(int16_t)) {
-    return py::cast(std::any_cast<int16_t>(value));
-  } else if (id == typeid(uint16_t)) {
-    return py::cast(std::any_cast<uint16_t>(value));
-  } else if (id == typeid(int8_t)) {
-    return py::cast(std::any_cast<int8_t>(value));
-  } else if (id == typeid(uint8_t)) {
-    return py::cast(std::any_cast<uint8_t>(value));
-  } else if (id == typeid(std::complex<float>)) {
+  if (id == typeid(std::string)) { return py::cast(std::any_cast<std::string>(value)); }
+  if (id == typeid(float)) { return py::cast(std::any_cast<float>(value)); }
+  if (id == typeid(double)) { return py::cast(std::any_cast<double>(value)); }
+  if (id == typeid(bool)) { return py::cast(std::any_cast<bool>(value)); }
+  if (id == typeid(int64_t)) { return py::cast(std::any_cast<int64_t>(value)); }
+  if (id == typeid(uint64_t)) { return py::cast(std::any_cast<uint64_t>(value)); }
+  if (id == typeid(int32_t)) { return py::cast(std::any_cast<int32_t>(value)); }
+  if (id == typeid(uint32_t)) { return py::cast(std::any_cast<uint32_t>(value)); }
+  if (id == typeid(int16_t)) { return py::cast(std::any_cast<int16_t>(value)); }
+  if (id == typeid(uint16_t)) { return py::cast(std::any_cast<uint16_t>(value)); }
+  if (id == typeid(int8_t)) { return py::cast(std::any_cast<int8_t>(value)); }
+  if (id == typeid(uint8_t)) { return py::cast(std::any_cast<uint8_t>(value)); }
+  if (id == typeid(std::complex<float>)) {
     return py::cast(std::any_cast<std::complex<float>>(value));
-  } else if (id == typeid(std::complex<double>)) {
-    return py::cast(std::any_cast<std::complex<double>>(value));
-  } else if (id == typeid(std::vector<std::string>)) {
-    return py::cast(std::any_cast<std::vector<std::string>>(value));
-  } else if (id == typeid(std::vector<float>)) {
-    return py::cast(std::any_cast<std::vector<float>>(value));
-  } else if (id == typeid(std::vector<double>)) {
-    return py::cast(std::any_cast<std::vector<double>>(value));
-  } else if (id == typeid(std::vector<bool>)) {
-    return py::cast(std::any_cast<std::vector<bool>>(value));
-  } else if (id == typeid(std::vector<int64_t>)) {
-    return py::cast(std::any_cast<std::vector<int64_t>>(value));
-  } else if (id == typeid(std::vector<uint64_t>)) {
-    return py::cast(std::any_cast<std::vector<uint64_t>>(value));
-  } else if (id == typeid(std::vector<int32_t>)) {
-    return py::cast(std::any_cast<std::vector<int32_t>>(value));
-  } else if (id == typeid(std::vector<uint32_t>)) {
-    return py::cast(std::any_cast<std::vector<uint32_t>>(value));
-  } else if (id == typeid(std::vector<int16_t>)) {
-    return py::cast(std::any_cast<std::vector<int16_t>>(value));
-  } else if (id == typeid(std::vector<uint16_t>)) {
-    return py::cast(std::any_cast<std::vector<uint16_t>>(value));
-  } else if (id == typeid(std::vector<int8_t>)) {
-    return py::cast(std::any_cast<std::vector<int8_t>>(value));
-  } else if (id == typeid(std::vector<uint8_t>)) {
-    return py::cast(std::any_cast<std::vector<uint8_t>>(value));
-  } else if (id == typeid(std::vector<std::complex<float>>)) {
-    return py::cast(std::any_cast<std::vector<std::complex<float>>>(value));
-  } else if (id == typeid(std::vector<std::complex<double>>)) {
-    return py::cast(std::any_cast<std::vector<std::complex<double>>>(value));
-  } else if (id == typeid(std::vector<std::vector<std::string>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<std::string>>>(value));
-  } else if (id == typeid(std::vector<std::vector<float>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<float>>>(value));
-  } else if (id == typeid(std::vector<std::vector<double>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<double>>>(value));
-  } else if (id == typeid(std::vector<std::vector<bool>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<bool>>>(value));
-  } else if (id == typeid(std::vector<std::vector<int64_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int64_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<uint64_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint64_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<int32_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int32_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<uint32_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint32_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<int16_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int16_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<uint16_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint16_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<int8_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int8_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<uint8_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint8_t>>>(value));
-  } else if (id == typeid(std::vector<std::vector<std::complex<float>>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<std::complex<float>>>>(value));
-  } else if (id == typeid(std::vector<std::vector<std::complex<double>>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<std::complex<double>>>>(value));
-  } else {
-    return py::none();
   }
+  if (id == typeid(std::complex<double>)) {
+    return py::cast(std::any_cast<std::complex<double>>(value));
+  }
+  if (id == typeid(std::vector<std::string>)) {
+    return py::cast(std::any_cast<std::vector<std::string>>(value));
+  }
+  if (id == typeid(std::vector<float>)) {
+    return py::cast(std::any_cast<std::vector<float>>(value));
+  }
+  if (id == typeid(std::vector<double>)) {
+    return py::cast(std::any_cast<std::vector<double>>(value));
+  }
+  if (id == typeid(std::vector<bool>)) { return py::cast(std::any_cast<std::vector<bool>>(value)); }
+  if (id == typeid(std::vector<int64_t>)) {
+    return py::cast(std::any_cast<std::vector<int64_t>>(value));
+  }
+  if (id == typeid(std::vector<uint64_t>)) {
+    return py::cast(std::any_cast<std::vector<uint64_t>>(value));
+  }
+  if (id == typeid(std::vector<int32_t>)) {
+    return py::cast(std::any_cast<std::vector<int32_t>>(value));
+  }
+  if (id == typeid(std::vector<uint32_t>)) {
+    return py::cast(std::any_cast<std::vector<uint32_t>>(value));
+  }
+  if (id == typeid(std::vector<int16_t>)) {
+    return py::cast(std::any_cast<std::vector<int16_t>>(value));
+  }
+  if (id == typeid(std::vector<uint16_t>)) {
+    return py::cast(std::any_cast<std::vector<uint16_t>>(value));
+  }
+  if (id == typeid(std::vector<int8_t>)) {
+    return py::cast(std::any_cast<std::vector<int8_t>>(value));
+  }
+  if (id == typeid(std::vector<uint8_t>)) {
+    return py::cast(std::any_cast<std::vector<uint8_t>>(value));
+  }
+  if (id == typeid(std::vector<std::complex<float>>)) {
+    return py::cast(std::any_cast<std::vector<std::complex<float>>>(value));
+  }
+  if (id == typeid(std::vector<std::complex<double>>)) {
+    return py::cast(std::any_cast<std::vector<std::complex<double>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<std::string>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<std::string>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<float>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<float>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<double>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<double>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<bool>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<bool>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<int64_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<int64_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<uint64_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<uint64_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<int32_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<int32_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<uint32_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<uint32_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<int16_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<int16_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<uint16_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<uint16_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<int8_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<int8_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<uint8_t>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<uint8_t>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<std::complex<float>>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<std::complex<float>>>>(value));
+  }
+  if (id == typeid(std::vector<std::vector<std::complex<double>>>)) {
+    return py::cast(std::any_cast<std::vector<std::vector<std::complex<double>>>>(value));
+  }
+  return py::none();
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 void init_metadata(py::module_& m) {
-  py::class_<_NoneValue>(m, "_NoneValue").def(py::init<>());
+  py::class_<MetaNoneValue>(m, "MetaNoneValue").def(py::init<>());
 
   py::enum_<MetadataPolicy>(m, "MetadataPolicy", doc::MetadataPolicy::doc_MetadataPolicy)
       .value("REJECT", MetadataPolicy::kReject)
@@ -387,8 +399,8 @@ void init_metadata(py::module_& m) {
           [](MetadataDictionary& meta_dict) -> std::vector<std::pair<std::string, py::object>> {
             std::vector<std::pair<std::string, py::object>> items;
             items.reserve(meta_dict.size());
-            for (auto& [key, value] : meta_dict) {
-              items.push_back({key, metadata_obj_to_pyobject(*value)});
+            for (const auto& [key, value] : meta_dict) {
+              items.emplace_back(key, metadata_obj_to_pyobject(*value));
             }
             return items;
           },
@@ -397,7 +409,7 @@ void init_metadata(py::module_& m) {
           "type_dict",
           [](MetadataDictionary& meta_dict) -> py::dict {
             py::dict type_dict;
-            for (auto& [key, v] : meta_dict) {
+            for (const auto& [key, v] : meta_dict) {
               type_dict[py::str(key)] = py::str(v->value().type().name());
             }
             return type_dict;
@@ -409,11 +421,8 @@ void init_metadata(py::module_& m) {
              const std::string& key,
              const py::object& default_value = py::none()) -> py::object {
             if (!meta_dict.has_key(key)) {
-              if (py::isinstance<_NoneValue>(default_value)) {
-                throw py::key_error(key);
-              } else {
-                return default_value;
-              }
+              if (py::isinstance<MetaNoneValue>(default_value)) { throw py::key_error(key); }
+              return default_value;
             }
             auto meta_obj = meta_dict.get(key);
             auto result = metadata_obj_to_pyobject(*meta_obj);
@@ -421,7 +430,7 @@ void init_metadata(py::module_& m) {
             return result;
           },
           "key"_a,
-          "default"_a = _NoneValue(),
+          "default"_a = MetaNoneValue(),
           doc::MetadataDictionary::doc_pop)
       .def(
           "set",
@@ -432,7 +441,7 @@ void init_metadata(py::module_& m) {
              bool cast_to_cpp = false) {
             if (!cast_to_cpp) {
               auto data_ptr = std::make_shared<GILGuardedPyObject>(value);
-              meta_dict.set<std::shared_ptr<GILGuardedPyObject>>(key, data_ptr);
+              meta_dict.set<std::shared_ptr<GILGuardedPyObject>>(key, std::move(data_ptr));
             } else {
               auto meta_obj = std::make_shared<MetadataObject>();
               py_object_to_metadata_object(*meta_obj, value, dtype, cast_to_cpp);
@@ -447,7 +456,7 @@ void init_metadata(py::module_& m) {
       .def("__setitem__",
            [](MetadataDictionary& meta_dict, const std::string& key, py::object& value) {
              auto data_ptr = std::make_shared<GILGuardedPyObject>(value);
-             meta_dict.set<std::shared_ptr<GILGuardedPyObject>>(key, data_ptr);
+             meta_dict.set<std::shared_ptr<GILGuardedPyObject>>(key, std::move(data_ptr));
            })
       .def_property("policy",
                     py::overload_cast<>(&MetadataDictionary::policy, py::const_),

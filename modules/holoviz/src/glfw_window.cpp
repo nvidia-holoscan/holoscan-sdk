@@ -539,7 +539,7 @@ float GLFWWindow::get_aspect_ratio() {
   if (impl_->framebuffer_height_) {
     return float(impl_->framebuffer_width_) / float(impl_->framebuffer_height_);
   } else {
-    return 1.f;
+    return 1.F;
   }
 }
 

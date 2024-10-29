@@ -35,16 +35,15 @@
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+namespace py = pybind11;  // NOLINT(misc-unused-alias-decls)
 
-namespace py = pybind11;
-
+// NOLINTNEXTLINE(modernize-concat-nested-namespaces)
 namespace PYBIND11_NAMESPACE {
 namespace detail {
 
+// NOLINTBEGIN(altera-struct-pack-align)
 template <typename NodeT>
 struct graph_caster {
  public:
@@ -65,7 +64,7 @@ struct graph_caster {
    * std::vector<NodeT> instance or return false upon failure. The
    * second argument indicates whether implicit conversions should be applied.
    */
-  bool load(handle src, bool) {
+  bool load([[maybe_unused]] handle src, [[maybe_unused]] bool use_implicit) {
     // not implemented
     return false;
   }
@@ -83,7 +82,7 @@ struct graph_caster {
     for (auto&& value : src) {
       auto value_ =
           reinterpret_steal<object>(value_conv::cast(std::forward<NodeT>(value), policy, parent));
-      if (!value_) { return handle(); }
+      if (!value_) { return {}; }
       PyList_SET_ITEM(out.ptr(), index++, value_.release().ptr());  // steals a reference
     }
     return out.release();
@@ -97,6 +96,7 @@ class type_caster<std::vector<::holoscan::OperatorGraph::NodeType>>
 template <>
 class type_caster<std::vector<::holoscan::FragmentGraph::NodeType>>
     : public graph_caster<::holoscan::FragmentGraph::NodeType> {};
+// NOLINTEND(altera-struct-pack-align)
 
 }  // namespace detail
 }  // namespace PYBIND11_NAMESPACE
@@ -164,6 +164,7 @@ PYBIND11_MODULE(_graphs, m) {
         .. currentmodule:: _graphs
     )pbdoc";
 
+  // NOLINTBEGIN(bugprone-unused-raii)
   py::class_<OperatorGraph::NodeType>(m, "OperatorNodeType");
   py::class_<OperatorGraph::EdgeDataElementType>(m, "OperatorEdgeDataElementType");
   py::class_<OperatorGraph::EdgeDataType>(m, "OperatorEdgeDataType");
@@ -176,6 +177,7 @@ PYBIND11_MODULE(_graphs, m) {
   // py::class_<FragmentGraph::EdgeDataType>(m, "FragmentEdgeDataType");
   py::class_<FragmentGraph, PyFragmentGraph, std::shared_ptr<FragmentGraph>>(
       m, "FragmentGraph", doc::Graph::doc_Graph);
+  // NOLINTEND(bugprone-unused-raii)
 
   py::class_<OperatorFlowGraph, OperatorGraph, std::shared_ptr<OperatorFlowGraph>>(
       m, "OperatorFlowGraph", doc::FlowGraph::doc_FlowGraph)

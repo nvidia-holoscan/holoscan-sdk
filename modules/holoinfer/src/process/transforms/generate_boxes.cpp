@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -199,7 +199,7 @@ InferStatus GenerateBoxes::execute_mask(const std::map<std::string, void*>& inda
     processed_data.insert({key, std::make_shared<DataBuffer>()});
     processed_dims.insert({key, {{height, width, 4}}});
   }
-  processed_data.at(key)->host_buffer.resize(height * width * 4);
+  processed_data.at(key)->host_buffer_->resize(height * width * 4);
 
   float* scores = static_cast<float*>(indata.at(tensor_to_output_map.at("scores")));
   float* masks = static_cast<float*>(indata.at(tensor_to_output_map.at("masks")));
@@ -209,7 +209,7 @@ InferStatus GenerateBoxes::execute_mask(const std::map<std::string, void*>& inda
 
   size_t size_scores =
       accumulate(dims_scores.begin(), dims_scores.end(), 1, std::multiplies<size_t>());
-  auto buffer = reinterpret_cast<float*>(processed_data.at(key)->host_buffer.data());
+  auto buffer = reinterpret_cast<float*>(processed_data.at(key)->host_buffer_->data());
 
   for (int i = 0; i < size_scores; i++) {
     if (scores[i] > threshold) {
@@ -283,21 +283,22 @@ InferStatus GenerateBoxes::execute(const std::map<std::string, void*>& indata,
 
       if (processed_data.find(key) == processed_data.end()) {
         processed_data.insert({key, std::make_shared<DataBuffer>()});
-        processed_data.at(key)->host_buffer.resize(4);
+        processed_data.at(key)->host_buffer_->resize(4);
         processed_dims.insert({key, {{1, 2, 2}}});
 
         processed_data.insert({key_text, std::make_shared<DataBuffer>()});
-        processed_data.at(key_text)->host_buffer.resize(3);
+        processed_data.at(key_text)->host_buffer_->resize(3);
         processed_dims.insert({key_text, {{1, 1, 3}}});
       }
 
-      auto current_data = static_cast<float*>(processed_data.at(key)->host_buffer.data());
+      auto current_data = static_cast<float*>(processed_data.at(key)->host_buffer_->data());
       current_data[0] = 0;
       current_data[1] = 0;
       current_data[2] = 0;
       current_data[3] = 0;
 
-      auto current_data_text = static_cast<float*>(processed_data.at(key_text)->host_buffer.data());
+      auto current_data_text =
+          static_cast<float*>(processed_data.at(key_text)->host_buffer_->data());
       current_data_text[0] = 1.1;
       current_data_text[1] = 1.1;
       current_data_text[2] = 0.05;
@@ -351,12 +352,12 @@ InferStatus GenerateBoxes::execute(const std::map<std::string, void*>& indata,
 
       for (int i = 0; i < size_of_item; i++) {
         auto key = fmt::format("{}{}", obj_name, i);
-        std::memcpy(processed_data.at(key)->host_buffer.data(),
+        std::memcpy(processed_data.at(key)->host_buffer_->data(),
                     obj_boxes[i].data(),
                     obj_boxes[i].size() * sizeof(float));
 
         key = fmt::format("{}text{}", obj_name, i);
-        auto current_data_text = static_cast<float*>(processed_data.at(key)->host_buffer.data());
+        auto current_data_text = static_cast<float*>(processed_data.at(key)->host_buffer_->data());
         current_data_text[0] = obj_boxes[i][2];
         current_data_text[1] = obj_boxes[i][1];
       }

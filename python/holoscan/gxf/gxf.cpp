@@ -39,11 +39,7 @@
 
 #include "gxf/core/gxf.h"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -68,13 +64,14 @@ PYBIND11_MODULE(_gxf, m) {
 
   init_entity(m);
 
-  // TODO: This method can be removed once Executor::extension_manager(),
+  // TODO(unknown): `load_extensions` can be removed once Executor::extension_manager(),
   // ExtensionManager, GXFExtensionManager are exposed to Python.
   m.def(
       "load_extensions",
       [](uint64_t context,
          const std::vector<std::string>& extension_filenames,
          const std::vector<std::string>& manifest_filenames) {
+        // NOLINTNEXTLINE(performance-no-int-to-ptr,cppcoreguidelines-pro-type-reinterpret-cast)
         gxf::GXFExtensionManager extension_manager(reinterpret_cast<gxf_context_t>(context));
         for (const auto& extension_filename : extension_filenames) {
           extension_manager.load_extension(extension_filename);

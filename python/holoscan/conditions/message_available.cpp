@@ -27,12 +27,8 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 namespace py = pybind11;
 
 namespace holoscan {
@@ -53,17 +49,18 @@ class PyMessageAvailableCondition : public MessageAvailableCondition {
   using MessageAvailableCondition::MessageAvailableCondition;
 
   // Define a constructor that fully initializes the object.
-  PyMessageAvailableCondition(Fragment* fragment,
-                              // std::shared_ptr<gxf::GXFResource> receiver,
-                              uint64_t min_size = 1UL, size_t front_stage_max_size = 1UL,
-                              const std::string& name = "noname_message_available_condition")
+  explicit PyMessageAvailableCondition(
+      Fragment* fragment,
+      // std::shared_ptr<gxf::GXFResource> receiver,
+      uint64_t min_size = 1UL, size_t front_stage_max_size = 1UL,
+      const std::string& name = "noname_message_available_condition")
       : MessageAvailableCondition(
             ArgList{Arg{"min_size", min_size}, Arg{"front_stage_max_size", front_stage_max_size}}) {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // receiver = receiver;  // e.g. DoubleBufferReceiver
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

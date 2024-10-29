@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,13 +17,13 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(pybind11 2.11.1
+rapids_cpm_find(pybind11 2.13.6
     GLOBAL_TARGETS pybind11
 
     CPM_ARGS
 
     GITHUB_REPOSITORY pybind/pybind11
-    GIT_TAG v2.11.1
+    GIT_TAG v2.13.6
     GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
 )

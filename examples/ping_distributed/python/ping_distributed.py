@@ -21,7 +21,7 @@ from argparse import ArgumentParser
 import numpy as np
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Fragment
+from holoscan.core import Application, Fragment, Tracker
 from holoscan.operators import PingTensorRxOp, PingTensorTxOp
 
 
@@ -98,9 +98,23 @@ class MyPingApp(Application):
         self.add_flow(fragment1, fragment2, {("tx", "rx")})
 
 
-def main(on_gpu=False, count=10, shape=(64, 32), dtype=np.uint8):
+def main(on_gpu=False, count=10, shape=(64, 32), dtype=np.uint8, data_flow_tracking_enabled=False):
     app = MyPingApp(gpu_tensor=on_gpu, count=count, shape=shape, dtype=dtype)
-    app.run()
+
+    if data_flow_tracking_enabled:
+        with Tracker(
+            app,
+            filename="logger.log",
+            num_start_messages_to_skip=2,
+            num_last_messages_to_discard=3,
+        ) as trackers:
+            app.run()
+            print(f"{type(trackers)=}, {trackers=}")
+            for fragment_name, tracker in trackers.items():
+                print(f"Fragment: {fragment_name}")
+                tracker.print()
+    else:
+        app.run()
 
 
 if __name__ == "__main__":
@@ -163,6 +177,11 @@ if __name__ == "__main__":
             " 'uint64_t', 'float', 'double', 'complex<float>', 'complex<double>'}"
         ),
     )
+    parser.add_argument(
+        "--track",
+        action="store_true",
+        help="Enable data flow tracking for the distributed app",
+    )
     # use parse_known_args to ignore other CLI arguments that may be used by Application
     args, remaining = parser.parse_known_args()
 
@@ -196,4 +215,5 @@ if __name__ == "__main__":
         count=args.count,
         shape=shape,
         dtype=args.data_type,
+        data_flow_tracking_enabled=args.track,
     )

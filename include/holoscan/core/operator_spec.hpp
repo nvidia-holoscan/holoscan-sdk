@@ -73,7 +73,8 @@ class OperatorSpec : public ComponentSpec {
    *       (DoubleBufferReceiver/UcxReceiver) and condition (MessageAvailableCondition) will use
    *       the queue size for initialization ('capacity' for the connector and 'min_size' for
    *       the condition) if they are not set.
-   *       Please refer to the [Holoscan SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-c)
+   *       Please refer to the [Holoscan SDK User
+   * Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-c)
    *       to see how to receive any number of inputs in C++.
    *
    * @tparam DataT The type of the input data.
@@ -175,8 +176,7 @@ class OperatorSpec : public ComponentSpec {
    * @param init_list The initializer list of the parameter.
    */
   void param(Parameter<holoscan::IOSpec*>& parameter, const char* key, const char* headline,
-             const char* description, std::initializer_list<void*> init_list) {
-    (void)init_list;
+             const char* description, [[maybe_unused]] std::initializer_list<void*> init_list) {
     parameter.key_ = key;
     parameter.headline_ = headline;
     parameter.description_ = description;

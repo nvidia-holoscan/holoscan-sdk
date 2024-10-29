@@ -29,7 +29,7 @@
 #include <vector>
 
 // the default range for enums is 128 which is not enough for the Key enum, increase to 512
-#define MAGIC_ENUM_RANGE_MAX 512
+#define MAGIC_ENUM_RANGE_MAX 512  // NOLINT(cppcoreguidelines-macro-usage)
 #include <magic_enum.hpp>
 
 #include "../operator_util.hpp"
@@ -50,11 +50,8 @@
 #include "holoscan/operators/holoviz/codecs.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -100,16 +97,17 @@ class PyHolovizOp : public HolovizOp {
       std::vector<holoscan::IOSpec*> receivers = std::vector<holoscan::IOSpec*>(),
       const std::vector<HolovizOp::InputSpec>& tensors = std::vector<HolovizOp::InputSpec>(),
       const std::vector<std::vector<float>>& color_lut = std::vector<std::vector<float>>(),
-      const std::string& window_title = "Holoviz", const std::string& display_name = "",
-      uint32_t width = 1920, uint32_t height = 1080, float framerate = 60.f,
+      const std::string& window_title = "Holoviz"s, const std::string& display_name = ""s,
+      uint32_t width = 1920, uint32_t height = 1080, float framerate = 60.F,
       bool use_exclusive_display = false, bool fullscreen = false, bool headless = false,
       bool framebuffer_srgb = false, bool vsync = false,
       ColorSpace display_color_space = ColorSpace::AUTO, bool enable_render_buffer_input = false,
       bool enable_render_buffer_output = false, bool enable_camera_pose_output = false,
-      const std::string& camera_pose_output_type = "projection_matrix",
-      const std::array<float, 3>& camera_eye = {0.f, 0.f, 1.f},
-      const std::array<float, 3>& camera_look_at = {0.f, 0.f, 0.f},
-      const std::array<float, 3>& camera_up = {0.f, 1.f, 1.f},
+      const std::string& camera_pose_output_type = "projection_matrix"s,
+      const std::array<float, 3>& camera_eye = {0.F, 0.F, 1.F},
+      const std::array<float, 3>& camera_look_at = {0.F, 0.F, 0.F},
+      const std::array<float, 3>& camera_up = {0.F, 1.F, 1.F},
+      // NOLINTBEGIN(performance-unnecessary-value-param)
       KeyCallbackFunction key_callback = KeyCallbackFunction(),
       UnicodeCharCallbackFunction unicode_char_callback = UnicodeCharCallbackFunction(),
       MouseButtonCallbackFunction mouse_button_callback = MouseButtonCallbackFunction(),
@@ -117,7 +115,8 @@ class PyHolovizOp : public HolovizOp {
       CursorPosCallbackFunction cursor_pos_callback = CursorPosCallbackFunction(),
       FramebufferSizeCallbackFunction framebuffer_size_callback = FramebufferSizeCallbackFunction(),
       WindowSizeCallbackFunction window_size_callback = WindowSizeCallbackFunction(),
-      const std::string& font_path = "",
+      // NOLINTEND(performance-unnecessary-value-param)
+      const std::string& font_path = ""s,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
       const std::string& name = "holoviz_op")
       : HolovizOp(ArgList{Arg{"allocator", allocator},
@@ -143,8 +142,8 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"font_path", font_path}}) {
     // only append tensors argument if it is not empty
     //     avoids [holoscan] [error] [gxf_operator.hpp:126] Unable to handle parameter 'tensors'
-    if (tensors.size() > 0) { this->add_arg(Arg{"tensors", tensors}); }
-    if (receivers.size() > 0) { this->add_arg(Arg{"receivers", receivers}); }
+    if (!tensors.empty()) { this->add_arg(Arg{"tensors", tensors}); }
+    if (!receivers.empty()) { this->add_arg(Arg{"receivers", receivers}); }
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
 
     // check if callbacks are provided, for each callback take the GIL before calling the function
@@ -190,18 +189,17 @@ class PyHolovizOp : public HolovizOp {
               })});
     }
     if (framebuffer_size_callback) {
-      this->add_arg(
-          Arg{"framebuffer_size_callback",
-              FramebufferSizeCallbackFunction([framebuffer_size_callback](int width, int height) {
-                py::gil_scoped_acquire guard;
-                framebuffer_size_callback(width, height);
-              })});
+      this->add_arg(Arg{"framebuffer_size_callback",
+                        FramebufferSizeCallbackFunction([framebuffer_size_callback](int w, int h) {
+                          py::gil_scoped_acquire guard;
+                          framebuffer_size_callback(w, h);
+                        })});
     }
     if (window_size_callback) {
       this->add_arg(Arg{"window_size_callback",
-                        WindowSizeCallbackFunction([window_size_callback](int width, int height) {
+                        WindowSizeCallbackFunction([window_size_callback](int w, int h) {
                           py::gil_scoped_acquire guard;
-                          window_size_callback(width, height);
+                          window_size_callback(w, h);
                         })});
     }
 
@@ -209,7 +207,7 @@ class PyHolovizOp : public HolovizOp {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -287,10 +285,10 @@ PYBIND11_MODULE(_holoviz, m) {
                  "enable_render_buffer_input"_a = false,
                  "enable_render_buffer_output"_a = false,
                  "enable_camera_pose_output"_a = false,
-                 "camera_pose_output_type"_a = "projection_matrix",
-                 "camera_eye"_a = std::array<float, 3>{0.f, 0.f, 1.f},
-                 "camera_look_at"_a = std::array<float, 3>{0.f, 0.f, 0.f},
-                 "camera_up"_a = std::array<float, 3>{0.f, 1.f, 1.f},
+                 "camera_pose_output_type"_a = "projection_matrix"s,
+                 "camera_eye"_a = std::array<float, 3>{0.F, 0.F, 1.F},
+                 "camera_look_at"_a = std::array<float, 3>{0.F, 0.F, 0.F},
+                 "camera_up"_a = std::array<float, 3>{0.F, 1.F, 1.F},
                  "key_callback"_a = HolovizOp::KeyCallbackFunction(),
                  "unicode_char_callback"_a = HolovizOp::UnicodeCharCallbackFunction(),
                  "mouse_button_callback"_a = HolovizOp::MouseButtonCallbackFunction(),
@@ -298,7 +296,7 @@ PYBIND11_MODULE(_holoviz, m) {
                  "cursor_pos_callback"_a = HolovizOp::CursorPosCallbackFunction(),
                  "framebuffer_size_callback"_a = HolovizOp::FramebufferSizeCallbackFunction(),
                  "window_size_callback"_a = HolovizOp::WindowSizeCallbackFunction(),
-                 "font_path"_a = "",
+                 "font_path"_a = ""s,
                  "cuda_stream_pool"_a = py::none(),
                  "name"_a = "holoviz_op"s,
                  doc::HolovizOp::doc_HolovizOp);

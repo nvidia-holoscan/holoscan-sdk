@@ -43,7 +43,7 @@ constexpr uint32_t CIRCLE_SEGMENTS = 32;
 
 class Attributes {
  public:
-  Attributes() : color_({1.f, 1.f, 1.f, 1.f}), line_width_(1.f), point_size_(1.f) {}
+  Attributes() : color_({1.F, 1.F, 1.F, 1.F}), line_width_(1.F), point_size_(1.F) {}
 
   bool operator==(const Attributes& rhs) const {
     return ((color_ == rhs.color_) && (line_width_ == rhs.line_width_) &&
@@ -187,7 +187,7 @@ class GeometryLayer::Impl {
   std::list<class DepthMap> depth_maps_;
 
   // internal state
-  float aspect_ratio_ = 1.f;
+  float aspect_ratio_ = 1.F;
 
   size_t vertex_count_ = 0;
   std::unique_ptr<Buffer> vertex_buffer_;
@@ -385,7 +385,7 @@ void GeometryLayer::end(Vulkan* vulkan) {
             for (uint32_t index = 0; index < primitive.data_.size() / 2; ++index) {
               vertices.insert(
                   vertices.end(),
-                  {primitive.data_[index * 2 + 0], primitive.data_[index * 2 + 1], 0.f});
+                  {primitive.data_[index * 2 + 0], primitive.data_[index * 2 + 1], 0.F});
             }
             break;
           case PrimitiveTopology::CROSS_LIST:
@@ -393,10 +393,10 @@ void GeometryLayer::end(Vulkan* vulkan) {
             for (uint32_t index = 0; index < primitive.primitive_count_; ++index) {
               const float x = primitive.data_[index * 3 + 0];
               const float y = primitive.data_[index * 3 + 1];
-              const float sy = primitive.data_[index * 3 + 2] * 0.5f;
+              const float sy = primitive.data_[index * 3 + 2] * 0.5F;
               const float sx = sy / impl_->aspect_ratio_;
               vertices.insert(vertices.end(),
-                              {x - sx, y, 0.f, x + sx, y, 0.f, x, y - sy, 0.f, x, y + sy, 0.f});
+                              {x - sx, y, 0.F, x + sx, y, 0.F, x, y - sy, 0.F, x, y + sy, 0.F});
             }
             break;
           case PrimitiveTopology::RECTANGLE_LIST:
@@ -407,20 +407,20 @@ void GeometryLayer::end(Vulkan* vulkan) {
               const float x1 = primitive.data_[index * 4 + 2];
               const float y1 = primitive.data_[index * 4 + 3];
               vertices.insert(vertices.end(),
-                              {x0, y0, 0.f, x1, y0, 0.f, x1, y1, 0.f, x0, y1, 0.f, x0, y0, 0.f});
+                              {x0, y0, 0.F, x1, y0, 0.F, x1, y1, 0.F, x0, y1, 0.F, x0, y0, 0.F});
             }
             break;
           case PrimitiveTopology::OVAL_LIST:
             for (uint32_t index = 0; index < primitive.primitive_count_; ++index) {
               const float x = primitive.data_[index * 4 + 0];
               const float y = primitive.data_[index * 4 + 1];
-              const float rx = primitive.data_[index * 4 + 2] * 0.5f;
-              const float ry = primitive.data_[index * 4 + 3] * 0.5f;
+              const float rx = primitive.data_[index * 4 + 2] * 0.5F;
+              const float ry = primitive.data_[index * 4 + 3] * 0.5F;
               for (uint32_t segment = 0; segment <= CIRCLE_SEGMENTS; ++segment) {
-                const float rad = (2.f * M_PI) / CIRCLE_SEGMENTS * segment;
+                const float rad = (2.F * M_PI) / CIRCLE_SEGMENTS * segment;
                 const float px = x + std::cos(rad) * rx;
                 const float py = y + std::sin(rad) * ry;
-                vertices.insert(vertices.end(), {px, py, 0.f});
+                vertices.insert(vertices.end(), {px, py, 0.F});
               }
             }
             break;
@@ -445,9 +445,9 @@ void GeometryLayer::end(Vulkan* vulkan) {
 
       // ImGui is using integer coordinates for the text position, we use the 0...1 range.
       // Therefore generate vertices in larger scale and scale them down afterwards.
-      const float scale = 16384.f;
-      const ImVec4 clip_rect(0.f, 0.f, scale * std::max(1.f, impl_->aspect_ratio_), scale);
-      const float inv_scale = 1.f / scale;
+      const float scale = 16384.F;
+      const ImVec4 clip_rect(0.F, 0.F, scale * std::max(1.F, impl_->aspect_ratio_), scale);
+      const float inv_scale = 1.F / scale;
 
       ImDrawVert *vertex_base = nullptr, *vertex = nullptr;
       for (auto&& text : impl_->texts_) {
@@ -471,7 +471,7 @@ void GeometryLayer::end(Vulkan* vulkan) {
         }
         while (vertex < impl_->text_draw_list_->_VtxWritePtr) {
           vertex->pos.x =
-              (vertex->pos.x * inv_scale - text.x_) * (1.f / impl_->aspect_ratio_) + text.x_;
+              (vertex->pos.x * inv_scale - text.x_) * (1.F / impl_->aspect_ratio_) + text.x_;
           vertex->pos.y *= inv_scale;
           ++vertex;
         }
@@ -609,8 +609,8 @@ void GeometryLayer::render(Vulkan* vulkan) {
   // setup the 2D view matrix in a way that geometry coordinates are in the range [0...1]
   nvmath::mat4f view_matrix_2d_base;
   view_matrix_2d_base.identity();
-  view_matrix_2d_base.scale({2.f, 2.f, 1.f});
-  view_matrix_2d_base.translate({-.5f, -.5f, 0.f});
+  view_matrix_2d_base.scale({2.F, 2.F, 1.F});
+  view_matrix_2d_base.translate({-.5F, -.5F, 0.F});
 
   std::vector<Layer::View> views = get_views();
   if (views.empty()) { views.push_back(Layer::View()); }

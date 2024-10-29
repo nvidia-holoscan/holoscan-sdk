@@ -11,11 +11,21 @@ We provide utilities to work around the second conflict:
 
 `````{tab-set}
 ````{tab-item} IGX SW 1.0
-Refer to the [IGX user guide](https://docs.nvidia.com/igx-orin/user-guide/latest/igpu-dgpu.html) to learn how to leverage the iGPU in containers while the IGX developer kit is flashed in dGPU mode.
 
-To leverage both GPUs in Holoscan, you can create separate applications running concurrently per the IGX documentation above, where the iGPU application must run in the Holoscan iGPU container, and the dGPU application can run bare metal or in the Holoscan dGPU container.
+1. From an IGX developer kit flashed for dGPU, run the following command to enable iGPU container support:
 
-You can also create a single distributed application that leverages both the iGPU and dGPU by executing separate fragments on the iGPU and on the dGPU.
+   ```bash
+   sudo /opt/nvidia/l4t-igpu-container-on-dgpu-host-config/l4t-igpu-container-on-dgpu-host-config.sh configure
+   ```
+
+  Refer to the [IGX user guide][igx-igpu-dgpu] for details.
+
+2. To leverage both GPUs in Holoscan, you can either:
+
+   1. create separate Holoscan applications running concurrently, where the iGPU application must run in the Holoscan iGPU container, and the dGPU application can run bare metal or in the Holoscan dGPU container. Refer to the [IGX user guide][igx-igpu-dgpu] for details on how to launch a Holoscan container using the iGPU.
+   2. create a single distributed application that leverages both the iGPU and dGPU by executing separate fragments on the iGPU and on the dGPU.
+
+[igx-igpu-dgpu]: https://docs.nvidia.com/igx-orin/user-guide/latest/igpu-dgpu.html
 
 The example below shows the ping distributed application between the iGPU and dGPU using Holoscan containers:
 
@@ -24,7 +34,7 @@ COMMON_DOCKER_FLAGS="--rm -i --init --net=host
 --runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=all
 --cap-add CAP_SYS_PTRACE --ipc=host --ulimit memlock=-1 --ulimit stack=67108864
 "
-HOLOSCAN_VERSION=2.2.0
+HOLOSCAN_VERSION=2.6.0
 HOLOSCAN_IMG="nvcr.io/nvidia/clara-holoscan/holoscan:v$HOLOSCAN_VERSION"
 HOLOSCAN_DGPU_IMG="$HOLOSCAN_IMG-dgpu"
 HOLOSCAN_IGPU_IMG="$HOLOSCAN_IMG-igpu"
@@ -45,13 +55,13 @@ docker run \
 docker run \
   $COMMON_DOCKER_FLAGS \
   -e NVIDIA_VISIBLE_DEVICES=nvidia.com/igpu=0 \
-  $HOLOSCAN_IMG-igpu \
+  $HOLOSCAN_IGPU_IMG \
   bash -c "./examples/ping_distributed/cpp/ping_distributed --gpu --worker"
 ```
 
 ````
 ````{tab-item} HoloPack 1.2+
-The [L4T Compute Assist](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/l4t-compute-assist) is a container on NGC which isolates the iGPU stack in order to enable iGPU compute on the developer kits configured for dGPU. Other applications can run concurrently on the dGPU, natively or in another container.
+The [L4T Compute Assist](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/l4t-compute-assist) is a container on NGC which isolates the iGPU stack by containing the L4T BSP packages in order to enable iGPU compute on the developer kits configured for dGPU. Other applications can run concurrently on the dGPU, natively or in another container.
 ````
 `````
 

@@ -32,27 +32,24 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/operators/inference/inference.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
 namespace holoscan::ops {
 
-InferenceOp::DataMap _dict_to_inference_datamap(py::dict dict) {
+InferenceOp::DataMap _dict_to_inference_datamap(const py::dict& dict) {
   InferenceOp::DataMap data_map;
-  for (auto& [key, value] : dict) {
+  for (const auto& [key, value] : dict) {
     data_map.insert(key.cast<std::string>(), value.cast<std::string>());
   }
   return data_map;
 }
 
-InferenceOp::DataVecMap _dict_to_inference_datavecmap(py::dict dict) {
+InferenceOp::DataVecMap _dict_to_inference_datavecmap(const py::dict& dict) {
   InferenceOp::DataVecMap data_vec_map;
-  for (auto& [key, value] : dict) {
+  for (const auto& [key, value] : dict) {
     data_vec_map.insert(key.cast<std::string>(), value.cast<std::vector<std::string>>());
   }
   return data_vec_map;
@@ -76,15 +73,16 @@ class PyInferenceOp : public InferenceOp {
   // Define a constructor that fully initializes the object.
   PyInferenceOp(Fragment* fragment, const py::args& args, const std::string& backend,
                 std::shared_ptr<::holoscan::Allocator> allocator,
-                py::dict inference_map,      // InferenceOp::DataVecMap
-                py::dict model_path_map,     // InferenceOp::DataMap
-                py::dict pre_processor_map,  // InferenceOp::DataVecMap
-                py::dict device_map,         // InferenceOp::DataMap
-                py::dict temporal_map,       // InferenceOp::DataMap
-                py::dict activation_map,     // InferenceOp::DataMap
-                py::dict backend_map,        // InferenceOp::DataMap
+                const py::dict& inference_map,      // InferenceOp::DataVecMap
+                const py::dict& model_path_map,     // InferenceOp::DataMap
+                const py::dict& pre_processor_map,  // InferenceOp::DataVecMap
+                const py::dict& device_map,         // InferenceOp::DataMap
+                const py::dict& temporal_map,       // InferenceOp::DataMap
+                const py::dict& activation_map,     // InferenceOp::DataMap
+                const py::dict& backend_map,        // InferenceOp::DataMap
                 const std::vector<std::string>& in_tensor_names,
-                const std::vector<std::string>& out_tensor_names, bool infer_on_cpu = false,
+                const std::vector<std::string>& out_tensor_names,
+                const std::vector<int32_t>& trt_opt_profile, bool infer_on_cpu = false,
                 bool parallel_inference = true, bool input_on_cuda = true,
                 bool output_on_cuda = true, bool transmit_on_cuda = true, bool enable_fp16 = false,
                 bool is_engine_path = false,
@@ -96,6 +94,7 @@ class PyInferenceOp : public InferenceOp {
                             Arg{"allocator", allocator},
                             Arg{"in_tensor_names", in_tensor_names},
                             Arg{"out_tensor_names", out_tensor_names},
+                            Arg{"trt_opt_profile", trt_opt_profile},
                             Arg{"infer_on_cpu", infer_on_cpu},
                             Arg{"parallel_inference", parallel_inference},
                             Arg{"input_on_cuda", input_on_cuda},
@@ -110,8 +109,8 @@ class PyInferenceOp : public InferenceOp {
 
     // Workaround to maintain backwards compatibility with the v0.5 API:
     // convert any single str values to List[str].
-    py::dict inference_map_dict = inference_map.cast<py::dict>();
-    for (auto& [key, value] : inference_map_dict) {
+    auto inference_map_dict = inference_map.cast<py::dict>();
+    for (const auto& [key, value] : inference_map_dict) {
       if (py::isinstance<py::str>(value)) {
         // warn about deprecated non-list input
         auto key_str = key.cast<std::string>();
@@ -130,18 +129,18 @@ class PyInferenceOp : public InferenceOp {
       }
     }
 
-    py::dict temporal_map_infer = temporal_map.cast<py::dict>();
-    for (auto& [key, value] : temporal_map_infer) {
+    auto temporal_map_infer = temporal_map.cast<py::dict>();
+    for (const auto& [key, value] : temporal_map_infer) {
       if (!py::isinstance<py::str>(value)) { temporal_map_infer[key] = py::str(value); }
     }
 
-    py::dict activation_map_infer = activation_map.cast<py::dict>();
-    for (auto& [key, value] : activation_map_infer) {
+    auto activation_map_infer = activation_map.cast<py::dict>();
+    for (const auto& [key, value] : activation_map_infer) {
       if (!py::isinstance<py::str>(value)) { activation_map_infer[key] = py::str(value); }
     }
 
-    py::dict device_map_infer = device_map.cast<py::dict>();
-    for (auto& [key, value] : device_map_infer) {
+    auto device_map_infer = device_map.cast<py::dict>();
+    for (const auto& [key, value] : device_map_infer) {
       if (!py::isinstance<py::str>(value)) { device_map_infer[key] = py::str(value); }
     }
 
@@ -169,7 +168,7 @@ class PyInferenceOp : public InferenceOp {
     this->add_arg(Arg("pre_processor_map", pre_processor_datamap));
 
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 
@@ -198,6 +197,7 @@ PYBIND11_MODULE(_inference, m) {
                             py::dict,
                             const std::vector<std::string>&,
                             const std::vector<std::string>&,
+                            const std::vector<int32_t>&,
                             bool,
                             bool,
                             bool,
@@ -219,6 +219,7 @@ PYBIND11_MODULE(_inference, m) {
                    "backend_map"_a = py::dict(),
                    "in_tensor_names"_a = std::vector<std::string>{},
                    "out_tensor_names"_a = std::vector<std::string>{},
+                   "trt_opt_profile"_a = std::vector<int32_t>{1, 1, 1},
                    "infer_on_cpu"_a = false,
                    "parallel_inference"_a = true,
                    "input_on_cuda"_a = true,

@@ -181,7 +181,7 @@ void HoloInferTests::parameter_setup_test() {
   auto backup_infer_map = std::move(inference_map);
   auto backup_device_map = std::move(device_map);
 
-  model_path_map = {{"test_model", model_folder + "identity_model.pt"}};
+  model_path_map = {{"test_model", model_folder + "model.pt"}};
   pre_processor_map = {{"test_model", {"input_"}}};
   inference_map = {{"test_model", {"output_"}}};
   device_map = {};
@@ -193,14 +193,14 @@ void HoloInferTests::parameter_setup_test() {
       status, test_module, 25, test_identifier_params.at(25), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: Torch backend, Config file missing
-  std::filesystem::rename(model_folder + "identity_model.onnx", model_folder + "identity_model.pt");
+  std::filesystem::rename(model_folder + "identity_model.pt", model_folder + "model.pt");
   status = create_specifications();
   clear_specs();
   holoinfer_assert(
       status, test_module, 26, test_identifier_params.at(26), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: Torch backend, Inference node missing in Config file
-  std::ofstream torch_config_file(model_folder + "identity_model.yaml");
+  std::ofstream torch_config_file(model_folder + "model.yaml");
   status = create_specifications();
   clear_specs();
   holoinfer_assert(
@@ -219,7 +219,7 @@ void HoloInferTests::parameter_setup_test() {
       status, test_module, 28, test_identifier_params.at(28), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: Torch backend, dtype missing in input node in Config file
-  torch_config_file.open(model_folder + "identity_model.yaml", std::ofstream::trunc);
+  torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
   torch_inference["inference"]["input_nodes"]["input"]["id"] = "1";
   std::cout << torch_inference << std::endl;
   torch_config_file << torch_inference;
@@ -230,7 +230,7 @@ void HoloInferTests::parameter_setup_test() {
       status, test_module, 29, test_identifier_params.at(29), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: Torch backend, Incorrect dtype in config file
-  torch_config_file.open(model_folder + "identity_model.yaml", std::ofstream::trunc);
+  torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
   torch_inference["inference"]["input_nodes"]["input"]["dtype"] = "float";
   torch_config_file << torch_inference;
   torch_config_file.close();
@@ -240,7 +240,7 @@ void HoloInferTests::parameter_setup_test() {
       status, test_module, 30, test_identifier_params.at(30), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: Torch backend, Output node missing in config file correct
-  torch_config_file.open(model_folder + "identity_model.yaml", std::ofstream::trunc);
+  torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
   torch_inference["inference"]["input_nodes"]["input"]["dtype"] = "kFloat32";
   torch_config_file << torch_inference;
   torch_config_file.close();
@@ -250,8 +250,8 @@ void HoloInferTests::parameter_setup_test() {
       status, test_module, 31, test_identifier_params.at(31), HoloInfer::holoinfer_code::H_ERROR);
 
   // Restore all changes to previous state
-  std::filesystem::remove(model_folder + "identity_model.yaml");
-  std::filesystem::rename(model_folder + "identity_model.pt", model_folder + "identity_model.onnx");
+  std::filesystem::rename(model_folder + "model.pt", model_folder + "identity_model.pt");
+  std::filesystem::remove(model_folder + "model.yaml");
   model_path_map = std::move(backup_path_map);
   pre_processor_map = std::move(backup_pre_map);
   inference_map = std::move(backup_infer_map);

@@ -197,14 +197,14 @@ TEST(MetadataDictionary, TestMetadataPolicy) {
   d.set("patient name", "Mr. Smith"s);
   EXPECT_EQ(d.get<std::string>("patient name"), "John Doe"s);
 
-  // update using new metadta object
+  // update using new metadata object
   auto shared_obj = d.get("patient name");
   d.policy(MetadataPolicy::kUpdate);
   d.set("patient name", "Mr. Smith"s);
   EXPECT_EQ(d.get<std::string>("patient name"), "Mr. Smith"s);
   EXPECT_EQ(std::any_cast<std::string>(shared_obj->value()), "John Doe"s);
 
-  // update existing metadta object in-place
+  // update existing metadata object in-place
   shared_obj = d.get("patient name");
   d.policy(MetadataPolicy::kInplaceUpdate);
   d.set("patient name", "Mr. Nobody"s);

@@ -22,10 +22,10 @@
 #include <utility>
 #include <vector>
 
-#include "gxf/std/tensor.hpp"
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
 #include <holoinfer_utils.hpp>
+#include "gxf/std/tensor.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/utils/holoinfer_utils.hpp"
 
@@ -33,37 +33,44 @@ namespace HoloInfer = holoscan::inference;
 
 namespace holoscan::utils {
 
-template <typename T>
-gxf_result_t extract_data(nvidia::gxf::MemoryStorageType to,
+GxfTensorBuffer::GxfTensorBuffer(const holoscan::gxf::Entity& entity,
+                                 const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor)
+    : entity_(entity), tensor_(tensor) {}
+
+void* GxfTensorBuffer::data() {
+  return reinterpret_cast<void*>(tensor_->pointer());
+}
+
+size_t GxfTensorBuffer::size() const {
+  return tensor_->element_count();
+}
+
+size_t GxfTensorBuffer::get_bytes() const {
+  return tensor_->bytes_size();
+}
+
+void GxfTensorBuffer::resize(size_t /*number_of_elements*/) {
+  throw std::runtime_error("Resizing of GxfTensorBuffer is not supported");
+}
+
+gxf_result_t extract_data(const std::shared_ptr<HoloInfer::DataBuffer>& db,
+                          nvidia::gxf::MemoryStorageType to,
                           nvidia::gxf::MemoryStorageType storage_type,
                           HoloInfer::holoinfer_datatype dtype, void* in_tensor_data,
-                          HoloInfer::DataMap& data_per_input_tensor,
-                          const std::string& current_tensor, size_t buffer_size,
-                          const std::string& module, cudaStream_t cstream) {
-  if (data_per_input_tensor.find(current_tensor) == data_per_input_tensor.end()) {
-    auto db = std::make_shared<HoloInfer::DataBuffer>(dtype);
-    db->host_buffer.resize(buffer_size);
-    db->device_buffer->resize(buffer_size);
-
-    data_per_input_tensor.insert({current_tensor, std::move(db)});
-  } else {
-    // allocate buffer for dynamic tensor size
-    auto tensor_db = data_per_input_tensor.at(current_tensor);
-    if (tensor_db->host_buffer.size() != buffer_size) {
-      tensor_db->host_buffer.resize(buffer_size);
-    }
-    if (tensor_db->device_buffer->size() != buffer_size) {
-      tensor_db->device_buffer->resize(buffer_size);
-    }
+                          size_t buffer_size, const std::string& module, cudaStream_t cstream) {
+  if (to == nvidia::gxf::MemoryStorageType::kHost) {
+    db->host_buffer_->resize(buffer_size);
+  } else if (to == nvidia::gxf::MemoryStorageType::kDevice) {
+    db->device_buffer_->resize(buffer_size);
   }
 
   if (to == nvidia::gxf::MemoryStorageType::kHost) {
-    auto in_tensor_ptr = data_per_input_tensor.at(current_tensor)->host_buffer.data();
+    auto in_tensor_ptr = db->host_buffer_->data();
 
     if (storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
       cudaError_t cuda_result = cudaMemcpyAsync(in_tensor_ptr,
                                                 static_cast<const void*>(in_tensor_data),
-                                                buffer_size * sizeof(T),
+                                                buffer_size * get_element_size(dtype),
                                                 cudaMemcpyDeviceToHost,
                                                 cstream);
       if (cuda_result != cudaSuccess) {
@@ -71,24 +78,18 @@ gxf_result_t extract_data(nvidia::gxf::MemoryStorageType to,
                            cudaGetErrorString(cuda_result));
         return HoloInfer::report_error(module, "Data extraction, DtoH cudaMemcpy.");
       }
-
-      cuda_result = cudaStreamSynchronize(cstream);
-      if (cuda_result != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Cuda stream synchronization failed: {}",
-                           cudaGetErrorString(cuda_result));
-        return HoloInfer::report_error(module, "Data extraction, Stream synchronization.");
-      }
+      // When copying from device memory to pagable memory the call is synchronous with the host
+      // execution. No need to synchronize here.
     } else if (storage_type == nvidia::gxf::MemoryStorageType::kHost) {
-      memcpy(
-          static_cast<T*>(in_tensor_ptr), static_cast<T*>(in_tensor_data), buffer_size * sizeof(T));
+      memcpy(in_tensor_ptr, in_tensor_data, buffer_size * get_element_size(dtype));
     }
   } else {
     if (to == nvidia::gxf::MemoryStorageType::kDevice) {
-      void* device_buff = data_per_input_tensor.at(current_tensor)->device_buffer->data();
+      void* device_buff = db->device_buffer_->data();
       if (storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
         cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(device_buff),
                                                   static_cast<const void*>(in_tensor_data),
-                                                  buffer_size * sizeof(T),
+                                                  buffer_size * get_element_size(dtype),
                                                   cudaMemcpyDeviceToDevice,
                                                   cstream);
 
@@ -119,38 +120,32 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
     if (cuda_buffer_out) { to = nvidia::gxf::MemoryStorageType::kDevice; }
 
     auto messages = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers").value();
+    // get the CUDA stream from the input messages
+    if (cuda_stream_handler.from_messages(context, messages) != GXF_SUCCESS) {
+      throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
+    }
+    const cudaStream_t cstream = cuda_stream_handler.get_cuda_stream(context);
     for (unsigned int i = 0; i < in_tensors.size(); ++i) {
-      // nvidia::gxf::Handle<nvidia::gxf::Tensor> in_tensor;
       HOLOSCAN_LOG_DEBUG("Extracting data from tensor {}", in_tensors[i]);
-      std::shared_ptr<holoscan::Tensor> in_tensor;
-      cudaStream_t cstream = 0;
+      nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>> maybe_in_tensor =
+          nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
+      size_t message_index;
       for (unsigned int j = 0; j < messages.size(); ++j) {
-        const auto& in_message = messages[j];
-        const auto maybe_tensor = in_message.get<holoscan::Tensor>(in_tensors[i].c_str(), false);
-        if (maybe_tensor) {
+        maybe_in_tensor =
+            messages[j].nvidia::gxf::Entity::get<nvidia::gxf::Tensor>(in_tensors[i].c_str());
+        if (maybe_in_tensor) {
           // break out if the expected tensor name was found in this message
-          in_tensor = maybe_tensor;
-          //   get the CUDA stream from the input message
-          gxf_result_t stream_handler_result =
-              cuda_stream_handler.from_message(context, in_message);
-          if (stream_handler_result != GXF_SUCCESS) {
-            throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
-          }
-          cstream = cuda_stream_handler.get_cuda_stream(context);
+          message_index = j;
           break;
         }
       }
-      if (!in_tensor)
+      if (!maybe_in_tensor) {
         return HoloInfer::report_error(module,
                                        "Data extraction, Tensor " + in_tensors[i] + " not found");
+      }
 
-      // convert from Tensor to nvidia::gxf::Tensor so code below can be re-used as-is.
-      // (otherwise cannot easily get element_type, storage_type)
-      nvidia::gxf::Tensor in_tensor_gxf{in_tensor->dl_ctx()};
-      void* in_tensor_data = in_tensor_gxf.pointer();
-
-      auto element_type = in_tensor_gxf.element_type();
-      auto storage_type = in_tensor_gxf.storage_type();
+      const auto& in_tensor = maybe_in_tensor.value();
+      const auto storage_type = in_tensor->storage_type();
 
       if (storage_type != nvidia::gxf::MemoryStorageType::kHost &&
           storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
@@ -163,69 +158,23 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
                                        "Input storage type in data extraction not supported.");
       }
 
-      std::vector<int> dims;
-      for (unsigned int di = 0; di < in_tensor_gxf.shape().rank(); ++di)
-        dims.push_back(in_tensor_gxf.shape().dimension(di));
-
-      size_t buffer_size = std::accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
-      dims_per_tensor[in_tensors[i]] = std::move(dims);
-
-      gxf_result_t status = GXF_SUCCESS;
+      HoloInfer::holoinfer_datatype dtype;
+      const auto element_type = in_tensor->element_type();
       switch (element_type) {
         case nvidia::gxf::PrimitiveType::kFloat32:
-          status = extract_data<float>(to,
-                                       storage_type,
-                                       HoloInfer::holoinfer_datatype::h_Float32,
-                                       in_tensor_data,
-                                       data_per_input_tensor,
-                                       in_tensors[i],
-                                       buffer_size,
-                                       module,
-                                       cstream);
+          dtype = HoloInfer::holoinfer_datatype::h_Float32;
           break;
         case nvidia::gxf::PrimitiveType::kInt32:
-          status = extract_data<int32_t>(to,
-                                         storage_type,
-                                         HoloInfer::holoinfer_datatype::h_Int32,
-                                         in_tensor_data,
-                                         data_per_input_tensor,
-                                         in_tensors[i],
-                                         buffer_size,
-                                         module,
-                                         cstream);
+          dtype = HoloInfer::holoinfer_datatype::h_Int32;
           break;
         case nvidia::gxf::PrimitiveType::kInt8:
-          status = extract_data<int8_t>(to,
-                                        storage_type,
-                                        HoloInfer::holoinfer_datatype::h_Int8,
-                                        in_tensor_data,
-                                        data_per_input_tensor,
-                                        in_tensors[i],
-                                        buffer_size,
-                                        module,
-                                        cstream);
+          dtype = HoloInfer::holoinfer_datatype::h_Int8;
           break;
         case nvidia::gxf::PrimitiveType::kInt64:
-          status = extract_data<int64_t>(to,
-                                         storage_type,
-                                         HoloInfer::holoinfer_datatype::h_Int64,
-                                         in_tensor_data,
-                                         data_per_input_tensor,
-                                         in_tensors[i],
-                                         buffer_size,
-                                         module,
-                                         cstream);
+          dtype = HoloInfer::holoinfer_datatype::h_Int64;
           break;
         case nvidia::gxf::PrimitiveType::kUnsigned8:
-          status = extract_data<uint8_t>(to,
-                                         storage_type,
-                                         HoloInfer::holoinfer_datatype::h_Int8,
-                                         in_tensor_data,
-                                         data_per_input_tensor,
-                                         in_tensors[i],
-                                         buffer_size,
-                                         module,
-                                         cstream);
+          dtype = HoloInfer::holoinfer_datatype::h_UInt8;
           break;
         default: {
           HOLOSCAN_LOG_INFO("Incoming tensors must be of type: float, int32, int64, int8, uint8");
@@ -233,8 +182,41 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
                                          "Data extraction, data type not supported in extraction.");
         }
       }
-      if (status != GXF_SUCCESS) {
-        return HoloInfer::report_error(module, "Data extraction, In tensor extraction failed.");
+
+      auto data_map = data_per_input_tensor.find(in_tensors[i]);
+      if (data_map == data_per_input_tensor.end()) {
+        data_map = data_per_input_tensor
+                       .insert({in_tensors[i], std::make_shared<HoloInfer::DataBuffer>(dtype)})
+                       .first;
+      }
+      auto& db = data_map->second;
+
+      std::vector<int> dims;
+      for (unsigned int di = 0; di < in_tensor->shape().rank(); ++di) {
+        dims.push_back(in_tensor->shape().dimension(di));
+      }
+      dims_per_tensor[in_tensors[i]] = std::move(dims);
+
+      if (to == storage_type) {
+        auto buffer =
+            std::make_shared<GxfTensorBuffer>(messages[message_index], in_tensor);
+        if (to == nvidia::gxf::MemoryStorageType::kDevice) {
+          db->device_buffer_ = buffer;
+        } else {
+          db->host_buffer_ = buffer;
+        }
+      } else {
+        gxf_result_t status = extract_data(db,
+                                           to,
+                                           storage_type,
+                                           dtype,
+                                           in_tensor->pointer(),
+                                           in_tensor->element_count(),
+                                           module,
+                                           cstream);
+        if (status != GXF_SUCCESS) {
+          return HoloInfer::report_error(module, "Data extraction, In tensor extraction failed.");
+        }
       }
     }
 
@@ -270,7 +252,7 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
 
       auto current_model_output = input_data_map.at(current_tensor);
       memcpy(out_tensor_data.value(),
-             current_model_output->host_buffer.data(),
+             current_model_output->host_buffer_->data(),
              buffer_size * sizeof(T));
     } else {  // to is on device
       out_tensor.value()->reshape<T>(
@@ -282,7 +264,7 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
       if (!out_tensor_data)
         return HoloInfer::report_error(module, "Data transmission, Getting out tensor data.");
 
-      auto current_model_dev_buff = input_data_map.at(current_tensor)->host_buffer.data();
+      auto current_model_dev_buff = input_data_map.at(current_tensor)->host_buffer_->data();
       cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
                                                 static_cast<const void*>(current_model_dev_buff),
                                                 buffer_size * sizeof(T),
@@ -292,12 +274,9 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
         HOLOSCAN_LOG_ERROR("Data transmission (HtoD) failed: {}", cudaGetErrorString(cuda_result));
         return HoloInfer::report_error(module, "Data Transmission, HtoD cudaMemcpy.");
       }
-      cuda_result = cudaStreamSynchronize(cstream);
-      if (cuda_result != cudaSuccess) {
-        HOLOSCAN_LOG_ERROR("Cuda stream synchronization failed: {}",
-                           cudaGetErrorString(cuda_result));
-        return HoloInfer::report_error(module, "Data transmission, Stream synchronization.");
-      }
+      // When copying from pagable memory to device memory cudaMemcpyAsync() is copying the memory
+      // to staging memory first and therefore is synchronous with the host execution. No need to
+      // synchronize here.
     }
   } else {
     if (from == nvidia::gxf::MemoryStorageType::kDevice) {
@@ -311,7 +290,7 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
         if (!out_tensor_data)
           return HoloInfer::report_error(module, "Data Transmission, getting out tensor data.");
 
-        void* current_model_dev_buff = input_data_map.at(current_tensor)->device_buffer->data();
+        void* current_model_dev_buff = input_data_map.at(current_tensor)->device_buffer_->data();
         cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
                                                   static_cast<const void*>(current_model_dev_buff),
                                                   buffer_size * sizeof(T),
@@ -332,7 +311,7 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
         if (!out_tensor_data)
           return HoloInfer::report_error(module, "Data Transmission, getting out tensor data");
 
-        void* current_model_dev_buff = input_data_map.at(current_tensor)->device_buffer->data();
+        void* current_model_dev_buff = input_data_map.at(current_tensor)->device_buffer_->data();
         cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
                                                   static_cast<const void*>(current_model_dev_buff),
                                                   buffer_size * sizeof(T),
@@ -343,12 +322,8 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
                              cudaGetErrorString(cuda_result));
           return HoloInfer::report_error(module, "Data transmission, DtoH cudaMemcpy");
         }
-        cuda_result = cudaStreamSynchronize(cstream);
-        if (cuda_result != cudaSuccess) {
-          HOLOSCAN_LOG_ERROR("Cuda stream synchronization failed: {}",
-                             cudaGetErrorString(cuda_result));
-          return HoloInfer::report_error(module, "Data transmission, Stream synchronization.");
-        }
+        // When copying from device memory to pagable memory the call is synchronous with the host
+        // execution. No need to synchronize here.
       }
     }
   }

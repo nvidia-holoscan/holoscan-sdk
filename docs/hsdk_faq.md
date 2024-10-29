@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.5.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.5.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -637,6 +637,9 @@ A36: Yes, for linear inference pipelines or applications with minimal computatio
 
 A37:  Increasing the number of worker threads can improve performance up to a point, but it also increases CPU usage.
 
+**Q38: Is there any memory pool (allocator) that supports both host and device memory?**
+
+Please use `RMMAllocator` for this purpose. It supports simultaneous memory pools for CUDA device memory and pinned host memory. A `BlockMemoryPool` can be used on either host or device memory, but cannot support both types at the same time. `UnboundedAllocator` also supports both host and device memory, but is not a memory pool (it allocates and frees new memory each time).
 
 ## Performance
 
@@ -1143,6 +1146,17 @@ A19:To resolve these errors, edit the `/etc/docker/daemon.json` file to include 
 ```
 
 You may need to consult your IT team and replace `IP-x` and `DNS-SERVER-x` with the provided values.
+
+**Q20:I am seeing the following error when trying to use the `RMMAllocator`**
+
+When running the application, if it fails to start with an error like the following being logged:
+
+```cpp
+[error] [rmm_allocator.cpp:74] Unexpected error while initializing RMM Allocator rmm_allocator: std::bad_alloc: out_of_memory: RMM failure at:bazel-out/k8-opt/bin/external/rmm/_virtual_includes/rmm/rmm/mr/device/pool_memory_resource.hpp:424: Maximum pool size exceeded
+```
+
+This indicates that the requested memory sizes on host and/or device exceed the available memory. Please make sure that your device supports the specified memory size. Also check that the specified the values for `device_memory_initial_size`, `device_memory_max_size`, `host_memory_initial_size` and `host_memory_max_size` were specified using the intended units (B, KB, MB, GB or TB).
+
 
 ## Miscellaneous
 

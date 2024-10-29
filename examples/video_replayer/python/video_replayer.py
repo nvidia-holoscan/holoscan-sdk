@@ -19,6 +19,7 @@ import os
 
 from holoscan.core import Application
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
+from holoscan.resources import RMMAllocator
 
 sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
 
@@ -40,9 +41,17 @@ class VideoReplayerApp(Application):
         if not os.path.exists(video_dir):
             raise ValueError(f"Could not find video data: {video_dir=}")
 
+        # create an allocator supporting both host and device memory pools
+        # (The video stream is copied to an intermediate host buffer before being copied to the GPU)
+        rmm_allocator = RMMAllocator(self, name="rmm-allocator", **self.kwargs("rmm_allocator"))
+
         # Define the replayer and holoviz operators
         replayer = VideoStreamReplayerOp(
-            self, name="replayer", directory=video_dir, **self.kwargs("replayer")
+            self,
+            name="replayer",
+            directory=video_dir,
+            **self.kwargs("replayer"),
+            allocator=rmm_allocator,
         )
         visualizer = HolovizOp(self, name="holoviz", **self.kwargs("holoviz"))
 

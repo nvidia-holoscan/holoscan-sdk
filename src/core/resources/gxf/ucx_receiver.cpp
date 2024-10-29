@@ -25,6 +25,7 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
+#include "holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp"
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
 
 namespace holoscan {
@@ -65,7 +66,7 @@ void UcxReceiver::setup(ComponentSpec& spec) {
   spec.param(port_, "port", "rx_port", "RX port", kDefaultUcxPort);
   spec.param(buffer_, "buffer", "Serialization Buffer", "");
 
-  // TODO: implement OperatorSpec::resource for managing nvidia::gxf:Resource types
+  // TODO(unknown): implement OperatorSpec::resource for managing nvidia::gxf:Resource types
   // spec.resource(gpu_device_, "Optional GPU device resource");
 }
 
@@ -98,6 +99,11 @@ std::string UcxReceiver::address() {
 
 uint32_t UcxReceiver::port() {
   return port_.get();
+}
+
+void UcxReceiver::track() {
+  auto receiver_ptr = static_cast<holoscan::HoloscanUcxReceiver*>(gxf_cptr_);
+  receiver_ptr->track();
 }
 
 }  // namespace holoscan

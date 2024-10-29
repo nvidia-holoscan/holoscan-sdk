@@ -58,7 +58,7 @@ class PyFragment : public Fragment {
   /* Inherit the constructors */
   using Fragment::Fragment;
 
-  explicit PyFragment(py::object op);
+  explicit PyFragment(const py::object& op);
 
   /* Trampolines (need one for each virtual function) */
   void add_operator(const std::shared_ptr<Operator>& op) override;

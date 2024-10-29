@@ -17,9 +17,6 @@
 
 #include <pybind11/pybind11.h>
 
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
-
 namespace py = pybind11;
 
 namespace holoscan {
@@ -27,6 +24,9 @@ namespace holoscan {
 void init_asynchronous(py::module_&);
 void init_boolean(py::module_&);
 void init_count(py::module_&);
+void init_cuda_buffer_available(py::module_&);
+void init_cuda_event(py::module_&);
+void init_cuda_stream(py::module_&);
 void init_periodic(py::module_&);
 void init_downstream_message_affordable(py::module_&);
 void init_message_available(py::module_&);
@@ -42,6 +42,9 @@ PYBIND11_MODULE(_conditions, m) {
   init_asynchronous(m);
   init_boolean(m);
   init_count(m);
+  init_cuda_buffer_available(m);
+  init_cuda_event(m);
+  init_cuda_stream(m);
   init_periodic(m);
   init_downstream_message_affordable(m);
   init_message_available(m);

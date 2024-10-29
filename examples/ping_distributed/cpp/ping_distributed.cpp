@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <algorithm>
 #include <iostream>
 #include <string>
@@ -25,8 +26,9 @@
 
 class Fragment1 : public holoscan::Fragment {
  public:
-  Fragment1(bool gpu_tensor = false, int64_t count = 10, int32_t batch_size = 0, int32_t rows = 32,
-            int32_t columns = 64, int32_t channels = 0, const std::string& data_type = "uint8_t")
+  // NOLINTNEXTLINE(modernize-pass-by-value,bugprone-easily-swappable-parameters)
+  Fragment1(bool gpu_tensor, int64_t count, int32_t batch_size, int32_t rows, int32_t columns,
+            int32_t channels, const std::string& data_type)
       : gpu_tensor_(gpu_tensor),
         batch_size_(batch_size),
         count_(count),
@@ -76,6 +78,7 @@ class App : public holoscan::Application {
   // Inherit the constructor
   using Application::Application;
 
+  // NOLINTNEXTLINE(modernize-pass-by-value,bugprone-easily-swappable-parameters)
   void set_options(bool gpu_tensor = false, int64_t count = 10, int32_t batch_size = 0,
                    int32_t rows = 32, int32_t columns = 1024, int32_t channels = 0,
                    const std::string& data_type = "uint8_t") {
@@ -88,6 +91,7 @@ class App : public holoscan::Application {
     channels_ = channels;
     data_type_ = data_type;
   }
+  // NOLINTEND(fuchsia-default-arguments-declarations)
 
   void compose() override {
     using namespace holoscan;
@@ -161,6 +165,7 @@ int main() {
             << "                      {'int8_t', 'int16_t', 'int32_t', 'int64_t',  \n"
             << "                       'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t',  \n"
             << "                       'float', 'double', 'complex<float>', complex<double>'}.\n"
+            << "  --track             If specified, data flow tracking will be enabled.\n"
             << std::endl;
 
   auto app = holoscan::make_application<App>();
@@ -171,19 +176,33 @@ int main() {
   // Parse any additional supported arguments
   bool tensor_on_gpu = get_boolean_arg(remaining_args, "--gpu").value_or(false);
   int64_t count = get_int64_arg(remaining_args, "--count").value_or(10);
-  int64_t batch_size = get_int32_arg(remaining_args, "--batch_size").value_or(0);
+  int32_t batch_size = get_int32_arg(remaining_args, "--batch_size").value_or(0);
   int32_t rows = get_int32_arg(remaining_args, "--rows").value_or(32);
   int32_t columns = get_int32_arg(remaining_args, "--columns").value_or(64);
   int32_t channels = get_int32_arg(remaining_args, "--channels").value_or(0);
   std::string data_type = get_str_arg(remaining_args, "--data_type").value_or("uint8_t");
+  bool data_flow_tracking_enabled = get_boolean_arg(remaining_args, "--track").value_or(false);
 
   HOLOSCAN_LOG_INFO("Running ping with tensors on {}.", tensor_on_gpu ? "GPU" : "host");
 
   // configure tensor on host vs. GPU and set the count and shape
   app->set_options(tensor_on_gpu, count, batch_size, rows, columns, channels, data_type);
 
-  // run the application
-  app->run();
+  if (data_flow_tracking_enabled) {
+    // enable data flow tracking for a distributed app
+    auto trackers = app->track_distributed(0, 0, 0);
+
+    // run the application
+    app->run();
+
+    // print data flow tracking results
+    for (const auto& [name, tracker] : trackers) {
+      std::cout << "Fragment: " << name << std::endl;
+      tracker->print();
+    }
+  } else {
+    app->run();
+  }
 
   return 0;
 }

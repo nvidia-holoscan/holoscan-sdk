@@ -55,7 +55,7 @@
  */
 #define HOLOSCAN_CONDITION_FORWARD_ARGS(class_name) \
   HOLOSCAN_CONDITION_FORWARD_TEMPLATE()             \
-  class_name(ArgT&& arg, ArgsT&&... args)           \
+  explicit class_name(ArgT&& arg, ArgsT&&... args)  \
       : Condition(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 /**
@@ -91,7 +91,7 @@
  */
 #define HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(class_name, super_class_name) \
   HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                     \
-  class_name(ArgT&& arg, ArgsT&&... args)                                   \
+  explicit class_name(ArgT&& arg, ArgsT&&... args)                          \
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
@@ -224,7 +224,7 @@ class Condition : public Component {
    *
    * @param spec The reference to the component specification.
    */
-  virtual void setup(ComponentSpec& spec) { (void)spec; }
+  virtual void setup([[maybe_unused]] ComponentSpec& spec) {}
 
   /**
    * @brief Get a YAML representation of the condition.

@@ -20,20 +20,19 @@
 ############################################################
 # Dependencies ending in _YY.MM are built or extracted from
 # the TensorRT or PyTorch NGC containers of that same version
-ARG ONNX_RUNTIME_VERSION=1.15.1_23.08
-ARG LIBTORCH_VERSION=2.1.0_23.08
-ARG TORCHVISION_VERSION=0.16.0_23.08
+ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
+ARG LIBTORCH_VERSION=2.5.0_24.08
+ARG TORCHVISION_VERSION=0.20.0_24.08
 ARG GRPC_VERSION=1.54.2
-ARG UCX_VERSION=1.15.0
-ARG GXF_VERSION=4.0_20240409_bc03d9d
-ARG MOFED_VERSION=23.10-2.1.3.1
+ARG GXF_VERSION=447_20241004_bf72709
+ARG MOFED_VERSION=24.07-0.6.1.0
 
 ############################################################
 # Base image
 ############################################################
 ARG GPU_TYPE=dgpu
-FROM nvcr.io/nvidia/tensorrt:23.08-py3 AS dgpu_base
-FROM nvcr.io/nvidia/tensorrt:23.12-py3-igpu AS igpu_base
+FROM nvcr.io/nvidia/tensorrt:24.08-py3 AS dgpu_base
+FROM nvcr.io/nvidia/tensorrt:24.08-py3-igpu AS igpu_base
 FROM ${GPU_TYPE}_base AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -84,7 +83,7 @@ ARG ONNX_RUNTIME_VERSION
 # note: built with CUDA and TensorRT providers
 WORKDIR /opt/onnxruntime
 RUN curl -S -L -# -o ort.tgz \
-    https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-12.2-$(uname -m).tar.gz
+    https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-$(uname -m).tar.gz
 RUN mkdir -p ${ONNX_RUNTIME_VERSION}
 RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2
 
@@ -96,15 +95,20 @@ ARG LIBTORCH_VERSION
 ARG GPU_TYPE
 
 # Download libtorch binaries from artifactory
-# note: extracted from nvcr.io/nvidia/pytorch:23.07-py3
+# note: extracted from nvcr.io/nvidia/pytorch:24.08-py3
 WORKDIR /opt/libtorch/
 RUN ARCH=$(uname -m) && if [ "$ARCH" = "aarch64" ]; then ARCH="${ARCH}-${GPU_TYPE}"; fi && \
     curl -S -# -o libtorch.tgz -L \
         https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/libtorch/libtorch-${LIBTORCH_VERSION}-${ARCH}.tar.gz
 RUN mkdir -p ${LIBTORCH_VERSION}
 RUN tar -xf libtorch.tgz -C ${LIBTORCH_VERSION} --strip-components 1
-# Remove kineto from config to remove warning, not needed by holoscan
+
+# Patch step to remove kineto from config to remove warning, not needed by holoscan
 RUN find . -type f -name "*Config.cmake" -exec sed -i '/kineto/d' {} +
+# Patch step for CMake configuration warning
+COPY patches/libtorch.Caffe2.cmake.patch ${LIBTORCH_VERSION}/share/cmake/Caffe2/cuda.patch
+WORKDIR ${LIBTORCH_VERSION}
+RUN patch -p1 < share/cmake/Caffe2/cuda.patch
 
 ############################################################
 # TorchVision
@@ -172,44 +176,21 @@ RUN UBUNTU_VERSION=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d= -f2) 
 ############################################################
 # UCX
 ############################################################
-FROM mofed-installer AS ucx-builder
-ARG UCX_VERSION
+FROM build-tools AS ucx-patcher
 
-# Clone
-WORKDIR /opt/ucx/
-RUN git clone --depth 1 --branch v${UCX_VERSION} https://github.com/openucx/ucx.git src
-
-# Patch
-WORKDIR /opt/ucx/src
-RUN curl -L https://github.com/openucx/ucx/pull/9341.patch | git apply
-
-# Prerequisites to build
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y \
-        libtool="2.4.6-*" \
-        automake="1:1.16.5-*" \
-    && rm -rf /var/lib/apt/lists/*
-
-# Build and install
-RUN ./autogen.sh
-WORKDIR /opt/ucx/build
-RUN ../src/contrib/configure-release-mt --with-cuda=/usr/local/cuda-12 \
-    --prefix=/opt/ucx/${UCX_VERSION}
-RUN make -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` )) install
-
-# Apply patches for import and run
+# The base container provides custom builds of HPCX libraries without
+# the necessary rpath for non-containerized applications. We patch RPATH
+# for portability when we later repackage these libraries for distribution
+# outside of the container.
 WORKDIR /opt/ucx/${UCX_VERSION}
-# patch cmake config
-RUN sed -i "s|set(prefix.*)|set(prefix \"$(pwd)\")|" lib/cmake/ucx/ucx-targets.cmake
-# patch rpath (relative to ORIGIN)
-RUN patchelf --set-rpath '$ORIGIN' lib/libuc*.so*
-RUN patchelf --set-rpath '$ORIGIN:$ORIGIN/..' lib/ucx/libuc*.so*
-RUN patchelf --set-rpath '$ORIGIN/../lib' bin/*
+RUN patchelf --set-rpath '$ORIGIN' /opt/hpcx/ucx/lib/libuc*.so* \
+    && patchelf --set-rpath '$ORIGIN:$ORIGIN/..' /opt/hpcx/ucx/lib/ucx/libuc*.so* \
+    && patchelf --set-rpath '$ORIGIN/../lib' /opt/hpcx/ucx/bin/*
 
 ############################################################
 # GXF
 ############################################################
-FROM base AS gxf-builder
+FROM base AS gxf-downloader
 ARG GXF_VERSION
 
 WORKDIR /opt/nvidia/gxf
@@ -259,22 +240,21 @@ ENV GRPC=/opt/grpc/${GRPC_VERSION}
 COPY --from=grpc-builder ${GRPC} ${GRPC}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GRPC}"
 
-# Copy UCX
-ARG UCX_VERSION
-ENV UCX=/opt/ucx/${UCX_VERSION}
-COPY --from=ucx-builder ${UCX} ${UCX}
-ENV PATH="${PATH}:${UCX}/bin"
-ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${UCX}"
-# remove older version of UCX in hpcx install
-RUN rm -rf /opt/hpcx/ucx /usr/local/ucx
-RUN unset OPENUCX_VERSION
-# required for gxf_ucx.so to find ucx
-ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${UCX}/lib"
+# Copy UCX and set other HPC-X runtime paths
+ENV HPCX=/opt/hpcx
+COPY --from=ucx-patcher ${HPCX}/ucx ${HPCX}/ucx
+ENV PATH="${PATH}:${HPCX}/ucx/bin:${HPCX}/ucc/bin:${HPCX}/ompi/bin"
+ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${HPCX}/ucx"
+# Constrain HPCX's ld config to Holoscan/Torch explicit dependencies,
+# to prevent inadvertently picking up non-expected libraries
+RUN echo "${HPCX}/ucx/lib" > /etc/ld.so.conf.d/hpcx.conf \
+    && echo "${HPCX}/ucc/lib" >> /etc/ld.so.conf.d/hpcx.conf \
+    && echo "${HPCX}/ompi/lib" >> /etc/ld.so.conf.d/hpcx.conf
 
 # Copy GXF
 ARG GXF_VERSION
 ENV GXF=/opt/nvidia/gxf/${GXF_VERSION}
-COPY --from=gxf-builder ${GXF} ${GXF}
+COPY --from=gxf-downloader ${GXF} ${GXF}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
 
 # Setup Docker & NVIDIA Container Toolkit's apt repositories to enable DooD
@@ -288,6 +268,21 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && echo "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
         "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
         tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install NVIDIA Performance Libraries on arm64 dGPU platform
+# as a runtime requirement for the Holoinfer `libtorch` backend (2.5.0).
+ARG GPU_TYPE
+RUN if [[ $(uname -m) = "aarch64" && ${GPU_TYPE} = "dgpu" ]]; then \
+    curl -L https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/cuda-keyring_1.1-1_all.deb -O \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y \
+        nvpl-blas=0.2.0.1-* \
+        nvpl-lapack=0.2.2.1-* \
+    && apt-get purge -y cuda-keyring \
+    && rm cuda-keyring_1.1-1_all.deb \
+    && rm -rf /var/lib/apt/lists/* \
+    ; fi
 
 # APT INSTALLS
 #  valgrind - dynamic analysis

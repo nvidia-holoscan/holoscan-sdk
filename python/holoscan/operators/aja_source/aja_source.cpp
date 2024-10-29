@@ -18,10 +18,13 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 
 #include "../operator_util.hpp"
@@ -32,11 +35,8 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/operators/aja_source/aja_source.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
-
-#define STRINGIFY(x) #x
-#define MACRO_STRINGIFY(x) STRINGIFY(x)
+using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
+using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -44,23 +44,23 @@ namespace holoscan::ops {
 
 namespace {
 
-static std::unordered_map<std::string, NTV2Channel> const NTV2ChannelMapping = {
-    {"NTV2_CHANNEL1", NTV2Channel::NTV2_CHANNEL1},
-    {"NTV2_CHANNEL2", NTV2Channel::NTV2_CHANNEL2},
-    {"NTV2_CHANNEL3", NTV2Channel::NTV2_CHANNEL3},
-    {"NTV2_CHANNEL4", NTV2Channel::NTV2_CHANNEL4},
-    {"NTV2_CHANNEL5", NTV2Channel::NTV2_CHANNEL5},
-    {"NTV2_CHANNEL6", NTV2Channel::NTV2_CHANNEL6},
-    {"NTV2_CHANNEL7", NTV2Channel::NTV2_CHANNEL7},
-    {"NTV2_CHANNEL8", NTV2Channel::NTV2_CHANNEL8}};
+// using constexpr constructor instead of unordered_map here to make clang-tidy happy
+// (avoids warning of type: fuchsia-statically-constructed-objects)
+constexpr std::array<std::pair<std::string_view, NTV2Channel>, 8> NTV2ChannelMapping = {
+    {{"NTV2_CHANNEL1", NTV2Channel::NTV2_CHANNEL1},
+     {"NTV2_CHANNEL2", NTV2Channel::NTV2_CHANNEL2},
+     {"NTV2_CHANNEL3", NTV2Channel::NTV2_CHANNEL3},
+     {"NTV2_CHANNEL4", NTV2Channel::NTV2_CHANNEL4},
+     {"NTV2_CHANNEL5", NTV2Channel::NTV2_CHANNEL5},
+     {"NTV2_CHANNEL6", NTV2Channel::NTV2_CHANNEL6},
+     {"NTV2_CHANNEL7", NTV2Channel::NTV2_CHANNEL7},
+     {"NTV2_CHANNEL8", NTV2Channel::NTV2_CHANNEL8}}};
 
-static NTV2Channel ToNTV2Channel(const std::string& value) {
-  auto it = NTV2ChannelMapping.find(value);
-  if (it != NTV2ChannelMapping.end()) {
-    return it->second;
-  } else {
-    return NTV2Channel::NTV2_CHANNEL_INVALID;
+constexpr NTV2Channel ToNTV2Channel(std::string_view value) {
+  for (const auto& [name, channel] : NTV2ChannelMapping) {
+    if (name == value) { return channel; }
   }
+  return NTV2Channel::NTV2_CHANNEL_INVALID;
 }
 
 }  // namespace
@@ -83,10 +83,10 @@ class PyAJASourceOp : public AJASourceOp {
   // Define a constructor that fully initializes the object.
   PyAJASourceOp(
       Fragment* fragment, const py::args& args, const std::string& device = "0"s,
-      const std::variant<std::string, NTV2Channel> channel = NTV2Channel::NTV2_CHANNEL1,
+      const std::variant<std::string, NTV2Channel>& channel = NTV2Channel::NTV2_CHANNEL1,
       uint32_t width = 1920, uint32_t height = 1080, uint32_t framerate = 60,
       bool interlaced = false, bool rdma = false, bool enable_overlay = false,
-      const std::variant<std::string, NTV2Channel> overlay_channel = NTV2Channel::NTV2_CHANNEL2,
+      const std::variant<std::string, NTV2Channel>& overlay_channel = NTV2Channel::NTV2_CHANNEL2,
       bool overlay_rdma = true, const std::string& name = "aja_source")
       : AJASourceOp(ArgList{Arg{"device", device},
                             Arg{"width", width},
@@ -110,7 +110,7 @@ class PyAJASourceOp : public AJASourceOp {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    setup(*spec_);
   }
 };
 

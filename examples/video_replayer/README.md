@@ -4,7 +4,7 @@ Minimal example to demonstrate the use of the video stream replayer operator to 
 
 The video frames need to have been converted to a gxf entity format to use as input. You can use the `convert_video_to_gxf_entities.py` script installed in `/opt/nvidia/holoscan/bin` or available [on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#convert_video_to_gxf_entitiespy) (tensors will be loaded on the GPU).
 
-> Note: Support for H264 stream support is in progress and can be found on [HoloHub](https://nvidia-holoscan.github.io/holohub)
+> Note: Support for H264 stream support is in progress and can be found on [HoloHub](https://github.com/nvidia-holoscan/holohub)
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/video_replayer.html) for step-by-step documentation of this example.*
 

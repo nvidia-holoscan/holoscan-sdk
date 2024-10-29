@@ -1,6 +1,6 @@
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,15 +30,19 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<int*>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("Tx message value: {}", ++index_);
-    if (index_ % 2) {
-      int* value = new int{index_};
+    if (index_ % 2 != 0) {
+      int* value = new int{index_};  // NOLINT(*)
       op_output.emit(value, "out");  // emit only odd values
     } else {
       op_output.emit(nullptr, "out");  // emit nullptr for even values
     }
-  }
+    index_++;
+  }  // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
+
+ private:
   int index_ = 0;
 };
 
@@ -54,15 +58,16 @@ class PingMxOp : public Operator {
     spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this value", 2);
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
-    auto value = op_input.receive<int*>("in").value();
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    auto* value = op_input.receive<int*>("in").value();
 
     HOLOSCAN_LOG_INFO("Middle message received (count: {})", count_++);
 
-    if (value) {
+    if (value != nullptr) {
       HOLOSCAN_LOG_INFO("Middle message value: {}", *value);
       op_output.emit((*value) * multiplier_, "out");
-      delete value;
+      delete value;  // NOLINT(*)
     }
   };
 
@@ -81,7 +86,8 @@ class PingRxOp : public Operator {
     spec.input<int>("in").condition(holoscan::ConditionType::kNone);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto received_value = op_input.receive<int>("in");
 
     HOLOSCAN_LOG_INFO("Rx message received (count: {})", count_++);
@@ -115,7 +121,7 @@ class MyPingApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
   auto app = holoscan::make_application<MyPingApp>();
   app->run();
 

@@ -167,7 +167,7 @@ struct BufferInfo;
  *     - **image_format**: color image format, used if `type` is `color`, `color_lut` or
  *         `depth_map_color`. (default: `auto_detect`).
  *       - type: `std::string`
- *     - **color**: RGBA color of rendered geometry (default: `[1.f, 1.f, 1.f, 1.f]`)
+ *     - **color**: RGBA color of rendered geometry (default: `[1.F, 1.F, 1.F, 1.F]`)
  *       - type: `std::vector<float>`
  *     - **line_width**: line width for geometry made of lines (default: `1.0`)
  *       - type: `float`
@@ -749,7 +749,7 @@ class HolovizOp : public Operator {
 
     std::string tensor_name_;  ///< name of the tensor/video buffer containing the input data
     InputType type_ = InputType::UNKNOWN;  ///< input type
-    float opacity_ = 1.f;  ///< layer opacity, 1.0 is fully opaque, 0.0 is fully transparent
+    float opacity_ = 1.F;  ///< layer opacity, 1.0 is fully opaque, 0.0 is fully transparent
     int32_t priority_ =
         0;  ///< layer priority, determines the render order, layers with higher priority values are
             ///< rendered on top of layers with lower priority values
@@ -763,9 +763,9 @@ class HolovizOp : public Operator {
     ChromaLocation y_chroma_location_ =
         ChromaLocation::COSITED_EVEN;  ///< chroma location in y direction for formats which are
                                        ///< chroma downsampled in height (420)
-    std::vector<float> color_{1.f, 1.f, 1.f, 1.f};  ///< color of rendered geometry
-    float line_width_ = 1.f;                        ///< line width for geometry made of lines
-    float point_size_ = 1.f;                        ///< point size for geometry made of points
+    std::vector<float> color_{1.F, 1.F, 1.F, 1.F};  ///< color of rendered geometry
+    float line_width_ = 1.F;                        ///< line width for geometry made of lines
+    float point_size_ = 1.F;                        ///< point size for geometry made of points
     std::vector<std::string> text_;  ///< array of text strings, used when type_ is TEXT.
     DepthMapRenderMode depth_map_render_mode_ =
         DepthMapRenderMode::POINTS;  ///< depth map render mode, used if type_ is
@@ -790,12 +790,12 @@ class HolovizOp : public Operator {
      * viewport instead of the upper left corner.
      */
     struct View {
-      float offset_x_ = 0.f,
-            offset_y_ = 0.f;  ///< offset of top-left corner of the view. Top left coordinate of
+      float offset_x_ = 0.F,
+            offset_y_ = 0.F;  ///< offset of top-left corner of the view. Top left coordinate of
                               /// the window area is (0, 0) bottom right
                               /// coordinate is (1, 1).
-      float width_ = 1.f,
-            height_ = 1.f;  ///< width and height of the view in normalized range. 1.0 is full size.
+      float width_ = 1.F,
+            height_ = 1.F;  ///< width and height of the view in normalized range. 1.0 is full size.
       std::optional<std::array<float, 16>>
           matrix_;  ///< row major 4x4 transform matrix (optional, can be nullptr)
     };

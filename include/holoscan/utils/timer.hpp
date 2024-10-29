@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -120,7 +120,11 @@ class Timer {
       elapsed_seconds_ =
           std::chrono::duration_cast<std::chrono::duration<double>>(end_ - start_).count();
     }
-    if (is_auto_output_) { print(); }
+    if (is_auto_output_) {
+      try {
+        print();
+      } catch (const std::exception& e) {}  // suppress exceptions from fmt
+    }
   }
 
   /**

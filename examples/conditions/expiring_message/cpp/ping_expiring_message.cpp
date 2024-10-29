@@ -32,7 +32,8 @@ class PingTxOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<std::shared_ptr<std::string>>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value =
         std::make_shared<std::string>(fmt::format("ExpiringMessageAvailable ping: {}", index_));
     ++index_;
@@ -40,9 +41,9 @@ class PingTxOp : public Operator {
     // retrieve the scheduler used for this application via it's fragment
     auto scheduler = fragment_->scheduler();
     // To get the clock we currently have to cast the scheduler to gxf::GXFScheduler.
-    // TODO: Refactor C++ lib so the clock method is on Scheduler rather than GXFScheduler.
-    //       That would allow us to avoid this dynamic_pointer_cast, but might require adding
-    //       renaming Clock->GXFClock and then adding a new holoscan::Clock independent of GXF.
+    // TODO(unknown): Refactor C++ lib so the clock method is on Scheduler rather than
+    //   GXFScheduler. That would allow us to avoid this dynamic_pointer_cast, but might require
+    //   adding renaming Clock->GXFClock and then adding a new holoscan::Clock independent of GXF.
     auto gxf_scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(scheduler);
     auto clock = gxf_scheduler->clock();
     auto timestamp = clock->timestamp();
@@ -72,19 +73,21 @@ class PingRxOp : public Operator {
         .condition(ConditionType::kExpiringMessageAvailable, expiring_message_arglist);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
-    auto in_value = op_input.receive<std::shared_ptr<std::string>>("in");
-
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("PingRxOp::compute() called");
 
-    while (in_value) {
+    while (true) {
+      auto in_value = op_input.receive<std::shared_ptr<std::string>>("in");
+
+      if (!in_value) { break; }
+
       auto message = in_value.value();
       if (message) {
         HOLOSCAN_LOG_INFO("Rx message received: {}", message->c_str());
       } else {
         HOLOSCAN_LOG_INFO("Rx message received: nullptr");
       }
-      in_value = op_input.receive<std::shared_ptr<std::string>>("in");
     }
   };
 };
@@ -111,7 +114,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<App>();
 
   // Get the configuration

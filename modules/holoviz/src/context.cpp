@@ -149,7 +149,7 @@ class Context::Impl {
   std::optional<SurfaceFormat> surface_format_;
   CUstream cuda_stream_ = 0;
   std::string font_path_;
-  float font_size_in_pixels_ = 0.f;
+  float font_size_in_pixels_ = 0.F;
   PresentMode present_mode_ = PresentMode::AUTO;
 
   std::unique_ptr<Window> window_;

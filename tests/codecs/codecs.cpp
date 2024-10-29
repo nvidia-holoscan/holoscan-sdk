@@ -156,7 +156,7 @@ void codec_shared_vector_compare(std::shared_ptr<dataT> value, size_t buffer_siz
   }
 }
 
-// TODO: update size check here
+// TODO(unknown): update size check here
 template <typename dataT>
 void codec_vector_vector_compare(dataT& vectors, size_t buffer_size = 4096,
                                  bool omit_size_check = true, bool omit_values_check = false) {
@@ -185,7 +185,7 @@ void codec_vector_vector_compare(dataT& vectors, size_t buffer_size = 4096,
   }
 }
 
-// TODO: update size check here
+// TODO(unknown): update size check here
 template <typename dataT>
 void codec_shared_vector_vector_compare(std::shared_ptr<dataT> vectors, size_t buffer_size = 4096,
                                         bool omit_size_check = true,

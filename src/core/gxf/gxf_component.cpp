@@ -114,7 +114,7 @@ void GXFComponent::gxf_initialize() {
     gxf_component_ = handle;
     gxf_cid_ = handle->cid();
   } else {
-    // TODO: make sure all components always get initialized via GraphEntity so we can
+    // TODO(unknown): make sure all components always get initialized via GraphEntity so we can
     //       remove this code path. Some cases such as passing Arg of type Condition or
     //       Resource to make_operator will currently still use this code path.
     HOLOSCAN_LOG_TRACE(
@@ -123,7 +123,7 @@ void GXFComponent::gxf_initialize() {
         GxfComponentAdd(gxf_context_, gxf_eid_, gxf_tid_, gxf_cname().c_str(), &gxf_cid_));
   }
 
-  // TODO: replace gxf_cptr_ with Handle<Component>?
+  // TODO(unknown): replace gxf_cptr_ with Handle<Component>?
   HOLOSCAN_GXF_CALL(
       GxfComponentPointer(gxf_context_, gxf_cid_, gxf_tid_, reinterpret_cast<void**>(&gxf_cptr_)));
 }
@@ -139,7 +139,7 @@ void GXFComponent::set_gxf_parameter(const std::string& component_name, const st
                              "component '{}':: failed to set GXF parameter '{}'",
                              component_name,
                              key);
-  // TODO: handle error
+  // TODO(unknown): handle error
 }
 
 }  // namespace holoscan::gxf

@@ -36,6 +36,7 @@
 #include "./component.hpp"
 #include "./condition.hpp"
 #include "./forward_def.hpp"
+#include "./graph.hpp"
 #include "./messagelabel.hpp"
 #include "./metadata.hpp"
 #include "./operator_spec.hpp"
@@ -83,7 +84,7 @@
  */
 #define HOLOSCAN_OPERATOR_FORWARD_ARGS(class_name) \
   HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()             \
-  class_name(ArgT&& arg, ArgsT&&... args)          \
+  explicit class_name(ArgT&& arg, ArgsT&&... args) \
       : Operator(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 /**
@@ -117,7 +118,7 @@
  */
 #define HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(class_name, super_class_name) \
   HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()                                     \
-  class_name(ArgT&& arg, ArgsT&&... args)                                  \
+  explicit class_name(ArgT&& arg, ArgsT&&... args)                         \
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
@@ -352,7 +353,7 @@ class Operator : public ComponentBase {
    *
    * @param spec The reference to the operator specification.
    */
-  virtual void setup(OperatorSpec& spec) { (void)spec; }
+  virtual void setup([[maybe_unused]] OperatorSpec& spec) {}
 
   /**
    * @brief Returns whether the operator is a root operator based on its fragment's graph
@@ -376,6 +377,32 @@ class Operator : public ComponentBase {
    * @return True, if the operator is a leaf operator; false, otherwise
    */
   bool is_leaf();
+
+  /**
+   * @brief Returns whether all the successors of an operator are virtual operators
+   *
+   * @param op The shared_ptr to the operator for which the check is to be performed
+   * @param graph The graph of operators. fragment()->graph() can usually be used to get this graph.
+   * @return true if the operator has all virtual operator successors, false otherwise
+   */
+  static bool is_all_operator_successor_virtual(OperatorNodeType op, OperatorGraph& graph);
+
+  /**
+   * @brief Returns whether all the predecessors of an operator are virtual operators
+   *
+   * @param op The shared_ptr to the operator for which the check is to be performed
+   * @param graph The graph of operators. fragment()->graph() can usually be used to get this graph.
+   * @return true if the operator has all virtual operator predecessors, false otherwise
+   */
+  static bool is_all_operator_predecessor_virtual(OperatorNodeType op, OperatorGraph& graph);
+
+  /**
+   * @brief Returns the fully qualified name of the operator including the name of the fragment.
+   *
+   * @return std::string fully qualified name of the operator in the format:
+   * "<fragment_name>.<operator_name>"
+   */
+  std::string qualified_name();
 
   /**
    * @brief Initialize the operator.
@@ -417,12 +444,9 @@ class Operator : public ComponentBase {
    * @param op_output The output context of the operator.
    * @param context The execution context of the operator.
    */
-  virtual void compute(InputContext& op_input, OutputContext& op_output,
-                       ExecutionContext& context) {
-    (void)op_input;
-    (void)op_output;
-    (void)context;
-  }
+  virtual void compute([[maybe_unused]] InputContext& op_input,
+                       [[maybe_unused]] OutputContext& op_output,
+                       [[maybe_unused]] ExecutionContext& context) {}
 
   /**
    * @brief Register the argument setter for the given type.
@@ -616,12 +640,19 @@ class Operator : public ComponentBase {
   // externally by them
   friend class AnnotatedDoubleBufferReceiver;
   friend class AnnotatedDoubleBufferTransmitter;
+  friend class HoloscanUcxTransmitter;
+  friend class HoloscanUcxReceiver;
   friend class DFFTCollector;
 
   // Make GXFExecutor a friend class so it can call protected initialization methods
   friend class holoscan::gxf::GXFExecutor;
   // Fragment should be able to call reset_graph_entities
   friend class Fragment;
+
+  friend gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
+                                         const char* name);
+  friend gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Operator* op,
+                                       const char* name);
 
   /**
    * @brief This function creates a GraphEntity corresponding to the operator
@@ -734,7 +765,6 @@ class Operator : public ComponentBase {
           // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
           auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
           const auto& arg_type = arg.arg_type();
-          (void)param;
 
           auto element_type = arg_type.element_type();
           auto container_type = arg_type.container_type();

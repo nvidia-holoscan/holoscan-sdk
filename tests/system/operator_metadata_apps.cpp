@@ -47,7 +47,8 @@ class PingTxMetadataOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.output<int>("out"); }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     if (is_metadata_enabled()) {
       auto dynamic_metadata = metadata();
       if (num_keys_ == 1) {
@@ -82,7 +83,8 @@ class ForwardOp : public Operator {
     spec.output<int>("out");
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("in").value();
     if (is_metadata_enabled()) {
       HOLOSCAN_LOG_INFO("fwd metadata()->size() = {}", metadata()->size());
@@ -101,7 +103,8 @@ class ForwardAddMetadataOp : public Operator {
     spec.input<int>("in");
     spec.output<int>("out");
   }
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("in").value();
     if (is_metadata_enabled()) {
       auto meta = metadata();
@@ -122,7 +125,8 @@ class ForwardAddMetadataOp2 : public Operator {
     spec.input<int>("in");
     spec.output<int>("out");
   }
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("in").value();
     if (is_metadata_enabled()) {
       auto meta = metadata();
@@ -146,7 +150,8 @@ class PingThreeRxMetadataOp : public Operator {
     spec.input<int>("in3");
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = op_input.receive<int>("in1").value();
     auto value2 = op_input.receive<int>("in2").value();
     auto value3 = op_input.receive<int>("in3").value();
@@ -172,7 +177,8 @@ class PingSingleRxMetadataOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.input<int>("in1"); }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = op_input.receive<int>("in1").value();
     auto meta = metadata();
     HOLOSCAN_LOG_INFO("{} metadata has {} keys", name(), meta->size());
@@ -212,7 +218,8 @@ class PingTxTensorMapMetadataOp : public Operator {
     Operator::initialize();
   }
 
-  void compute(InputContext&, OutputContext& op_output, ExecutionContext& context) override {
+  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
     if (is_metadata_enabled()) {
       auto dynamic_metadata = metadata();
       if (num_keys_ == 1) {
@@ -289,7 +296,8 @@ class PingSingleRxTensorMapMetadataOp : public Operator {
 
   void setup(OperatorSpec& spec) override { spec.input<holoscan::TensorMap>("in1"); }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = op_input.receive<holoscan::TensorMap>("in1").value();
     auto meta = metadata();
     HOLOSCAN_LOG_INFO("{} metadata has {} keys", name(), meta->size());

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2018-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
  //--------------------------------------------------------------------
@@ -474,7 +474,7 @@ NV_COMPILE_TIME_ASSERT(NV_OFFSET_OF(NvPackValidation, a) == 8);
 
 #define    NV_MAX_REAL                    NV_MAX_F32
 #define NV_EPS_REAL                    NV_EPS_F32
-#define NV_NORMALIZATION_EPSILON    float(1e-20f)
+#define NV_NORMALIZATION_EPSILON    float(1e-20F)
 
 /** enum for empty constructor tag*/
 enum NvEMPTY            {    NvEmpty        };

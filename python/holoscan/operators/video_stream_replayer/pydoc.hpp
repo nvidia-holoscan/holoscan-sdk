@@ -35,6 +35,22 @@ Operator class to replay a video stream from a file.
         file being read, this tensor could be on either CPU or GPU. For the data used in examples
         distributed with the SDK, the tensor will be an unnamed GPU tensor (name == "").
 
+**==Device Memory Requirements==**
+
+    This operator reads data from a file to an intermediate host buffer and then transfers the data
+    to the GPU. Because both host and device memory is needed, an allocator supporting both memory
+    types must be used. Options for this are `UnboundedAllocator` and `RMMAllocator`. When
+    specifying memory pool sizes for `RMMAllocator`, the following memory blocks are needed:
+
+     1. One block of host memory equal in size to a single uncompressed video frame
+       is needed. Note that for RMMAllocator, the memory sizes should be specified in MiB, so the
+       minimum value can be obtained by:
+       ``math.ceil(height * width * channels * element_size_bytes) / (1024 * 1024))``.
+     2. One block of device memory equal in size to the host memory block.
+
+    When declaring an `RMMAllocator` memory pool, `host_memory_initial_size` and
+    `device_memory_initial_size` must be greater than or equal to the values discussed above.
+
 Parameters
 ----------
 fragment : holoscan.core.Fragment (constructor only)

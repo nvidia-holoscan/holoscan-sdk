@@ -24,7 +24,7 @@
 
 #include <holoscan/holoscan.hpp>
 
-#include "../env_wrapper.hpp"
+#include "distributed_app_fixture.hpp"
 #include "utility_apps.hpp"
 namespace holoscan {
 
@@ -32,13 +32,15 @@ namespace holoscan {
 // Tests
 ///////////////////////////////////////////////////////////////////////////////
 
-TEST(DistributedApp, TestTwoParallelFragmentsApp) {
+TEST_F(DistributedApp, TestTwoParallelFragmentsApp) {
   auto app = make_application<TwoParallelFragmentsApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("SingleOp fragment1.op: 0 - 10") != std::string::npos)
@@ -49,13 +51,15 @@ TEST(DistributedApp, TestTwoParallelFragmentsApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
+TEST_F(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
   auto app = make_application<TwoMultiInputsOutputsFragmentsApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -63,13 +67,15 @@ TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsApp) {
+TEST_F(DistributedApp, TestTwoMultipleSingleOutputOperatorsApp) {
   auto app = make_application<TwoMultipleSingleOutputOperatorsApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -77,13 +83,15 @@ TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsBroadcastApp) {
+TEST_F(DistributedApp, TestTwoMultipleSingleOutputOperatorsBroadcastApp) {
   auto app = make_application<TwoMultipleSingleOutputOperatorsBroadcastApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -91,13 +99,15 @@ TEST(DistributedApp, TestTwoMultipleSingleOutputOperatorsBroadcastApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestOneTxBroadcastOneRxTwoInputs) {
+TEST_F(DistributedApp, TestOneTxBroadcastOneRxTwoInputs) {
   auto app = make_application<OneTxBroadcastOneRxTwoInputs>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -105,13 +115,15 @@ TEST(DistributedApp, TestOneTxBroadcastOneRxTwoInputs) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp2) {
+TEST_F(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp2) {
   auto app = make_application<TwoMultiInputsOutputsFragmentsApp2>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -119,13 +131,15 @@ TEST(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp2) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestUCXConnectionApp) {
+TEST_F(DistributedApp, TestUCXConnectionApp) {
   auto app = make_application<UCXConnectionApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -133,13 +147,15 @@ TEST(DistributedApp, TestUCXConnectionApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestUCXConnectionApp2) {
+TEST_F(DistributedApp, TestUCXConnectionApp2) {
   auto app = make_application<UCXConnectionApp2>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -147,12 +163,14 @@ TEST(DistributedApp, TestUCXConnectionApp2) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestUCXLinearPipelineApp) {
+TEST_F(DistributedApp, TestUCXLinearPipelineApp) {
   auto app = make_application<UCXLinearPipelineApp>();
 
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 20") != std::string::npos)
@@ -160,13 +178,15 @@ TEST(DistributedApp, TestUCXLinearPipelineApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestUCXBroadcastApp) {
+TEST_F(DistributedApp, TestUCXBroadcastApp) {
   auto app = make_application<UCXBroadcastApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Rx fragment3.rx message received count: 10") != std::string::npos)
@@ -177,15 +197,19 @@ TEST(DistributedApp, TestUCXBroadcastApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestUCXBroadCastMultiReceiverApp) {
+TEST_F(DistributedApp, TestUCXBroadCastMultiReceiverAppLocal) {
+  // 'AppDriver::launch_fragments_async()' path will be tested.
   auto app = make_application<UCXBroadCastMultiReceiverApp>();
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
 
   std::string log_output = testing::internal::GetCapturedStderr();
+
   EXPECT_TRUE(log_output.find("RxParam fragment2.rx message received (count: 10, size: 2)") !=
               std::string::npos)
       << "=== LOG ===\n"
@@ -195,7 +219,30 @@ TEST(DistributedApp, TestUCXBroadCastMultiReceiverApp) {
       << log_output << "\n===========\n";
 }
 
-TEST(DistributedApp, TestDriverTerminationWithConnectionFailure) {
+TEST_F(DistributedApp, TestUCXBroadCastMultiReceiverAppWorker) {
+  // With this arguments, this will go through 'AppWorkerServiceImpl::GetAvailablePorts()' path
+  std::vector<std::string> args{"app", "--driver", "--worker", "--fragments=all"};
+  auto app = make_application<UCXBroadCastMultiReceiverApp>(args);
+
+  // capture output so that we can check that the expected value is present
+  testing::internal::CaptureStderr();
+
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  EXPECT_TRUE(log_output.find("RxParam fragment2.rx message received (count: 10, size: 2)") !=
+              std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("Rx fragment4.rx message received count: 10") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST_F(DistributedApp, TestDriverTerminationWithConnectionFailure) {
   const char* env_orig = std::getenv("HOLOSCAN_MAX_CONNECTION_RETRY_COUNT");
 
   // Set retry count to 1 to save time
@@ -203,8 +250,8 @@ TEST(DistributedApp, TestDriverTerminationWithConnectionFailure) {
   setenv("HOLOSCAN_MAX_CONNECTION_RETRY_COUNT", new_env_var, 1);
 
   // Test that the driver terminates when both the driver and the worker are started but the
-  // connection to the driver from the worker fails (wrong IP address such as '22' which is usually
-  // used for SSH and not bindable so we can safely assume that the connection will fail).
+  // connection to the driver from the worker fails (wrong IP address such as '22' which is
+  // usually used for SSH and not bindable so we can safely assume that the connection will fail).
   //
   // Note:: This test will hang if the port number 22 is bindable.
   const std::vector<std::string> args{
@@ -215,7 +262,9 @@ TEST(DistributedApp, TestDriverTerminationWithConnectionFailure) {
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
 
-  app->run();
+  try {
+    app->run();
+  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
   // The driver should terminate after the connection failure (after 1 retry)
 
   std::string log_output = testing::internal::GetCapturedStderr();

@@ -36,8 +36,6 @@
 #include "holoscan/logger/logger.hpp"
 #include "io_context.hpp"
 
-using std::string_literals::operator""s;
-
 namespace py = pybind11;
 
 namespace holoscan {

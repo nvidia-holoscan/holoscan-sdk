@@ -338,7 +338,7 @@ void Context::initQueueList(QueueScoreList& list, const uint32_t* maxFamilyCount
   for(uint32_t qF = 0; qF < m_physicalInfo.queueProperties.size(); ++qF)
   {
     const auto& queueFamily = m_physicalInfo.queueProperties[qF];
-    QueueScore  score{0, qF, 0, 1.0f};
+    QueueScore  score{0, qF, 0, 1.0F};
 
     for(uint32_t i = 0; i < 32; i++)
     {
@@ -448,8 +448,8 @@ bool Context::initDevice(uint32_t deviceIndex, const ContextCreateInfo& info)
       // handle each request individually
       for(uint32_t i = 0; i < it.count; i++)
       {
-        // in this pass we don't care about the real priority yet, queueList is initialized with 1.0f
-        QueueScore queue = removeQueueListItem(queueScoresTemp, it.requiredFlags, 1.0f);
+        // in this pass we don't care about the real priority yet, queueList is initialized with 1.0F
+        QueueScore queue = removeQueueListItem(queueScoresTemp, it.requiredFlags, 1.0F);
         if(!queue.score)
         {
           // there were not enough queues left supporting the required flags
@@ -848,7 +848,7 @@ void ContextCreateInfo::removeDeviceExtension(const char* name)
   }
 }
 
-void ContextCreateInfo::addRequestedQueue(VkQueueFlags flags, uint32_t count /*= 1*/, float priority /*= 1.0f*/)
+void ContextCreateInfo::addRequestedQueue(VkQueueFlags flags, uint32_t count /*= 1*/, float priority /*= 1.0F*/)
 {
   requestedQueues.push_back({flags, count, priority});
 }

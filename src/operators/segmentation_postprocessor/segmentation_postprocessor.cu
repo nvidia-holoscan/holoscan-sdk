@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,10 +68,10 @@ __global__ void postprocessing_kernel(Shape shape, const float* input, output_ty
   switch (network_output_type) {
     case NetworkOutputType::kSigmoid: {
       const float value = input[data_format_to_index<data_format>(shape, y, x, 0)];
-      max_index = value >= 0.5f ? 1 : 0;
+      max_index = value >= 0.5F ? 1 : 0;
     } break;
     case NetworkOutputType::kSoftmax: {
-      float max_value = 0.0f;
+      float max_value = 0.0F;
       for (uint32_t c = 0; c < shape.channels; c++) {
         const float value = input[data_format_to_index<data_format>(shape, y, x, c)];
         if (value > max_value) {

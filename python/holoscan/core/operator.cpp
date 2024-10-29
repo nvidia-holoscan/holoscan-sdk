@@ -10,7 +10,7 @@
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+4 * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
@@ -40,8 +40,7 @@
 #include "kwarg_handling.hpp"
 #include "operator_pydoc.hpp"
 
-using std::string_literals::operator""s;
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -61,19 +60,19 @@ void init_operator(py::module_& m) {
           //       it.
           //       Otherwise, this method will return a new IOSpec object instead of a reference to
           //       the existing one.
-          [](OperatorSpec& op, const std::string& name, py::object size) -> IOSpec& {
+          [](OperatorSpec& op, const std::string& name, const py::object& size) -> IOSpec& {
             // Check if 'size' is an int and convert to IOSpec::IOSize if necessary
             if (py::isinstance<py::int_>(size)) {
-              int size_int = size.cast<int>();
+              auto size_int = size.cast<int>();
               // Assuming IOSpec::IOSize can be constructed from an int
               return op.input<gxf::Entity>(name, IOSpec::IOSize(size_int));
-            } else if (py::isinstance<IOSpec::IOSize>(size)) {
+            }
+            if (py::isinstance<IOSpec::IOSize>(size)) {
               // Directly pass IOSpec::IOSize if 'size' is already the correct type
               return op.input<gxf::Entity>(name, size.cast<IOSpec::IOSize>());
-            } else {
-              throw std::runtime_error(
-                  "Invalid type for 'size'. Expected 'int' or 'holoscan.core.IOSpec.IOSize'.");
             }
+            throw std::runtime_error(
+                "Invalid type for 'size'. Expected 'int' or 'holoscan.core.IOSpec.IOSize'.");
           },
           "name"_a,
           py::kw_only(),
@@ -132,10 +131,11 @@ void init_operator(py::module_& m) {
   operator_class
       .def(py::init<py::object, Fragment*, const py::args&, const py::kwargs&>(),
            doc::Operator::doc_Operator_args_kwargs)
-      .def_property("name",
-                    py::overload_cast<>(&Operator::name, py::const_),
-                    (Operator & (Operator::*)(const std::string&)) & Operator::name,
-                    doc::Operator::doc_name)
+      .def_property(
+          "name",
+          py::overload_cast<>(&Operator::name, py::const_),
+          [](Operator& op, const std::string& name) -> Operator& { return op.name(name); },
+          doc::Operator::doc_name)
       .def_property_readonly(
           "fragment", py::overload_cast<>(&Operator::fragment), doc::Operator::doc_fragment)
       .def_property("spec",
@@ -220,7 +220,7 @@ void init_operator(py::module_& m) {
       .value("NATIVE", Operator::OperatorType::kNative)
       .value("GXF", Operator::OperatorType::kGXF)
       .value("VIRTUAL", Operator::OperatorType::kVirtual);
-}
+}  // init_operator
 
 PyOperatorSpec::PyOperatorSpec(Fragment* fragment, py::object op)
     : OperatorSpec(fragment), py_op_(std::move(op)) {}
@@ -233,7 +233,7 @@ void PyOperatorSpec::py_param(const std::string& name, const py::object& default
   std::string headline{""s};
   std::string description{""s};
   for (const auto& [kw_name, value] : kwargs) {
-    std::string param_name = kw_name.cast<std::string>();
+    auto param_name = kw_name.cast<std::string>();
     if (param_name == "headline") {
       headline = value.cast<std::string>();
     } else if (param_name == "description") {
@@ -281,27 +281,25 @@ std::list<Parameter<std::vector<IOSpec*>>>& PyOperatorSpec::py_receivers() {
 }
 
 // PyOperator
-
-PyOperator::PyOperator(py::object op, Fragment* fragment, const py::args& args,
+PyOperator::PyOperator(const py::object& op, Fragment* fragment, const py::args& args,
                        const py::kwargs& kwargs)
-    : Operator() {
+    : py_op_(op),
+      py_compute_(py::getattr(op, "compute")),
+      py_initialize_(py::getattr(op, "initialize")),
+      py_start_(py::getattr(op, "start")),
+      py_stop_(py::getattr(op, "stop")) {
   using std::string_literals::operator""s;
 
   HOLOSCAN_LOG_TRACE("PyOperator::PyOperator()");
-  py_op_ = op;
-  py_compute_ = py::getattr(op, "compute");        // cache the compute method
-  py_initialize_ = py::getattr(op, "initialize");  // cache the initialize method
-  py_start_ = py::getattr(op, "start");            // cache the start method
-  py_stop_ = py::getattr(op, "stop");              // cache the stop method
   fragment_ = fragment;
 
   // Store the application object to access the trace/profile functions
-  auto app = fragment_->application();
-  py_app_ = static_cast<PyApplication*>(app);
+  auto* app = fragment_->application();
+  py_app_ = dynamic_cast<PyApplication*>(app);
 
   // Parse args
-  for (auto& item : args) {
-    py::object arg_value = item.cast<py::object>();
+  for (const auto& item : args) {
+    auto arg_value = item.cast<py::object>();
     if (py::isinstance<Condition>(arg_value)) {
       this->add_arg(arg_value.cast<std::shared_ptr<Condition>>());
     } else if (py::isinstance<Resource>(arg_value)) {
@@ -319,8 +317,8 @@ PyOperator::PyOperator(py::object op, Fragment* fragment, const py::args& args,
 
   // Pars kwargs
   for (const auto& [name, value] : kwargs) {
-    std::string kwarg_name = name.cast<std::string>();
-    py::object kwarg_value = value.cast<py::object>();
+    auto kwarg_name = name.cast<std::string>();
+    auto kwarg_value = value.cast<py::object>();
     if (kwarg_name == "name"s) {
       if (py::isinstance<py::str>(kwarg_value)) {
         this->name(kwarg_value.cast<std::string>());
@@ -328,21 +326,16 @@ PyOperator::PyOperator(py::object op, Fragment* fragment, const py::args& args,
         throw std::runtime_error("name kwarg must be a string");
       }
     } else if (kwarg_name == "fragment"s) {
-      if (py::isinstance<Fragment>(kwarg_value)) {
-        throw std::runtime_error(
-            "Cannot add kwarg fragment. Fragment can only be provided positionally");
-      } else {
-        throw std::runtime_error("fragment kwarg must be a Fragment");
-      }
+      throw std::runtime_error("fragment cannot be passed via a kwarg, only positionally");
     } else if (py::isinstance<Condition>(kwarg_value)) {
       // Set the condition's name to the kwarg name
       auto cond = kwarg_value.cast<std::shared_ptr<Condition>>();
-      cond.get()->name(kwarg_name);
+      cond->name(kwarg_name);
       this->add_arg(cond);
     } else if (py::isinstance<Resource>(kwarg_value)) {
       // Set the resource's name to the kwarg name
       auto resource = kwarg_value.cast<std::shared_ptr<Resource>>();
-      resource.get()->name(kwarg_name);
+      resource->name(kwarg_name);
       this->add_arg(resource);
     } else {
       this->add_arg(py_object_to_arg(kwarg_value, kwarg_name));
@@ -350,7 +343,7 @@ PyOperator::PyOperator(py::object op, Fragment* fragment, const py::args& args,
   }
 
   // Set name if needed
-  if (name_ == "") {
+  if (name_.empty()) {
     static size_t op_number;
     op_number++;
     this->name("unnamed_operator_" + std::to_string(op_number));
@@ -424,6 +417,7 @@ PyOperator::TracingThreadLocal& PyOperator::get_tracing_data() {
     // Check if the module name starts with '_pydevd_bundle' which means that it is using
     // PyDevd debugger. If so, then we need to set the trace function to the current frame.
     auto module_name = trace_module.cast<std::string>();
+    // NOLINTNEXTLINE(abseil-string-find-str-contains)
     if (module_name.find("_pydevd_bundle") != std::string::npos) {
       if (data.pydevd_trace_func.is_none()) {
         // Get the trace function from the debugger
@@ -474,7 +468,7 @@ void PyOperator::set_py_tracing() {
     // If tracing is not enabled, do nothing and return
     if (!tracing_data.in_tracing) { return; }
 
-    auto py_thread_state = _PyThreadState_UncheckedGet();
+    auto* py_thread_state = _PyThreadState_UncheckedGet();
 
     // If tracing_data.is_func_set is false, cache the current trace/profile functions for
     // the current thread.
@@ -541,9 +535,11 @@ void PyOperator::set_py_tracing() {
     // https://github.com/python/cpython/blob/c184c6750e40ca4ffa4f62a5d145b892cbd066bc
     //   /Doc/whatsnew/3.11.rst#L2301
     // - tstate->frame is removed.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     py_thread_state->cframe->current_frame =
         reinterpret_cast<_PyInterpreterFrame*>(tracing_data.py_last_frame);
 #else  // < Python 3.11.0
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     py_thread_state->frame = reinterpret_cast<PyFrameObject*>(tracing_data.py_last_frame);
 #endif
 
@@ -620,7 +616,7 @@ void PyOperator::stop() {
 
 void PyOperator::compute(InputContext& op_input, OutputContext& op_output,
                          ExecutionContext& context) {
-  auto gxf_context = context.context();
+  auto* gxf_context = context.context();
 
   // Get the compute method of the Python Operator class and call it
   py::gil_scoped_acquire scope_guard;

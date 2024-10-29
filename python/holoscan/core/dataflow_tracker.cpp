@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@
 #include "dataflow_tracker_pydoc.hpp"
 #include "holoscan/core/dataflow_tracker.hpp"
 
-using pybind11::literals::operator""_a;
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -48,9 +48,9 @@ void init_data_flow_tracker(py::module_& m) {
            "num_buffered_messages"_a = kDefaultNumBufferedMessages,
            doc::DataFlowTracker::doc_enable_logging)
       .def("end_logging", &DataFlowTracker::end_logging, doc::DataFlowTracker::doc_end_logging)
-      // TODO: sphinx API doc build complains if more than one overloaded get_metric method has a
-      //       docstring specified. For now using the docstring defined for 2-argument
-      //       version and describe the single argument variant in the Notes section.
+      // TODO(unknown): sphinx API doc build complains if more than one overloaded get_metric method
+      // has a docstring specified. For now using the docstring defined for 2-argument
+      // version and describe the single argument variant in the Notes section.
       .def("get_metric",
            py::overload_cast<std::string, DataFlowMetric>(&DataFlowTracker::get_metric),
            "pathstring"_a,

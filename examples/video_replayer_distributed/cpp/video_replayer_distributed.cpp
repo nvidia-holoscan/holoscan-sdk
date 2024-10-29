@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,7 @@ class Fragment1 : public holoscan::Fragment {
     using namespace holoscan;
 
     ArgList args;
-    auto data_directory = std::getenv("HOLOSCAN_INPUT_PATH");
+    auto* data_directory = std::getenv("HOLOSCAN_INPUT_PATH");  // NOLINT(*)
     if (data_directory != nullptr && data_directory[0] != '\0') {
       auto video_directory = std::filesystem::path(data_directory);
       video_directory /= "racerx";
@@ -67,7 +67,7 @@ class DistributedVideoReplayerApp : public holoscan::Application {
   }
 };
 
-int main(int argc, char** argv) {
+int main([[maybe_unused]] int argc, char** argv) {
   // Get the yaml configuration file
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= std::filesystem::path("video_replayer_distributed.yaml");

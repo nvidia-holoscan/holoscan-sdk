@@ -52,6 +52,10 @@ class UcxContext : public gxf::GXFNetworkContext {
 
  private:
   Parameter<std::shared_ptr<UcxEntitySerializer>> entity_serializer_;
+  Parameter<bool> reconnect_;      ///< Try to reconnect if a connection is closed during run
+  Parameter<bool> cpu_data_only_;  ///< Support CPU memory only for UCX communication
+  Parameter<bool> enable_async_;   ///< Control whether UCX transmit/receive uses asynchronous mode
+
   // TODO: support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
 };

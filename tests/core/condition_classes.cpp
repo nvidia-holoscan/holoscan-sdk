@@ -32,6 +32,9 @@
 #include "holoscan/core/conditions/gxf/asynchronous.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/conditions/gxf/count.hpp"
+#include "holoscan/core/conditions/gxf/cuda_buffer_available.hpp"
+#include "holoscan/core/conditions/gxf/cuda_event.hpp"
+#include "holoscan/core/conditions/gxf/cuda_stream.hpp"
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/conditions/gxf/periodic.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
@@ -143,7 +146,7 @@ TEST(ConditionClasses, TestCountConditionGXFComponentMethods) {
 TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithoutSpec) {
   CountCondition count{10};
   count.fragment(&F);
-  // TODO: avoid segfault if initialize is called before the fragment is assigned
+  // TODO(unknown): avoid segfault if initialize is called before the fragment is assigned
 
   // test that an error is logged if initialize is called before a spec as assigned
   testing::internal::CaptureStderr();
@@ -214,19 +217,6 @@ TEST(ConditionClasses, TestMessageAvailableCondition) {
   EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
-TEST(ConditionClasses, TestExpiringMessageAvailableCondition) {
-  Fragment F;
-  const std::string name{"expiring-message-available-condition"};
-  ArgList arglist{Arg{"min_size", 1L}, Arg{"front_stage_max_size", 2L}};
-  auto condition = F.make_condition<ExpiringMessageAvailableCondition>(name, arglist);
-  EXPECT_EQ(condition->name(), name);
-  EXPECT_EQ(typeid(condition),
-            typeid(std::make_shared<ExpiringMessageAvailableCondition>(arglist)));
-  EXPECT_EQ(std::string(condition->gxf_typename()),
-            "nvidia::gxf::ExpiringMessageAvailableSchedulingTerm"s);
-  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
-}
-
 TEST(ConditionClasses, TestMessageAvailableConditionDefaultConstructor) {
   Fragment F;
   auto condition = F.make_condition<MessageAvailableCondition>();
@@ -243,6 +233,24 @@ TEST(ConditionClasses, TestMessageAvailableConditionSizeMethods) {
 
   condition->front_stage_max_size(5);
   EXPECT_EQ(condition->front_stage_max_size(), 5);
+}
+
+TEST(ConditionClasses, TestExpiringMessageAvailableCondition) {
+  Fragment F;
+  const std::string name{"expiring-message-available-condition"};
+  ArgList arglist{Arg{"min_size", 1L}, Arg{"front_stage_max_size", 2L}};
+  auto condition = F.make_condition<ExpiringMessageAvailableCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition),
+            typeid(std::make_shared<ExpiringMessageAvailableCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::ExpiringMessageAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
+TEST(ConditionClasses, TestExpiringMessageAvailableConditionDefaultConstructor) {
+  Fragment F;
+  auto condition = F.make_condition<ExpiringMessageAvailableCondition>();
 }
 
 TEST(ConditionClasses, TestPeriodicCondition) {
@@ -349,7 +357,7 @@ TEST(ConditionClasses, TestPeriodicConditionGXFComponentMethods) {
 TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithoutSpec) {
   PeriodicCondition periodic{1000000};
   periodic.fragment(&F);
-  // TODO: avoid segfault if initialize is called before the fragment is assigned
+  // TODO(unknown): avoid segfault if initialize is called before the fragment is assigned
 
   // test that an error is logged if initialize is called before a spec as assigned
   testing::internal::CaptureStderr();
@@ -419,6 +427,53 @@ TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithUnreco
   EXPECT_TRUE(log_output.find("'undefined_arg' not found in spec_.params") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
+}
+
+TEST(ConditionClasses, TestCudaBufferAvailableCondition) {
+  Fragment F;
+  const std::string name{"cuda-buffer-available-condition"};
+  auto condition = F.make_condition<CudaBufferAvailableCondition>(name);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<CudaBufferAvailableCondition>()));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::CudaBufferAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
+TEST(ConditionClasses, TestCudaBufferAvailableConditionDefaultConstructor) {
+  Fragment F;
+  auto condition = F.make_condition<CudaBufferAvailableCondition>();
+}
+
+TEST(ConditionClasses, TestCudaStreamCondition) {
+  Fragment F;
+  const std::string name{"cuda-stream-condition"};
+  auto condition = F.make_condition<CudaStreamCondition>(name);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<CudaStreamCondition>()));
+  EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::CudaStreamSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
+TEST(ConditionClasses, TestCudaStreamConditionDefaultConstructor) {
+  Fragment F;
+  auto condition = F.make_condition<CudaStreamCondition>();
+}
+
+TEST(ConditionClasses, TestCudaEventCondition) {
+  Fragment F;
+  const std::string name{"cuda-event-condition"};
+  const std::string event_name{"cuda-event"};
+  auto condition = F.make_condition<CudaEventCondition>(name, Arg{"event_name", event_name});
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<CudaEventCondition>()));
+  EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::CudaEventSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
+TEST(ConditionClasses, TestCudaEventConditionDefaultConstructor) {
+  Fragment F;
+  auto condition = F.make_condition<CudaEventCondition>();
 }
 
 }  // namespace holoscan

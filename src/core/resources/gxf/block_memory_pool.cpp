@@ -86,7 +86,7 @@ nvidia::gxf::MemoryStorageType BlockMemoryPool::storage_type() const {
   if (pool) {
     return pool->storage_type();
   } else {
-    // TODO: throw error or return Unexpected?
+    // TODO(unknown): throw error or return Unexpected?
     HOLOSCAN_LOG_ERROR("BlockMemoryPool component not yet registered with GXF");
     return nvidia::gxf::MemoryStorageType::kSystem;
   }
