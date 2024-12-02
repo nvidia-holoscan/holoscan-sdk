@@ -24,6 +24,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "gxf/std/dlpack_utils.hpp"  // nvidia::gxf::numpyTypestr
 #include "holoscan/core/common.hpp"
@@ -119,49 +120,48 @@ void set_array_interface(const py::object& obj,
   }
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-py::capsule py_dlpack(Tensor* tensor, py::object stream) {
-  // TOIMPROVE: need to get current stream pointer and call with the stream
-  cudaStream_t curr_stream_ptr = nullptr;  // legacy stream
+void synchronize_streams(cudaStream_t stream1, cudaStream_t stream2) {
+  cudaEvent_t stream1_event{};
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventCreateWithFlags(&stream1_event, cudaEventDisableTiming),
+                                 "Failure during call to cudaEventCreateWithFlags");
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventRecord(stream1_event, stream1),
+                                 "Failure during call to cudaEventRecord");
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamWaitEvent(stream2, stream1_event, 0),
+                                 "Failure during call to cudaStreamWaitEvent");
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventDestroy(stream1_event),
+                                 "Failure during call to cudaEventDestroy");
+}
 
+void process_dlpack_stream(py::object stream_obj) {
   int64_t stream_id = 1;  // legacy default stream
   cudaStream_t stream_ptr = nullptr;
 
-  if (stream.is_none()) {
-    stream = py::int_(1);  // legacy default stream
-  } else if (py::isinstance<py::int_>(stream)) {
-    stream_id = stream.cast<int64_t>();
+  if (stream_obj.is_none()) {
+    stream_obj = py::int_(1);  // legacy default stream
+  } else if (py::isinstance<py::int_>(stream_obj)) {
+    stream_id = stream_obj.cast<int64_t>();
     if (stream_id < -1) {
       throw std::runtime_error(
           "Invalid stream, valid stream should be -1 (non-blocking), 1 (legacy default stream), 2 "
           "(per-thread default stream), or a positive integer (stream pointer)");
     }
-    if (stream_id <= 2) {
-      // Allow the stream id 0 as a special case for the default stream.
-      // This is to support the legacy behavior.
-      stream_ptr = nullptr;
-    } else {
-      // NOLINTNEXTLINE(performance-no-int-to-ptr,cppcoreguidelines-pro-type-reinterpret-cast)
-      stream_ptr = reinterpret_cast<cudaStream_t>(stream_id);
-    }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr)
+    if (stream_id > 2) { stream_ptr = reinterpret_cast<cudaStream_t>(stream_id); }
   } else {
     throw std::runtime_error(fmt::format("Invalid stream type: should be int type but given '{}'",
-                                         std::string(py::str(stream))));
+                                         std::string(py::str(stream_obj))));
   }
 
   // Wait for the current stream to finish before the provided stream starts consuming the memory.
+  cudaStream_t curr_stream_ptr = nullptr;  // legacy stream
   if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
-    cudaEvent_t curr_stream_event{};
-    HOLOSCAN_CUDA_CALL_THROW_ERROR(
-        cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming),
-        "Failure during call to cudaEventCreateWithFlags");
-    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventRecord(curr_stream_event, curr_stream_ptr),
-                                   "Failure during call to cudaEventRecord");
-    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamWaitEvent(stream_ptr, curr_stream_event, 0),
-                                   "Failure during call to cudaStreamWaitEvent");
-    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventDestroy(curr_stream_event),
-                                   "Failure during call to cudaEventDestroy");
+    synchronize_streams(curr_stream_ptr, stream_ptr);
   }
+}
+
+py::capsule py_dlpack(Tensor* tensor, py::object stream) {
+  // determine stream and synchronize it with the default stream if necessary
+  process_dlpack_stream(std::move(stream));
 
   DLManagedTensor* dl_managed_tensor = tensor->to_dlpack();
 
@@ -184,7 +184,6 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream) {
 
   return dlpack_capsule;
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 py::tuple py_dlpack_device(Tensor* tensor) {
   auto& dl_tensor = tensor->dl_ctx()->tensor.dl_tensor;

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,5 +58,6 @@ if(HOLOSCAN_BUILD_TESTS)
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
           )
   set_tests_properties(EXAMPLE_CPP_FLOW_TRACKER_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Data Flow Tracking Results")
+                       PASS_REGULAR_EXPRESSION "Data Flow Tracking Results"
+                       PASS_REGULAR_EXPRESSION "Path 1: root1,middle1,leaf1")
 endif()

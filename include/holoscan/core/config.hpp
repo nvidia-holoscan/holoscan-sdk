@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_CONFIG_HPP
 #define HOLOSCAN_CORE_CONFIG_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <filesystem>
 #include <iostream>
 #include <string>

@@ -27,6 +27,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -41,6 +42,8 @@
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/conditions/gxf/expiring_message.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
+#include "holoscan/core/conditions/gxf/multi_message_available.hpp"
+#include "holoscan/core/conditions/gxf/multi_message_available_timeout.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/errors.hpp"
@@ -48,6 +51,7 @@
 #include "holoscan/core/graph.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/gxf/entity.hpp"
+#include "holoscan/core/gxf/entity_group.hpp"
 #include "holoscan/core/gxf/gxf_extension_registrar.hpp"
 #include "holoscan/core/gxf/gxf_network_context.hpp"
 #include "holoscan/core/gxf/gxf_operator.hpp"
@@ -66,6 +70,8 @@
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp"
 #include "holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp"
+#include "holoscan/core/resources/gxf/system_resources.hpp"
+#include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/services/common/forward_op.hpp"
 #include "holoscan/core/services/common/virtual_operator.hpp"
 #include "holoscan/core/signal_handler.hpp"
@@ -75,6 +81,7 @@
 #include "gxf/std/default_extension.hpp"
 #include "gxf/std/extension_factory_helper.hpp"
 #include "gxf/std/monitor.hpp"
+#include "gxf/std/receiver.hpp"
 #include "gxf/test/components/entity_monitor.hpp"
 
 namespace holoscan::gxf {
@@ -393,7 +400,7 @@ void bind_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t ei
         "Unable to support types other than ConnectorType::kDefault (rx_name: '{}')", rx_name));
   }
   const char* entity_name = "";
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(gxf_context, eid, &entity_name));
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGetName(gxf_context, eid, &entity_name));
 
   gxf_tid_t receiver_find_tid{};
   HOLOSCAN_GXF_CALL_FATAL(
@@ -608,10 +615,22 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
 
   // Set the default scheduling term for this input
   if (io_spec->conditions().empty()) {
-    ArgList args;
-    args.add(Arg("min_size") = static_cast<uint64_t>(queue_size));
-    io_spec->condition(
-        ConditionType::kMessageAvailable, Arg("receiver") = io_spec->connector(), args);
+    // Check if the receiver for this io_spec is already involved in a multi-message condition
+    bool port_has_multi_port_condition = false;
+    for (auto& condition_info : op->spec()->multi_port_conditions()) {
+      const auto& in_names = condition_info.port_names;
+      if (std::find(in_names.begin(), in_names.end(), rx_name) != in_names.end()) {
+        port_has_multi_port_condition = true;
+        break;
+      }
+    }
+    // Only add a MessageAvailable condition if it is not already associated with a condition
+    if (!port_has_multi_port_condition) {
+      ArgList args;
+      args.add(Arg("min_size") = static_cast<uint64_t>(queue_size));
+      io_spec->condition(
+          ConditionType::kMessageAvailable, Arg("receiver") = io_spec->connector(), args);
+    }
   }
 
   // Initialize conditions for this input
@@ -624,14 +643,14 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
             std::dynamic_pointer_cast<MessageAvailableCondition>(condition);
         // Note: GraphEntity::addSchedulingTerm requires a unique name here
         std::string cond_name =
-            fmt::format("__{}_{}_cond_{}", op->name(), rx_name, condition_index);
+            fmt::format("__{}_{}_message_available{}", op->name(), rx_name, condition_index);
         message_available_condition->receiver(connector);
         message_available_condition->name(cond_name);
         message_available_condition->fragment(fragment);
         auto rx_condition_spec = std::make_shared<ComponentSpec>(fragment);
         message_available_condition->setup(*rx_condition_spec);
         message_available_condition->spec(std::move(rx_condition_spec));
-        // Add to the same entity as the operator and initialize
+        // Add to the same entity as the operator. initialize() will be called later
         message_available_condition->add_to_graph_entity(op);
         break;
       }
@@ -640,15 +659,34 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
             std::dynamic_pointer_cast<ExpiringMessageAvailableCondition>(condition);
         // Note: GraphEntity::addSchedulingTerm requires a unique name here
         std::string cond_name =
-            fmt::format("__{}_{}_cond_{}", op->name(), rx_name, condition_index);
+            fmt::format("__{}_{}_expiring_message{}", op->name(), rx_name, condition_index);
         expiring_message_available_condition->receiver(connector);
         expiring_message_available_condition->name(cond_name);
         expiring_message_available_condition->fragment(fragment);
         auto rx_condition_spec = std::make_shared<ComponentSpec>(fragment);
         expiring_message_available_condition->setup(*rx_condition_spec);
         expiring_message_available_condition->spec(std::move(rx_condition_spec));
-        // Add to the same entity as the operator and initialize
+        // Add to the same entity as the operator. initialize() will be called later
         expiring_message_available_condition->add_to_graph_entity(op);
+        break;
+      }
+      case ConditionType::kMultiMessageAvailableTimeout: {
+        std::shared_ptr<MultiMessageAvailableTimeoutCondition> multi_message_timeout_condition =
+            std::dynamic_pointer_cast<MultiMessageAvailableTimeoutCondition>(condition);
+        // Note: GraphEntity::addSchedulingTerm requires a unique name here
+        std::string cond_name =
+            fmt::format("__{}_{}_message_timeout{}", op->name(), rx_name, condition_index);
+
+        // vector with a single receiver corresponding to this IOSpec
+        std::vector<std::shared_ptr<GXFResource>> receivers({connector});
+        multi_message_timeout_condition->receivers(receivers);
+        multi_message_timeout_condition->name(cond_name);
+        multi_message_timeout_condition->fragment(fragment);
+        auto rx_condition_spec = std::make_shared<ComponentSpec>(fragment);
+        multi_message_timeout_condition->setup(*rx_condition_spec);
+        multi_message_timeout_condition->spec(std::move(rx_condition_spec));
+        // Add to the same entity as the operator. initialize() will be called later
+        multi_message_timeout_condition->add_to_graph_entity(op);
         break;
       }
       case ConditionType::kNone:
@@ -679,7 +717,7 @@ void bind_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t e
         "Unable to support types other than ConnectorType::kDefault (tx_name: '{}')", tx_name));
   }
   const char* entity_name = "";
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(gxf_context, eid, &entity_name));
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGetName(gxf_context, eid, &entity_name));
 
   gxf_tid_t transmitter_find_tid{};
   HOLOSCAN_GXF_CALL_FATAL(
@@ -1635,6 +1673,51 @@ bool GXFExecutor::initialize_fragment() {
       HOLOSCAN_LOG_DEBUG("No target of op {} has a UCX connector.", op_name);
     }
   }
+
+  // Finish initialization of any thread pools after all operators have been initialized.
+  if (!fragment_->thread_pools_.empty()) {
+    if (typeid(*fragment_->scheduler()) == typeid(GreedyScheduler)) {
+      HOLOSCAN_LOG_WARN(
+          "The GreedyScheduler does not support thread pools. The thread pools defined by this "
+          "application will be ignored. To use thread pools, switch to either the "
+          "EventBasedScheduler or MultiThreadScheduler.");
+    }
+
+    // Update entity groups for operators that were assigned to a thread pool
+    for (const auto& pool : fragment_->thread_pools_) {
+      HOLOSCAN_LOG_DEBUG("Configuring thread pool: {}", pool->name());
+      auto pool_entity_group = pool->entity_group();
+      // add all operators associated with this pool to its entity group
+      // (Note: This will also remove the operator from whatever entity group it was in previously)
+      int32_t gpu_device = -1;
+      for (auto& op : pool->operators()) {
+        pool_entity_group->add(op, entity_prefix_);
+
+        // Warn if not all operators in the thread pool are not on the same GPUDevice.
+        // (CudaStreamPool, RMMAllocator, StreamOrderedAllocator and BlockMemoryPool components for
+        //  all operators in the thread pool must have been defined with the same integer "dev_id"
+        //  parameter value).
+        auto current_dev_id = holoscan::gxf::gxf_device_id(context_, op->graph_entity()->eid());
+        if (current_dev_id.has_value()) {
+          if (gpu_device == -1) {
+            gpu_device = current_dev_id.value();
+          } else if (gpu_device != current_dev_id.value()) {
+            std::string err_msg = fmt::format(
+                "All operators in thread pool '{}' must be using the same GPU device. Operator "
+                "'{}' has a component using a GPUDevice with CUDA device id {} but a prior "
+                "operator in the pool was using a component with device id {}. Please use "
+                "separate thread pools for operators on different devices.",
+                pool->name(),
+                op->name(),
+                current_dev_id.value(),
+                gpu_device);
+            HOLOSCAN_LOG_ERROR(err_msg);
+            throw std::runtime_error(err_msg);
+          }
+        }
+      }
+    }
+  }
   return true;
 }
 
@@ -1678,6 +1761,7 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   // Create Components for input
   const auto& inputs = spec.inputs();
   for (const auto& [name, io_spec] : inputs) {
+    HOLOSCAN_LOG_INFO("creating input IOSpec named '{}'", name);
     gxf::GXFExecutor::create_input_port(fragment(), context_, eid, io_spec.get(), op_eid_ != 0, op);
   }
 
@@ -1686,6 +1770,66 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   for (const auto& [name, io_spec] : outputs) {
     gxf::GXFExecutor::create_output_port(
         fragment(), context_, eid, io_spec.get(), op_eid_ != 0, op);
+  }
+
+  // Add any multi-message conditions
+  size_t multi_port_condition_index = 0;
+  for (auto& condition_info : spec.multi_port_conditions()) {
+    HOLOSCAN_LOG_INFO("Found a multi-message condition, adding it...");
+    // get receiver objects corresponding to the input port names specified
+    std::vector<std::shared_ptr<Resource>> condition_receivers;
+    condition_receivers.reserve(condition_info.port_names.size());
+    for (auto& input_port_name : condition_info.port_names) {
+      auto it = inputs.find(input_port_name);
+      if (it == inputs.end()) {
+        HOLOSCAN_LOG_ERROR("Input port '{}' requested by a multi-message condition was not found",
+                           input_port_name);
+        break;
+      }
+      condition_receivers.push_back(it->second->connector());
+    }
+    // skip adding the condition if any of the inputs was not found
+    if (condition_receivers.size() != condition_info.port_names.size()) {
+      HOLOSCAN_LOG_ERROR(
+          "Multi-message condition requested {} input ports, but {} were found. The requested "
+          "condition will not be added.",
+          condition_info.port_names.size(),
+          condition_receivers.size());
+      break;
+    }
+    // add the receiver objects to the argument list
+    condition_info.args.add(holoscan::Arg{"receivers", condition_receivers});
+    switch (condition_info.kind) {
+      case ConditionType::kMultiMessageAvailable: {
+        HOLOSCAN_LOG_TRACE("Adding a MultiMessageAvailableCondition to operator '{}'", op->name());
+        const std::string& condition_name =
+            fmt::format("__{}_multi_message{}", op->name(), multi_port_condition_index);
+        auto multi_port_condition = fragment()->make_condition<MultiMessageAvailableCondition>(
+            condition_name, condition_info.args);
+        // Add to the same entity as the operator
+        multi_port_condition->add_to_graph_entity(op);
+        op->add_arg(multi_port_condition);
+        break;
+      }
+      case ConditionType::kMultiMessageAvailableTimeout: {
+        HOLOSCAN_LOG_TRACE("Adding a MultiMessageAvailableTimeoutCondition to operator '{}'",
+                           op->name());
+        const std::string& condition_name =
+            fmt::format("__{}_multi_message_timeout{}", op->name(), multi_port_condition_index);
+        auto multi_port_condition =
+            fragment()->make_condition<MultiMessageAvailableTimeoutCondition>(condition_name,
+                                                                              condition_info.args);
+        // Add to the same entity as the operator
+        multi_port_condition->add_to_graph_entity(op);
+        op->add_arg(multi_port_condition);
+        break;
+      }
+      default:
+        throw std::runtime_error(
+            fmt::format("Condition type {} is not a supported multi-message condition",
+                        static_cast<int>(condition_info.kind)));
+    }
+    multi_port_condition_index++;
   }
 
   HOLOSCAN_LOG_TRACE("Configuring operator: {}", op->name());
@@ -1742,6 +1886,25 @@ bool GXFExecutor::is_holoscan() const {
     return false;
   }
   return zero_eid && zero_cid;
+}
+
+std::shared_ptr<GPUDevice> GXFExecutor::add_gpu_device_to_graph_entity(
+    const std::string& device_name, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,
+    std::optional<int32_t> device_id) {
+  int32_t gpu_id;
+  if (device_id.has_value()) {
+    gpu_id = device_id.value();
+  } else {
+    gpu_id = static_cast<int32_t>(AppDriver::get_int_env_var("HOLOSCAN_UCX_DEVICE_ID", 0));
+  }
+  auto gpu_device = fragment_->make_resource<GPUDevice>(
+      device_name, holoscan::Arg("dev_id", static_cast<int32_t>(gpu_id)));
+
+  gpu_device->gxf_eid(graph_entity->eid());
+  gpu_device->add_to_graph_entity(fragment_, graph_entity);
+  gpu_device->initialize();
+
+  return gpu_device;
 }
 
 bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
@@ -1871,62 +2034,95 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       network_context->gxf_eid(eid);
       network_context->initialize();
 
-      auto entity_group_gid = ::holoscan::gxf::add_entity_group(context_, "network_entity_group");
+      // add network_context to the network_entity_gorup
+      auto network_entity_group =
+          std::make_shared<gxf::EntityGroup>(context_, "network_entity_group");
 
-      int32_t gpu_id =
-          static_cast<int32_t>(AppDriver::get_int_env_var("HOLOSCAN_UCX_DEVICE_ID", 0));
-      std::string device_entity_name = fmt::format("{}gpu_device_entity", entity_prefix_);
+      // add a GPUDevice to the network_entity_group
+      // This is for the NetworkContext and Broadcast codelets that have a UcxTransmitter or
+      // UcxReceiver.
+      network_entity_group->add(*network_context);
+      // create new Entity to hold the GPUDevice
+      std::string device_name = fmt::format("{}gpu_device_entity", entity_prefix_);
       gpu_device_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
-      auto maybe = gpu_device_entity_->setup(context, device_entity_name.c_str());
-      if (!maybe) {
-        throw std::runtime_error(
-            fmt::format("Failed to create GPU device entity: '{}'", device_entity_name));
+      auto maybe = gpu_device_entity_->setup(context_, device_name.c_str());
+      if (maybe) {
+        auto gpu_device = add_gpu_device_to_graph_entity(device_name, gpu_device_entity_);
+        network_entity_group->add(*gpu_device);
+      } else {
+        // failed to create GPUDevice, a default device would be used.
+        HOLOSCAN_LOG_ERROR(
+            "Failed to generate a new GraphEntity to hold a GPUDevice. CUDA device id 0 will be "
+            "used.");
       }
-      // TODO (GXF4): should have an addResource to add to resources_ member instead of components_?
-      auto device_handle = gpu_device_entity_->addComponent(
-          "nvidia::gxf::GPUDevice", "gpu_device_component", {nvidia::gxf::Arg("dev_id", gpu_id)});
-      if (device_handle.is_null()) {
-        HOLOSCAN_LOG_ERROR("Failed to create GPU device resource for device {}", gpu_id);
-      }
 
-      // Note: GxfUpdateEntityGroup
-      //   calls Runtime::GxfUpdateEntityGroup(gid, eid)
-      //     which calls  EntityGroups::groupAddEntity(gid, eid); (entity_groups_ in
-      //     SharedContext)
-      //       which calls EntityGroupItem::addEntity for the EntityGroupItem corresponding to
-      //       gid
-      //         any eid corresponding to a ResourceBase class like GPUDevice or ThreadPool is
-      //             stored in internal resources_ vector
-      //         all other eid are stored in the entities vector
-
-      // add GPUDevice resource to the networking entity group
-      GXF_ASSERT_SUCCESS(
-          GxfUpdateEntityGroup(context_, entity_group_gid, gpu_device_entity_->eid()));
-
-      // add the network context to the entity group
-      auto gxf_network_context =
-          std::dynamic_pointer_cast<holoscan::gxf::GXFNetworkContext>(fragment_->network_context());
-      HOLOSCAN_GXF_CALL_FATAL(
-          GxfUpdateEntityGroup(context, entity_group_gid, gxf_network_context->gxf_eid()));
-
-      // Loop through all operators and add any operators with a UCX port to the entity group
+      // Loop through all operators and define a GPUDevice resource for any operators with a UCX
+      // port (if one does not already exist).
       auto& operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
+      int generated_device_entity_count = 0;
+      std::unordered_set<std::string> groups_with_device;
       for (auto& node : operator_graph.get_nodes()) {
+        // exit early for virtual operators
+        if (node->operator_type() == Operator::OperatorType::kVirtual) { continue; }
+
         auto op_spec = node->spec();
-        bool already_added = false;
+        bool has_ucx_connector = false;
         for (const auto& [_, io_spec] : op_spec->inputs()) {
           if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
-            add_operator_to_entity_group(context, entity_group_gid, node);
-            already_added = true;
+            has_ucx_connector = true;
             break;
           }
         }
-        if (already_added) { continue; }
-        for (const auto& [_, io_spec] : op_spec->outputs()) {
-          if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
-            add_operator_to_entity_group(context, entity_group_gid, node);
-            break;
+        if (!has_ucx_connector) {
+          for (const auto& [_, io_spec] : op_spec->outputs()) {
+            if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
+              has_ucx_connector = true;
+              break;
+            }
           }
+        }
+        // done if there is no UCX connector
+        if (!has_ucx_connector) { continue; }
+
+        // Add a GPUDevice to the entity group if one does not already exist there
+        // (UcxTransmitter and/or UcxReceiver expect to find a GPUDevice resource).
+        auto graph_entity = node->graph_entity();
+        if (!graph_entity) {
+          HOLOSCAN_LOG_ERROR(
+              "Operator '{}' with UCX connectors does not have a graph entity, "
+              "could not add GPUDevice",
+              node->name());
+          continue;
+        }
+
+        auto op_eid = graph_entity->eid();
+        auto maybe_device_id = holoscan::gxf::gxf_device_id(context_, op_eid);
+        auto entity_group_name = holoscan::gxf::gxf_entity_group_name(context_, op_eid);
+        if (groups_with_device.find(entity_group_name) != groups_with_device.end()) {
+          // already added a GPUDevice to this entity group
+          continue;
+        }
+        if (maybe_device_id) {
+          HOLOSCAN_LOG_DEBUG(
+              "operator '{}' is in EntityGroup '{}' with a GPUDevice having CUDA ID '{}'",
+              node->name(),
+              entity_group_name,
+              maybe_device_id.value());
+          groups_with_device.insert(entity_group_name);
+        } else {
+          HOLOSCAN_LOG_DEBUG("operator '{}' is in EntityGroup '{}' without a GPUDevice resource",
+                             node->name(),
+                             entity_group_name);
+          std::string device_name =
+              fmt::format("{}gpu_device_entity{}", entity_prefix_, generated_device_entity_count);
+          auto maybe_gpu_device = add_gpu_device_to_graph_entity(device_name, graph_entity);
+          if (maybe_gpu_device) {
+            HOLOSCAN_LOG_DEBUG(
+                "Generated GPUDevice '{}' for operator '{}'", device_name, node->name());
+            generated_device_entity_count++;
+          }
+          // store in set to avoid adding multiple GPUDevice objects to the same entity group
+          groups_with_device.insert(entity_group_name);
         }
       }
 
@@ -1935,10 +2131,12 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
         // Add the entity to the entity group if it has a UCX connector
         if (has_ucx_connector(broadcast_entity)) {
           auto broadcast_eid = broadcast_entity->eid();
-          HOLOSCAN_LOG_DEBUG("Adding implicit broadcast eid '{}' to entity group '{}'",
+          HOLOSCAN_LOG_DEBUG("Adding implicit broadcast eid '{}' to entity group '{}' with id '{}'",
                              broadcast_eid,
-                             entity_group_gid);
-          HOLOSCAN_GXF_CALL_FATAL(GxfUpdateEntityGroup(context, entity_group_gid, broadcast_eid));
+                             network_entity_group->name(),
+                             network_entity_group->gxf_gid());
+          HOLOSCAN_GXF_CALL_FATAL(
+              GxfUpdateEntityGroup(context, network_entity_group->gxf_gid(), broadcast_eid));
         }
       }
     } else {

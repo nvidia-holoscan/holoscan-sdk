@@ -18,7 +18,7 @@ Setup your developer kit:
 Developer Kit | User Guide | OS | GPU Mode
 ------------- | ---------- | --- | ---
 [NVIDIA IGX Orin][igx] | [Guide][igx-guide] | [IGX Software][igx-sw] 1.0 Production Release | iGPU **or*** dGPU
-[NVIDIA Jetson AGX Orin and Orin Nano][jetson-orin] | [Guide][jetson-guide] | [JetPack][jp] 6.0 | iGPU
+[NVIDIA Jetson AGX Orin and Orin Nano][jetson-orin] | [Guide][jetson-guide] | [JetPack][jp] 6.1 | iGPU
 [NVIDIA Clara AGX][clara-agx]<br>_Only supporting the NGC container_ | [Guide][clara-guide] | [HoloPack][sdkm] 1.2<br>_[Upgrade to 535+ drivers required][cagx-upgrade]_ | dGPU
 
 [clara-agx]: https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments
@@ -82,11 +82,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````

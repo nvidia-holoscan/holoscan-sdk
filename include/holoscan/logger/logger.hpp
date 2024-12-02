@@ -21,7 +21,6 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>  // allows fmt to format std::array, std::vector, etc.
 
-#include <chrono>
 #include <memory>
 #include <string>
 #include <string_view>

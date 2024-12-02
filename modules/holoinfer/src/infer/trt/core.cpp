@@ -191,8 +191,13 @@ bool TrtInfer::initialize_parameters() {
         holoinfer_type = holoinfer_datatype::h_UInt8;
         break;
       }
+      case nvinfer1::DataType::kHALF: {
+        holoinfer_type = holoinfer_datatype::h_Float16;
+        break;
+      }
       default: {
-        HOLOSCAN_LOG_INFO("TensorRT backend supports float, int8, int32, uint8 data types.");
+        HOLOSCAN_LOG_INFO(
+            "TensorRT backend supports float, float16, int8, int32, uint8 data types.");
         HOLOSCAN_LOG_ERROR("Data type not supported.");
         return false;
       }
@@ -259,26 +264,23 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
       return status;
     }
 
-    if (input_buffer->device_buffer_->data() == nullptr) {
-      status.set_message(" TRT inference core: Data in Input Device buffer is null.");
-      return status;
-    }
-
-    // Host to Device transfer
-    if (!cuda_buf_in_) {
+    if (cuda_buf_in_) {
+      if (input_buffer->device_buffer_->data() == nullptr) {
+        status.set_message(" TRT inference core: Data in Input Device buffer is null.");
+        return status;
+      }
+    } else {
+      // Host to Device transfer
       if (input_buffer->host_buffer_->size() == 0) {
         status.set_message(" TRT inference core: Empty input host buffer.");
         return status;
       }
 
-      if (input_buffer->device_buffer_->size() != input_buffer->host_buffer_->size()) {
-        status.set_message(" TRT inference core: Input Host and Device buffer size mismatch.");
-        return status;
-      }
+      input_buffer->device_buffer_->resize(input_buffer->host_buffer_->size());
 
       auto cstatus = cudaMemcpyAsync(input_buffer->device_buffer_->data(),
                                      input_buffer->host_buffer_->data(),
-                                     input_buffer->device_buffer_->get_bytes(),
+                                     input_buffer->host_buffer_->get_bytes(),
                                      cudaMemcpyHostToDevice,
                                      cuda_stream_);
       if (cstatus != cudaSuccess) {
@@ -377,7 +379,7 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
 
       // Instantiate graphExec from graph. The error node and error message parameters are unused
       // here.
-      check_cuda(cudaGraphInstantiate(&cuda_graph_instance_, cuda_graph, nullptr, nullptr, 0));
+      check_cuda(cudaGraphInstantiate(&cuda_graph_instance_, cuda_graph, 0));
     }
 
     check_cuda(cudaGraphDestroy(cuda_graph));

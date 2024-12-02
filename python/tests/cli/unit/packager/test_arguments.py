@@ -47,6 +47,10 @@ class TestPackagingArguments:
         self.input_args.platform = Platform.X64Workstation
         self.input_args.platform_config = PlatformConfiguration.dGPU
         self.input_args.includes = []
+        self.input_args.additional_libs = [
+            pathlib.Path("/path/to/lib"),
+            pathlib.Path("/path/to/so"),
+        ]
 
         self.source_load_called = False
 
@@ -144,6 +148,7 @@ class TestPackagingArguments:
         assert args.build_parameters.version == "HoloscanVersionNum"
         assert args.build_parameters.command_filename == "app"
         assert args.build_parameters.sdk == SdkType.Holoscan
+        assert args.build_parameters.additional_libs == self.input_args.additional_libs
         assert args.application_manifest is not None
         assert args.package_manifest is not None
         assert args.build_parameters.build_cache == self.input_args.build_cache

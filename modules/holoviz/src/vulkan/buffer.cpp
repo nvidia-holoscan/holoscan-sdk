@@ -27,14 +27,16 @@ Buffer::Buffer(Vulkan* vulkan, nvvk::ResourceAllocator* alloc, size_t size)
     : Resource(vulkan, alloc), size_(size) {}
 
 Buffer::~Buffer() {
-  wait();
+  try {
+    wait();
 
-  // check if this buffer had been imported to CUDA
-  if (device_ptr_) {
-    const CudaService::ScopedPush cuda_context = vulkan_->get_cuda_service()->PushContext();
-    device_ptr_.reset();
-  }
-  alloc_->destroy(buffer_);
+    // check if this buffer had been imported to CUDA
+    if (device_ptr_) {
+      const CudaService::ScopedPush cuda_context = vulkan_->get_cuda_service()->PushContext();
+      device_ptr_.reset();
+    }
+    alloc_->destroy(buffer_);
+  } catch (const std::exception& e) {}  // ignore potential exceptions
 }
 
 void Buffer::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {

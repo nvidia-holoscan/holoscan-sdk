@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_ARGUMENT_SETTER_HPP
 #define HOLOSCAN_CORE_ARGUMENT_SETTER_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <any>
 #include <complex>
 #include <functional>

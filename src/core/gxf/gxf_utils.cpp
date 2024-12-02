@@ -14,18 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <gxf/core/gxf.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <utility>
+
+#include <common/fixed_vector.hpp>
 
 #include "holoscan/core/gxf/gxf_utils.hpp"
 
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 #include "holoscan/core/io_context.hpp"
-
-#include "gxf/std/transmitter.hpp"
 
 namespace holoscan::gxf {
 
@@ -98,6 +100,55 @@ uint64_t get_default_queue_policy() {
     }
   }
   return 2UL;  // fail
+}
+
+std::optional<int32_t> gxf_device_id(gxf_context_t context, gxf_uid_t eid) {
+  // Get handle to entity
+  auto maybe = nvidia::gxf::Entity::Shared(context, eid);
+  if (!maybe) {
+    HOLOSCAN_LOG_ERROR("Failed to create shared Entity for eid {}", eid);
+    return std::nullopt;
+  }
+  auto entity = maybe.value();
+  // Find all GPUDevice components
+  auto maybe_resources = entity.findAllHeap<nvidia::gxf::GPUDevice>();
+  if (!maybe_resources) {
+    HOLOSCAN_LOG_ERROR("Failed to find resources in entity");
+    return std::nullopt;
+  }
+  auto resources = std::move(maybe_resources.value());
+  if (resources.empty()) { return std::nullopt; }
+  if (resources.size() > 1) {
+    HOLOSCAN_LOG_WARN(
+        "Multiple ({}) GPUDevice resources found in entity {}.", resources.size(), eid);
+  }
+
+  int32_t device_id = resources.at(0).value()->device_id();
+  // Loop over any additional device ID(s), warning if there are multiple conflicting IDs
+  for (size_t i = 1; i < resources.size(); i++) {
+    int32_t this_dev_id = resources.at(i).value()->device_id();
+    if (this_dev_id != device_id) {
+      HOLOSCAN_LOG_WARN(
+          "Additional GPUDevice resources with conflicting CUDA device ID {} found in entity "
+          "{}. The CUDA device ID of the first device found ({}) will be returned.",
+          this_dev_id,
+          eid,
+          device_id);
+    }
+  }
+  return device_id;
+}
+
+std::string gxf_entity_group_name(gxf_context_t context, gxf_uid_t eid) {
+  const char* name;
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGroupName(context, eid, &name));
+  return std::string{name};
+}
+
+gxf_uid_t gxf_entity_group_id(gxf_context_t context, gxf_uid_t eid) {
+  gxf_uid_t gid;
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGroupId(context, eid, &gid));
+  return gid;
 }
 
 }  // namespace holoscan::gxf

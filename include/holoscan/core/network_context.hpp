@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_NETWORK_CONTEXT_HPP
 #define HOLOSCAN_CORE_NETWORK_CONTEXT_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <stdio.h>
 #include <iostream>
 #include <memory>

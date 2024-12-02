@@ -16,9 +16,11 @@ limitations under the License.
 """  # noqa: E501
 
 import pytest
+from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.operators import PingRxOp, PingTxOp
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
@@ -122,3 +124,41 @@ def test_app_config_keys(config_file):
 
     # other non-existent keys are not
     assert "abcdefg" not in keys
+
+
+class MyPingApp(Application):
+    def compose(self):
+        # Define the tx and rx operators, allowing tx to execute 10 times
+        tx = PingTxOp(self, CountCondition(self, 10), name="tx")
+        rx = PingRxOp(self, name="rx")
+
+        # Define the workflow:  tx -> rx
+        self.add_flow(tx, rx)
+
+
+def test_app_log_function(capfd):
+    """
+    The following debug log messages are expected to be printed:
+
+        Executing PyApplication::run()... (log_func_ptr=0x7ffff37dc660)
+        Executing Application::run()... (log_func_ptr=0x7ffff37dc660)
+
+    The addresses (log_func_ptr=0x<address>) should be the same for both log messages.
+    """
+
+    env_var_settings = {
+        ("HOLOSCAN_LOG_LEVEL", "DEBUG"),
+    }
+    with env_var_context(env_var_settings):
+        # Application class's constructor reads the environment variable HOLOSCAN_LOG_LEVEL so
+        # wrap the app in the context manager to ensure the environment variables are set
+        app = MyPingApp()
+        app.run()
+
+    captured = capfd.readouterr()
+    # Extract text (log_func_ptr=0x<address>) from the log message and check if the addresses are
+    # all same.
+    import re
+
+    addresses = re.findall(r"log_func_ptr=0x[0-9a-fA-F]+", captured.err)
+    assert len(set(addresses)) == 1

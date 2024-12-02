@@ -62,6 +62,7 @@ target_sources(${PROJECT_NAME}
         cuda/convert.cu
         cuda/cuda_service.cpp
         cuda/gen_depth_map.cu
+        cuda/gen_primitive_vertices.cu
 
         layers/geometry_layer.cpp
         layers/image_layer.cpp

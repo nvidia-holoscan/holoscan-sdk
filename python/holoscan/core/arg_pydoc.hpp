@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,11 +52,7 @@ name : str, optional
 )doc")
 
 PYDOC(name, R"doc(
-The name of the argument.
-
-Returns
--------
-name : str
+Name of the argument.
 )doc")
 
 PYDOC(arg_type, R"doc(

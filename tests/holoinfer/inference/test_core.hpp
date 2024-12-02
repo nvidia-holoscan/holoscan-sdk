@@ -174,7 +174,11 @@ class HoloInferTests {
       {31, "TRT backend, Parallel inference on multi-GPU with Output on host"},
       {32, "TRT backend, multi rank test (rank 5)"},
       {33, "TRT backend, multi rank test (rank 9)"},
-      {34, "Torch backend, Basic inference"}};
+      {34, "Torch backend, Basic inference"},
+      {35, "ONNX backend, Basic parallel end-to-end cuda inference"},
+      {36, "ONNX backend, Input on host, cuda inference"},
+      {37, "ONNX backend, Output on host, cuda inference"},
+      {38, "ONNX backend, Input and output on device, CPU inference"}};
 };
 
 #endif /* HOLOINFER_INFERENCE_TESTS_HPP */

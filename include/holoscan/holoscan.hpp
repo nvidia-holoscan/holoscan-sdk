@@ -39,6 +39,7 @@
 
 // Domain objects
 #include "./core/gxf/entity.hpp"
+#include "./core/gxf/entity_group.hpp"
 
 // Conditions
 #include "./core/conditions/gxf/asynchronous.hpp"
@@ -50,6 +51,8 @@
 #include "./core/conditions/gxf/downstream_affordable.hpp"
 #include "./core/conditions/gxf/expiring_message.hpp"
 #include "./core/conditions/gxf/message_available.hpp"
+#include "./core/conditions/gxf/multi_message_available.hpp"
+#include "./core/conditions/gxf/multi_message_available_timeout.hpp"
 #include "./core/conditions/gxf/periodic.hpp"
 
 // NetworkContexts
@@ -69,6 +72,7 @@
 #include "./core/resources/gxf/std_component_serializer.hpp"
 #include "./core/resources/gxf/std_entity_serializer.hpp"
 #include "./core/resources/gxf/stream_ordered_allocator.hpp"
+#include "./core/resources/gxf/system_resources.hpp"
 #include "./core/resources/gxf/ucx_component_serializer.hpp"
 #include "./core/resources/gxf/ucx_entity_serializer.hpp"
 #include "./core/resources/gxf/ucx_holoscan_component_serializer.hpp"

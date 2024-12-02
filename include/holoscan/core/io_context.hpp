@@ -494,8 +494,9 @@ class InputContext {
   }
 
   inline holoscan::RuntimeError create_receive_error(const char* name, const char* message) {
-    auto error_message = fmt::format("ReceiveError on input port '{}': {}", name, message);
-    HOLOSCAN_LOG_DEBUG(error_message);
+    auto error_message =
+        fmt::format("Failure receiving message from input port '{}': {}", name, message);
+    HOLOSCAN_LOG_TRACE(error_message);
     return holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str());
   }
 

@@ -33,6 +33,7 @@
     holoscan.resources.StdComponentSerializer
     holoscan.resources.StdEntitySerializer
     holoscan.resources.StreamOrderedAllocator
+    holoscan.resources.ThreadPool
     holoscan.resources.Transmitter
     holoscan.resources.UnboundedAllocator
     holoscan.resources.UcxComponentSerializer
@@ -62,6 +63,7 @@ from ._resources import (
     StdComponentSerializer,
     StdEntitySerializer,
     StreamOrderedAllocator,
+    ThreadPool,
     Transmitter,
     UcxComponentSerializer,
     UcxEntitySerializer,
@@ -93,6 +95,7 @@ __all__ = [
     "StdComponentSerializer",
     "StdEntitySerializer",
     "StreamOrderedAllocator",
+    "ThreadPool",
     "Transmitter",
     "UcxComponentSerializer",
     "UcxEntitySerializer",

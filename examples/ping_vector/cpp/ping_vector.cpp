@@ -58,7 +58,8 @@ class PingMxOp : public Operator {
     spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this value", 2);
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto values1 = op_input.receive<std::vector<int>>("in").value();
 
     HOLOSCAN_LOG_INFO("Middle message received (count: {})", count_++);

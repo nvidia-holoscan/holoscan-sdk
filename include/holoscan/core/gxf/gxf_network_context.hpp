@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_NETWORK_CONTEXT_HPP
 #define HOLOSCAN_CORE_GXF_GXF_NETWORK_CONTEXT_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -45,6 +47,14 @@ class GXFNetworkContext : public holoscan::NetworkContext, public GXFComponent {
    * @return The type name of the GXF network context.
    */
   virtual const char* gxf_typename() const = 0;
+
+  /**
+   * @brief Get a YAML representation of the network context.
+   *
+   * @return YAML node including type, specs, resources of the network context in addition
+   * to the base component properties.
+   */
+  YAML::Node to_yaml_node() const override;
 
  protected:
   // Make Fragment a friend class so it can call reset_graph_entities

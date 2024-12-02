@@ -20,7 +20,6 @@
 #include <stdlib.h>  // POSIX setenv
 
 #include <algorithm>
-#include <chrono>
 #include <cstdlib>
 #include <deque>
 #include <memory>
@@ -814,14 +813,15 @@ bool AppDriver::check_configuration() {
     return false;
   }
 
-  // If the environment variable HOLOSCAN_ENABLE_HEALTH_CHECK is set to true, we enable the
-  // health check service.
-  if (get_bool_env_var("HOLOSCAN_ENABLE_HEALTH_CHECK")) { need_health_check_ = true; }
-
   auto& app_options = *options_;
 
-  // Or, if the driver or worker is running, we need to launch the health check service.
+  // If the driver or worker is running, we launch the health check service by default.
   if (app_options.run_driver || app_options.run_worker) { need_health_check_ = true; }
+
+  // Or, if the environment variable HOLOSCAN_ENABLE_HEALTH_CHECK is set to true or false, we enable
+  // or disable the health check service. If the environment variable is not set or invalid, we use
+  // the default value.
+  need_health_check_ = get_bool_env_var("HOLOSCAN_ENABLE_HEALTH_CHECK", need_health_check_);
 
   // Check if the driver or worker service needs to be launched
   if (app_options.run_driver) { need_driver_ = true; }

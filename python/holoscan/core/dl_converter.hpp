@@ -18,6 +18,7 @@
 #ifndef PYHOLOSCAN_CORE_DL_CONVERTER_HPP
 #define PYHOLOSCAN_CORE_DL_CONVERTER_HPP
 
+#include <cuda_runtime.h>
 #include <dlpack/dlpack.h>
 #include <pybind11/pybind11.h>
 
@@ -122,6 +123,9 @@ pybind11::tuple array2pytuple(const T* arr, size_t length) {
   }
   return result;
 }
+
+/// @brief Synchronize two CUDA streams
+void synchronize_streams(cudaStream_t stream1, cudaStream_t stream2);
 
 }  // namespace holoscan
 

@@ -9,6 +9,7 @@ This folder includes the following scripts:
 - [`convert_video_to_gxf_entities.py`](#convert_video_to_gxf_entitiespy)
 - [`download_ngc_data`](#download_ngc_data)
 - [`generate_extension_uuids.py`](#generate_extension_uuidspy)
+- [`generate_gxf_manifest.py`](#generate_gxf_manifestpy)
 - [`graph_surgeon.py`](#graph_surgeonpy)
 - [`gxf_entity_codec.py`](#gxf_entity_codecpy)
 - [`video_validation.py`](#video_validationpy)
@@ -109,6 +110,15 @@ Above commands will parse the video starting at 00:00:05 and ending at 00:00:10.
 
 ____
 
+## ctest_time_comparison.py
+
+This script compares time from different tests to make sure they match expected timing comparison.
+
+### Usage
+
+`python3 ./scripts/ctest_time_comparison.py <filename> "TEST1" "LESS" "TEST2"`
+____
+
 ## download_ngc_data
 
 Download and unzip datasets from NGC. This can optionally run a script to convert video files to GXF tensor files compatible with the `video_stream_replayer` operator.
@@ -136,6 +146,36 @@ Provides a set of UUIDs to be used by `GXF_EXT_FACTORY_SET_INFO` and `GXF_EXT_FA
 
 ``` sh
 python3 scripts/generate_extension_uuids.py
+```
+
+____
+
+## generate_gxf_manifest.py
+
+Generates a GXF extension registry manifest. Refer to [Graph Composer Registry documentation](https://docs.nvidia.com/metropolis/deepstream/dev-guide/graphtools-docs/docs/text/GraphComposer_Registry.html) for registry details.
+
+Holoscan SDK provides the CMake function `generate_gxf_registry_manifest` to call this script each time a target is updated.
+You can also call this script directly for manual testing with your own Holoscan GXF extensions.
+
+Note that GXF manifests are not portable and typically include filepaths relative to the
+build environment. All extensions must be available in the local environment to use this script.
+
+The script accepts a number of optional arguments, including manifest content, extension search paths,
+a custom Python `.pickle` database path, and more. See `generate_gxf_manifest.py -h` for help.
+
+The GXF registry CLI need not be present in the environment to generate an extension manifest.
+
+### Usage
+
+```sh
+python3 scripts/generate_gxf_manifest.py \
+    --output <my_manifest.yaml>
+    --name <MyHoloscanExtension> \
+    --extension-library <path/to/my_extension.so> \
+    --uuid <uuid> \
+    --version <version> \
+    --extension-dependencies [libgxf_std.so,libgxf_ucx.so,...]
+    ...
 ```
 
 ____

@@ -73,6 +73,7 @@ ConfigureTest(
   core/config.cpp
   core/data_exporter.cpp
   core/dataflow_tracker.cpp
+  core/entity_group.cpp
   core/fragment.cpp
   core/fragment_allocation.cpp
   core/io_spec.cpp
@@ -85,7 +86,14 @@ ConfigureTest(
   core/resource_classes.cpp
   core/scheduler_classes.cpp
   core/system_resource_manager.cpp
- )
+)
+
+if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
+  # Set test properties for CORE_TEST
+  # (death tests have to be excluded because it causes an issue with ASAN)
+  # https://github.com/google/googletest/blob/main/docs/advanced.md#death-tests-and-threads
+  set_tests_properties(CORE_TEST PROPERTIES ENVIRONMENT "GTEST_FILTER=-Application.TestAppHelpOption:Application.TestAppVersionOption")
+endif()
 
 # ##################################################################################################
 # * codecs tests ----------------------------------------------------------------------------------
@@ -166,6 +174,11 @@ target_link_libraries(SYSTEM_TEST
   holoscan::ops::video_stream_replayer
 )
 
+if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
+  # Exclude tests that are known to fail with ASAN
+  set_tests_properties(SYSTEM_TEST PROPERTIES ENVIRONMENT "GTEST_FILTER=-HolovizApps.*")
+endif()
+
 ConfigureTest(
   SYSTEM_DISTRIBUTED_TEST
   system/distributed/distributed_app.cpp
@@ -205,6 +218,13 @@ HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000;\
 HOLOSCAN_MAX_DURATION_MS=3000;\
 HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
 "
+  )
+endif()
+
+if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
+  # Append additional flags to exclude tests that are known to fail with ASAN
+  string(APPEND CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
+    ";GTEST_FILTER=-DistributedApp.TestTwoMultiInputsOutputsFragmentsApp"
   )
 endif()
 
@@ -285,8 +305,9 @@ target_link_libraries(HOLOINFER_TEST
 # * Flow Tracking tests ----------------------------------------------------------------------------------
 ConfigureTest(
   FLOW_TRACKING_TEST
-  flow_tracking/flow_tracking_cycle.cpp
   flow_tracking/entity_passthrough.cpp
+  flow_tracking/flow_tracking_cycle.cpp
+  flow_tracking/limited_tracking_tests.cpp
 )
 target_link_libraries(FLOW_TRACKING_TEST
   PRIVATE

@@ -13,9 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copy NOTICE file for installation
-install(FILES ${CMAKE_CURRENT_LIST_DIR}/cpack/NOTICE.txt
+# Copy NOTICE file for packaging
+install(FILES "${CMAKE_CURRENT_LIST_DIR}/cpack/NOTICE.txt"
     DESTINATION .
+    RENAME NOTICE
+    COMPONENT holoscan-cpack
+)
+
+# Copy LICENSE file for installation
+install(FILES "${CMAKE_BINARY_DIR}/LICENSE.txt"
+    DESTINATION "/usr/share/doc/holoscan/"
+    RENAME copyright
     COMPONENT holoscan-cpack
 )
 

@@ -201,7 +201,7 @@ ip -o -4 addr show | awk '{print $2, $4}' # to show interface name and IP
 `````{warning}
 ### Known limitations
 
-The following are known limitations of the distributed application support in the SDK, which will be addressed in future updates:
+The following are known limitations of the distributed application support in the SDK, some of which will be addressed in future updates:
 
 #### 1. A connection error message is displayed even when the distributed application is running correctly.
 
@@ -213,7 +213,15 @@ By default, device ID 0 is used by the UCX extensions to send/receive data betwe
 
 #### 3. "Address already in use" errors in distributed applications due to the health check service.
 
-In scenarios where distributed applications have both the driver and workers running on the same host, either within a Docker container or directly on the host, there's a possibility of encountering "Address already in use" errors. A potential solution is to assign a different port number to the `HOLOSCAN_HEALTH_CHECK_PORT` environment variable (default: `8777`), for example, by using `export HOLOSCAN_HEALTH_CHECK_PORT=8780`.
+If the driver or worker is running, the health check service is launched by default. Alternatively, if the environment variable `HOLOSCAN_ENABLE_HEALTH_CHECK` is set to true or false (can use "1" or "0", "on" or "off" as well, case-insensitive), the health check service is enabled or disabled accordingly. If the environment variable is not set or is invalid, the default value is used.
+
+In scenarios where distributed applications have both the driver and workers running on the same host, either within a Docker container or directly on the host, there's a possibility of encountering "Address already in use" errors.
+This issue can be avoided by setting the `HOLOSCAN_HEALTH_CHECK_PORT` environment variable to a different port number for the health check service. The default port number is `8777`. For example, the port number can be set to `8780` by using `export HOLOSCAN_HEALTH_CHECK_PORT=8780`.
+Alternatively, the health check service can be disabled by setting the `HOLOSCAN_ENABLE_HEALTH_CHECK` environment variable to `false`.
+
+#### 4. The use of the management port is unsupported on the NVIDIA IGX Orin Developer Kit.
+
+IGX devices come with two ethernet ports, noted as port #4 and #5 in the [NVIDIA IGX Orin User Guide](https://docs.nvidia.com/igx-orin/user-guide/latest/system-overview.html#i-o-and-external-interfaces). To run distributed applications on these devices, the user must ensure that ethernet port #4 is used to connect the driver and the workers.
 `````
 
 `````{note}
@@ -292,7 +300,7 @@ A table of the types that have codecs pre-registered so that they can be seriali
 | std::vector&lt;T&gt;                    | T is std::string or any of the boolean, integer or floating point types above             |
 | std::vector&lt;std::vector&lt;T&gt;&gt; | T is std::string or any of the boolean, integer or floating point types above             |
 | std::vector&lt;HolovizOp::InputSpec&gt; | a vector of InputSpec objects that are specific to HolovizOp                              |
-| std::shared_ptr&lt;%&gt;                | T is any of the scalar, vector or std::string types above |
+| std::shared_ptr&lt;T&gt;                | T is any of the scalar, vector or std::string types above |
 | tensor types                            | holoscan::Tensor, nvidia::gxf::Tensor, nvidia::gxf::VideoBuffer, nvidia::gxf::AudioBuffer |
 | GXF-specific types                      | nvidia::gxf::TimeStamp, nvidia::gxf::EndOfStream                                          |
 
@@ -689,7 +697,7 @@ if __name__ == "__main__":
     args = parser.parse_args(app_argv[1:])
     main(on_gpu=args.gpu)
 ```
-For Python, `app.argv[1:]` can be used with an `ArgumentParser` from Python's [argparse](https://docs.python.org/3/library/argparse.html) module. 
+For Python, `app.argv[1:]` can be used with an `ArgumentParser` from Python's [argparse](https://docs.python.org/3/library/argparse.html) module.
 
 Alternatively, it may be preferable to instead use `parser.parse_known_args()` to allow any arguments not defined by the user's parser to pass through to the application class itself. If one also sets `add_help=False` when constructing the `ArgumentParser`, it is possible to print the parser's help while still preserving the default application help (covering the default set of distributed application arguments). An example of this style is shown in the code block below.
 ```{code-block} Python

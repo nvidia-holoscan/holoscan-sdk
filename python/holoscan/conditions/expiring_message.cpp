@@ -54,9 +54,8 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
 
   // Define a constructor that fully initializes the object.
   explicit PyExpiringMessageAvailableCondition(
-      Fragment* fragment,
-      // std::shared_ptr<gxf::GXFResource> receiver,
-      int64_t max_batch_size, int64_t max_delay_ns, std::shared_ptr<Clock> clock = nullptr,
+      Fragment* fragment, int64_t max_batch_size, int64_t max_delay_ns,
+      std::shared_ptr<Clock> clock = nullptr,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, max_delay_ns) {
     name_ = name;
@@ -66,16 +65,15 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     } else {
       this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
     }
+    // Note "receiver" parameter is set automatically from GXFExecutor
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    // receiver = receiver;  // e.g. DoubleBufferReceiver
     setup(*spec_);
   }
 
   template <typename Rep, typename Period>
   PyExpiringMessageAvailableCondition(
-      Fragment* fragment,
-      // std::shared_ptr<gxf::GXFResource> receiver,
-      int64_t max_batch_size, std::chrono::duration<Rep, Period> recess_period_duration,
+      Fragment* fragment, int64_t max_batch_size,
+      std::chrono::duration<Rep, Period> recess_period_duration,
       std::shared_ptr<Clock> clock = nullptr,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, recess_period_duration) {
@@ -87,7 +85,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
       this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
     }
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    // receiver = receiver;  // e.g. DoubleBufferReceiver
+    // Note "receiver" parameter is set automatically from GXFExecutor
     setup(*spec_);
   }
 };

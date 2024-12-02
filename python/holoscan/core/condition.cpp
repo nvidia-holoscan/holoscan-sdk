@@ -99,7 +99,9 @@ void init_condition(py::module_& m) {
       .value("BOOLEAN", ConditionType::kBoolean)
       .value("PERIODIC", ConditionType::kPeriodic)
       .value("ASYNCHRONOUS", ConditionType::kAsynchronous)
-      .value("EXPIRING_MESSAGE_AVAILABLE", ConditionType::kExpiringMessageAvailable);
+      .value("EXPIRING_MESSAGE_AVAILABLE", ConditionType::kExpiringMessageAvailable)
+      .value("MULTI_MESSAGE_AVAILABLE", ConditionType::kMultiMessageAvailable)
+      .value("MULTI_MESSAGE_AVAILABLE_TIMEOUT", ConditionType::kMultiMessageAvailableTimeout);
 
   py::class_<Condition, Component, PyCondition, std::shared_ptr<Condition>>(
       m, "Condition", doc::Condition::doc_Condition)

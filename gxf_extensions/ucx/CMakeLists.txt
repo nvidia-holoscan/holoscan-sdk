@@ -39,5 +39,27 @@ target_link_libraries(gxf_ucx_holoscan
   PUBLIC  gxf_ucx_holoscan_lib
   PRIVATE holoscan_security_flags
 )
+
+include(WrapOperatorAsGXFExtension)
+generate_gxf_registry_manifest(
+  EXTENSION_TARGET gxf_ucx_holoscan
+  EXTENSION_NAME UcxHoloscanExtension
+  FORWARD_ARGS
+  --uuid "e549f7ce-9ecf-4d53-8156-418727c176df"
+  --version "${holoscan_VERSION}"
+  --extension-dependencies
+    $<TARGET_FILE:GXF::std>
+    $<TARGET_FILE:GXF::multimedia>
+    $<TARGET_FILE:GXF::serialization>
+  --headers
+    "${CMAKE_CURRENT_SOURCE_DIR}/ucx_holoscan_component_serializer.hpp"
+)
+if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
+  register_gxf_extension(
+    EXTENSION_NAME UcxHoloscanExtension
+    MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/UcxHoloscanExtension_manifest.yaml"
+  )
+endif()
+
 # Install GXF extension as a component 'holoscan-gxf_extensions'
 install_gxf_extension(gxf_ucx_holoscan)

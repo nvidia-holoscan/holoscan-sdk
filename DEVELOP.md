@@ -200,7 +200,7 @@ Visual Studio Code can be utilized to develop the Holoscan SDK. The `.devcontain
 
 The `./run` script contains `vscode` and `vscode_remote` commands for launching Visual Studio Code in a container or from a remote machine, respectively.
 
-- To launch Visual Studio Code in a dev container, use `./run vscode`.
+- To launch Visual Studio Code in a dev container, use `./run vscode` (`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process). For more information, refer to the instructions from `./run vscode -h`.
 - To attach to an existing dev container from a remote machine, use `./run vscode_remote`. For more information, refer to the instructions from `./run vscode_remote -h`.
 
 Once Visual Studio Code is launched, the development container will be built and the recommended extensions will be installed automatically, along with CMake being configured.

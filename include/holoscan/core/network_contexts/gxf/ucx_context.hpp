@@ -56,7 +56,7 @@ class UcxContext : public gxf::GXFNetworkContext {
   Parameter<bool> cpu_data_only_;  ///< Support CPU memory only for UCX communication
   Parameter<bool> enable_async_;   ///< Control whether UCX transmit/receive uses asynchronous mode
 
-  // TODO: support GPUDevice nvidia::gxf::Resource
+  // TODO(unknown): support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
 };
 

@@ -63,9 +63,10 @@ class App : public holoscan::Application {
 int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<App>();
 
-  // Get the configuration
+  // Get the yaml configuration file
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
-  config_path += "/ping_async.yaml";
+  config_path /= std::filesystem::path("ping_async.yaml");
+  if (argc >= 2) { config_path = argv[1]; }
   app->config(config_path);
 
   // set customizable application parameters via the YAML

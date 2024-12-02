@@ -168,7 +168,7 @@ class InferenceOp : public holoscan::Operator {
   ///  @brief Memory allocator
   Parameter<std::shared_ptr<Allocator>> allocator_;
 
-  ///  @brief Flag to enable inference on CPU (only supported by onnxruntime).
+  ///  @brief Flag to enable inference on CPU (only supported by ONNX Runtime and LibTorch).
   /// Default is False.
   Parameter<bool> infer_on_cpu_;
 

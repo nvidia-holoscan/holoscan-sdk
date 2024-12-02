@@ -47,6 +47,15 @@ namespace py = pybind11;
 namespace holoscan {
 
 void init_operator(py::module_& m) {
+  py::class_<MultiMessageConditionInfo, std::shared_ptr<MultiMessageConditionInfo>>(
+      m,
+      "MultiMessageConditionInfo",
+      R"doc(Information associated with a multi-message condition.)doc")
+      .def(py::init<>())
+      .def_readwrite("kind", &MultiMessageConditionInfo::kind)
+      .def_readwrite("port_names", &MultiMessageConditionInfo::port_names)
+      .def_readwrite("args", &MultiMessageConditionInfo::args);
+
   py::class_<OperatorSpec, ComponentSpec, std::shared_ptr<OperatorSpec>>(
       m, "OperatorSpec", R"doc(Operator specification class.)doc")
       .def(py::init<Fragment*>(), "fragment"_a, doc::OperatorSpec::doc_OperatorSpec)
@@ -56,20 +65,21 @@ void init_operator(py::module_& m) {
            py::return_value_policy::reference_internal)
       .def(
           "input",
-          // Note: The return type needs to be specified explicitly because pybind11 can't deduce
+          // Note: The return type needs to be specified explicitly because pybind11 can't
+          // deduce
           //       it.
-          //       Otherwise, this method will return a new IOSpec object instead of a reference to
-          //       the existing one.
-          [](OperatorSpec& op, const std::string& name, const py::object& size) -> IOSpec& {
+          //       Otherwise, this method will return a new IOSpec object instead of a reference
+          //       to the existing one.
+          [](OperatorSpec& spec, const std::string& name, const py::object& size) -> IOSpec& {
             // Check if 'size' is an int and convert to IOSpec::IOSize if necessary
             if (py::isinstance<py::int_>(size)) {
               auto size_int = size.cast<int>();
               // Assuming IOSpec::IOSize can be constructed from an int
-              return op.input<gxf::Entity>(name, IOSpec::IOSize(size_int));
+              return spec.input<gxf::Entity>(name, IOSpec::IOSize(size_int));
             }
             if (py::isinstance<IOSpec::IOSize>(size)) {
               // Directly pass IOSpec::IOSize if 'size' is already the correct type
-              return op.input<gxf::Entity>(name, size.cast<IOSpec::IOSize>());
+              return spec.input<gxf::Entity>(name, size.cast<IOSpec::IOSize>());
             }
             throw std::runtime_error(
                 "Invalid type for 'size'. Expected 'int' or 'holoscan.core.IOSpec.IOSize'.");
@@ -92,6 +102,45 @@ void init_operator(py::module_& m) {
            "name"_a,
            doc::OperatorSpec::doc_output_kwargs,
            py::return_value_policy::reference_internal)
+      .def(
+          "multi_port_condition",
+          [](OperatorSpec& spec,
+             ConditionType type,
+             const std::vector<std::string>& port_names,
+             const py::kwargs& kwargs) {
+            // special handling of str -> YAML::Node conversion for sampling_mode argument
+            ArgList extra_args{};
+            for (const auto& [name, handle] : kwargs) {
+              auto arg_name = name.cast<std::string>();
+              auto arg_value = handle.cast<py::object>();
+              if (arg_name == std::string("sampling_mode")) {
+                if (py::isinstance<py::str>(arg_value)) {
+                  auto mode_str = arg_value.cast<std::string>();
+                  if (mode_str == "SumOfAll") {
+                    extra_args.add(Arg("sampling_mode", YAML::Node("SumOfAll")));
+                  } else if (mode_str == "PerReceiver") {
+                    extra_args.add(Arg("sampling_mode", YAML::Node("PerReceiver")));
+                  } else {
+                    throw std::runtime_error("Invalid sampling mode: " + mode_str);
+                  }
+                } else {
+                  throw std::runtime_error("Invalid type for 'sampling_mode'. Expected 'str'.");
+                }
+                kwargs.attr("pop")(arg_name);
+              }
+            }
+            // automatically convert the remaining arguments
+            ArgList args = kwargs_to_arglist(kwargs);
+            // append any arguments such as sampling_mode that were handled separately
+            args.add(extra_args);
+            return spec.multi_port_condition(type, port_names, args);
+          },
+          "kind"_a,
+          "port_names"_a,
+          doc::OperatorSpec::doc_multi_port_condition)
+      .def("multi_port_conditions",
+           &OperatorSpec::multi_port_conditions,
+           doc::OperatorSpec::doc_multi_port_conditions)
       .def_property_readonly("outputs",
                              &OperatorSpec::outputs,
                              doc::OperatorSpec::doc_outputs,

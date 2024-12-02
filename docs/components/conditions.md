@@ -21,13 +21,15 @@ By default, operators are always `READY`, meaning they are scheduled to continuo
 
 - MessageAvailableCondition
 - ExpiringMessageAvailableCondition
+- MultiMessageAvailableCondition
+- MultiMessageAvailableTimeoutCondition
 - DownstreamMessageAffordableCondition
 - CountCondition
 - BooleanCondition
 - PeriodicCondition
 - AsynchronousCondition
 
-These conditions fall under various types as detailed below. Often, conditions are explicitly added to an operator by the application author, but it should also be noted that unless the default is overridden a `MessageAvailableCondition` is automatically added for each of an operator's input ports and a `DownstreamMessageAffordableCondition` is automatically added for each of it's output ports. 
+These conditions fall under various types as detailed below. Often, conditions are explicitly added to an operator by the application author, but it should also be noted that unless the default is overridden, a `MessageAvailableCondition` is automatically added for each of an operator's input ports and a `DownstreamMessageAffordableCondition` is automatically added for each of it's output ports.
 
 :::{note}
 Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{py:mod}`Python <holoscan.conditions>`.
@@ -43,17 +45,21 @@ conversely, the operator is unscheduled from execution whenever any one of the s
 
 The following table gives a rough categorization of the available condition types to help better understand their purpose and how they are assigned. More detailed descriptions of the individual conditions are given in the following sections.
 
-|           Condition Name             |  Classification  |   Associated With   |
-|--------------------------------------|------------------|---------------------|
-| MessageAvailableCondition            |  message-driven  | single input port   |
-| ExpiringMessageAvailableCondition    |  message-driven  | single input port   |
-| DownstreamMessageAffordableCondition |  message-driven  | single output port  |
-| PeriodicCondition                    |   clock-driven   | operator as a whole |
-| CountCondition                       |      other       | operator as a whole |
-| BooleanCondition                     | execution-driven | operator as a whole |
-| AsynchronousCondition                | execution-driven | operator as a whole |
+|           Condition Name               |  Classification  |   Associated With              |
+|----------------------------------------|------------------|--------------------------------|
+| MessageAvailableCondition              |  message-driven  | single input port              |
+| ExpiringMessageAvailableCondition      |  message-driven  | single input port              |
+| MultiMessageAffordableCondition        |  message-driven  | multiple input ports           |
+| MultiMessageAffordableTimeoutCondition |  message-driven  | single or multiple input ports |
+| DownstreamMessageAffordableCondition   |  message-driven  | single output port             |
+| PeriodicCondition                      |   clock-driven   | operator as a whole            |
+| CountCondition                         |      other       | operator as a whole            |
+| BooleanCondition                       | execution-driven | operator as a whole            |
+| AsynchronousCondition                  | execution-driven | operator as a whole            |
 
-Here, the various message-driven conditions are associated with an input port (receiver) or output port (transmitter). Message-driven conditions are typically assigned via the `IOSpec::condition` method ({cpp:func}`C++ <holoscan::IOSPec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method. All other condition types are typically passed as either a positional or keyword argument during operator construction in the application's `compose` method (i.e. passed to {cpp:func}`~holoscan::Fragment::make_operator` in C++ or the operator class's constructor in Python). Once these conditions are assigned, they automatically enforce the associated criteria for that transmitter/receiver as part of the conditions controlling whether the operator will call `compute`. Due to the AND combination of conditions discussed above, all ports must meet their associated conditions in order for an operator to call `compute`.
+Here, the various message-driven conditions are associated with an input port (receiver) or output port (transmitter). Message-driven conditions that are associated with a single input port are assigned via the `IOSpec::condition` method ({cpp:func}`C++ <holoscan::IOSPec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method. Those associated with multiple input ports would instead be assigned via the `OperatorSpec::multi_port_condition` method ({cpp:func}`C++ <holoscan::OperatorSpec::multi_port_condition>`/{py:func}`Python <holoscan.core.OperatorSpec.multi_port_condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method.
+
+All other condition types are typically passed as either a positional or keyword argument during operator construction in the application's `compose` method (i.e. passed to {cpp:func}`~holoscan::Fragment::make_operator` in C++ or the operator class's constructor in Python). Once these conditions are assigned, they automatically enforce the associated criteria for that transmitter/receiver as part of the conditions controlling whether the operator will call `compute`. Due to the AND combination of conditions discussed above, all ports must meet their associated conditions in order for an operator to call `compute`.
 
 The `PeriodicCondition` is clock-driven. It automatically takes effect based on timing from it's associated clock. The `CountCondition` is another condition type that automatically takes effect, stopping execution of an operator after a specified count is reached.
 
@@ -72,13 +78,35 @@ An operator associated with `ExpiringMessageAvailableCondition` ({cpp:class}`C++
 This condition is associated with a specific input or output port of an operator through the `condition()` method on the return value (IOSpec) of the OperatorSpec's `input()` or `output()` method.
 
 The parameters ``max_batch_size`` and ``max_delay_ns`` dictate the maximum number of messages to be batched together and the maximum delay from first message to wait before executing the entity respectively.
-Please note that `ExpiringMessageAvailableCondition` requires that the input messages sent to any port using this condition must contain a timestamp. This means that the upstream operator has to emit using a timestamp .
+Please note that `ExpiringMessageAvailableCondition` requires that the input messages sent to any port using this condition must contain a timestamp. This means that the upstream operator has to emit using a timestamp.
+
+To obtain a similar capability without the need for a timestamp, the `MultiMessageAvailableTimeoutCondition` described below can be used with only a single input port assigned. The difference in the timing computation is that `MultiMessageAvailableTimeOutCondition` measures time between the last time `compute` was called on the operator while `ExpiringMessageAvailableCondition` is instead based on the elapsed time since a message arrived in the operator's input queue.
 
 ## DownstreamMessageAffordableCondition
 
 The `DownstreamMessageAffordableCondition` ({cpp:class}`C++ <holoscan::gxf::DownstreamMessageAffordableCondition>`/{py:class}`Python <holoscan.conditions.DownstreamMessageAffordableCondition>`) condition specifies that an operator shall be executed if the input port of the downstream operator for a given output port can accept new messages.
 This condition is associated with a specific output port of an operator through the `condition()` method on the return value (IOSpec) of the OperatorSpec's `output()` method.
 The minimum number of messages that permits the execution of the operator is specified by `min_size` parameter (default: `1`).
+
+## MultiMessageAvailableCondition
+
+An operator associated with `MultiMessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::MessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.MessageAvailableCondition>`) is executed when the associated queues of multiple user-specified input ports have the required number of elements.
+
+This condition is associated with multiple input ports of an operator through the `multi_port_condition()` method on OperatorSpec. The `port_names` argument to `multi_port_condition` controls which input ports are associated with this condition.
+
+This condition has two operating modes. The first mode is `MultiMessageAvailableCondition::SamplingMode::SumOfAll` (C++) or `holoscan.conditions.MultiMessageAvailableCondition.SamplingMode.SUM_OF_ALL` (Python). In this mode, the `min_sum` parameter is used to specify the total number of messages that must be received across all the ports included in `port_names` for the operator to execute. The second available mode is `MultiMessageAvailableCondition::SamplingMode::PerReceiver` (C++) or `holoscan.conditions.MultiMessageAvailableCondition.SamplingMode.PER_RECEIVER` (Python). This mode instead takes a vector/list of `min_sizes` equal in length to the `port_names`. This controls the number of messages that must arrive at each individual port in order for the operator to execute. This latter, "per-receiver" mode is equivalent to setting a `MessageAvailableCondition` in each input port individually.
+
+For more details see the [C++ example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message/cpp/multi_message_per_receiver.cpp) or [Python example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message/python/multi_message_per_receiver.py).
+
+## MultiMessageAvailableTimeoutCondition
+
+This operator is the same as `MultiMessageAvailableCondition` described above, but has one additional parameter "execution_frequency" that can be used to specify a timeout interval after which the operator will be allowed to execute even if the condition on the number of messages received has not yet been met.
+
+For more details see the [C++ example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message/cpp/multi_message_sum_of_all.cpp) or [Python example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message/python/multi_message_sum_of_all.py).
+
+:::{note}
+This condition can also be assigned via `IOSpec::condition` instead of `OperatorSpec::multi_port_condition` to support the use case where there is only one port to consider. This provides a way for a single input port to support a message available condition that has a timeout interval.
+:::
 
 ## CountCondition
 

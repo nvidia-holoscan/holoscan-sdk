@@ -124,10 +124,13 @@ void init_application(py::module_& m) {
           [](Application& app,
              uint64_t num_start_messages_to_skip,
              uint64_t num_last_messages_to_discard,
-             int latency_threshold)
+             int latency_threshold,
+             bool is_limited_tracking)
               -> std::unordered_map<std::string, std::reference_wrapper<DataFlowTracker>> {
-            auto tracker_pointers = app.track_distributed(
-                num_start_messages_to_skip, num_last_messages_to_discard, latency_threshold);
+            auto tracker_pointers = app.track_distributed(num_start_messages_to_skip,
+                                                          num_last_messages_to_discard,
+                                                          latency_threshold,
+                                                          is_limited_tracking);
             std::unordered_map<std::string, std::reference_wrapper<DataFlowTracker>> trackers;
             for (const auto& [name, tracker_ptr] : tracker_pointers) {
               trackers.emplace(name, std::ref(*tracker_ptr));
@@ -137,6 +140,7 @@ void init_application(py::module_& m) {
           "num_start_messages_to_skip"_a = kDefaultNumStartMessagesToSkip,
           "num_last_messages_to_discard"_a = kDefaultNumLastMessagesToDiscard,
           "latency_threshold"_a = kDefaultLatencyThreshold,
+          "is_limited_tracking"_a = false,
           // doc::Fragment::doc_track_distributed,
           py::return_value_policy::reference_internal)
       .def(
@@ -198,6 +202,16 @@ void PyApplication::compose() {
 }
 
 void PyApplication::run() {
+  // Debug log to show that the run() function is executed
+  // (with the logging function pointer info to check if the logging function pointer address is
+  // the same as the one set in the Python side).
+  // This message is checked by the test_app_log_function in test_application_minimal.py.
+
+  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+  HOLOSCAN_LOG_DEBUG("Executing PyApplication::run()... (log_func_ptr=0x{:x})",
+                     reinterpret_cast<uint64_t>(&nvidia::LoggingFunction));
+  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+
   // Create a deleter for DLManagedTensor objects so that they can be deleted in a separate thread
   // to avoid blocking the GXF runtime mutex.
   LazyDLManagedTensorDeleter deleter;

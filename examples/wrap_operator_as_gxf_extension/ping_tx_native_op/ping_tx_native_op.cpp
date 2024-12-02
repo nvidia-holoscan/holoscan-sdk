@@ -26,7 +26,7 @@ void PingTxNativeOp::setup(OperatorSpec& spec) {
   spec.output<holoscan::gxf::Entity>("out");
 }
 
-void PingTxNativeOp::compute(InputContext& op_input, OutputContext& op_output,
+void PingTxNativeOp::compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                              ExecutionContext& context) {
   HOLOSCAN_LOG_INFO("PingTxNativeOp::compute() called.");
 

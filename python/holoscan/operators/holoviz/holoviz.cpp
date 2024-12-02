@@ -40,6 +40,7 @@
 #include "../../core/io_context.hpp"                 // PyOutputContext
 #include "holoscan/core/codec_registry.hpp"
 #include "holoscan/core/condition.hpp"
+#include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator.hpp"
@@ -118,6 +119,7 @@ class PyHolovizOp : public HolovizOp {
       // NOLINTEND(performance-unnecessary-value-param)
       const std::string& font_path = ""s,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
+      std::shared_ptr<holoscan::BooleanCondition> window_close_condition = nullptr,
       const std::string& name = "holoviz_op")
       : HolovizOp(ArgList{Arg{"allocator", allocator},
                           Arg{"color_lut", color_lut},
@@ -145,7 +147,9 @@ class PyHolovizOp : public HolovizOp {
     if (!tensors.empty()) { this->add_arg(Arg{"tensors", tensors}); }
     if (!receivers.empty()) { this->add_arg(Arg{"receivers", receivers}); }
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
-
+    if (window_close_condition) {
+      this->add_arg(Arg{"window_close_condition", window_close_condition});
+    }
     // check if callbacks are provided, for each callback take the GIL before calling the function
     if (key_callback) {
       this->add_arg(
@@ -202,7 +206,6 @@ class PyHolovizOp : public HolovizOp {
                           window_size_callback(w, h);
                         })});
     }
-
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
@@ -219,18 +222,10 @@ PYBIND11_MODULE(_holoviz, m) {
         --------------------------------------
         .. currentmodule:: _holoviz
     )pbdoc";
-
   py::class_<HolovizOp, PyHolovizOp, Operator, std::shared_ptr<HolovizOp>> holoviz_op(
       m, "HolovizOp", doc::HolovizOp::doc_HolovizOp);
 
-  py::enum_<HolovizOp::ColorSpace>(holoviz_op, "ColorSpace")
-      .value("SRGB_NONLINEAR", HolovizOp::ColorSpace::SRGB_NONLINEAR)
-      .value("EXTENDED_SRGB_LINEAR", HolovizOp::ColorSpace::EXTENDED_SRGB_LINEAR)
-      .value("BT2020_LINEAR", HolovizOp::ColorSpace::BT2020_LINEAR)
-      .value("HDR10_ST2084", HolovizOp::ColorSpace::HDR10_ST2084)
-      .value("PASS_THROUGH", HolovizOp::ColorSpace::PASS_THROUGH)
-      .value("BT709_LINEAR", HolovizOp::ColorSpace::BT709_LINEAR)
-      .value("AUTO", HolovizOp::ColorSpace::AUTO);
+  export_enum<HolovizOp::ColorSpace>(holoviz_op, "ColorSpace");
 
   holoviz_op.def(py::init<Fragment*,
                           const py::args&,
@@ -265,6 +260,7 @@ PYBIND11_MODULE(_holoviz, m) {
                           ops::HolovizOp::WindowSizeCallbackFunction,
                           const std::string&,
                           std::shared_ptr<holoscan::CudaStreamPool>,
+                          std::shared_ptr<holoscan::BooleanCondition>,
                           const std::string&>(),
                  "fragment"_a,
                  "allocator"_a,
@@ -298,6 +294,7 @@ PYBIND11_MODULE(_holoviz, m) {
                  "window_size_callback"_a = HolovizOp::WindowSizeCallbackFunction(),
                  "font_path"_a = ""s,
                  "cuda_stream_pool"_a = py::none(),
+                 "window_close_condition"_a = py::none(),
                  "name"_a = "holoviz_op"s,
                  doc::HolovizOp::doc_HolovizOp);
 

@@ -192,7 +192,7 @@ Image format detection for `nvidia::gxf::Tensor`. Tensors don't have image forma
 | kInt8 | 4 | signed RGBA-8-8-8-8 single plane | - |
 | kUnsigned16 | 4 | RGBA-16-16-16-16 single plane | - |
 | kInt16 | 4 | signed RGBA-16-16-16-16 single plane | - |
-| kFloat32 | 4 | RGBA-16-16-16-16 single plane | - |
+| kFloat32 | 4 | RGBA float 32 single plane | - |
 
 ````
 ````{tab-item} Module
@@ -460,7 +460,7 @@ When providing CUDA resources to Holoviz through (e.g., {func}`viz::ImageCudaDev
 
 ## Reading the Frame Buffer
 
-The rendered frame buffer can be read back. This is useful when when doing offscreen rendering or running Holoviz in a headless environment.
+The rendered frame buffer can be read back. This is useful when doing offscreen rendering or running Holoviz in a headless environment.
 
 :::{note}
 Reading the depth buffer is not supported when using the Holoviz operator.

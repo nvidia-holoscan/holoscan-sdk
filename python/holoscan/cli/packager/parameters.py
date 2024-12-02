@@ -243,6 +243,7 @@ class PackageBuildParameters:
         self._logger = logging.getLogger("packager.parameters")
         self._data = {}
         self._data["app_dir"] = DefaultValues.HOLOSCAN_APP_DIR
+        self._data["lib_dir"] = DefaultValues.HOLOSCAN_LIB_DIR
         self._data["config_file_path"] = DefaultValues.HOLOSCAN_CONFIG_PATH
         self._data["docs_dir"] = DefaultValues.HOLOSCAN_DOCS_DIR
         self._data["logs_dir"] = DefaultValues.HOLOSCAN_LOGS_DIR
@@ -262,6 +263,7 @@ class PackageBuildParameters:
         self._data["tarball_output"] = None
         self._data["cmake_args"] = ""
         self._data["includes"] = []
+        self._data["additional_lib_paths"] = ""
 
         self._data["application_directory"] = None
         self._data["application_type"] = None
@@ -275,6 +277,8 @@ class PackageBuildParameters:
         self._data["monai_deploy_app_sdk_version"] = None
         self._data["title"] = None
         self._data["version"] = None
+
+        self._additional_libs = []
 
     @property
     def build_cache(self) -> int:
@@ -518,6 +522,31 @@ class PackageBuildParameters:
     @includes.setter
     def includes(self, value: str):
         self._data["includes"] = value
+
+    @property
+    def additional_lib_paths(self) -> str:
+        """
+        Additional libraries that user wants to include in the package.
+        Stores the post-processed values to be injected into LD_LIBRARY_PATH and PYTHONPATH in the
+        Jinja2 template.
+        """
+        return self._data["additional_lib_paths"]
+
+    @additional_lib_paths.setter
+    def additional_lib_paths(self, value: str):
+        self._data["additional_lib_paths"] = value
+
+    @property
+    def additional_libs(self) -> list[str]:
+        """
+        Additional libraries that user wants to include in the package.
+        Stores paths entered from the command line before processing.
+        """
+        return self._additional_libs
+
+    @additional_libs.setter
+    def additional_libs(self, value: list[str]):
+        self._additional_libs = value
 
     @property
     def to_jinja(self) -> dict[str, Any]:

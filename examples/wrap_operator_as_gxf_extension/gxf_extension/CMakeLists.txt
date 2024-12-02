@@ -14,6 +14,9 @@
 # limitations under the License.
 
 include(WrapOperatorAsGXFExtension)
+if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
+  set(REGISTER_ARG "REGISTER")
+endif()
 wrap_operator_as_gxf_extension(
   OPERATOR_CLASS "myops::PingTxNativeOp"
   OPERATOR_HEADER_INCLUDE "ping_tx_native_op/ping_tx_native_op.hpp"
@@ -37,6 +40,12 @@ wrap_operator_as_gxf_extension(
   EXTENSION_TARGET_NAME "gxf_wrapped_ping_tx_native_op" # optional, defaults to EXTENSION_NAME lowercase
   EXTENSION_TARGET_PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  EXTENSION_DEPENDS
+    $<TARGET_FILE:GXF::std>
+    $<TARGET_FILE:gxf_holoscan_wrapper>
+  ${REGISTER_ARG}
+  REGISTER_DEPENDS
+    register_HoloscanWrapperExtension
 )
 
 wrap_operator_as_gxf_extension(
@@ -62,6 +71,12 @@ wrap_operator_as_gxf_extension(
   EXTENSION_TARGET_NAME "gxf_wrapped_ping_rx_native_op" # optional, defaults to EXTENSION_NAME lowercase
   EXTENSION_TARGET_PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  EXTENSION_DEPENDS
+    $<TARGET_FILE:GXF::std>
+    $<TARGET_FILE:gxf_holoscan_wrapper>
+  ${REGISTER_ARG}
+  REGISTER_DEPENDS
+    register_HoloscanWrapperExtension
 )
 
 

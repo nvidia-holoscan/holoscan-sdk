@@ -23,5 +23,6 @@ holoscan_pybind11_module(resources
     resources.cpp
     serialization_buffers.cpp
     std_entity_serializer.cpp
+    system_resources.cpp
     transmitters.cpp
 )

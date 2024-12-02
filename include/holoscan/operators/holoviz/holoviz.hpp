@@ -187,7 +187,7 @@ struct BufferInfo;
  * - **window_title**: Title on window canvas (default: `"Holoviz"`)
  *   - type: `std::string`
  * - **display_name**: In exclusive display or fullscreen mode, name of display to use as shown
- *   with `xrandr` or `hwinfo --monitor` (default: ``)
+ *   with `xrandr` or `hwinfo --monitor` (default: `""`)
  *   - type: `std::string`
  * - **width**: Window width or display resolution width if in exclusive display or fullscreen mode
  *   (default: `1920`)
@@ -216,8 +216,15 @@ struct BufferInfo;
  *   'ColorSpace::PASS_THROUGH' is supported since there is no display. For other color spaces the
  *   display needs to be configured for HDR (default: `ColorSpace::AUTO`)
  *   - type: `std::string`
- * - **window_close_scheduling_term**: BooleanSchedulingTerm to stop the codelet from ticking
- *   when the window is closed
+ * - **window_close_condition.**: BooleanCondition on the operator that will cause it to stop
+ *   executing if the display window is closed. By default, this condition is created
+ *   automatically during HolovizOp::initialize. The user may want to provide it if, for example
+ *   there are multiple HolovizOp operators and you want to share the same window close condition
+ *   across both. By sharing the same condition, if one of the display windows is closed it would
+ *   also close the other(s).
+ * - **window_close_scheduling_term**: This is a deprecated parameter name for
+ *   `window_close_condition`. Please use `window_close_condition` instead as
+ *   `window_close_scheduling_term` will be removed in a future release.
  *   - type: `gxf::Handle<gxf::BooleanSchedulingTerm>`
  * - **allocator**: Allocator used to allocate memory for `render_buffer_output`
  *   - type: `gxf::Handle<gxf::Allocator>`
@@ -913,6 +920,7 @@ class HolovizOp : public Operator {
   Parameter<bool> vsync_;
   Parameter<ColorSpace> display_color_space_;
   Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
+  Parameter<std::shared_ptr<BooleanCondition>> window_close_condition_;
   Parameter<std::shared_ptr<Allocator>> allocator_;
   Parameter<std::string> font_path_;
   Parameter<std::string> camera_pose_output_type_;
@@ -938,8 +946,6 @@ class HolovizOp : public Operator {
   bool render_buffer_output_enabled_ = false;
   bool camera_pose_output_enabled_ = false;
   bool is_first_tick_ = true;
-
-  static std::mutex mutex_;  ///< mutex to protect start method
 
   static std::remove_pointer_t<viz::KeyCallbackFunction> key_callback_handler;
   static std::remove_pointer_t<viz::UnicodeCharCallbackFunction> unicode_char_callback_handler;

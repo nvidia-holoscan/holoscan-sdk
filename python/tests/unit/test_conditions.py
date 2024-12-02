@@ -30,6 +30,8 @@ from holoscan.conditions import (
     DownstreamMessageAffordableCondition,
     ExpiringMessageAvailableCondition,
     MessageAvailableCondition,
+    MultiMessageAvailableCondition,
+    MultiMessageAvailableTimeoutCondition,
     PeriodicCondition,
 )
 from holoscan.core import Application, Condition, ConditionType, Operator
@@ -235,6 +237,58 @@ spec:
 
     def test_positional_initialization(self, app):
         ExpiringMessageAvailableCondition(app, 1, 4, RealtimeClock(app, name="clock"), "expiring")
+
+
+class TestMultiMessageAvailableCondition:
+    def test_kwarg_based_initialization_sum_of_all(self, app, capfd):
+        name = "multi_message_available"
+        cond = MultiMessageAvailableCondition(
+            fragment=app,
+            name=name,
+            min_sum=4,
+            sampling_mode="SumOfAll",
+        )
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, Condition)
+        assert cond.gxf_typename == "nvidia::gxf::MultiMessageAvailableSchedulingTerm"
+
+        assert f"""
+name: {name}
+fragment: ""
+""" in repr(cond)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization(self, app):
+        MultiMessageAvailableCondition(app)
+
+
+class TestMultiMessageAvailableTimeoutCondition:
+    def test_kwarg_based_initialization_sum_of_all(self, app, capfd):
+        name = "multi_message_available_timeout"
+        cond = MultiMessageAvailableTimeoutCondition(
+            fragment=app,
+            execution_frequency="10Hz",
+            name=name,
+            min_sizes=[1, 2, 1],
+            sampling_mode="PerReceiver",
+        )
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, Condition)
+        assert cond.gxf_typename == "nvidia::gxf::MessageAvailableFrequencyThrottler"
+
+        assert f"""
+name: {name}
+fragment: ""
+""" in repr(cond)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
 
 
 class TestPeriodicCondition:

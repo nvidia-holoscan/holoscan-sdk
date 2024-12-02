@@ -23,6 +23,8 @@
 #include <unordered_map>
 
 #include "../io_context.hpp"
+#include "gxf/core/handle.hpp"
+#include "gxf/std/receiver.hpp"
 
 namespace holoscan::gxf {
 

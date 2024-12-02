@@ -1,0 +1,6 @@
+platform:
+  arch: @CMAKE_SYSTEM_PROCESSOR@
+  os: linux
+  distribution: ubuntu_22.04
+compute:
+  cuda: @CUDAToolkit_VERSION@

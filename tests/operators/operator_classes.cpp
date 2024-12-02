@@ -27,8 +27,10 @@
 
 #include "../config.hpp"
 #include "../utils.hpp"
+#include "common/assert.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -39,7 +41,6 @@
 #include "holoscan/core/resources/gxf/block_memory_pool.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
-#include "common/assert.hpp"
 
 #ifdef HOLOSCAN_BUILD_AJA
 #include "holoscan/operators/aja_source/aja_source.hpp"
@@ -241,6 +242,94 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOp) {
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
                                                              << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseNone) {
+  const std::string name{"holoviz"};
+  ArgList kwargs = F.from_config("holoviz");
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
+  op->initialize();
+  std::string log_output = testing::internal::GetCapturedStderr();
+  // error will be logged due to initialize before Fragment was composed
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  // no warnings if no window close argument is provided
+  EXPECT_TRUE(log_output.find("window_close_condition") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("window_close_scheduling_term") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseCurrentName) {
+  const std::string name{"holoviz"};
+  ArgList kwargs = F.from_config("holoviz");
+  auto close_condition = F.make_condition<BooleanCondition>("window_close");
+  kwargs.add(Arg("window_close_condition", close_condition));
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
+  op->initialize();
+  std::string log_output = testing::internal::GetCapturedStderr();
+  // error will be logged due to initialize before Fragment was composed
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  // no warnings about window close arguments if the new name is provided
+  EXPECT_TRUE(log_output.find("window_close_condition") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("window_close_scheduling_term") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseDeprecatedName) {
+  const std::string name{"holoviz"};
+  ArgList kwargs = F.from_config("holoviz");
+  auto close_condition = F.make_condition<BooleanCondition>("window_close");
+  kwargs.add(Arg("window_close_scheduling_term", close_condition));
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
+  op->initialize();
+  std::string log_output = testing::internal::GetCapturedStderr();
+  // error will be logged due to initialize before Fragment was composed
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  // warnings about
+  EXPECT_TRUE(log_output.find("\"window_close_scheduling_term\" was provided, but this parameter "
+                              "name is deprecated") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseBothNames) {
+  const std::string name{"holoviz"};
+  ArgList kwargs = F.from_config("holoviz");
+  auto close_condition = F.make_condition<BooleanCondition>("window_close");
+  kwargs.add(Arg("window_close_scheduling_term", close_condition));
+  kwargs.add(Arg("window_close_condition", close_condition));
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
+  op->initialize();
+  std::string log_output = testing::internal::GetCapturedStderr();
+  // error will be logged due to initialize before Fragment was composed
+  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  // warnings about
+  EXPECT_TRUE(
+      log_output.find("discarding the duplicate \"window_close_scheduling_term\" argument") !=
+      std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestHolovizOpInputSpec) {

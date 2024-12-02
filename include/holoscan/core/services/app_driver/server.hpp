@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,9 +34,6 @@ class Server;
 }  // namespace grpc
 
 namespace holoscan::service {
-
-constexpr int32_t kDefaultAppDriverPort = 8765;
-constexpr int32_t kDefaultHealthCheckingPort = 8777;
 
 class AppDriverServer {
  public:

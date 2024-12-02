@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_CONDITION_HPP
 
 #include <gxf/core/gxf.h>
+#include <yaml-cpp/yaml.h>
 
 #include <any>
 #include <iostream>
@@ -104,13 +105,15 @@ class Resource;
 enum class ConditionType {
   kNone,              ///< No condition
   kMessageAvailable,  ///< Default for input port (nvidia::gxf::MessageAvailableSchedulingTerm)
-  kDownstreamMessageAffordable,  ///< Default for output port
-                                 ///< (nvidia::gxf::DownstreamReceptiveSchedulingTerm)
-  kCount,                        ///< nvidia::gxf::CountSchedulingTerm
-  kBoolean,                      ///< nvidia::gxf::BooleanSchedulingTerm
-  kPeriodic,                     ///< nvidia::gxf::PeriodicSchedulingTerm
-  kAsynchronous,                 ///< nvidia::gxf::AsynchronousSchedulingTerm
-  kExpiringMessageAvailable,     ///< nvidia::gxf::ExpiringMessageAvailableSchedulingTerm
+  kDownstreamMessageAffordable,   ///< Default for output port
+                                  ///< (nvidia::gxf::DownstreamReceptiveSchedulingTerm)
+  kCount,                         ///< nvidia::gxf::CountSchedulingTerm
+  kBoolean,                       ///< nvidia::gxf::BooleanSchedulingTerm
+  kPeriodic,                      ///< nvidia::gxf::PeriodicSchedulingTerm
+  kAsynchronous,                  ///< nvidia::gxf::AsynchronousSchedulingTerm
+  kExpiringMessageAvailable,      ///< nvidia::gxf::ExpiringMessageAvailableSchedulingTerm
+  kMultiMessageAvailable,         ///< nvidia::gxf::MultiMessageAvailableSchedulingTerm
+  kMultiMessageAvailableTimeout,  ///< nvidia::gxf::MessageAvailableFrequencyThrottler
 };
 
 /**

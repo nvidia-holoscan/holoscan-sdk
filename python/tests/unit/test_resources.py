@@ -17,7 +17,7 @@ limitations under the License.
 
 from holoscan.core import ComponentSpec, Resource
 from holoscan.core import _Resource as ResourceBase
-from holoscan.gxf import GXFResource
+from holoscan.gxf import GXFResource, GXFSystemResourceBase
 from holoscan.operators import PingTxOp
 from holoscan.resources import (
     Allocator,
@@ -36,6 +36,7 @@ from holoscan.resources import (
     StdComponentSerializer,
     StdEntitySerializer,
     StreamOrderedAllocator,
+    ThreadPool,
     Transmitter,
     UcxComponentSerializer,
     UcxEntitySerializer,
@@ -365,6 +366,30 @@ class TestSerializationBuffer:
         captured = capfd.readouterr()
         assert "error" not in captured.err
         assert "warning" not in captured.err
+
+
+class TestThreadPool:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "my_thread_pool"
+        pool = ThreadPool(
+            fragment=app,
+            name=name,
+            initial_size=1,
+        )
+        assert isinstance(pool, GXFSystemResourceBase)
+        assert isinstance(pool, GXFResource)
+        assert isinstance(pool, ResourceBase)
+        assert pool.id == -1
+        assert pool.gxf_typename == "nvidia::gxf::ThreadPool"
+
+        assert f"name: {name}" in repr(pool)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
+    def test_default_initialization(self, app):
+        ThreadPool(fragment=app)
 
 
 class TestUcxSerializationBuffer:

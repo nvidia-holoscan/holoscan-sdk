@@ -58,11 +58,13 @@ class PyMultiThreadScheduler : public MultiThreadScheduler {
                                   double check_recession_period_ms = 5.0,
                                   int64_t max_duration_ms = -1LL,
                                   int64_t stop_on_deadlock_timeout = 0LL,
+                                  bool strict_job_thread_pinning = false,
                                   const std::string& name = "multithread_scheduler")
       : MultiThreadScheduler(ArgList{Arg{"worker_thread_number", worker_thread_number},
                                      Arg{"stop_on_deadlock", stop_on_deadlock},
                                      Arg{"check_recession_period_ms", check_recession_period_ms},
-                                     Arg{"stop_on_deadlock_timeout", stop_on_deadlock_timeout}}) {
+                                     Arg{"stop_on_deadlock_timeout", stop_on_deadlock_timeout},
+                                     Arg{"strict_job_thread_pinning", strict_job_thread_pinning}}) {
     // max_duration_ms is an optional argument in GXF. We use a negative value in this constructor
     // to indicate that the argument should not be set.
     if (max_duration_ms >= 0) { this->add_arg(Arg{"max_duration_ms", max_duration_ms}); }
@@ -93,6 +95,7 @@ void init_multithread_scheduler(py::module_& m) {
                     double,
                     int64_t,
                     int64_t,
+                    bool,
                     const std::string&>(),
            "fragment"_a,
            py::kw_only(),
@@ -102,6 +105,7 @@ void init_multithread_scheduler(py::module_& m) {
            "check_recession_period_ms"_a = 5.0,
            "max_duration_ms"_a = -1LL,
            "stop_on_deadlock_timeout"_a = 0LL,
+           "strict_job_thread_pinning"_a = false,
            "name"_a = "multithread_scheduler"s,
            doc::MultiThreadScheduler::doc_MultiThreadScheduler)
       .def_property_readonly("clock", &MultiThreadScheduler::clock)

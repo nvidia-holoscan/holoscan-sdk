@@ -34,6 +34,7 @@
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/block_memory_pool.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/core/resources/gxf/cpu_thread.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
@@ -43,6 +44,7 @@
 #include "holoscan/core/resources/gxf/std_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 #include "holoscan/core/resources/gxf/stream_ordered_allocator.hpp"
+#include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp"
@@ -457,4 +459,47 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitter) {
 TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitterDefaultConstructor) {
   auto resource = F.make_resource<UcxTransmitter>();
 }
+
+TEST_F(ResourceClassesWithGXFContext, TestCPUThread) {
+  const std::string name{"thread0"};
+  Arg pin_arg{"pin_entity", true};
+  auto resource = F.make_resource<CPUThread>(name, pin_arg);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(pin_arg)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCPUThreadDefaultConstructor) {
+  auto resource = F.make_resource<CPUThread>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestGPUDevice) {
+  const std::string name{"dev0"};
+  Arg id_arg{"dev_id", static_cast<int32_t>(0)};
+  auto resource = F.make_resource<GPUDevice>(name, id_arg);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<GPUDevice>(id_arg)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::GPUDevice"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestGPUDeviceDefaultConstructor) {
+  auto resource = F.make_resource<GPUDevice>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestThreadPool) {
+  const std::string name{"thread-pool0"};
+  ArgList arglist{
+      Arg{"initial_size", static_cast<int64_t>(5)},
+      Arg{"priority", static_cast<int64_t>(2)},
+  };
+  auto resource = F.make_resource<ThreadPool>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<ThreadPool>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::ThreadPool"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestThreadPoolDefaultConstructor) {
+  auto resource = F.make_resource<ThreadPool>();
+}
+
 }  // namespace holoscan

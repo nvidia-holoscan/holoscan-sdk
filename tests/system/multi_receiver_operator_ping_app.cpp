@@ -641,7 +641,7 @@ TEST(MultiReceiverOperatorPingApp, TestPingMultiPortSinglePrecedingCount) {
 TEST(MultiReceiverOperatorPingApp, TestPingMultiPortSingleSizeFive) {
   // make sure that debug messages are logged
   EnvVarWrapper wrapper({
-      std::make_pair("HOLOSCAN_LOG_LEVEL", "DEBUG"),
+      std::make_pair("HOLOSCAN_LOG_LEVEL", "TRACE"),
       std::make_pair("HOLOSCAN_EXECUTOR_LOG_LEVEL", "INFO"),  // quiet multi_thread_scheduler.cpp
   });
 
@@ -662,10 +662,8 @@ TEST(MultiReceiverOperatorPingApp, TestPingMultiPortSingleSizeFive) {
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 
-  EXPECT_TRUE(
-      log_output.find(
-          "ReceiveError on input port 'receivers': No message received from the input port") !=
-      std::string::npos)
+  EXPECT_TRUE(log_output.find("Failure receiving message from input port 'receivers': No message "
+                              "received from the input port") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 

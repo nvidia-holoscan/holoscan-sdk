@@ -288,6 +288,11 @@ class Arg {
   const std::string& name() const { return name_; }
 
   /**
+   * @brief Set the name of the argument
+   */
+  void name(const std::string& arg_name) { name_ = arg_name; }
+
+  /**
    * @brief Get the type of the argument.
    *
    * @return The type of the argument.

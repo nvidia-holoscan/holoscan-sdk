@@ -28,6 +28,7 @@
 #include <unordered_set>
 #include <tuple>
 #include <utility>  // for std::pair
+#include <vector>
 
 #include "common.hpp"
 #include "config.hpp"
@@ -43,6 +44,8 @@ namespace gxf {
 // Forward declarations
 class GXFExecutor;
 }  // namespace gxf
+
+class ThreadPool;
 
 // key = operator name,  value = (input port names, output port names, multi-receiver names)
 using FragmentPortMap =
@@ -487,6 +490,15 @@ class Fragment {
   }
 
   /**
+   * @brief Create a new thread pool resource.
+   *
+   * @param name The name of the thread pool.
+   * @param initial_size The initial number of threads in the thread pool.
+   * @return The shared pointer to the thread pool resource.
+   */
+  std::shared_ptr<ThreadPool> make_thread_pool(const std::string& name, int64_t initial_size = 1);
+
+  /**
    * @brief Add an operator to the graph.
    *
    * The information of the operator is stored in the Graph object.
@@ -640,12 +652,15 @@ class Fragment {
    * @param num_last_messages_to_discard The number of messages to discard at the end.
    * @param latency_threshold The minimum end-to-end latency in milliseconds to account for
    * in the end-to-end latency metric calculations.
+   * @param is_limited_tracking If true, the tracking is limited to root and leaf nodes, minimizing
+   * the timestamps by avoiding intermediate operators.
    * @return A reference to the DataFlowTracker object in which results will be
    * stored.
    */
   DataFlowTracker& track(uint64_t num_start_messages_to_skip = kDefaultNumStartMessagesToSkip,
                          uint64_t num_last_messages_to_discard = kDefaultNumLastMessagesToDiscard,
-                         int latency_threshold = kDefaultLatencyThreshold);
+                         int latency_threshold = kDefaultLatencyThreshold,
+                         bool is_limited_tracking = false);
 
   /**
    * @brief Get the DataFlowTracker object for this fragment.
@@ -706,6 +721,8 @@ class Fragment {
   /// Load the GXF extensions specified in the configuration.
   void load_extensions_from_config();
 
+  std::vector<std::shared_ptr<ThreadPool>>& thread_pools() { return thread_pools_; }
+
   // Note: Maintain the order of declarations (executor_ and graph_) to ensure proper destruction
   //       of the executor's context.
   std::string name_;                      ///< The name of the fragment.
@@ -716,8 +733,10 @@ class Fragment {
   std::shared_ptr<Scheduler> scheduler_;  ///< The scheduler used by the executor
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
   std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment
-  bool is_composed_ = false;                            ///< Whether the graph is composed or not.
-  bool is_metadata_enabled_ = false;                    ///< Whether metadata is enabled or not.
+  std::vector<std::shared_ptr<ThreadPool>>
+      thread_pools_;                  ///< Any thread pools used by the fragment
+  bool is_composed_ = false;          ///< Whether the graph is composed or not.
+  bool is_metadata_enabled_ = false;  ///< Whether metadata is enabled or not.
 };
 
 }  // namespace holoscan

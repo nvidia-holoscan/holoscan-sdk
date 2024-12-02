@@ -56,6 +56,7 @@ class BuilderBase:
         self._copy_application()
         self._copy_model_files()
         self._copy_docs()
+        self._copy_libs()
         _ = self._write_dockerignore()
         _ = self._copy_script()
 
@@ -238,6 +239,35 @@ Building image for:                 {platform_parameters.platform.value}
 
         target_config_file_path = Path(os.path.join(self._temp_dir, "app.config"))
         shutil.copyfile(self._build_parameters.app_config_file_path, target_config_file_path)
+
+    def _copy_libs(self):
+        """
+        - Copy additional libraries to the temporary application directory.
+        - Stores all subdirectories from the copied libraries to the 'additional_lib_paths'
+          parameter that will be used to set the LD_LIBRARY_PATH or PYTHONPATH environment variable
+          in the Dockerfile.
+        """
+        if self._build_parameters.additional_libs is None:
+            return
+        target_libs_path = Path(os.path.join(self._temp_dir, "lib"))
+        if os.path.exists(target_libs_path):
+            shutil.rmtree(target_libs_path)
+
+        for lib_path in self._build_parameters.additional_libs:
+            self._logger.debug(
+                f"Copying additional libraries from {lib_path} to {target_libs_path}"
+            )
+            shutil.copytree(lib_path, target_libs_path, dirs_exist_ok=True)
+
+        subdirectories = [
+            os.path.join(
+                DefaultValues.HOLOSCAN_LIB_DIR,
+                os.path.join(root, subdir).replace(str(target_libs_path), "").lstrip("/"),
+            )
+            for root, dirs, _ in os.walk(target_libs_path)
+            for subdir in dirs
+        ]
+        self._build_parameters.additional_lib_paths = ":".join(subdirectories)
 
     def _copy_model_files(self):
         """Copy models to temporary location"""

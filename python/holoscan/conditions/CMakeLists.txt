@@ -24,5 +24,7 @@ holoscan_pybind11_module(conditions
     downstream_message_affordable.cpp
     expiring_message.cpp
     message_available.cpp
+    multi_message_available.cpp
+    multi_message_available_timeout.cpp
     periodic.cpp
 )

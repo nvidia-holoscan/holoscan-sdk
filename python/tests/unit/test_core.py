@@ -44,6 +44,7 @@ from holoscan.core import (
     Resource,
     Scheduler,
     _Fragment,
+    arglist_to_kwargs,
     io_type_registry,
     py_object_to_arg,
 )
@@ -332,40 +333,40 @@ class TestResource:
 
 class TestOperatorSpecBase:
     def test_init(self, fragment):
-        c = OperatorSpecBase(fragment)
-        assert c.params == {}
-        assert c.fragment is fragment
+        spec = OperatorSpecBase(fragment)
+        assert spec.params == {}
+        assert spec.fragment is fragment
 
     def test_input(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input()
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input()
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "__iospec_input"
         assert iospec.io_type == IOSpec.IOType.INPUT
         assert iospec.queue_size == int(IOSpec.IOSize(1))
 
-        iospec2 = c.input("input2")
+        iospec2 = spec.input("input2")
         assert iospec2.name == "input2"
         assert iospec.io_type == IOSpec.IOType.INPUT
 
         # Calling a second time with the same name will log an error to the
         # console.
-        iospec2 = c.input("input2")
+        iospec2 = spec.input("input2")
         captured = capfd.readouterr()
         assert "error" in captured.err
         assert "already exists" in captured.err
 
-    def test_input_condition_none(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input("input_no_condition").condition(ConditionType.NONE)
+    def test_input_condition_none(self, fragment):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input("input_no_condition").condition(ConditionType.NONE)
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "input_no_condition"
         assert iospec.io_type == IOSpec.IOType.INPUT
         assert iospec.conditions == [(ConditionType.NONE, None)]
 
-    def test_input_condition_message_available(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input("input_message_available_condition").condition(
+    def test_input_condition_message_available(self, fragment):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input("input_message_available_condition").condition(
             ConditionType.MESSAGE_AVAILABLE, min_size=1
         )
         assert isinstance(iospec, IOSpec)
@@ -375,18 +376,18 @@ class TestOperatorSpecBase:
         assert iospec.conditions[0][0] == ConditionType.MESSAGE_AVAILABLE
         assert iospec.conditions[0][1] is not None
 
-    def test_input_connector_default(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input("input_no_condition").connector(IOSpec.ConnectorType.DEFAULT)
+    def test_input_connector_default(self, fragment):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input("input_no_condition").connector(IOSpec.ConnectorType.DEFAULT)
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "input_no_condition"
         assert iospec.io_type == IOSpec.IOType.INPUT
         assert iospec.connector() is None
 
     @pytest.mark.parametrize("kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1)])
-    def test_input_connector_double_buffer(self, fragment, capfd, kwargs):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input("input_no_condition").connector(
+    def test_input_connector_double_buffer(self, fragment, kwargs):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input("input_no_condition").connector(
             IOSpec.ConnectorType.DOUBLE_BUFFER, **kwargs
         )
         assert isinstance(iospec, IOSpec)
@@ -397,17 +398,17 @@ class TestOperatorSpecBase:
     @pytest.mark.parametrize(
         "kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1, address="0.0.0.0", port=13337)]
     )
-    def test_input_connector_ucx(self, fragment, capfd, kwargs):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input("input_no_condition").connector(IOSpec.ConnectorType.UCX, **kwargs)
+    def test_input_connector_ucx(self, fragment, kwargs):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input("input_no_condition").connector(IOSpec.ConnectorType.UCX, **kwargs)
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "input_no_condition"
         assert iospec.io_type == IOSpec.IOType.INPUT
         assert isinstance(iospec.connector(), UcxReceiver)
 
-    def test_input_connector_and_condition(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input("in").connector(
+    def test_input_connector_and_condition(self, fragment):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input("in").connector(
             IOSpec.ConnectorType.DOUBLE_BUFFER,
             capacity=5,
             policy=1,
@@ -429,13 +430,13 @@ class TestOperatorSpecBase:
         assert iospec.conditions[0][0] == ConditionType.EXPIRING_MESSAGE_AVAILABLE
         assert iospec.conditions[0][1] is not None
 
-        assert c.inputs["in"] == iospec
-        assert len(c.inputs["in"].conditions) == 1
+        assert spec.inputs["in"] == iospec
+        assert len(spec.inputs["in"].conditions) == 1
 
-    def test_input_condition_and_connector(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
+    def test_input_condition_and_connector(self, fragment):
+        spec = OperatorSpecBase(fragment)
         iospec = (
-            c.input("in")
+            spec.input("in")
             .condition(
                 ConditionType.EXPIRING_MESSAGE_AVAILABLE,
                 max_batch_size=5,
@@ -456,9 +457,52 @@ class TestOperatorSpecBase:
         assert iospec.conditions[0][0] == ConditionType.EXPIRING_MESSAGE_AVAILABLE
         assert iospec.conditions[0][1] is not None
 
-        assert c.inputs["in"] == iospec
+        assert spec.inputs["in"] == iospec
 
-        assert len(c.inputs["in"].conditions) == 1
+        assert len(spec.inputs["in"].conditions) == 1
+
+    @pytest.mark.parametrize(
+        "kind",
+        [ConditionType.MULTI_MESSAGE_AVAILABLE, ConditionType.MULTI_MESSAGE_AVAILABLE_TIMEOUT],
+    )
+    @pytest.mark.parametrize(
+        "sampling_mode",
+        ["SumOfAll", "PerReceiver"],
+    )
+    def test_multi_port_condition(self, fragment, kind, sampling_mode):
+        spec = OperatorSpecBase(fragment)
+        spec.input("in1")
+        spec.input("in2")
+        spec.input("in3")
+
+        if sampling_mode == "SumOfAll":
+            extra_kwargs = dict(min_sum=4)
+        elif sampling_mode == "PerReceiver":
+            extra_kwargs = dict(min_sizes=[1, 2, 1])
+
+        spec.multi_port_condition(
+            kind,
+            port_names=["in1", "in3"],
+            sampling_mode=sampling_mode,
+            **extra_kwargs,
+        )
+
+        # check that the condition was added
+        multi_port_conditions = spec.multi_port_conditions()
+        assert len(multi_port_conditions) == 1
+
+        # check the info on the condition
+        multi_port_condition_info = multi_port_conditions[0]
+        assert multi_port_condition_info.kind == kind
+        assert multi_port_condition_info.port_names == ["in1", "in3"]
+
+        # check that the expected kwargs are present in each case
+        kwargs = arglist_to_kwargs(multi_port_condition_info.args)
+        if sampling_mode == "SumOfAll":
+            assert kwargs["min_sum"] == 4
+        elif sampling_mode == "PerReceiver":
+            assert kwargs["min_sizes"] == [1, 2, 1]
+        assert kwargs["sampling_mode"] == sampling_mode
 
     @pytest.mark.parametrize(
         "spec_args,spec_kwargs,expected_name,expected_size",
@@ -480,8 +524,8 @@ class TestOperatorSpecBase:
     def test_input_queue_size(
         self, fragment, capfd, spec_args, spec_kwargs, expected_name, expected_size
     ):
-        c = OperatorSpecBase(fragment)
-        iospec = c.input(*spec_args, **spec_kwargs)
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.input(*spec_args, **spec_kwargs)
         assert isinstance(iospec, IOSpec)
         assert iospec.name == expected_name
         assert iospec.io_type == IOSpec.IOType.INPUT
@@ -489,39 +533,39 @@ class TestOperatorSpecBase:
 
         # Calling a second time with the same name will log an error to the
         # console.
-        c.input(expected_name)
+        spec.input(expected_name)
         captured = capfd.readouterr()
         assert "error" in captured.err
         assert "already exists" in captured.err
 
     def test_output(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.output()
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.output()
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "__iospec_output"
         assert iospec.io_type == IOSpec.IOType.OUTPUT
 
-        iospec2 = c.input("output2")
+        iospec2 = spec.input("output2")
         assert iospec2.name == "output2"
         assert iospec.io_type == IOSpec.IOType.OUTPUT
 
         # Calling a second time with the same name will log an error
-        iospec2 = c.input("output2")
+        iospec2 = spec.input("output2")
         captured = capfd.readouterr()
         assert "error" in captured.err
         assert "already exists" in captured.err
 
-    def test_output_condition_none(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.output("output_no_condition").condition(ConditionType.NONE)
+    def test_output_condition_none(self, fragment):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.output("output_no_condition").condition(ConditionType.NONE)
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "output_no_condition"
         assert iospec.io_type == IOSpec.IOType.OUTPUT
         assert iospec.conditions == [(ConditionType.NONE, None)]
 
-    def test_output_condition_downstream_message_affordable(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.output("output_downstream_message_affordable_condition").condition(
+    def test_output_condition_downstream_message_affordable(self, fragment):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.output("output_downstream_message_affordable_condition").condition(
             ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE, min_size=1
         )
         assert isinstance(iospec, IOSpec)
@@ -531,18 +575,18 @@ class TestOperatorSpecBase:
         assert iospec.conditions[0][0] == ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE
         assert iospec.conditions[0][1] is not None
 
-    def test_output_connector_default(self, fragment, capfd):
-        c = OperatorSpecBase(fragment)
-        iospec = c.output("output_no_condition").connector(IOSpec.ConnectorType.DEFAULT)
+    def test_output_connector_default(self, fragment):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.output("output_no_condition").connector(IOSpec.ConnectorType.DEFAULT)
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "output_no_condition"
         assert iospec.io_type == IOSpec.IOType.OUTPUT
         assert iospec.connector() is None
 
     @pytest.mark.parametrize("kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1)])
-    def test_output_connector_double_buffer(self, fragment, capfd, kwargs):
-        c = OperatorSpecBase(fragment)
-        iospec = c.output("output_no_condition").connector(
+    def test_output_connector_double_buffer(self, fragment, kwargs):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.output("output_no_condition").connector(
             IOSpec.ConnectorType.DOUBLE_BUFFER, **kwargs
         )
         assert isinstance(iospec, IOSpec)
@@ -553,9 +597,9 @@ class TestOperatorSpecBase:
     @pytest.mark.parametrize(
         "kwargs", [{}, dict(capacity=4), dict(capacity=1, policy=1, address="0.0.0.0", port=13337)]
     )
-    def test_output_connector_ucx(self, fragment, capfd, kwargs):
-        c = OperatorSpecBase(fragment)
-        iospec = c.output("output_no_condition").connector(IOSpec.ConnectorType.UCX, **kwargs)
+    def test_output_connector_ucx(self, fragment, kwargs):
+        spec = OperatorSpecBase(fragment)
+        iospec = spec.output("output_no_condition").connector(IOSpec.ConnectorType.UCX, **kwargs)
         assert isinstance(iospec, IOSpec)
         assert iospec.name == "output_no_condition"
         assert iospec.io_type == IOSpec.IOType.OUTPUT
@@ -568,8 +612,8 @@ class TestOperatorSpecBase:
 
     def test_optional_parameter(self, fragment):
         op_tx, _ = get_tx_and_rx_ops(fragment)
-        c = PyOperatorSpec(fragment, op_tx)
-        c.param("optional_param", 5, flag=ParameterFlag.OPTIONAL)
+        spec = PyOperatorSpec(fragment, op_tx)
+        spec.param("optional_param", 5, flag=ParameterFlag.OPTIONAL)
 
 
 class TestInputContext:
@@ -596,9 +640,14 @@ def test_condition_type():
     (  # noqa: B018
         ConditionType.NONE,
         ConditionType.MESSAGE_AVAILABLE,
+        ConditionType.EXPIRING_MESSAGE_AVAILABLE,
+        ConditionType.MULTI_MESSAGE_AVAILABLE,
+        ConditionType.MULTI_MESSAGE_AVAILABLE_TIMEOUT,
         ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE,
         ConditionType.COUNT,
         ConditionType.BOOLEAN,
+        ConditionType.PERIODIC,
+        ConditionType.ASYNCHRONOUS,
     )
 
 
@@ -699,6 +748,31 @@ class TestFragment:
         op_tx, op_rx = get_tx_and_rx_ops(fragment)
         fragment.add_operator(op_tx)
         fragment.add_operator(op_rx)
+
+    def test_make_thread_pool(self, fragment, config_file):
+        fragment.config(config_file)
+
+        op_tx, op_rx = get_tx_and_rx_ops(fragment)
+        op_tx2, op_rx2 = get_tx_and_rx_ops(fragment)
+
+        pool1 = fragment.make_thread_pool("pool1", 2)
+        pool1.add(op_tx, True)
+        pool1.add(op_rx, False)
+
+        pool2 = fragment.make_thread_pool("pool2", 2)
+        pool2.add([op_tx2, op_rx2], True)
+
+        assert pool1.name == "pool1"
+        assert pool2.name == "pool2"
+
+        # check that the expected operators are associated with each pool
+        assert op_rx in pool1.operators
+        assert op_tx in pool1.operators
+        assert op_rx2 in pool2.operators
+        assert op_tx2 in pool2.operators
+
+        assert "gxf_typename: nvidia::gxf::ThreadPool" in repr(pool1)
+        assert "operators in pool" in repr(pool1)
 
     def test_add_flow(self, fragment, config_file, capfd):
         fragment.config(config_file)

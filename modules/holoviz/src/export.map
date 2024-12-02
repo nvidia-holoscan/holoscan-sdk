@@ -70,6 +70,7 @@
             "holoscan::viz::LineWidth(float)";
             "holoscan::viz::PointSize(float)";
             "holoscan::viz::Primitive(holoscan::viz::PrimitiveTopology, unsigned int, unsigned long, float const*)";
+            "holoscan::viz::PrimitiveCudaDevice(holoscan::viz::PrimitiveTopology, unsigned int, unsigned long, unsigned long long)";
             "holoscan::viz::Text(float, float, float, char const*)";
             "holoscan::viz::DepthMap(holoscan::viz::DepthMapRenderMode, unsigned int, unsigned int, holoscan::viz::ImageFormat, unsigned long long, holoscan::viz::ImageFormat, unsigned long long)";
 

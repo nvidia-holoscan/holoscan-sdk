@@ -24,6 +24,7 @@
 #include <set>
 #include <memory>
 
+#include <gxf/core/expected.hpp>
 #include <gxf/std/default_extension.hpp>
 #include "../common.hpp"
 

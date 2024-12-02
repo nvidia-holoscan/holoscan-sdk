@@ -15,3 +15,4 @@
 
 add_subdirectory(clock)
 add_subdirectory(native)
+add_subdirectory(thread_pool)

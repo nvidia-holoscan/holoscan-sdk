@@ -302,7 +302,7 @@ class Application : public Fragment {
   std::unordered_map<std::string, DataFlowTracker*> track_distributed(
       uint64_t num_start_messages_to_skip = kDefaultNumStartMessagesToSkip,
       uint64_t num_last_messages_to_discard = kDefaultNumLastMessagesToDiscard,
-      int latency_threshold = kDefaultLatencyThreshold);
+      int latency_threshold = kDefaultLatencyThreshold, bool is_limited_tracking = false);
 
  protected:
   friend class AppDriver;
@@ -373,6 +373,7 @@ class Application : public Fragment {
    * @brief Configure UCX environment variables
    */
   void set_ucx_env();
+  void set_v4l2_env();
 };
 
 }  // namespace holoscan

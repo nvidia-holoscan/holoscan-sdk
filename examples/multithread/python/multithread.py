@@ -143,7 +143,9 @@ class ParallelPingApp(Application):
             self.add_flow(d, rx, {("out_val", "values"), ("out_name", "names")})
 
 
-def main(threads, num_delays, delay, delay_step, event_based, count, silent, track):
+def main(
+    threads, num_delays, delay, delay_step, event_based, count, silent, track, name, output_file
+):
     app = ParallelPingApp(
         num_delays=num_delays, delay=delay, delay_step=delay_step, count=count, silent=silent
     )
@@ -172,6 +174,10 @@ def main(threads, num_delays, delay, delay_step, event_based, count, silent, tra
 
     duration = time.time() - tstart
     print(f"Total app runtime = {duration:0.3f} s")
+
+    if name and output_file:
+        with open(output_file, "a") as file:
+            file.write(f"{name} {duration:0.3f}\n")
 
 
 if __name__ == "__main__":
@@ -242,6 +248,14 @@ if __name__ == "__main__":
         action="store_true",
         help="enable data flow tracking",
     )
+    parser.add_argument(
+        "--name",
+        help="specify the name of the specific run for the output file",
+    )
+    parser.add_argument(
+        "--output_file",
+        help="store the output timing to a file",
+    )
 
     args = parser.parse_args()
     if args.delay < 0:
@@ -267,4 +281,6 @@ if __name__ == "__main__":
         count=args.count,
         silent=args.silent,
         track=args.track,
+        name=args.name,
+        output_file=args.output_file,
     )

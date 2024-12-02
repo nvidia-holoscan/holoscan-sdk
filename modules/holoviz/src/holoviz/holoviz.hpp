@@ -383,10 +383,10 @@ void BeginImageLayer();
  * @param row_pitch     the number of bytes between each row, if zero then data is
  * assumed to be contiguous in memory
  * @param device_ptr_plane_1    CUDA device memory pointer for plane 1
- * @param row_pitch_1     the number of bytes between each row for plane 1, if zero then data is
+ * @param row_pitch_plane_1 the number of bytes between each row for plane 1, if zero then data is
  * assumed to be contiguous in memory
  * @param device_ptr_plane_2    CUDA device memory pointer for plane 2
- * @param row_pitch_2     the number of bytes between each row for plane 2, if zero then data is
+ * @param row_pitch_plane_2 the number of bytes between each row for plane 2, if zero then data is
  * assumed to be contiguous in memory
  */
 void ImageCudaDevice(uint32_t width, uint32_t height, ImageFormat fmt, CUdeviceptr device_ptr,
@@ -567,6 +567,19 @@ void PointSize(float size);
  */
 void Primitive(PrimitiveTopology topology, uint32_t primitive_count, size_t data_size,
                const float* data);
+
+/**
+ * Draw a geometric primitive, source is CUDA device memory.
+ *
+ * @param topology          primitive topology
+ * @param primitive_count   primitive count
+ * @param data_size         size of the data array in floats
+ * @param data              CUDA device memory pointer to data, the format and size of the array
+ *                          depends on the primitive count and topology
+ */
+void PrimitiveCudaDevice(PrimitiveTopology topology, uint32_t primitive_count, size_t data_size,
+                         CUdeviceptr data);
+
 /**
  * Draw text.
  *

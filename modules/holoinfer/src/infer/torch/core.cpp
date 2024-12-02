@@ -21,6 +21,8 @@
 
 #include <torch/script.h>
 
+#include <yaml-cpp/yaml.h>
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -162,6 +164,9 @@ torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& i
     case holoinfer_datatype::h_Float32:
       return create_tensor_core<float>(
           input_buffer, dims, torch::kF32, infer_device_, input_device_, cstream);
+    case holoinfer_datatype::h_Float16:
+      return create_tensor_core<int16_t>(
+          input_buffer, dims, torch::kF16, infer_device_, input_device_, cstream);
     case holoinfer_datatype::h_Int8:
       return create_tensor_core<int8_t>(
           input_buffer, dims, torch::kI8, infer_device_, input_device_, cstream);
@@ -176,7 +181,8 @@ torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& i
           input_buffer, dims, torch::kUInt8, infer_device_, input_device_, cstream);
     default: {
       HOLOSCAN_LOG_INFO(
-          "Torch backend is supported with following data types: float, int8, int32, int64, uint8");
+          "Torch backend supports following input data types: float, float16, int8, int32, int64, "
+          "uint8");
       HOLOSCAN_LOG_ERROR("Unsupported datatype in Torch backend tensor creation.");
       return torch::empty({0});
     }
@@ -295,7 +301,8 @@ InferStatus TorchInferImpl::transfer_to_output(
                                            cstream);
     default:
       HOLOSCAN_LOG_INFO(
-          "Torch backend is supported with following data types: float, int8, int32, int64, uint8");
+          "Torch backend is supported with following output data types: float, int8, int32, int64, "
+          "uint8");
       return InferStatus(holoinfer_code::H_ERROR, "Unsupported datatype for transfer.");
   }
 }

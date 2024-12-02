@@ -364,6 +364,9 @@ connector:
         type: uint64_t
         description: ""
         flag: kNone
+  gxf_eid: 0
+  gxf_cid: 0
+  gxf_typename: nvidia::gxf::DoubleBufferTransmitter
 conditions:
   - id: -1
     name: message_available
@@ -373,6 +376,9 @@ conditions:
         type: uint64_t
         value: 5
     spec: ~
+    gxf_eid: 0
+    gxf_cid: 0
+    gxf_typename: nvidia::gxf::MessageAvailableSchedulingTerm
     type: kMessageAvailable)",
                                         entity_typename);
   EXPECT_EQ(spec.description(), description);

@@ -25,7 +25,6 @@ option(BUILD_SHARED_LIBS "Build Shared Libraries" ON)
 option(HOLOSCAN_BUILD_LIBTORCH "Build support for the LibTorch backend" ON)
 option(HOLOSCAN_BUILD_ORT "Build support for the ONNX Runtime backend" ON)
 option(HOLOSCAN_BUILD_AJA "Build support for AJA" ON)
-option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
 option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
 option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
 option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Datasets" ON)
@@ -33,6 +32,9 @@ option(HOLOSCAN_BUILD_TESTS "Build Holoscan SDK Tests" ON)
 option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan SDK" OFF)
 option(HOLOSCAN_INSTALL_EXAMPLE_SOURCE "Install the example source code" ON)
 option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
+option(HOLOSCAN_ENABLE_GOOGLE_SANITIZER "Enable use of google sanitizer" OFF)
+option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
+option(HOLOSCAN_REGISTER_GXF_EXTENSIONS "Register extensions with the Graph Composer registry" OFF)
 
 # ##############################################################################
 # # Prerequisite statements
@@ -64,6 +66,18 @@ project(${HOLOSCAN_PACKAGE_NAME}
     LANGUAGES C CXX
 )
 include(SetupCUDA) # CUDA Language enabled there after additional setup
+
+# If enabling google sanitizer
+if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
+  # Note: Before running the tests, the following command must be executed:
+  #   export ASAN_OPTIONS=symbolize=1:protect_shadow_gap=0
+  # This ensures that stack traces are symbolized and prevents false positives related to shadow gap
+  # protection.
+  # Without this, CUDA-related tests may fail (e.g., CUDA runtime API error "out of memory").
+  # (See https://github.com/NVIDIA/DALI/pull/362).
+  # You may still see some false positives when running the tests that uses the Vulkan-related APIs.
+  list(APPEND CMAKE_CXX_FLAGS "-g -O1 -Wno-stringop-truncation -fsanitize=address -fno-omit-frame-pointer")
+endif()
 
 # ##############################################################################
 # # Global properties (CMAKE_*)
@@ -301,6 +315,12 @@ foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
         )
     endif()
 endforeach()
+
+install(
+  DIRECTORY ${GXF_PYTHON_MODULE_PATH}
+  DESTINATION python/${HOLOSCAN_INSTALL_LIB_DIR}
+  COMPONENT "holoscan-gxf_libs"
+)
 
 # Install CMake script to build GXE applications
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/GenerateGXEAppInstall.cmake"

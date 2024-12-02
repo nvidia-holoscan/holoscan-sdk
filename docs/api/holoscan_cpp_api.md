@@ -97,6 +97,7 @@
 - {ref}`exhale_class_classholoscan_1_1ParameterWrapper`
 - {ref}`exhale_class_classholoscan_1_1Resource`
 - {ref}`exhale_class_classholoscan_1_1Scheduler`
+- {ref}`exhale_class_classholoscan_1_1ThreadPool`
 
 ### Operators
 
@@ -164,6 +165,7 @@
 - {ref}`exhale_class_classholoscan_1_1StdComponentSerializer`
 - {ref}`exhale_class_classholoscan_1_1StdEntitySerializer`
 - {ref}`exhale_class_classholoscan_1_1StreamOrderedAllocator`
+- {ref}`exhale_class_classholoscan_1_1ThreadPool`
 - {ref}`exhale_class_classholoscan_1_1Transmitter`
 - {ref}`exhale_class_classholoscan_1_1UcxComponentSerializer`
 - {ref}`exhale_class_classholoscan_1_1UcxEntitySerializer`
@@ -294,7 +296,6 @@
 
 ### Inference Module Typedefs
 
-- {ref}`exhale_typedef_data__processor_8hpp_1a52a96a33d28d5268514788dc66953631`
 - {ref}`exhale_typedef_data__processor_8hpp_1aebc6df65b363c69857e1a735ea8108ce`
 - {ref}`exhale_typedef_holoinfer__buffer_8hpp_1a087e5c16b34b9ed56caef479b684c421`
 - {ref}`exhale_typedef_holoinfer__buffer_8hpp_1a33b28575b822fc2e74dd30eab1ae22bf`
@@ -320,6 +321,7 @@
 - {ref}`exhale_variable_dataflow__tracker_8hpp_1af7cd18b9eb2b9d9b76d328b59900f566`
 - {ref}`exhale_variable_expected_8hpp_1ae6efc4444700a9a08911d884857bb06c`
 - {ref}`exhale_variable_gpu__resource__monitor_8hpp_1ae9c4ec64e9b50146f256c3e70eccb823`
+- {ref}`exhale_variable_io__context_8hpp_1a7d68812a7241b94af93ec46784458585`
 - {ref}`exhale_variable_serialization__buffer_8hpp_1aa7a8ceba3b1b28fd04e0139b78701b36`
 - {ref}`exhale_variable_type__traits_8hpp_1a2b61ac0c36bd39ca398dde9664e65e33`
 - {ref}`exhale_variable_type__traits_8hpp_1a3891b0c8d38e9c0a11b23dc8edd31ceb`
@@ -337,7 +339,6 @@
 - {ref}`exhale_variable_infer__manager_8hpp_1a25cde569b0d251fbd30765ec68766a0b`
 - {ref}`exhale_variable_infer__manager_8hpp_1a52921e7945bc7ee74cb281271e8fbeb4`
 - {ref}`exhale_variable_modules_2holoinfer_2src_2include_2holoinfer__utils_8hpp_1aed7f62ec8a46ab6cbe3334ac26c719c6`
-- {ref}`exhale_variable_process__manager_8hpp_1ab99c5b36d1bbf94cb7b4d231de096fdb`
 - {ref}`exhale_variable_utils_8hpp_1aba4496e4cd0c7966ca1730727c109373`
 
 ```{toctree}

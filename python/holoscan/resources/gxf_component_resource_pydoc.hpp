@@ -37,7 +37,7 @@ gxf_typename : str
     The GXF type name that identifies the specific GXF Component being wrapped.
 name : str, optional (constructor only)
     The name of the resource. Default value is ``"gxf_component"``.
-**kwargs : dict
+kwargs : dict
     The additional keyword arguments that can be passed depend on the underlying GXF Component.
     These parameters can provide further customization and functionality to the resource.
 )doc")

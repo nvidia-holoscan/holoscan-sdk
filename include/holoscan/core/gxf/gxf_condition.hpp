@@ -18,6 +18,9 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_CONDITION_HPP
 #define HOLOSCAN_CORE_GXF_GXF_CONDITION_HPP
 
+#include <yaml-cpp/yaml.h>
+
+#include <memory>
 #include <string>
 
 #include "../condition.hpp"
@@ -36,6 +39,16 @@ class GXFCondition : public holoscan::Condition, public gxf::GXFComponent {
   void initialize() override;
 
   void add_to_graph_entity(Operator* op);
+  void add_to_graph_entity(Fragment* fragment,
+                           std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+
+  /**
+   * @brief Get a YAML representation of the condition.
+   *
+   * @return YAML node including type and spec of the condition in addition to the base component
+   * properties.
+   */
+  YAML::Node to_yaml_node() const override;
 };
 
 }  // namespace holoscan::gxf

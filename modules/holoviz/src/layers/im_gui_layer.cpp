@@ -56,8 +56,8 @@ void ImGuiLayer::end(Vulkan* vulkan) {
   // nothing to do if there are no vertices
   if (impl_->draw_data_->TotalVtxCount > 0) {
     // copy all vertex and index data to one host buffer
-    std::unique_ptr<ImDrawVert> vertex_data(new ImDrawVert[impl_->draw_data_->TotalVtxCount]);
-    std::unique_ptr<ImDrawIdx> index_data(new ImDrawIdx[impl_->draw_data_->TotalIdxCount]);
+    std::unique_ptr<ImDrawVert[]> vertex_data(new ImDrawVert[impl_->draw_data_->TotalVtxCount]);
+    std::unique_ptr<ImDrawIdx[]> index_data(new ImDrawIdx[impl_->draw_data_->TotalIdxCount]);
 
     ImDrawVert* vertex = vertex_data.get();
     ImDrawIdx* index = index_data.get();

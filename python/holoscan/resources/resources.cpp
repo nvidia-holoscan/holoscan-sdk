@@ -31,6 +31,7 @@ void init_serialization_buffers(py::module_&);
 void init_component_serializers(py::module_&);
 void init_entity_serializers(py::module_&);
 void init_std_entity_serializer(py::module_&);
+void init_system_resources(py::module_&);
 
 PYBIND11_MODULE(_resources, m) {
   m.doc() = R"pbdoc(
@@ -48,5 +49,6 @@ PYBIND11_MODULE(_resources, m) {
   init_component_serializers(m);
   init_entity_serializers(m);
   init_std_entity_serializer(m);
+  init_system_resources(m);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

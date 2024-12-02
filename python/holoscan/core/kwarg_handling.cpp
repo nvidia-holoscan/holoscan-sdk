@@ -117,56 +117,72 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   }
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
+namespace {
+
+template <typename T>
+YAML::Node process_nested_sequence_as_node(const py::sequence& sequence) {
+  YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
+  for (const auto& item : sequence) {
+    YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
+    for (const auto& inner_item : item) {
+      inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
+    }
+    if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
+  }
+  return yaml_node;
+}
+
+template <typename T>
+YAML::Node process_sequence_as_node(const py::sequence& sequence) {
+  YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
+  for (const auto& item : sequence) { yaml_node.push_back(cast_to_yaml_node<T>(item)); }
+  return yaml_node;
+}
+
+template <typename T>
+std::vector<T> process_shared_ptr_sequence(const py::sequence& sequence) {
+  std::vector<T> v;
+  size_t length = py::len(sequence);
+  v.reserve(length);
+  for (const auto& item : sequence) { v.push_back(item.cast<T>()); }
+  return v;
+}
+
+template <typename T>
+std::vector<std::vector<T>> process_nested_shared_ptr_sequence(const py::sequence& sequence) {
+  std::vector<std::vector<T>> v;
+  v.reserve(static_cast<size_t>(py::len(sequence)));
+  for (const auto& item : sequence) {
+    std::vector<T> vv;
+    vv.reserve(static_cast<size_t>(py::len(item)));
+    for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+    v.push_back(vv);
+  }
+  return v;
+}
+}  // namespace
+
 template <typename T>
 void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
   // not intended for images or other large tensors, just
   // for short arrays containing parameter settings to operators/resources
 
+  auto first_item = seq[0];
   if constexpr (std::is_same_v<T, std::shared_ptr<Resource>> ||
                 std::is_same_v<T, std::shared_ptr<Condition>>) {
-    auto first_item = seq[0];
     if (py::isinstance<py::sequence>(first_item) && !py::isinstance<py::str>(first_item)) {
-      // Handle list of list and other sequence of sequence types.
-      std::vector<std::vector<T>> v;
-      v.reserve(static_cast<size_t>(py::len(seq)));
-      for (const auto& item : seq) {
-        std::vector<T> vv;
-        vv.reserve(static_cast<size_t>(py::len(item)));
-        for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
-        v.push_back(vv);
-      }
-      out = v;
+      out = process_nested_shared_ptr_sequence<T>(seq);
     } else {
-      // 1d vector to handle a sequence of elements
-      std::vector<T> v;
-      size_t length = py::len(seq);
-      v.reserve(length);
-      for (const auto& item : seq) { v.push_back(item.cast<T>()); }
-      out = v;
+      out = process_shared_ptr_sequence<T>(seq);
     }
   } else {
-    auto first_item = seq[0];
     if (py::isinstance<py::sequence>(first_item) && !py::isinstance<py::str>(first_item)) {
-      // Handle list of list and other sequence of sequence types.
-      YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-      for (const auto& item : seq) {
-        YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
-        for (const auto& inner_item : item) {
-          inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
-        }
-        if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
-      }
-      out = yaml_node;
+      out = process_nested_sequence_as_node<T>(seq);
     } else {
-      // 1d vector to handle a sequence of elements
-      YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-      for (const auto& item : seq) { yaml_node.push_back(cast_to_yaml_node<T>(item)); }
-      out = yaml_node;
+      out = process_sequence_as_node<T>(seq);
     }
   }
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
   py::sequence seq;

@@ -295,7 +295,7 @@ RUN apt-get update \
         libnvinfer10="10.3.*+cuda12.5" \
         libnvinfer-plugin10="10.3.*+cuda12.5" \
         libnvonnxparsers10="10.3.*+cuda12.5" \
-        libcusparselt0="0.6.2.3-*" \
+        libcusparselt0="0.6.3.2-*" \
         libcudnn9-cuda-12  \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/lib/*/libcudnn*train.so*
@@ -336,7 +336,7 @@ RUN apt update \
     && apt-get install -y --no-install-recommends --no-install-suggests \
         gcc \
         python3-dev \
-    && rm -rf /var/lib/apt/lists/* 
+    && rm -rf /var/lib/apt/lists/*
 {% endif %}
 
 {% endif %}
@@ -412,8 +412,7 @@ WORKDIR {{ working_dir }}
 USER $UNAME
 
 ENV PATH=/home/${UNAME}/.local/bin:/opt/nvidia/holoscan/bin:$PATH
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{{ app_dir }}:/home/${UNAME}/.local/lib/python3.10/site-packages/holoscan/lib
-ENV PYTHONPATH="{{ app_dir }}:${PYTHONPATH}"
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/${UNAME}/.local/lib/python3.10/site-packages/holoscan/lib
 
 {% if application_type == 'PythonModule' or application_type == 'PythonFile' %}
 COPY ./pip/requirements.txt /tmp/requirements.txt
@@ -465,6 +464,17 @@ COPY ./map/pkg.json {{ pkg_json }}
 COPY --from=builder /install {{ app_dir }}
 {% else %}
 COPY ./app {{ app_dir }}
+{% endif %}
+
+{% if additional_lib_paths != '' %}
+
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{{ additional_lib_paths }}:{{ lib_dir }}
+COPY ./lib {{ lib_dir }}
+
+{% if application_type == 'PythonModule' or application_type == 'PythonFile' %}
+ENV PYTHONPATH=$PYTHONPATH:{{ additional_lib_paths }}:{{ lib_dir }}
+{% endif %}
+
 {% endif %}
 
 ENTRYPOINT ["/var/holoscan/tools"]

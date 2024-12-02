@@ -196,11 +196,6 @@ void InferenceOp::start() {
       HoloInfer::raise_error(module_, "Parameter Validation failed: " + status.get_message());
     }
 
-    bool is_aarch64 = HoloInfer::is_platform_aarch64();
-    if (is_aarch64 && backend_.get().compare("onnxrt") == 0 && !infer_on_cpu_.get()) {
-      HoloInfer::raise_error(module_, "Onnxruntime with CUDA not supported on aarch64.");
-    }
-
     // Create inference specification structure
     inference_specs_ =
         std::make_shared<HoloInfer::InferenceSpecs>(backend_.get(),

@@ -147,6 +147,11 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
       const auto& in_tensor = maybe_in_tensor.value();
       const auto storage_type = in_tensor->storage_type();
 
+      if (!in_tensor->isContiguous()) {
+        HOLOSCAN_LOG_ERROR("Input tensor {} must have row-major memory layout.", in_tensors[i]);
+        return HoloInfer::report_error(module, "Data extraction, Memory layout not row-major.");
+      }
+
       if (storage_type != nvidia::gxf::MemoryStorageType::kHost &&
           storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
         return HoloInfer::report_error(
@@ -176,8 +181,12 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
         case nvidia::gxf::PrimitiveType::kUnsigned8:
           dtype = HoloInfer::holoinfer_datatype::h_UInt8;
           break;
+        case nvidia::gxf::PrimitiveType::kFloat16:
+          dtype = HoloInfer::holoinfer_datatype::h_Float16;
+          break;
         default: {
-          HOLOSCAN_LOG_INFO("Incoming tensors must be of type: float, int32, int64, int8, uint8");
+          HOLOSCAN_LOG_INFO(
+              "Incoming tensors must be of type: float, float16, int32, int64, int8, uint8");
           return HoloInfer::report_error(module,
                                          "Data extraction, data type not supported in extraction.");
         }

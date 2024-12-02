@@ -200,6 +200,40 @@ TEST(Fragment, TestAddOperator) {
   EXPECT_EQ(nodes[0], op);
 }
 
+TEST(Fragment, TestMakeThreadPool) {
+  Fragment F;
+  auto op1 = F.make_operator<Operator>("op1");
+  auto op2 = F.make_operator<Operator>("op2");
+  auto op3 = F.make_operator<Operator>("op3");
+
+  // create a pool of size 1
+  auto pool1 = F.make_thread_pool("pool1", 1);
+  // add an individual operator without thread pinning
+  pool1->add(op1, false);
+
+  // create a pool of size 2
+  auto pool2 = F.make_thread_pool("pool2", 2);
+  // add multiple operators, each with thread pinning
+  pool2->add({op2, op3}, true);
+
+  EXPECT_EQ(pool1->name(), std::string{"pool1"});
+  EXPECT_EQ(pool2->name(), std::string{"pool2"});
+
+  // check that the associated operators are as expected
+  auto pool1_ops = pool1->operators();
+  EXPECT_EQ(pool1_ops.size(), 1);
+  EXPECT_EQ(pool1_ops[0]->name(), std::string{"op1"});
+  auto pool2_ops = pool2->operators();
+  EXPECT_EQ(pool2_ops.size(), 2);
+  EXPECT_EQ(pool2_ops[0]->name(), std::string{"op2"});
+  EXPECT_EQ(pool2_ops[1]->name(), std::string{"op3"});
+
+  // description contains the GXF typename and info on operators in the pool
+  auto description1 = pool1->description();
+  ASSERT_TRUE(description1.find("gxf_typename: nvidia::gxf::ThreadPool") != std::string::npos);
+  ASSERT_TRUE(description1.find("operators in pool") != std::string::npos);
+}
+
 TEST(Application, TestAddOperatorsWithSameName) {
   Fragment F;
 

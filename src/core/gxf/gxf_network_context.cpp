@@ -41,4 +41,12 @@ void GXFNetworkContext::reset_graph_entities() {
   reset_gxf_graph_entity();
 }
 
+YAML::Node GXFNetworkContext::to_yaml_node() const {
+  YAML::Node node = NetworkContext::to_yaml_node();
+  node["gxf_eid"] = YAML::Node(gxf_eid());
+  node["gxf_cid"] = YAML::Node(gxf_cid());
+  node["gxf_typename"] = YAML::Node(gxf_typename());
+  return node;
+}
+
 }  // namespace holoscan::gxf

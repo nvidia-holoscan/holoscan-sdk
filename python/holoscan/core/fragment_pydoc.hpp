@@ -229,12 +229,28 @@ num_last_messages_to_discard : int
 latency_threshold : int
     The minimum end-to-end latency in milliseconds to account for in the
     end-to-end latency metric calculations
+is_limited_tracking : bool, optional
+    If ``True``, the tracking is limited to root and leaf nodes, minimizing
+    the timestamps by avoiding intermediate operators.
 
 Returns
 -------
 tracker : holoscan.core.DataFlowTracker
     The data flow tracker object that can be used to display metrics data for profiling along the
     different paths through the computation graph.
+)doc")
+
+PYDOC(make_thread_pool, R"doc(
+Create a ThreadPool associated with this Fragment.
+
+The add method must be used to add individual operators to the pool.
+
+Parameters
+----------
+name : str
+    A name for the thread pool.
+initialize_size : 1
+    The initial number of threads in the pool.
 )doc")
 
 PYDOC(run, R"doc(

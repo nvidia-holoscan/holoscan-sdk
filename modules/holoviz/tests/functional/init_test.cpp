@@ -21,6 +21,9 @@
 #include <GLFW/glfw3.h>
 #include <stdlib.h>
 
+#include <future>
+#include <vector>
+
 #include <holoviz/holoviz.hpp>
 
 namespace viz = holoscan::viz;
@@ -142,4 +145,21 @@ TEST(Init, Errors) {
       viz::ReadFramebuffer(viz::ImageFormat::R8G8B8A8_UNORM, 1, 1, 1 * 1 * 4 * sizeof(uint8_t), 0),
       std::runtime_error);
   EXPECT_NO_THROW(viz::Shutdown());
+}
+
+TEST(Init, MultiThreaded) {
+  if (glfwInit() == GLFW_FALSE) {
+    const char* description;
+    int code = glfwGetError(&description);
+    ASSERT_EQ(code, GLFW_PLATFORM_UNAVAILABLE)
+        << "Expected `GLFW_PLATFORM_UNAVAILABLE` but got `" << code << "`: `" << description << "`";
+    GTEST_SKIP() << "No display server available, skipping test." << description;
+  }
+
+  // create multiple windows from threads
+  std::vector<std::future<void>> futures;
+  for (int i = 0; i < 8; ++i) {
+    futures.push_back(std::async(std::launch::async, [] { viz::Init(640, 480, "Holoviz test"); }));
+  }
+  for (auto&& future : futures) { future.wait(); }
 }

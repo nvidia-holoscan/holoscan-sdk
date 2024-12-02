@@ -21,6 +21,12 @@
 
 namespace holoscan::ops {
 
+std::string GXFOperator::gxf_entity_group_name() const {
+  const char* name;
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGroupName(gxf_context_, gxf_eid_, &name));
+  return std::string{name};
+}
+
 void GXFOperator::initialize() {
   // Call base class initialize function.
   Operator::initialize();
@@ -53,6 +59,15 @@ void GXFOperator::set_parameters() {
                                key);
     HOLOSCAN_LOG_TRACE("GXFOperator '{}':: setting GXF parameter '{}'", name_, key);
   }
+}
+
+YAML::Node GXFOperator::to_yaml_node() const {
+  YAML::Node node = Operator::to_yaml_node();
+  node["gxf_eid"] = YAML::Node(gxf_eid());
+  node["gxf_cid"] = YAML::Node(gxf_cid());
+  node["gxf_typename"] = YAML::Node(gxf_typename());
+  node["gxf_entity_group_name"] = YAML::Node(gxf_entity_group_name());
+  return node;
 }
 
 }  // namespace holoscan::ops

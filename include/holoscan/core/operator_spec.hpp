@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_OPERATOR_SPEC_HPP
 #define HOLOSCAN_CORE_OPERATOR_SPEC_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <iostream>
 #include <list>
 #include <memory>
@@ -31,6 +33,12 @@
 #include "./component_spec.hpp"
 #include "./io_spec.hpp"
 namespace holoscan {
+
+struct MultiMessageConditionInfo {
+  ConditionType kind;
+  std::vector<std::string> port_names;
+  ArgList args;
+};
 
 /**
  * @brief Class to define the specification of an operator.
@@ -61,6 +69,20 @@ class OperatorSpec : public ComponentSpec {
   IOSpec& input() {
     return input<DataT>("__iospec_input");
   }
+
+  /**
+   * @brief Add a Condition that depends on the status of multiple input ports.
+   *
+   * @param type The type of multi-message condition (currently only kMultiMessageAvailable)
+   * @param port_names The names of the input ports the condition will apply to
+   * @param args ArgList of arguments to pass to the MultiMessageAvailableCondition
+   */
+  void multi_port_condition(ConditionType kind, std::vector<std::string> port_names, ArgList args) {
+    multi_port_conditions_.emplace_back(
+        MultiMessageConditionInfo{kind, std::move(port_names), std::move(args)});
+  }
+
+  std::vector<MultiMessageConditionInfo>& multi_port_conditions() { return multi_port_conditions_; }
 
   /**
    * @brief Define an input specification for this operator.
@@ -286,6 +308,9 @@ class OperatorSpec : public ComponentSpec {
  protected:
   std::unordered_map<std::string, std::shared_ptr<IOSpec>> inputs_;   ///< Input specs
   std::unordered_map<std::string, std::shared_ptr<IOSpec>> outputs_;  ///< Outputs specs
+
+  // multi-message conditions span multiple IOSpec objects, so store them on OperatorSpec instead
+  std::vector<MultiMessageConditionInfo> multi_port_conditions_;
 
   /// Container for receivers parameters
   std::list<Parameter<std::vector<IOSpec*>>> receivers_params_;

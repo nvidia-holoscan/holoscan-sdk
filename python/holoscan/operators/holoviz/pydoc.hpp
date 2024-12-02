@@ -173,6 +173,12 @@ font_path : str, optional
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
     ``holoscan.resources.CudaStreamPool`` instance to allocate CUDA streams. Default value is
     ``None``.
+window_close_condition : holoscan.conditions.BooleanCondition, optionally
+    This is the ``BooleanCondition`` on the operator that will cause it to stop executing if the
+    display window is closed. By default, this condition is created automatically during initialize.
+    The user may want to provide it if, for example, there are multiple HolovizOp operators and you
+    want to share the same window close condition across both. By sharing the same condition, if
+    one of the display windows is closed it would also close the other(s).
 name : str, optional (constructor only)
     The name of the operator. Default value is ``"holoviz_op"``.
 

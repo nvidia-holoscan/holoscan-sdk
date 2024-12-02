@@ -17,6 +17,9 @@ limitations under the License.
 
 from collections.abc import MutableMapping, Sequence
 
+# BooleanCondition, Allocator, CudaStreamPool are all used as argument types so have to be imported
+# before HolovizOp's __init__() can be called.
+from holoscan.conditions import BooleanCondition  # noqa: F401
 from holoscan.core import IOSpec, io_type_registry
 from holoscan.resources import Allocator, CudaStreamPool, UnboundedAllocator  # noqa: F401
 
@@ -162,6 +165,7 @@ class HolovizOp(_HolovizOp):
         window_size_callback=None,
         font_path="",
         cuda_stream_pool=None,
+        window_close_condition=None,
         name="holoviz_op",
     ):
         if allocator is None:
@@ -370,7 +374,6 @@ class HolovizOp(_HolovizOp):
             ispec.views = tensor.get("views", [])
 
             tensor_input_specs.append(ispec)
-
         super().__init__(
             fragment,
             *args,
@@ -405,16 +408,9 @@ class HolovizOp(_HolovizOp):
             window_size_callback=window_size_callback,
             font_path=font_path,
             cuda_stream_pool=cuda_stream_pool,
+            window_close_condition=window_close_condition,
             name=name,
         )
-
-    InputSpec = _HolovizOp.InputSpec
-    InputType = _HolovizOp.InputType
-    ImageFormat = _HolovizOp.ImageFormat
-    YuvModelConversion = _HolovizOp.YuvModelConversion
-    YuvRange = _HolovizOp.YuvRange
-    ChromaLocation = _HolovizOp.ChromaLocation
-    DepthMapRenderMode = _HolovizOp.DepthMapRenderMode
 
 
 # copy docstrings defined in operators_pydoc.hpp

@@ -26,8 +26,8 @@ void PingRxNativeOp::setup(OperatorSpec& spec) {
   spec.input<holoscan::gxf::Entity>("in");
 }
 
-void PingRxNativeOp::compute(InputContext& op_input, OutputContext& op_output,
-                             ExecutionContext& context) {
+void PingRxNativeOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+                             [[maybe_unused]] ExecutionContext& context) {
   HOLOSCAN_LOG_INFO("PingRxNativeOp::compute() called.");
 
   // The type of `in_message` is 'holoscan::gxf::Entity'.

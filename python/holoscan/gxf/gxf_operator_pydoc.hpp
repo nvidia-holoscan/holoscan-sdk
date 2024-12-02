@@ -61,6 +61,15 @@ PYDOC(gxf_cid, R"doc(
 The GXF component ID.
 )doc")
 
+PYDOC(gxf_entity_group_name, R"doc(
+The name of the GXF EntityGroup containing this operator.
+
+Returns
+-------
+str
+    The entity group name.
+)doc")
+
 PYDOC(description, R"doc(
 YAML formatted string describing the operator.
 )doc")

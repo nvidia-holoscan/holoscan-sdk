@@ -42,25 +42,19 @@ Required parameters and related features available with the Holoscan Inference M
                 - It is recommended to use the same version of torch for `torchscript` model generation, as used in the HOLOSCAN SDK on the respective architectures.
                 - Additionally, it is recommended to generate the `torchscript` model on the same architecture on which it will be executed. For example, `torchscript` model must be generated on `x86_64` to be executed in an application running on `x86_64` only.
         - ONNX runtime:
-            - Data flow via host only. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` must be `false`.
-            - CUDA-based inference (supported on x86_64).
-            - CPU-based inference (supported on x86_64 and aarch64).
+            - CUDA and CPU based inference supported both on x86_64 and aarch64.
+            - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
+            - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
 
     - `infer_on_cpu` parameter is set to `true` if CPU based inference is desired.
 
-        The tables below demonstrate the supported features related to the data buffer and the inference with `trt` and `onnxrt` based backend, on x86 and aarch64 system respectively.
+        The tables below demonstrate the supported features related to the data buffer and the inference with `trt`, `torch` and `onnxrt` based backend.
 
-        | x86  | `input_on_cuda`  | `output_on_cuda`  | `transmit_on_cuda` | `infer_on_cpu` |
+        |  | `input_on_cuda`  | `output_on_cuda`  | `transmit_on_cuda` | `infer_on_cpu` |
         |---|---|---|---|---|
         | Supported values for `trt`  | `true` or `false`  | `true` or `false` | `true` or `false` | `false` |
         | Supported values for `torch`  | `true` or `false`  | `true` or `false` | `true` or `false` | `true` or `false` |
-        | Supported values for `onnxrt`  | `false`  | `false` | `true` or `false` | `true` or `false` |
-
-        | Aarch64  | `input_on_cuda`  | `output_on_cuda`  | `transmit_on_cuda` | `infer_on_cpu` |
-        |---|---|---|---|---|
-        | Supported values for `trt`  | `true` or `false`  | `true` or `false` | `true` or `false` | `false` |
-        | Supported values for `torch`  | `true` or `false`  | `true` or `false` | `true` or `false` | `true` or `false` |
-        | Supported values for `onnxrt`  | `false`  | `false` | `true` or `false` | `true` |
+        | Supported values for `onnxrt`  | `true` or `false`  | `true` or `false` | `true` or `false` | `true` or `false` |
 
     - `model_path_map`: User can design single or multi AI inference pipeline by populating `model_path_map` in the config file.
         - With a single entry, it is single inference; with more than one entry, multi AI inference is enabled.
@@ -78,7 +72,7 @@ Required parameters and related features available with the Holoscan Inference M
         - Parameter `parallel_inference` can be either `true` or `false`. Default value is `true`.
         - Inferences are launched in parallel without any check of the available GPU resources. You must ensure that there is enough memory and compute available to run all the inferences in parallel.
     - `enable_fp16`: Generation of the TensorRT engine files with FP16 option
-        - If `backend` is set to `trt`, and if the input models are in __onnx__ format, then you can generate the engine file with fp16 option to accelerate inferencing.
+        - If `backend` is set to `onnx` or `trt` if the input models are in __onnx__ format, then you can generate the engine file with fp16 option to accelerate inferencing.
         - It takes few minutes to generate the engine files for the first time.
         - It can be either `true` or `false`. Default value is `false`.
     - `is_engine_path`: if the input models are specified in __trt engine format__ in `model_path_map`, this flag must be set to `true`. Default value is `false`.

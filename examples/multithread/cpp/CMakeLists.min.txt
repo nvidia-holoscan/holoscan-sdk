@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the \"License\");
@@ -44,4 +44,20 @@ if(BUILD_TESTING)
           )
   set_tests_properties(EXAMPLE_CPP_MULTITHREAD_OPERATOR_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "sum of received values: 496")
+
+  # Test the flow tracking
+  file(READ ${CMAKE_CURRENT_SOURCE_DIR}/multithread.yaml CONFIG_STRING)
+  string(REPLACE "tracking: false" "tracking: true" CONFIG_STRING "${CONFIG_STRING}")
+
+  # Write the config
+  set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/multithread_tracking.yaml)
+  file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
+
+  add_test(NAME EXAMPLE_CPP_MULTITHREAD_OPERATOR_TRACKING_TEST
+           COMMAND multithread ${CONFIG_FILE}
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  set_tests_properties(EXAMPLE_CPP_MULTITHREAD_OPERATOR_TRACKING_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "Data Flow Tracking Results:"
+                       PASS_REGULAR_EXPRESSION "tx->out: 1")
 endif()

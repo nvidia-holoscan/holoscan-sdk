@@ -17,6 +17,7 @@
 
 #include "holoscan/core/flow_tracking_annotation.hpp"
 
+#include <memory>
 #include <utility>
 
 #include "holoscan/core/fragment.hpp"
@@ -50,13 +51,26 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
     // gxf_entity->deactivate();
     MessageLabel m;
     m = std::move(op->get_consolidated_input_label());
-    m.update_last_op_publish();
 
-    // Check if a message_label component already exists in the entity
+    std::shared_ptr<holoscan::Operator> op_shared_ptr(op, [](Operator*) {});
+
+    bool is_current_op_root = op->is_root() || op->is_user_defined_root() ||
+                              holoscan::Operator::is_all_operator_predecessor_virtual(
+                                  op_shared_ptr, op->fragment()->graph());
+    if (!op->fragment()->data_flow_tracker()->limited_tracking() ||
+        (op->fragment()->data_flow_tracker()->limited_tracking() &&
+         is_current_op_root)) {  // update the last timestamp if limited tracking is not enabled
+      m.update_last_op_publish();
+    }
+
+    HOLOSCAN_LOG_DEBUG("annotate_message: MessageLabel: {}", m.to_string());
+
     static gxf_tid_t message_label_tid = GxfTidNull();
     if (message_label_tid == GxfTidNull()) {
       GxfComponentTypeId(context, "holoscan::MessageLabel", &message_label_tid);
     }
+
+    // Check if a message_label component already exists in the entity
     // If a message_label component already exists in the entity, just update the value of the
     // MessageLabel
     if (gxf::has_component(context, uid, message_label_tid, "message_label")) {
@@ -108,7 +122,16 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
     // Find whether current operator is already in the paths of message label m
     auto cyclic_path_indices = m.has_operator(op->qualified_name());
     if (cyclic_path_indices.empty()) {  // No cyclic paths
-      m.add_new_op_timestamp(cur_op_timestamp);
+      std::shared_ptr<holoscan::Operator> op_shared_ptr(op, [](Operator*) {});
+      bool is_current_op_leaf =
+          op->is_leaf() || holoscan::Operator::is_all_operator_successor_virtual(
+                               op_shared_ptr, op->fragment()->graph());
+      if (!op->fragment()->data_flow_tracker()->limited_tracking() ||
+          (op->fragment()->data_flow_tracker()->limited_tracking() &&
+           is_current_op_leaf)) {  // add a new timestamp if limited tracking is not enabled
+        m.add_new_op_timestamp(cur_op_timestamp);
+      }
+      HOLOSCAN_LOG_DEBUG("deannotate_message: MessageLabel: {}", m.to_string());
       op->update_input_message_label(receiver_name, m);
     } else {
       // Update the publish timestamp of current operator where the cycle ends, to be the same as

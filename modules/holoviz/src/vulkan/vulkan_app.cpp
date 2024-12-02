@@ -221,6 +221,7 @@ class Vulkan::Impl {
     bool export_alloc_dedicated_initialized_ = false;
 
     nvvk::BatchSubmission batch_submission_;
+    nvvk::BatchSubmission transfer_batch_submission_;
 
     nvvk::CommandPool transfer_cmd_pool_;
     bool transfer_cmd_pool_initialized_ = false;
@@ -444,6 +445,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
 
   // init batch submission
   nvvk_.batch_submission_.init(nvvk_.vk_ctx_.m_queueGCT);
+  nvvk_.transfer_batch_submission_.init(nvvk_.vk_ctx_.m_queueT);
 
   // init command pool
   nvvk_.transfer_cmd_pool_.init(device_, nvvk_.vk_ctx_.m_queueT.familyIndex);
@@ -733,13 +735,18 @@ void Vulkan::Impl::end_transfer_pass() {
   // associates all current staging resources with the transfer fence
   nvvk_.alloc_.finalizeStaging(transfer_job.fence_.get());
 
+  // add the command buffer to the batch submission
+  nvvk_.transfer_batch_submission_.enqueue(transfer_job.cmd_buffer_);
+
+  // signal the transfer job semaphore on completion
+  nvvk_.transfer_batch_submission_.enqueueSignal(transfer_job.semaphore_.get());
+
   // submit staged transfers
-  vk::SubmitInfo submit_info;
-  submit_info.commandBufferCount = 1;
-  submit_info.pCommandBuffers = &transfer_job.cmd_buffer_;
-  submit_info.signalSemaphoreCount = 1;
-  submit_info.pSignalSemaphores = &transfer_job.semaphore_.get();
-  queue_t_.submit(submit_info, transfer_job.fence_.get());
+  const vk::Result result =
+      vk::Result(nvvk_.transfer_batch_submission_.execute(transfer_job.fence_.get(), 0b0000'0001));
+  if (result != vk::Result::eSuccess) {
+    vk::throwResultException(result, "Failed to execute batch submission");
+  }
 
   // next graphics submission must wait for transfer completion
   nvvk_.batch_submission_.enqueueWait(transfer_job.semaphore_.get(),
@@ -890,7 +897,7 @@ void Vulkan::Impl::submit_frame() {
   const vk::Result result =
       vk::Result(nvvk_.batch_submission_.execute(wait_fences_[image_index].get(), 0b0000'0001));
   if (result != vk::Result::eSuccess) {
-    vk::throwResultException(result, "Failed to execute bach submission");
+    vk::throwResultException(result, "Failed to execute batch submission");
   }
 
   // Presenting frame
@@ -1645,6 +1652,8 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<Buffer*,
     }
     image_subresource_layers.layerCount = 1;
 
+    buffers[plane]->access_with_vulkan(nvvk_.transfer_batch_submission_);
+
     vk::BufferImageCopy buffer_image_copy;
     buffer_image_copy.imageSubresource = image_subresource_layers;
     buffer_image_copy.imageExtent = vk::Extent3D{width, height, 1};
@@ -2187,7 +2196,7 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
   const vk::Result result =
       vk::Result(nvvk_.batch_submission_.execute(read_job.fence_.get(), 0b0000'0001));
   if (result != vk::Result::eSuccess) {
-    vk::throwResultException(result, "Failed to execute bach submission");
+    vk::throwResultException(result, "Failed to execute batch submission");
   }
 
   // copy the buffer to CUDA memory

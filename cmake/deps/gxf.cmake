@@ -111,8 +111,37 @@ foreach(component ${HOLOSCAN_GXF_COMPONENTS})
     endif()
 endforeach()
 
+if(NOT GXF_ROOT)
+    cmake_path(GET "${GXF_DIR}" PARENT_PATH PARENT_PATH PARENT_PATH GXF_ROOT)
+endif()
+find_path(GXF_PYTHON_MODULE_PATH
+    NAMES
+        core/__init__.py
+        core/Gxf.py
+    PATHS ${GXF_ROOT}/python/gxf
+    REQUIRED
+)
+
+# Test that the GXF Python module is in PYTHONPATH
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -c "import os; import gxf; print(os.pathsep.join(gxf.__path__).strip())"
+    RESULT_VARIABLE GXF_MODULE_FOUND
+    OUTPUT_VARIABLE GXF_MODULE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(NOT GXF_MODULE_FOUND EQUAL 0)
+    message(FATAL_ERROR "GXF Python module not found in PYTHONPATH")
+endif()
+if(NOT GXF_MODULE_DIR STREQUAL "${GXF_PYTHON_MODULE_PATH}")
+    message(WARNING
+        "Expected GXF Python module at ${GXF_PYTHON_MODULE_PATH} but found at ${GXF_MODULE_DIR}."
+        " Do you need to update your PYTHONPATH?")
+endif()
+
 # Set variables in parent scope for use throughout the Holoscan project
 set(GXF_INCLUDE_DIR ${GXF_INCLUDE_DIR} PARENT_SCOPE)
+set(GXF_PYTHON_MODULE_PATH ${GXF_PYTHON_MODULE_PATH} PARENT_SCOPE)
 set(HOLOSCAN_GXF_LIB_DIR ${HOLOSCAN_GXF_LIB_DIR} PARENT_SCOPE)
 set(HOLOSCAN_GXF_BIN_DIR ${HOLOSCAN_GXF_BIN_DIR} PARENT_SCOPE)
 set(HOLOSCAN_GXE_LOCATION ${HOLOSCAN_GXE_LOCATION} PARENT_SCOPE)

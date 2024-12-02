@@ -167,7 +167,8 @@ int main([[maybe_unused]] int argc, char** argv) {
 
   // Get the configuration
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
-  config_path += "/multithread.yaml";
+  config_path /= std::filesystem::path("multithread.yaml");
+  if (argc >= 2) { config_path = argv[1]; }
   app->config(config_path);
 
   // Turn on data flow tracking if it is specified in the YAML

@@ -44,8 +44,9 @@ Operator class to replay a video stream from a file.
 
      1. One block of host memory equal in size to a single uncompressed video frame
        is needed. Note that for RMMAllocator, the memory sizes should be specified in MiB, so the
-       minimum value can be obtained by:
-       ``math.ceil(height * width * channels * element_size_bytes) / (1024 * 1024))``.
+       minimum value can be obtained by
+       ``math.ceil(height * width * channels * element_size_bytes) / (1024 * 1024))``
+
      2. One block of device memory equal in size to the host memory block.
 
     When declaring an `RMMAllocator` memory pool, `host_memory_initial_size` and

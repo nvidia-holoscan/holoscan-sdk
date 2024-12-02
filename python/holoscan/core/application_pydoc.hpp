@@ -156,6 +156,9 @@ num_last_messages_to_discard : int
 latency_threshold : int
     The minimum end-to-end latency in milliseconds to account for in the
     end-to-end latency metric calculations
+is_limited_tracking : bool
+    If true, the tracking is limited to root and leaf nodes, minimizing the timestamps by avoiding
+    intermediate operators.
 
 Returns
 -------

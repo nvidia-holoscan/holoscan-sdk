@@ -105,11 +105,19 @@ static void register_py_object_codec() {
       "std::shared_ptr<GILGuardedPyObject>"s);
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-py::object PyInputContext::py_receive(const std::string& name, const std::string& kind) {
-  auto* py_op = py_op_.cast<PyOperator*>();
-  auto py_op_spec = py_op->py_shared_spec();
+namespace {
 
+/**
+ * @brief Determine if tuple of objects will be received based on kind or the OperatorSpec
+ *
+ * @param name The name of the input
+ * @param kind The kind of the input
+ * @param py_op_spec The OperatorSpec object
+ *
+ * @return True if the input should be returned as a tuple, false otherwise
+ */
+bool should_return_as_tuple(const std::string& name, const std::string& kind,
+                            const std::shared_ptr<PyOperatorSpec>& py_op_spec) {
   bool should_return_tuple = false;
   bool is_receivers = false;
   for (const auto& receivers : py_op_spec->py_receivers()) {
@@ -123,27 +131,25 @@ py::object PyInputContext::py_receive(const std::string& name, const std::string
   if (!kind.empty()) {
     if (kind == "single") {
       if (is_receivers) {
-        HOLOSCAN_LOG_ERROR(
+        std::string err_msg = fmt::format(
             "Invalid kind '{}' for receive() method, cannot be 'single' for the input port with "
             "'IOSpec.ANY_SIZE'",
             kind);
-        throw std::runtime_error(fmt::format(
-            "Invalid kind '{}' for receive() method, cannot be 'single' for the input port with "
-            "'IOSpec.ANY_SIZE'",
-            kind));
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
       should_return_tuple = false;
     } else if (kind == "multi") {
       should_return_tuple = true;
     } else {
-      HOLOSCAN_LOG_ERROR("Invalid kind '{}' for receive() method, must be 'single' or 'multi'",
-                         kind);
-      throw std::runtime_error(
-          fmt::format("Invalid kind '{}' for receive() method, must be 'single' or 'multi'", kind));
+      std::string err_msg =
+          fmt::format("Invalid kind '{}' for receive() method, must be 'single' or 'multi'", kind);
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     }
   } else {
-    // If the 'queue_size' equals IOSpec.PRECEDING_COUNT (0) or 'queue_size > 1', returns a tuple.
     if (!should_return_tuple) {
+      // If the 'queue_size' equals IOSpec.PRECEDING_COUNT (0) or 'queue_size > 1', returns a tuple.
       auto input_spec = py_op_spec->inputs().find(name);
       if (input_spec != py_op_spec->inputs().end()) {
         auto queue_size = input_spec->second->queue_size();
@@ -151,57 +157,144 @@ py::object PyInputContext::py_receive(const std::string& name, const std::string
       }
     }
   }
+  return should_return_tuple;
+}
+}  // namespace
 
-  if (should_return_tuple) {
-    auto maybe_any_result = receive<std::vector<std::any>>(name.c_str());
-    if (!maybe_any_result.has_value()) {
-      HOLOSCAN_LOG_ERROR("Unable to receive input (std::vector<std::any>) with name '{}'", name);
-      return py::none();
-    }
-    auto any_result = maybe_any_result.value();
-    if (any_result.empty()) { return py::make_tuple(); }
-
-    // Check element type (querying the first element using the name '{name}:0')
-    auto& element = any_result[0];
-    const auto& element_type = element.type();
-    auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
-    const auto& receiver_func = registry.get_receiver(element_type);
-
-    py::tuple result_tuple(any_result.size());
-    int counter = 0;
-    try {
-      for (const auto& any_item : any_result) {
-        const auto& item_type = any_item.type();
-        if (item_type == typeid(kNoReceivedMessage) || item_type == typeid(std::nullptr_t)) {
-          // add None to the tuple
-          PyTuple_SET_ITEM(result_tuple.ptr(), counter++, py::none().release().ptr());
-          continue;
-        }
-        // Get the Python object from the entity
-        py::object in_obj = receiver_func(any_item, name, *this);
-
-        // Move the Python object into the tuple
-        PyTuple_SET_ITEM(result_tuple.ptr(), counter++, in_obj.release().ptr());
-      }
-    } catch (const std::bad_any_cast& e) {
-      HOLOSCAN_LOG_ERROR(
-          "Unable to receive input (std::vector<holoscan::gxf::Entity>) with name "
-          "'{}' ({})",
-          name,
-          e.what());
-    }
-    return result_tuple;
+py::object PyInputContext::receive_as_tuple(const std::string& name) {
+  auto maybe_any_result = receive<std::vector<std::any>>(name.c_str());
+  if (!maybe_any_result.has_value()) {
+    HOLOSCAN_LOG_ERROR("Unable to receive input (std::vector<std::any>) with name '{}'", name);
+    return py::none();
   }
+  auto any_result = maybe_any_result.value();
+  if (any_result.empty()) { return py::make_tuple(); }
+
+  // Get receiver from registry based only on the type of the first element
+  auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
+  const auto& receiver_func = registry.get_receiver(any_result[0].type());
+
+  py::tuple result_tuple(any_result.size());
+  int counter = 0;
+  try {
+    for (const auto& any_item : any_result) {
+      const auto& item_type = any_item.type();
+      if (item_type == typeid(kNoReceivedMessage) || item_type == typeid(std::nullptr_t)) {
+        PyTuple_SET_ITEM(result_tuple.ptr(), counter++, py::none().release().ptr());
+        continue;
+      }
+      py::object in_obj = receiver_func(any_item, name, *this);
+      PyTuple_SET_ITEM(result_tuple.ptr(), counter++, in_obj.release().ptr());
+    }
+  } catch (const std::bad_any_cast& e) {
+    HOLOSCAN_LOG_ERROR(
+        "Unable to receive input (std::vector<holoscan::gxf::Entity>) with name "
+        "'{}' ({})",
+        name,
+        e.what());
+  }
+  return result_tuple;
+}
+
+py::object PyInputContext::receive_as_single(const std::string& name) {
   auto maybe_result = receive<std::any>(name.c_str());
   if (!maybe_result.has_value()) {
     HOLOSCAN_LOG_DEBUG("Unable to receive input (std::any) with name '{}'", name);
     return py::none();
   }
   auto result = maybe_result.value();
-  const auto& result_type = result.type();
   auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
-  const auto& receiver_func = registry.get_receiver(result_type);
+  const auto& receiver_func = registry.get_receiver(result.type());
   return receiver_func(result, name, *this);
+}
+
+py::object PyInputContext::py_receive(const std::string& name, const std::string& kind) {
+  auto* py_op = py_op_.cast<PyOperator*>();
+  auto py_op_spec = py_op->py_shared_spec();
+
+  bool should_return_tuple = should_return_as_tuple(name, kind, py_op_spec);
+  if (should_return_tuple) { return receive_as_tuple(name); }
+  return receive_as_single(name);
+}
+
+bool PyOutputContext::handle_py_entity(py::object& data, const std::string& name,
+                                       int64_t acq_timestamp, EmitterReceiverRegistry& registry) {
+  if (py::isinstance<holoscan::PyEntity>(data)) {
+    HOLOSCAN_LOG_DEBUG("py_emit: emitting a holoscan::PyEntity");
+    const auto& emit_func = registry.get_emitter(typeid(holoscan::PyEntity));
+    emit_func(data, name, *this, acq_timestamp);
+    return true;
+  }
+  return false;
+}
+
+bool PyOutputContext::handle_py_dict(py::object& data, const std::string& name,
+                                     int64_t acq_timestamp, EmitterReceiverRegistry& registry) {
+  if (py::isinstance<py::dict>(data)) {
+    const auto& emit_func = registry.get_emitter(typeid(pybind11::dict));
+    emit_func(data, name, *this, acq_timestamp);
+    return true;
+  }
+  return false;
+}
+
+bool PyOutputContext::handle_holoviz_op(py::object& data, const std::string& name,
+                                        int64_t acq_timestamp, EmitterReceiverRegistry& registry) {
+  // Emit a sequence of HolovizOp.InputSpec as a C++ object without having to explicitly set
+  // emitter_name="std::vector<holoscan::ops::HolovizOp::InputSpec>" when calling emit.
+  if ((py::isinstance<py::list>(data) || py::isinstance<py::tuple>(data)) && py::len(data) > 0) {
+    auto seq = data.cast<py::sequence>();
+    if (py::isinstance<holoscan::ops::HolovizOp::InputSpec>(seq[0])) {
+      HOLOSCAN_LOG_DEBUG(
+          "py_emit: emitting a std::vector<holoscan::ops::HolovizOp::InputSpec> object");
+      const auto& emit_func =
+          registry.get_emitter(typeid(std::vector<holoscan::ops::HolovizOp::InputSpec>));
+      emit_func(data, name, *this, acq_timestamp);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool PyOutputContext::check_distributed_app(const std::string& name) {
+  bool is_ucx_connector = false;
+  if (outputs_.find(name) != outputs_.end()) {
+    auto connector_type = outputs_.at(name)->connector_type();
+    is_ucx_connector = connector_type == IOSpec::ConnectorType::kUCX;
+  }
+
+  if (is_ucx_connector) { return true; }
+
+  // If this operator doesn't have a UCX connector, can still determine if the app is
+  // a multi-fragment app via the application pointer assigned to the fragment
+  auto* py_op = py_op_.cast<PyOperator*>();
+  auto py_op_spec = py_op->py_shared_spec();
+  auto* app_ptr = py_op_spec->fragment()->application();
+  if (app_ptr != nullptr) {
+    // a non-empty fragment graph means that the application is multi-fragment
+    if (!(app_ptr->fragment_graph().is_empty())) { return true; }
+  }
+  return false;
+}
+
+void PyOutputContext::emit_tensor_like_distributed(py::object& data, const std::string& name,
+                                                   int64_t acq_timestamp,
+                                                   EmitterReceiverRegistry& registry) {
+  HOLOSCAN_LOG_DEBUG("py_emit: emitting a tensor-like object over a UCX connector");
+  const auto& emit_func = registry.get_emitter(typeid(holoscan::Tensor));
+  emit_func(data, name, *this, acq_timestamp);
+}
+
+void PyOutputContext::emit_python_object(py::object& data, const std::string& name,
+                                         int64_t acq_timestamp, EmitterReceiverRegistry& registry) {
+  // Note: issue 4290043
+  // Instead of calling cloudpickle directly here to serialize to a string, we instead register
+  // a codec for type std::shared_ptr<GILGuardedPyObject> in this module, so that proper
+  // serialization will occur for distributed applications even in the case where an implicit
+  // broadcast codelet was inserted.
+  HOLOSCAN_LOG_DEBUG("py_emit: emitting a std::shared_ptr<GILGuardedPyObject>");
+  const auto& emit_func = registry.get_emitter(typeid(std::shared_ptr<GILGuardedPyObject>));
+  emit_func(data, name, *this, acq_timestamp);
 }
 
 void PyOutputContext::py_emit(py::object& data, const std::string& name,
@@ -217,15 +310,16 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   // For this reason, we need to release the GIL before entity ref-count-related functions are
   // called.
 
-// avoid overhead of retrieving operator name for release builds
+  // avoid overhead of retrieving operator name for release builds
 #ifdef NDEBUG
-
 #else
   auto op_name = py_op_.attr("name").cast<std::string>();
   HOLOSCAN_LOG_DEBUG("py_emit (operator name={}, port name={}):", op_name, name);
 #endif
 
   auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
+
+  // If the user specified emitter_name, emit using that
   if (!emitter_name.empty()) {
     HOLOSCAN_LOG_DEBUG("py_emit: emitting a {}", emitter_name);
     const auto& emit_func = registry.get_emitter(emitter_name);
@@ -234,85 +328,35 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   }
 
   // If this is a PyEntity emit a gxf::Entity so that it can be consumed by non-Python operator.
-  if (py::isinstance<holoscan::PyEntity>(data)) {
-    HOLOSCAN_LOG_DEBUG("py_emit: emitting a holoscan::PyEntity");
-    const auto& emit_func = registry.get_emitter(typeid(holoscan::PyEntity));
-    emit_func(data, name, *this, acq_timestamp);
-    return;
-  }
+  if (handle_py_entity(data, name, acq_timestamp, registry)) { return; }
 
   /// @todo Workaround for HolovizOp which expects a list of input specs.
   /// If we don't do the cast here the operator receives a python list object. There should be a
   /// generic way for this, or the operator needs to register expected types.
-  if (py::isinstance<py::list>(data) || py::isinstance<py::tuple>(data)) {
-    if (py::len(data) > 0) {
-      auto seq = data.cast<py::sequence>();
-      if (py::isinstance<holoscan::ops::HolovizOp::InputSpec>(seq[0])) {
-        HOLOSCAN_LOG_DEBUG(
-            "py_emit: emitting a std::vector<holoscan::ops::HolovizOp::InputSpec> object");
-        const auto& emit_func =
-            registry.get_emitter(typeid(std::vector<holoscan::ops::HolovizOp::InputSpec>));
-        emit_func(data, name, *this, acq_timestamp);
-        return;
-      }
-    }
-  }
+  if (handle_holoviz_op(data, name, acq_timestamp, registry)) { return; }
 
   // handle pybind11::dict separately from other Python types for special TensorMap treatment
-  if (py::isinstance<py::dict>(data)) {
-    const auto& emit_func = registry.get_emitter(typeid(pybind11::dict));
-    emit_func(data, name, *this, acq_timestamp);
-    return;
-  }
+  if (handle_py_dict(data, name, acq_timestamp, registry)) { return; }
 
-  bool is_ucx_connector = false;
-  if (outputs_.find(name) != outputs_.end()) {
-    auto connector_type = outputs_.at(name)->connector_type();
-    is_ucx_connector = connector_type == IOSpec::ConnectorType::kUCX;
-  }
-
-  bool is_distributed_app = false;
-  if (is_ucx_connector) {
-    is_distributed_app = true;
-  } else {
-    // If this operator doesn't have a UCX connector, can still determine if the app is
-    // a multi-fragment app via the application pointer assigned to the fragment.
-    auto* py_op = py_op_.cast<PyOperator*>();
-    auto py_op_spec = py_op->py_shared_spec();
-    auto* app_ptr = py_op_spec->fragment()->application();
-    if (app_ptr != nullptr) {
-      // a non-empty fragment graph means that the application is multi-fragment
-      if (!(app_ptr->fragment_graph().is_empty())) { is_distributed_app = true; }
-    }
-  }
+  bool is_distributed_app = check_distributed_app(name);
   HOLOSCAN_LOG_DEBUG("py_emit: detected {}distributed app", is_distributed_app ? "" : "non-");
-
-  // Note: issue 4290043
-  // For distributed applications, always convert tensor-like data to an entity containing a
-  // holoscan::Tensor. Previously this was only done on operators where `is_ucx_connector` was
-  // true, but that lead to a bug in cases where an implicit broadcast codelet was inserted at
-  // run time by the GXFExecutor. To ensure the UCX transmitter downstream of the broadcast
-  // will receive an entity containiner a holoscan::Tensor for any array-like object, we need to
-  // always make the conversion here. This would have additional overhead of entity creation for
-  // single fragment applications, where serialization of tensors is not necessary, so we guard
-  // this loop in an `is_distributed_app` condition. This way single fragment applications will
-  // still just directly pass the Python object.
   if (is_distributed_app && is_tensor_like(data)) {
-    HOLOSCAN_LOG_DEBUG("py_emit: emitting a tensor-like object over a UCX connector");
-    const auto& emit_func = registry.get_emitter(typeid(holoscan::Tensor));
-    emit_func(data, name, *this, acq_timestamp);
+    // Note: issue 4290043
+    // For distributed applications, always convert tensor-like data to an entity containing a
+    // holoscan::Tensor. Previously this was only done on operators where `is_ucx_connector` was
+    // true, but that lead to a bug in cases where an implicit broadcast codelet was inserted at
+    // run time by the GXFExecutor. To ensure the UCX transmitter downstream of the broadcast
+    // will receive an entity containing a holoscan::Tensor for any array-like object, we need to
+    // always make the conversion here. This would have additional overhead of entity creation for
+    // single fragment applications, where serialization of tensors is not necessary, so we guard
+    // this loop in an `is_distributed_app` condition. This way single fragment applications will
+    // still just directly pass the Python object.
+    emit_tensor_like_distributed(data, name, acq_timestamp, registry);
     return;
   }
 
   // Emit everything else as a Python object.
-  // Note: issue 4290043
-  // Instead of calling cloudpickle directly here to serialize to a string, we instead register
-  // a codec for type std::shared_ptr<GILGuardedPyObject> in this module, so that proper
-  // serialization will occur for distributed applications even in the case where an implicit
-  // broadcast codelet was inserted.
-  HOLOSCAN_LOG_DEBUG("py_emit: emitting a std::shared_ptr<GILGuardedPyObject>");
-  const auto& emit_func = registry.get_emitter(typeid(std::shared_ptr<GILGuardedPyObject>));
-  emit_func(data, name, *this, acq_timestamp);
+  emit_python_object(data, name, acq_timestamp, registry);
 }
 
 void init_io_context(py::module_& m) {
@@ -400,7 +444,6 @@ void init_io_context(py::module_& m) {
            "Return a reference to the static EmitterReceiverRegistry",
            py::return_value_policy::reference_internal);
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 PyInputContext::PyInputContext(ExecutionContext* execution_context, Operator* op,
                                std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,

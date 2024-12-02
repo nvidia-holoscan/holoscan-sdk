@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_EXECUTORS_GXF_GXF_PARAMETER_ADAPTOR_HPP
 #define HOLOSCAN_CORE_EXECUTORS_GXF_GXF_PARAMETER_ADAPTOR_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <functional>
 #include <memory>
 #include <string>

@@ -55,11 +55,7 @@ class App : public holoscan::Application {
       // Set Holoviz width and height from source resolution
       auto viz_args = from_config("visualizer");
       for (auto& arg : from_config("source")) {
-        if (arg.name() == "width") {
-          viz_args.add(arg);
-        } else if (arg.name() == "height") {
-          viz_args.add(arg);
-        }
+        if (arg.name() == "width" || arg.name() == "height") { viz_args.add(arg); }
       }
       visualizer =
           make_operator<ops::HolovizOp>("visualizer", viz_args, Arg("allocator") = allocator);

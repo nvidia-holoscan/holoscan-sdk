@@ -43,9 +43,13 @@ class OnnxInfer : public InferBase {
   /**
    * @brief Constructor
    * @param model_file_path Path to onnx model file
+   * @param enable_fp16 Flag showing if trt engine file conversion will use FP16.
    * @param cuda_flag Flag to show if inference will happen using CUDA
+   * @param cuda_buf_in Flag to demonstrate if input data buffer is on cuda
+   * @param cuda_buf_out Flag to demonstrate if output data buffer will be on cuda
    * */
-  OnnxInfer(const std::string& model_file_path, bool cuda_flag);
+  OnnxInfer(const std::string& model_file_path, bool enable_fp16, bool cuda_flag, bool cuda_buf_in,
+            bool cuda_buf_out);
 
   /**
    * @brief Destructor
@@ -65,7 +69,7 @@ class OnnxInfer : public InferBase {
    * */
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
                            std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
-                           cudaEvent_t cuda_event_data, cudaEvent_t *cuda_event_inference);
+                           cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference);
 
   /**
    * @brief Populate class parameters with model details and values

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,7 +51,14 @@ void AppWorkerServer::start() {
 
   // If server_port is empty, find an unused network port and use it as the default port.
   if (server_port.empty()) {
-    auto unused_ports = get_unused_network_ports(1, kMinNetworkPort, kMaxNetworkPort);
+    // Get the driver port to exclude it from the list of unused ports.
+    std::string driver_address = app_worker_->options()->driver_address;
+    auto driver_port_str = holoscan::CLIOptions::parse_port(driver_address);
+    auto driver_port = kDefaultAppDriverPort;
+    if (!driver_port_str.empty()) { driver_port = std::stoi(driver_port_str); }
+    const std::vector<int> exclude_ports = {driver_port};
+    auto unused_ports =
+        get_unused_network_ports(1, kMinNetworkPort, kMaxNetworkPort, exclude_ports);
     if (unused_ports.empty()) {
       HOLOSCAN_LOG_ERROR("No unused ports found");
       return;

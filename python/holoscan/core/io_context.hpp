@@ -41,6 +41,8 @@ namespace py = pybind11;
 
 namespace holoscan {
 
+class EmitterReceiverRegistry;  // Forward declaration
+
 void init_io_context(py::module_&);
 
 class PyInputContext : public gxf::GXFInputContext {
@@ -55,6 +57,12 @@ class PyInputContext : public gxf::GXFInputContext {
 
  private:
   py::object py_op_ = py::none();
+
+  /// @brief Receive data as a Python object from the specified input port
+  py::object receive_as_single(const std::string& name);
+
+  /// @brief Receive data as a tuple of Python objects from the specified input port
+  py::object receive_as_tuple(const std::string& name);
 };
 
 class PyOutputContext : public gxf::GXFOutputContext {
@@ -71,6 +79,29 @@ class PyOutputContext : public gxf::GXFOutputContext {
 
  private:
   py::object py_op_ = py::none();
+
+  /// @brief Handle emitting data if it is a PyEntity object
+  bool handle_py_entity(py::object& data, const std::string& name, int64_t acq_timestamp,
+                        EmitterReceiverRegistry& registry);
+
+  /// @brief Handle emitting data if it is a list or tuple of HolovizOp.InputSpec
+  bool handle_holoviz_op(py::object& data, const std::string& name, int64_t acq_timestamp,
+                         EmitterReceiverRegistry& registry);
+
+  /// @brief Handle emitting data if it is a Python dict
+  bool handle_py_dict(py::object& data, const std::string& name, int64_t acq_timestamp,
+                      EmitterReceiverRegistry& registry);
+
+  /// @brief Determine if the current operator belongs to a distributed application
+  bool check_distributed_app(const std::string& name);
+
+  /// @brief emit tensor-like Python objects for distributed applications
+  void emit_tensor_like_distributed(py::object& data, const std::string& name,
+                                    int64_t acq_timestamp, EmitterReceiverRegistry& registry);
+
+  /// @brief emit as a Python object
+  void emit_python_object(py::object& data, const std::string& name, int64_t acq_timestamp,
+                          EmitterReceiverRegistry& registry);
 };
 
 }  // namespace holoscan

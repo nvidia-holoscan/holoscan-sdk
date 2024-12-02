@@ -18,7 +18,7 @@ The [Holoscan SDK](https://github.com/nvidia-holoscan/holoscan-sdk) can be effec
 
 ### Launching VSCode with the Holoscan SDK
 
-- **Local Development**: Use the `./run vscode` command to launch Visual Studio Code in a development container.
+- **Local Development**: Use the `./run vscode` command to launch Visual Studio Code in a development container (`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process). For more information, refer to the instructions from `./run vscode -h`.
 - **Remote Development**: For attaching to an existing dev container from a remote machine, use `./run vscode_remote`. Additional instructions can be accessed via `./run vscode_remote -h`.
 
 Upon launching Visual Studio Code, the development container will automatically be built. This process also involves the installation of recommended extensions and the configuration of CMake.

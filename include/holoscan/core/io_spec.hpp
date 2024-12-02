@@ -36,6 +36,7 @@
 #include "./conditions/gxf/downstream_affordable.hpp"
 #include "./conditions/gxf/expiring_message.hpp"
 #include "./conditions/gxf/message_available.hpp"
+#include "./conditions/gxf/multi_message_available_timeout.hpp"
 #include "./conditions/gxf/periodic.hpp"
 #include "./gxf/entity.hpp"
 #include "./resource.hpp"
@@ -205,6 +206,14 @@ class IOSpec {
         conditions_.emplace_back(
             type,
             std::make_shared<DownstreamMessageAffordableCondition>(std::forward<ArgsT>(args)...));
+        break;
+      case ConditionType::kMultiMessageAvailableTimeout:
+        // May want to use this multi-message condition even with a single port as a way to have
+        // a timeout on the condition. Unlike ExpiringMessageAvailableCondition, this one does not
+        // require a timestamp to be emitted by the upstream operator.
+        conditions_.emplace_back(
+            type,
+            std::make_shared<MultiMessageAvailableTimeoutCondition>(std::forward<ArgsT>(args)...));
         break;
       case ConditionType::kNone:
         conditions_.emplace_back(type, nullptr);

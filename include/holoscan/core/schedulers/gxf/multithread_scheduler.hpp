@@ -58,9 +58,7 @@ class MultiThreadScheduler : public gxf::GXFScheduler {
   Parameter<double> check_recession_period_ms_;
   Parameter<int64_t> max_duration_ms_;
   Parameter<int64_t> stop_on_deadlock_timeout_;  // in ms
-  // The following two parameters need to wait on ThreadPool support
-  // Parameter<bool> thread_pool_allocation_auto_;
-  // Parameter<bool> strict_job_thread_pinning_;
+  Parameter<bool> strict_job_thread_pinning_;
 };
 
 }  // namespace holoscan

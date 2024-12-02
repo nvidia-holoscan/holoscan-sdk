@@ -28,18 +28,17 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../context.hpp"
 #include "../cuda/cuda_service.hpp"
 #include "../cuda/gen_depth_map.hpp"
+#include "../cuda/gen_primitive_vertices.hpp"
 #include "../vulkan/buffer.hpp"
 #include "../vulkan/vulkan_app.hpp"
 
 namespace holoscan::viz {
-
-/// the segment count a circle is made of
-constexpr uint32_t CIRCLE_SEGMENTS = 32;
 
 class Attributes {
  public:
@@ -58,15 +57,84 @@ class Attributes {
 class Primitive {
  public:
   Primitive(const Attributes& attributes, PrimitiveTopology topology, uint32_t primitive_count,
-            size_t data_size, const float* data, uint32_t vertex_offset,
-            std::vector<uint32_t>& vertex_counts, vk::PrimitiveTopology vk_topology)
+            size_t data_size, const float* host_data, CUdeviceptr device_data,
+            uint32_t vertex_offset, CUstream cuda_stream)
       : attributes_(attributes),
         topology_(topology),
         primitive_count_(primitive_count),
+        device_data_(device_data),
         vertex_offset_(vertex_offset),
-        vertex_counts_(vertex_counts),
-        vk_topology_(vk_topology) {
-    data_.assign(data, data + data_size);
+        cuda_stream_(cuda_stream) {
+    size_t required_data_size;
+    switch (topology) {
+      case PrimitiveTopology::POINT_LIST:
+        required_data_size = primitive_count * 2;
+        vertex_counts_.push_back(required_data_size / 2);
+        vk_topology_ = vk::PrimitiveTopology::ePointList;
+        break;
+      case PrimitiveTopology::LINE_LIST:
+        required_data_size = primitive_count * 2 * 2;
+        vertex_counts_.push_back(required_data_size / 2);
+        vk_topology_ = vk::PrimitiveTopology::eLineList;
+        break;
+      case PrimitiveTopology::LINE_STRIP:
+        required_data_size = 2 + primitive_count * 2;
+        vertex_counts_.push_back(required_data_size / 2);
+        vk_topology_ = vk::PrimitiveTopology::eLineStrip;
+        break;
+      case PrimitiveTopology::TRIANGLE_LIST:
+        required_data_size = primitive_count * 3 * 2;
+        vertex_counts_.push_back(required_data_size / 2);
+        vk_topology_ = vk::PrimitiveTopology::eTriangleList;
+        break;
+      case PrimitiveTopology::CROSS_LIST:
+        required_data_size = primitive_count * 3;
+        vertex_counts_.push_back(primitive_count * 4);
+        vk_topology_ = vk::PrimitiveTopology::eLineList;
+        break;
+      case PrimitiveTopology::RECTANGLE_LIST:
+        required_data_size = primitive_count * 2 * 2;
+        for (uint32_t i = 0; i < primitive_count; ++i) { vertex_counts_.push_back(5); }
+        vk_topology_ = vk::PrimitiveTopology::eLineStrip;
+        break;
+      case PrimitiveTopology::OVAL_LIST:
+        required_data_size = primitive_count * 4;
+        for (uint32_t i = 0; i < primitive_count; ++i) {
+          vertex_counts_.push_back(CIRCLE_SEGMENTS + 1);
+        }
+        vk_topology_ = vk::PrimitiveTopology::eLineStrip;
+        break;
+      case PrimitiveTopology::POINT_LIST_3D:
+        required_data_size = primitive_count * 3;
+        vertex_counts_.push_back(required_data_size / 3);
+        vk_topology_ = vk::PrimitiveTopology::ePointList;
+        break;
+      case PrimitiveTopology::LINE_LIST_3D:
+        required_data_size = primitive_count * 2 * 3;
+        vertex_counts_.push_back(required_data_size / 3);
+        vk_topology_ = vk::PrimitiveTopology::eLineList;
+        break;
+      case PrimitiveTopology::LINE_STRIP_3D:
+        required_data_size = 3 + primitive_count * 3;
+        vertex_counts_.push_back(required_data_size / 3);
+        vk_topology_ = vk::PrimitiveTopology::eLineStrip;
+        break;
+      case PrimitiveTopology::TRIANGLE_LIST_3D:
+        required_data_size = primitive_count * 3 * 3;
+        vertex_counts_.push_back(required_data_size / 3);
+        vk_topology_ = vk::PrimitiveTopology::eTriangleList;
+        break;
+    }
+
+    if (data_size < required_data_size) {
+      std::stringstream buf;
+      buf << "Required data array size is " << required_data_size << " but only " << data_size
+          << " where specified";
+      throw std::runtime_error(buf.str().c_str());
+    }
+
+    if (host_data) { host_data_.assign(host_data, host_data + required_data_size); }
+    data_size_ = required_data_size;
   }
   Primitive() = delete;
 
@@ -87,20 +155,28 @@ class Primitive {
   }
 
   bool operator==(const Primitive& rhs) const {
+    // we can reuse if the attributes, topology and primitive count match and
+    // if we did not switch from host to device memory and vice versa
     return ((attributes_ == rhs.attributes_) && (topology_ == rhs.topology_) &&
-            (primitive_count_ == rhs.primitive_count_) && (data_ == rhs.data_));
+            (primitive_count_ == rhs.primitive_count_) &&
+            ((host_data_.empty() && !device_data_) ||
+             (((!host_data_.empty()) == (rhs.device_data_ == 0)) &&
+              ((device_data_ != 0) == (rhs.host_data_.empty())))));
   }
 
   const Attributes attributes_;
 
   const PrimitiveTopology topology_;
   const uint32_t primitive_count_;
-  std::vector<float> data_;
+  std::vector<float> host_data_;
+  CUdeviceptr device_data_;
+  CUstream cuda_stream_ = 0;
 
   // internal state
-  const uint32_t vertex_offset_;
-  const std::vector<uint32_t> vertex_counts_;
-  const vk::PrimitiveTopology vk_topology_;
+  const uint32_t vertex_offset_;  ///< vertex start offset (in units of 3 * float)
+  size_t data_size_;              ///< size of input data
+  std::vector<uint32_t> vertex_counts_;
+  vk::PrimitiveTopology vk_topology_;
 };
 
 class Text {
@@ -169,11 +245,19 @@ class GeometryLayer::Impl {
       // Data will be uploaded when drawing regardless if the layer is reused or not
       /// @todo this should be made explicit, first check if the layer can be reused and then
       ///     update the reused layer with these properties below which don't prevent reusing
-      auto it = other.depth_maps_.begin();
+      auto depth_map_it = other.depth_maps_.begin();
       for (auto&& depth_map : depth_maps_) {
-        it->depth_device_ptr_ = depth_map.depth_device_ptr_;
-        it->color_device_ptr_ = depth_map.color_device_ptr_;
-        it->cuda_stream_ = depth_map.cuda_stream_;
+        depth_map_it->depth_device_ptr_ = depth_map.depth_device_ptr_;
+        depth_map_it->color_device_ptr_ = depth_map.color_device_ptr_;
+        depth_map_it->cuda_stream_ = depth_map.cuda_stream_;
+        ++depth_map_it;
+      }
+      auto primitive_it = other.primitives_.begin();
+      for (auto&& primitive : primitives_) {
+        primitive_it->host_data_ = primitive.host_data_;
+        primitive_it->device_data_ = primitive.device_data_;
+        primitive_it->cuda_stream_ = primitive.cuda_stream_;
+        ++primitive_it;
       }
       return true;
     }
@@ -226,86 +310,34 @@ void GeometryLayer::primitive(PrimitiveTopology topology, uint32_t primitive_cou
   if (data_size == 0) { throw std::invalid_argument("data_size should not be zero"); }
   if (data == nullptr) { throw std::invalid_argument("data should not be nullptr"); }
 
-  uint32_t required_data_size;
-  std::vector<uint32_t> vertex_counts;
-  vk::PrimitiveTopology vkTopology;
-  switch (topology) {
-    case PrimitiveTopology::POINT_LIST:
-      required_data_size = primitive_count * 2;
-      vertex_counts.push_back(required_data_size / 2);
-      vkTopology = vk::PrimitiveTopology::ePointList;
-      break;
-    case PrimitiveTopology::LINE_LIST:
-      required_data_size = primitive_count * 2 * 2;
-      vertex_counts.push_back(required_data_size / 2);
-      vkTopology = vk::PrimitiveTopology::eLineList;
-      break;
-    case PrimitiveTopology::LINE_STRIP:
-      required_data_size = 2 + primitive_count * 2;
-      vertex_counts.push_back(required_data_size / 2);
-      vkTopology = vk::PrimitiveTopology::eLineStrip;
-      break;
-    case PrimitiveTopology::TRIANGLE_LIST:
-      required_data_size = primitive_count * 3 * 2;
-      vertex_counts.push_back(required_data_size / 2);
-      vkTopology = vk::PrimitiveTopology::eTriangleList;
-      break;
-    case PrimitiveTopology::CROSS_LIST:
-      required_data_size = primitive_count * 3;
-      vertex_counts.push_back(primitive_count * 4);
-      vkTopology = vk::PrimitiveTopology::eLineList;
-      break;
-    case PrimitiveTopology::RECTANGLE_LIST:
-      required_data_size = primitive_count * 2 * 2;
-      for (uint32_t i = 0; i < primitive_count; ++i) { vertex_counts.push_back(5); }
-      vkTopology = vk::PrimitiveTopology::eLineStrip;
-      break;
-    case PrimitiveTopology::OVAL_LIST:
-      required_data_size = primitive_count * 4;
-      for (uint32_t i = 0; i < primitive_count; ++i) {
-        vertex_counts.push_back(CIRCLE_SEGMENTS + 1);
-      }
-      vkTopology = vk::PrimitiveTopology::eLineStrip;
-      break;
-    case PrimitiveTopology::POINT_LIST_3D:
-      required_data_size = primitive_count * 3;
-      vertex_counts.push_back(required_data_size / 3);
-      vkTopology = vk::PrimitiveTopology::ePointList;
-      break;
-    case PrimitiveTopology::LINE_LIST_3D:
-      required_data_size = primitive_count * 2 * 3;
-      vertex_counts.push_back(required_data_size / 3);
-      vkTopology = vk::PrimitiveTopology::eLineList;
-      break;
-    case PrimitiveTopology::LINE_STRIP_3D:
-      required_data_size = 3 + primitive_count * 3;
-      vertex_counts.push_back(required_data_size / 3);
-      vkTopology = vk::PrimitiveTopology::eLineStrip;
-      break;
-    case PrimitiveTopology::TRIANGLE_LIST_3D:
-      required_data_size = primitive_count * 3 * 3;
-      vertex_counts.push_back(required_data_size / 3);
-      vkTopology = vk::PrimitiveTopology::eTriangleList;
-      break;
-  }
+  const auto& primitive = impl_->primitives_.emplace_back(impl_->attributes_,
+                                                          topology,
+                                                          primitive_count,
+                                                          data_size,
+                                                          data,
+                                                          0,
+                                                          impl_->vertex_count_,
+                                                          Context::get().get_cuda_stream());
 
-  if (data_size < required_data_size) {
-    std::stringstream buf;
-    buf << "Required data array size is " << required_data_size << " but only " << data_size
-        << " where specified";
-    throw std::runtime_error(buf.str().c_str());
-  }
+  for (auto&& vertex_count : primitive.vertex_counts_) { impl_->vertex_count_ += vertex_count; }
+}
 
-  impl_->primitives_.emplace_back(impl_->attributes_,
-                                  topology,
-                                  primitive_count,
-                                  data_size,
-                                  data,
-                                  impl_->vertex_count_,
-                                  vertex_counts,
-                                  vkTopology);
+void GeometryLayer::primitive_cuda_device(PrimitiveTopology topology, uint32_t primitive_count,
+                                          size_t data_size, CUdeviceptr data) {
+  if (primitive_count == 0) { throw std::invalid_argument("primitive_count should not be zero"); }
+  if (data_size == 0) { throw std::invalid_argument("data_size should not be zero"); }
+  if (data == 0) { throw std::invalid_argument("data should not be 0"); }
 
-  for (auto&& vertex_count : vertex_counts) { impl_->vertex_count_ += vertex_count; }
+  const auto& primitive = impl_->primitives_.emplace_back(impl_->attributes_,
+                                                          topology,
+                                                          primitive_count,
+                                                          data_size,
+                                                          nullptr,
+                                                          data,
+                                                          impl_->vertex_count_,
+                                                          Context::get().get_cuda_stream());
+
+  for (auto&& vertex_count : primitive.vertex_counts_) { impl_->vertex_count_ += vertex_count; }
 }
 
 void GeometryLayer::text(float x, float y, float size, const char* text) {
@@ -349,7 +381,7 @@ bool GeometryLayer::can_be_reused(Layer& other) const {
 }
 
 void GeometryLayer::end(Vulkan* vulkan) {
-  // if the aspect ratio changed, re-create the text and primitive buffers because the generated
+  // if the aspect ratio changed, re-create the text buffers because the generated
   // vertex positions depend on the aspect ratio
   if (impl_->aspect_ratio_ != vulkan->get_window()->get_aspect_ratio()) {
     impl_->aspect_ratio_ = vulkan->get_window()->get_aspect_ratio();
@@ -357,84 +389,56 @@ void GeometryLayer::end(Vulkan* vulkan) {
     impl_->text_draw_list_.reset();
     impl_->text_vertex_buffer_.reset();
     impl_->text_index_buffer_.reset();
-
-    // only crosses depend on the aspect ratio
-    bool has_crosses = false;
-    for (auto&& primitive : impl_->primitives_) {
-      if (primitive.topology_ == PrimitiveTopology::CROSS_LIST) {
-        has_crosses = true;
-        break;
-      }
-    }
-    if (has_crosses) { impl_->vertex_buffer_.reset(); }
   }
 
   if (!impl_->primitives_.empty()) {
     if (!impl_->vertex_buffer_) {
-      // setup the vertex buffer
-      std::vector<float> vertices;
-      vertices.reserve(impl_->vertex_count_ * 3);
+      // allocate the vertex buffer
+      impl_->vertex_buffer_ = vulkan->create_buffer_for_cuda_interop(
+          impl_->vertex_count_ * 3 * sizeof(float), vk::BufferUsageFlagBits::eVertexBuffer);
+    }
 
-      for (auto&& primitive : impl_->primitives_) {
-        switch (primitive.topology_) {
-          case PrimitiveTopology::POINT_LIST:
-          case PrimitiveTopology::LINE_LIST:
-          case PrimitiveTopology::LINE_STRIP:
-          case PrimitiveTopology::TRIANGLE_LIST:
-            // just copy
-            for (uint32_t index = 0; index < primitive.data_.size() / 2; ++index) {
-              vertices.insert(
-                  vertices.end(),
-                  {primitive.data_[index * 2 + 0], primitive.data_[index * 2 + 1], 0.F});
-            }
-            break;
-          case PrimitiveTopology::CROSS_LIST:
-            // generate crosses
-            for (uint32_t index = 0; index < primitive.primitive_count_; ++index) {
-              const float x = primitive.data_[index * 3 + 0];
-              const float y = primitive.data_[index * 3 + 1];
-              const float sy = primitive.data_[index * 3 + 2] * 0.5F;
-              const float sx = sy / impl_->aspect_ratio_;
-              vertices.insert(vertices.end(),
-                              {x - sx, y, 0.F, x + sx, y, 0.F, x, y - sy, 0.F, x, y + sy, 0.F});
-            }
-            break;
-          case PrimitiveTopology::RECTANGLE_LIST:
-            // generate rectangles
-            for (uint32_t index = 0; index < primitive.primitive_count_; ++index) {
-              const float x0 = primitive.data_[index * 4 + 0];
-              const float y0 = primitive.data_[index * 4 + 1];
-              const float x1 = primitive.data_[index * 4 + 2];
-              const float y1 = primitive.data_[index * 4 + 3];
-              vertices.insert(vertices.end(),
-                              {x0, y0, 0.F, x1, y0, 0.F, x1, y1, 0.F, x0, y1, 0.F, x0, y0, 0.F});
-            }
-            break;
-          case PrimitiveTopology::OVAL_LIST:
-            for (uint32_t index = 0; index < primitive.primitive_count_; ++index) {
-              const float x = primitive.data_[index * 4 + 0];
-              const float y = primitive.data_[index * 4 + 1];
-              const float rx = primitive.data_[index * 4 + 2] * 0.5F;
-              const float ry = primitive.data_[index * 4 + 3] * 0.5F;
-              for (uint32_t segment = 0; segment <= CIRCLE_SEGMENTS; ++segment) {
-                const float rad = (2.F * M_PI) / CIRCLE_SEGMENTS * segment;
-                const float px = x + std::cos(rad) * rx;
-                const float py = y + std::sin(rad) * ry;
-                vertices.insert(vertices.end(), {px, py, 0.F});
-              }
-            }
-            break;
-          case PrimitiveTopology::POINT_LIST_3D:
-          case PrimitiveTopology::LINE_LIST_3D:
-          case PrimitiveTopology::LINE_STRIP_3D:
-          case PrimitiveTopology::TRIANGLE_LIST_3D:
-            vertices.insert(vertices.end(), primitive.data_.begin(), primitive.data_.end());
-            break;
-        }
+    // generate vertex data
+    CudaService* const cuda_service = vulkan->get_cuda_service();
+    const CudaService::ScopedPush cuda_context = cuda_service->PushContext();
+
+    for (auto&& primitive : impl_->primitives_) {
+      // select the stream to be used by CUDA operations
+      const CUstream stream = cuda_service->select_cuda_stream(primitive.cuda_stream_);
+      impl_->vertex_buffer_->begin_access_with_cuda(stream);
+
+      UniqueAsyncCUdeviceptr tmp_src_device_ptr;
+      CUdeviceptr src_device_ptr;
+
+      // if the data is on host, allocate temporary memory and copy the data to it
+      if (!primitive.host_data_.empty()) {
+        const size_t size = primitive.data_size_ * sizeof(float);
+        tmp_src_device_ptr.reset([size, stream] {
+          CUdeviceptr device_ptr;
+          CudaCheck(cuMemAllocAsync(&device_ptr, size, stream));
+          return std::pair<CUdeviceptr, CUstream>(device_ptr, stream);
+        }());
+        src_device_ptr = tmp_src_device_ptr.get().first;
+        // copy from host to device
+        CudaCheck(cuMemcpyHtoDAsync(src_device_ptr,
+                                    reinterpret_cast<const float*>(primitive.host_data_.data()),
+                                    size,
+                                    stream));
+      } else {
+        src_device_ptr = primitive.device_data_;
       }
 
-      impl_->vertex_buffer_ = vulkan->create_buffer(
-          vertices.size() * sizeof(float), vertices.data(), vk::BufferUsageFlagBits::eVertexBuffer);
+      // generate vertex data
+      gen_primitive_vertices(
+          primitive.topology_,
+          primitive.primitive_count_,
+          primitive.vertex_counts_,
+          impl_->aspect_ratio_,
+          src_device_ptr,
+          impl_->vertex_buffer_->device_ptr_.get() + primitive.vertex_offset_ * sizeof(float) * 3,
+          stream);
+
+      impl_->vertex_buffer_->end_access_with_cuda(stream);
     }
   }
 

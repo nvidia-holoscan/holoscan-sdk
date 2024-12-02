@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -245,119 +246,147 @@ void py_object_to_metadata_object(MetadataObject& meta_obj, const py::object& va
   }
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
+using CastFunction = std::function<py::object(const std::any&)>;
+
+/// @brief Cast the value stored in C++ MetadataObject to a Python Object
 py::object metadata_obj_to_pyobject(MetadataObject& meta_obj) {
+  static const std::unordered_map<std::type_index, CastFunction> cast_map = {
+      // Return a Python objects as-is.
+      {typeid(std::shared_ptr<GILGuardedPyObject>),
+       [](const std::any& value) {
+         return std::any_cast<std::shared_ptr<GILGuardedPyObject>>(value)->obj();
+       }},
+      // For C++ types, this function currently supports casting T, vector<T>, and
+      // vector<vector<<T>> types where T is either std::string, bool or various integer or floating
+      // point types.
+
+      // Handle scalar types
+      {typeid(std::string),
+       [](const std::any& value) { return py::cast(std::any_cast<std::string>(value)); }},
+      {typeid(float), [](const std::any& value) { return py::cast(std::any_cast<float>(value)); }},
+      {typeid(double),
+       [](const std::any& value) { return py::cast(std::any_cast<double>(value)); }},
+      {typeid(bool), [](const std::any& value) { return py::cast(std::any_cast<bool>(value)); }},
+      {typeid(int64_t),
+       [](const std::any& value) { return py::cast(std::any_cast<int64_t>(value)); }},
+      {typeid(uint64_t),
+       [](const std::any& value) { return py::cast(std::any_cast<uint64_t>(value)); }},
+      {typeid(int32_t),
+       [](const std::any& value) { return py::cast(std::any_cast<int32_t>(value)); }},
+      {typeid(uint32_t),
+       [](const std::any& value) { return py::cast(std::any_cast<uint32_t>(value)); }},
+      {typeid(int16_t),
+       [](const std::any& value) { return py::cast(std::any_cast<int16_t>(value)); }},
+      {typeid(uint16_t),
+       [](const std::any& value) { return py::cast(std::any_cast<uint16_t>(value)); }},
+      {typeid(int8_t),
+       [](const std::any& value) { return py::cast(std::any_cast<int8_t>(value)); }},
+      {typeid(uint8_t),
+       [](const std::any& value) { return py::cast(std::any_cast<uint8_t>(value)); }},
+      {typeid(std::complex<float>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::complex<float>>(value)); }},
+      {typeid(std::complex<double>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::complex<double>>(value)); }},
+      // Handle std::vector<T> types
+      {typeid(std::vector<std::string>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::string>>(value));
+       }},
+      {typeid(std::vector<float>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<float>>(value)); }},
+      {typeid(std::vector<double>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<double>>(value)); }},
+      {typeid(std::vector<bool>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<bool>>(value)); }},
+      {typeid(std::vector<int64_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<int64_t>>(value)); }},
+      {typeid(std::vector<uint64_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<uint64_t>>(value)); }},
+      {typeid(std::vector<int32_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<int32_t>>(value)); }},
+      {typeid(std::vector<uint32_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<uint32_t>>(value)); }},
+      {typeid(std::vector<int16_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<int16_t>>(value)); }},
+      {typeid(std::vector<uint16_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<uint16_t>>(value)); }},
+      {typeid(std::vector<int8_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<int8_t>>(value)); }},
+      {typeid(std::vector<uint8_t>),
+       [](const std::any& value) { return py::cast(std::any_cast<std::vector<uint8_t>>(value)); }},
+      {typeid(std::vector<std::complex<float>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::complex<float>>>(value));
+       }},
+      {typeid(std::vector<std::complex<double>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::complex<double>>>(value));
+       }},
+      // Handle std::vector<std::vector<T>> types
+      {typeid(std::vector<std::vector<std::string>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<std::string>>>(value));
+       }},
+      {typeid(std::vector<std::vector<float>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<float>>>(value));
+       }},
+      {typeid(std::vector<std::vector<double>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<double>>>(value));
+       }},
+      {typeid(std::vector<std::vector<bool>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<bool>>>(value));
+       }},
+      {typeid(std::vector<std::vector<int64_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<int64_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<uint64_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<uint64_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<int32_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<int32_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<uint32_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<uint32_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<int16_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<int16_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<uint16_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<uint16_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<int8_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<int8_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<uint8_t>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<uint8_t>>>(value));
+       }},
+      {typeid(std::vector<std::vector<std::complex<float>>>),
+       [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<std::complex<float>>>>(value));
+       }},
+      {typeid(std::vector<std::vector<std::complex<double>>>), [](const std::any& value) {
+         return py::cast(std::any_cast<std::vector<std::vector<std::complex<double>>>>(value));
+       }}};
+
   std::any value = meta_obj.value();
   const auto& id = value.type();
-  // Return a Python objects as-is.
-  if (id == typeid(std::shared_ptr<GILGuardedPyObject>)) {
-    return std::any_cast<std::shared_ptr<GILGuardedPyObject>>(value)->obj();
-  }
-  // For C++ types, support casting T, vector<T>, and vector<vector<<T>> types
-  // where T is either std::string, bool or various integer or floating point types.
-  if (id == typeid(std::string)) { return py::cast(std::any_cast<std::string>(value)); }
-  if (id == typeid(float)) { return py::cast(std::any_cast<float>(value)); }
-  if (id == typeid(double)) { return py::cast(std::any_cast<double>(value)); }
-  if (id == typeid(bool)) { return py::cast(std::any_cast<bool>(value)); }
-  if (id == typeid(int64_t)) { return py::cast(std::any_cast<int64_t>(value)); }
-  if (id == typeid(uint64_t)) { return py::cast(std::any_cast<uint64_t>(value)); }
-  if (id == typeid(int32_t)) { return py::cast(std::any_cast<int32_t>(value)); }
-  if (id == typeid(uint32_t)) { return py::cast(std::any_cast<uint32_t>(value)); }
-  if (id == typeid(int16_t)) { return py::cast(std::any_cast<int16_t>(value)); }
-  if (id == typeid(uint16_t)) { return py::cast(std::any_cast<uint16_t>(value)); }
-  if (id == typeid(int8_t)) { return py::cast(std::any_cast<int8_t>(value)); }
-  if (id == typeid(uint8_t)) { return py::cast(std::any_cast<uint8_t>(value)); }
-  if (id == typeid(std::complex<float>)) {
-    return py::cast(std::any_cast<std::complex<float>>(value));
-  }
-  if (id == typeid(std::complex<double>)) {
-    return py::cast(std::any_cast<std::complex<double>>(value));
-  }
-  if (id == typeid(std::vector<std::string>)) {
-    return py::cast(std::any_cast<std::vector<std::string>>(value));
-  }
-  if (id == typeid(std::vector<float>)) {
-    return py::cast(std::any_cast<std::vector<float>>(value));
-  }
-  if (id == typeid(std::vector<double>)) {
-    return py::cast(std::any_cast<std::vector<double>>(value));
-  }
-  if (id == typeid(std::vector<bool>)) { return py::cast(std::any_cast<std::vector<bool>>(value)); }
-  if (id == typeid(std::vector<int64_t>)) {
-    return py::cast(std::any_cast<std::vector<int64_t>>(value));
-  }
-  if (id == typeid(std::vector<uint64_t>)) {
-    return py::cast(std::any_cast<std::vector<uint64_t>>(value));
-  }
-  if (id == typeid(std::vector<int32_t>)) {
-    return py::cast(std::any_cast<std::vector<int32_t>>(value));
-  }
-  if (id == typeid(std::vector<uint32_t>)) {
-    return py::cast(std::any_cast<std::vector<uint32_t>>(value));
-  }
-  if (id == typeid(std::vector<int16_t>)) {
-    return py::cast(std::any_cast<std::vector<int16_t>>(value));
-  }
-  if (id == typeid(std::vector<uint16_t>)) {
-    return py::cast(std::any_cast<std::vector<uint16_t>>(value));
-  }
-  if (id == typeid(std::vector<int8_t>)) {
-    return py::cast(std::any_cast<std::vector<int8_t>>(value));
-  }
-  if (id == typeid(std::vector<uint8_t>)) {
-    return py::cast(std::any_cast<std::vector<uint8_t>>(value));
-  }
-  if (id == typeid(std::vector<std::complex<float>>)) {
-    return py::cast(std::any_cast<std::vector<std::complex<float>>>(value));
-  }
-  if (id == typeid(std::vector<std::complex<double>>)) {
-    return py::cast(std::any_cast<std::vector<std::complex<double>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<std::string>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<std::string>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<float>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<float>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<double>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<double>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<bool>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<bool>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<int64_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int64_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<uint64_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint64_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<int32_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int32_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<uint32_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint32_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<int16_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int16_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<uint16_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint16_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<int8_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<int8_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<uint8_t>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<uint8_t>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<std::complex<float>>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<std::complex<float>>>>(value));
-  }
-  if (id == typeid(std::vector<std::vector<std::complex<double>>>)) {
-    return py::cast(std::any_cast<std::vector<std::vector<std::complex<double>>>>(value));
-  }
+
+  auto it = cast_map.find(id);
+  if (it != cast_map.end()) { return it->second(value); }
+
   return py::none();
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 void init_metadata(py::module_& m) {
   py::class_<MetaNoneValue>(m, "MetaNoneValue").def(py::init<>());

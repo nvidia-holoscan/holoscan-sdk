@@ -38,6 +38,8 @@
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/conditions/gxf/periodic.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
+#include "holoscan/core/conditions/gxf/multi_message_available.hpp"
+#include "holoscan/core/conditions/gxf/multi_message_available_timeout.hpp"
 #include "holoscan/core/conditions/gxf/expiring_message.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
@@ -251,6 +253,161 @@ TEST(ConditionClasses, TestExpiringMessageAvailableCondition) {
 TEST(ConditionClasses, TestExpiringMessageAvailableConditionDefaultConstructor) {
   Fragment F;
   auto condition = F.make_condition<ExpiringMessageAvailableCondition>();
+}
+
+TEST(ConditionClasses, TestMultiMessageAvailableConditionSumOfAll) {
+  // Test supplying sampling_mode argument as an enum
+  Fragment F;
+  const std::string name{"multi-message-available"};
+  ArgList arglist{Arg{"sampling_mode", MultiMessageAvailableCondition::SamplingMode::kSumOfAll},
+                  Arg{"min_sum", static_cast<size_t>(4)}};
+  auto condition = F.make_condition<MultiMessageAvailableCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<MultiMessageAvailableCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::MultiMessageAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+
+  // verify no error logged about failure to convert sampling_mode to YAML::Node was logged
+  testing::internal::CaptureStderr();
+
+  condition->initialize();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("Unable to convert argument type") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST(ConditionClasses, TestMultiMessageAvailableConditionPerReceiver) {
+  // Test supplying sampling_mode argument as a std::string
+  Fragment F;
+  const std::string name{"multi-message-available"};
+  ArgList arglist{Arg{"sampling_mode", std::string("PerReceiver")},
+                  Arg{"min_sizes", std::vector<size_t>({1, 2, 1})}};
+  auto condition = F.make_condition<MultiMessageAvailableCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<MultiMessageAvailableCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::MultiMessageAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+
+  // verify no error logged about failure to convert sampling_mode to YAML::Node was logged
+  testing::internal::CaptureStderr();
+
+  condition->initialize();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("Unable to convert argument type") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST(ConditionClasses, TestMultiMessageAvailableConditionPerReceiverYAML) {
+  // Test supplying sampling_mode argument as a YAML::Node
+  Fragment F;
+  const std::string name{"multi-message-available"};
+  ArgList arglist{Arg{"sampling_mode", YAML::Node(std::string("PerReceiver"))},
+                  Arg{"min_sizes", std::vector<size_t>({1, 2, 1})}};
+  auto condition = F.make_condition<MultiMessageAvailableCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<MultiMessageAvailableCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::MultiMessageAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+
+  // verify no error logged about failure to convert sampling_mode to YAML::Node was logged
+  testing::internal::CaptureStderr();
+
+  condition->initialize();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("Unable to convert argument type") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST(ConditionClasses, TestMultiMessageAvailableConditionDefaultConstructor) {
+  Fragment F;
+  auto condition = F.make_condition<MultiMessageAvailableCondition>();
+}
+
+TEST(ConditionClasses, TestMultiMessageAvailableTimeoutConditionSumOfAll) {
+  Fragment F;
+  const std::string name{"multi-message-available-timeout"};
+  ArgList arglist{Arg{"execution_frequency", std::string("1000000")},
+                  Arg{"sampling_mode", std::string("SumOfAll")},
+                  Arg{"min_sum", static_cast<size_t>(4)}};
+  auto condition = F.make_condition<MultiMessageAvailableTimeoutCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition),
+            typeid(std::make_shared<MultiMessageAvailableTimeoutCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::MessageAvailableFrequencyThrottler"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+
+  // verify no error logged about failure to convert sampling_mode to YAML::Node was logged
+  testing::internal::CaptureStderr();
+
+  condition->initialize();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("Unable to convert argument type") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST(ConditionClasses, TestMultiMessageAvailableTimeoutConditionPerReceiver) {
+  // Test supplying sampling_mode argument as an enum
+  Fragment F;
+  const std::string name{"multi-message-available-timeout"};
+  ArgList arglist{
+      Arg{"execution_frequency", std::string("10ms")},
+      Arg{"sampling_mode", MultiMessageAvailableTimeoutCondition::SamplingMode::kPerReceiver},
+      Arg{"min_sizes", std::vector<size_t>({1, 2, 1})}};
+  auto condition = F.make_condition<MultiMessageAvailableTimeoutCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition),
+            typeid(std::make_shared<MultiMessageAvailableTimeoutCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::MessageAvailableFrequencyThrottler"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+
+  // verify no error logged about failure to convert sampling_mode to YAML::Node was logged
+  testing::internal::CaptureStderr();
+
+  condition->initialize();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("Unable to convert argument type") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
+
+TEST(ConditionClasses, TestMultiMessageAvailableTimeoutConditionPerReceiverString) {
+  // Test supplying sampling_mode argument as a string
+  Fragment F;
+  const std::string name{"multi-message-available-timeout"};
+  ArgList arglist{Arg{"execution_frequency", std::string("10ms")},
+                  Arg{"sampling_mode", std::string("PerReceiver")},
+                  Arg{"min_sizes", std::vector<size_t>({1, 2, 1})}};
+  auto condition = F.make_condition<MultiMessageAvailableTimeoutCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition),
+            typeid(std::make_shared<MultiMessageAvailableTimeoutCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()),
+            "nvidia::gxf::MessageAvailableFrequencyThrottler"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+
+  // verify no error logged about failure to convert sampling_mode to YAML::Node was logged
+  testing::internal::CaptureStderr();
+
+  condition->initialize();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("Unable to convert argument type") == std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(ConditionClasses, TestPeriodicCondition) {

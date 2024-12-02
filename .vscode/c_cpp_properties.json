@@ -4,7 +4,8 @@
         {
             "name": "x86_64",
             "includePath": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/include"
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/include",
+                "/usr/local/cuda/include",
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
@@ -21,7 +22,8 @@
         {
             "name": "arm64",
             "includePath": [
-                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/include"
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/include",
+                "/usr/local/cuda/include",
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",

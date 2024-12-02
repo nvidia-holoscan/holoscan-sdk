@@ -73,6 +73,7 @@ class Scheduler;
 // holoscan::gxf
 namespace gxf {
 class Entity;
+class EntityGroup;
 class GXFComponent;
 class GXFCondition;
 class GXFInputContext;
@@ -81,6 +82,7 @@ class GXFResource;
 class GXFExtensionManager;
 class GXFNetworkContext;
 class GXFScheduler;
+class GXFSystemResourceBase;
 }  // namespace gxf
 
 // Distributed Application
@@ -119,18 +121,22 @@ class CudaStreamCondition;
 class DownstreamMessageAffordableCondition;
 class ExpiringMessageAvailableCondition;
 class MessageAvailableCondition;
+class MultiMessageAvailableCondition;
+class MultiMessageAvailableTimeoutCondition;
 class PeriodicCondition;
 
 // Resources
 class Allocator;
 class AnnotatedDoubleBufferReceiver;
 class AnnotatedDoubleBufferTransmitter;
+class BlockMemoryPool;
 class Clock;
 class CudaAllocator;
-class BlockMemoryPool;
 class CudaStreamPool;
+class CPUThread;
 class DoubleBufferReceiver;
 class DoubleBufferTransmitter;
+class GPUDevice;
 class HoloscanUcxReceiver;
 class HoloscanUcxTransmitter;
 class ManualClock;
@@ -141,6 +147,7 @@ class SerializationBuffer;
 class StdComponentSerializer;
 class StdEntitySerializer;
 class StreamOrderedAllocator;
+class ThreadPool;
 class Transmitter;
 class UcxComponentSerializer;
 class UcxEntitySerializer;

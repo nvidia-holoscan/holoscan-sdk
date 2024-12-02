@@ -17,7 +17,9 @@
 #include "infer_manager.hpp"
 
 #include <dlfcn.h>
+#include <sys/sysinfo.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
@@ -249,11 +251,6 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
         }
 
         case holoinfer_backend::h_onnx: {
-          if (cuda_buffer_in_ || cuda_buffer_out_) {
-            status.set_message(
-                "Inference manager, Cuda based in and out buffer not supported in onnxrt");
-            return status;
-          }
           if (inference_specs->is_engine_path_) {
             status.set_message(
                 "Inference manager, Engine path cannot be true with onnx runtime backend");
@@ -266,12 +263,6 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 
-          bool is_aarch64 = is_platform_aarch64();
-          if (is_aarch64 && inference_specs->oncuda_) {
-            status.set_message("Onnxruntime with CUDA not supported on aarch64.");
-            return status;
-          }
-
 #if use_onnxruntime
           HOLOSCAN_LOG_INFO("Searching for ONNX Runtime libraries");
           void* handle = dlopen("libholoscan_infer_onnx_runtime.so", RTLD_NOW);
@@ -281,7 +272,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
           HOLOSCAN_LOG_INFO("Found ONNX Runtime libraries");
-          using NewOnnxInfer = OnnxInfer* (*)(const std::string&, bool);
+          using NewOnnxInfer = OnnxInfer* (*)(const std::string&, bool, bool, bool, bool);
           auto new_ort_infer = reinterpret_cast<NewOnnxInfer>(dlsym(handle, "NewOnnxInfer"));
           if (!new_ort_infer) {
             HOLOSCAN_LOG_ERROR(dlerror());
@@ -290,7 +281,11 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
           dlclose(handle);
-          auto context = new_ort_infer(model_path, inference_specs->oncuda_);
+          auto context = new_ort_infer(model_path,
+                                       inference_specs->use_fp16_,
+                                       inference_specs->oncuda_,
+                                       cuda_buffer_in_,
+                                       cuda_buffer_out_);
           holo_infer_context_[model_name] = std::unique_ptr<OnnxInfer>(context);
 #else
           HOLOSCAN_LOG_ERROR("Onnxruntime backend not supported or incorrectly installed.");
@@ -363,9 +358,6 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       // if the GPU for inference is not same as GPU-dt
       DataMap dm;
 
-      // in and out buffer on cuda not supported for onnxrt.
-      bool allocate_cuda = (backend_type.compare("onnxrt") == 0) ? false : true;
-
       for (unsigned int d = 0; d < out_tensor_names.size(); d++) {
         std::vector<int64_t> dims = holo_infer_context_.at(model_name)->get_output_dims()[d];
         auto datatype = holo_infer_context_.at(model_name)->get_output_datatype()[d];
@@ -378,7 +370,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
                                         dims,
                                         datatype,
                                         out_tensor_names[d],
-                                        allocate_cuda,
+                                        true /* allocate_cuda */,
                                         device_id);
         if (astatus.get_code() != holoinfer_code::H_SUCCESS) {
           astatus.display_message();
@@ -390,8 +382,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
         if (device_id != device_gpu_dt_) {
           check_cuda(cudaSetDevice(device_id));
 
-          auto astatus =
-              allocate_buffers(dm, dims, datatype, out_tensor_names[d], allocate_cuda, device_id);
+          auto astatus = allocate_buffers(
+              dm, dims, datatype, out_tensor_names[d], true /* allocate_cuda */, device_id);
           if (astatus.get_code() != holoinfer_code::H_SUCCESS) {
             astatus.display_message();
             status.set_message("Allocation failed for output tensor: " + out_tensor_names[d]);
@@ -459,8 +451,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 
-          auto astatus =
-              allocate_buffers(dm_in, dims, datatype, in_tensor_names[d], allocate_cuda, device_id);
+          auto astatus = allocate_buffers(
+              dm_in, dims, datatype, in_tensor_names[d], true /* allocate_cuda */, device_id);
           if (astatus.get_code() != holoinfer_code::H_SUCCESS) {
             astatus.display_message();
             status.set_message("Allocation failed for output tensor: " + out_tensor_names[d]);
@@ -487,6 +479,13 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
     }
 
     check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
+
+    if (inference_specs->parallel_processing_) {
+      // create the work queue for parallel processing, limit the worker count the available core
+      // count
+      work_queue_ = std::make_unique<WorkQueue>(
+          std::min(infer_param_.size(), static_cast<size_t>(get_nprocs())));
+    }
   } catch (const std::runtime_error& rt) {
     raise_error("Inference Manager", "Setting Inference parameters: " + std::string(rt.what()));
   } catch (...) {
@@ -728,8 +727,7 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
 
   std::chrono::steady_clock::time_point s_time;
   std::chrono::steady_clock::time_point e_time;
-
-  std::map<std::string, std::future<InferStatus>> inference_futures;
+  std::map<std::string, std::shared_ptr<std::packaged_task<InferStatus()>>> inference_futures;
   s_time = std::chrono::steady_clock::now();
   for (const auto& [model_instance, _] : infer_param_) {
     bool process_model = true;
@@ -766,13 +764,12 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
         }
       } else {
         inference_futures.insert({model_instance,
-                                  std::async(std::launch::async,
-                                             std::bind(&ManagerInfer::run_core_inference,
-                                                       this,
-                                                       model_instance,
-                                                       permodel_preprocess_data,
-                                                       permodel_output_data,
-                                                       cuda_stream))});
+                                  work_queue_->async(std::bind(&ManagerInfer::run_core_inference,
+                                                                this,
+                                                                model_instance,
+                                                                permodel_preprocess_data,
+                                                                permodel_output_data,
+                                                                cuda_stream))});
       }
     }
   }
@@ -780,7 +777,7 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
   if (parallel_processing_) {
     std::string failed_models;
     for (auto& inf_fut : inference_futures) {
-      InferStatus infer_status = inf_fut.second.get();
+      InferStatus infer_status = inf_fut.second->get_future().get();
       if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
         status.set_code(holoinfer_code::H_ERROR);
         infer_status.display_message();
@@ -788,8 +785,8 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
       }
     }
     if (status.get_code() != holoinfer_code::H_SUCCESS) {
-        status.set_message("Inference manager, Inference failed in execution for" + failed_models);
-        return status;
+      status.set_message("Inference manager, Inference failed in execution for" + failed_models);
+      return status;
     }
   }
 
@@ -841,7 +838,7 @@ InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inf
     status = g_manager->execute_inference(inference_specs, cuda_stream);
   } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
-    status.set_message(std::string("Inference manager, Error in inference setup: ") + e.what());
+    status.set_message(std::string("Inference manager, Error in inference execution: ") + e.what());
     return status;
   }
 

@@ -95,6 +95,7 @@ class TestMultiThreadScheduler:
             check_recession_period_ms=2.0,
             max_duration_ms=10000,
             stop_on_deadlock_timeout=10,
+            strict_job_thread_pinning=True,
             name=name,
         )
         assert isinstance(scheduler, GXFScheduler)

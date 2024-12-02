@@ -710,6 +710,69 @@ app.run()
 This is also illustrated in the [multithread](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/multithread) example.
 :::
 
+
+(configuring-app-thread-pools)=
+### Configuring worker thread pools
+
+Both the `MultiThreadScheduler` and `EventBasedScheduler` discussed in the previous section automatically create an internal worker thread pool by default. In some scenarios, it may be desirable for users to instead assign operators to specific user-defined thread pools. This also allows optionally pinning operators to a specific thread.
+
+Assuming that, I have three operators, `op1`, `op2` and `op3`. Assume that I want to assign these two a thread pool and that I would like operators 2 and 3 to be pinned to specific threads in the thread pool. The code for configuring thread pools from the Fragment `compose` method is shown in the example below.
+
+`````{tab-set}
+````{tab-item} C++
+We create thread pools via calls to the {cpp:func}`~holoscan::Fragment::make_thread_pool` method. The first argument is a user-defined name for the thread pool while the second is the number of threads initially in the thread pool. This `make_thread_pool` method returns a shared pointer to a {cpp:class}`~holoscan::ThreadPool` object. The {cpp:func}`~holoscan::ThreadPool::add` method of that object can then be used to add a single operator or a vector of operators to the thread pool. The second argument to the `add` function is a boolean indicating whether the given operators should be pinned to always run on a specific thread within the thread pool.
+
+```{code-block} cpp
+:name: holoscan-thread-pool-example-cpp
+
+    // The following code would be within `Fragment::compose` after operators have been defined
+    // Assume op1, op2 and op3 are `shared_ptr<OperatorType>` as returned by `make_operator`
+
+    // create a thread pool with a three threads
+    auto pool1 = make_thread_pool("pool1", 3);
+    // assign a single operator to the thread pool (unpinned)
+    pool1->add(op1, false);
+    // assign multiple operators to this thread pool (pinned)
+    pool1->add({op2, op3}, true);
+
+```
+
+````
+
+````{tab-item} Python
+We create thread pools via calls to the {py:func}`~holoscan.core.Fragment.make_thread_pool` method. The first argument is a user-defined name for the thread pool while the second is the initial size of the thread pool. It is not necessary to modify this as the size will be incremented as needed automatically. This `make_thread_pool` method returns a shared pointer to a {py:class}`~holoscan.resources.ThreadPool` object. The {py:func}`~holoscan.resources.ThreadPool.add` method of that object can then be used to add a single operator or a vector of operators to the thread pool. The second argument to the `add` function is a boolean indicating whether the given operators should be pinned to always run on a specific thread within the thread pool.
+
+```{code-block} python
+:name: holoscan-thread-pool-example-python
+    # The following code would be within `Fragment::compose` after operators have been defined
+    # Assume op1, op2 and op3 are `shared_ptr<OperatorType>` as returned by `make_operator`
+
+    # create a thread pool with a single thread
+    pool1 = self.make_thread_pool("pool1", 1);
+    # assign a single operator to the thread pool (unpinned)
+    pool1.add(op1, True);
+    # assign multiple operators to this thread pool (pinned)
+    pool1.add([op2, op3], True);
+```
+````
+`````
+:::{note}
+It is not necessary to define a thread pool for Holoscan applications. There is a default thread pool that gets used for any operators the user did not explicitly assign to a thread pool. The use of thread pools provides a way to explicitly indicate that threads should be pinned.
+
+One case where separate thread pools **must** be used is in order to support pinning of operators involving separate GPU devices. Only a single GPU device should be used from any given thread pool. Operators associated with a GPU device resource are those using one of the CUDA-based allocators like
+`BlockMemoryPool`, `CudaStreamPool`, `RMMAllocator` or `StreamOrderedAllocator`.
+:::
+
+:::{tip}
+A concrete example of a simple application with two pairs of operators in separate thread pools is given in the [thread pool resource example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/resources/thread_pool).
+:::
+
+Note that any given operator can only belong to a single thread pool. Assigning the same operator to multiple thread pools may result in errors being logged at application startup time.
+
+There is also a related boolean parameter, `strict_thread_pinning` that can be passed as a `holoscan::Arg` to the `MultiThreadScheduler` constructor. When this argument is set to `false` and an operator is pinned to a specific thread, it is allowed for other operators to also run on that same thread whenever the pinned operator is not ready to execute. When `strict_thread_pinning` is `true`, the thread can ONLY be used by the operator that was pinned to the thread. For the `EventBasedScheduler`, it is always in strict pinning mode and there is no such parameter.
+
+If a thread pool is configured by the single-thread `GreedyScheduler` is used a warning will be logged indicating that the user-defined thread pools would be ignored. Only `MultiThreadScheduler` and `EventBasedScheduler` can make use of the thread pools.
+
 (configuring-app-runtime)=
 ### Configuring runtime properties
 
@@ -1035,7 +1098,7 @@ Given a CMake project, a pre-built executable, or a Python application, you can 
 
 ## Dynamic Application Metadata
 
-As of Holoscan v2.3 it is possible to send metadata alongside the data emitted from an operator's output ports. This metadata can then be used and/or modified by any downstream operators. Currently this feature is only available for C++ applications, but will also be available to Python applications in a future release. The subsections below describe how this feature can be enabled and used.
+As of Holoscan v2.3 (for C++) or v2.4 (for Python) it is possible to send metadata alongside the data emitted from an operator's output ports. This metadata can then be used and/or modified by any downstream operators. The subsections below describe how this feature can be enabled and used.
 
 ### Enabling application metadata
 
@@ -1236,7 +1299,7 @@ The metadata policy would typically be set during {py:func}`~holoscan.core.Appli
 
 # Example for setting metadata policy from Application.compose()
 my_op = MyOperator(self, name="my_op")
-my_op.metadata_policy = holoscan.MetadataPolicy.RAISE
+my_op.metadata_policy = holoscan.core.MetadataPolicy.RAISE
 
 ```
 ````

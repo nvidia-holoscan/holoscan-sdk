@@ -475,7 +475,7 @@ Arguments:
         Default: release
         Associated environment variable: CMAKE_BUILD_TYPE
   --parallel, -j <njobs> : Specify the maximum number of concurrent processes to be used when building
-        Default: maximum
+        Default: maximum (number of CPUs, using 'nproc')
         Associated environment variable: CMAKE_BUILD_PARALLEL_LEVEL
   --buildpath, -d <build_directory> : Change the build path.
         Default: build-<arch>[-<gpu>]
@@ -1097,6 +1097,10 @@ launch() {
     # -e CUPY_CACHE_DIR
     #   Define path for cupy' kernel cache, needed since $HOME does
     #   not exist when running with `-u id:group`
+    #
+    # Container launch command steps:
+    # - Append the Holoscan bin folder to the existing `PATH` before running
+    # - Add the GXF module to PYTHONPATH before running
 
     img="$(get_build_img_name):$(get_git_sha)"
     run_command $HOLOSCAN_DOCKER_EXE run \
@@ -1125,7 +1129,10 @@ launch() {
         --ulimit memlock=-1 \
         --ulimit stack=67108864 \
         ${extra_args[@]} \
-        $img -c "export PATH=\$PATH:${container_top}/${working_dir}/bin; $run_cmd" # Append the Holoscan bin folder to the existing `PATH` before running
+        $img -c "
+            export PATH=\$PATH:${container_top}/${working_dir}/bin;
+            export PYTHONPATH=\$PYTHONPATH:\$(realpath \$(find /opt/nvidia/gxf -name Gxf.py | head -n1 | xargs dirname)/../..);
+            $run_cmd" 
 }
 
 vscode_desc() { c_echo 'Launch VSCode in DevContainer
@@ -1133,8 +1140,8 @@ vscode_desc() { c_echo 'Launch VSCode in DevContainer
 Launch a VSCode instance in a Docker container with the development environment.
 
 Arguments:
-  --parallel <njobs> : Specify the maximum number of concurrent processes to be used when building
-        Default: maximum
+  --parallel, -j <njobs> : Specify the maximum number of concurrent processes to be used when building
+        Default: maximum (number of CPUs, using 'nproc')
         Associated environment variable: CMAKE_BUILD_PARALLEL_LEVEL
 '
 }
@@ -1158,12 +1165,20 @@ vscode() {
 
     # Parse CLI arguments next
     local args=("$@")
-    local i
-    local arg
-    for i in "${!args[@]}"; do
-        if [ "${args[i]}" = "--parallel" ]; then
-           build_njobs="${args[i+1]}"
-        fi
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --parallel|-j)
+                build_njobs="$2"
+                shift 2
+                ;;
+            *)
+                # If $1 starts with a dash, it's an unknown option
+                if [[ $1 == -* ]]; then
+                    c_echo_err R "Unknown option: $1"
+                fi
+                shift
+                ;;
+        esac
     done
 
     # These environment variables will be passed to the container via `devcontainer.json`

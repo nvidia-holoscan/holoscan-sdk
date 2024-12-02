@@ -94,6 +94,7 @@ TEST_F(SchedulerClassesWithGXFContext, TestMultiThreadSchedulerWithArgs) {
       Arg{"check_recession_period_ms", 5.0},
       Arg{"max_duration_ms", 10000L},
       Arg{"stop_on_deadlock_timeout", 100LL},
+      Arg{"strict_job_thread_pinning", true},
   };
   auto scheduler = F.make_scheduler<MultiThreadScheduler>(name, arglist);
   EXPECT_TRUE(scheduler->description().find("name: " + name) != std::string::npos);

@@ -50,16 +50,14 @@ class PyMessageAvailableCondition : public MessageAvailableCondition {
 
   // Define a constructor that fully initializes the object.
   explicit PyMessageAvailableCondition(
-      Fragment* fragment,
-      // std::shared_ptr<gxf::GXFResource> receiver,
-      uint64_t min_size = 1UL, size_t front_stage_max_size = 1UL,
+      Fragment* fragment, uint64_t min_size = 1UL, size_t front_stage_max_size = 1UL,
       const std::string& name = "noname_message_available_condition")
       : MessageAvailableCondition(
             ArgList{Arg{"min_size", min_size}, Arg{"front_stage_max_size", front_stage_max_size}}) {
     name_ = name;
     fragment_ = fragment;
+    // Note "receiver" parameter is set automatically from GXFExecutor
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    // receiver = receiver;  // e.g. DoubleBufferReceiver
     setup(*spec_);
   }
 };

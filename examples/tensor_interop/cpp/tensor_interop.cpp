@@ -32,6 +32,7 @@
 #include "./receive_tensor_gxf.hpp"
 #include "./send_tensor_gxf.hpp"
 
+// NOLINTBEGIN(cppcoreguidelines-macro-usage)
 #ifdef CUDA_TRY
 #undef CUDA_TRY
 #define CUDA_TRY(stmt)                                                                  \
@@ -47,6 +48,7 @@
     }                                                                                   \
   }
 #endif
+// NOLINTEND(cppcoreguidelines-macro-usage)
 
 namespace holoscan::ops {
 
@@ -84,7 +86,7 @@ class ProcessTensorOp : public Operator {
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
-               ExecutionContext& context) override {
+               [[maybe_unused]] ExecutionContext& context) override {
     // The type of `in_message` is 'holoscan::TensorMap'.
     auto in_message = op_input.receive<holoscan::TensorMap>("in").value();
     // The type of out_message is TensorMap

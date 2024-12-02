@@ -124,6 +124,23 @@ PYBIND11_MODULE(_gxf, m) {
           },
           R"doc(Return repr(self).)doc");
 
+  py::class_<gxf::GXFSystemResourceBase,
+             gxf::GXFResource,
+             Resource,
+             gxf::GXFComponent,
+             std::shared_ptr<gxf::GXFSystemResourceBase>>(
+      m, "GXFSystemResourceBase", doc::GXFSystemResourceBase::doc_GXFSystemResourceBase)
+      .def(py::init<>(), doc::GXFSystemResourceBase::doc_GXFSystemResourceBase)
+      .def(
+          "__repr__",
+          [](const py::object& obj) {
+            // use py::object and obj.cast to avoid a segfault if object has not been initialized
+            auto resource = obj.cast<std::shared_ptr<gxf::GXFSystemResourceBase>>();
+            if (resource) { return resource->description(); }
+            return std::string("<GXFSystemResourceBase: None>");
+          },
+          R"doc(Return repr(self).)doc");
+
   py::class_<gxf::GXFCondition, Condition, gxf::GXFComponent, std::shared_ptr<gxf::GXFCondition>>(
       m, "GXFCondition", doc::GXFCondition::doc_GXFCondition)
       .def(py::init<>(), doc::GXFCondition::doc_GXFCondition)

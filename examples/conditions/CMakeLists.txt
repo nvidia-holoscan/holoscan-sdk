@@ -15,5 +15,5 @@
 
 add_subdirectory(asynchronous)
 add_subdirectory(expiring_message)
+add_subdirectory(multi_message)
 add_subdirectory(periodic)
-

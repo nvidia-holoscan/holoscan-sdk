@@ -51,15 +51,13 @@ class PyDownstreamMessageAffordableCondition : public DownstreamMessageAffordabl
 
   // Define a constructor that fully initializes the object.
   explicit PyDownstreamMessageAffordableCondition(
-      Fragment* fragment,
-      // std::shared_ptr<gxf::GXFResource> transmitter,
-      // add transmitter here? gxf_uid_t eid,
-      uint64_t min_size = 1L, const std::string& name = "noname_downstream_affordable_condition")
+      Fragment* fragment, uint64_t min_size = 1L,
+      const std::string& name = "noname_downstream_affordable_condition")
       : DownstreamMessageAffordableCondition(Arg{"min_size", min_size}) {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
-    // transmitter_ = transmitter;  // e.g. DoubleBufferTransmitter
+    // Note "transmitter" parameter is set automatically from GXFExecutor
     setup(*spec_);
   }
 };

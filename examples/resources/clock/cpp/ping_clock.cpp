@@ -51,9 +51,9 @@ void TimedPingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputConte
   auto scheduler = fragment_->scheduler();
 
   // To get the clock we currently have to cast the scheduler to gxf::GXFScheduler.
-  // TODO: Refactor C++ lib so the clock method is on Scheduler rather than GXFScheduler.
-  //       That would allow us to avoid this dynamic_pointer_cast, but might require adding
-  //       renaming Clock->GXFClock and then adding a new holoscan::Clock independent of GXF.
+  // TODO(unknown): Refactor C++ lib so the clock method is on Scheduler rather than GXFScheduler.
+  //   That would allow us to avoid this dynamic_pointer_cast, but might require renaming
+  //   Clock->GXFClock and then adding a new holoscan::Clock independent of GXF.
   auto gxf_scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(scheduler);
   auto clock = gxf_scheduler->clock();
 

@@ -19,8 +19,10 @@
 #define HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
 
 #include <gxf/core/gxf.h>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -33,19 +35,19 @@
 // macro like GXF_ASSERT_SUCCESS, but uses HOLOSCAN_LOG_ERROR and includes line/filename info
 // Note: HOLOSCAN_GXF_CALL depends on GNU C statement expressions ({ })
 //       https://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html
-#define HOLOSCAN_GXF_CALL(stmt)                                                         \
-  ({                                                                                    \
-    gxf_result_t code = (stmt);                                                         \
-    if (code != GXF_SUCCESS) {                                                          \
-      HOLOSCAN_LOG_ERROR("GXF call '{}' in line {} of file {} failed with '{}' ({})",   \
-                         #stmt,                                                         \
-                         __LINE__,                                                      \
-                         __FILE__,                                                      \
-                         GxfResultStr(code),                                            \
-                         static_cast<int>(code));                                       \
-      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) { PrettyPrintBacktrace(); }       \
-    }                                                                                   \
-    code;                                                                               \
+#define HOLOSCAN_GXF_CALL(stmt)                                                       \
+  ({                                                                                  \
+    gxf_result_t code = (stmt);                                                       \
+    if (code != GXF_SUCCESS) {                                                        \
+      HOLOSCAN_LOG_ERROR("GXF call '{}' in line {} of file {} failed with '{}' ({})", \
+                         #stmt,                                                       \
+                         __LINE__,                                                    \
+                         __FILE__,                                                    \
+                         GxfResultStr(code),                                          \
+                         static_cast<int>(code));                                     \
+      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) { PrettyPrintBacktrace(); }     \
+    }                                                                                 \
+    code;                                                                             \
   })
 
 #define HOLOSCAN_GXF_CALL_FATAL(stmt)                                                 \
@@ -263,6 +265,12 @@ gxf_uid_t add_entity_group(void* context, std::string name);
  * @return The default queue policy.
  */
 uint64_t get_default_queue_policy();
+
+std::optional<int32_t> gxf_device_id(gxf_context_t context, gxf_uid_t eid);
+
+std::string gxf_entity_group_name(gxf_context_t context, gxf_uid_t eid);
+
+gxf_uid_t gxf_entity_group_id(gxf_context_t context, gxf_uid_t eid);
 
 }  // namespace holoscan::gxf
 

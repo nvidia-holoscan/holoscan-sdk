@@ -43,6 +43,7 @@ create a custom application.
     holoscan.core.IOSpec
     holoscan.core.Message
     holoscan.core.MetadataDictionary
+    holoscan.core.MultiMessageConditionInfo
     holoscan.core.MetadataPolicy
     holoscan.core.NetworkContext
     holoscan.core.Operator
@@ -58,56 +59,76 @@ create a custom application.
     holoscan.core.py_object_to_arg
 """
 
+import os
+import sys
+
 # Note: Python 3.7+ expects the threading module to be initialized (imported) before additional
 # threads are created (by C++ modules using pybind11).
 # Otherwise you will get an assert tlock.locked() error on exit.
 # (CLARAHOLOS-765)
 import threading as _threading  # noqa: F401, I001
 
-from ..graphs._graphs import FragmentGraph, OperatorGraph
-from ._core import Application as _Application
-from ._core import (
-    Arg,
-    ArgContainerType,
-    ArgElementType,
-    ArgList,
-    ArgType,
-    CLIOptions,
-    Component,
-    Condition,
-    ConditionType,
-    Config,
-    DataFlowMetric,
-    DataFlowTracker,
-    DLDevice,
-    DLDeviceType,
-    ExecutionContext,
-    Executor,
-)
-from ._core import Fragment as _Fragment
-from ._core import (
-    InputContext,
-    IOSpec,
-    Message,
-    MetadataDictionary,
-    MetadataPolicy,
-    NetworkContext,
-)
-from ._core import Operator as _Operator
-from ._core import OutputContext, ParameterFlag
-from ._core import PyComponentSpec as ComponentSpec
-from ._core import PyRegistryContext as _RegistryContext
-from ._core import PyOperatorSpec as OperatorSpec
-from ._core import PyTensor as Tensor
-from ._core import Resource as _Resource
-from ._core import (
-    Scheduler,
-    arg_to_py_object,
-    arglist_to_kwargs,
-    kwargs_to_arglist,
-    py_object_to_arg,
-)
-from ._core import register_types as _register_types
+# Temporarily set RTLD_GLOBAL to ensure that global symbols in the Holoscan C++ API
+# (including logging-related symbols like nvidia::LoggingFunction) are shared
+# across bindings. This is necessary because the Python interpreter loads the
+# Pybind11 module with RTLD_LOCAL by default, which can duplicate symbols and
+# lead to symbol resolution issues when the C++ API and global symbols are loaded
+# as shared libraries by the Python interpreter.
+original_flags = sys.getdlopenflags()  # Save the current dlopen flags
+try:
+    sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_LAZY)
+
+    # Import statements for the C++ API classes
+    from ..graphs._graphs import FragmentGraph, OperatorGraph
+    from ._core import Application as _Application
+    from ._core import (
+        Arg,
+        ArgContainerType,
+        ArgElementType,
+        ArgList,
+        ArgType,
+        CLIOptions,
+        Component,
+        Condition,
+        ConditionType,
+        Config,
+        DataFlowMetric,
+        DataFlowTracker,
+        DLDevice,
+        DLDeviceType,
+        ExecutionContext,
+        Executor,
+        InputContext,
+        IOSpec,
+        Message,
+        MetadataDictionary,
+        MetadataPolicy,
+        NetworkContext,
+        OutputContext,
+        ParameterFlag,
+        Scheduler,
+        arg_to_py_object,
+        arglist_to_kwargs,
+        kwargs_to_arglist,
+        py_object_to_arg,
+    )
+    from ._core import Fragment as _Fragment
+    from ._core import Operator as _Operator
+    from ._core import PyComponentSpec as ComponentSpec
+    from ._core import PyOperatorSpec as OperatorSpec
+    from ._core import PyRegistryContext as _RegistryContext
+    from ._core import PyTensor as Tensor
+    from ._core import Resource as _Resource
+    from ._core import register_types as _register_types
+finally:
+    # Restore the original dlopen flags immediately after the imports
+    sys.setdlopenflags(original_flags)
+del original_flags
+
+# need these imports for ThreadPool return type of Fragment.make_thread_pool to work
+from ..gxf._gxf import GXFResource as _GXFResource  # noqa: E402, F401, I001
+from ..resources import ThreadPool as _ThreadPool  # noqa: E402, F401, I001
+
 
 Graph = OperatorGraph  # define alias for backward compatibility
 
@@ -138,6 +159,7 @@ __all__ = [
     "Message",
     "MetadataDictionary",
     "MetadataPolicy",
+    "MultiMessageConditionInfo",
     "NetworkContext",
     "Operator",
     "OperatorSpec",
@@ -361,6 +383,7 @@ class Tracker:
         num_start_messages_to_skip=10,
         num_last_messages_to_discard=10,
         latency_threshold=0,
+        is_limited_tracking=False,
     ):
         """
         Parameters
@@ -382,6 +405,9 @@ class Tracker:
         latency_threshold : int, optional
             The minimum end-to-end latency in milliseconds to account for in the end-to-end
             latency metric calculations.
+        is_limited_tracking : bool, optional
+            If true, the tracking is limited to root and leaf nodes, minimizing the timestamps by
+            avoiding intermediate operators.
         """
         self.app = app
 
@@ -400,6 +426,7 @@ class Tracker:
             num_start_messages_to_skip=num_start_messages_to_skip,
             num_last_messages_to_discard=num_last_messages_to_discard,
             latency_threshold=latency_threshold,
+            is_limited_tracking=False,
         )
 
     def __enter__(self):

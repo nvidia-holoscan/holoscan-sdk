@@ -43,7 +43,7 @@ add_dependencies(v4l2_camera v4l2_camera_yaml)
 
 # Testing
 option(HOLOSCAN_BUILD_V4L2_TESTS "Build tests for V4L2 loopback" OFF)
-if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
+if(BUILD_TESTING AND HOLOSCAN_BUILD_V4L2_TESTS)
   # Assumes that the v4l2 video loopback has already been mounted and the yaml files have been
   # updated to use the virtual loopback device.
 

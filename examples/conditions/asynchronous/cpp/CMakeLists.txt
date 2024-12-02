@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,11 +74,47 @@ install(FILES
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-  add_test(NAME EXAMPLE_CPP_PING_ASYNC_TEST
-           COMMAND ping_async
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  set_tests_properties(EXAMPLE_CPP_PING_ASYNC_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Rx message value: 20")
-endif()
+  # Test all the combinations for the async test
+  # RT: receive/transmit
+  # R: receive only
+  # T: transmit only
+  # O: receive and transmit async set to false
+  # M: Multi-thread
+  # G: Greedy
+  set(testconfigs RT T R O MRT GRT)
+  foreach(config IN LISTS testconfigs)
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/ping_async.yaml CONFIG_STRING)
+    string(REPLACE "async_receive: true" "async_receive: false" CONFIG_STRING "${CONFIG_STRING}")
 
+    string(FIND "${config}" "R" HAS_R)
+    if(HAS_R GREATER -1)
+      string(REPLACE "async_receive: false" "async_receive: true" CONFIG_STRING "${CONFIG_STRING}")
+    endif()
+
+    string(FIND "${config}" "T" HAS_T)
+    if(HAS_T GREATER -1)
+      string(REPLACE "async_transmit: false" "async_transmit: true" CONFIG_STRING "${CONFIG_STRING}")
+    endif()
+
+    string(FIND "${config}" "M" HAS_M)
+    if(HAS_M GREATER -1)
+      string(REPLACE "scheduler: event_based" "scheduler: multi_thread" CONFIG_STRING "${CONFIG_STRING}")
+    endif()
+
+    string(FIND "${config}" "G" HAS_G)
+    if(HAS_G GREATER -1)
+      string(REPLACE "scheduler: event_based" "scheduler: greedy" CONFIG_STRING "${CONFIG_STRING}")
+    endif()
+
+    # Write the config
+    set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_video_replayer_config_${config}.yaml)
+    file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
+
+    add_test(NAME EXAMPLE_CPP_PING_ASYNC_${config}_TEST
+             COMMAND ping_async ${CONFIG_FILE}
+             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            )
+    set_tests_properties(EXAMPLE_CPP_PING_ASYNC_${config}_TEST PROPERTIES
+                         PASS_REGULAR_EXPRESSION "Rx message value: 20")
+  endforeach()
+endif()

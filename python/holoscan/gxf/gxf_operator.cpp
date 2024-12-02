@@ -65,12 +65,16 @@ void init_gxf_operator(py::module_& m) {
                     py::overload_cast<>(&ops::GXFOperator::gxf_cid, py::const_),
                     py::overload_cast<gxf_uid_t>(&ops::GXFOperator::gxf_cid),
                     doc::GXFOperator::doc_gxf_cid)
+      .def_property_readonly("gxf_entity_group_name",
+                             &ops::GXFOperator::gxf_entity_group_name,
+                             doc::GXFOperator::doc_gxf_entity_group_name)
       .def_property_readonly(
           "description", &ops::GXFOperator::description, doc::GXFOperator::doc_description)
       .def(
           "__repr__",
           [](const py::object& obj) {
-            // use py::object and obj.cast to avoid a segfault if object has not been initialized
+            // use py::object and obj.cast to avoid a segfault if object has not been
+            // initialized
             auto op = obj.cast<std::shared_ptr<ops::GXFOperator>>();
             if (op) { return op->description(); }
             return std::string("<GXFOperator: None>");

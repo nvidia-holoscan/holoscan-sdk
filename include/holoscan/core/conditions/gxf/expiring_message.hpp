@@ -20,6 +20,8 @@
 
 #include <memory>
 
+#include <gxf/std/scheduling_terms.hpp>
+
 #include "../../gxf/gxf_condition.hpp"
 #include "../../resources/gxf/clock.hpp"
 #include "../../resources/gxf/realtime_clock.hpp"

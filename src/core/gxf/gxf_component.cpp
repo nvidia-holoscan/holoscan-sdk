@@ -142,4 +142,16 @@ void GXFComponent::set_gxf_parameter(const std::string& component_name, const st
   // TODO(unknown): handle error
 }
 
+std::string GXFComponent::gxf_entity_group_name() {
+  const char* name;
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGroupName(gxf_context_, gxf_eid_, &name));
+  return std::string{name};
+}
+
+gxf_uid_t GXFComponent::gxf_entity_group_id() {
+  gxf_uid_t gid;
+  HOLOSCAN_GXF_CALL_FATAL(GxfEntityGroupId(gxf_context_, gxf_eid_, &gid));
+  return gid;
+}
+
 }  // namespace holoscan::gxf

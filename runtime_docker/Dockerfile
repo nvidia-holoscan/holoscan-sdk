@@ -65,7 +65,7 @@ FROM base AS runtime_cpp_no_mkl
 #  libcufft - Holoscan-python-core/OnnxRT dependency
 #  libcurand - libtorch & CuPy dependency
 #  libcusparse - libtorch & CuPy dependency
-#  libcusparseLt - libtorch dependency (Patch package file installs to match TensorRT base container)
+#  libcusparseLt - libtorch dependency
 #  cuda-nvrtc - libtorch & CuPy dependency
 #  libnvjitlink - libtorch & CuPy dependency
 #  libcusolver - libtorch & CuPy dependency
@@ -75,16 +75,6 @@ FROM base AS runtime_cpp_no_mkl
 #  libcudnn_train.so is removed since training is not needed in a runtime environment (saves ~200 MB)
 ARG GPU_TYPE
 RUN apt-get update \
-    && if [ $(uname -m) = "aarch64" ] && [ ${GPU_TYPE} = "dgpu" ]; then \
-        dpkg-divert --rename --divert /usr/local/cuda/lib64/libcusparseLt.so.0.6.2.3 \
-            /usr/lib/sbsa-linux-gnu/libcusparseLt.so.0.6.2.3 \
-        && dpkg-divert --rename --divert /usr/local/cuda/lib64/libcusparseLt.so.0 \
-            /usr/lib/sbsa-linux-gnu/libcusparseLt.so.0 \
-        && dpkg-divert --rename --divert /usr/local/cuda/lib64/libcusparseLt.so \
-            /usr/lib/sbsa-linux-gnu/libcusparseLt.so \
-        && dpkg-divert --rename --divert /usr/local/cuda/include/cusparseLt.h \
-            /usr/include/cusparseLt.h \
-        ; fi \
     && apt-get install --no-install-recommends --allow-downgrades -y \
         libx11-6="2:1.7.5-*" \
         libxcursor1="1:1.2.0-*" \
@@ -112,7 +102,7 @@ RUN apt-get update \
         libcufft-12-6 \
         libcurand-12-6 \
         libcusparse-12-6 \
-        libcusparselt0="0.6.2.3-*" \
+        libcusparselt0="0.6.3.2-*" \
         cuda-nvrtc-12-6 \
         libnvjitlink-12-6 \
         libcusolver-12-6 \

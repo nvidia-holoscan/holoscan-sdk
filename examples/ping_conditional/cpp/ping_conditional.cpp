@@ -39,8 +39,8 @@ class PingTxOp : public Operator {
     } else {
       op_output.emit(nullptr, "out");  // emit nullptr for even values
     }
-    index_++;
-  }  // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
+    index_++;  // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
+  }
 
  private:
   int index_ = 0;

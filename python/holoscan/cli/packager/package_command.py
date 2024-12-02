@@ -79,6 +79,13 @@ def create_package_parser(
         help="target platform configuration for the build output. "
         f"Valid values: {str.join(', ', SDK.PLATFORM_CONFIGS)}.",
     )
+    parser.add_argument(
+        "--add",
+        action="append",
+        dest="additional_libs",
+        type=valid_existing_dir_path,
+        help="include additional library files, python files into the application directory.",
+    )
     parser.add_argument("--timeout", type=int, help="override default application timeout")
     parser.add_argument("--version", type=Version, help="set the version of the application")
 

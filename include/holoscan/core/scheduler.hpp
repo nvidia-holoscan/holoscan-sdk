@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_SCHEDULER_HPP
 #define HOLOSCAN_CORE_SCHEDULER_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <stdio.h>
 #include <iostream>
 #include <memory>

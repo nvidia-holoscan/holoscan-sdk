@@ -24,21 +24,7 @@
 #include <string>
 #include <vector>
 
-#include "gxf/core/entity.hpp"
 #include "gxf/core/gxf.h"
-#include "gxf/core/parameter.hpp"
-#include "gxf/cuda/cuda_stream.hpp"
-#include "gxf/cuda/cuda_stream_id.hpp"
-#include "gxf/cuda/cuda_stream_pool.hpp"
-#include "gxf/multimedia/video.hpp"
-#include "gxf/std/allocator.hpp"
-#include "gxf/std/clock.hpp"
-#include "gxf/std/codelet.hpp"
-#include "gxf/core/parameter_parser_std.hpp"
-#include "gxf/std/receiver.hpp"
-#include "gxf/std/tensor.hpp"
-#include "gxf/std/timestamp.hpp"
-#include "gxf/std/transmitter.hpp"
 
 #include "holoinfer_buffer.hpp"
 #include "holoinfer_constants.hpp"
@@ -121,7 +107,8 @@ static const std::map<std::string, holoinfer_datatype> kHoloInferDataTypeMap = {
     {"kInt32", holoinfer_datatype::h_Int32},
     {"kInt8", holoinfer_datatype::h_Int8},
     {"kUInt8", holoinfer_datatype::h_UInt8},
-    {"kInt64", holoinfer_datatype::h_Int64}};
+    {"kInt64", holoinfer_datatype::h_Int64},
+    {"kFloat16", holoinfer_datatype::h_Float16}};
 
 InferStatus parse_yaml_node(const node_type& in_config, std::vector<std::string>& names,
                             std::vector<std::vector<int64_t>>& dims,

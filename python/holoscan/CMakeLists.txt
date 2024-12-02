@@ -80,12 +80,12 @@ function(holoscan_pybind11_module pybind11_module_name)
 endfunction()
 
 # custom target for top-level __init__.py file is copied
-set(CMAKE_PYBIND11_PRIMARY_INIT_FILE ${CMAKE_CURRENT_LIST_DIR}/__init__.py)
-add_custom_target(holoscan-python-pyinit
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PYBIND11_PRIMARY_INIT_FILE}" "${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/"
-    DEPENDS "${CMAKE_PYBIND11_PRIMARY_INIT_FILE}"
+set(CMAKE_PYBIND11_PRIMARY_INIT_FILE ${CMAKE_CURRENT_LIST_DIR}/__init__.py.in)
+configure_file(
+    ${CMAKE_PYBIND11_PRIMARY_INIT_FILE}
+    ${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/__init__.py
+    @ONLY
 )
-add_dependencies(holoscan-python holoscan-python-pyinit)
 
 # custom target for top-level decorator.py file is copied
 set(CMAKE_PYBIND11_DECORATORS_PY_FILE ${CMAKE_CURRENT_LIST_DIR}/decorator.py)

@@ -44,5 +44,6 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_FLOW_TRACKER_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Data Flow Tracking Results")
+                       PASS_REGULAR_EXPRESSION "Data Flow Tracking Results"
+                       PASS_REGULAR_EXPRESSION "Path 1: root1,middle1,leaf1")
 endif()

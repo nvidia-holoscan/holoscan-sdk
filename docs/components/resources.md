@@ -97,3 +97,13 @@ This is the receiver class used by input ports of operators within a fragment.
 ### UcxReceiver
 
 This is the receiver class used by input ports of operators that connect fragments in a distributed applications. It takes care of receiving UCX active messages and deserializing their contents.
+
+## System Resources
+
+The components in this "system resources" section are related to system resources such as CPU Threads that can be used by operators. 
+
+### ThreadPool
+
+This resource represents a thread pool that can be used to pin operators to run using specific CPU threads. This functionality is not supported by the `GreedyScheduler` because it is single-threaded, but it is supported by both the `EventBasedScheduler` and `MultiThreadScheduler`. Unlike other resource types, a ThreadPool should **not** be created via `make_resource` ({cpp:func}`C++ <holoscan::Fragment::make_resource>`/{py::func}`Python <holoscan.core.Fragment.make_resource>`), but should instead use the dedicated `make_thread_pool` ({cpp:func}`C++ <holoscan::Fragment::make_resource>`/{py::func}`Python <holoscan.core.Fragment.make_resource>`) method. This dedicated method is necessary as the thread pool requires some additional initialization logic that is not required by the other resource types. See the section on {ref}`configuring thread pools <configuring-app-thread-pools>` in the user guide for usage.
+
+- The parameter `initial_size` indicates the number of threads to initialize the thread pool with.

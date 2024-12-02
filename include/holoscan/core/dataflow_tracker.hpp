@@ -124,6 +124,24 @@ class DataFlowTracker {
   void set_discard_last_messages(uint64_t num) { num_last_messages_to_discard_ = num; }
 
   /**
+   * @brief Set the limited tracking option which enables tracking only at root and leaf operators.
+   * This also means that distinction between paths are ignored if multiple paths have the same
+   * root and leaf operators.
+   *
+   * @param limited_tracking The boolean value to set the limited tracking option. True enables
+   * tracking only at root and leaf operators.
+   */
+  void set_limited_tracking(bool limited_tracking) { is_limited_tracking = limited_tracking; }
+
+  /**
+   * @brief Get whether the limited tracking option is enabled or not.
+   *
+   * @return true if limited tracking is enabled.
+   * @return false if limited tracking is not enabled.
+   */
+  bool limited_tracking() { return is_limited_tracking; }
+
+  /**
    * @brief Enable message logging at the end of the every execution of a leaf
    * Operator.
    *
@@ -239,6 +257,12 @@ class DataFlowTracker {
   void write_to_logfile(std::string text);
 
  private:
+  bool is_limited_tracking =
+      false;  ///< The variable is used to indicate whether tracking is performed only at the root
+              ///< and leaf operators, and intermediate operators are not timestamped.
+              ///< This enables us to minimize the overhead of timestamping at every operator, and
+              /// serializing and transferring a large amount timestamp data.
+
   std::map<std::string, uint64_t>
       source_messages_;  ///< The map of source names to the number of published messages.
   std::mutex source_messages_mutex_;  ///< The mutex for the source_messages_.

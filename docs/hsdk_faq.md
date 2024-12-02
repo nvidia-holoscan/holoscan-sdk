@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.6.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -827,6 +827,9 @@ A1: You can use the
 
 command to launch VSCode in a development container. Configure CMake, build the source code, and use the Run and Debug view to start debugging sessions.
 
+`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process.
+For more information, refer to the instructions from `./run vscode -h`.
+
 **Q2: How can I get started with debugging my Holoscan application?**
 
 For debugging applications in Holoscan repo, refer to the [Debugging Section](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_debugging.html).  For debugging applications in Holohub, refer to HoloHub [tutorials](https://github.com/nvidia-holoscan/holohub/tree/main/tutorials/debugging) for strategies to set up debugging with Visual Studio Code or other tools such as GDB.
@@ -1074,7 +1077,7 @@ To achieve synchronized termination across all Holoviz instances:
 1. Create a shared boolean scheduling condition.
 1. For each HolovizOp in your application:
    * Set this condition as a general execution condition.
-   * Importantly, also set it as the `window_close_scheduling_term` parameter.
+   * Importantly, also set it as the `window_close_condition` parameter (Note: this parameter was named `window_close_scheduling_term` in releases prior to v2.7).
 
 **Q16:I'm trying to use the `render_buffer_output` from Holoviz Python operator, but I get the following error :**
 

@@ -67,6 +67,8 @@ The following examples illustrate the use of specific **conditions** to modify t
 
 * [**PeriodicCondition**](conditions/periodic): trigger an operator at a user-defined time interval
 * [**AsynchronousCondition**](conditions/asynchronous): allow operators to run asynchronously (C++ API only)
+* [**ExpiringMessageAvailableCondition**](conditions/expiring_message): allow operators to run when a certain number of messages have arrived or after a specified time interval has elapsed.
+* [**MultiMessageAvailableCondition**, **MultiMessageAvailableTimeoutCondition**](conditions/multi_message): allow operators to run only once a certain number of messages have arrived across multiple associated input ports (optionally with a timeout on the interval to wait for messages).
 
 The following examples illustrate the use of specific resource classes that can be passed to operators or schedulers:
 

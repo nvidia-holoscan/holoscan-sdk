@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_OPERATOR_HPP
 #define HOLOSCAN_CORE_OPERATOR_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <stdio.h>
 #include <algorithm>
 #include <iostream>
@@ -37,6 +39,7 @@
 #include "./condition.hpp"
 #include "./forward_def.hpp"
 #include "./graph.hpp"
+#include "./io_spec.hpp"
 #include "./messagelabel.hpp"
 #include "./metadata.hpp"
 #include "./operator_spec.hpp"

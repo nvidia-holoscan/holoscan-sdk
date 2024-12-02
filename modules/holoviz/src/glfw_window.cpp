@@ -58,6 +58,9 @@ struct GLFWWindow::Impl {
   Impl() = delete;
 
   ~Impl() {
+    // glfwDestroyWindow() and glfwTerminate() are not thread-safe, take the lock
+    std::lock_guard<std::mutex> guard(mutex_);
+
     if (intern_window_ && window_) {
       if (init_flags_ & InitFlags::FULLSCREEN) {
         // GLFW is not switching back to the original mode when just destroying the window,
@@ -69,7 +72,6 @@ struct GLFWWindow::Impl {
       glfwDestroyWindow(window_);
     }
 
-    std::lock_guard<std::mutex> guard(mutex_);
     --glfw_init_count_;
     if (glfw_init_count_ == 0) { glfwTerminate(); }
   }
@@ -182,7 +184,11 @@ GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitF
     if (!monitor) { monitor = glfwGetPrimaryMonitor(); }
   }
 
-  impl_->window_ = glfwCreateWindow(width, height, title, monitor, NULL);
+  {
+    // glfwCreateWindow() is not thread safe, take the lock
+    std::lock_guard<std::mutex> guard(impl_->mutex_);
+    impl_->window_ = glfwCreateWindow(width, height, title, monitor, NULL);
+  }
   if (!impl_->window_) { throw std::runtime_error("Failed to create glfw window"); }
 
   impl_->intern_window_ = true;
@@ -199,6 +205,8 @@ GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitF
 GLFWWindow::~GLFWWindow() {}
 
 void GLFWWindow::init_im_gui() {
+  // ImGui is calling glfwCreateStandardCursor() which is not thread safe, take the lock
+  std::lock_guard<std::mutex> guard(impl_->mutex_);
   ImGui_ImplGlfw_InitForVulkan(impl_->window_, true);
 }
 
@@ -527,6 +535,8 @@ void GLFWWindow::im_gui_new_frame() {
 }
 
 void GLFWWindow::begin() {
+  // GLFW event processing is not thread safe, take the lock
+  std::lock_guard<std::mutex> guard(impl_->mutex_);
   glfwPollEvents();
 }
 

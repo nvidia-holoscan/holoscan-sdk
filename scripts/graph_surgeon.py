@@ -30,7 +30,13 @@ graph.outputs[0].name += "_old"
 # Insert a transpose at the network input tensor and rebind it to the new node (1 x 3 x 512 x 512)
 nhwc_to_nchw_in = gs.Node("Transpose", name="transpose_input", attrs={"perm": [0, 3, 1, 2]})
 nhwc_to_nchw_in.outputs = graph.inputs
-graph.inputs = [gs.Variable("INPUT__0", dtype=graph.inputs[0].dtype, shape=[1, 512, 512, 3])]
+graph.inputs = [
+    gs.Variable(
+        "INPUT__0",
+        dtype=graph.inputs[0].dtype,
+        shape=[graph.inputs[0].shape[i] for i in [0, 2, 3, 1]],
+    )
+]
 nhwc_to_nchw_in.inputs = graph.inputs
 
 graph.nodes.extend([nhwc_to_nchw_in])

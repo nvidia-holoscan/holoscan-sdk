@@ -45,7 +45,7 @@ class MinimalNativeResourceOp : public Operator {
 
   MinimalNativeResourceOp() = default;
 
-  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
     auto res = resource<MinimalNativeResource>("string_native_resource");
     if (res) {

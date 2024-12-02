@@ -142,6 +142,8 @@ add_holoscan_library(core
     core/conditions/gxf/downstream_affordable.cpp
     core/conditions/gxf/periodic.cpp
     core/conditions/gxf/message_available.cpp
+    core/conditions/gxf/multi_message_available.cpp
+    core/conditions/gxf/multi_message_available_timeout.cpp
     core/conditions/gxf/expiring_message.cpp
     core/config.cpp
     core/dataflow_tracker.cpp
@@ -155,6 +157,7 @@ add_holoscan_library(core
     core/fragment_scheduler.cpp
     core/graphs/flow_graph.cpp
     core/gxf/entity.cpp
+    core/gxf/entity_group.cpp
     core/gxf/gxf_component.cpp
     core/gxf/gxf_component_info.cpp
     core/gxf/gxf_condition.cpp
@@ -180,6 +183,7 @@ add_holoscan_library(core
     core/resources/gxf/annotated_double_buffer_transmitter.cpp
     core/resources/gxf/block_memory_pool.cpp
     core/resources/gxf/clock.cpp
+    core/resources/gxf/cpu_thread.cpp
     core/resources/gxf/cuda_allocator.cpp
     core/resources/gxf/cuda_stream_pool.cpp
     core/resources/gxf/double_buffer_receiver.cpp
@@ -196,6 +200,7 @@ add_holoscan_library(core
     core/resources/gxf/std_component_serializer.cpp
     core/resources/gxf/std_entity_serializer.cpp
     core/resources/gxf/stream_ordered_allocator.cpp
+    core/resources/gxf/system_resources.cpp
     core/resources/gxf/transmitter.cpp
     core/resources/gxf/ucx_component_serializer.cpp
     core/resources/gxf/ucx_entity_serializer.cpp

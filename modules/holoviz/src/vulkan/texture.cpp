@@ -31,14 +31,16 @@ Texture::Texture(Vulkan* vulkan, nvvk::ResourceAllocator* alloc, uint32_t width,
     : Resource(vulkan, alloc), width_(width), height_(height), format_(format) {}
 
 Texture::~Texture() {
-  wait();
+  try {
+    wait();
 
-  // check if this texture had been imported to CUDA
-  if (!mipmaps_.empty()) {
-    const CudaService::ScopedPush cuda_context = vulkan_->get_cuda_service()->PushContext();
-    mipmaps_.clear();
-  }
-  alloc_->destroy(texture_);
+    // check if this texture had been imported to CUDA
+    if (!mipmaps_.empty()) {
+      const CudaService::ScopedPush cuda_context = vulkan_->get_cuda_service()->PushContext();
+      mipmaps_.clear();
+    }
+    alloc_->destroy(texture_);
+  } catch (const std::exception& e) {}  // ignore potential exceptions
 }
 
 void Texture::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
@@ -142,20 +144,14 @@ void Texture::upload(CUstream ext_stream, const std::array<CUdeviceptr, 3>& devi
     if (!device_ptr[plane]) { break; }
 
     uint32_t channels, hw_channels, component_size, width_divisor, height_divisior;
-    format_info(format_,
-                &channels,
-                &hw_channels,
-                &component_size,
-                &width_divisor,
-                &height_divisior,
-                plane);
+    format_info(
+        format_, &channels, &hw_channels, &component_size, &width_divisor, &height_divisior, plane);
 
     // the width and height might be different for each plane for Y'CbCr formats
     const uint32_t width = width_ / width_divisor;
     const uint32_t height = height_ / height_divisior;
 
-    size_t src_pitch =
-        row_pitch[plane] != 0 ? row_pitch[plane] : width * channels * component_size;
+    size_t src_pitch = row_pitch[plane] != 0 ? row_pitch[plane] : width * channels * component_size;
 
     if (!mipmaps_.empty()) {
       // direct upload to CUDA imported Vulkan texture by copying to CUDA array

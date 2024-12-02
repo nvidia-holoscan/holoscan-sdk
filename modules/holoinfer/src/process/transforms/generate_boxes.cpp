@@ -16,6 +16,8 @@
  */
 #include "generate_boxes.hpp"
 
+#include <yaml-cpp/yaml.h>
+
 #include <functional>
 #include <map>
 #include <memory>

@@ -32,6 +32,7 @@ set(holoinfer_src
     manager/process_manager.cpp
     utils/infer_utils.cpp
     utils/infer_buffer.cpp
+    utils/work_queue.cpp
 )
 
 add_library(${PROJECT_NAME} SHARED ${holoinfer_src})

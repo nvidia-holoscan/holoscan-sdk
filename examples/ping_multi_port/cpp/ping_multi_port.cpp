@@ -88,7 +88,8 @@ class PingMxOp : public Operator {
     spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this value", 2);
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = op_input.receive<std::shared_ptr<ValueData>>("in1").value();
     auto value2 = op_input.receive<std::shared_ptr<ValueData>>("in2").value();
 

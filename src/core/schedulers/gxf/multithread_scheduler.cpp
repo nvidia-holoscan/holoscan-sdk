@@ -61,6 +61,13 @@ void MultiThreadScheduler::setup(ComponentSpec& spec) {
              "negative value means not stop on deadlock. This parameter only applies when  "
              "stop_on_deadlock=true",
              0L);
+  spec.param(strict_job_thread_pinning_,
+             "strict_job_thread_pinning",
+             "Strict Job-Thread Pinning",
+             "When true, the thread an operator is pinned to is not allowed to run any other "
+             "operators. When false (the default), if the pinned operator is not in a READY state,"
+             " another operator could run on the thread.",
+             false);
 }
 
 nvidia::gxf::MultiThreadScheduler* MultiThreadScheduler::get() const {

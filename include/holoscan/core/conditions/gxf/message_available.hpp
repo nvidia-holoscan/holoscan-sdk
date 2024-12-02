@@ -40,7 +40,7 @@ class MessageAvailableCondition : public gxf::GXFCondition {
   std::shared_ptr<gxf::GXFResource> receiver() { return receiver_.get(); }
 
   void min_size(uint64_t min_size);
-  size_t min_size() { return min_size_; }
+  uint64_t min_size() { return min_size_; }
 
   void front_stage_max_size(size_t front_stage_max_size);
   size_t front_stage_max_size() { return front_stage_max_size_; }

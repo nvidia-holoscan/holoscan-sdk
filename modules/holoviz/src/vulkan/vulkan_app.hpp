@@ -161,12 +161,15 @@ class Vulkan {
     bool normalized_ = true;     //< if true, then texture coordinates are normalize (0...1), else
                                  //< (0...width, 0...height)
     bool cuda_interop_ = false;  //< used for interop with CUDA
-    vk::SamplerYcbcrModelConversion ycbcr_model_conversion_;  ///< YCbCr model conversion
-    vk::SamplerYcbcrRange ycbcr_range_;                       ///< YCbCR range
-    vk::ChromaLocation x_chroma_location_;  ///< chroma location in x direction for formats which
-                                            ///< are chroma downsampled in width (420 and 422)
-    vk::ChromaLocation y_chroma_location_;  ///< chroma location in y direction for formats which
-                                            ///< are chroma downsampled in height (420)
+    vk::SamplerYcbcrModelConversion ycbcr_model_conversion_ =
+        vk::SamplerYcbcrModelConversion::eYcbcr601;  ///< YCbCr model conversion
+    vk::SamplerYcbcrRange ycbcr_range_ = vk::SamplerYcbcrRange::eItuFull;  ///< YCbCR range
+    vk::ChromaLocation x_chroma_location_ =
+        vk::ChromaLocation::eCositedEven;  ///< chroma location in x direction for formats which
+                                           ///< are chroma downsampled in width (420 and 422)
+    vk::ChromaLocation y_chroma_location_ =
+        vk::ChromaLocation::eCositedEven;  ///< chroma location in y direction for formats which
+                                           ///< are chroma downsampled in height (420)
   };
 
   /**

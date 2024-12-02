@@ -58,12 +58,16 @@ std::ostream& operator<<(std::ostream& os, const PrimitiveTopology& topology) {
 
 }  // namespace holoscan::viz
 
+enum class Source { HOST, CUDA_DEVICE };
+
 // Fixture that initializes Holoviz
-class PrimitiveTopology : public TestHeadless,
-                          public testing::WithParamInterface<viz::PrimitiveTopology> {};
+class PrimitiveTopology
+    : public TestHeadless,
+      public testing::WithParamInterface<std::tuple<viz::PrimitiveTopology, Source>> {};
 
 TEST_P(PrimitiveTopology, Primitive) {
-  const viz::PrimitiveTopology topology = GetParam();
+  const viz::PrimitiveTopology topology = std::get<0>(GetParam());
+  const Source source = std::get<1>(GetParam());
 
   std::vector<uint32_t> color_crc, depth_crc;
   uint32_t primitive_count;
@@ -273,21 +277,47 @@ TEST_P(PrimitiveTopology, Primitive) {
 
   EXPECT_NO_THROW(viz::Begin());
 
-  EXPECT_NO_THROW(viz::BeginGeometryLayer());
+  viz::CudaService::ScopedPush cuda_context;
+  viz::UniqueCUdeviceptr device_ptr;
+
+  viz::CudaService cuda_service(0);
+
+  if (source == Source::CUDA_DEVICE) {
+    cuda_context = cuda_service.PushContext();
+    device_ptr.reset([size = data.size() * sizeof(float)] {
+      CUdeviceptr device_ptr;
+      EXPECT_EQ(cuMemAlloc(&device_ptr, size), CUDA_SUCCESS);
+      return device_ptr;
+    }());
+
+    EXPECT_EQ(cuMemcpyHtoD(device_ptr.get(), data.data(), data.size() * sizeof(float)),
+              CUDA_SUCCESS);
+  }
 
   for (uint32_t i = 0; i < 3; ++i) {
-    if (i == 1) {
-      EXPECT_NO_THROW(viz::Color(1.F, 0.5F, 0.25F, 0.75F));
-    } else if (i == 2) {
+    EXPECT_NO_THROW(viz::BeginGeometryLayer());
+
+    if (i != 0) { EXPECT_NO_THROW(viz::Color(1.F, 0.5F, 0.25F, 0.75F)); }
+    if (i == 2) {
       EXPECT_NO_THROW(viz::PointSize(4.F));
       EXPECT_NO_THROW(viz::LineWidth(3.F));
     }
 
-    EXPECT_NO_THROW(viz::Primitive(topology, primitive_count, data.size(), data.data()));
+    if (source == Source::CUDA_DEVICE) {
+      EXPECT_NO_THROW(
+          viz::PrimitiveCudaDevice(topology, primitive_count, data.size(), device_ptr.get()));
+    } else {
+      EXPECT_NO_THROW(viz::Primitive(topology, primitive_count, data.size(), data.data()));
+    }
+
+    EXPECT_NO_THROW(viz::EndLayer());
 
     for (auto&& item : data) { item += 0.1F; }
+    if (source == Source::CUDA_DEVICE) {
+      EXPECT_EQ(cuMemcpyHtoD(device_ptr.get(), data.data(), data.size() * sizeof(float)),
+                CUDA_SUCCESS);
+    }
   }
-  EXPECT_NO_THROW(viz::EndLayer());
 
   EXPECT_NO_THROW(viz::End());
 
@@ -297,12 +327,14 @@ TEST_P(PrimitiveTopology, Primitive) {
 
 INSTANTIATE_TEST_SUITE_P(
     GeometryLayer, PrimitiveTopology,
-    testing::Values(viz::PrimitiveTopology::POINT_LIST, viz::PrimitiveTopology::LINE_LIST,
-                    viz::PrimitiveTopology::LINE_STRIP, viz::PrimitiveTopology::TRIANGLE_LIST,
-                    viz::PrimitiveTopology::CROSS_LIST, viz::PrimitiveTopology::RECTANGLE_LIST,
-                    viz::PrimitiveTopology::OVAL_LIST, viz::PrimitiveTopology::POINT_LIST_3D,
-                    viz::PrimitiveTopology::LINE_LIST_3D, viz::PrimitiveTopology::LINE_STRIP_3D,
-                    viz::PrimitiveTopology::TRIANGLE_LIST_3D));
+    testing::Combine(
+        testing::Values(viz::PrimitiveTopology::POINT_LIST, viz::PrimitiveTopology::LINE_LIST,
+                        viz::PrimitiveTopology::LINE_STRIP, viz::PrimitiveTopology::TRIANGLE_LIST,
+                        viz::PrimitiveTopology::CROSS_LIST, viz::PrimitiveTopology::RECTANGLE_LIST,
+                        viz::PrimitiveTopology::OVAL_LIST, viz::PrimitiveTopology::POINT_LIST_3D,
+                        viz::PrimitiveTopology::LINE_LIST_3D, viz::PrimitiveTopology::LINE_STRIP_3D,
+                        viz::PrimitiveTopology::TRIANGLE_LIST_3D),
+        testing::Values(Source::HOST, Source::CUDA_DEVICE)));
 
 // Fixture that initializes Holoviz
 class GeometryLayer : public TestHeadless {};

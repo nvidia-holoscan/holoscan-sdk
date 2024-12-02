@@ -26,6 +26,7 @@
     holoscan.gxf.GXFOutputContext
     holoscan.gxf.GXFResource
     holoscan.gxf.GXFScheduler
+    holoscan.gxf.GXFSystemResourceBase
 """
 
 from ._gxf import (  # noqa: I001
@@ -38,6 +39,7 @@ from ._gxf import (  # noqa: I001
     GXFOutputContext,
     GXFResource,
     GXFScheduler,
+    GXFSystemResourceBase,
 )
 from ._gxf import PyEntity as Entity
 from ._gxf import load_extensions
@@ -53,5 +55,6 @@ __all__ = [
     "GXFOutputContext",
     "GXFResource",
     "GXFScheduler",
+    "GXFSystemResourceBase",
     "load_extensions",
 ]

@@ -20,8 +20,8 @@
 
 #include "holoscan/core/gxf/gxf_operator.hpp"
 
+#include "gxf/core/registrar.hpp"
 #include "gxf/std/codelet.hpp"
-#include "gxf/core/parameter_parser_std.hpp"
 #include "holoscan/profiler/profiler.hpp"
 
 namespace holoscan::gxf {

@@ -208,10 +208,27 @@ void Application::set_ucx_env() {
   setenv("UCX_CM_USE_ALL_DEVICES", "n", 0);
 }
 
+void Application::set_v4l2_env() {
+  const char* env_value = std::getenv("HOLOSCAN_DISABLE_V4L2_RTLD_NODELETE");
+  // Workaround to avoid v4l2 seg fault https://nvbugs/4210082
+  if (env_value == nullptr) {
+      HOLOSCAN_LOG_DEBUG("Enable the libnvv4l2 workaround by setting the "
+              "`LIBV4L2_ENABLE_RTLD_NODELETE` environment variable.");
+      setenv("LIBV4L2_ENABLE_RTLD_NODELETE", "1", 0);
+  }
+}
+
 void Application::run() {
+  // Debug log to show that the run() function is executed
+  // (with the logging function pointer info to check if the logging function pointer address is
+  // the same as the one set in the Python side).
+  // This message is checked by the test_app_log_function in test_application_minimal.py.
+  HOLOSCAN_LOG_DEBUG("Executing Application::run()... (log_func_ptr=0x{:x})",
+                     reinterpret_cast<uint64_t>(&nvidia::LoggingFunction));
   if (cli_parser_.has_error()) { return; }
 
   set_ucx_env();
+  set_v4l2_env();
   driver().run();
 }
 
@@ -224,7 +241,7 @@ std::future<void> Application::run_async() {
 
 std::unordered_map<std::string, DataFlowTracker*> Application::track_distributed(
     uint64_t num_start_messages_to_skip, uint64_t num_last_messages_to_discard,
-    int latency_threshold) {
+    int latency_threshold, bool is_limited_tracking) {
   if (!is_composed_) { compose_graph(); }
   std::unordered_map<std::string, DataFlowTracker*> trackers;
   auto& frag_graph = fragment_graph();
@@ -232,8 +249,10 @@ std::unordered_map<std::string, DataFlowTracker*> Application::track_distributed
   for (const auto& each_fragment : frag_graph.get_nodes()) {
     // if track has not been called on the fragment, then call the tracker
     if (!each_fragment->data_flow_tracker()) {
-      each_fragment->track(
-          num_start_messages_to_skip, num_last_messages_to_discard, latency_threshold);
+      each_fragment->track(num_start_messages_to_skip,
+                           num_last_messages_to_discard,
+                           latency_threshold,
+                           is_limited_tracking);
     }
     trackers[each_fragment->name()] = each_fragment->data_flow_tracker();
   }

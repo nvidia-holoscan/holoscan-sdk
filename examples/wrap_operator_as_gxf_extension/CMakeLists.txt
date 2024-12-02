@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,9 @@ add_subdirectory(gxf_extension)
 add_subdirectory(gxf_app)
 add_subdirectory(ping_rx_native_op)
 add_subdirectory(ping_tx_native_op)
+if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
+  add_subdirectory(gxf_registry)
+endif()
 
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 

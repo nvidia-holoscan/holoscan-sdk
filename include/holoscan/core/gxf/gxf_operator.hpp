@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_GXF_GXF_OPERATOR_HPP
 
 #include <gxf/core/gxf.h>
+#include <yaml-cpp/yaml.h>
 
 #include <iostream>
 #include <string>
@@ -27,6 +28,8 @@
 #include "../executors/gxf/gxf_parameter_adaptor.hpp"
 #include "../operator.hpp"
 #include "./gxf_utils.hpp"
+#include "gxf/core/handle.hpp"
+#include "gxf/std/codelet.hpp"
 
 namespace holoscan::ops {
 
@@ -103,6 +106,9 @@ class GXFOperator : public holoscan::Operator {
    */
   gxf_uid_t gxf_cid() const { return gxf_cid_; }
 
+  /// @brief The name of the entity group this operator belongs
+  std::string gxf_entity_group_name() const;
+
   /**
    * @brief Register the argument setter and the GXF parameter adaptor for the given type.
    *
@@ -176,6 +182,14 @@ class GXFOperator : public holoscan::Operator {
     ::holoscan::Operator::register_argument_setter<typeT>();
     register_parameter_adaptor<typeT>();
   }
+
+  /**
+   * @brief Get a YAML representation of the operator.
+   *
+   * @return YAML node including type, specs, conditions and resources of the operator in addition
+   * to the base component properties.
+   */
+  YAML::Node to_yaml_node() const override;
 
  protected:
   /**

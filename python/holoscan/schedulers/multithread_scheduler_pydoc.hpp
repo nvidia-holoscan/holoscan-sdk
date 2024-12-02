@@ -53,6 +53,10 @@ stop_on_deadlock_timeout : int, optional
     The scheduler will wait this amount of time before determining that it is in deadlock
     and should stop. It will reset if a job comes in during the wait. A negative value means not
     stop on deadlock. This parameter only applies when `stop_on_deadlock=true`",
+strict_job_thread_pinning : bool, optional
+    When true, the thread an operator is pinned to is not allowed to run any other operators.
+    When false, if the pinned operator is not in a READY state, another operator could run on the
+    thread.
 name : str, optional
     The name of the scheduler.
 )doc")

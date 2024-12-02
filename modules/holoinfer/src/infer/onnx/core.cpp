@@ -18,6 +18,7 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include <cassert>
 #include <functional>
 #include <memory>
 #include <string>
@@ -33,16 +34,23 @@ namespace inference {
 class OnnxInferImpl {
  public:
   // Internal only
-  OnnxInferImpl(const std::string& model_file_path, bool cuda_flag);
+  OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, bool cuda_flag,
+                bool cuda_buf_in, bool cuda_buf_out);
+  ~OnnxInferImpl();
 
-  std::string model_path_{""};
-  bool use_cuda_ = true;
+  const std::string model_path_;
+  const bool enable_fp16_;
+  const bool use_cuda_;
+  const bool cuda_buf_in_;
+  const bool cuda_buf_out_;
+
+  std::unique_ptr<Ort::Env> env_;
 
   Ort::SessionOptions session_options_;
-  OrtCUDAProviderOptions cuda_options_{};
+  OrtCUDAProviderOptionsV2* cuda_options_ = nullptr;
+  OrtTensorRTProviderOptionsV2* tensor_rt_options_ = nullptr;
 
-  std::unique_ptr<Ort::Env> env_ = nullptr;
-  std::unique_ptr<Ort::Session> session_ = nullptr;
+  std::unique_ptr<Ort::Session> session_;
 
   Ort::AllocatorWithDefaultOptions allocator_;
 
@@ -62,22 +70,17 @@ class OnnxInferImpl {
   std::vector<Ort::Value> input_tensors_;
   std::vector<Ort::Value> output_tensors_;
 
-  std::vector<Ort::Value> input_tensors_gpu_;
-  std::vector<Ort::Value> output_tensors_gpu_;
-
   Ort::MemoryInfo memory_info_ = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator,
                                                             OrtMemType::OrtMemTypeDefault);
 
   Ort::MemoryInfo memory_info_cuda_ =
       Ort::MemoryInfo("Cuda", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
-  std::unique_ptr<Ort::Allocator> memory_allocator_cuda_;
 
-  holoinfer_datatype get_holoinfer_datatype(ONNXTensorElementDataType datatype);
+  cudaStream_t cuda_stream_ = nullptr;
+  cudaEvent_t cuda_event_ = nullptr;
 
-  Ort::Value create_tensor(const std::shared_ptr<DataBuffer>& input_buffer,
-                           const std::vector<int64_t>& dims);
-  void transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
-                          const size_t& index);
+  Ort::Value create_tensor(const std::shared_ptr<DataBuffer>& data_buffer,
+                           const std::vector<int64_t>& dims, bool cuda_buf);
 
   // Wrapped Public APIs
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
@@ -92,26 +95,6 @@ class OnnxInferImpl {
   std::vector<holoinfer_datatype> get_output_datatype() const;
   void cleanup();
 };
-
-template <typename T>
-Ort::Value create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer,
-                              const std::vector<int64_t>& dims, Ort::MemoryInfo& memory_info_) {
-  size_t input_tensor_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
-
-  return Ort::Value::CreateTensor<T>(memory_info_,
-                                     static_cast<T*>(input_buffer->host_buffer_->data()),
-                                     input_tensor_size,
-                                     dims.data(),
-                                     dims.size());
-}
-
-template <typename T>
-void transfer_to_host(std::shared_ptr<DataBuffer>& output_buffer, Ort::Value& output_tensor,
-                      const size_t& output_tensor_size) {
-  memcpy(output_buffer->host_buffer_->data(),
-         output_tensor.GetTensorMutableData<T>(),
-         output_tensor_size * sizeof(T));
-}
 
 void OnnxInfer::print_model_details() {
   impl_->print_model_details();
@@ -133,7 +116,7 @@ void OnnxInferImpl::print_model_details() {
   }
 }
 
-holoinfer_datatype OnnxInferImpl::get_holoinfer_datatype(ONNXTensorElementDataType data_type) {
+static holoinfer_datatype get_holoinfer_datatype(ONNXTensorElementDataType data_type) {
   switch (data_type) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
       return holoinfer_datatype::h_Float32;
@@ -145,8 +128,33 @@ holoinfer_datatype OnnxInferImpl::get_holoinfer_datatype(ONNXTensorElementDataTy
       return holoinfer_datatype::h_Int64;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
       return holoinfer_datatype::h_UInt8;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+      return holoinfer_datatype::h_Float16;
     default:
       return holoinfer_datatype::h_Unsupported;
+  }
+}
+
+static ONNXTensorElementDataType get_onnx_datatype(holoinfer_datatype data_type) {
+  switch (data_type) {
+    case holoinfer_datatype::h_Float32:
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+    case holoinfer_datatype::h_Int8:
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+    case holoinfer_datatype::h_Int32:
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
+    case holoinfer_datatype::h_Int64:
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
+    case holoinfer_datatype::h_UInt8:
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+    case holoinfer_datatype::h_Float16:
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+    default:
+      HOLOSCAN_LOG_INFO(
+          "Onnxruntime backend is supported with following input data types: float, float16, int8, "
+          "int32, int64, uint8");
+      HOLOSCAN_LOG_ERROR("Unsupported datatype in Onnx backend tensor creation.");
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   }
 }
 
@@ -199,17 +207,59 @@ int OnnxInfer::set_holoscan_inf_onnx_session_options() {
 int OnnxInferImpl::set_holoscan_inf_onnx_session_options() {
   session_options_.SetIntraOpNumThreads(1);
   session_options_.SetInterOpNumThreads(1);
-  if (use_cuda_) { session_options_.AppendExecutionProvider_CUDA(cuda_options_); }
+  if (use_cuda_) {
+    // create and initialize TensorRT provider options
+    Ort::ThrowOnError(Ort::GetApi().CreateTensorRTProviderOptions(&tensor_rt_options_));
+
+    const std::filesystem::path path(model_path_);
+    std::filesystem::path trt_engine_cache_path(model_path_);
+    trt_engine_cache_path.replace_extension("");
+    trt_engine_cache_path += "_onnx_cache_" + Ort::GetVersionString();
+
+    const std::vector<const char*> option_keys = {
+        "trt_fp16_enable",
+        "trt_engine_cache_enable",
+        "trt_engine_cache_path",
+        "trt_timing_cache_enable",
+        "trt_timing_cache_path",
+    };
+    const std::vector<const char*> option_values = {
+        enable_fp16_ ? "1" : "0",       // trt_fp16_enable
+        "1",                            // trt_engine_cache_enable
+        trt_engine_cache_path.c_str(),  // trt_engine_cache_path
+        "1",                            // trt_timing_cache_enable
+        trt_engine_cache_path.c_str(),  // trt_timing_cache_path
+    };
+    assert(option_keys.size() == option_values.size());
+    Ort::ThrowOnError(Ort::GetApi().UpdateTensorRTProviderOptions(
+        tensor_rt_options_, option_keys.data(), option_values.data(), option_keys.size()));
+    Ort::ThrowOnError(Ort::GetApi().UpdateTensorRTProviderOptionsWithValue(
+        tensor_rt_options_, "user_compute_stream", cuda_stream_));
+
+    // add the TensoRT provider
+    session_options_.AppendExecutionProvider_TensorRT_V2(*tensor_rt_options_);
+
+    // create and initialize CUDA provider options
+    Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cuda_options_));
+    Ort::ThrowOnError(Ort::GetApi().UpdateCUDAProviderOptionsWithValue(
+        cuda_options_, "user_compute_stream", cuda_stream_));
+
+    // add the CUDA provider
+    session_options_.AppendExecutionProvider_CUDA_V2(*cuda_options_);
+  }
   session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
   return 0;
 }
 
-extern "C" OnnxInfer* NewOnnxInfer(const std::string& model_file_path, bool cuda_flag) {
-  return new OnnxInfer(model_file_path, cuda_flag);
+extern "C" OnnxInfer* NewOnnxInfer(const std::string& model_file_path, bool enable_fp16,
+                                   bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out) {
+  return new OnnxInfer(model_file_path, enable_fp16, cuda_flag, cuda_buf_in, cuda_buf_out);
 }
 
-OnnxInfer::OnnxInfer(const std::string& model_file_path, bool cuda_flag)
-    : impl_(new OnnxInferImpl(model_file_path, cuda_flag)) {}
+OnnxInfer::OnnxInfer(const std::string& model_file_path, bool enable_fp16, bool cuda_flag,
+                     bool cuda_buf_in, bool cuda_buf_out)
+    : impl_(new OnnxInferImpl(model_file_path, enable_fp16, cuda_flag, cuda_buf_in, cuda_buf_out)) {
+}
 
 OnnxInfer::~OnnxInfer() {
   if (impl_) {
@@ -218,21 +268,73 @@ OnnxInfer::~OnnxInfer() {
   }
 }
 
-OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool cuda_flag)
-    : model_path_(model_file_path), use_cuda_(cuda_flag) {
+static void logging_function(void* param, OrtLoggingLevel severity, const char* category,
+                             const char* logid, const char* code_location, const char* message) {
+  LogLevel log_level;
+  switch (severity) {
+    case OrtLoggingLevel::ORT_LOGGING_LEVEL_FATAL:
+      log_level = LogLevel::CRITICAL;
+      break;
+    case OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR:
+      log_level = LogLevel::ERROR;
+      break;
+    case OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING:
+      log_level = LogLevel::WARN;
+      break;
+    case OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO:
+      log_level = LogLevel::INFO;
+      break;
+    case OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE:
+      log_level = LogLevel::DEBUG;
+      break;
+  }
+  HOLOSCAN_LOG_CALL(log_level, "Onnxruntime {} {}", code_location, message);
+}
+
+OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, bool cuda_flag,
+                             bool cuda_buf_in, bool cuda_buf_out)
+    : model_path_(model_file_path),
+      enable_fp16_(enable_fp16),
+      use_cuda_(cuda_flag),
+      cuda_buf_in_(cuda_buf_in),
+      cuda_buf_out_(cuda_buf_out) {
   try {
+    OrtLoggingLevel logging_level;
+    switch (log_level()) {
+      case LogLevel::OFF:
+      case LogLevel::CRITICAL:
+        logging_level = OrtLoggingLevel::ORT_LOGGING_LEVEL_FATAL;
+        break;
+      case LogLevel::ERROR:
+        logging_level = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR;
+        break;
+      case LogLevel::WARN:
+        logging_level = OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING;
+        break;
+      case LogLevel::INFO:
+        logging_level = OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO;
+        break;
+      case LogLevel::DEBUG:
+      case LogLevel::TRACE:
+        logging_level = OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE;
+        break;
+    }
+    env_ = std::make_unique<Ort::Env>(logging_level, "onnx", logging_function, nullptr);
+    if (!env_) {
+      HOLOSCAN_LOG_ERROR("Env creation failed in Onnx inference constructor");
+      throw std::runtime_error("Onnxruntime env creation failed");
+    }
+
+    check_cuda(cudaStreamCreate(&cuda_stream_));
+    check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
+
     set_holoscan_inf_onnx_session_options();
 
-    auto env_local = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "test");
-    env_ = std::move(env_local);
-
-    auto _session =
-        std::make_unique<Ort::Session>(*env_, model_file_path.c_str(), session_options_);
-    if (!_session) {
+    session_ = std::make_unique<Ort::Session>(*env_, model_file_path.c_str(), session_options_);
+    if (!session_) {
       HOLOSCAN_LOG_ERROR("Session creation failed in Onnx inference constructor");
       throw std::runtime_error("Onnxruntime session creation failed");
     }
-    session_ = std::move(_session);
     populate_model_details();
   } catch (const Ort::Exception& exception) {
     HOLOSCAN_LOG_ERROR(exception.what());
@@ -240,60 +342,55 @@ OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool cuda_flag)
   }
 }
 
-Ort::Value OnnxInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& input_buffer,
-                                        const std::vector<int64_t>& dims) {
-  auto data_type = input_buffer->get_datatype();
-
-  switch (data_type) {
-    case holoinfer_datatype::h_Float32:
-      return create_tensor_core<float>(input_buffer, dims, memory_info_);
-    case holoinfer_datatype::h_Int8:
-      return create_tensor_core<int8_t>(input_buffer, dims, memory_info_);
-    case holoinfer_datatype::h_Int32:
-      return create_tensor_core<int32_t>(input_buffer, dims, memory_info_);
-    case holoinfer_datatype::h_Int64:
-      return create_tensor_core<int64_t>(input_buffer, dims, memory_info_);
-    case holoinfer_datatype::h_UInt8:
-      return create_tensor_core<uint8_t>(input_buffer, dims, memory_info_);
-    default: {
-      HOLOSCAN_LOG_INFO(
-          "Onnxruntime backend is supported with following data types: float, int8, int32, int64, "
-          "uint8");
-      HOLOSCAN_LOG_ERROR("Unsupported datatype in Onnx backend tensor creation.");
-      return Ort::Value(nullptr);
-    }
-  }
+OnnxInferImpl::~OnnxInferImpl() {
+  if (tensor_rt_options_) { Ort::GetApi().ReleaseTensorRTProviderOptions(tensor_rt_options_); }
+  if (cuda_options_) { Ort::GetApi().ReleaseCUDAProviderOptions(cuda_options_); }
+  if (cuda_stream_) { cudaStreamDestroy(cuda_stream_); }
+  if (cuda_event_) { cudaEventDestroy(cuda_event_); }
 }
 
-void OnnxInferImpl::transfer_to_output(std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
-                                       const size_t& index) {
-  size_t output_tensor_size = accumulate(
-      output_dims_[index].begin(), output_dims_[index].end(), 1, std::multiplies<size_t>());
+Ort::Value OnnxInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& data_buffer,
+                                        const std::vector<int64_t>& dims, bool cuda_buf) {
+  const size_t tensor_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
 
-  auto data_type = output_buffer[index]->get_datatype();
-
-  switch (data_type) {
-    case holoinfer_datatype::h_Float32:
-      transfer_to_host<float>(output_buffer[index], output_tensors_[index], output_tensor_size);
-      break;
-    case holoinfer_datatype::h_Int8:
-      transfer_to_host<int8_t>(output_buffer[index], output_tensors_[index], output_tensor_size);
-      break;
-    case holoinfer_datatype::h_Int32:
-      transfer_to_host<int32_t>(output_buffer[index], output_tensors_[index], output_tensor_size);
-      break;
-    case holoinfer_datatype::h_Int64:
-      transfer_to_host<int64_t>(output_buffer[index], output_tensors_[index], output_tensor_size);
-      break;
-    case holoinfer_datatype::h_UInt8:
-      transfer_to_host<uint8_t>(output_buffer[index], output_tensors_[index], output_tensor_size);
-      break;
-    default:
-      HOLOSCAN_LOG_INFO(
-          "Onnxruntime backend is supported with following data types: float, int8, int32, int64, "
-          "uint8");
-      throw std::runtime_error("Unsupported datatype in output transfer with onnxrt backend.");
+  const OrtMemoryInfo* info;
+  void* p_data;
+  if (cuda_buf) {
+    if (data_buffer->device_buffer_->size() != tensor_size) {
+      HOLOSCAN_LOG_ERROR("Onnx: Device buffer size mismatch, expected {}, but is {}.",
+                         tensor_size,
+                         data_buffer->device_buffer_->size());
+      return Ort::Value(nullptr);
+    }
+    p_data = data_buffer->device_buffer_->data();
+    info = memory_info_cuda_;
+  } else {
+    if (data_buffer->host_buffer_->size() != tensor_size) {
+      HOLOSCAN_LOG_ERROR("Onnx: Host buffer size mismatch, expected {}, but is {}.",
+                         tensor_size,
+                         data_buffer->host_buffer_->size());
+      return Ort::Value(nullptr);
+    }
+    p_data = data_buffer->host_buffer_->data();
+    info = memory_info_;
   }
+
+  Ort::Value tensor(nullptr);
+  const ONNXTensorElementDataType element_data_type =
+      get_onnx_datatype(data_buffer->get_datatype());
+  if (cuda_buf && !use_cuda_) {
+    // create a tensor in CPU memory, we copy to/from this buffer before/after inference
+    tensor = Ort::Value::CreateTensor(allocator_, dims.data(), dims.size(), element_data_type);
+  } else {
+    // wrap the buffer
+    tensor = Ort::Value::CreateTensor(info,
+                                      static_cast<float*>(p_data),
+                                      tensor_size * get_element_size(data_buffer->get_datatype()),
+                                      dims.data(),
+                                      dims.size(),
+                                      element_data_type);
+  }
+  return tensor;
 }
 
 InferStatus OnnxInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
@@ -310,7 +407,9 @@ InferStatus OnnxInferImpl::do_inference(
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
 
   try {
-    check_cuda(cudaEventSynchronize(cuda_event_data));
+    // synchronize the CUDA stream used for inference with the CUDA event recorded when preparing
+    // the input data
+    check_cuda(cudaStreamWaitEvent(cuda_stream_, cuda_event_data));
 
     input_tensors_.clear();
     output_tensors_.clear();
@@ -325,33 +424,38 @@ InferStatus OnnxInferImpl::do_inference(
     }
 
     for (size_t a = 0; a < input_buffer.size(); a++) {
-      if (input_buffer[a]->host_buffer_->size() == 0) {
-        status.set_message("ONNX inference core: Input Host buffer empty.");
-        return status;
-      }
-
-      Ort::Value i_tensor = create_tensor(input_buffer[a], input_dims_[a]);
-
+      Ort::Value i_tensor = create_tensor(input_buffer[a], input_dims_[a], cuda_buf_in_);
       if (!i_tensor) {
         status.set_message("Onnxruntime: Error creating Ort tensor.");
         return status;
+      }
+      if (cuda_buf_in_ && !use_cuda_) {
+        // Copy the the input data to the input Ort tensor if inference is on CPU and input on
+        // device
+        // Note: there is a bug in the C++ API, GetTensorRawData() is returning a `const void*`
+        // instead of a `void *` as the C API
+        check_cuda(cudaMemcpyAsync(const_cast<void*>(i_tensor.GetTensorRawData()),
+                                   input_buffer[a]->device_buffer_->data(),
+                                   input_buffer[a]->device_buffer_->get_bytes(),
+                                   cudaMemcpyDeviceToHost,
+                                   cuda_stream_));
       }
       input_tensors_.push_back(std::move(i_tensor));
     }
 
     for (unsigned int a = 0; a < output_buffer.size(); a++) {
-      if (output_buffer[a]->host_buffer_->size() == 0) {
-        status.set_message("ONNX inference core: Output Host buffer empty.");
-        return status;
-      }
-
-      Ort::Value o_tensor = create_tensor(output_buffer[a], output_dims_[a]);
+      Ort::Value o_tensor = create_tensor(output_buffer[a], output_dims_[a], cuda_buf_out_);
 
       if (!o_tensor) {
         status.set_message("Onnxruntime: Error creating output Ort tensor.");
         return status;
       }
       output_tensors_.push_back(std::move(o_tensor));
+    }
+
+    if (!use_cuda_) {
+      // synchronize CUDA with CPU if using CPU inference
+      check_cuda(cudaStreamSynchronize(cuda_stream_));
     }
 
     session_->Run(Ort::RunOptions{nullptr},
@@ -362,8 +466,22 @@ InferStatus OnnxInferImpl::do_inference(
                   output_tensors_.data(),
                   output_tensors_.size());
 
-    for (unsigned int a = 0; a < output_buffer.size(); a++) {
-      transfer_to_output(output_buffer, a);
+    if (cuda_buf_out_ && !use_cuda_) {
+      for (size_t index = 0; index < output_buffer.size(); ++index) {
+        // Copy the the input data to the input Ort tensor if inference is on CPU and input on
+        // device
+        check_cuda(cudaMemcpyAsync(output_buffer[index]->device_buffer_->data(),
+                                   output_tensors_[index].GetTensorRawData(),
+                                   output_buffer[index]->device_buffer_->get_bytes(),
+                                   cudaMemcpyHostToDevice,
+                                   cuda_stream_));
+      }
+    }
+
+    if (cuda_buf_out_ || use_cuda_) {
+      // record a CUDA event and pass it back to the caller
+      check_cuda(cudaEventRecord(cuda_event_, cuda_stream_));
+      *cuda_event_inference = cuda_event_;
     }
   } catch (const Ort::Exception& exception) {
     HOLOSCAN_LOG_ERROR(exception.what());

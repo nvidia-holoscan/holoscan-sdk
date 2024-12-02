@@ -24,7 +24,7 @@ ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
 ARG LIBTORCH_VERSION=2.5.0_24.08
 ARG TORCHVISION_VERSION=0.20.0_24.08
 ARG GRPC_VERSION=1.54.2
-ARG GXF_VERSION=447_20241004_bf72709
+ARG GXF_VERSION=447_20241029_bf72709
 ARG MOFED_VERSION=24.07-0.6.1.0
 
 ############################################################
@@ -182,7 +182,6 @@ FROM build-tools AS ucx-patcher
 # the necessary rpath for non-containerized applications. We patch RPATH
 # for portability when we later repackage these libraries for distribution
 # outside of the container.
-WORKDIR /opt/ucx/${UCX_VERSION}
 RUN patchelf --set-rpath '$ORIGIN' /opt/hpcx/ucx/lib/libuc*.so* \
     && patchelf --set-rpath '$ORIGIN:$ORIGIN/..' /opt/hpcx/ucx/lib/ucx/libuc*.so* \
     && patchelf --set-rpath '$ORIGIN/../lib' /opt/hpcx/ucx/bin/*
@@ -256,6 +255,7 @@ ARG GXF_VERSION
 ENV GXF=/opt/nvidia/gxf/${GXF_VERSION}
 COPY --from=gxf-downloader ${GXF} ${GXF}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
+ENV PYTHONPATH="${PYTHONPATH}:/opt/nvidia/gxf/${GXF_VERSION}/python"
 
 # Setup Docker & NVIDIA Container Toolkit's apt repositories to enable DooD
 # for packaging & running applications with the CLI

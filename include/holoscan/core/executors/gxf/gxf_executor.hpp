@@ -43,6 +43,7 @@ namespace holoscan {
 // Forward declarations
 class Arg;
 class Condition;
+class GPUDevice;
 class Resource;
 
 }  // namespace holoscan
@@ -350,6 +351,10 @@ class GXFExecutor : public holoscan::Executor {
    */
   void add_component_args_to_graph_entity(std::vector<Arg>& args,
                                           std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+
+  std::shared_ptr<GPUDevice> add_gpu_device_to_graph_entity(
+      const std::string& device_name, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,
+      std::optional<int32_t> device_id = std::nullopt);
 };
 
 }  // namespace holoscan::gxf

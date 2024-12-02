@@ -108,6 +108,25 @@ PYDOC(outputs, R"doc(
 Return the reference of the output port map.
 )doc")
 
+PYDOC(multi_port_condition, R"doc(
+Add a Condition that depends on the status of multiple input ports.
+
+Parameters
+----------
+port_names : The names of the input ports this condition will apply to.
+kwargs : dict or holoscan::ArgList
+    Additional arguments to pass to the multi-message condition.
+)doc")
+
+PYDOC(multi_port_conditions, R"doc(
+Returns a list of multi-message conditions associated with the operator.
+
+Parameters
+----------
+conditions : list of holoscan.core.MultiMessageConditionInfo
+    The list of info structdors for the multi-message conditions associated with the operator.
+)doc")
+
 PYDOC(param, R"doc(
 Add a parameter to the specification.
 

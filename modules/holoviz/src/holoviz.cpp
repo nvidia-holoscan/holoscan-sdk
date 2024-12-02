@@ -259,6 +259,12 @@ void Primitive(PrimitiveTopology topology, uint32_t primitive_count, size_t data
   Context::get().get_active_geometry_layer()->primitive(topology, primitive_count, data_size, data);
 }
 
+void PrimitiveCudaDevice(PrimitiveTopology topology, uint32_t primitive_count, size_t data_size,
+                         CUdeviceptr data) {
+  Context::get().get_active_geometry_layer()->primitive_cuda_device(
+      topology, primitive_count, data_size, data);
+}
+
 void DepthMap(DepthMapRenderMode render_mode, uint32_t width, uint32_t height,
               ImageFormat depth_fmt, CUdeviceptr depth_device_ptr, ImageFormat color_fmt,
               CUdeviceptr color_device_ptr) {

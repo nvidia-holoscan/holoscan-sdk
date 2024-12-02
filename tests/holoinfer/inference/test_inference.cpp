@@ -17,6 +17,8 @@
 
 #include "test_core.hpp"
 
+#include <yaml-cpp/yaml.h>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -149,11 +151,45 @@ void HoloInferTests::inference_tests() {
   inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
 
   if (use_onnxruntime) {
+    backend = "onnxrt";
+
+    // Test: ONNX backend, Basic parallel end-to-end cuda inference
+    input_on_cuda = true;
+    output_on_cuda = true;
+    infer_on_cpu = false;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     35,
+                     test_identifier_infer.at(35),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: ONNX backend, Input on host, cuda inference
+    input_on_cuda = false;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     36,
+                     test_identifier_infer.at(36),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: ONNX backend, Output on host, cuda inference
+    input_on_cuda = true;
+    output_on_cuda = false;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     37,
+                     test_identifier_infer.at(37),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
     // Test: ONNX backend, Basic parallel inference on CPU
     input_on_cuda = false;
     output_on_cuda = false;
     infer_on_cpu = true;
-    backend = "onnxrt";
     status = prepare_for_inference();
     status = do_inference();
     holoinfer_assert(status,
@@ -162,7 +198,21 @@ void HoloInferTests::inference_tests() {
                      test_identifier_infer.at(17),
                      HoloInfer::holoinfer_code::H_SUCCESS);
 
+    // Test: ONNX backend, Input and output on device, CPU inference
+    input_on_cuda = true;
+    output_on_cuda = true;
+    infer_on_cpu = true;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     38,
+                     test_identifier_infer.at(38),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
     // Test: ONNX backend, Basic sequential inference on CPU
+    input_on_cuda = false;
+    output_on_cuda = false;
     parallel_inference = false;
     status = prepare_for_inference();
     status = do_inference();
@@ -172,197 +222,172 @@ void HoloInferTests::inference_tests() {
                      test_identifier_infer.at(18),
                      HoloInfer::holoinfer_code::H_SUCCESS);
 
-    if (is_x86_64) {
-      // Test: ONNX backend, Basic sequential inference on GPU
-      infer_on_cpu = false;
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       19,
-                       test_identifier_infer.at(19),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
-
-      // Test: ONNX backend, Basic parallel inference on GPU
-      parallel_inference = true;
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       20,
-                       test_identifier_infer.at(20),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
-
-      // Test: ONNX backend, Empty host input
-      dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->size();
-      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(0);
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       21,
-                       test_identifier_infer.at(21),
-                       HoloInfer::holoinfer_code::H_ERROR);
-      inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(dbs);
-
-      // Test: ONNX backend, Empty host output
-      dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->size();
-      inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(0);
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       22,
-                       test_identifier_infer.at(22),
-                       HoloInfer::holoinfer_code::H_ERROR);
-      inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
-    } else {
-      // Test: ONNX backend on ARM, Basic sequential inference on GPU
-      infer_on_cpu = false;
-      status = prepare_for_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       23,
-                       test_identifier_infer.at(23),
-                       HoloInfer::holoinfer_code::H_ERROR);
-    }
-
-    // Multi-GPU tests
-    cudaDeviceProp device_prop;
-    auto dev_id = 1;
-    backend = "trt";
-    auto cstatus = cudaGetDeviceProperties(&device_prop, dev_id);
-    device_map.at("model_1") = "1";
-
-    if (cstatus == cudaSuccess) {
-      // Test: TRT backend, Basic sequential inference on multi-GPU
-      input_on_cuda = true;
-      output_on_cuda = true;
-      parallel_inference = false;
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       27,
-                       test_identifier_infer.at(27),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
-
-      // Test: TRT backend, Basic parallel inference on multi-GPU
-      parallel_inference = true;
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       28,
-                       test_identifier_infer.at(28),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
-
-      // Test: TRT backend, Parallel inference on multi-GPU with I/O on host
-      input_on_cuda = false;
-      output_on_cuda = false;
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       29,
-                       test_identifier_infer.at(29),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
-
-      // Test: TRT backend, Parallel inference on multi-GPU with Input on host
-      input_on_cuda = false;
-      output_on_cuda = true;
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       30,
-                       test_identifier_infer.at(30),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
-
-      // Test: TRT backend, Parallel inference on multi-GPU with Output on host
-      input_on_cuda = true;
-      output_on_cuda = false;
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       31,
-                       test_identifier_infer.at(31),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
-    } else {
-      // make sure the last error is reset, else Torch tests below will fail since they check for
-      // the last error without doing a CUDA call before.
-      cudaGetLastError();
-    }
-    device_map.at("model_1") = "0";
-
-    if (is_x86_64) {
-      device_map.at("model_2") = "1";
-      if (cstatus == cudaSuccess) {
-        // Test: ONNX backend, Basic sequential inference on multi-GPU
-        status = prepare_for_inference();
-        status = do_inference();
-        holoinfer_assert(status,
-                         test_module,
-                         24,
-                         test_identifier_infer.at(24),
-                         HoloInfer::holoinfer_code::H_SUCCESS);
-
-        // Test: ONNX backend, Basic parallel inference on multi-GPU
-        parallel_inference = true;
-        status = prepare_for_inference();
-        status = do_inference();
-        holoinfer_assert(status,
-                         test_module,
-                         26,
-                         test_identifier_infer.at(26),
-                         HoloInfer::holoinfer_code::H_SUCCESS);
-      } else {
-        // Test: ONNX backend, Inference single GPU with multi-GPU settings
-        status = prepare_for_inference();
-        holoinfer_assert(status,
-                         test_module,
-                         25,
-                         test_identifier_infer.at(25),
-                         HoloInfer::holoinfer_code::H_ERROR);
-      }
-      device_map.at("model_2") = "0";
-    }
-
-    // test multi-rank
-
-    auto original_path = model_path_map["model_1"];
-    auto original_dim = in_tensor_dimensions["m1_pre_proc"];
-
-    model_path_map["model_1"] = model_folder + "identity_model_5r.onnx";
-    model_path_map["model_2"] = model_folder + "identity_model_5r.onnx";
-
-    in_tensor_dimensions["m1_pre_proc"] = {1, 1, 1, 1, 1};
-    in_tensor_dimensions["m2_pre_proc"] = {1, 1, 1, 1, 1};
-
+    // Test: ONNX backend, Basic sequential inference on GPU
+    infer_on_cpu = false;
     status = prepare_for_inference();
     status = do_inference();
     holoinfer_assert(status,
                      test_module,
-                     32,
-                     test_identifier_infer.at(32),
+                     19,
+                     test_identifier_infer.at(19),
                      HoloInfer::holoinfer_code::H_SUCCESS);
 
-    model_path_map["model_1"] = model_folder + "identity_model_9r.onnx";
-    model_path_map["model_2"] = model_folder + "identity_model_9r.onnx";
-
-    in_tensor_dimensions["m1_pre_proc"] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
-    in_tensor_dimensions["m2_pre_proc"] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
-
+    // Test: ONNX backend, Basic parallel inference on GPU
+    parallel_inference = true;
     status = prepare_for_inference();
     status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     20,
+                     test_identifier_infer.at(20),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: ONNX backend, Empty host input
+    dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->size();
+    inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(0);
+    status = do_inference();
     holoinfer_assert(
-        status, test_module, 33, test_identifier_infer.at(33), HoloInfer::holoinfer_code::H_ERROR);
+        status, test_module, 21, test_identifier_infer.at(21), HoloInfer::holoinfer_code::H_ERROR);
+    inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(dbs);
 
-    model_path_map["model_1"] = original_path;
-    model_path_map["model_2"] = original_path;
-
-    in_tensor_dimensions["m1_pre_proc"] = original_dim;
-    in_tensor_dimensions["m2_pre_proc"] = original_dim;
+    // Test: ONNX backend, Empty host output
+    dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->size();
+    inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(0);
+    status = do_inference();
+    holoinfer_assert(
+        status, test_module, 22, test_identifier_infer.at(22), HoloInfer::holoinfer_code::H_ERROR);
+    inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
   }
+
+  // Multi-GPU tests
+  cudaDeviceProp device_prop;
+  auto dev_id = 1;
+  backend = "trt";
+  auto cstatus = cudaGetDeviceProperties(&device_prop, dev_id);
+  device_map.at("model_1") = "1";
+
+  if (cstatus == cudaSuccess) {
+    // Test: TRT backend, Basic sequential inference on multi-GPU
+    input_on_cuda = true;
+    output_on_cuda = true;
+    parallel_inference = false;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     27,
+                     test_identifier_infer.at(27),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: TRT backend, Basic parallel inference on multi-GPU
+    parallel_inference = true;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     28,
+                     test_identifier_infer.at(28),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: TRT backend, Parallel inference on multi-GPU with I/O on host
+    input_on_cuda = false;
+    output_on_cuda = false;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     29,
+                     test_identifier_infer.at(29),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: TRT backend, Parallel inference on multi-GPU with Input on host
+    input_on_cuda = false;
+    output_on_cuda = true;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     30,
+                     test_identifier_infer.at(30),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: TRT backend, Parallel inference on multi-GPU with Output on host
+    input_on_cuda = true;
+    output_on_cuda = false;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     31,
+                     test_identifier_infer.at(31),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+  } else {
+    // make sure the last error is reset, else Torch tests below will fail since they check for
+    // the last error without doing a CUDA call before.
+    cudaGetLastError();
+  }
+  device_map.at("model_1") = "0";
+
+  device_map.at("model_2") = "1";
+  if (cstatus == cudaSuccess) {
+    // Test: ONNX backend, Basic sequential inference on multi-GPU
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     24,
+                     test_identifier_infer.at(24),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    // Test: ONNX backend, Basic parallel inference on multi-GPU
+    parallel_inference = true;
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                     test_module,
+                     26,
+                     test_identifier_infer.at(26),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+  } else {
+    // Test: ONNX backend, Inference single GPU with multi-GPU settings
+    status = prepare_for_inference();
+    holoinfer_assert(
+        status, test_module, 25, test_identifier_infer.at(25), HoloInfer::holoinfer_code::H_ERROR);
+  }
+  device_map.at("model_2") = "0";
+
+  // test multi-rank
+
+  auto original_path = model_path_map["model_1"];
+  auto original_dim = in_tensor_dimensions["m1_pre_proc"];
+
+  model_path_map["model_1"] = model_folder + "identity_model_5r.onnx";
+  model_path_map["model_2"] = model_folder + "identity_model_5r.onnx";
+
+  in_tensor_dimensions["m1_pre_proc"] = {1, 1, 1, 1, 1};
+  in_tensor_dimensions["m2_pre_proc"] = {1, 1, 1, 1, 1};
+
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 32, test_identifier_infer.at(32), HoloInfer::holoinfer_code::H_SUCCESS);
+
+  model_path_map["model_1"] = model_folder + "identity_model_9r.onnx";
+  model_path_map["model_2"] = model_folder + "identity_model_9r.onnx";
+
+  in_tensor_dimensions["m1_pre_proc"] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+  in_tensor_dimensions["m2_pre_proc"] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 33, test_identifier_infer.at(33), HoloInfer::holoinfer_code::H_ERROR);
+
+  model_path_map["model_1"] = original_path;
+  model_path_map["model_2"] = original_path;
+
+  in_tensor_dimensions["m1_pre_proc"] = original_dim;
+  in_tensor_dimensions["m2_pre_proc"] = original_dim;
 
   if (use_torch) {
     // Test: torch backend, Basic inference
@@ -409,10 +434,16 @@ void HoloInferTests::inference_tests() {
   // cleaning engine files
   for (const auto& file : std::filesystem::directory_iterator(model_folder)) {
     if (file.is_regular_file()) {
-      auto filename = file.path().filename().string();
+      const auto filename = file.path().filename().string();
       if (filename.find(".engine.") != std::string::npos) {
         std::filesystem::remove(file.path());
-        HOLOSCAN_LOG_INFO("Cleaning up engine file {}: ", filename);
+        HOLOSCAN_LOG_INFO("Cleaning up engine file: {}", filename);
+      }
+    } else if (file.is_directory()) {
+      const auto directory = file.path().string();
+      if (directory.find("_onnx_cache_") != std::string::npos) {
+        std::filesystem::remove_all(file.path());
+        HOLOSCAN_LOG_INFO("Cleaning up onnx cache directory: {}", directory);
       }
     }
   }

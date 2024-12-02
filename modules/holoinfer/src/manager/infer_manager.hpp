@@ -30,6 +30,7 @@
 #include <holoinfer_constants.hpp>
 #include <holoinfer_utils.hpp>
 #include <infer/infer.hpp>
+#include <utils/work_queue.hpp>
 
 #if use_onnxruntime
 #include <infer/onnx/core.hpp>
@@ -176,6 +177,9 @@ class ManagerInfer {
 
   /// Map storing inferred output dimension per tensor
   DimType models_output_dims_;
+
+  /// Work queue use for parallel processing
+  std::unique_ptr<WorkQueue> work_queue_;
 
   /// Map storing Backends supported with holoinfer mapping
   inline static std::map<std::string, holoinfer_backend> supported_backend_{

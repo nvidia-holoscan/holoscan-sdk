@@ -18,14 +18,16 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_SCHEDULER_HPP
 #define HOLOSCAN_CORE_GXF_GXF_SCHEDULER_HPP
 
+#include <yaml-cpp/yaml.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "../resources/gxf/clock.hpp"
 #include "../scheduler.hpp"
 #include "./gxf_component.hpp"
 #include "gxf/std/clock.hpp"
-#include "../resources/gxf/clock.hpp"
 
 namespace holoscan::gxf {
 
@@ -61,6 +63,14 @@ class GXFScheduler : public holoscan::Scheduler, public GXFComponent {
    * @return The GXF clock pointer used by the scheduler.
    */
   virtual nvidia::gxf::Clock* gxf_clock();
+
+  /**
+   * @brief Get a YAML representation of the scheduler.
+   *
+   * @return YAML node including type, specs, and resources of the scheduler in addition
+   * to the base component properties.
+   */
+  YAML::Node to_yaml_node() const override;
 
  protected:
   // Make Fragment a friend class so it can call reset_graph_entities

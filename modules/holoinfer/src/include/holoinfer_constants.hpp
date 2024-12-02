@@ -45,7 +45,8 @@ enum class holoinfer_datatype {
   h_Int32 = 2,
   h_Int64 = 3,
   h_UInt8 = 4,
-  h_Unsupported = 5
+  h_Float16 = 5,
+  h_Unsupported = 6
 };
 /// @brief Data processor implementation codes
 enum class holoinfer_data_processor { h_CUDA = 0, h_HOST = 1, h_CUDA_AND_HOST = 2 };

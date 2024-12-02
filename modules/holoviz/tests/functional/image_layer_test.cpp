@@ -269,17 +269,6 @@ TEST_P(ImageLayer, Image) {
     SetupData(color_format);
     SetupData(depth_format);
   } else if (is_yuv) {
-    // Skip test on iGPU, there is a Vulkan driver issue. The test fails on the first run only, the
-    // second run (within the same container) passes. The Vulkan driver has a shader cache, if the
-    // shader for the YUV format exists, the test passes, if the shader is not in the cache it
-    // fails.
-    CUdevice device = 0;
-    ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-    int is_integrated = false;
-    ASSERT_EQ(cuDeviceGetAttribute(&is_integrated, CU_DEVICE_ATTRIBUTE_INTEGRATED, device),
-              CUDA_SUCCESS);
-    if (is_integrated) { GTEST_SKIP() << "YUV tests fail on integrated devices, test skipped"; }
-
     color_format = image_format;
 
     // create a smooth RGB pattern so we don't need to deal with linear chroma filtering when

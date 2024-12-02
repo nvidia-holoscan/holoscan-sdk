@@ -6,7 +6,7 @@
 
 ## Synopsis
 
-`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-platform-config) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-includes) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-source) [](#cli-package-sdk-version) [](#cli-package-holoscan-sdk-file) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application) [](#cli-package-source)
+`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-add) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-platform-config) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-includes) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-source) [](#cli-package-sdk-version) [](#cli-package-holoscan-sdk-file) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application) [](#cli-package-source)
 
 ## Examples
 
@@ -81,6 +81,48 @@ Path to the application's [configuration file](./run_config.md). The configurati
 ### `[--docs|-d DOCS]`
 
 An optional directory path of documentation, README, licenses that shall be included in the package.
+
+(#cli-package-add)=
+
+### `[--add DIR_PATH]`
+
+`--add` enables additional files to be added to the application package. Use this option to include additional Python modules, files, or static objects (.so) on which the application depends.
+
+- `DIR_PATH` must be a directory path. The packager recursively copies all the files and directories inside `DIR_PATH` to `/opt/holoscan/app/lib`.
+- `--add` may be specified multiple times.
+
+For example:
+```bash
+holoscan package --add /path/to/python/module-1 --add /path/to/static-objects
+```
+
+With the example above, assuming the directories contain the following:
+
+```bash
+/path/to/
+├── python
+│   ├── module-1
+│   │   ├── __init__.py
+│   │   └── main.py
+└── static-objects
+    ├── my-lib.so
+    └── my-other-lib.so
+```
+
+The resulting package will contain the following:
+
+```bash
+/opt/holoscan/
+├── app
+│   └── my-app
+└──lib/
+    ├── module-1
+    │   ├── __init__.py
+    │   └── main.py
+    ├── my-lib.so
+    └── my-other-lib.so
+
+```
 
 (#cli-package-models)=
 

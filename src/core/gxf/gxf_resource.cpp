@@ -19,6 +19,7 @@
 
 #include <any>
 #include <functional>
+#include <memory>
 #include <string>
 #include <typeindex>
 #include <typeinfo>
@@ -101,15 +102,20 @@ void GXFResource::initialize() {
 }
 
 void GXFResource::add_to_graph_entity(Operator* op) {
+  add_to_graph_entity(op->fragment(), op->graph_entity());
+}
+
+void GXFResource::add_to_graph_entity(Fragment* fragment,
+                                      std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
   if (gxf_context_ == nullptr) {
     // cannot reassign to a different graph entity if the resource was already initialized with GXF
     if (gxf_graph_entity_ && is_initialized_) { return; }
 
-    gxf_graph_entity_ = op->graph_entity();
-    fragment_ = op->fragment();
+    gxf_graph_entity_ = graph_entity;
+    fragment_ = fragment;
     if (gxf_graph_entity_) {
-      gxf_context_ = gxf_graph_entity_->context();
-      gxf_eid_ = gxf_graph_entity_->eid();
+      gxf_context_ = graph_entity->context();
+      gxf_eid_ = graph_entity->eid();
     }
   }
   this->initialize();
@@ -213,5 +219,17 @@ bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
   }
   return false;
 }
+
+YAML::Node GXFResource::to_yaml_node() const {
+  YAML::Node node = Resource::to_yaml_node();
+  node["gxf_eid"] = YAML::Node(gxf_eid());
+  node["gxf_cid"] = YAML::Node(gxf_cid());
+  node["gxf_typename"] = YAML::Node(gxf_typename());
+  return node;
+}
+
+GXFSystemResourceBase::GXFSystemResourceBase(const std::string& name,
+                                             nvidia::gxf::ResourceBase* component)
+    : GXFResource(name, component) {}
 
 }  // namespace holoscan::gxf

@@ -30,6 +30,8 @@ void init_cuda_stream(py::module_&);
 void init_periodic(py::module_&);
 void init_downstream_message_affordable(py::module_&);
 void init_message_available(py::module_&);
+void init_multi_message_available(py::module_&);
+void init_multi_message_available_timeout(py::module_&);
 void init_expiring_message_available(py::module_&);
 
 PYBIND11_MODULE(_conditions, m) {
@@ -48,6 +50,8 @@ PYBIND11_MODULE(_conditions, m) {
   init_periodic(m);
   init_downstream_message_affordable(m);
   init_message_available(m);
+  init_multi_message_available(m);
+  init_multi_message_available_timeout(m);
   init_expiring_message_available(m);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

@@ -23,6 +23,8 @@ from typing import Optional
 
 from packaging.version import Version
 
+from holoscan import __version__ as holoscan_version_string
+
 from .artifact_sources import ArtifactSources
 from .enum_types import SdkType
 from .exceptions import FailedToDetectSDKVersionError, InvalidSdkError
@@ -51,7 +53,19 @@ def detect_sdk(sdk: Optional[SdkType] = None) -> SdkType:
 
     command = None
     try:
-        command = Path(sys.argv[0]).name.lower()
+        # For Python 3.10+, this check is to support use of the holoscan cli bash script bundled
+        # with the Debian package.
+        # Since the Debian package bundles with 3.10, we don't need to handle 3.9 but
+        # we still need to check if `orig_argv` is supported to avoid breaking unit test.
+        if (
+            getattr(sys, "orig_argv", None)
+            and len(sys.orig_argv) >= 3
+            and sys.orig_argv[0] == "python3"
+            and sys.orig_argv[2] == "holoscan.cli"
+        ):
+            command = "holoscan"
+        else:
+            command = Path(sys.argv[0]).name.lower()
         return SdkType(command)
     except Exception as ex:
         raise InvalidSdkError(f"Invalid SDK value provided: {command}") from ex
@@ -114,8 +128,7 @@ def detect_holoscan_version(
         return sdk_version.base_version
     else:
         try:
-            ver_str = importlib.metadata.version("holoscan").title()
-            ver = Version(ver_str)
+            ver = Version(holoscan_version_string)
             ver_str = ".".join(str(i) for i in ver.release)
 
             if len(ver.release) == 1 and ver.major == ver.release[0]:

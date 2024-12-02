@@ -34,6 +34,7 @@
 #include "holoscan/core/graph.hpp"
 #include "holoscan/core/network_context.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/scheduler.hpp"
 #include "kwarg_handling.hpp"
 
@@ -138,12 +139,18 @@ void init_fragment(py::module_& m) {
            "num_start_messages_to_skip"_a = kDefaultNumStartMessagesToSkip,
            "num_last_messages_to_discard"_a = kDefaultNumLastMessagesToDiscard,
            "latency_threshold"_a = kDefaultLatencyThreshold,
+           "is_limited_tracking"_a = false,
            doc::Fragment::doc_track,
            py::return_value_policy::reference_internal)
       .def_property("is_metadata_enabled",
                     py::overload_cast<>(&Fragment::is_metadata_enabled, py::const_),
                     py::overload_cast<bool>(&Fragment::is_metadata_enabled),
                     doc::Fragment::doc_is_metadata_enabled)
+      .def("make_thread_pool",
+           &Fragment::make_thread_pool,
+           "name"_a,
+           "initialize_size"_a = 1,
+           doc::Fragment::doc_make_thread_pool)
       .def("run",
            &Fragment::run,
            doc::Fragment::doc_run,

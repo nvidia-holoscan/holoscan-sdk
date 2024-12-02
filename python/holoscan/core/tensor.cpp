@@ -368,14 +368,9 @@ py::object PyTensor::from_dlpack_pyobj(const py::object& obj) {
   return py_tensor;
 }
 
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, bool cuda) {
-  auto memory_buf = std::make_shared<ArrayInterfaceMemoryBuffer>();
-  memory_buf->obj_ref = obj;  // hold obj to prevent it from being garbage collected
-
-  const char* interface_name = cuda ? "__cuda_array_interface__" : "__array_interface__";
-  auto array_interface = obj.attr(interface_name).cast<py::dict>();
-
+DLTensor init_dl_tensor_from_interface(
+    const std::shared_ptr<ArrayInterfaceMemoryBuffer>& memory_buf, const py::dict& array_interface,
+    bool cuda) {
   // Process mandatory entries
   memory_buf->dl_shape = array_interface["shape"].cast<std::vector<int64_t>>();
   auto& shape = memory_buf->dl_shape;
@@ -433,47 +428,49 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
   local_dl_tensor.strides = strides.data();
 
   // We do not process 'descr', 'mask', and 'offset' entries
+  return local_dl_tensor;
+}
 
+void process_array_interface_stream(const py::object& stream_obj) {
+  int64_t stream_id = 1;  // legacy default stream
+  cudaStream_t stream_ptr = nullptr;
+  if (stream_obj.is_none()) {
+    stream_id = -1;
+  } else {
+    stream_id = stream_obj.cast<int64_t>();
+  }
+  if (stream_id < -1) {
+    throw std::runtime_error(
+        "Invalid stream, valid stream should be  None (no synchronization), 1 (legacy default "
+        "stream), 2 "
+        "(per-thread defaultstream), or a positive integer (stream pointer)");
+  }
+  if (stream_id > 2) {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr,cppcoreguidelines-pro-type-reinterpret-cast)
+    stream_ptr = reinterpret_cast<cudaStream_t>(stream_id);
+  }
+
+  // Wait for the current stream to finish before the provided stream starts consuming the memory.
+  cudaStream_t curr_stream_ptr = nullptr;  // legacy stream
+  if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
+    synchronize_streams(curr_stream_ptr, stream_ptr);
+  }
+}
+
+std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, bool cuda) {
+  auto memory_buf = std::make_shared<ArrayInterfaceMemoryBuffer>();
+  memory_buf->obj_ref = obj;  // hold obj to prevent it from being garbage collected
+
+  const char* interface_name = cuda ? "__cuda_array_interface__" : "__array_interface__";
+  auto array_interface = obj.attr(interface_name).cast<py::dict>();
+
+  DLTensor local_dl_tensor = init_dl_tensor_from_interface(memory_buf, array_interface, cuda);
   if (cuda) {
-    // Process 'stream' entry
+    // determine stream and synchronize it with the default stream if necessary
     py::object stream_obj = py::none();
-    if (array_interface.contains("stream")) { stream_obj = array_interface["stream"]; }
-
-    int64_t stream_id = 1;  // legacy default stream
-    cudaStream_t stream_ptr = nullptr;
-    if (stream_obj.is_none()) {
-      stream_id = -1;
-    } else {
-      stream_id = stream_obj.cast<int64_t>();
-    }
-    if (stream_id < -1) {
-      throw std::runtime_error(
-          "Invalid stream, valid stream should be  None (no synchronization), 1 (legacy default "
-          "stream), 2 "
-          "(per-thread defaultstream), or a positive integer (stream pointer)");
-    }
-    if (stream_id <= 2) {
-      stream_ptr = nullptr;
-    } else {
-      // NOLINTNEXTLINE(performance-no-int-to-ptr,cppcoreguidelines-pro-type-reinterpret-cast)
-      stream_ptr = reinterpret_cast<cudaStream_t>(stream_id);
-    }
-
-    cudaStream_t curr_stream_ptr = nullptr;  // legacy stream
-
-    if (stream_id >= 0 && curr_stream_ptr != stream_ptr) {
-      cudaEvent_t curr_stream_event{};
-      HOLOSCAN_CUDA_CALL_THROW_ERROR(
-          cudaEventCreateWithFlags(&curr_stream_event, cudaEventDisableTiming),
-          "Failure during call to cudaEventCreateWithFlags");
-      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventRecord(curr_stream_event, stream_ptr),
-                                     "Failure during call to cudaEventRecord");
-      // Make current stream (curr_stream_ptr) to wait until the given stream (stream_ptr)
-      // is finished. This is a reverse of py_dlpack() method.
-      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamWaitEvent(curr_stream_ptr, curr_stream_event, 0),
-                                     "Failure during call to cudaStreamWaitEvent");
-      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaEventDestroy(curr_stream_event),
-                                     "Failure during call to cudaEventDestroy");
+    if (array_interface.contains("stream")) {
+      stream_obj = array_interface["stream"];
+      process_array_interface_stream(stream_obj);
     }
   }
   // Create DLManagedTensor object
@@ -503,7 +500,6 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
 
   return tensor;
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
   // Pybind11 doesn't have a way to get/set a pointer with a name so we have to use the C API

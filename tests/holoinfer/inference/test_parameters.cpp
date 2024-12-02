@@ -17,6 +17,8 @@
 
 #include "test_core.hpp"
 
+#include <yaml-cpp/yaml.h>
+
 #include <string>
 #include <utility>
 
@@ -263,8 +265,11 @@ void HoloInferTests::parameter_setup_test() {
     backend = "onnxrt";
     status = create_specifications();
     clear_specs();
-    holoinfer_assert(
-        status, test_module, 20, test_identifier_params.at(20), HoloInfer::holoinfer_code::H_ERROR);
+    holoinfer_assert(status,
+                     test_module,
+                     20,
+                     test_identifier_params.at(20),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
 
     // Test: ONNX backend, incorrect model file format
     backend = "onnxrt";
@@ -285,7 +290,6 @@ void HoloInferTests::parameter_setup_test() {
     holoinfer_assert(
         status, test_module, 22, test_identifier_params.at(22), HoloInfer::holoinfer_code::H_ERROR);
 
-    if (!is_x86_64) { infer_on_cpu = true; }
     // Test: ONNX backend, Default
     is_engine_path = false;
     input_on_cuda = false;

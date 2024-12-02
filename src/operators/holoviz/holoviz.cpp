@@ -709,9 +709,6 @@ YAML_CONVERTER(holoscan::ops::HolovizOp::LayerCallbackFunction);
 
 namespace holoscan::ops {
 
-// Initialize static members
-std::mutex HolovizOp::mutex_;
-
 /*static*/ void HolovizOp::key_callback_handler(void* user_pointer, viz::Key key,
                                                 viz::KeyAndButtonAction action,
                                                 viz::KeyModifiers modifiers) {
@@ -883,11 +880,22 @@ void HolovizOp::setup(OperatorSpec& spec) {
   spec.param(window_close_scheduling_term_,
              "window_close_scheduling_term",
              "WindowCloseSchedulingTerm",
-             "BooleanSchedulingTerm to stop the codelet from ticking when the window is closed.");
-
+             "This is a deprecated parameter name for `window_close_condition`. Please use "
+             "`window_close_condition` instead as `window_close_scheduling_term` will be removed "
+             "in a future release.",
+             ParameterFlag::kOptional);
+  spec.param(window_close_condition_,
+             "window_close_condition",
+             "window close condition",
+             "BooleanCondition on the operator that will cause it to stop executing if the "
+             "display window is closed. By default, this condition is created automatically "
+             "during HolovizOp::initialize. The user may want to provide it if, for example, "
+             "there are multiple HolovizOp operators and you want to share the same window close "
+             "condition across both. By sharing the same condition, if one of the display "
+             "windows is closed it would also close the other(s).",
+             ParameterFlag::kOptional);
   spec.param(
       allocator_, "allocator", "Allocator", "Allocator used to allocate render buffer output.");
-
   spec.param(font_path_,
              "font_path",
              "FontPath",
@@ -1281,23 +1289,6 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
                     static_cast<int>(buffer_info.element_type)));
   }
 
-  // get pointer to tensor buffer
-  std::vector<nvidia::byte> host_buffer;
-  if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
-    host_buffer.resize(buffer_info.bytes_size);
-
-    // copy from device to host
-    HOLOSCAN_CUDA_CALL(cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
-                                       static_cast<const void*>(buffer_info.buffer_ptr),
-                                       buffer_info.bytes_size,
-                                       cudaMemcpyDeviceToHost,
-                                       cuda_stream_handler_.get_cuda_stream(context.context())));
-    // When copying from device memory to pagable memory the call is synchronous with the host
-    // execution. No need to synchronize here.
-
-    buffer_info.buffer_ptr = host_buffer.data();
-  }
-
   // start a geometry layer
   viz::BeginGeometryLayer();
   set_input_spec_geometry(input_spec);
@@ -1315,7 +1306,25 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
       throw std::runtime_error(
           fmt::format("No text has been specified by input spec '{}'.", input_spec.tensor_name_));
     }
-    uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
+
+    uintptr_t src_coord;
+    std::vector<nvidia::byte> host_buffer;
+    if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
+      host_buffer.resize(buffer_info.bytes_size);
+
+      // copy from device to host
+      HOLOSCAN_CUDA_CALL(cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
+                                         static_cast<const void*>(buffer_info.buffer_ptr),
+                                         buffer_info.bytes_size,
+                                         cudaMemcpyDeviceToHost,
+                                         cuda_stream_handler_.get_cuda_stream(context.context())));
+      // When copying from device memory to pageable memory the call is synchronous with the host
+      // execution. No need to synchronize here.
+
+      src_coord = reinterpret_cast<uintptr_t>(host_buffer.data());
+    } else {
+      src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
+    }
     constexpr uint32_t values_per_coordinate = 3;
     float coords[values_per_coordinate]{0.F, 0.F, 0.05F};
     for (uint32_t index = 0; index < coordinates; ++index) {
@@ -1343,12 +1352,12 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
               .c_str());
     }
   } else {
-    std::vector<float> coords;
     viz::PrimitiveTopology topology;
     uint32_t primitive_count;
     uint32_t coordinate_count;
     uint32_t values_per_coordinate;
     std::vector<float> default_coord;
+
     switch (input_spec.type_) {
       case InputType::POINTS:
         // point primitives, one coordinate (x, y) per primitive
@@ -1495,36 +1504,74 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
             fmt::format("Unhandled tensor type '{}'", inputTypeToString(input_spec.type_)));
     }
 
-    // copy coordinates
-    uintptr_t src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
-    coords.reserve(coordinate_count * values_per_coordinate);
-
-    for (uint32_t index = 0; index < coordinate_count; ++index) {
-      uint32_t component_index = 0;
-      // copy from source array
-      while (component_index < std::min(buffer_info.components, values_per_coordinate)) {
-        switch (buffer_info.element_type) {
-          case nvidia::gxf::PrimitiveType::kFloat32:
-            coords.push_back(reinterpret_cast<const float*>(src_coord)[component_index]);
-            break;
-          case nvidia::gxf::PrimitiveType::kFloat64:
-            coords.push_back(reinterpret_cast<const double*>(src_coord)[component_index]);
-            break;
-          default:
-            throw std::runtime_error("Unhandled element type");
-        }
-        ++component_index;
-      }
-      // fill from default array
-      while (component_index < values_per_coordinate) {
-        coords.push_back(default_coord[component_index]);
-        ++component_index;
-      }
-      src_coord += buffer_info.stride[1];
-    }
-
     if (primitive_count) {
-      viz::Primitive(topology, primitive_count, coords.size(), coords.data());
+      if ((buffer_info.element_type == nvidia::gxf::PrimitiveType::kFloat32) &&
+          (buffer_info.components == values_per_coordinate)) {
+        // can use the buffer directly, no copy required
+        if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kSystem) {
+          viz::Primitive(topology,
+                         primitive_count,
+                         coordinate_count * values_per_coordinate,
+                         reinterpret_cast<const float*>(buffer_info.buffer_ptr));
+        } else {
+          viz::PrimitiveCudaDevice(topology,
+                                   primitive_count,
+                                   coordinate_count * values_per_coordinate,
+                                   reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr));
+        }
+
+      } else {
+        // copy coordinates, convert from double to float if needed and add defaults
+        uintptr_t src_coord;
+        std::vector<nvidia::byte> host_buffer;
+        if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
+          host_buffer.resize(buffer_info.bytes_size);
+
+          // copy from device to host
+          HOLOSCAN_CUDA_CALL(
+              cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
+                              static_cast<const void*>(buffer_info.buffer_ptr),
+                              buffer_info.bytes_size,
+                              cudaMemcpyDeviceToHost,
+                              cuda_stream_handler_.get_cuda_stream(context.context())));
+          // When copying from device memory to pageable memory the call is synchronous with the
+          // host execution. No need to synchronize here.
+
+          src_coord = reinterpret_cast<uintptr_t>(host_buffer.data());
+        } else {
+          src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
+        }
+
+        // copy coordinates
+        std::vector<float> coords;
+        coords.reserve(coordinate_count * values_per_coordinate);
+
+        for (uint32_t index = 0; index < coordinate_count; ++index) {
+          uint32_t component_index = 0;
+          // copy from source array
+          while (component_index < std::min(buffer_info.components, values_per_coordinate)) {
+            switch (buffer_info.element_type) {
+              case nvidia::gxf::PrimitiveType::kFloat32:
+                coords.push_back(reinterpret_cast<const float*>(src_coord)[component_index]);
+                break;
+              case nvidia::gxf::PrimitiveType::kFloat64:
+                coords.push_back(reinterpret_cast<const double*>(src_coord)[component_index]);
+                break;
+              default:
+                throw std::runtime_error("Unhandled element type");
+            }
+            ++component_index;
+          }
+          // fill from default array
+          while (component_index < values_per_coordinate) {
+            coords.push_back(default_coord[component_index]);
+            ++component_index;
+          }
+          src_coord += buffer_info.stride[1];
+        }
+
+        viz::Primitive(topology, primitive_count, coords.size(), coords.data());
+      }
     }
   }
 
@@ -1630,16 +1677,46 @@ void HolovizOp::initialize() {
   // Set up prerequisite parameters before calling Operator::initialize()
   auto frag = fragment();
 
-  // Find if there is an argument for 'window_close_scheduling_term'
-  auto has_window_close_scheduling_term =
+  // Find if there is an argument for the deprecated 'window_close_scheduling_term' name or
+  // the newer 'window_close_condition' name.
+  auto window_scheduling_term_iter =
       std::find_if(args().begin(), args().end(), [](const auto& arg) {
         return (arg.name() == "window_close_scheduling_term");
       });
-  // Create the BooleanCondition if there is no argument provided.
-  if (has_window_close_scheduling_term == args().end()) {
-    window_close_scheduling_term_ =
-        frag->make_condition<holoscan::BooleanCondition>("window_close_scheduling_term");
-    add_arg(window_close_scheduling_term_.get());
+  auto window_condition_iter = std::find_if(args().begin(), args().end(), [](const auto& arg) {
+    return (arg.name() == "window_close_condition");
+  });
+  bool has_window_close_scheduling_term = window_scheduling_term_iter != args().end();
+  bool has_window_close_condition = window_condition_iter != args().end();
+  if (has_window_close_scheduling_term) {
+    if (has_window_close_condition) {
+      HOLOSCAN_LOG_WARN(
+          "Both \"window_close_scheduling_term\" and \"window_close_condition\" arguments "
+          "were provided. Please provide only \"window_close_condition\". Now discarding the "
+          "duplicate \"window_close_scheduling_term\" argument.");
+      // remove the duplicate argument using the deprecated name
+      args().erase(window_scheduling_term_iter);
+    } else {
+      HOLOSCAN_LOG_WARN(
+          "An argument named \"window_close_scheduling_term\" was provided, but this parameter "
+          "name is deprecated. Please provide this argument via its new name, "
+          "\"window_close_condition\", instead. Now renaming the argument to "
+          "\"window_close_condition\".");
+
+      // rename the existing argument in-place
+      std::string new_name{"window_close_condition"};
+      window_scheduling_term_iter->name(new_name);
+    }
+    // in either case above, we now have only "window_close_condition"
+    has_window_close_condition = true;
+    has_window_close_scheduling_term = false;
+  }
+
+  // Create the BooleanCondition if there was no window close argument provided.
+  if (!has_window_close_condition) {
+    window_close_condition_ =
+        frag->make_condition<holoscan::BooleanCondition>("window_close_condition");
+    add_arg(window_close_condition_.get());
   }
 
   // Conditional inputs and outputs are enabled using a boolean argument
@@ -1652,8 +1729,6 @@ void HolovizOp::initialize() {
 }
 
 void HolovizOp::start() {
-  std::lock_guard<std::mutex> guard(mutex_);
-
   // set the font to be used
   if (!font_path_.get().empty()) { viz::SetFont(font_path_.get().c_str(), 25.F); }
 
@@ -1750,7 +1825,7 @@ void HolovizOp::start() {
   }
 
   // cast Condition to BooleanCondition
-  window_close_scheduling_term_->enable_tick();
+  window_close_condition_->enable_tick();
 
   // Copy the user defined input spec list to the internal input spec list. If there is no user
   // defined input spec it will be generated from the first messages received.
@@ -1802,7 +1877,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
   // cast Condition to BooleanCondition
   if (viz::WindowShouldClose()) {
-    window_close_scheduling_term_->disable_tick();
+    window_close_condition_->disable_tick();
     return;
   }
 

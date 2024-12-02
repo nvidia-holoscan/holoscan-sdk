@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
@@ -26,16 +27,16 @@
 
 class Fragment1 : public holoscan::Fragment {
  public:
-  // NOLINTNEXTLINE(modernize-pass-by-value,bugprone-easily-swappable-parameters)
+  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
   Fragment1(bool gpu_tensor, int64_t count, int32_t batch_size, int32_t rows, int32_t columns,
-            int32_t channels, const std::string& data_type)
+            int32_t channels, std::string data_type)
       : gpu_tensor_(gpu_tensor),
         batch_size_(batch_size),
         count_(count),
         rows_(rows),
         columns_(columns),
         channels_(channels),
-        data_type_(data_type) {}
+        data_type_(std::move(data_type)) {}
 
   void compose() override {
     using namespace holoscan;
@@ -78,7 +79,7 @@ class App : public holoscan::Application {
   // Inherit the constructor
   using Application::Application;
 
-  // NOLINTNEXTLINE(modernize-pass-by-value,bugprone-easily-swappable-parameters)
+  // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
   void set_options(bool gpu_tensor = false, int64_t count = 10, int32_t batch_size = 0,
                    int32_t rows = 32, int32_t columns = 1024, int32_t channels = 0,
                    const std::string& data_type = "uint8_t") {
@@ -91,7 +92,6 @@ class App : public holoscan::Application {
     channels_ = channels;
     data_type_ = data_type;
   }
-  // NOLINTEND(fuchsia-default-arguments-declarations)
 
   void compose() override {
     using namespace holoscan;

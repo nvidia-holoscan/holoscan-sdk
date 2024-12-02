@@ -25,6 +25,8 @@
     holoscan.conditions.DownstreamMessageAffordableCondition
     holoscan.conditions.ExpiringMessageAvailableCondition
     holoscan.conditions.MessageAvailableCondition
+    holoscan.conditions.MultiMessageAvailableCondition
+    holoscan.conditions.MultiMessageAvailableTimeoutCondition
     holoscan.conditions.PeriodicCondition
 """
 
@@ -39,6 +41,8 @@ from ._conditions import (
     DownstreamMessageAffordableCondition,
     ExpiringMessageAvailableCondition,
     MessageAvailableCondition,
+    MultiMessageAvailableCondition,
+    MultiMessageAvailableTimeoutCondition,
     PeriodicCondition,
 )
 
@@ -53,5 +57,13 @@ __all__ = [
     "DownstreamMessageAffordableCondition",
     "ExpiringMessageAvailableCondition",
     "MessageAvailableCondition",
+    "MultiMessageAvailableCondition",
+    "MultiMessageAvailableTimeoutCondition",
     "PeriodicCondition",
 ]
+
+
+# expose the SamplingMode enum from MultiMessageAvailableCondition
+# (done this way instead of redefinining it in the bindings to avoids error:
+#  ImportError: generic_type: type "SamplingMode" is already registered!)
+MultiMessageAvailableTimeoutCondition.SamplingMode = MultiMessageAvailableCondition.SamplingMode

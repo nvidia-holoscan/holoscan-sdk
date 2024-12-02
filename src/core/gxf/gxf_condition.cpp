@@ -99,4 +99,12 @@ void GXFCondition::add_to_graph_entity(Operator* op) {
   this->initialize();
 }
 
+YAML::Node GXFCondition::to_yaml_node() const {
+  YAML::Node node = Condition::to_yaml_node();
+  node["gxf_eid"] = YAML::Node(gxf_eid());
+  node["gxf_cid"] = YAML::Node(gxf_cid());
+  node["gxf_typename"] = YAML::Node(gxf_typename());
+  return node;
+}
+
 }  // namespace holoscan::gxf

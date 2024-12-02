@@ -18,13 +18,14 @@
 #ifndef HOLOSCAN_CORE_MESSAGELABEL_HPP
 #define HOLOSCAN_CORE_MESSAGELABEL_HPP
 
-#include <chrono>
+#include <ctime>
 #include <iterator>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 #include "./forward_def.hpp"
+#include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
 
@@ -35,14 +36,23 @@ namespace holoscan {
 
 /**
  * @brief Return the current time in microseconds since the epoch.
-This function uses the C++11 standard library's chrono library.
+ * This function previously used the C++11 standard library's chrono library.
+ * This function now uses CLOCK_REALTIME to get the current time, because the clock chrono uses is
+ * implementation-dependent. We want a known clock like CLOCK_REALTIME so that we can use the clock
+ * across machines. CLOCK_REALTIME is a clock that is supposed to be synchronized with PTP
+ * synchronization.
  *
- * @return The current time in microseconds since epoch.
+ * @return The current time in microseconds returned by CLOCK_REALTIME. If CLOCK_REALTIME is not
+ * available, it returns -1.
  */
 static inline int64_t get_current_time_us() {
-  return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                  std::chrono::system_clock::now().time_since_epoch())
-                                  .count());
+  struct timespec ts;
+  if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+    return static_cast<int64_t>(ts.tv_sec) * 1000000 + static_cast<int64_t>(ts.tv_nsec) / 1000;
+  } else {
+    HOLOSCAN_LOG_ERROR("Error in clock_gettime");
+    return -1;
+  }
 }
 
 /** @brief This struct represents a timestamp label for a Holoscan Operator.

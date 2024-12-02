@@ -80,6 +80,18 @@ class GeometryLayer : public Layer {
                  const float* data);
 
   /**
+   * Draw a geometric primitive, source is CUDA device memory.
+   *
+   * @param topology          primitive topology
+   * @param primitive_count   primitive count
+   * @param data_size         size of the data array in floats
+   * @param data              CUDA device memory pointer to data, the format and size of the array
+   *                          depends on the primitive count and topology
+   */
+  void primitive_cuda_device(PrimitiveTopology topology, uint32_t primitive_count, size_t data_size,
+                             CUdeviceptr data);
+
+  /**
    * Draw text.
    *
    * @param x     x coordinate

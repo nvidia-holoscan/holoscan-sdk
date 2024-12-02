@@ -43,6 +43,8 @@ uint32_t get_element_size(holoinfer_datatype element_type) noexcept {
     case holoinfer_datatype::h_Int8:
     case holoinfer_datatype::h_UInt8:
       return 1;
+    case holoinfer_datatype::h_Float16:
+      return 2;
   }
   return 0;
 }

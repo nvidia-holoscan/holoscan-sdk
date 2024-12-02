@@ -20,7 +20,7 @@ import logging
 from typing import Any, Optional
 
 import requests
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
 from holoscan import __version__ as holoscan_version_string
 
@@ -41,12 +41,19 @@ class ArtifactSources:
     ManifestFileUrl = None
 
     def __init__(self) -> None:
-        ArtifactSources.HoloscanVersion = ".".join(
-            str(i) for i in Version(holoscan_version_string).release[0:3]
-        )
-        ArtifactSources.ManifestFileUrl = f"https://edge.urm.nvidia.com/artifactory/sw-holoscan-cli-generic/{ArtifactSources.HoloscanVersion}/artifacts.json"
         self._logger = logging.getLogger("common")
-        self._supported_holoscan_versions = ["2.6.0"]
+        self._supported_holoscan_versions = ["2.6.0", "2.7.0"]
+        try:
+            ArtifactSources.HoloscanVersion = ".".join(
+                str(i) for i in Version(holoscan_version_string).release[0:3]
+            )
+        except InvalidVersion as ex:
+            raise RuntimeError(
+                "Unable to detect Holoscan version. Use --sdk-version to specify "
+                "a Holoscan SDK version to use."
+            ) from ex
+
+        ArtifactSources.ManifestFileUrl = f"https://edge.urm.nvidia.com/artifactory/sw-holoscan-cli-generic/{ArtifactSources.HoloscanVersion}/artifacts.json"
 
     @property
     def holoscan_versions(self) -> list[str]:

@@ -76,6 +76,7 @@ class PackagingArguments:
         self.build_parameters.tarball_output = args.output
         self.build_parameters.cmake_args = args.cmake_args
         self.build_parameters.includes = args.includes
+        self.build_parameters.additional_libs = args.additional_libs
 
         models = Models()
         platform = Platform(self._artifact_sources)

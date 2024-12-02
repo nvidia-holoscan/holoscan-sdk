@@ -98,6 +98,31 @@ Parameters
 
 }  // namespace GXFResource
 
+namespace GXFSystemResourceBase {
+
+// Constructor
+PYDOC(GXFSystemResourceBase, R"doc(
+A class considered a GXF nvidia::gxf::Resource.
+
+This represents a resource such as a ThreadPool or GPUDevice that may be shared amongst multiple
+entities in an nvidia::gxf::EntityGroup.
+
+)doc")
+
+PYDOC(GXFSystemResourceBase_kwargs, R"doc(
+A class considered a GXF nvidia::gxf::Resource.
+
+This represents a resource such as a ThreadPool or GPUDevice that may be shared amongst multiple
+entities in an nvidia::gxf::EntityGroup.
+
+Parameters
+----------
+**kwargs : dict
+    Keyword arguments to pass on to the parent resource class.
+)doc")
+
+}  // namespace GXFSystemResourceBase
+
 namespace GXFInputContext {
 
 // Constructor

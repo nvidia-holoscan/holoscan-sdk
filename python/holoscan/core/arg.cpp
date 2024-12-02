@@ -100,7 +100,10 @@ void init_arg(py::module_& m) {
       //    Instead, see py_object_to_arg() utility for getting an Arg object from a Python one
       // Arg& operator=(const ArgT& value)
       // Arg&& operator=(ArgT&& value)
-      .def_property_readonly("name", &Arg::name, doc::Arg::doc_name)
+      .def_property("name",
+                    py::overload_cast<>(&Arg::name, py::const_),
+                    py::overload_cast<const std::string&>(&Arg::name),
+                    doc::Arg::doc_name)
       .def_property_readonly("arg_type", &Arg::arg_type, doc::Arg::doc_arg_type)
       .def_property_readonly("has_value", &Arg::has_value, doc::Arg::doc_has_value)
       // std::any& value()

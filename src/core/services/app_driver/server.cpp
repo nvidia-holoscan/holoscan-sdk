@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/cli_options.hpp"
+#include "holoscan/core/system/network_utils.hpp"
 #include "holoscan/logger/logger.hpp"
 
 #include "../app_worker/client.hpp"
@@ -94,14 +95,25 @@ void AppDriverServer::run() {
   std::unique_ptr<grpc::Server> server;
   AppDriverServiceImpl app_driver_service(app_driver_);
   if (need_driver_) {
-    grpc::ServerBuilder builder;
-    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-    builder.RegisterService(&app_driver_service);
-    server = builder.BuildAndStart();
-    if (server) {
-      HOLOSCAN_LOG_INFO("AppDriverServer listening on {}", server_address);
+    // Check if the listening port is already in use
+    int server_port_int = std::stoi(server_port);
+    auto unused_ports =
+        get_unused_network_ports(1, server_port_int, server_port_int, {}, {server_port_int});
+    if (unused_ports.empty() || unused_ports[0] != server_port_int) {
+      HOLOSCAN_LOG_ERROR("Port {} is already in use", server_port_int);
+      should_stop_ = true;
     } else {
-      HOLOSCAN_LOG_ERROR("Failed to start AppDriverServer on {}", server_address);
+      // Start the gRPC server
+      grpc::ServerBuilder builder;
+      builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+      builder.RegisterService(&app_driver_service);
+      server = builder.BuildAndStart();
+      if (server) {
+        HOLOSCAN_LOG_INFO("AppDriverServer listening on {}", server_address);
+      } else {
+        HOLOSCAN_LOG_ERROR("Failed to start AppDriverServer on {}", server_address);
+        should_stop_ = true;
+      }
     }
   }
 

@@ -24,8 +24,10 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <gxf/app/graph_entity.hpp>
+#include <gxf/core/component.hpp>
 #include "../parameter.hpp"
 #include "./gxf_utils.hpp"
 
@@ -58,6 +60,12 @@ class GXFComponent {
   void gxf_graph_entity(std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
     gxf_graph_entity_ = std::move(graph_entity);
   }
+
+  /// @brief The name of the entity group this component belongs to
+  std::string gxf_entity_group_name();
+
+  /// @brief The group id of the entity group this component belongs to
+  gxf_uid_t gxf_entity_group_id();
 
   void* gxf_cptr() { return gxf_cptr_; }
 

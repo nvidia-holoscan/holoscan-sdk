@@ -18,6 +18,7 @@ limitations under the License.
 import pytest
 from packaging.version import Version
 
+import holoscan.cli.common.sdk_utils
 from holoscan.cli.common.artifact_sources import ArtifactSources
 from holoscan.cli.common.enum_types import SdkType
 from holoscan.cli.common.exceptions import FailedToDetectSDKVersionError, InvalidSdkError
@@ -87,32 +88,28 @@ class TestDetectHoloscanVersion:
 
     def test_detect_sdk_version(self, monkeypatch):
         version = "1.0.0"
-
-        monkeypatch.setattr("importlib.metadata.version", lambda x: version)
+        holoscan.cli.common.sdk_utils.holoscan_version_string = version
 
         result = detect_holoscan_version(self._artifact_source)
         assert result == version
 
     def test_detect_sdk_version_with_patch(self, monkeypatch):
         version = "1.0.0-beta-1"
-
-        monkeypatch.setattr("importlib.metadata.version", lambda x: version)
+        holoscan.cli.common.sdk_utils.holoscan_version_string = version
 
         result = detect_holoscan_version(self._artifact_source)
         assert result == "1.0.0"
 
     def test_detect_sdk_version_with_unsupported_version(self, monkeypatch):
         version = "0.1.2"
-
-        monkeypatch.setattr("importlib.metadata.version", lambda x: version)
+        holoscan.cli.common.sdk_utils.holoscan_version_string = version
 
         with pytest.raises(FailedToDetectSDKVersionError):
             detect_holoscan_version(self._artifact_source)
 
     def test_detect_sdk_version_with_no_match(self, monkeypatch):
         version = "100"
-
-        monkeypatch.setattr("importlib.metadata.version", lambda x: version)
+        holoscan.cli.common.sdk_utils.holoscan_version_string = version
 
         with pytest.raises(FailedToDetectSDKVersionError):
             detect_holoscan_version(self._artifact_source)
@@ -122,7 +119,7 @@ class TestDetectHoloscanVersion:
         [("1.0a2+4.gcaa3b3fe", "1.0.0"), ("1", "1.0.0"), ("1.0", "1.0.0"), ("1.0.0.1", "1.0.0")],
     )
     def test_detect_sdk_version_with_non_semver_string(self, monkeypatch, version, expected):
-        monkeypatch.setattr("importlib.metadata.version", lambda x: version)
+        holoscan.cli.common.sdk_utils.holoscan_version_string = version
 
         result = detect_holoscan_version(self._artifact_source)
         assert result == expected

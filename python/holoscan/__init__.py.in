@@ -25,7 +25,7 @@ def _set_version():
     try:
         return importlib.metadata.version("holoscan")
     except ImportError:
-        return "unknown version"
+        return "@holoscan_VERSION@" or "unknown version"
 
 
 __all__ = ["__version__", "as_tensor", "cli", "core", "gxf"]

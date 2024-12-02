@@ -34,9 +34,11 @@
 #include "holoscan/core/dataflow_tracker.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
-#include "holoscan/core/operator.hpp"
+#include "holoscan/core/gxf/entity_group.hpp"
 #include "holoscan/core/gxf/gxf_network_context.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
+#include "holoscan/core/operator.hpp"
+#include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 
 using std::string_literals::operator""s;
@@ -496,12 +498,13 @@ std::future<void> Fragment::run_async() {
 
 holoscan::DataFlowTracker& Fragment::track(uint64_t num_start_messages_to_skip,
                                            uint64_t num_last_messages_to_discard,
-                                           int latency_threshold) {
+                                           int latency_threshold, bool is_limited_tracking) {
   if (!data_flow_tracker_) {
     data_flow_tracker_ = std::make_shared<holoscan::DataFlowTracker>();
     data_flow_tracker_->set_skip_starting_messages(num_start_messages_to_skip);
     data_flow_tracker_->set_discard_last_messages(num_last_messages_to_discard);
     data_flow_tracker_->set_skip_latencies(latency_threshold);
+    data_flow_tracker_->set_limited_tracking(is_limited_tracking);
   }
   return *data_flow_tracker_;
 }
@@ -587,6 +590,47 @@ void Fragment::load_extensions_from_config() {
   for (const auto& yaml_node : config().yaml_nodes()) {
     executor().extension_manager()->load_extensions_from_yaml(yaml_node);
   }
+}
+
+/**
+ * @brief Create a new thread pool resource.
+ *
+ * @param name The name of the resource.
+ * @param args The arguments for the resource.
+ * @return The shared pointer to the resource.
+ */
+std::shared_ptr<ThreadPool> Fragment::make_thread_pool(const std::string& name,
+                                                       int64_t initial_size) {
+  // Create a dedicated GXF Entity for the ThreadPool
+  // (unlike a typical Condition/Resource, it does not belong to the same entity as an operator)
+  auto pool_entity = std::make_shared<nvidia::gxf::GraphEntity>();
+  auto pool_entity_name = fmt::format("{}_{}_entity", this->name(), name);
+  auto maybe_pool = pool_entity->setup(executor().context(), pool_entity_name.c_str());
+  if (!maybe_pool) {
+    throw std::runtime_error(
+        fmt::format("Failed to create thread pool entity: '{}'", pool_entity_name));
+  }
+
+  // Create the ThreadPool resource
+  auto pool_resource = make_resource<ThreadPool>(name, holoscan::Arg("initial_size", initial_size));
+
+  // Assign the pool to the entity that was created above and initialize it via add_to_graph_entity
+  pool_resource->gxf_eid(pool_entity->eid());
+  pool_resource->add_to_graph_entity(this, pool_entity);
+
+  auto pool_group = std::make_shared<gxf::EntityGroup>(executor().context(),
+                                                       fmt::format("{}_group", pool_entity_name));
+  pool_resource->entity_group(std::move(pool_group));
+
+  // Add this ThreadPool into the entity group
+  pool_resource->entity_group()->add(*pool_resource);
+
+  // Store pointers to all thread pools so initialization of entity groups can be
+  // performed later by GXFExecutor. We can only add operators to the entity group AFTER they have
+  // been initialized in GXFExecutor.
+  thread_pools_.push_back(pool_resource);
+
+  return pool_resource;
 }
 
 }  // namespace holoscan
