@@ -20,6 +20,11 @@
 
 #include "holoscan/core/gxf/gxf_operator.hpp"
 
+#include <memory>
+
+#include "../io_context.hpp"
+#include "./gxf_execution_context.hpp"
+#include "gxf/core/parameter_parser_std.hpp"
 #include "gxf/core/registrar.hpp"
 #include "gxf/std/codelet.hpp"
 #include "holoscan/profiler/profiler.hpp"
@@ -56,7 +61,10 @@ class GXFWrapper : public nvidia::gxf::Codelet {
  private:
   void store_exception();
 
-  Operator* op_ = nullptr;
+  Operator* op_{};
+  std::unique_ptr<GXFExecutionContext> exec_context_{};
+  InputContext* op_input_{};
+  OutputContext* op_output_{};
 };
 
 }  // namespace holoscan::gxf

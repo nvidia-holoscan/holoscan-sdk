@@ -227,17 +227,18 @@ void FormatConverterOp::stop() {
 void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output,
                                 ExecutionContext& context) {
   // Process input message
-  auto in_message = op_input.receive<gxf::Entity>("source_video").value();
-
-  // get the CUDA stream from the input message
-  gxf_result_t stream_handler_result =
-      cuda_stream_handler_.from_message(context.context(), in_message);
-  if (stream_handler_result != GXF_SUCCESS) {
-    throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
+  auto maybe_in_message = op_input.receive<gxf::Entity>("source_video");
+  if (!maybe_in_message) {
+    throw std::runtime_error("Failed to receive a message from input port 'source_video'");
   }
+  auto in_message = maybe_in_message.value();
+
+  // Get the CUDA stream from the input message if present, otherwise generate one.
+  // This stream will also be transmitted on the "tensor" output port.
+  cudaStream_t cuda_stream = op_input.receive_cuda_stream("source_video", true);
 
   // assign the CUDA stream to the NPP stream context
-  npp_stream_ctx_.hStream = cuda_stream_handler_.get_cuda_stream(context.context());
+  npp_stream_ctx_.hStream = cuda_stream;
 
   nvidia::gxf::Shape out_shape{0, 0, 0};
   void* in_tensor_data = nullptr;
@@ -292,7 +293,6 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
       case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12:
         in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned8;
         in_channels = buffer_info.color_planes.size();
-        out_channels = 3;
         switch (out_dtype_) {
           case FormatDType::kRGB888:
             out_channels = 3;
@@ -314,8 +314,6 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
     // Get needed information from the tensor
     in_memory_storage_type = frame->storage_type();
-    out_shape = nvidia::gxf::Shape{
-        static_cast<int32_t>(buffer_info.height), static_cast<int32_t>(buffer_info.width), 4};
     in_tensor_data = frame->pointer();
     rows = buffer_info.height;
     columns = buffer_info.width;
@@ -335,10 +333,11 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
               fmt::format("Failed to allocate device scratch buffer ({} bytes)", buffer_size));
         }
       }
-      HOLOSCAN_CUDA_CALL(cudaMemcpy(device_scratch_buffer_->pointer(),
-                                    frame->pointer(),
-                                    buffer_size,
-                                    cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(device_scratch_buffer_->pointer(),
+                                                frame->pointer(),
+                                                buffer_size,
+                                                cudaMemcpyHostToDevice),
+                                     "Failed to copy input data to device scratch buffer");
       in_tensor_data = device_scratch_buffer_->pointer();
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
     }
@@ -405,10 +404,12 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
         }
       }
 
-      HOLOSCAN_CUDA_CALL(cudaMemcpy(static_cast<void*>(device_scratch_buffer_->pointer()),
-                                    static_cast<const void*>(in_tensor_gxf.pointer()),
-                                    buffer_size,
-                                    cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(
+          cudaMemcpy(static_cast<void*>(device_scratch_buffer_->pointer()),
+                     static_cast<const void*>(in_tensor_gxf.pointer()),
+                     buffer_size,
+                     cudaMemcpyHostToDevice),
+          "Failed to copy input data to device scratch buffer");
       in_tensor_data = device_scratch_buffer_->pointer();
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
     }
@@ -469,7 +470,7 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     if (!resize_result) { throw std::runtime_error("Failed to resize image.\n"); }
 
     // Update the tensor pointer and shape
-    out_shape = nvidia::gxf::Shape{resize_height_, resize_width_, in_channels};
+    out_shape = nvidia::gxf::Shape{resize_height_, resize_width_, out_channels};
     in_tensor_data = resize_result.value();
     rows = resize_height_;
     columns = resize_width_;
@@ -541,12 +542,6 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
   } else {
     throw std::runtime_error("Only support 3 or 4 channel input tensor");
-  }
-
-  // pass the CUDA stream to the output message
-  stream_handler_result = cuda_stream_handler_.to_message(out_message);
-  if (stream_handler_result != GXF_SUCCESS) {
-    throw std::runtime_error("Failed to add the CUDA stream to the outgoing messages");
   }
 
   // Emit the tensor
@@ -656,16 +651,15 @@ void FormatConverterOp::convertTensorFormat(
       const auto in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
       auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      cudaError_t cuda_status =
-          HOLOSCAN_CUDA_CALL(cudaMemcpy2DAsync(out_tensor_ptr,
-                                               dst_step,
-                                               in_tensor_ptr,
-                                               src_step,
-                                               columns * out_channels * dst_typesize,
-                                               rows,
-                                               cudaMemcpyDeviceToDevice,
-                                               npp_stream_ctx_.hStream));
-      if (cuda_status) { throw std::runtime_error("Failed to copy GPU data to GPU memory."); }
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy2DAsync(out_tensor_ptr,
+                                                       dst_step,
+                                                       in_tensor_ptr,
+                                                       src_step,
+                                                       columns * out_channels * dst_typesize,
+                                                       rows,
+                                                       cudaMemcpyDeviceToDevice,
+                                                       npp_stream_ctx_.hStream),
+                                     "Failed to copy GPU data to GPU memory.");
       status = NPP_SUCCESS;
       break;
     }
@@ -990,11 +984,12 @@ void FormatConverterOp::setup(OperatorSpec& spec) {
              "Output channel order",
              "Host memory integer array describing how channel values are permutated.",
              std::vector<int>{});
-
   spec.param(pool_, "pool", "Pool", "Pool to allocate the output message.");
-
-  cuda_stream_handler_.define_params(spec);
-
+  spec.param(cuda_stream_pool_,
+             "cuda_stream_pool",
+             "CUDA Stream Pool",
+             "Instance of gxf::CudaStreamPool.",
+             ParameterFlag::kOptional);
   // TODO (gbae): spec object holds an information about errors
   // TODO (gbae): incorporate std::expected to not throw exceptions
 }

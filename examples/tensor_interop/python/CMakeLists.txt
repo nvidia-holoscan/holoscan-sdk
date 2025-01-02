@@ -63,13 +63,12 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT tensor_interop_test.py
-  PRE_LINK
   COMMAND patch -u -o tensor_interop_test.py ${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.py
     ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/tensor_interop/python_tensor_interop.patch
   )
 
   add_custom_target(python_tensor_interop_test ALL
-    DEPENDS "tensor_interop_test.py"
+    DEPENDS tensor_interop_test.py
   )
 
   add_test(NAME EXAMPLE_PYTHON_TENSOR_INTEROP_TEST

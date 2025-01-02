@@ -306,7 +306,7 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer
          4,
          HolovizOp::ImageFormat::R8G8B8A8_UNORM,
          {viz::ComponentSwizzle::A,
-          viz::ComponentSwizzle::G,
+          viz::ComponentSwizzle::B,
           viz::ComponentSwizzle::G,
           viz::ComponentSwizzle::R}},
         {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBX,

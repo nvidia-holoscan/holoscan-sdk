@@ -27,17 +27,24 @@ namespace holoscan::doc {
 namespace CudaBufferAvailableCondition {
 
 PYDOC(CudaBufferAvailableCondition, R"doc(
-Condition based on data availability in a cuda buffer.
+Condition based on data availability in a CudaBuffer object.
 
-A component which specifies the availability of data at the receiver based on the cuda buffers
+A component which specifies the availability of data at the receiver based on the CudaBuffers
 present in incoming messages.
 
 Parameters
 ----------
 fragment : holoscan.core.Fragment
     The fragment the condition will be associated with.
+receiver : str, optional
+    The name of the operator's input port to which the condition would apply.
 name : str, optional
     The name of the condition.
+
+Notes
+-----
+The `nvidia::gxf::CudaBuffer` class is currently unused by Holoscan SDK. This condition is
+intended exclusively for interoperation with wrapped GXF Codelets that use GXF's CudaBuffer type.
 )doc")
 
 PYDOC(receiver, R"doc(

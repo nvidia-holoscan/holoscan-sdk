@@ -26,7 +26,7 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/utils/cuda_stream_handler.hpp"
+#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "segmentation_postprocessor.cuh"
 
 using holoscan::ops::segmentation_postprocessor::DataFormat;
@@ -89,8 +89,7 @@ class SegmentationPostprocessorOp : public Operator {
   Parameter<std::string> in_tensor_name_;
   Parameter<std::string> network_output_type_;
   Parameter<std::string> data_format_;
-
-  CudaStreamHandler cuda_stream_handler_;
+  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
 };
 
 }  // namespace holoscan::ops

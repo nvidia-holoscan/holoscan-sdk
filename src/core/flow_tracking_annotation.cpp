@@ -56,7 +56,7 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
 
     bool is_current_op_root = op->is_root() || op->is_user_defined_root() ||
                               holoscan::Operator::is_all_operator_predecessor_virtual(
-                                  op_shared_ptr, op->fragment()->graph());
+                                  std::move(op_shared_ptr), op->fragment()->graph());
     if (!op->fragment()->data_flow_tracker()->limited_tracking() ||
         (op->fragment()->data_flow_tracker()->limited_tracking() &&
          is_current_op_root)) {  // update the last timestamp if limited tracking is not enabled
@@ -125,7 +125,7 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
       std::shared_ptr<holoscan::Operator> op_shared_ptr(op, [](Operator*) {});
       bool is_current_op_leaf =
           op->is_leaf() || holoscan::Operator::is_all_operator_successor_virtual(
-                               op_shared_ptr, op->fragment()->graph());
+                               std::move(op_shared_ptr), op->fragment()->graph());
       if (!op->fragment()->data_flow_tracker()->limited_tracking() ||
           (op->fragment()->data_flow_tracker()->limited_tracking() &&
            is_current_op_leaf)) {  // add a new timestamp if limited tracking is not enabled

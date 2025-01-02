@@ -15,10 +15,12 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "gxf/std/clock.hpp"
 #include "gxf/std/codelet.hpp"
@@ -256,6 +258,70 @@ void Operator::initialize_resources() {
     } else {
       // initialize as a native (non-GXF) resource
       resource->initialize();
+    }
+  }
+}
+
+void Operator::update_connector_arguments() {
+  for (auto& condition : conditions_) {
+    auto& cond_args = condition.second->args();
+
+    // replace any string "receiver" with Receiver or "transmitter" with Transmitter object.
+    const std::vector<std::string> connector_arg_names = {"receiver", "transmitter"};
+    for (const auto& arg_name : connector_arg_names) {
+      // find the existing std::string or YAML::Node argument
+      auto new_arg_end =
+          std::remove_if(cond_args.begin(), cond_args.end(), [arg_name](const auto& arg) {
+            return (arg.name() == arg_name &&
+                    (arg.arg_type().element_type() == ArgElementType::kString ||
+                     arg.arg_type().element_type() == ArgElementType::kYAMLNode) &&
+                    arg.arg_type().container_type() == ArgContainerType::kNative);
+          });
+      if (new_arg_end != cond_args.end()) {
+        std::string connector_name;
+        if (new_arg_end->arg_type().element_type() == ArgElementType::kYAMLNode) {
+          auto node = std::any_cast<YAML::Node>(new_arg_end->value());
+          // skip if this was not a scalar node or does not contain a string
+          if (!node.IsScalar()) { continue; }
+          connector_name = node.as<std::string>();
+          if (connector_name.empty()) { continue; }
+        } else {
+          connector_name = std::any_cast<std::string>(new_arg_end->value());
+        }
+        HOLOSCAN_LOG_DEBUG(fmt::format(
+            "'{}' argument was specified via a string. Replacing that argument with one "
+            "using the actual {} object with name '{}'.",
+            arg_name,
+            arg_name,
+            connector_name));
+        using IOSpecIterator =
+            std::unordered_map<std::string, std::shared_ptr<holoscan::IOSpec>>::const_iterator;
+        IOSpecIterator it;
+        // find the corresponding input port
+        if (arg_name == "receiver") {
+          const auto& inputs = spec_->inputs();
+          it = inputs.find(connector_name);
+          if (it == inputs.end()) {
+            throw std::runtime_error(fmt::format(
+                "Operator '{}' does not have an input port '{}'", name_, connector_name));
+          }
+        } else if (arg_name == "transmitter") {
+          const auto& outputs = spec_->outputs();
+          it = outputs.find(connector_name);
+          if (it == outputs.end()) {
+            throw std::runtime_error(fmt::format(
+                "Operator '{}' does not have an output port '{}'", name_, connector_name));
+          }
+        }
+        HOLOSCAN_LOG_INFO(
+            "Operator '{}': removing old arg '{}' and adding actual connector for port '{}'",
+            name_,
+            arg_name,
+            connector_name);
+        // remove the old argument and add the new one
+        cond_args.erase(new_arg_end, cond_args.end());
+        condition.second->add_arg(Arg(arg_name, it->second->connector()));
+      }
     }
   }
 }

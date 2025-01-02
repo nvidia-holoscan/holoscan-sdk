@@ -147,7 +147,9 @@ args:
 class TestDownstreamMessageAffordableCondition:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "downstream_affordable"
-        cond = DownstreamMessageAffordableCondition(fragment=app, name=name, min_size=10)
+        cond = DownstreamMessageAffordableCondition(
+            fragment=app, name=name, min_size=10, transmitter="out"
+        )
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::DownstreamReceptiveSchedulingTerm"
@@ -170,14 +172,14 @@ args:
         DownstreamMessageAffordableCondition(app)
 
     def test_positional_initialization(self, app):
-        DownstreamMessageAffordableCondition(app, 4, "affordable")
+        DownstreamMessageAffordableCondition(app, 4, "out", "affordable")
 
 
 class TestMessageAvailableCondition:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "message_available"
         cond = MessageAvailableCondition(
-            fragment=app, name=name, min_size=1, front_stage_max_size=10
+            fragment=app, name=name, min_size=1, front_stage_max_size=10, receiver="in"
         )
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
@@ -204,14 +206,14 @@ args:
         MessageAvailableCondition(app)
 
     def test_positional_initialization(self, app):
-        MessageAvailableCondition(app, 1, 4, "available")
+        MessageAvailableCondition(app, 1, 4, "in", "available")
 
 
 class TestExpiringMessageAvailableCondition:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "expiring_message"
         cond = ExpiringMessageAvailableCondition(
-            fragment=app, name=name, max_batch_size=1, max_delay_ns=10
+            fragment=app, name=name, max_batch_size=1, max_delay_ns=10, receiver="in"
         )
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
@@ -224,6 +226,9 @@ fragment: ""
 args:
   - name: clock
     type: std::shared_ptr<Resource>
+  - name: receiver
+    type: std::string
+    value: in
 spec:
 """ in repr(cond)
 
@@ -236,7 +241,9 @@ spec:
         ExpiringMessageAvailableCondition(app, 1, 4)
 
     def test_positional_initialization(self, app):
-        ExpiringMessageAvailableCondition(app, 1, 4, RealtimeClock(app, name="clock"), "expiring")
+        ExpiringMessageAvailableCondition(
+            app, 1, 4, RealtimeClock(app, name="clock"), "in", "expiring"
+        )
 
 
 class TestMultiMessageAvailableCondition:
@@ -362,6 +369,7 @@ class TestCudaEventCondition:
         cond = CudaEventCondition(
             fragment=app,
             event_name=event_name,
+            receiver="in",
             name=name,
         )
         assert isinstance(cond, GXFCondition)
@@ -390,7 +398,7 @@ args:
 class TestCudaStreamCondition:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "cuda_stream_condition"
-        cond = CudaStreamCondition(fragment=app, name=name)
+        cond = CudaStreamCondition(fragment=app, receiver="in", name=name)
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::CudaStreamSchedulingTerm"
@@ -399,7 +407,9 @@ class TestCudaStreamCondition:
 name: {name}
 fragment: ""
 args:
-  []
+  - name: receiver
+    type: std::string
+    value: in
 """ in repr(cond)
 
         # assert no warnings or errors logged
@@ -414,7 +424,7 @@ args:
 class TestCudaBufferAvailableCondition:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "cuda_buffer_available_condition"
-        cond = CudaBufferAvailableCondition(fragment=app, name=name)
+        cond = CudaBufferAvailableCondition(fragment=app, receiver="in", name=name)
         assert isinstance(cond, GXFCondition)
         assert isinstance(cond, Condition)
         assert cond.gxf_typename == "nvidia::gxf::CudaBufferAvailableSchedulingTerm"

@@ -45,11 +45,9 @@ class SumOfAllThrottledRxOp : public Operator {
     ArgList multi_message_args{
         holoscan::Arg("execution_frequency", std::string{"30ms"}),
         holoscan::Arg("min_sum", static_cast<size_t>(20)),
-        holoscan::Arg("sampling_mode",
-                      MultiMessageAvailableTimeoutCondition::SamplingMode::kSumOfAll)};
-    std::vector<std::string> input_port_names{"in1", "in2", "in3"};
+        holoscan::Arg("sampling_mode", MultiMessageAvailableCondition::SamplingMode::kSumOfAll)};
     spec.multi_port_condition(
-        ConditionType::kMultiMessageAvailableTimeout, input_port_names, multi_message_args);
+        ConditionType::kMultiMessageAvailableTimeout, {"in1", "in2", "in3"}, multi_message_args);
   }
 
   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,

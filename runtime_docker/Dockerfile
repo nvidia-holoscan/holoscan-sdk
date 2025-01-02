@@ -236,3 +236,11 @@ FROM runtime_cpp_pip_mkl AS runtime_cpp_py
 #    psutil - dependency for holoscan CLI
 COPY python/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Install apt run dependencies
+#   cuda-cudart-dev-12-6 - CuPy dependency (https://docs.cupy.dev/en/latest/install.html#cupy-always-raises-nvrtc-error-compilation-6)
+
+RUN apt-get update -y \
+    && apt-get install --no-install-recommends -y \
+        cuda-cudart-dev-12-6 \
+    && rm -rf /var/lib/apt/lists/*

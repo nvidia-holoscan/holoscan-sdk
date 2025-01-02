@@ -140,6 +140,8 @@ add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 ConfigureTest(
   SYSTEM_TEST
   system/cycle.cpp
+  system/cuda_allocators.cpp
+  system/cuda_stream.cpp
   system/env_wrapper.cpp
   system/exception_handling.cpp
   system/demosaic_op_app.cpp
@@ -147,6 +149,7 @@ ConfigureTest(
   system/jobstatistics_app.cpp
   system/holoviz_op_apps.cpp
   system/loading_gxf_extension.cpp
+  system/message_conditions_via_constructor.cpp
   system/multi_receiver_operator_ping_app.cpp
   system/multithreaded_app.cpp
   system/native_async_operator_ping_app.cpp
@@ -179,6 +182,15 @@ if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
   set_tests_properties(SYSTEM_TEST PROPERTIES ENVIRONMENT "GTEST_FILTER=-HolovizApps.*")
 endif()
 
+# ##################################################################################################
+# * utils tests ------------------------------------------------------------------------------------
+ConfigureTest(
+  UTILS_TEST
+  utils/cuda_macros.cpp
+)
+
+# ##################################################################################################
+# * system distributed tests ------------------------------------------------------------------------
 ConfigureTest(
   SYSTEM_DISTRIBUTED_TEST
   system/distributed/distributed_app.cpp

@@ -43,9 +43,8 @@ class PerReceiverRxOp : public Operator {
     ArgList multi_message_args{
         holoscan::Arg("min_sizes", std::vector<size_t>{1, 2, 1}),
         holoscan::Arg("sampling_mode", MultiMessageAvailableCondition::SamplingMode::kPerReceiver)};
-    std::vector<std::string> input_port_names{"in1", "in2", "in3"};
     spec.multi_port_condition(
-        ConditionType::kMultiMessageAvailable, input_port_names, multi_message_args);
+        ConditionType::kMultiMessageAvailable, {"in1", "in2", "in3"}, multi_message_args);
   }
 
   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,

@@ -77,7 +77,6 @@ if(HOLOSCAN_BUILD_TESTS)
   # Patch the current example to enable recording the rendering window
   set(_patch_file ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/holoviz_geometry/cpp_holoviz_geometry.patch)
   add_custom_command(OUTPUT holoviz_geometry_test.cpp
-    PRE_LINK
     COMMAND patch -u -o holoviz_geometry_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.cpp
             ${_patch_file}
     DEPENDS ${_patch_file}

@@ -45,16 +45,22 @@ fragment : holoscan.core.Fragment
 sampling_mode : {"SumOfAll", "PerReceiver"} or MultiMessageAvailableCondition.SamplingMode, optional
     The sampling method to use when checking for messages in receiver queues.
 min_sum : int, optional
-    The scheduling term permits execution if the sum of message counts of all receivers have at
+    The condition permits execution if the sum of message counts of all receivers has at
     least the given number of messages available. This option is only intended for use with
     "SumOfAll" `sampling_mode`.
 min_sizes : list of int, optional
-    The scheduling term permits execution if all given receivers have at least the given number of
+    The condition permits execution if all given receivers have at least the given number of
     messages available in this list. This option is only intended for use with
     "PerReceiver" `sampling_mode`. The length of `min_sizes` must match the
     number of receivers associated with the condition.
 name : str, optional
     The name of the condition.
+
+Notes
+-----
+This condition is typically set via the `Operator.multi_port_condition` method using
+`ConditionType.MULTI_MESSAGE_AVAILABLE`. The "receivers" argument must be set based on the input
+port names as described in the "Parameters" section.
 )doc")
 
 PYDOC(receivers, R"doc(

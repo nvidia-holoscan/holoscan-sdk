@@ -158,6 +158,7 @@ def docker_run(
     pkg_info: dict,
     quiet: bool,
     commands: list[str],
+    health_check: bool,
     network: str,
     network_interface: Optional[str],
     use_all_nics: bool,
@@ -184,6 +185,7 @@ def docker_run(
         pkg_info (dict): package manifest
         quiet (bool): prints only stderr when True, otherwise, prints all logs
         commands (List[str]): list of arguments to provide to the container
+        health_check (bool): whether or not to enable the gRPC health check service
         network (str): Docker network to associate the container with
         network_interface (Optional[str]): Name of the network interface for setting
             UCX_NET_DEVICES
@@ -197,6 +199,7 @@ def docker_run(
         shared_memory_size (str): size of /dev/shm,
         is_root (bool): whether the user is root (UID = 0) or not
     """
+
     volumes = []
     environment_variables = {
         "NVIDIA_DRIVER_CAPABILITIES": "all",
@@ -206,6 +209,9 @@ def docker_run(
 
     if network_interface is not None:
         environment_variables["UCX_NET_DEVICES"] = network_interface
+
+    if health_check:
+        environment_variables["HOLOSCAN_ENABLE_HEALTH_CHECK"] = "true"
 
     if logger.root.level == logging.DEBUG:
         environment_variables["UCX_LOG_LEVEL"] = "DEBUG"

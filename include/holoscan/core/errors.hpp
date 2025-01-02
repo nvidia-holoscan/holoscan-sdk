@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,7 @@ enum class ErrorCode {
   kInvalidArgument = 4,  // Invalid argument
   kNotFound = 5,         // Not found
   kDuplicateName = 6,    // Duplicate name
+  kNotImplemented = 7,   // Indicate that a method is not implemented
   kErrorCodeCount        // Number of error codes
 };
 

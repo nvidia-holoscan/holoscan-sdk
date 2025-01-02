@@ -312,4 +312,13 @@ void HoloInferTests::parameter_setup_test() {
   clear_specs();
   holoinfer_assert(
       status, test_module, 24, test_identifier_params.at(24), HoloInfer::holoinfer_code::H_SUCCESS);
+
+  // Test: TRT backend, disable CUDA Graphs
+  backend = "trt";
+  use_cuda_graphs = false;
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 32, test_identifier_params.at(32), HoloInfer::holoinfer_code::H_SUCCESS);
+  use_cuda_graphs = true;
 }

@@ -45,8 +45,27 @@ max_delay_ns: int or datetime.timedelta
 clock : holoscan.resources.Clock or None, optional
     The clock used by the scheduler to define the flow of time. If None, a default-constructed
     `holoscan.resources.RealtimeClock` will be used.
+receiver : str, optional
+    The name of the operator's input port to which the condition would apply.
 name : str, optional
     The name of the condition.
+
+Notes
+-----
+This condition is typically set within the `Operator.setup` method using the `IOSpec.condition`
+method with `ConditionType.EXPIRING_MESSAGE_AVAILABLE`. In that case, the receiver name is already
+known from the port corresponding to the `IOSpec` object, so the "receiver" argument is unnecessary.
+
+The `max_delay_ns` used by this condition type is relative to the timestamp of the oldest message
+in the receiver queue. Use of this condition requires that the upstream operator emitted a
+timestamp for at least one message in the queue. Holoscan Operators do not emit a timestamp
+by default, but only when it is explicitly requested in the `Operator::emit` call. The built-in
+operators of the SDK do not currently emit a timestamp, so this condition cannot be easily used
+with the provided operators. As a potential alternative, please see
+`MultiMessageAvailableTimeoutCondition` which can be configured to use a single port and a timeout
+interval without needing a timestamp. A timestamp is not needed in the case of
+`MultiMessageAvailableTimeoutCondition` because the interval measured is the time since the same
+operator previously ticked.
 )doc")
 
 PYDOC(receiver, R"doc(

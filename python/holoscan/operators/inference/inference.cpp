@@ -85,6 +85,7 @@ class PyInferenceOp : public InferenceOp {
                 const std::vector<int32_t>& trt_opt_profile, bool infer_on_cpu = false,
                 bool parallel_inference = true, bool input_on_cuda = true,
                 bool output_on_cuda = true, bool transmit_on_cuda = true, bool enable_fp16 = false,
+                bool enable_cuda_graphs = true,
                 bool is_engine_path = false,
                 std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                 // TODO(grelee): handle receivers similarly to HolovizOp?  (default: {})
@@ -101,6 +102,7 @@ class PyInferenceOp : public InferenceOp {
                             Arg{"output_on_cuda", output_on_cuda},
                             Arg{"transmit_on_cuda", transmit_on_cuda},
                             Arg{"enable_fp16", enable_fp16},
+                            Arg{"enable_cuda_graphs", enable_cuda_graphs},
                             Arg{"is_engine_path", is_engine_path}}) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
     add_positional_condition_and_resource_args(this, args);
@@ -205,6 +207,7 @@ PYBIND11_MODULE(_inference, m) {
                             bool,
                             bool,
                             bool,
+                            bool,
                             std::shared_ptr<holoscan::CudaStreamPool>,
                             const std::string&>(),
                    "fragment"_a,
@@ -226,6 +229,7 @@ PYBIND11_MODULE(_inference, m) {
                    "output_on_cuda"_a = true,
                    "transmit_on_cuda"_a = true,
                    "enable_fp16"_a = false,
+                   "enable_cuda_graphs"_a = true,
                    "is_engine_path"_a = false,
                    "cuda_stream_pool"_a = py::none(),
                    "name"_a = "inference"s,

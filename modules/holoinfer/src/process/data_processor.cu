@@ -91,6 +91,7 @@ void DataProcessor::max_per_channel_scaled_cuda(size_t rows, size_t cols, size_t
   dim3 block(32, 1, 1);
   dim3 grid((channels + block.x - 1) / block.x, 1, 1);
   normalize<<<grid, block, 0, cuda_stream>>>(rows, cols, channels, d_argmax, outdata);
+  check_cuda(cudaPeekAtLastError());
 
   check_cuda(cudaFreeAsync(d_argmax, cuda_stream));
 }

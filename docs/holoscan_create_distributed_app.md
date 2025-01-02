@@ -213,9 +213,9 @@ By default, device ID 0 is used by the UCX extensions to send/receive data betwe
 
 #### 3. "Address already in use" errors in distributed applications due to the health check service.
 
-If the driver or worker is running, the health check service is launched by default. Alternatively, if the environment variable `HOLOSCAN_ENABLE_HEALTH_CHECK` is set to true or false (can use "1" or "0", "on" or "off" as well, case-insensitive), the health check service is enabled or disabled accordingly. If the environment variable is not set or is invalid, the default value is used.
+If the environment variable `HOLOSCAN_ENABLE_HEALTH_CHECK` is set to true or false (can use "1" or "0", "on" or "off" as well, case-insensitive), the health check service is enabled or disabled accordingly. If the environment variable is not set or is invalid, the default value (disabled) is used.
 
-In scenarios where distributed applications have both the driver and workers running on the same host, either within a Docker container or directly on the host, there's a possibility of encountering "Address already in use" errors.
+In scenarios where distributed applications have both the driver and workers running on the same host with the health check service enabled, either within a Docker container or directly on the host, there's a possibility of encountering "Address already in use" errors.
 This issue can be avoided by setting the `HOLOSCAN_HEALTH_CHECK_PORT` environment variable to a different port number for the health check service. The default port number is `8777`. For example, the port number can be set to `8780` by using `export HOLOSCAN_HEALTH_CHECK_PORT=8780`.
 Alternatively, the health check service can be disabled by setting the `HOLOSCAN_ENABLE_HEALTH_CHECK` environment variable to `false`.
 
@@ -243,7 +243,7 @@ Given a CMake project, a pre-built executable, or a Python application, you can 
 
 You can set environment variables to modify the default actions of services and the scheduler when executing a distributed application.
 
-- **HOLOSCAN_ENABLE_HEALTH_CHECK** : determines if the health check service should be active, even without specifying `--driver` or `--worker` in the CLI. By default, initiating the AppDriver (`--driver`) or AppWorker (`--worker`) service automatically triggers the [GRPC Health Checking Service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) so [grpc-health-probe](https://github.com/grpc-ecosystem/grpc-health-probe) can monitor liveness/readiness. Interprets values like "true", "1", or "on" (case-insensitive) as true (to enable the health check). It defaults to "false" if left unspecified.
+- **HOLOSCAN_ENABLE_HEALTH_CHECK**: determines whether the health check service should be active for distributed applications. Accepts values such as "true," "1," or "on" (case-insensitive) as true, enabling the health check. If unspecified, it defaults to "false." When enabled, the [gRPC Health Checking Service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) is activated, allowing tools like [grpc-health-probe](https://github.com/grpc-ecosystem/grpc-health-probe) to monitor liveness and readiness.
 
 - **HOLOSCAN_HEALTH_CHECK_PORT** : designates the port number on which the Health Checking Service is launched. It must be an integer value representing a valid port number. If unspecified, it defaults to `8777`.
 

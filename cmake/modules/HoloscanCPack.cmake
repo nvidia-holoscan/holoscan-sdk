@@ -70,8 +70,7 @@ set(CPACK_COMPONENTS_ALL
 
 # - cuda-nvcc: needed to find Holoscan with CMake (FindCUDAToolkit requirement)
 #   Note: not needed at runtime
-# - cuda-cudart-dev: needed for holoscan core and some operators
-#   Note: only cuda-cudart (non dev) needed at runtime
+# - cuda-cudart-dev: needed for holoscan core and some operators at build time and by Cupy at runtime
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
   "cuda-nvcc-12-6 | cuda-nvcc-12-9 | cuda-nvcc-12-8 | cuda-nvcc-12-7 | cuda-nvcc-12-5 | cuda-nvcc-12-4 | cuda-nvcc-12-3 | cuda-nvcc-12-2 |cuda-nvcc-12-1 | cuda-nvcc-12-0, \
   cuda-cudart-dev-12-6 | libcudart.so.12-dev"

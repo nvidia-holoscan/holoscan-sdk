@@ -244,6 +244,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
                                                                  device_id,
                                                                  device_gpu_dt_,
                                                                  inference_specs->use_fp16_,
+                                                                 inference_specs->use_cuda_graphs_,
                                                                  inference_specs->is_engine_path_,
                                                                  cuda_buffer_in_,
                                                                  cuda_buffer_out_)});
@@ -281,6 +282,12 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
           dlclose(handle);
+          // The ONNX backend is not supporting CUDA Graphs in multi-treaded scenarios and also
+          // requires that addresses of inputs are not changing. Since we need both features we
+          // dont support CUDA Graphs for the ONNX backend.
+          // See
+          // https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#using-cuda-graphs-preview
+          // for more information.
           auto context = new_ort_infer(model_path,
                                        inference_specs->use_fp16_,
                                        inference_specs->oncuda_,
@@ -765,11 +772,11 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
       } else {
         inference_futures.insert({model_instance,
                                   work_queue_->async(std::bind(&ManagerInfer::run_core_inference,
-                                                                this,
-                                                                model_instance,
-                                                                permodel_preprocess_data,
-                                                                permodel_output_data,
-                                                                cuda_stream))});
+                                                               this,
+                                                               model_instance,
+                                                               permodel_preprocess_data,
+                                                               permodel_output_data,
+                                                               cuda_stream))});
       }
     }
   }

@@ -64,11 +64,14 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
                    std::optional<int32_t> channels = std::nullopt,
                    const std::variant<std::string, py::dtype>& dtype = "uint8_t",
                    const std::string& tensor_name = "tensor",
-                   const std::string& name = "ping_tensor_tx")
+                   std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
+                   bool async_device_allocation = false, const std::string& name = "ping_tensor_tx")
       : PingTensorTxOp(ArgList{Arg{"storage_type", storage_type},
                                Arg{"rows", rows},
-                               Arg{"tensor_name", tensor_name}}) {
+                               Arg{"tensor_name", tensor_name},
+                               Arg{"async_device_allocation", async_device_allocation}}) {
     add_positional_condition_and_resource_args(this, args);
+    if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
     if (allocator.has_value()) { this->add_arg(Arg{"allocator", allocator.value()}); }
     if (batch_size.has_value()) { this->add_arg(Arg{"batch_size", batch_size.value()}); }
     if (batch_size.has_value()) { this->add_arg(Arg{"columns", columns.value()}); }
@@ -137,6 +140,8 @@ PYBIND11_MODULE(_ping_tensor_tx, m) {
                     std::optional<int32_t>,
                     const std::variant<std::string, py::dtype>,
                     const std::string&,
+                    std::shared_ptr<holoscan::CudaStreamPool>,
+                    bool,
                     const std::string&>(),
            "fragment"_a,
            "allocator"_a = py::none(),
@@ -147,6 +152,8 @@ PYBIND11_MODULE(_ping_tensor_tx, m) {
            "channels"_a = py::none(),
            "dtype"_a = "uint8_t"s,
            "tensor_name"_a = "tensor"s,
+           "cuda_stream_pool"_a = py::none(),
+           "async_device_allocation"_a = false,
            "name"_a = "video_stream_replayer"s,
            doc::PingTensorTxOp::doc_PingTensorTxOp);
 }  // PYBIND11_MODULE NOLINT

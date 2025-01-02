@@ -14,5 +14,6 @@
 # limitations under the License.
 
 add_subdirectory(clock)
+add_subdirectory(cuda_stream_pool)
 add_subdirectory(native)
 add_subdirectory(thread_pool)

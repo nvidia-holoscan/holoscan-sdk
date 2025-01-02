@@ -31,12 +31,14 @@ namespace inference {
 
 TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
                    const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
-                   bool enable_fp16, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out)
+                   bool enable_fp16, bool enable_cuda_graphs, bool is_engine_path, bool cuda_buf_in,
+                   bool cuda_buf_out)
     : model_path_(model_path),
       model_name_(model_name),
       trt_opt_profile_(trt_opt_profile),
       device_id_(device_id),
       enable_fp16_(enable_fp16),
+      enable_cuda_graphs_(enable_cuda_graphs),
       is_engine_path_(is_engine_path),
       cuda_buf_in_(cuda_buf_in),
       cuda_buf_out_(cuda_buf_out) {
@@ -337,7 +339,7 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
   }
 
   bool capturing_graph = false;
-  if (use_cuda_graph_) {
+  if (enable_cuda_graphs_) {
     // TRT works in two phases, the first phase can't be capture. Start capturing after the
     // first phase.
     // See https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#cuda-graphs for
@@ -349,16 +351,28 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
     first_phase_ = false;
   }
 
-  const bool infer_status = context_->enqueueV3(cuda_stream_);
+  bool infer_status = context_->enqueueV3(cuda_stream_);
   if (!infer_status) {
     if (capturing_graph) {
       // end the capture and destroy the graph when inference failed and we are capturing
       cudaGraph_t cuda_graph = nullptr;
       check_cuda(cudaStreamEndCapture(cuda_stream_, &cuda_graph));
       check_cuda(cudaGraphDestroy(cuda_graph));
+      capturing_graph = false;
+
+      // if inference failed with CUDA Graphs enabled, retry without
+      HOLOSCAN_LOG_WARN(
+          "TRT inference failed with CUDA Graphs enabled, retrying with without CUDA Graphs. "
+          "Consider disabling CUDA Graphs by setting the `enable_cuda_graphs` parameter to "
+          "`false`.");
+      enable_cuda_graphs_ = false;
+      infer_status = context_->enqueueV3(cuda_stream_);
     }
-    status.set_message(" TRT inference core: Inference failure.");
-    return status;
+
+    if (!infer_status) {
+      status.set_message(" TRT inference core: Inference failure.");
+      return status;
+    }
   }
 
   if (capturing_graph) {

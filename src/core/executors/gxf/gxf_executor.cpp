@@ -264,6 +264,7 @@ GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
     // }
     own_gxf_context_ = true;
     extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
+    extension_manager_->refresh();
     // Register extensions for holoscan (GXFWrapper codelet)
     register_extensions();
 
@@ -356,7 +357,7 @@ void GXFExecutor::run(OperatorGraph& graph) {
 std::future<void> GXFExecutor::run_async(OperatorGraph& graph) {
   if (!is_gxf_graph_initialized_) { initialize_gxf_graph(graph); }
 
-  return std::async(std::launch::async, [this, &graph]() {
+  return std::async(std::launch::async, [this]() {
     // Note that run_gxf_graph() can raise an exception.
     this->run_gxf_graph();
   });
@@ -374,6 +375,7 @@ void GXFExecutor::interrupt() {
 void GXFExecutor::context(void* context) {
   context_ = context;
   extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
+  extension_manager_->refresh();
 }
 
 std::shared_ptr<ExtensionManager> GXFExecutor::extension_manager() {
@@ -679,7 +681,7 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
 
         // vector with a single receiver corresponding to this IOSpec
         std::vector<std::shared_ptr<GXFResource>> receivers({connector});
-        multi_message_timeout_condition->receivers(receivers);
+        multi_message_timeout_condition->receivers(std::move(receivers));
         multi_message_timeout_condition->name(cond_name);
         multi_message_timeout_condition->fragment(fragment);
         auto rx_condition_spec = std::make_shared<ComponentSpec>(fragment);
@@ -1165,7 +1167,7 @@ void GXFExecutor::connect_broadcast_to_previous_op(
                 std::dynamic_pointer_cast<DoubleBufferTransmitter>(prev_connector);
             if (prev_ucx_connector) {
               prev_connector_capacity = prev_ucx_connector->capacity_;
-              prev_connector_capacity = prev_ucx_connector->policy_;
+              prev_connector_policy = prev_ucx_connector->policy_;
             } else {
               HOLOSCAN_LOG_ERROR(
                   "Failed to cast connector to DoubleBufferTransmitter, using default capacity and "
@@ -1676,7 +1678,8 @@ bool GXFExecutor::initialize_fragment() {
 
   // Finish initialization of any thread pools after all operators have been initialized.
   if (!fragment_->thread_pools_.empty()) {
-    if (typeid(*fragment_->scheduler()) == typeid(GreedyScheduler)) {
+    auto scheduler = fragment_->scheduler();
+    if (std::dynamic_pointer_cast<GreedyScheduler>(scheduler) != nullptr) {
       HOLOSCAN_LOG_WARN(
           "The GreedyScheduler does not support thread pools. The thread pools defined by this "
           "application will be ignored. To use thread pools, switch to either the "
@@ -1833,6 +1836,10 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   }
 
   HOLOSCAN_LOG_TRACE("Configuring operator: {}", op->name());
+
+  // Must call this method AFTER the GXFExecutor::create_input_port calls above so that the
+  // receivers have already been created.
+  op->update_connector_arguments();
 
   // add Component(s) and/or Resource(s) added as Arg/ArgList to the graph entity
   add_component_args_to_graph_entity(op->args(), op->graph_entity());
@@ -2320,7 +2327,7 @@ bool GXFExecutor::initialize_scheduler(Scheduler* sch) {
   // op_eid_ and op_cid_ will only be nonzero if OperatorWrapper wraps a codelet created by GXF.
   // (i.e. this executor belongs to a GXF application using a Holoscan operator as a codelet)
   // In that case GXF we do not create a GraphEntity or a Component for the scheduler.
-  gxf_uid_t eid = op_eid_;
+  gxf_uid_t eid{};
   gxf_uid_t scheduler_cid = op_cid_;
   if (is_holoscan()) {
     const std::string scheduler_entity_name = fmt::format("{}{}", entity_prefix_, sch->name());
@@ -2364,7 +2371,6 @@ bool GXFExecutor::initialize_network_context(NetworkContext* network_context) {
   // op_eid_ and op_cid_ will only be nonzero if OperatorWrapper wraps a codelet created by GXF.
   // (i.e. this executor belongs to a GXF application using a Holoscan operator as a codelet)
   // In that case GXF we do not create a GraphEntity or a Component for the network context.
-  gxf_uid_t eid = op_eid_;
   gxf_uid_t network_context_cid = op_cid_;
   if (is_holoscan()) {
     const std::string network_context_entity_name =
@@ -2376,7 +2382,7 @@ bool GXFExecutor::initialize_network_context(NetworkContext* network_context) {
       throw std::runtime_error(fmt::format("Failed to create entity for network context: '{}'",
                                            network_context_entity_name));
     }
-    eid = network_context_entity_->eid();
+    auto eid = network_context_entity_->eid();
     // Set the entity id and graph entity shared pointer
     gxf_network_context->gxf_graph_entity(network_context_entity_);
     gxf_network_context->gxf_eid(eid);

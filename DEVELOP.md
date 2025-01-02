@@ -84,7 +84,7 @@ To build the Holoscan SDK on a local environment, the following versions of dev 
 | CUDA | 12.6 | Core SDK | base |
 | gRPC | 1.54.2 | Core SDK | grpc-builder |
 | UCX | 1.17.0 | Core SDK | base |
-| GXF | 4.1 | Core SDK | gxf-downloader |
+| GXF | 4.1.1 | Core SDK | gxf-downloader |
 | MOFED | 24.07 | ConnectX | mofed-installer |
 | TensorRT | 10.3 | Inference operator | base |
 | NVPL | 24.03 | LibTorch | build |

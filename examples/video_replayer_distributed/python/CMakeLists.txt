@@ -65,13 +65,12 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT video_replayer_distributed_test.py
-    PRE_LINK
     COMMAND patch -u -o video_replayer_distributed_test.py ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer_distributed.py
       ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/video_replayer/python_video_replayer_distributed.patch
   )
 
   add_custom_target(python_video_replayer_distributed_test ALL
-    DEPENDS "video_replayer_distributed_test.py"
+    DEPENDS video_replayer_distributed_test.py
   )
 
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_TEST

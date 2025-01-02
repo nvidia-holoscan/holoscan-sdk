@@ -75,6 +75,11 @@ Required parameters and related features available with the Holoscan Inference M
         - If `backend` is set to `onnx` or `trt` if the input models are in __onnx__ format, then you can generate the engine file with fp16 option to accelerate inferencing.
         - It takes few minutes to generate the engine files for the first time.
         - It can be either `true` or `false`. Default value is `false`.
+    - `enable_cuda_graphs`: Enable usage of CUDA Graphs for backends which support it.
+        - Enabled by default for the TensorRT backend.
+        - Using CUDA Graphs reduces CPU launch costs and enables optimizations which might not be possible with the piecewise work submission mechanism of streams.
+        - Models including loops or conditions are not supported with CUDA Graphs. For these models usage of CUDA Graphs needs to be disabled.
+        - It can be either `true` or `false`. Default value is `true`.
     - `is_engine_path`: if the input models are specified in __trt engine format__ in `model_path_map`, this flag must be set to `true`. Default value is `false`.
     - `in_tensor_names`: Input tensor names to be used by `pre_processor_map`. This parameter is optional. If absent in the parameter map, values are derived from `pre_processor_map`.
     - `out_tensor_names`: Output tensor names to be used by `inference_map`. This parameter is optional. If absent in the parameter map, values are derived from `inference_map`.

@@ -169,12 +169,21 @@ void InferenceOp::setup(OperatorSpec& spec) {
   spec.param(is_engine_path_, "is_engine_path", "Input path is engine file", "", false);
 
   spec.param(enable_fp16_, "enable_fp16", "Use fp16", "Use fp16.", false);
+  spec.param(enable_cuda_graphs_,
+             "enable_cuda_graphs",
+             "Use CUDA graphs",
+             "Enable usage of CUDA Graphs for backends which support it.",
+             true);
   spec.param(input_on_cuda_, "input_on_cuda", "Input buffer on CUDA", "", true);
   spec.param(output_on_cuda_, "output_on_cuda", "Output buffer on CUDA", "", true);
   spec.param(transmit_on_cuda_, "transmit_on_cuda", "Transmit message on CUDA", "", true);
 
   spec.param(parallel_inference_, "parallel_inference", "Parallel inference", "", true);
-  cuda_stream_handler_.define_params(spec);
+  spec.param(cuda_stream_pool_,
+             "cuda_stream_pool",
+             "CUDA Stream Pool",
+             "Instance of gxf::CudaStreamPool.",
+             ParameterFlag::kOptional);
 }
 
 void InferenceOp::initialize() {
@@ -212,7 +221,8 @@ void InferenceOp::start() {
                                                     parallel_inference_.get(),
                                                     enable_fp16_.get(),
                                                     input_on_cuda_.get(),
-                                                    output_on_cuda_.get());
+                                                    output_on_cuda_.get(),
+                                                    enable_cuda_graphs_.get());
     HOLOSCAN_LOG_INFO("Inference Specifications created");
     // Create holoscan inference context
     holoscan_infer_context_ = std::make_unique<HoloInfer::InferContext>();
@@ -246,16 +256,23 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
   auto cont = context.context();
   try {
     // Extract relevant data from input GXF Receivers, and update inference specifications
+    // (cuda_stream will be set by get_data_per_model)
+    cudaStream_t cuda_stream{};
     gxf_result_t stat = holoscan::utils::get_data_per_model(op_input,
                                                             in_tensor_names_.get(),
                                                             inference_specs_->data_per_tensor_,
                                                             dims_per_tensor_,
                                                             input_on_cuda_.get(),
                                                             module_,
-                                                            cont,
-                                                            cuda_stream_handler_);
+                                                            cuda_stream);
 
     if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Tick, Data extraction"); }
+
+    // Transmit this stream on the output port if needed
+    if (cuda_stream != cudaStreamDefault && output_on_cuda_.get()) {
+      HOLOSCAN_LOG_TRACE("InferenceOp: forwarding CUDA stream from receivers input to output");
+      op_output.set_cuda_stream(cuda_stream, "transmitter");
+    }
 
     // check for tensor validity the first time
     if (validate_tensor_dimensions_) {
@@ -275,8 +292,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
 
     inference_specs_->set_activation_map(activation_map_.get().get_map());
 
-    auto status = holoscan_infer_context_->execute_inference(
-        inference_specs_, cuda_stream_handler_.get_cuda_stream(cont));
+    auto status = holoscan_infer_context_->execute_inference(inference_specs_, cuda_stream);
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, "Inference Operator: Inference execution");
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
@@ -299,7 +315,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
                                                     transmit_on_cuda_.get(),
                                                     allocator.value(),
                                                     module_,
-                                                    cuda_stream_handler_);
+                                                    cuda_stream);
     if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Compute, Data Transmission"); }
   } catch (const std::runtime_error& r_) {
     HoloInfer::raise_error(module_,

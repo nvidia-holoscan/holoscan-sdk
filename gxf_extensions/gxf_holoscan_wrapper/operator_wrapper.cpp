@@ -99,6 +99,12 @@ gxf_result_t OperatorWrapper::initialize() {
 
           gxf_tid_t condition_tid{};
           gxf_result_t code = GxfComponentType(context(), condition_cid, &condition_tid);
+          if (code != GXF_SUCCESS) {
+            HOLOSCAN_LOG_ERROR("Failed to get component type for component id '': {}",
+                               condition_cid,
+                               GxfResultStr(code));
+            continue;
+          }
 
           gxf_tid_t boolean_condition_tid{};
           GxfComponentTypeId(
@@ -114,7 +120,12 @@ gxf_result_t OperatorWrapper::initialize() {
                                        condition_cid,
                                        condition_tid,
                                        reinterpret_cast<void**>(&boolean_condition_ptr));
-
+            if (code != GXF_SUCCESS) {
+              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
+                                 condition_cid,
+                                 GxfResultStr(code));
+              continue;
+            }
             if (boolean_condition_ptr) {
               auto condition =
                   std::make_shared<holoscan::BooleanCondition>(tag, boolean_condition_ptr);
@@ -126,7 +137,12 @@ gxf_result_t OperatorWrapper::initialize() {
                                        condition_cid,
                                        condition_tid,
                                        reinterpret_cast<void**>(&async_condition_ptr));
-
+            if (code != GXF_SUCCESS) {
+              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
+                                 condition_cid,
+                                 GxfResultStr(code));
+              continue;
+            }
             if (async_condition_ptr) {
               auto condition =
                   std::make_shared<holoscan::AsynchronousCondition>(tag, async_condition_ptr);
@@ -155,7 +171,12 @@ gxf_result_t OperatorWrapper::initialize() {
 
           gxf_tid_t resource_tid{};
           gxf_result_t code = GxfComponentType(context(), resource_cid, &resource_tid);
-
+          if (code != GXF_SUCCESS) {
+            HOLOSCAN_LOG_ERROR("Failed to get GXF component type for component id '': {}",
+                               resource_cid,
+                               GxfResultStr(code));
+            continue;
+          }
           gxf_tid_t unbounded_allocator_tid{};
           GxfComponentTypeId(
               context(), "nvidia::gxf::UnboundedAllocator", &unbounded_allocator_tid);
@@ -172,7 +193,12 @@ gxf_result_t OperatorWrapper::initialize() {
                                        resource_cid,
                                        resource_tid,
                                        reinterpret_cast<void**>(&unbounded_allocator_ptr));
-
+            if (code != GXF_SUCCESS) {
+              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
+                                 resource_cid,
+                                 GxfResultStr(code));
+              continue;
+            }
             if (unbounded_allocator_ptr) {
               auto resource =
                   std::make_shared<holoscan::UnboundedAllocator>(tag, unbounded_allocator_ptr);
@@ -184,7 +210,12 @@ gxf_result_t OperatorWrapper::initialize() {
                                        resource_cid,
                                        resource_tid,
                                        reinterpret_cast<void**>(&block_memory_pool_ptr));
-
+            if (code != GXF_SUCCESS) {
+              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
+                                 resource_cid,
+                                 GxfResultStr(code));
+              continue;
+            }
             if (block_memory_pool_ptr) {
               auto resource =
                   std::make_shared<holoscan::BlockMemoryPool>(tag, block_memory_pool_ptr);
@@ -196,7 +227,12 @@ gxf_result_t OperatorWrapper::initialize() {
                                        resource_cid,
                                        resource_tid,
                                        reinterpret_cast<void**>(&cuda_stream_pool_ptr));
-
+            if (code != GXF_SUCCESS) {
+              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
+                                 resource_cid,
+                                 GxfResultStr(code));
+              continue;
+            }
             if (cuda_stream_pool_ptr) {
               auto resource = std::make_shared<holoscan::CudaStreamPool>(tag, cuda_stream_pool_ptr);
               op_->add_arg(Arg(param_ptr->key()) = resource);

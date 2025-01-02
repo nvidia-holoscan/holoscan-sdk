@@ -34,7 +34,7 @@ TEST(ArgumentSetter, TestArgumentSetterInstance) {
   ArgumentSetter instance = ArgumentSetter::get_instance();
 
   // call static ensure_type method
-  ArgumentSetter::ensure_type<float>;
+  ArgumentSetter::ensure_type<float>;  // NOLINT(clang-diagnostic-unused-value)
 
   // get the setter corresponding to float
   float f = 1.0;

@@ -61,6 +61,43 @@ data : object
 
 )doc")
 
+PYDOC(receive_cuda_stream, R"doc(
+Receive the CUDA stream associated with the specified input port.
+
+Parameters
+----------
+input_port_name : str, optional
+	The name of the input port to receive the object from.
+allocate : bool, optional
+	If True, the operator should allocate its own CUDA stream and synchronize any incoming streams
+	to it. The stream returned by this function is then the internally, allocated stream.
+
+Returns
+-------
+stream_ptr : int
+	The memory address of the underlying cudaStream_t.
+
+)doc")
+
+PYDOC(receive_cuda_streams, R"doc(
+Receive a list of CUDA streams associated with the specified input port.
+
+The size of the list will be equal to the number of messages received on the port. For messages
+not containing a CudaStream, the corresponding entry in the list will be ``None``.
+
+Parameters
+----------
+input_port_name : str, optional
+	The name of the input port to receive the object from.
+
+Returns
+-------
+stream_ptrs : list[int]
+	The memory addresses of the underlying cudaStream_t for each message. For any messages without
+	a stream, the list will contain None.
+
+)doc")
+
 }  // namespace InputContext
 
 namespace OutputContext {
@@ -95,6 +132,18 @@ emitter_name : str, optional
 	currently registered type names, call ``holoscan.core.io_type_registry.registered_types()``.
 )doc")
 
+PYDOC(set_cuda_stream, R"doc(
+Specify a CUDA stream to be emitted along with any data on the specified output port.
+
+Parameters
+----------
+stream_ptr : int
+	The memory address of the underlying cudaStream_t to be emitted.
+output_port_name : str, optional
+	The name of the output port to emit the stream on. Can be unspecified if there is only a single
+	output port on the operator.
+)doc")
+
 }  // namespace OutputContext
 
 namespace EmitterReceiverRegistry {
@@ -116,4 +165,4 @@ names : list of str
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_CORE_IO_CONTEXT_PYDOC_HPP
+#endif /* PYHOLOSCAN_CORE_IO_CONTEXT_PYDOC_HPP */

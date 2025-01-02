@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +59,7 @@ void ConvertR8G8B8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src, s
                          (height + (block_dim.y - 1)) / block_dim.y);
   ConvertR8G8B8ToR8G8B8A8Kernel<<<launch_grid, block_dim, 0, stream>>>(
       width, height, reinterpret_cast<const uint8_t*>(src), src_pitch, dst_surface.get(), alpha);
+  CudaRTCheck(cudaPeekAtLastError());
 }
 
 namespace {
@@ -95,6 +96,7 @@ void ConvertB8G8R8A8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src,
       src_pitch,
       reinterpret_cast<uint8_t*>(dst),
       dst_pitch);
+  CudaRTCheck(cudaPeekAtLastError());
 }
 
 }  // namespace holoscan::viz

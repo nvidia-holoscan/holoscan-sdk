@@ -57,9 +57,27 @@ The following table gives a rough categorization of the available condition type
 | BooleanCondition                       | execution-driven | operator as a whole            |
 | AsynchronousCondition                  | execution-driven | operator as a whole            |
 
-Here, the various message-driven conditions are associated with an input port (receiver) or output port (transmitter). Message-driven conditions that are associated with a single input port are assigned via the `IOSpec::condition` method ({cpp:func}`C++ <holoscan::IOSPec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method. Those associated with multiple input ports would instead be assigned via the `OperatorSpec::multi_port_condition` method ({cpp:func}`C++ <holoscan::OperatorSpec::multi_port_condition>`/{py:func}`Python <holoscan.core.OperatorSpec.multi_port_condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method.
+Here, the various message-driven conditions are associated with an input port (receiver) or output port (transmitter). Message-driven conditions that are associated with a single input port are typically assigned via the `IOSpec::condition` method ({cpp:func}`C++ <holoscan::IOSPec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method. Those associated with multiple input ports would instead be assigned via the `OperatorSpec::multi_port_condition` method ({cpp:func}`C++ <holoscan::OperatorSpec::multi_port_condition>`/{py:func}`Python <holoscan.core.OperatorSpec.multi_port_condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method.
 
 All other condition types are typically passed as either a positional or keyword argument during operator construction in the application's `compose` method (i.e. passed to {cpp:func}`~holoscan::Fragment::make_operator` in C++ or the operator class's constructor in Python). Once these conditions are assigned, they automatically enforce the associated criteria for that transmitter/receiver as part of the conditions controlling whether the operator will call `compute`. Due to the AND combination of conditions discussed above, all ports must meet their associated conditions in order for an operator to call `compute`.
+
+As of Holoscan v2.8, it is also possible to add a message-based condition that takes a "receiver" or "transmitter" argument as a positional argument to `Fragment::make_operator` (C++) or the operator's constructor (Python). Any "receiver" or "transmitter" parameter of the condition should be specified via a string-valued argument that takes the name of the port to which the condition would apply. The SDK will then take care of automatically swapping in the actual underlying `Receiver` or `Transmitter` object used by the named port when the application is run. As a concrete example, if the `setup` method of an operator had set a `ConditionType::kNone` (C++) condition on an input port, but we want to add a `MessageAvailableCondition` without modifying that setup method. This could be done via:
+
+```cpp
+// assuming that an operator has an input port named "in1" we could explicitly create a condition for this port via
+auto in1_condition = make_condition<MessageAvailableCondition>("in1_condition",
+                                                               Arg("min_size_", static_cast<uint64_t>(1)),
+                                                               Arg("receiver", "in1"));
+// then `in1_condition` can be passed as an argument to the `Fragment::make_operator` call for the operator
+```
+
+or equivalently, in Python
+```py
+# assuming that an operator has an input port named "in1" we could explicitly create a condition for this port via
+in1_condition = MessageAvailableCondition(fragment, name="in1_condition", min_size=1, receiver="in");
+
+# then in1_condition can be passed as a positional argument to the operator's constructor
+```
 
 The `PeriodicCondition` is clock-driven. It automatically takes effect based on timing from it's associated clock. The `CountCondition` is another condition type that automatically takes effect, stopping execution of an operator after a specified count is reached.
 

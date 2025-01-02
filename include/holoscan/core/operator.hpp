@@ -683,6 +683,12 @@ class Operator : public ComponentBase {
   /// Update parameters based on the specified arguments
   void update_params_from_args();
 
+  /** @brief Replace any "receiver" supplied as a string with the actual receiver of that name
+   *
+   * Can only be called after GXFExecutor::create_input_port so the input ports (receivers) exist.
+   */
+  void update_connector_arguments();
+
   /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
   virtual void set_parameters();
 

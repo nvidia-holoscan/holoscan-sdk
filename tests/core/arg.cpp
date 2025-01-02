@@ -243,6 +243,24 @@ TEST(Arg, TestIOSpec) {
   check_arg_types(spec_arg, ArgElementType::kIOSpec, ArgContainerType::kNative);
 }
 
+TEST(Arg, TestCharPtrAsString) {
+  Arg char_array_arg{"receiver", "in"};
+  check_arg_types(char_array_arg, ArgElementType::kString, ArgContainerType::kNative);
+  EXPECT_EQ(std::any_cast<std::string>(char_array_arg.value()), std::string("in"));
+
+  const char* out1_char = "out";
+  Arg char_array_arg2{"transmitter", out1_char};
+  check_arg_types(char_array_arg2, ArgElementType::kString, ArgContainerType::kNative);
+  EXPECT_EQ(std::any_cast<std::string>(char_array_arg2.value()), std::string(out1_char));
+}
+
+TEST(Arg, TestCharPtrAssignment) {
+  Arg char_array_arg("receiver");
+  char_array_arg = "in";
+  check_arg_types(char_array_arg, ArgElementType::kString, ArgContainerType::kNative);
+  EXPECT_EQ(std::any_cast<std::string>(char_array_arg.value()), std::string("in"));
+}
+
 TEST(Arg, TestArgDescription) {
   for (const auto& [name, value, str_list] : arg_params) {
     Arg arg = Arg(name);

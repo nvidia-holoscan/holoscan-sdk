@@ -31,7 +31,7 @@ import yaml
 try:
     from registry.core.version import GXF_CORE_COMPATIBLE_VERSION, REGISTRY_CORE_VERSION
 except ImportError:
-    GXF_CORE_COMPATIBLE_VERSION = "4.1.0"
+    GXF_CORE_COMPATIBLE_VERSION = "4.2.0"
     REGISTRY_CORE_VERSION = "1.1"
 
 # Configure the logger

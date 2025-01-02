@@ -151,11 +151,14 @@ class PyOperator : public Operator {
                ExecutionContext& context) override;
 
  private:
-  py::object py_op_ = py::none();          ///> cache the Python operator
-  py::object py_initialize_ = py::none();  ///> cache the initialize method
-  py::object py_start_ = py::none();       ///> cache the start method
-  py::object py_stop_ = py::none();        ///> cache the stop method
-  py::object py_compute_ = py::none();     ///> cache the compute method
+  py::object py_op_ = py::none();                               ///> cache the Python operator
+  py::object py_initialize_ = py::none();                       ///> cache the initialize method
+  py::object py_start_ = py::none();                            ///> cache the start method
+  py::object py_stop_ = py::none();                             ///> cache the stop method
+  py::object py_compute_ = py::none();                          ///> cache the compute method
+  std::shared_ptr<holoscan::PyInputContext> py_op_input_{};     ///> cache the PyInputContext
+  std::shared_ptr<holoscan::PyOutputContext> py_op_output_{};   ///> cache the PyOutputContext
+  std::shared_ptr<holoscan::PyExecutionContext> py_context_{};  ///> cache the PyExecutionContext
 
   /// Python application pointer to access the trace/profile functions
   PyApplication* py_app_ = nullptr;

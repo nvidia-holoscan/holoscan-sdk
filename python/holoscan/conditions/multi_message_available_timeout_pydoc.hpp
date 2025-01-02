@@ -51,16 +51,29 @@ execution_frequency : std::string
 sampling_mode : {"SumOfAll", "PerReceiver"} or MultiMessageAvailableTimeoutCondition.SamplingMode, optional
     The sampling method to use when checking for messages in receiver queues.
 min_sum : int, optional
-    The scheduling term permits execution if the sum of message counts of all receivers have at
+    The condition permits execution if the sum of message counts of all receivers has at
     least the given number of messages available. This option is only intended for use with
     "SumOfAll" `sampling_mode`.
 min_sizes : list of int, optional
-    The scheduling term permits execution if all given receivers have at least the given number of
+    The condition permits execution if all given receivers have at least the given number of
     messages available in this list. This option is only intended for use with
     "PerReceiver" `sampling_mode`. The length of `min_sizes` must match the
     number of receivers associated with the condition.
 name : str, optional
     The name of the condition.
+
+Notes
+-----
+This condition is typically set via the `Operator.multi_port_condition` method using
+`ConditionType.MULTI_MESSAGE_AVAILABLE_TIMEOUT`. The "receivers" argument must be set
+based on the input port names as described in the "Parameters" section.
+
+This condition can also be used on a single port as a way to have a message-available condition
+that also supports a timeout interval. For this single input port use case, the condition can be
+added within `Operator.setup` using the `IOSpec.condition` method with condition type
+`ConditionType.MULTI_MESSAGE_AVAILABLE_TIMEOUT`. In this case, the input port is already known
+from the `IOSpec` object, so the "receivers" argument is unnecessary.
+
 )doc")
 
 PYDOC(receivers, R"doc(

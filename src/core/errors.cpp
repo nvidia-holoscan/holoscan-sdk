@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,7 @@ const char* RuntimeError::ErrorStrings[] = {
     "Invalid argument",              // 4
     "Not found",                     // 5
     "Duplicate name",                // 6
+    "Not Implemented",               // 7
 };
 
 RuntimeError::RuntimeError(holoscan::ErrorCode error_code)

@@ -95,6 +95,8 @@ transmit_on_cuda : bool, optional
     Whether to transmit the message on the GPU. Default value is ``True``.
 enable_fp16 : bool, optional
     Use 16-bit floating point computations. Default value is ``False``.
+enable_cuda_graphs : bool, optional
+    Use CUDA Graphs. Default value is ``True``.
 is_engine_path : bool, optional
     Whether the input model path mapping is for trt engine files. Default value is ``False``.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional

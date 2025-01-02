@@ -21,8 +21,11 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
+#include "../expected.hpp"
 #include "../io_context.hpp"
+#include "./gxf_cuda.hpp"
 #include "gxf/core/handle.hpp"
 #include "gxf/std/receiver.hpp"
 
@@ -61,9 +64,49 @@ class GXFInputContext : public InputContext {
    */
   gxf_context_t gxf_context() const;
 
+  /** @brief Synchronize any streams found on this port to the operator's internal CUDA stream.
+   *
+   * The `receive` method must have been called for `input_port_name` prior to calling this method
+   * in order for any received streams to be found. This method will call `cudaSetDevice` to make
+   * the device corresponding to the operator's internal stream current.
+   *
+   * If no `CudaStreamPool` resource was available on the operator, the operator will not have an
+   * internal stream. In that case, the first stream received on the input port will be returned
+   * and any additional streams on the input will have been synchronized to it. If no streams were
+   * found on the input and no `CudaStreamPool` resource was available, `cudaStreamDefault` is
+   * returned.
+   *
+   * @param input_port_name The name of the input port. Can be omitted if the operator only has a
+   * single input port.
+   * @param allocate Whether to allocate a new stream if no stream is found. If false or the
+   * operator does not have a `cuda_stream_pool` parameter set, returns cudaStreamDefault.
+   * @param sync_to_default Whether to also synchronize any received streams to the default stream.
+   * @returns The operator's internal CUDA stream, when possible. Returns `cudaStreamDefault`
+   * instead if no CudaStreamPool resource was available and no stream was found on the input port.
+   */
+  cudaStream_t receive_cuda_stream(const char* input_port_name = nullptr, bool allocate = true,
+                                   bool sync_to_default = false) override;
+
+  /** @brief Retrieve the CUDA streams found an input port.
+   *
+   * This method is intended for advanced use cases where it is the users responsibility to
+   * manage any necessary stream synchronization. In most cases, it is recommended to use
+   * `receive_cuda_stream` instead.
+   *
+   * @param input_port_name The name of the input port. Can be omitted if the operator only has a
+   * single input port.
+   * @returns Vector of (optional) cudaStream_t. The length of the vector will match the number of
+   * messages on the input port. Any messages that do not contain a stream will have value of
+   * std::nullopt.
+   */
+  std::vector<std::optional<cudaStream_t>> receive_cuda_streams(
+      const char* input_port_name = nullptr) override;
+
  protected:
   bool empty_impl(const char* name = nullptr) override;
   std::any receive_impl(const char* name = nullptr, bool no_error_message = false) override;
+
+  gxf_result_t retrieve_cuda_streams(nvidia::gxf::Entity& message, const std::string& input_name);
 };
 
 /**
@@ -96,6 +139,18 @@ class GXFOutputContext : public OutputContext {
    * @return The pointer to the GXF context.
    */
   gxf_context_t gxf_context() const;
+
+  /**
+   * @brief Set a stream to be emitted on a given output port.
+   *
+   * The actual creation of the stream component in the output message will occur on any subsequent
+   * `emit` calls on this output port, so the call to this function should occur prior to the
+   * `emit` call(s) for a given port.
+   *
+   * @param stream The CUDA stream
+   * @param output_port_name The name of the output port.
+   */
+  void set_cuda_stream(const cudaStream_t stream, const char* output_port_name = nullptr) override;
 
  protected:
   void emit_impl(std::any data, const char* name = nullptr,

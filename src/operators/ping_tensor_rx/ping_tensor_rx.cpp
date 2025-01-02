@@ -22,7 +22,6 @@
 #include <string>
 
 namespace holoscan::ops {
-
 void PingTensorRxOp::setup(OperatorSpec& spec) {
   spec.input<TensorMap>("in");
 }
@@ -34,6 +33,18 @@ void PingTensorRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputCont
     HOLOSCAN_LOG_ERROR("Failed to receive message from port 'in'");
     return;
   }
+  cudaStream_t stream = op_input.receive_cuda_stream("in", false);
+
+  HOLOSCAN_LOG_INFO("{} received {}default CUDA stream from port 'in'",
+                    name(),
+                    stream == cudaStreamDefault ? "" : "non-");
+
+  // have this operator wait for any work on the stream to complete
+  cudaError_t status = cudaStreamSynchronize(stream);
+  if (status != cudaSuccess) {
+    HOLOSCAN_LOG_ERROR("Failed to synchronize stream: {}", cudaGetErrorString(status));
+  }
+
   auto in_message = maybe_in_message.value();
   // Loop over any tensors found, printing their names and shapes.
   for (auto& [key, tensor] : in_message) {

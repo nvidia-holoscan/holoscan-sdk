@@ -47,9 +47,21 @@ namespace holoscan {
  * @brief Condition class to indicate data availability on CUDA stream completion via an event.
  *
  * A condition which specifies the availability of data at the receiver on completion of the
- * work on the provided cuda stream with the help of cuda event.
- * This condition will keep polling on the event provided to check for data availability for
- * consumption.
+ * work on the provided cuda stream with the help of cuda event. This condition will keep polling
+ * on the event provided to check for data availability for consumption.
+ *
+ * This condition applies to a specific input port of the operator as determined by setting the
+ * "receiver" argument.
+ *
+ * **Note:** The nvidia::gxf::CudaEvent class is currently unused by Holoscan SDK. This condition is
+ * intended exclusively for interoperation with wrapped GXF Codelets that use GXF's CudaEvent type.
+ *
+ * ==Parameters==
+ *
+ * - **receiver** (std::string): The receiver to check for a CudaEvent. This should be specified
+ * by the name of the Operator's input port the condition will apply to. The Holoscan SDK will then
+ * automatically replace the port name with the actual receiver object at application run time.
+ * - **event_name** (std::string): The name of the CUDA event to wait on.
  */
 class CudaEventCondition : public gxf::GXFCondition {
  public:

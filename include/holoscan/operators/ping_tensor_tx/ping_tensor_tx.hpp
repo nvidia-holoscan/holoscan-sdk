@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_PING_TENSOR_TX_HPP
-#define HOLOSCAN_OPERATORS_PING_TENSOR_TX_HPP
+#ifndef HOLOSCAN_OPERATORS_PING_TENSOR_TX_PING_TENSOR_TX_HPP
+#define HOLOSCAN_OPERATORS_PING_TENSOR_TX_PING_TENSOR_TX_HPP
 
 #include <memory>
 #include <string>
@@ -96,8 +96,10 @@ class PingTensorTxOp : public Operator {
   Parameter<int32_t> channels_{0};
   Parameter<std::string> data_type_{"uint8_t"};
   Parameter<std::string> tensor_name_{"tensor"};
+  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
+  Parameter<bool> async_device_allocation_{false};
 };
 
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_PING_TENSOR_TX_HPP */
+#endif /* HOLOSCAN_OPERATORS_PING_TENSOR_TX_PING_TENSOR_TX_HPP */

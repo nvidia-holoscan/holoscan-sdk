@@ -18,7 +18,13 @@
 #ifndef HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 #define HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 
+#include <string>
+#include <vector>
+
 #include "./common.hpp"
+#include "./errors.hpp"
+#include "./expected.hpp"
+#include "./gxf/gxf_cuda.hpp"
 #include "./io_context.hpp"
 
 namespace holoscan {
@@ -57,6 +63,17 @@ class ExecutionContext {
    * @return The pointer to the context.
    */
   void* context() const { return context_; }
+
+  /// @brief allocate a new GXF CudaStream object and return the contained cudaStream_t
+  virtual expected<cudaStream_t, RuntimeError> allocate_cuda_stream(
+      const std::string& stream_name = "") = 0;
+
+  /// @brief synchronize all of the streams in cuda_streams with target_cuda_stream
+  virtual void synchronize_streams(const std::vector<std::optional<cudaStream_t>>& cuda_streams,
+                                   cudaStream_t target_cuda_stream) = 0;
+
+  /// @brief determine the CUDA device corresponding to the given stream
+  virtual expected<int, RuntimeError> device_from_stream(cudaStream_t stream) = 0;
 
  protected:
   InputContext* input_context_ = nullptr;    ///< The input context.

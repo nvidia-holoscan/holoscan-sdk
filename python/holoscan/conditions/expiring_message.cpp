@@ -17,6 +17,7 @@
 
 #include <pybind11/chrono.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <chrono>
 #include <cstdint>
@@ -56,6 +57,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
   explicit PyExpiringMessageAvailableCondition(
       Fragment* fragment, int64_t max_batch_size, int64_t max_delay_ns,
       std::shared_ptr<Clock> clock = nullptr,
+      std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, max_delay_ns) {
     name_ = name;
@@ -65,7 +67,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     } else {
       this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
     }
-    // Note "receiver" parameter is set automatically from GXFExecutor
+    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -75,6 +77,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
       Fragment* fragment, int64_t max_batch_size,
       std::chrono::duration<Rep, Period> recess_period_duration,
       std::shared_ptr<Clock> clock = nullptr,
+      std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, recess_period_duration) {
     name_ = name;
@@ -84,6 +87,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     } else {
       this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
     }
+    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // Note "receiver" parameter is set automatically from GXFExecutor
     setup(*spec_);
@@ -101,21 +105,29 @@ void init_expiring_message_available(py::module_& m) {
       // TODO(unknown): sphinx API doc build complains if more than one
       // ExpiringMessageAvailableCondition init method has a docstring specified. For now just set
       // the docstring for the overload using datetime.timedelta for the max_delay.
-      .def(py::init<Fragment*, int64_t, int64_t, std::shared_ptr<Clock>, const std::string&>(),
-           "fragment"_a,
-           "max_batch_size"_a,
-           "max_delay_ns"_a,
-           "clock"_a = py::none(),
-           "name"_a = "noname_expiring_message_available_condition"s)
       .def(py::init<Fragment*,
                     int64_t,
-                    std::chrono::nanoseconds,
+                    int64_t,
                     std::shared_ptr<Clock>,
+                    std::optional<const std::string>,
                     const std::string&>(),
            "fragment"_a,
            "max_batch_size"_a,
            "max_delay_ns"_a,
            "clock"_a = py::none(),
+           "receiver"_a = py::none(),
+           "name"_a = "noname_expiring_message_available_condition"s)
+      .def(py::init<Fragment*,
+                    int64_t,
+                    std::chrono::nanoseconds,
+                    std::shared_ptr<Clock>,
+                    std::optional<const std::string>,
+                    const std::string&>(),
+           "fragment"_a,
+           "max_batch_size"_a,
+           "max_delay_ns"_a,
+           "clock"_a = py::none(),
+           "receiver"_a = py::none(),
            "name"_a = "noname_expiring_message_available_condition"s,
            doc::ExpiringMessageAvailableCondition::doc_ExpiringMessageAvailableCondition)
       .def_property("receiver",

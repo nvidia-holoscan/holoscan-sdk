@@ -161,6 +161,7 @@ add_holoscan_library(core
     core/gxf/gxf_component.cpp
     core/gxf/gxf_component_info.cpp
     core/gxf/gxf_condition.cpp
+    core/gxf/gxf_cuda.cpp
     core/gxf/gxf_execution_context.cpp
     core/gxf/gxf_extension_manager.cpp
     core/gxf/gxf_io_context.cpp

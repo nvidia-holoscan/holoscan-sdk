@@ -108,6 +108,7 @@ void GenDepthMapCoords(ImageFormat depth_format, uint32_t width, uint32_t height
                                                   inv_height,
                                                   reinterpret_cast<const uint8_t*>(src),
                                                   reinterpret_cast<float*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
       break;
     case ImageFormat::D32_SFLOAT:
       GenDepthMapCoordsKernel<float>
@@ -117,6 +118,7 @@ void GenDepthMapCoords(ImageFormat depth_format, uint32_t width, uint32_t height
                                                   inv_height,
                                                   reinterpret_cast<const float*>(src),
                                                   reinterpret_cast<float*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
       break;
     default:
       throw std::runtime_error("Unsupported depth map format.");
@@ -135,6 +137,7 @@ size_t GenDepthMapIndices(DepthMapRenderMode render_mode, uint32_t width, uint32
     case DepthMapRenderMode::LINES:
       GenDepthMapIndicesKernel<DepthMapRenderMode::LINES>
           <<<launch_grid, block_dim, 0, stream>>>(width, height, reinterpret_cast<uint32_t*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
       generated_bytes = (width - 1) * (height - 1) * sizeof(uint32_t) * 4;
       // last column
       generated_bytes += (height - 1) * sizeof(uint32_t) * 2;
@@ -144,6 +147,7 @@ size_t GenDepthMapIndices(DepthMapRenderMode render_mode, uint32_t width, uint32
     case DepthMapRenderMode::TRIANGLES:
       GenDepthMapIndicesKernel<DepthMapRenderMode::TRIANGLES>
           <<<launch_grid, block_dim, 0, stream>>>(width, height, reinterpret_cast<uint32_t*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
       generated_bytes = (width - 1) * (height - 1) * sizeof(uint32_t) * 6;
       break;
     default:

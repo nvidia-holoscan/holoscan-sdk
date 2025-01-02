@@ -669,16 +669,30 @@ void PyOperator::compute(InputContext& op_input, OutputContext& op_output,
 
   // Get the compute method of the Python Operator class and call it
   py::gil_scoped_acquire scope_guard;
-  auto py_op_input =
-      std::make_shared<PyInputContext>(&context, op_input.op(), op_input.inputs(), this->py_op_);
-  auto py_op_output = std::make_shared<PyOutputContext>(
-      &context, op_output.op(), op_output.outputs(), this->py_op_);
-  auto py_context =
-      std::make_shared<PyExecutionContext>(gxf_context, py_op_input, py_op_output, this->py_op_);
+
+  if (py_context_ == nullptr) {
+    // create PyInputContext, PyOutputContext, PyExecutionContext objects and store them
+    py_op_input_ =
+        std::make_shared<PyInputContext>(&context, op_input.op(), op_input.inputs(), this->py_op_);
+    py_op_output_ = std::make_shared<PyOutputContext>(
+        &context, op_output.op(), op_output.outputs(), this->py_op_);
+    py_context_ = std::make_shared<PyExecutionContext>(
+        gxf_context, py_op_input_, py_op_output_, this->py_op_);
+
+    // Make sure CudaObjectHandler has been initialized for use by py_emit and py_receive
+    py_context_->init_cuda_object_handler(op_output.op());
+    py_op_input_->cuda_object_handler(py_context_->cuda_object_handler());
+    py_op_output_->cuda_object_handler(py_context_->cuda_object_handler());
+    HOLOSCAN_LOG_TRACE("PyOperator: py_context_->cuda_object_handler() for op '{}' is {}null",
+                       op_input.op()->name(),
+                       py_context_->cuda_object_handler() == nullptr ? "" : "not ");
+  }
+
+  py_context_->clear_received_streams();
 
   set_py_tracing();
 
-  py_compute_.operator()(py::cast(py_op_input), py::cast(py_op_output), py::cast(py_context));
+  py_compute_.operator()(py::cast(py_op_input_), py::cast(py_op_output_), py::cast(py_context_));
 }
 
 }  // namespace holoscan

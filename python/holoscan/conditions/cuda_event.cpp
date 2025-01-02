@@ -16,6 +16,7 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
@@ -51,10 +52,12 @@ class PyCudaEventCondition : public CudaEventCondition {
 
   // Define a constructor that fully initializes the object.
   explicit PyCudaEventCondition(Fragment* fragment, const std::string& event_name = "",
+                                std::optional<const std::string> receiver = std::nullopt,
                                 const std::string& name = "noname_cuda_event_condition")
       : CudaEventCondition(Arg("event_name", event_name)) {
     name_ = name;
     fragment_ = fragment;
+    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -66,9 +69,13 @@ void init_cuda_event(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<CudaEventCondition>>(
       m, "CudaEventCondition", doc::CudaEventCondition::doc_CudaEventCondition)
-      .def(py::init<Fragment*, const std::string&, const std::string&>(),
+      .def(py::init<Fragment*,
+                    const std::string&,
+                    std::optional<const std::string>,
+                    const std::string&>(),
            "fragment"_a,
            "event_name"_a = ""s,
+           "receiver"_a = py::none(),
            "name"_a = "noname_cuda_event_condition"s,
            doc::CudaEventCondition::doc_CudaEventCondition)
       .def_property(

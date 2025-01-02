@@ -94,7 +94,7 @@ void StreamOrderedAllocator::setup(ComponentSpec& spec) {
              "dev_id",
              "Device Id",
              "Device on which to create the memory pool.",
-             static_cast<int32_t>(0));
+             static_cast<int32_t>(kDefaultDeviceId));
 }
 
 nvidia::gxf::StreamOrderedAllocator* StreamOrderedAllocator::get() const {

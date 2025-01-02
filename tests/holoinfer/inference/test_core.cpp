@@ -51,8 +51,8 @@ void HoloInferTests::holoinfer_assert(const HoloInfer::InferStatus& status,
                 << " -> FAIL.\n";
     }
   } else {
-    std::cout << "Test: " << current_test << " executed with status as: " << test_status ? "PASS\n"
-                                                                                         : "FAIL\n";
+    std::cout << "Test: " << current_test
+              << " executed with status as: " << (test_status ? "PASS\n" : "FAIL\n");
   }
 }
 
@@ -124,7 +124,8 @@ void HoloInferTests::setup_specifications() {
                                                                  parallel_inference,
                                                                  enable_fp16,
                                                                  input_on_cuda,
-                                                                 output_on_cuda);
+                                                                 output_on_cuda,
+                                                                 use_cuda_graphs);
 }
 
 HoloInfer::InferStatus HoloInferTests::create_specifications() {

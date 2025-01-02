@@ -52,7 +52,9 @@ void Allocator::free(nvidia::byte* pointer) {
   auto allocator = get();
   if (allocator) {
     auto result = allocator->free(pointer);
-    if (!result) { HOLOSCAN_LOG_ERROR("Failed to free memory at {}", static_cast<void*>(pointer)); }
+    if (!result) {
+      HOLOSCAN_LOG_ERROR("Allocator failed to free memory");
+    }
   }
 }
 

@@ -372,7 +372,7 @@ python python/tests/system/test_pytracing.py pdb
 
 # Type the following commands to check if the breakpoints are hit:
 #
-#   b test_pytracing.py:76
+#   b test_pytracing.py:78
 #   c
 #   exit
 ```
@@ -381,16 +381,64 @@ python python/tests/system/test_pytracing.py pdb
 This is an interactive session.
 Please type the following commands to check if the breakpoints are hit.
 
-  (Pdb) b test_pytracing.py:76
-  Breakpoint 1 at /workspace/holoscan-sdk/python/tests/system/test_pytracing.py:76
+  (Pdb) b test_pytracing.py:78
+  Breakpoint 1 at /workspace/holoscan-sdk/python/tests/system/test_pytracing.py:78
   (Pdb) c
   ...
-  > /workspace/holoscan-sdk/python/tests/system/test_pytracing.py(76)start()
+  > /workspace/holoscan-sdk/python/tests/system/test_pytracing.py(78)start()
   -> print("Mx start")
   (Pdb) exit
 ```
 
 For more details, please refer to the `pdb_main()` method in [`test_pytracing.py`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_pytracing.py).
+
+It is also possible to launch the `pdb` session without having to manually add a breakpoint() to the source file before main() as was done in test_pytracing.py. In that case, just launch the existing application using `python -m pdb my_app.py`. For example, we can launch the existing ping_multi_port.py example included with the SDK like this
+
+```bash
+python -m pdb ./examples/ping_multi_port/python/ping_multi_port.py
+```
+
+We will then be at the `pdb` prompt, from which we can insert a break point (at the first line of the `compute` method in this case) and then use `c` to continue execution until the breakpoint is reached.
+
+```text
+(Pdb) b ping_multi_port.py:97
+Breakpoint 1 at /workspace/holoscan-sdk/build-x86_64/examples/ping_multi_port/python/ping_multi_port.py:97
+(Pdb) c
+[info] [fragment.cpp:588] Loading extensions from configs...
+[info] [gxf_executor.cpp:262] Creating context
+[info] [gxf_executor.cpp:1767] creating input IOSpec named 'in2'
+[info] [gxf_executor.cpp:1767] creating input IOSpec named 'in1'
+[info] [gxf_executor.cpp:1767] creating input IOSpec named 'receivers:1'
+[info] [gxf_executor.cpp:1767] creating input IOSpec named 'receivers:0'
+[info] [gxf_executor.cpp:1767] creating input IOSpec named 'receivers'
+[info] [gxf_executor.cpp:2174] Activating Graph...
+[info] [gxf_executor.cpp:2204] Running Graph...
+[info] [gxf_executor.cpp:2206] Waiting for completion...
+[info] [greedy_scheduler.cpp:191] Scheduling 3 entities
+> /workspace/holoscan-sdk/build-x86_64/examples/ping_multi_port/python/ping_multi_port.py(97)compute()
+-> value1 = op_input.receive("in1")
+```
+
+Now that we are at the desired breakpoint, we can interactively debug the operator. The following show an example of using `s` to step by one line then `p value1` to print the value of the "value1" variable. The `l` command is used to show the surrounding context. In the output, the arrow indicates the line where we are currently at in the debugger and the "B" indicates the breakpoint that was previously added.
+```
+(Pdb) s
+> /workspace/holoscan-sdk/build-x86_64/examples/ping_multi_port/python/ping_multi_port.py(98)compute()
+-> value2 = op_input.receive("in2")
+(Pdb) p value1
+ValueData(1)
+(Pdb) l
+ 93             spec.output("out2")
+ 94             spec.param("multiplier", 2)
+ 95
+ 96         def compute(self, op_input, op_output, context):
+ 97 B           value1 = op_input.receive("in1")
+ 98  ->         value2 = op_input.receive("in2")
+ 99             print(f"Middle message received (count: {self.count})")
+100             self.count += 1
+101
+102             print(f"Middle message value1: {value1.data}")
+103             print(f"Middle message value2: {value2.data}")
+```
 
 ### Profiling a Holoscan Python Application
 

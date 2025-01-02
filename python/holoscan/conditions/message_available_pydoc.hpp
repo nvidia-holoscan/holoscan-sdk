@@ -49,8 +49,16 @@ front_stage_max_size : int
     Threshold for the number of front stage messages. Execution is only
     allowed if the number of front stage messages does not exceed this
     count.
+receiver : str, optional
+    The name of the operator's input port to which the condition would apply.
 name : str, optional
     The name of the condition.
+
+Notes
+-----
+This condition is typically set within the `Operator.setup` method using the `IOSpec.condition`
+method with `ConditionType.MESSAGE_AVAILABLE`. In that case, the receiver name is already known
+from the port corresponding to the `IOSpec` object, so the "receiver" argument is unnecessary.
 )doc")
 
 PYDOC(receiver, R"doc(

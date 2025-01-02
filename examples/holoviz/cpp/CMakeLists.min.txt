@@ -51,7 +51,6 @@ if(BUILD_TESTING)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT holoviz_geometry_test.cpp
-    PRE_LINK
     COMMAND patch -u -o holoviz_geometry_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.cpp
             ${CMAKE_SOURCE_DIR}/testing/validation_frames/holoviz_geometry/cpp_holoviz_geometry.patch
   )

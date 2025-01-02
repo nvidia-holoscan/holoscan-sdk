@@ -36,14 +36,22 @@ TEST(AppDriver, TestSetUcxToExcludeCudaIpc) {
   if (env_orig) { unsetenv("UCX_TLS"); }
   AppDriver::set_ucx_to_exclude_cuda_ipc();
   const char* env_var = std::getenv("UCX_TLS");
-  EXPECT_EQ(std::string{env_var}, std::string("^cuda_ipc"));
+  if (env_var) {
+    EXPECT_EQ(std::string{env_var}, std::string("^cuda_ipc"));
+  } else {
+    FAIL() << "UCX_TLS environment variable not set";
+  }
 
   // does not clobber pre-existing UCX_TLS value
   const char* new_env_var = "tcp,cuda_copy";
   setenv("UCX_TLS", new_env_var, 1);
   AppDriver::set_ucx_to_exclude_cuda_ipc();
   env_var = std::getenv("UCX_TLS");
-  EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  if (env_var) {
+    EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  } else {
+    FAIL() << "UCX_TLS environment variable not set";
+  }
 
   // warns if allow list contains cuda_ipc
   testing::internal::CaptureStderr();
@@ -52,7 +60,11 @@ TEST(AppDriver, TestSetUcxToExcludeCudaIpc) {
   AppDriver::set_ucx_to_exclude_cuda_ipc();
   std::string log_output = testing::internal::GetCapturedStderr();
   env_var = std::getenv("UCX_TLS");
-  EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  if (env_var) {
+    EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  } else {
+    FAIL() << "UCX_TLS environment variable not set";
+  }
   EXPECT_TRUE(log_output.find("warn") != std::string::npos) << "=== LOG ===\n"
                                                             << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("UCX_TLS is set") != std::string::npos)
@@ -86,7 +98,11 @@ TEST(AppDriver, TestExcludeCudaIpcTransportOnIgpu) {
   AppDriver::exclude_cuda_ipc_transport_on_igpu();
   const char* env_var = std::getenv("UCX_TLS");
   if (is_integrated) {
-    EXPECT_EQ(std::string{env_var}, std::string("^cuda_ipc"));
+    if (env_var) {
+      EXPECT_EQ(std::string{env_var}, std::string("^cuda_ipc"));
+    } else {
+      FAIL() << "UCX_TLS environment variable not set";
+    }
   } else {
     // environment variable is not set when not in iGPU environment
     EXPECT_EQ(env_var, nullptr);
@@ -97,7 +113,11 @@ TEST(AppDriver, TestExcludeCudaIpcTransportOnIgpu) {
   setenv("UCX_TLS", new_env_var, 1);
   AppDriver::exclude_cuda_ipc_transport_on_igpu();
   env_var = std::getenv("UCX_TLS");
-  EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  if (env_var) {
+    EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  } else {
+    FAIL() << "UCX_TLS environment variable not set";
+  }
 
   // warns if on iGPU and allow list contains cuda_ipc
   testing::internal::CaptureStderr();
@@ -106,7 +126,11 @@ TEST(AppDriver, TestExcludeCudaIpcTransportOnIgpu) {
   AppDriver::exclude_cuda_ipc_transport_on_igpu();
   std::string log_output = testing::internal::GetCapturedStderr();
   env_var = std::getenv("UCX_TLS");
-  EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  if (env_var) {
+    EXPECT_EQ(std::string{env_var}, std::string(new_env_var));
+  } else {
+    FAIL() << "UCX_TLS environment variable not set";
+  }
   if (is_integrated) {
     EXPECT_TRUE(log_output.find("warn") != std::string::npos) << "=== LOG ===\n"
                                                               << log_output << "\n===========\n";

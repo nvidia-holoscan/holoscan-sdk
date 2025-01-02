@@ -22,6 +22,8 @@
 
 #include <holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.cuh>
 
+#include <vector>
+
 // This test data is generated in python as follows:
 //
 //  import numpy as np
@@ -173,7 +175,8 @@ TEST_F(SegmentationPostprocessorTest, Argmax) {
             shape.height * shape.width *
                 sizeof(holoscan::ops::segmentation_postprocessor::output_type_t));
 
-  holoscan::ops::segmentation_postprocessor::output_type_t host_output_data[output_data_size] = {};
+  std::vector<holoscan::ops::segmentation_postprocessor::output_type_t> host_output_data(
+      output_data_size);
 
   ASSERT_EQ(cudaSuccess, cudaMemset(device_output_data, 0, output_data_size));
 
@@ -186,7 +189,8 @@ TEST_F(SegmentationPostprocessorTest, Argmax) {
 
   ASSERT_EQ(
       cudaSuccess,
-      cudaMemcpy(host_output_data, device_output_data, output_data_size, cudaMemcpyDeviceToHost));
+      cudaMemcpy(
+          host_output_data.data(), device_output_data, output_data_size, cudaMemcpyDeviceToHost));
 
   for (uint32_t i = 0; i < output_data_size / sizeof(host_output_data[0]); i++) {
     ASSERT_EQ(kArgmaxOutputData[i], host_output_data[i]) << "Failed at index: " << i;

@@ -45,6 +45,8 @@ struct MultiMessageConditionInfo {
  */
 class OperatorSpec : public ComponentSpec {
  public:
+  virtual ~OperatorSpec() = default;
+
   /**
    * @brief Construct a new OperatorSpec object.
    *
@@ -77,9 +79,10 @@ class OperatorSpec : public ComponentSpec {
    * @param port_names The names of the input ports the condition will apply to
    * @param args ArgList of arguments to pass to the MultiMessageAvailableCondition
    */
-  void multi_port_condition(ConditionType kind, std::vector<std::string> port_names, ArgList args) {
+  void multi_port_condition(ConditionType kind, const std::vector<std::string>& port_names,
+                            ArgList args) {
     multi_port_conditions_.emplace_back(
-        MultiMessageConditionInfo{kind, std::move(port_names), std::move(args)});
+        MultiMessageConditionInfo{kind, port_names, std::move(args)});
   }
 
   std::vector<MultiMessageConditionInfo>& multi_port_conditions() { return multi_port_conditions_; }

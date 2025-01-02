@@ -42,7 +42,6 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT holoviz_geometry_test.py
-    PRE_LINK
     COMMAND patch -u -o holoviz_geometry_test.py ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.py
       ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/holoviz_geometry/python_holoviz_geometry.patch
     COMMAND sed -i "s#RECORDING_DIR#${RECORDING_DIR}#g" holoviz_geometry_test.py
@@ -50,7 +49,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_custom_target(python_holoviz_geometry_test ALL
-    DEPENDS "holoviz_geometry_test.py"
+    DEPENDS holoviz_geometry_test.py
   )
 
   add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_GEOMETRY_TEST
@@ -113,7 +112,6 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT holoviz_geometry_3d_test.py
-    PRE_LINK
     COMMAND patch -u -o holoviz_geometry_3d_test.py ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry_3d.py
       ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/holoviz_geometry_3d/python_holoviz_geometry_3d.patch
     COMMAND sed -i "s#RECORDING_DIR#${RECORDING_DIR}#g" holoviz_geometry_3d_test.py
@@ -121,7 +119,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_custom_target(python_holoviz_geometry_3d_test ALL
-    DEPENDS "holoviz_geometry_3d_test.py"
+    DEPENDS holoviz_geometry_3d_test.py
   )
 
   add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_GEOMETRY_3D_TEST
@@ -176,7 +174,6 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT holoviz_views_test.py
-    PRE_LINK
     COMMAND patch -u -o holoviz_views_test.py ${CMAKE_CURRENT_SOURCE_DIR}/holoviz_views.py
       ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/holoviz_views/python_holoviz_views.patch
     COMMAND sed -i "s#RECORDING_DIR#${RECORDING_DIR}#g" holoviz_views_test.py
@@ -184,7 +181,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_custom_target(python_holoviz_views_test ALL
-    DEPENDS "holoviz_views_test.py"
+    DEPENDS holoviz_views_test.py
   )
 
   add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_VIEWS_TEST

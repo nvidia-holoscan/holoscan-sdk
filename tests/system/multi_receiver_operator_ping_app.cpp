@@ -129,7 +129,7 @@ class PingTensorMapTxOp : public holoscan::Operator {
     spec.output<holoscan::TensorMap>("out2");
   }
 
-  void initialize() {
+  void initialize() override {
     // Create an allocator for the tensors
     auto frag = fragment();
     allocator_ = frag->make_resource<holoscan::UnboundedAllocator>("allocator");

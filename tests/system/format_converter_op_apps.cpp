@@ -22,7 +22,6 @@
 #include <utility>
 
 #include "../config.hpp"
-#include "tensor_compare_op.hpp"
 
 #include "holoscan/holoscan.hpp"
 #include "holoscan/operators/format_converter/format_converter.hpp"
@@ -32,8 +31,6 @@
 using namespace holoscan;
 
 static HoloscanTestConfig test_config;
-
-using StringOrArg = std::variant<std::string, Arg>;
 
 class FormatConverterApp : public holoscan::Application {
  public:

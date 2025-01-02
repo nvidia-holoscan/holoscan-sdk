@@ -134,7 +134,11 @@ void InferenceProcessorOp::setup(OperatorSpec& spec) {
   spec.param(output_on_cuda_, "output_on_cuda", "Output buffer on CUDA", "", false);
   spec.param(transmit_on_cuda_, "transmit_on_cuda", "Transmit message on CUDA", "", false);
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
-  cuda_stream_handler_.define_params(spec);
+  spec.param(cuda_stream_pool_,
+             "cuda_stream_pool",
+             "CUDA Stream Pool",
+             "Instance of gxf::CudaStreamPool.",
+             ParameterFlag::kOptional);
 }
 
 void InferenceProcessorOp::conditional_disable_output_port(const std::string& port_name) {
@@ -220,27 +224,33 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
 
   try {
     // Extract relevant data from input GXF Receivers, and update inference specifications
+    // (cuda_stream will be set by get_data_per_model)
+    cudaStream_t cuda_stream{};
     gxf_result_t stat = holoscan::utils::get_data_per_model(op_input,
                                                             in_tensor_names_.get(),
                                                             data_per_tensor_,
                                                             dims_per_tensor_,
                                                             input_on_cuda_.get(),
                                                             module_,
-                                                            cont,
-                                                            cuda_stream_handler_);
+                                                            cuda_stream);
 
     if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Tick, Data extraction"); }
+
+    // Transmit this stream on the output port if needed
+    if (cuda_stream != cudaStreamDefault && output_on_cuda_.get()) {
+      HOLOSCAN_LOG_TRACE("InferenceProcessorOp: sending CUDA stream to output");
+      op_output.set_cuda_stream(cuda_stream, "transmitter");
+    }
 
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
     // Execute processing
-    auto status =
-        holoscan_postprocess_context_->process(process_operations_.get().get_map(),
-                                               processed_map_.get().get_map(),
-                                               data_per_tensor_,
-                                               dims_per_tensor_,
-                                               process_with_cuda,
-                                               cuda_stream_handler_.get_cuda_stream(cont));
+    auto status = holoscan_postprocess_context_->process(process_operations_.get().get_map(),
+                                                         processed_map_.get().get_map(),
+                                                         data_per_tensor_,
+                                                         dims_per_tensor_,
+                                                         process_with_cuda,
+                                                         cuda_stream);
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
       status.display_message();
       HoloInfer::report_error(module_, "Tick, post_process");
@@ -265,7 +275,7 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
                                                       transmit_on_cuda_.get(),
                                                       allocator.value(),
                                                       module_,
-                                                      cuda_stream_handler_);
+                                                      cuda_stream);
       if (stat != GXF_SUCCESS) { HoloInfer::report_error(module_, "Tick, Data Transmission"); }
     }
   } catch (const std::runtime_error& r_) {

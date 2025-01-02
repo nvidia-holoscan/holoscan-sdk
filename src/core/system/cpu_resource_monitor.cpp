@@ -155,7 +155,7 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
       get_proc_stats(last_total_stats_);
       is_last_total_stats_valid_ = true;
     } else {
-      uint64_t current_total_stats[4];
+      uint64_t current_total_stats[4] = {};
       get_proc_stats(current_total_stats);
 
       // Calculate the CPU usage

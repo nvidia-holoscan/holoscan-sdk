@@ -28,7 +28,8 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/utils/cuda_stream_handler.hpp"
+#include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 namespace holoscan::ops {
 
@@ -174,6 +175,7 @@ class FormatConverterOp : public holoscan::Operator {
   Parameter<int32_t> resize_height_;
   Parameter<int32_t> resize_mode_;
   Parameter<std::vector<int>> out_channel_order_;
+  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
 
   std::unique_ptr<nvidia::gxf::MemoryBuffer> resize_buffer_;
   std::unique_ptr<nvidia::gxf::MemoryBuffer> channel_buffer_;
@@ -192,8 +194,6 @@ class FormatConverterOp : public holoscan::Operator {
   FormatConversionType format_conversion_type_ = FormatConversionType::kUnknown;
 
   NppStreamContext npp_stream_ctx_{};
-
-  CudaStreamHandler cuda_stream_handler_;
 };
 
 }  // namespace holoscan::ops

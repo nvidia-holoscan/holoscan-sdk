@@ -97,6 +97,7 @@ class HoloInferTests {
   bool input_on_cuda = true;
   bool output_on_cuda = true;
   bool is_engine_path = false;
+  bool use_cuda_graphs = true;
 
   /// Pointer to inference context.
   std::unique_ptr<HoloInfer::InferContext> holoscan_infer_context_;
@@ -138,7 +139,8 @@ class HoloInferTests {
       {28, "Torch backend, Input node missing in Config file"},
       {29, "Torch backend, dtype missing in input node in Config file"},
       {30, "Torch backend, Incorrect dtype in inference"},
-      {31, "Torch backend, Output node missing in Config file"}};
+      {31, "Torch backend, Output node missing in Config file"},
+      {32, "TRT backend, disable CUDA Graphs"}};
 
   const std::map<unsigned int, std::string> test_identifier_infer = {
       {1, "TRT backend, Empty input data"},

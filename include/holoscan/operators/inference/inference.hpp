@@ -27,7 +27,7 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/utils/cuda_stream_handler.hpp"
+#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
@@ -82,6 +82,7 @@ namespace holoscan::ops {
  * - **output_on_cuda**: Whether the output buffer is on the GPU. Optional (default: `true`).
  * - **transmit_on_cuda**: Whether to transmit the message on the GPU. Optional (default: `true`).
  * - **enable_fp16**: Use 16-bit floating point computations. Optional (default: `false`).
+ * - **enable_cuda_graphs**: Use CUDA Graphs. Optional (default: `true`).
  * - **is_engine_path**: Whether the input model path mapping is for trt engine files. Optional
  *   (default: `false`).
  * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams. Optional
@@ -187,6 +188,9 @@ class InferenceOp : public holoscan::Operator {
   ///  @brief Flag showing if trt engine file conversion will use FP16. Default is False.
   Parameter<bool> enable_fp16_;
 
+  ///  @brief Flag showing if using CUDA Graphs. Default is True.
+  Parameter<bool> enable_cuda_graphs_;
+
   ///  @brief Flag to show if input model path mapping is for cached trt engine files. Default is
   ///  False.
   Parameter<bool> is_engine_path_;
@@ -197,6 +201,10 @@ class InferenceOp : public holoscan::Operator {
   ///  @brief Backend map. Multiple backends can be combined in the same application.
   ///  Supported values: "trt" or "torch"
   Parameter<DataMap> backend_map_;
+
+  ///  @brief Optional CUDA stream pool for allocation of an internal CUDA stream if none is
+  ///  available in the incoming messages.
+  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
 
   // Internal state
 
@@ -215,8 +223,6 @@ class InferenceOp : public holoscan::Operator {
 
   /// @brief Parameter to validate incoming tensor dimensions with model input dimensions
   bool validate_tensor_dimensions_ = true;
-
-  CudaStreamHandler cuda_stream_handler_;
 };
 
 }  // namespace holoscan::ops

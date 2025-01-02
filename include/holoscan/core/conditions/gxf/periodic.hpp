@@ -54,6 +54,15 @@ namespace holoscan {
  * - `std::chrono::duration<double, std::ratio<1, 1000>>(10)`
  *
  * This class wraps GXF SchedulingTerm(`nvidia::gxf::PeriodicSchedulingTerm`).
+ *
+ * ==Parameters==
+ *
+ * - **recess_period** (std::string): The recess (pause) period value used by the condition. The
+ * period is specified as a string containing a number and an (optional) unit. If no unit is given
+ * the value is assumed to be in nanoseconds. Supported units are: ms, s, hz (case insensitive).
+ * Constructors are also provided that allow specifying this period using an integer value
+ * (type `int64_t`) in nanoseconds. Alternatively, a `std::chrono::duration` can be used
+ * (see example above).
  */
 class PeriodicCondition : public gxf::GXFCondition {
  public:

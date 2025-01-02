@@ -28,6 +28,43 @@
 
 namespace holoscan {
 
+/**
+ * @brief Condition class to allow an operator to execute when a specified number of messages have
+ * arrived, or a specified time interval has elapsed since the first message was created.
+ *
+ * This condition applies to a specific input port of the operator as determined by setting the
+ * "receiver" argument.
+ *
+ * This condition can also be set via the `Operator::setup` method using `IOSpec::condition` with
+ * `ConditionType::kExpiringMessageAvailable`. In that case, the receiver is already known from the
+ * port corresponding to the `IOSpec` object, so the "receiver" argument is unnecessary.
+ *
+ * **Note:** The `max_delay_ns` used by this condition type is relative to the timestamp of the
+ * oldest message in the receiver queue. Use of this condition requires that the upstream operator
+ * emitted a timestamp for at least one message in the queue. Holoscan Operators do not emit a
+ * timestamp by default, but only when it is explicitly requested in the `Operator::emit` call. The
+ * built-in operators of the SDK do not currently emit a timestamp, so this condition cannot be
+ * easily used with the provided operators. As a potential alternative, please see
+ * `MultiMessageAvailableTimeoutCondition` which can be configured to use a single port and a
+ * timeout interval without needing a timestamp. A timestamp is not needed in the case of
+ * `MultiMessageAvailableTimeoutCondition` because the interval measured is the time since the same
+ * operator previously ticked.
+ *
+ * ==Parameters==
+ *
+ * - **max_batch_size** (int64_t): The maximum number of messages that can arrive before the
+ * operator will be considered READY. The operator can still be considered READY with fewer
+ * messages once `max_delay_ns` has elapsed.
+ * - **max_delay_ns** (int64_t): The maximum delay to wait from the time of the first message
+ * before the operator is considered READY. The units are in nanoseconds. A constructor is also
+ * provided which allows setting this via a `std::chrono::duration` instead.
+ * - **clock** (std::shared_ptr<holoscan::Clock>): The clock used by the scheduler to define the
+ * flow of time. If not provided, a default-constructed `holoscan::RealtimeClock` will be used.
+ * - **receiver** (std::string): The receiver whose message queue will be checked. This should be
+ * specified by the name of the Operator's input port the condition will apply to. The Holoscan SDK
+ * will then automatically replace the port name with the actual receiver object at application run
+ * time.
+ */
 class ExpiringMessageAvailableCondition : public gxf::GXFCondition {
  public:
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(ExpiringMessageAvailableCondition, GXFCondition)

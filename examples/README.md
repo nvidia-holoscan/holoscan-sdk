@@ -74,6 +74,12 @@ The following examples illustrate the use of specific resource classes that can 
 
 * [**Clock**](resources/clock): demonstrate assignment of a user-configured clock to the Holoscan SDK scheduler and how its runtime methods can be accessed from an operator's compute method.
 
+* [**ThreadPool**](resources/thread_pool): demonstrates pinning of operators to specific CPU threads in a thread pool.
+
+* [**native Resources**](resources/native): demonstrates how a Holoscan native Resource (not wrapping an underlying GXF Component) can be created and used. 
+
+* [**CudaStreamPool** and **CudaStreamCondition**](resources/cuda_stream_pool): demonstrates how Python apps can make use of a `CudaStreamPool` resource and `CudaStreamCondition` condition. Also demonstrates how to use stream-related API from native Python operator `compute` methods and have CuPy calls within `compute` use the desired stream.
+
 ## Decorator-based Python API
 
 * [**Python Functions as Operators**](python_decorator): demonstrates how to use a decorator to convert a Python function into an Operator.

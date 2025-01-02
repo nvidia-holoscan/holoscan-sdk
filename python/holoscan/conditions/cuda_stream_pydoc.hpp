@@ -36,6 +36,8 @@ Parameters
 ----------
 fragment : holoscan.core.Fragment
     The fragment the condition will be associated with.
+receiver : str, optional
+    The name of the operator's input port to which the condition would apply.
 name : str, optional
     The name of the condition.
 )doc")

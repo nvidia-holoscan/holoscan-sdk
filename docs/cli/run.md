@@ -21,7 +21,7 @@ spec:
 
 ## Synopsis
 
-`holoscan run` [](#cli-help) [](#cli-log-level) [](#cli-run-address) [](#cli-run-driver) [](#cli-run-input) [](#cli-run-output) [](#cli-run-fragments) [](#cli-run-worker) [](#cli-run-worker-address) [](#cli-run-config) [](#cli-run-network) [](#cli-run-nic) [](#cli-run-use-all-nics) [](#cli-run-render) [](#cli-run-quiet) [](#cli-run-shm-size)[](#cli-run-terminal) [](#cli-run-device) [](#cli-run-gpu) [](#cli-run-uid) [](#cli-run-gid)[](#cli-run-image-tag)
+`holoscan run` [](#cli-help) [](#cli-log-level) [](#cli-run-address) [](#cli-run-driver) [](#cli-run-input) [](#cli-run-output) [](#cli-run-fragments) [](#cli-run-worker) [](#cli-run-worker-address) [](#cli-run-config) [](#cli-run-health-check) [](#cli-run-network) [](#cli-run-nic) [](#cli-run-use-all-nics) [](#cli-run-render) [](#cli-run-quiet) [](#cli-run-shm-size)[](#cli-run-terminal) [](#cli-run-device) [](#cli-run-gpu) [](#cli-run-uid) [](#cli-run-gid)[](#cli-run-image-tag)
 
 ## Examples
 
@@ -123,6 +123,12 @@ Ensure that the IP address is not blocked and the port is configured with the fi
 ### `[--config CONFIG]`
 
 Path to the application configuration file. If specified, it overrides the embedded configuration file found in the environment variable `HOLOSCAN_CONFIG_PATH`.
+
+(#cli-run-health-check)=
+
+### `[--health-check HEALTH_CHECK]`
+
+Enables the health check service for [distributed applications](../holoscan_create_distributed_app.md) by setting the `HOLOSCAN_ENABLE_HEALTH_CHECK` environment variable to `true`. This allows [grpc-health-probe](https://github.com/grpc-ecosystem/grpc-health-probe) to monitor the application's liveness and readiness.
 
 (#cli-run-network)=
 

@@ -214,7 +214,7 @@ TEST(Fragment, TestMakeThreadPool) {
   // create a pool of size 2
   auto pool2 = F.make_thread_pool("pool2", 2);
   // add multiple operators, each with thread pinning
-  pool2->add({op2, op3}, true);
+  pool2->add({std::move(op2), std::move(op3)}, true);
 
   EXPECT_EQ(pool1->name(), std::string{"pool1"});
   EXPECT_EQ(pool2->name(), std::string{"pool2"});

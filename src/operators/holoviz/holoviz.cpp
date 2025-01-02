@@ -951,8 +951,10 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Layer Callback",
              "The callback function is called when HolovizOp processed all layers defined by the "
              "input specification. It can be used to add extra layers.");
-
-  cuda_stream_handler_.define_params(spec);
+  spec.param(cuda_stream_pool_,
+             "cuda_stream_pool",
+             "CUDA Stream Pool",
+             "Instance of gxf::CudaStreamPool.");
 }
 
 bool HolovizOp::enable_conditional_port(const std::string& port_name,
@@ -1279,8 +1281,8 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
   viz::EndLayer();
 }
 
-void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec& input_spec,
-                                BufferInfo& buffer_info) {
+void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_info,
+                                cudaStream_t stream) {
   if ((buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat32) &&
       (buffer_info.element_type != nvidia::gxf::PrimitiveType::kFloat64)) {
     throw std::runtime_error(
@@ -1313,11 +1315,13 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
       host_buffer.resize(buffer_info.bytes_size);
 
       // copy from device to host
-      HOLOSCAN_CUDA_CALL(cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
-                                         static_cast<const void*>(buffer_info.buffer_ptr),
-                                         buffer_info.bytes_size,
-                                         cudaMemcpyDeviceToHost,
-                                         cuda_stream_handler_.get_cuda_stream(context.context())));
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(
+          cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
+                          static_cast<const void*>(buffer_info.buffer_ptr),
+                          buffer_info.bytes_size,
+                          cudaMemcpyDeviceToHost,
+                          stream),
+          "Failed to copy coordinates to host");
       // When copying from device memory to pageable memory the call is synchronous with the host
       // execution. No need to synchronize here.
 
@@ -1528,12 +1532,13 @@ void HolovizOp::render_geometry(const ExecutionContext& context, const InputSpec
           host_buffer.resize(buffer_info.bytes_size);
 
           // copy from device to host
-          HOLOSCAN_CUDA_CALL(
+          HOLOSCAN_CUDA_CALL_THROW_ERROR(
               cudaMemcpyAsync(static_cast<void*>(host_buffer.data()),
                               static_cast<const void*>(buffer_info.buffer_ptr),
                               buffer_info.bytes_size,
                               cudaMemcpyDeviceToHost,
-                              cuda_stream_handler_.get_cuda_stream(context.context())));
+                              stream),
+              "Failed to copy coordinates to host");
           // When copying from device memory to pageable memory the call is synchronous with the
           // host execution. No need to synchronize here.
 
@@ -1709,7 +1714,6 @@ void HolovizOp::initialize() {
     }
     // in either case above, we now have only "window_close_condition"
     has_window_close_condition = true;
-    has_window_close_scheduling_term = false;
   }
 
   // Create the BooleanCondition if there was no window close argument provided.
@@ -1961,12 +1965,12 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   }
 
   // get the CUDA stream from the input message
-  const gxf_result_t result =
-      cuda_stream_handler_.from_messages(context.context(), receivers_messages);
-  if (result != GXF_SUCCESS) {
-    throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
-  }
-  viz::SetCudaStream(cuda_stream_handler_.get_cuda_stream(context.context()));
+  cudaStream_t cuda_stream = cudaStreamDefault;
+  // `receive_cuda_stream` returns the first stream found. If there are multiple streams, the
+  // remaining streams are synchronized to the first one.
+  if (receivers_messages.size() > 0) { cuda_stream = op_input.receive_cuda_stream("receivers"); }
+
+  viz::SetCudaStream(cuda_stream);
 
   // Depth maps have two tensors, the depth map itself and the depth map color values. Therefore
   // collect the information in the first pass through the input specs and then render the depth
@@ -2062,7 +2066,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       case InputType::LINE_STRIP_3D:
       case InputType::TRIANGLES_3D:
         // geometry layer
-        render_geometry(context, input_spec, buffer_info);
+        render_geometry(input_spec, buffer_info, cuda_stream);
         break;
 
       case InputType::DEPTH_MAP: {

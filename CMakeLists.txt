@@ -163,6 +163,19 @@ include(cmake/setup_dependencies.cmake)
 # ##############################################################################
 add_subdirectory(modules)
 
+# If enabling clang-tidy
+if(HOLOSCAN_ENABLE_CLANG_TIDY)
+  # TODO: move above add_subdirectory(modules) later
+  #   Want to exclude */.cache/* */_deps/* */thirdparty/*
+  #   but negative lookahead assertions are not supported for --header-filter
+  #   and --exclude-header-filter is not available until clang-tidy>=19.0.
+  set(CMAKE_CXX_CLANG_TIDY
+      clang-tidy
+      "--checks='*,-llvmlibc-restrict-system-libc-headers,-abseil-string-find-str-contains,-fuchsia-default-arguments-calls,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-readability-magic-numbers,-cppcoreguidelines-avoid-magic-numbers,-altera-unroll-loops,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-altera-id-dependent-backward-branch,-fuchsia-default-arguments-declarations,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument'"
+      "--extra-arg=-std=c++17"
+  )
+endif()
+
 # ##############################################################################
 # # Build core and operators
 # ##############################################################################
@@ -464,11 +477,6 @@ if(HOLOSCAN_BUILD_TESTS)
     # add Holoviz tests
     add_test(NAME HOLOVIZ_FUNCTIONAL_TEST COMMAND holoscan::viz::functionaltests)
     add_test(NAME HOLOVIZ_UNIT_TEST COMMAND holoscan::viz::unittests)
-endif()
-
-# If enabling clang-tidy
-if(HOLOSCAN_ENABLE_CLANG_TIDY)
-  set(CMAKE_CXX_CLANG_TIDY "clang-tidy;--checks=*,-llvmlibc-restrict-system-libc-headers,-fuchsia-default-arguments-calls,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-readability-magic-numbers,-cppcoreguidelines-avoid-magic-numbers,-altera-unroll-loops,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-altera-id-dependent-backward-branch,-fuchsia-default-arguments-declarations,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument;--extra-arg=-std=c++17")
 endif()
 
 if(HOLOSCAN_BUILD_PYTHON)

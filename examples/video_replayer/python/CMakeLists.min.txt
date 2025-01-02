@@ -37,7 +37,6 @@ if(BUILD_TESTING)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT video_replayer_test.py
-    PRE_LINK
     COMMAND patch -u -o video_replayer_test.py ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.py
         ${CMAKE_SOURCE_DIR}/testing/validation_frames/video_replayer/python_video_replayer.patch
   )

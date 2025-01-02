@@ -815,20 +815,24 @@ bool AppDriver::check_configuration() {
 
   auto& app_options = *options_;
 
-  // If the driver or worker is running, we launch the health check service by default.
-  if (app_options.run_driver || app_options.run_worker) { need_health_check_ = true; }
-
-  // Or, if the environment variable HOLOSCAN_ENABLE_HEALTH_CHECK is set to true or false, we enable
-  // or disable the health check service. If the environment variable is not set or invalid, we use
-  // the default value.
-  need_health_check_ = get_bool_env_var("HOLOSCAN_ENABLE_HEALTH_CHECK", need_health_check_);
-
   // Check if the driver or worker service needs to be launched
   if (app_options.run_driver) { need_driver_ = true; }
   if (app_options.run_worker) { need_worker_ = true; }
 
+  // By default, we disable health check service. The health check service can be enabled by
+  // setting the environment variable HOLOSCAN_ENABLE_HEALTH_CHECK to true when driver or worker is
+  // enabled.
+  need_health_check_ = false;
+
   // If there are no driver or worker, we need to run the application graph directly.
-  if (!need_driver_ && !need_worker_) { is_local_ = true; }
+  // Otherwise, the environment variable HOLOSCAN_ENABLE_HEALTH_CHECK
+  // can be set to true or false to enable or disable the health check service, respectively. If the
+  // environment variable is not set or invalid, we use the default value.
+  if (!need_driver_ && !need_worker_) {
+    is_local_ = true;
+  } else {
+    need_health_check_ = get_bool_env_var("HOLOSCAN_ENABLE_HEALTH_CHECK", need_health_check_);
+  }
 
   // Set the default driver server address if not specified.
   auto& server_address = options()->driver_address;

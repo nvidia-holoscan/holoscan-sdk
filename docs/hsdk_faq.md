@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -69,7 +69,7 @@ export PYTHONPATH="/opt/nvidia/holoscan/python/lib"
 pip install holoscan
 ```
 
-For more details and troubleshooting , please refer to  [PyPI](https://pypi.org/project/holoscan).For x86_64, ensure that the [CUDA Runtime is installed](https://developer.nvidia.com/cuda-12-2-2-download-archive?target\_os=Linux\&target\_arch=x86\_64\&Distribution=Ubuntu\&target_version=22.04).
+For more details and troubleshooting , please refer to  [PyPI](https://pypi.org/project/holoscan).For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia.com/cuda-12-6-3-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network).
 
 If you are unsure of which installation option to use, please refer to the considerations below:
 
@@ -87,7 +87,7 @@ A2: The prerequisites include:
 
 | Developer Kit | User Guide  | OS | GPU mode |
 | :---- | :---- | :---- | :---- |
-| [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) | [Link](https://developer.nvidia.com/igx-orin-developer-kit-user-guide) to User Guide | [IGX Software](https://developer.nvidia.com/igx-downloads) 1.0 Production Release | iGPU **or**\* dGPU |
+| [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) | [Link](https://developer.nvidia.com/igx-orin-developer-kit-user-guide) to User Guide | [IGX Software](https://developer.nvidia.com/igx-downloads) 1.1 Production Release | iGPU **or**\* dGPU |
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 

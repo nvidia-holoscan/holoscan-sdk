@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,16 @@
 
 namespace holoscan {
 
+/**
+ * @brief Count condition.
+ *
+ * This condition can be used to allow execution of an operator a specified number of times, after
+ * which the operator will enter the NEVER scheduling status and will not be executed again.
+ *
+ * ==Parameters==
+ *
+ * - **count** (int64_t): The number of times the `compute` method can be called.
+ */
 class CountCondition : public gxf::GXFCondition {
  public:
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(CountCondition, GXFCondition)

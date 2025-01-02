@@ -24,6 +24,29 @@
 
 namespace holoscan {
 
+/**
+ * @brief Condition class that allows an operator to execute only when one or more messages are
+ * available on a given input port.
+ *
+ * This condition applies to a specific input port of the operator as determined by setting the
+ * "receiver" argument.
+ *
+ * This condition can also be set via the `Operator::setup` method using `IOSpec::condition` with
+ * `ConditionType::kMessageAvailable`. In that case, the receiver is already known from the port
+ * corresponding to the `IOSpec` object, so the "receiver" argument is unnecessary.
+ *
+ * ==Parameters==
+ *
+ * - **min_size** (uint64_t): The minimum number of messages that must be available on the input
+ * port before the operator will be considered READY.
+ * - **front_stage_max_size** (size_t): If set, the condition will only allow execution if the
+ * number of messages in the front stage of the receiver's double-buffer queue does not exceed this
+ * count. In most cases, this parameter does not need to be set.
+ * - **receiver** (std::string): The receiver whose message queue will be checked. This should be
+ * specified by the name of the Operator's input port the condition will apply to. The Holoscan SDK
+ * will then automatically replace the port name with the actual receiver object at application run
+ * time.
+ */
 class MessageAvailableCondition : public gxf::GXFCondition {
  public:
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(MessageAvailableCondition, GXFCondition)

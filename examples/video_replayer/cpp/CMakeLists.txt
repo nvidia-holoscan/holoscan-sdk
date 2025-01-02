@@ -89,15 +89,12 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT video_replayer_test.cpp
-    PRE_LINK
     COMMAND patch -u -o video_replayer_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.cpp
       ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/video_replayer/cpp_video_replayer.patch
   )
 
   # Create the test executable
-  add_executable(video_replayer_test
-    video_replayer_test.cpp
-  )
+  add_executable(video_replayer_test video_replayer_test.cpp)
 
   target_include_directories(video_replayer_test
     PRIVATE ${Holoscan-examples_SOURCE_DIR}/../tests)

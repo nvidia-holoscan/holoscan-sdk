@@ -563,6 +563,11 @@ bool GPUResourceMonitor::init_nvml() {
       }
       char name[NVML_DEVICE_NAME_BUFFER_SIZE]{};
       result = nvmlDeviceGetName(device, name, NVML_DEVICE_NAME_BUFFER_SIZE);
+      if (result != 0) {
+        HOLOSCAN_LOG_DEBUG("Could not get the device name for GPU {}", index);
+        use_nvml = false;
+        break;
+      }
       if (strstr(name, "nvgpu") != nullptr) {
         HOLOSCAN_LOG_DEBUG("Found an iGPU ({}). Using CUDA Runtime API instead.", name);
         use_nvml = false;

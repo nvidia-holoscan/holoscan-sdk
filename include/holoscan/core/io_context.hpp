@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_IO_CONTEXT_HPP
 #define HOLOSCAN_CORE_IO_CONTEXT_HPP
 
+#include <cuda_runtime.h>
+
 #include <any>
 #include <map>
 #include <memory>
@@ -29,11 +31,13 @@
 #include <vector>
 
 #include <common/type_name.hpp>
+#include <gxf/cuda/cuda_stream.hpp>
 #include "./common.hpp"
 #include "./domain/tensor_map.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
 #include "./gxf/entity.hpp"
+#include "./gxf/gxf_cuda.hpp"
 #include "./message.hpp"
 #include "./operator.hpp"
 #include "./type_traits.hpp"
@@ -95,6 +99,8 @@ class InputContext {
    */
   InputContext(ExecutionContext* execution_context, Operator* op)
       : execution_context_(execution_context), op_(op), inputs_(op->spec()->inputs()) {}
+
+  virtual ~InputContext() = default;
 
   /**
    * @brief Get pointer to the execution context.
@@ -227,6 +233,57 @@ class InputContext {
       return receive_single_value<DataT>(name);
     }
   }
+
+  /** @brief Get the CUDA stream/event handler used by this input context
+   *
+   * This `CudaObjectHandler` class is designed primarily for internal use and is not guaranteed to
+   * have a stable API. Application authors should instead rely on the public `receive_cuda_stream`
+   * and `receive_cuda_streams` methods.
+   **/
+  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
+
+  /// @brief Set the CUDA stream/event handler used by this input context
+  void cuda_object_handler(std::shared_ptr<gxf::CudaObjectHandler> handler) {
+    cuda_object_handler_ = handler;
+  }
+
+  /** @brief Synchronize any streams found on this port to the operator's internal CUDA stream.
+   *
+   * The `receive` method must have been called for `input_port_name` prior to calling this method
+   * in order for any received streams to be found. This method will call `cudaSetDevice` to make
+   * the device corresponding to the operator's internal stream current.
+   *
+   * If no `CudaStreamPool` resource was available on the operator, the operator will not have an
+   * internal stream. In that case, the first stream received on the input port will be returned
+   * and any additional streams on the input will have been synchronized to it. If no streams were
+   * found on the input and no `CudaStreamPool` resource was available, `cudaStreamDefault` is
+   * returned.
+   *
+   * @param input_port_name The name of the input port. Can be omitted if the operator only has a
+   * single input port.
+   * @param allocate Whether to allocate a new stream if no stream is found. If false or the
+   * operator does not have a `cuda_stream_pool` parameter set, returns cudaStreamDefault.
+   * @param sync_to_default Whether to also synchronize any received streams to the default stream.
+   * @returns The operator's internal CUDA stream, when possible. Returns `cudaStreamDefault`
+   * instead if no CudaStreamPool resource was available and no stream was found on the input port.
+   */
+  virtual cudaStream_t receive_cuda_stream(const char* input_port_name = nullptr,
+                                           bool allocate = true, bool sync_to_default = false) = 0;
+
+  /** @brief Retrieve the CUDA streams found an input port.
+   *
+   * This method is intended for advanced use cases where it is the users responsibility to
+   * manage any necessary stream synchronization. In most cases, it is recommended to use
+   * `receive_cuda_stream` instead.
+   *
+   * @param input_port_name The name of the input port. Can be omitted if the operator only has a
+   * single input port.
+   * @returns Vector of (optional) cudaStream_t. The length of the vector will match the number of
+   * messages on the input port. Any messages that do not contain a stream will have value of
+   * std::nullopt.
+   */
+  virtual std::vector<std::optional<cudaStream_t>> receive_cuda_streams(
+      const char* input_port_name = nullptr) = 0;
 
  protected:
   /**
@@ -509,12 +566,16 @@ class InputContext {
       return make_unexpected<holoscan::RuntimeError>(create_receive_error("input", error_message));
     }
   }
+
   // --------------- End of helper functions for the receive method ---------------
 
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.
   Operator* op_ = nullptr;  ///< The operator that this context is associated with.
   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs_;  ///< The inputs.
+
+ private:
+  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler_{};
 };
 
 /**
@@ -545,6 +606,8 @@ class OutputContext {
   OutputContext(ExecutionContext* execution_context, Operator* op,
                 std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs)
       : execution_context_(execution_context), op_(op), outputs_(outputs) {}
+
+  virtual ~OutputContext() = default;
 
   /**
    * @brief Get pointer to the execution context.
@@ -745,6 +808,32 @@ class OutputContext {
     emit(out_message, name, acq_timestamp);
   }
 
+  /**
+   * @brief Set a stream to be emitted on a given output port.
+   *
+   * The actual creation of the stream component in the output message will occur on any subsequent
+   * `emit` calls on this output port, so the call to this function should occur prior to the
+   * `emit` call(s) for a given port.
+   *
+   * @param stream The CUDA stream
+   * @param output_port_name The name of the output port.
+   */
+  virtual void set_cuda_stream(const cudaStream_t stream,
+                               const char* output_port_name = nullptr) = 0;
+
+  /** @brief Get the CUDA stream/event handler used by this input context
+   *
+   * This `CudaObjectHandler` class is designed primarily for internal use and is not guaranteed to
+   * have a stable API. Application authors should instead rely on the public `set_cuda_stream`
+   * method.
+   **/
+  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
+
+  /// @brief Set the CUDA stream handler used by this output context
+  void cuda_object_handler(std::shared_ptr<gxf::CudaObjectHandler> handler) {
+    cuda_object_handler_ = handler;
+  }
+
  protected:
   /**
    * @brief The implementation of the `emit` method.
@@ -767,6 +856,7 @@ class OutputContext {
       nullptr;              ///< The execution context that is associated with.
   Operator* op_ = nullptr;  ///< The operator that this context is associated with.
   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs_;  ///< The outputs.
+  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler_{};
 };
 
 }  // namespace holoscan

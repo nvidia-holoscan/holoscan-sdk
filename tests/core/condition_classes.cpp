@@ -139,10 +139,12 @@ TEST(ConditionClasses, TestCountConditionGXFComponentMethods) {
   const std::string name{"count-condition"};
   auto condition = F.make_condition<CountCondition>(name, Arg{"count", 100});
 
+  // NOLINTBEGIN(clang-analyzer-deadcode.DeadStores)
   auto gxf_typename = condition->gxf_typename();
   auto context = condition->gxf_context();
   auto cid = condition->gxf_cid();
   auto eid = condition->gxf_eid();
+  // NOLINTEND(clang-analyzer-deadcode.DeadStores)
 }
 
 TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithoutSpec) {
@@ -335,7 +337,7 @@ TEST(ConditionClasses, TestMultiMessageAvailableConditionDefaultConstructor) {
 TEST(ConditionClasses, TestMultiMessageAvailableTimeoutConditionSumOfAll) {
   Fragment F;
   const std::string name{"multi-message-available-timeout"};
-  ArgList arglist{Arg{"execution_frequency", std::string("1000000")},
+  ArgList arglist{Arg{"execution_frequency", "1000000"},
                   Arg{"sampling_mode", std::string("SumOfAll")},
                   Arg{"min_sum", static_cast<size_t>(4)}};
   auto condition = F.make_condition<MultiMessageAvailableTimeoutCondition>(name, arglist);
@@ -388,7 +390,7 @@ TEST(ConditionClasses, TestMultiMessageAvailableTimeoutConditionPerReceiverStrin
   // Test supplying sampling_mode argument as a string
   Fragment F;
   const std::string name{"multi-message-available-timeout"};
-  ArgList arglist{Arg{"execution_frequency", std::string("10ms")},
+  ArgList arglist{Arg{"execution_frequency", "10ms"},
                   Arg{"sampling_mode", std::string("PerReceiver")},
                   Arg{"min_sizes", std::vector<size_t>({1, 2, 1})}};
   auto condition = F.make_condition<MultiMessageAvailableTimeoutCondition>(name, arglist);
@@ -505,10 +507,12 @@ TEST(ConditionClasses, TestPeriodicConditionGXFComponentMethods) {
   auto condition =
       F.make_condition<PeriodicCondition>(name, Arg{"recess_period", std::string("1000000")});
 
+  // NOLINTBEGIN(clang-analyzer-deadcode.DeadStores)
   auto gxf_typename = condition->gxf_typename();
   auto context = condition->gxf_context();
   auto cid = condition->gxf_cid();
   auto eid = condition->gxf_eid();
+  // NOLINTEND(clang-analyzer-deadcode.DeadStores)
 }
 
 TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithoutSpec) {

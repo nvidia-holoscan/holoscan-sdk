@@ -389,7 +389,36 @@ void init_io_context(py::module_& m) {
            "name"_a,
            py::kw_only(),
            "kind"_a = "",
-           doc::InputContext::doc_receive);
+           doc::InputContext::doc_receive)
+      .def(
+          "receive_cuda_stream",
+          [](PyInputContext& op_input, const char* input_port_name, bool allocate) -> intptr_t {
+            auto cuda_stream = op_input.receive_cuda_stream(input_port_name, allocate);
+            auto stream_ptr_address = reinterpret_cast<intptr_t>(static_cast<void*>(cuda_stream));
+            return stream_ptr_address;
+          },
+          "input_port_name"_a = nullptr,
+          "allocate"_a = true,
+          doc::InputContext::doc_receive_cuda_stream)
+      .def(
+          "receive_cuda_streams",
+          [](PyInputContext& op_input,
+             const char* input_port_name) -> std::vector<std::optional<intptr_t>> {
+            auto cuda_streams = op_input.receive_cuda_streams(input_port_name);
+            std::vector<std::optional<intptr_t>> out_ptrs{};
+            out_ptrs.reserve(cuda_streams.size());
+            for (const auto& stream : cuda_streams) {
+              if (stream) {
+                out_ptrs.emplace_back(
+                    reinterpret_cast<intptr_t>(static_cast<void*>(stream.value())));
+              } else {
+                out_ptrs.emplace_back(std::nullopt);
+              }
+            }
+            return out_ptrs;
+          },
+          "input_port_name"_a = nullptr,
+          doc::InputContext::doc_receive_cuda_streams);
 
   py::class_<PyOutputContext, OutputContext, std::shared_ptr<PyOutputContext>>(
       m, "PyOutputContext", R"doc(Output context class.)doc")
@@ -399,7 +428,19 @@ void init_io_context(py::module_& m) {
            "name"_a,
            "emitter_name"_a = "",
            "acq_timestamp"_a = -1,
-           doc::OutputContext::doc_emit);
+           doc::OutputContext::doc_emit)
+      .def(
+          "set_cuda_stream",
+          [](PyOutputContext& op_output,
+             intptr_t stream_ptr,
+             const char* output_port_name = nullptr) {
+            auto cuda_stream = reinterpret_cast<cudaStream_t>(stream_ptr);
+            op_output.set_cuda_stream(cuda_stream, output_port_name);
+            return;
+          },
+          "stream_ptr"_a,
+          "output_port_name"_a = nullptr,
+          doc::OutputContext::doc_set_cuda_stream);
 
   // register a cloudpickle-based serializer for Python objects
   register_py_object_codec();

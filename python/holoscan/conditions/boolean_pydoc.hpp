@@ -29,6 +29,11 @@ namespace BooleanCondition {
 PYDOC(BooleanCondition, R"doc(
 Boolean condition.
 
+This condition can be used as a kill switch for an operator. Once the condition is set to false,
+the operator will enter the NEVER scheduling status and cannot be executed again. In other words
+,this condition cannot currently be used to pause and resume an operator as the operator cannot
+be restarted once it is in the NEVER state.
+
 Parameters
 ----------
 fragment : holoscan.core.Fragment

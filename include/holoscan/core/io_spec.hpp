@@ -57,6 +57,8 @@ namespace holoscan {
  */
 class IOSpec {
  public:
+  virtual ~IOSpec() = default;
+
   /**
    * @brief Input/Output type.
    */

@@ -155,7 +155,6 @@ TEST(OperatorSpec, TestOperatorSpecParamOptional) {
 
   // initialize
   IOSpec default_input{&spec, "a", IOSpec::IOType::kInput, &typeid(gxf::Entity)};
-  IOSpec* default_input_ptr = &default_input;
   MetaParameter empty_p = Parameter<holoscan::IOSpec*>();  // set val
 
   // add one parameter

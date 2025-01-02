@@ -43,6 +43,15 @@ namespace holoscan {
  *
  * This condition will register a call back function which will be called once the work on the
  * specified CUDA stream completes indicating that the data is available for consumption
+ *
+ * This condition applies to a specific input port of the operator as determined by setting the
+ * "receiver" argument.
+ *
+ * ==Parameters==
+ *
+ * - **receiver** (std::string): The receiver to check for a CudaStreamId. This should be specified
+ * by the name of the Operator's input port the condition will apply to. The Holoscan SDK will then
+ * automatically replace the port name with the actual receiver object at application run time.
  */
 class CudaStreamCondition : public gxf::GXFCondition {
  public:

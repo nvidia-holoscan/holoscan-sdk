@@ -154,6 +154,7 @@ class PingThreeRxMetadataOp : public Operator {
                [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = op_input.receive<int>("in1").value();
     auto value2 = op_input.receive<int>("in2").value();
+    // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
     auto value3 = op_input.receive<int>("in3").value();
     auto meta = metadata();
     HOLOSCAN_LOG_INFO("rx metadata has {} keys", meta->size());
@@ -179,6 +180,7 @@ class PingSingleRxMetadataOp : public Operator {
 
   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
+    // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
     auto value1 = op_input.receive<int>("in1").value();
     auto meta = metadata();
     HOLOSCAN_LOG_INFO("{} metadata has {} keys", name(), meta->size());
@@ -234,7 +236,6 @@ class PingTxTensorMapMetadataOp : public Operator {
     HOLOSCAN_LOG_INFO("tensormap tx count = {}", count_);
 
     auto gxf_context = context.context();
-    auto frag = fragment();
 
     // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
     auto allocator =

@@ -39,8 +39,15 @@ fragment : holoscan.core.Fragment
     The fragment the condition will be associated with.
 event_name : event, optional
     The event name on which the cudaEventQuery API is called to get the status.
+receiver : str, optional
+    The name of the operator's input port to which the condition would apply.
 name : str, optional
     The name of the condition.
+
+Notes
+-----
+The `nvidia::gxf::CudaEvent` class is currently unused by Holoscan SDK. This condition is
+intended exclusively for interoperation with wrapped GXF Codelets that use GXF's CudaEvent type.
 )doc")
 
 PYDOC(receiver, R"doc(

@@ -18,6 +18,7 @@
 #include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
 
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -29,7 +30,6 @@
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 using holoscan::ops::segmentation_postprocessor::cuda_postprocess;
 using holoscan::ops::segmentation_postprocessor::DataFormat;
@@ -62,8 +62,11 @@ void SegmentationPostprocessorOp::setup(OperatorSpec& spec) {
              "Data format of network output.",
              std::string("hwc"));
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
-
-  cuda_stream_handler_.define_params(spec);
+  spec.param(cuda_stream_pool_,
+             "cuda_stream_pool",
+             "CUDA Stream Pool",
+             "Instance of gxf::CudaStreamPool.",
+             ParameterFlag::kOptional);
 
   // TODO (gbae): spec object holds an information about errors
   // TODO (gbae): incorporate std::expected to not throw exceptions
@@ -75,23 +78,28 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
 
   // Process input message
   // The type of `in_message` is 'holoscan::gxf::Entity'.
-  auto in_message = op_input.receive<gxf::Entity>("in_tensor").value();
-
-  // if (!in_message || in_message.value().is_null()) { return GXF_CONTRACT_MESSAGE_NOT_AVAILABLE; }
+  auto maybe_tensormap = op_input.receive<TensorMap>("in_tensor");
+  if (!maybe_tensormap) { throw std::runtime_error("Failed to receive input message"); }
+  auto& tensormap = maybe_tensormap.value();
 
   const std::string in_tensor_name = in_tensor_name_.get();
 
   // Get tensor attached to the message
   // The type of `maybe_tensor` is 'std::shared_ptr<holoscan::Tensor>'.
-  auto maybe_tensor = in_message.get<Tensor>(in_tensor_name.c_str());
-  if (!maybe_tensor) {
-    maybe_tensor = in_message.get<Tensor>();
-    if (!maybe_tensor) {
-      throw std::runtime_error(fmt::format("Tensor '{}' not found in message", in_tensor_name));
-    }
+  if (tensormap.empty()) { throw std::runtime_error("No tensors found in received message"); }
+  auto tensor_it = tensormap.find(in_tensor_name);
+  std::shared_ptr<Tensor> in_tensor;
+  if (tensor_it != tensormap.end()) {
+    in_tensor = tensor_it->second;
+  } else {
+    HOLOSCAN_LOG_ERROR(
+        fmt::format("Specified tensor with in_tensor_name='{}' not found in message. First tensor "
+                    "found ('{}') will be used instead.",
+                    in_tensor_name,
+                    tensormap.begin()->first));
+    in_tensor = tensormap.begin()->second;
   }
 
-  auto in_tensor = maybe_tensor;
   // validate tensor format
   DLDevice dev = in_tensor->device();
   if (dev.device_type != kDLCUDA && dev.device_type != kDLCUDAHost) {
@@ -105,12 +113,9 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
     throw std::runtime_error("Input tensor must have row-major memory layout.");
   }
 
-  // get the CUDA stream from the input message
-  gxf_result_t stream_handler_result =
-      cuda_stream_handler_.from_message(context.context(), in_message);
-  if (stream_handler_result != GXF_SUCCESS) {
-    throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
-  }
+  // Get the CUDA stream from the input message if present, otherwise generate one.
+  // This stream will also be transmitted on the "tensor" output port.
+  cudaStream_t cuda_stream = op_input.receive_cuda_stream("in_tensor", true);
 
   segmentation_postprocessor::Shape shape = {};
   switch (data_format_value_) {
@@ -176,13 +181,7 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
                    shape,
                    in_tensor_data,
                    out_tensor_data.value(),
-                   cuda_stream_handler_.get_cuda_stream(context.context()));
-
-  // pass the CUDA stream to the output message
-  stream_handler_result = cuda_stream_handler_.to_message(out_message);
-  if (stream_handler_result != GXF_SUCCESS) {
-    throw std::runtime_error("Failed to add the CUDA stream to the outgoing messages");
-  }
+                   cuda_stream);
 
   auto result = gxf::Entity(std::move(out_message.value()));
   op_output.emit(result);

@@ -27,7 +27,7 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/utils/cuda_stream_handler.hpp"
+#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 namespace holoscan::ops {
 
@@ -120,6 +120,7 @@ class BayerDemosaicOp : public holoscan::Operator {
   Parameter<int> bayer_grid_pos_;
   Parameter<bool> generate_alpha_;
   Parameter<int> alpha_value_;
+  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
 
   NppStreamContext npp_stream_ctx_{};
 
@@ -128,8 +129,6 @@ class BayerDemosaicOp : public holoscan::Operator {
   NppiBayerGridPosition npp_bayer_grid_pos_ = NPPI_BAYER_GBRG;
 
   nvidia::gxf::MemoryBuffer device_scratch_buffer_;
-
-  CudaStreamHandler cuda_stream_handler_;
 };
 
 }  // namespace holoscan::ops

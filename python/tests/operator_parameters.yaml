@@ -155,6 +155,7 @@ inference:
   parallel_inference: true
   infer_on_cpu: false
   enable_fp16: false
+  enable_cuda_graphs: true
   input_on_cuda: true
   output_on_cuda: true
   transmit_on_cuda: true

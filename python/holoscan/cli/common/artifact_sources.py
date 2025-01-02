@@ -42,7 +42,7 @@ class ArtifactSources:
 
     def __init__(self) -> None:
         self._logger = logging.getLogger("common")
-        self._supported_holoscan_versions = ["2.6.0", "2.7.0"]
+        self._supported_holoscan_versions = ["2.6.0", "2.7.0", "2.8.0"]
         try:
             ArtifactSources.HoloscanVersion = ".".join(
                 str(i) for i in Version(holoscan_version_string).release[0:3]

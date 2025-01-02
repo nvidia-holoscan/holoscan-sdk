@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
-#define INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#ifndef HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
+#define HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
 
 #include <array>
 #include <memory>
@@ -30,7 +30,7 @@
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/utils/cuda_stream_handler.hpp"
+#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 #include <holoviz/callbacks.hpp>
 
@@ -893,8 +893,7 @@ class HolovizOp : public Operator {
   void read_frame_buffer(InputContext& op_input, OutputContext& op_output,
                          ExecutionContext& context);
   void render_color_image(const InputSpec& input_spec, BufferInfo& buffer_info);
-  void render_geometry(const ExecutionContext& context, const InputSpec& input_spec,
-                       BufferInfo& buffer_info);
+  void render_geometry(const InputSpec& input_spec, BufferInfo& buffer_info, cudaStream_t stream);
   void render_depth_map(InputSpec* const input_spec_depth_map,
                         const BufferInfo& buffer_info_depth_map,
                         InputSpec* const input_spec_depth_map_color,
@@ -922,6 +921,7 @@ class HolovizOp : public Operator {
   Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
   Parameter<std::shared_ptr<BooleanCondition>> window_close_condition_;
   Parameter<std::shared_ptr<Allocator>> allocator_;
+  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_;
   Parameter<std::string> font_path_;
   Parameter<std::string> camera_pose_output_type_;
   Parameter<std::array<float, 3>> camera_eye_;
@@ -941,7 +941,6 @@ class HolovizOp : public Operator {
   viz::InstanceHandle instance_ = nullptr;
   std::vector<float> lut_;
   std::vector<InputSpec> initial_input_spec_;
-  CudaStreamHandler cuda_stream_handler_;
   bool render_buffer_input_enabled_ = false;
   bool render_buffer_output_enabled_ = false;
   bool camera_pose_output_enabled_ = false;
@@ -962,4 +961,4 @@ class HolovizOp : public Operator {
 };
 }  // namespace holoscan::ops
 
-#endif /* INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */
+#endif /* HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */

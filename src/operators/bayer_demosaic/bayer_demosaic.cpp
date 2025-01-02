@@ -32,7 +32,6 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 
 namespace holoscan::ops {
@@ -81,7 +80,11 @@ void BayerDemosaicOp::setup(OperatorSpec& spec) {
              "Alpha value to be generated",
              "Alpha value to be generated if `generate_alpha` is set to `true` (default `255`).",
              255);
-  cuda_stream_handler_.define_params(spec);
+  spec.param(cuda_stream_pool_,
+             "cuda_stream_pool",
+             "CUDA Stream Pool",
+             "Instance of gxf::CudaStreamPool.",
+             ParameterFlag::kOptional);
 }
 
 void BayerDemosaicOp::initialize() {
@@ -111,22 +114,18 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
   }
   auto in_message = maybe_message.value();
 
-  // get the CUDA stream from the input message
-  gxf_result_t stream_handler_result =
-      cuda_stream_handler_.from_message(context.context(), in_message);
-  if (stream_handler_result != GXF_SUCCESS) {
-    throw std::runtime_error("Failed to get the CUDA stream from incoming messages");
-  }
+  // Get the CUDA stream from the input message if present, otherwise generate one.
+  // This stream will also be transmitted on the "tensor" output port.
+  cudaStream_t cuda_stream = op_input.receive_cuda_stream("receiver", true);
 
   // assign the CUDA stream to the NPP stream context
-  npp_stream_ctx_.hStream = cuda_stream_handler_.get_cuda_stream(context.context());
+  npp_stream_ctx_.hStream = cuda_stream;
 
   void* input_data_ptr = nullptr;
   nvidia::gxf::Shape in_shape{0, 0, 0};
   int32_t rows = 0;
   int32_t columns = 0;
   int16_t in_channels = 0;
-  auto input_memory_type = nvidia::gxf::MemoryStorageType::kHost;
   nvidia::gxf::PrimitiveType element_type = nvidia::gxf::PrimitiveType::kCustom;
   uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(element_type);
 
@@ -172,7 +171,7 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
     columns = buffer_info.width;
     in_channels = 1;
     element_size = nvidia::gxf::PrimitiveTypeSize(element_type);
-    input_memory_type = frame->storage_type();
+    auto input_memory_type = frame->storage_type();
     input_data_ptr = frame->pointer();
 
     // if the input tensor is not coming from device then move it to device
@@ -188,10 +187,12 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
         }
       }
 
-      HOLOSCAN_CUDA_CALL(cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
-                                    static_cast<const void*>(frame->pointer()),
-                                    buffer_size,
-                                    cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(
+          cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
+                     static_cast<const void*>(frame->pointer()),
+                     buffer_size,
+                     cudaMemcpyHostToDevice),
+          "Failed to copy input data to device scratch buffer");
       input_data_ptr = device_scratch_buffer_.pointer();
     }
   } else {
@@ -278,10 +279,12 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
         }
       }
 
-      HOLOSCAN_CUDA_CALL(cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
-                                    static_cast<const void*>(in_tensor_gxf.pointer()),
-                                    buffer_size,
-                                    cudaMemcpyHostToDevice));
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(
+          cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
+                     static_cast<const void*>(in_tensor_gxf.pointer()),
+                     buffer_size,
+                     cudaMemcpyHostToDevice),
+          "Failed to copy input data to device scratch buffer");
       input_data_ptr = device_scratch_buffer_.pointer();
     } else {
       input_data_ptr = in_tensor_gxf.pointer();
@@ -293,7 +296,6 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
     }
     element_type = in_tensor_gxf.element_type();
     element_size = nvidia::gxf::PrimitiveTypeSize(element_type);
-    input_memory_type = in_tensor_gxf.storage_type();
   }
 
   int16_t out_channels = 3 + generate_alpha_;
@@ -380,12 +382,6 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
                                  npp_bayer_interp_mode_,
                                  npp_stream_ctx_);
     }
-  }
-
-  // pass the CUDA stream to the output message
-  stream_handler_result = cuda_stream_handler_.to_message(out_message);
-  if (stream_handler_result != GXF_SUCCESS) {
-    throw std::runtime_error("Failed to add the CUDA stream to the outgoing messages");
   }
 
   // Emit the tensor

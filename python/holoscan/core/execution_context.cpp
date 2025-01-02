@@ -20,10 +20,15 @@
 #include <pybind11/pybind11.h>
 
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "execution_context_pydoc.hpp"
 #include "holoscan/core/execution_context.hpp"
+#include "operator.hpp"
+
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -37,7 +42,59 @@ void init_execution_context(py::module_& m) {
   py::class_<PyExecutionContext, ExecutionContext, std::shared_ptr<PyExecutionContext>>(
       m, "PyExecutionContext", R"doc(Execution context class.)doc")
       .def_property_readonly("input", &PyExecutionContext::py_input)
-      .def_property_readonly("output", &PyExecutionContext::py_output);
+      .def_property_readonly("output", &PyExecutionContext::py_output)
+      .def(
+          "allocate_cuda_stream",
+          [](ExecutionContext& context, const std::string& name) -> intptr_t {
+            auto maybe_cuda_stream = context.allocate_cuda_stream(name);
+            if (maybe_cuda_stream) {
+              // return the memory address correspondingt to the cudaStream_t
+              auto cuda_stream = maybe_cuda_stream.value();
+              auto stream_ptr = reinterpret_cast<intptr_t>(static_cast<void*>(cuda_stream));
+              return stream_ptr;
+            }
+            return 0;
+          },
+          "stream_name"_a = "",
+          doc::ExecutionContext::doc_allocate_cuda_stream)
+      .def(
+          "synchronize_streams",
+          [](ExecutionContext& context,
+             std::vector<std::optional<intptr_t>>
+                 cuda_stream_ptrs,
+             intptr_t target_cuda_stream_ptr) {
+            // cast memory addresses to the corresponding cudaStream_t (void* pointer)
+            std::vector<std::optional<cudaStream_t>> cuda_streams;
+            cuda_streams.reserve(cuda_stream_ptrs.size());
+            for (const auto& stream_ptr : cuda_stream_ptrs) {
+              if (stream_ptr) {
+                cuda_streams.push_back(reinterpret_cast<cudaStream_t>(stream_ptr.value()));
+              } else {
+                cuda_streams.push_back(std::nullopt);
+              }
+            }
+            auto target_cuda_stream = reinterpret_cast<cudaStream_t>(target_cuda_stream_ptr);
+            context.synchronize_streams(cuda_streams, target_cuda_stream);
+            return;
+          },
+          "cuda_stream_ptrs"_a,
+          "target_cuda_stream_ptr"_a,
+          doc::ExecutionContext::doc_synchronize_streams)
+      .def(
+          "device_from_stream",
+          [](ExecutionContext& context, intptr_t cuda_stream_ptr) -> std::optional<int> {
+            auto maybe_device =
+                context.device_from_stream(reinterpret_cast<cudaStream_t>(cuda_stream_ptr));
+            if (maybe_device) {
+              return maybe_device.value();
+            } else {
+              HOLOSCAN_LOG_ERROR("Failed to get device from stream: {}",
+                                 maybe_device.error().what());
+              return std::nullopt;
+            }
+          },
+          "cuda_stream_ptr"_a,
+          doc::ExecutionContext::doc_device_from_stream);
 }
 
 PyExecutionContext::PyExecutionContext(gxf_context_t context,

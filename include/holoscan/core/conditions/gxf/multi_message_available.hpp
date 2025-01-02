@@ -31,6 +31,40 @@
 
 namespace holoscan {
 
+/**
+ * @brief Condition class that allows an operator to execute only when one or more messages are
+ * available across the specified input ports.
+ *
+ * This condition applies to a specific set of input ports of the operator as determined by setting
+ * the "receivers" argument. It can operate in one of two modes:
+ *
+ *  - "SumOfAll" mode: The condition checks if the sum of messages available across all input ports
+ *    is greater than or equal to a given threshold. For this mode, `min_sum` should be specified.
+ *  - "PerReceiver" mode: The condition checks if the number of messages available at each input
+ *    port is greater than or equal to a given threshold. For this mode, `min_sizes` should be
+ *    specified. This mode is equivalent to assigning individiaul MessageAvailableConditions to
+ *    each of the receivers.
+ *
+ * **Note:** This condition **must** currently be set via the `Operator::multi_port_condition`
+ * method using `ConditionType::kMultiMessageAvailable`. The "receivers" argument must be set based
+ * on the input port names as described in the "Parameters" section below.
+ *
+ * ==Parameters==
+ *
+ * - **sampling_mode** (std::string or MultiMessageAvailableCondition::SamplingMode) : The mode of
+ * operation of this condition (see above). Options are currently "SumOfAll" or "PerReceiver".
+ * - **min_sizes** (std::vector<size_t>): The condition permits execution if all given receivers
+ * have at least the given number of messages available in this list. This option is only intended
+ * for use with "PerReceiver" `sampling_mode`. The length of `min_sizes` must match the number of
+ * receivers associated with the condition.
+ * - **min_sum** (size_t): The condition permits execution if the sum of message counts of all
+ * receivers have at least the given number of messages available. This option is only intended for
+ * use with the "SumOfAll" `sampling_mode`.
+ * - **receivers** (std::vector<std::string>): The receivers whose message queues will be checked.
+ * This should be specified by a vector containing the names of the Operator's input ports the
+ * condition will apply to. The Holoscan SDK will then automatically replace the port names with
+ * the actual receiver objects at application run time.
+ */
 class MultiMessageAvailableCondition : public gxf::GXFCondition {
  public:
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(MultiMessageAvailableCondition, GXFCondition)

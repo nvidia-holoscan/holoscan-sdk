@@ -166,7 +166,6 @@ LABEL org.nvidia.holoscan="{{ holoscan_sdk_version }}"
 LABEL org.monai.deploy.app-sdk="{{ monai_deploy_app_sdk_version }}"
 {% endif %}
 
-ENV HOLOSCAN_ENABLE_HEALTH_CHECK=true
 ENV HOLOSCAN_INPUT_PATH={{ full_input_path }}
 ENV HOLOSCAN_OUTPUT_PATH={{ full_output_path }}
 ENV HOLOSCAN_WORKDIR={{ working_dir }}
@@ -215,7 +214,7 @@ RUN apt-get update \
 {% if 'torch' in includes %}
 # Install torch dependencies
 ENV PYTHON_VERSION=3.10.6-1~22.04
-ENV PYTHON_PIP_VERSION=22.0.2+dfsg-1ubuntu0.4
+ENV PYTHON_PIP_VERSION=22.0.2+dfsg-*
 
 RUN apt update \
 && apt-get install -y --no-install-recommends --no-install-suggests \
@@ -318,7 +317,7 @@ HEALTHCHECK --interval=10s --timeout=1s \
 {% if not 'torch' in includes %}
 # If torch is installed, we can skip installing Python
 ENV PYTHON_VERSION=3.10.6-1~22.04
-ENV PYTHON_PIP_VERSION=22.0.2+dfsg-1ubuntu0.4
+ENV PYTHON_PIP_VERSION=22.0.2+dfsg-*
 
 RUN apt update \
     && apt-get install -y --no-install-recommends --no-install-suggests \

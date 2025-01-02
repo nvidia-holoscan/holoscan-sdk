@@ -17,6 +17,10 @@
 
 #include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.cuh"
 
+#include <stdexcept>
+
+#include "holoscan/utils/cuda_macros.hpp"
+
 namespace holoscan::ops {
 namespace segmentation_postprocessor {
 
@@ -129,6 +133,7 @@ void cuda_postprocess(enum NetworkOutputType network_output_type, enum DataForma
       }
       break;
   }
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaPeekAtLastError(), "Postprocessing kernel failed");
 }
 
 }  // namespace segmentation_postprocessor

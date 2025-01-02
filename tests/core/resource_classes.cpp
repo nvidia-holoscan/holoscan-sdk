@@ -196,10 +196,12 @@ TEST_F(ResourceClassesWithGXFContext, TestUnboundedAllocatorGXFComponentMethods)
   const std::string name{"unbounded"};
   auto resource = F.make_resource<UnboundedAllocator>(name);
 
+  // NOLINTBEGIN(clang-analyzer-deadcode.DeadStores)
   auto gxf_typename = resource->gxf_typename();
   auto context = resource->gxf_context();
   auto cid = resource->gxf_cid();
   auto eid = resource->gxf_eid();
+  // NOLINTEND(clang-analyzer-deadcode.DeadStores)
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestUnboundedAllocatorAllocation) {

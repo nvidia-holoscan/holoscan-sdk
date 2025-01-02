@@ -24,7 +24,7 @@ ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
 ARG LIBTORCH_VERSION=2.5.0_24.08
 ARG TORCHVISION_VERSION=0.20.0_24.08
 ARG GRPC_VERSION=1.54.2
-ARG GXF_VERSION=447_20241029_bf72709
+ARG GXF_VERSION=4.1.1.4_20241210_dc72072
 ARG MOFED_VERSION=24.07-0.6.1.0
 
 ############################################################
@@ -195,7 +195,7 @@ ARG GXF_VERSION
 WORKDIR /opt/nvidia/gxf
 RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=x86_64; fi \
     && curl -S -# -L -o gxf.tgz \
-        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
+        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
 RUN mkdir -p ${GXF_VERSION}
 RUN tar xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1
 

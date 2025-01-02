@@ -55,7 +55,6 @@ if(HOLOSCAN_BUILD_TESTS AND TEST_AJA)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT aja_capture_test.py
-    PRE_LINK
     COMMAND patch -u -o aja_capture_test.py ${CMAKE_CURRENT_SOURCE_DIR}/aja_capture.py
       ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/aja_capture/python_aja_capture.patch
   )

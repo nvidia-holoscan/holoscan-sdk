@@ -278,13 +278,15 @@ struct InferenceSpecs {
    * @param use_fp16 Use FP16 conversion, only supported for trt
    * @param cuda_buffer_in Input buffers on CUDA
    * @param cuda_buffer_out Output buffers on CUDA
+   * @param use_cuda_graphs Use CUDA graphs, only supported for trt
    */
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
                  const Mappings& temporal_map, const Mappings& activation_map,
                  const std::vector<int32_t>& trt_opt_profile, bool is_engine_path, bool oncpu,
-                 bool parallel_proc, bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out)
+                 bool parallel_proc, bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out,
+                 bool use_cuda_graphs)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
@@ -299,7 +301,8 @@ struct InferenceSpecs {
         parallel_processing_(parallel_proc),
         use_fp16_(use_fp16),
         cuda_buffer_in_(cuda_buffer_in),
-        cuda_buffer_out_(cuda_buffer_out) {}
+        cuda_buffer_out_(cuda_buffer_out),
+        use_cuda_graphs_(use_cuda_graphs) {}
 
   /**
    * @brief Get the model data path map
@@ -385,6 +388,9 @@ struct InferenceSpecs {
 
   ///  @brief Flag showing if output buffers are on CUDA. Default is True.
   bool cuda_buffer_out_ = true;
+
+  ///  @brief Flag showing if using CUDA Graphs. Default is True.
+  bool use_cuda_graphs_ = true;
 
   /// @brief Input Data Map with key as tensor name and value as DataBuffer
   DataMap data_per_tensor_;

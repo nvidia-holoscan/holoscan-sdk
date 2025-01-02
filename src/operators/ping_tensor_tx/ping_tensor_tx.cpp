@@ -88,6 +88,16 @@ void PingTensorTxOp::setup(OperatorSpec& spec) {
              "output tensor name",
              "output tensor name (default: tensor)",
              std::string{"tensor"});
+  spec.param(cuda_stream_pool_,
+             "cuda_stream_pool",
+             "CUDA Stream Pool",
+             "Instance of gxf::CudaStreamPool.");
+  spec.param(async_device_allocation_,
+             "async_device_allocation",
+             "enable asynchronous device allocations",
+             "If True, enables asynchronous device memory allocation. For async allocation to be, "
+             "used, cuda_stream_pool must also be set.",
+             false);
 }
 
 nvidia::gxf::PrimitiveType PingTensorTxOp::primitive_type(const std::string& data_type) {
@@ -150,7 +160,7 @@ void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCont
   const uint64_t bytes_per_element = nvidia::gxf::PrimitiveTypeSize(dtype);
   auto strides = nvidia::gxf::ComputeTrivialStrides(tensor_shape, bytes_per_element);
   nvidia::gxf::MemoryStorageType storage_type;
-  auto storage_name = storage_type_.get();
+  const std::string storage_name = storage_type_.get();
   HOLOSCAN_LOG_DEBUG("storage_name = {}", storage_name);
   if (storage_name == std::string("device")) {
     storage_type = nvidia::gxf::MemoryStorageType::kDevice;
@@ -160,14 +170,56 @@ void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCont
     storage_type = nvidia::gxf::MemoryStorageType::kSystem;
   } else {
     throw std::runtime_error(fmt::format(
-        "Unrecognized storage_device ({}), should be one of {'device', 'host', 'system'}",
+        "Unrecognized storage_device ({}), should be one of ['device', 'host', 'system']",
         storage_name));
   }
 
-  // allocate a tensor of the specified shape and data type
-  auto result = gxf_tensor->reshapeCustom(
-      tensor_shape, dtype, bytes_per_element, strides, storage_type, allocator.value());
-  if (!result) { HOLOSCAN_LOG_ERROR("failed to generate tensor"); }
+  bool use_async_allocation =
+      (storage_type == nvidia::gxf::MemoryStorageType::kDevice && async_device_allocation_.get());
+  if (!use_async_allocation) {
+    // allocate a tensor of the specified shape and data type
+    auto result = gxf_tensor->reshapeCustom(
+        tensor_shape, dtype, bytes_per_element, strides, storage_type, allocator.value());
+    if (!result) { HOLOSCAN_LOG_ERROR("failed to generate tensor"); }
+  } else {
+    // Tensor doesn't currently have an API for async allocation so have to allocate with CUDA
+    // and then wrap it using wrapMemory.
+    const std::string stream_name = fmt::format("{}_stream", name_);
+    auto maybe_stream = context.allocate_cuda_stream(stream_name);
+    if (!maybe_stream) {
+      throw std::runtime_error(
+          fmt::format("Failed to allocate CUDA stream: {}", maybe_stream.error().what()));
+    }
+    auto cuda_stream = maybe_stream.value();
+    op_output.set_cuda_stream(cuda_stream, "out");
+
+    // manually use CUDA APIs for async memory allocation since reshapeCustom is synchronous
+    // Create a shared pointer for the CUDA memory with a custom deleter.
+    auto pointer = std::shared_ptr<void*>(new void*, [cuda_stream](void** pointer) {
+      if (pointer != nullptr) {
+        HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaFreeAsync(*pointer, cuda_stream),
+                                       "Failed to free CUDA memory");
+        delete pointer;
+      }
+    });
+
+    // Allocate CUDA device memory (for this test operator, the values are uninitialized)
+    size_t nbytes = tensor_shape.size() * bytes_per_element;
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMallocAsync(pointer.get(), nbytes, cuda_stream),
+                                   "Failed to allocate CUDA memory");
+
+    // wrap this memory as the GXF tensor
+    gxf_tensor->wrapMemory(tensor_shape,
+                           dtype,
+                           bytes_per_element,
+                           strides,
+                           storage_type,
+                           *pointer,
+                           [orig_pointer = pointer](void*) mutable {
+                             orig_pointer.reset();  // decrement ref count
+                             return nvidia::gxf::Success;
+                           });
+  }
 
   // Create Holoscan tensor
   auto maybe_dl_ctx = (*gxf_tensor).toDLManagedTensorContext();

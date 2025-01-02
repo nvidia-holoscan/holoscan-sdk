@@ -83,6 +83,7 @@ struct GLFWWindow::Impl {
   static void scroll_cb(GLFWwindow* window, double x, double y);
   static void framebuffer_size_cb(GLFWwindow* window, int width, int height);
   static void window_size_cb(GLFWwindow* window, int width, int height);
+  static void iconify_cb(GLFWwindow* window, int iconified);
 
   void setup_callbacks() {
     prev_key_cb_ = glfwSetKeyCallback(window_, &GLFWWindow::Impl::key_cb);
@@ -93,6 +94,7 @@ struct GLFWWindow::Impl {
     prev_framebuffer_size_cb_ =
         glfwSetFramebufferSizeCallback(window_, &GLFWWindow::Impl::framebuffer_size_cb);
     prev_window_size_cb_ = glfwSetWindowSizeCallback(window_, &GLFWWindow::Impl::window_size_cb);
+    prev_window_iconify_cb_ = glfwSetWindowIconifyCallback(window_, &GLFWWindow::Impl::iconify_cb);
   }
 
   KeyModifiers to_modifiers(int mods);
@@ -120,6 +122,8 @@ struct GLFWWindow::Impl {
   std::list<WindowSizeCallbackFunction> window_size_callbacks_;
   GLFWwindowsizefun prev_window_size_cb_ = nullptr;
 
+  GLFWwindowiconifyfun prev_window_iconify_cb_ = nullptr;
+
   bool caps_lock_ = false;
   bool num_lock_ = false;
   nvh::CameraManipulator::Inputs inputs_;  ///< Mouse button pressed
@@ -129,6 +133,7 @@ struct GLFWWindow::Impl {
   uint32_t framebuffer_height_ = 0;
   uint32_t window_width_ = 0;
   uint32_t window_height_ = 0;
+  bool minimized_ = false;
 };
 
 // Initialize static members
@@ -369,6 +374,14 @@ void GLFWWindow::Impl::window_size_cb(GLFWwindow* window, int width, int height)
   impl->window_height_ = height;
 }
 
+void GLFWWindow::Impl::iconify_cb(GLFWwindow* window, int iconified) {
+  GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
+
+  if (impl->prev_window_iconify_cb_) { impl->prev_window_iconify_cb_(window, iconified); }
+
+  impl->minimized_ = iconified == GLFW_TRUE;
+}
+
 Window::CallbackHandle GLFWWindow::add_key_callback(KeyCallbackFunction callback) {
   impl_->key_callbacks_.push_back(std::move(callback));
   // create a handle which automatically removes the callback from the list when the handle is
@@ -524,9 +537,8 @@ bool GLFWWindow::should_close() {
 }
 
 bool GLFWWindow::is_minimized() {
-  const bool minimized = glfwGetWindowAttrib(impl_->window_, GLFW_ICONIFIED);
-  if (minimized) { usleep(50); }
-  return minimized;
+  if (impl_->minimized_) { usleep(50); }
+  return impl_->minimized_;
 }
 
 void GLFWWindow::im_gui_new_frame() {

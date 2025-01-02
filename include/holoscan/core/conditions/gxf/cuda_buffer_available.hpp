@@ -40,8 +40,20 @@ namespace holoscan {
 /**
  * @brief Condition based on data availability in a cuda buffer.
  *
- * A component which specifies the availability of data at the receiver based on the cuda buffers
+ * A component which specifies the availability of data at the receiver based on the CudaBuffer
  * present in incoming messages.
+ *
+ * This condition applies to a specific input port of the operator as determined by setting the
+ * "receiver" argument.
+ *
+ * **Note:** The nvidia::gxf::CudaBuffer class is currently unused by Holoscan SDK. This condition
+ * is intended exclusively for interoperation with wrapped GXF Codelets that use GXF's CudaBuffer type.
+ *
+ * ==Parameters==
+ *
+ * - **receiver** (std::string): The receiver to check for a CudaBuffer. This should be specified
+ * by the name of the Operator's input port the condition will apply to. The Holoscan SDK will then
+ * automatically replace the port name with the actual receiver object at application run time.
  */
 class CudaBufferAvailableCondition : public gxf::GXFCondition {
  public:

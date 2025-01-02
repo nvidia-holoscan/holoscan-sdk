@@ -16,6 +16,7 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
@@ -51,12 +52,13 @@ class PyMessageAvailableCondition : public MessageAvailableCondition {
   // Define a constructor that fully initializes the object.
   explicit PyMessageAvailableCondition(
       Fragment* fragment, uint64_t min_size = 1UL, size_t front_stage_max_size = 1UL,
+      std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_message_available_condition")
       : MessageAvailableCondition(
             ArgList{Arg{"min_size", min_size}, Arg{"front_stage_max_size", front_stage_max_size}}) {
     name_ = name;
     fragment_ = fragment;
-    // Note "receiver" parameter is set automatically from GXFExecutor
+    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -68,10 +70,15 @@ void init_message_available(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<MessageAvailableCondition>>(
       m, "MessageAvailableCondition", doc::MessageAvailableCondition::doc_MessageAvailableCondition)
-      .def(py::init<Fragment*, uint64_t, size_t, const std::string&>(),
+      .def(py::init<Fragment*,
+                    uint64_t,
+                    size_t,
+                    std::optional<const std::string>,
+                    const std::string&>(),
            "fragment"_a,
            "min_size"_a = 1UL,
            "front_stage_max_size"_a = 1UL,
+           "receiver"_a = py::none(),
            "name"_a = "noname_message_available_condition"s,
            doc::MessageAvailableCondition::doc_MessageAvailableCondition)
       .def_property("receiver",

@@ -83,7 +83,6 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Patch the current example to enable recording the rendering window
   add_custom_command(OUTPUT video_replayer_distributed_test.cpp
-    PRE_LINK
     COMMAND patch -u -o video_replayer_distributed_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer_distributed.cpp
     ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/video_replayer/cpp_video_replayer_distributed.patch
   )

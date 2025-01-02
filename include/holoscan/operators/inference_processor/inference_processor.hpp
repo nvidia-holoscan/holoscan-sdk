@@ -27,7 +27,7 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/utils/cuda_stream_handler.hpp"
+#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 #include "holoinfer.hpp"
 #include "holoinfer_buffer.hpp"
@@ -153,6 +153,10 @@ class InferenceProcessorOp : public holoscan::Operator {
   ///  Supported value: False
   Parameter<bool> transmit_on_cuda_;
 
+  ///  @brief Optional CUDA stream pool for allocation of an internal CUDA stream if none is
+  ///  available in the incoming messages.
+  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
+
   void conditional_disable_output_port(const std::string& name);
 
   // Internal state
@@ -169,8 +173,6 @@ class InferenceProcessorOp : public holoscan::Operator {
 
   /// Operator Identifier, used in reporting.
   const std::string module_{"Inference Processor Operator"};
-
-  CudaStreamHandler cuda_stream_handler_;
 };
 
 }  // namespace holoscan::ops

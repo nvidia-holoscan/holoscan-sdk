@@ -20,35 +20,35 @@
 
 #include <cuda_runtime.h>
 
-#include <common/logger.hpp>  // GXF_LOG_ERROR, GXF_LOG_WARNING
+#include "holoscan/logger/logger.hpp"  // HOLOSCAN_LOG_ERROR, HOLOSCAN_LOG_WARN
 
 // Note: ({ ... }) here is a GNU statement expression and not standard C++
 // see: https://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html
 // It should be supported by both clang and gcc, but maybe not by MSVC
-#define HOLOSCAN_CUDA_CALL(stmt)                                                           \
-  ({                                                                                       \
-    cudaError_t _holoscan_cuda_err = stmt;                                                 \
-    if (cudaSuccess != _holoscan_cuda_err) {                                               \
-      GXF_LOG_ERROR("CUDA Runtime call %s in line %d of file %s failed with '%s' (%d).\n", \
-                    #stmt,                                                                 \
-                    __LINE__,                                                              \
-                    __FILE__,                                                              \
-                    cudaGetErrorString(_holoscan_cuda_err),                                \
-                    static_cast<int>(_holoscan_cuda_err));                                 \
-    }                                                                                      \
-    _holoscan_cuda_err;                                                                    \
+#define HOLOSCAN_CUDA_CALL(stmt)                                                              \
+  ({                                                                                          \
+    cudaError_t _holoscan_cuda_err = stmt;                                                    \
+    if (cudaSuccess != _holoscan_cuda_err) {                                                  \
+      HOLOSCAN_LOG_ERROR("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).", \
+                         #stmt,                                                               \
+                         __LINE__,                                                            \
+                         __FILE__,                                                            \
+                         cudaGetErrorString(_holoscan_cuda_err),                              \
+                         static_cast<int>(_holoscan_cuda_err));                               \
+    }                                                                                         \
+    _holoscan_cuda_err;                                                                       \
   })
 
 #define HOLOSCAN_CUDA_CALL_WARN(stmt)                                                        \
   ({                                                                                         \
     cudaError_t _holoscan_cuda_err = stmt;                                                   \
     if (cudaSuccess != _holoscan_cuda_err) {                                                 \
-      GXF_LOG_WARNING("CUDA Runtime call %s in line %d of file %s failed with '%s' (%d).\n", \
-                      #stmt,                                                                 \
-                      __LINE__,                                                              \
-                      __FILE__,                                                              \
-                      cudaGetErrorString(_holoscan_cuda_err),                                \
-                      static_cast<int>(_holoscan_cuda_err));                                 \
+      HOLOSCAN_LOG_WARN("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).", \
+                        #stmt,                                                               \
+                        __LINE__,                                                            \
+                        __FILE__,                                                            \
+                        cudaGetErrorString(_holoscan_cuda_err),                              \
+                        static_cast<int>(_holoscan_cuda_err));                               \
     }                                                                                        \
     _holoscan_cuda_err;                                                                      \
   })

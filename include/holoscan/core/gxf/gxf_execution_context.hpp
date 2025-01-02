@@ -21,11 +21,16 @@
 #include <gxf/core/gxf.h>
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "../execution_context.hpp"
+#include "./gxf_cuda.hpp"
 #include "./gxf_io_context.hpp"
 
 namespace holoscan::gxf {
+
+class GXFWrapper;  // forward declaration
 
 /**
  * @brief Class to hold the execution context for GXF Operator.
@@ -67,9 +72,52 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
    */
   std::shared_ptr<GXFOutputContext> gxf_output() { return gxf_output_context_; }
 
+  /// @brief allocate a new GXF CudaStream object and return the cudaStream_t corresponding to it
+  expected<cudaStream_t, RuntimeError> allocate_cuda_stream(
+      const std::string& stream_name) override;
+
+  // @brief synchronize all of the streams in cuda_streams with target_cuda_stream
+  void synchronize_streams(const std::vector<std::optional<cudaStream_t>>& cuda_streams,
+                           cudaStream_t target_cuda_stream) override;
+
+  // @brief determine the CUDA device corresponding to the given stream
+  expected<int, RuntimeError> device_from_stream(cudaStream_t stream) override;
+
+  /**
+   * @brief Return the CudaStreamHandle corresponding to a given cudaStream_t.
+   *
+   * This will only work with a cudaStream_t that was allocated as a CudaStream object by GXF.
+   * The stream should correspond to a CudaStreamId that was received on one of the Operator's
+   * input ports or a stream that was allocated via `allocate_cuda_stream`.
+   *
+   * @param stream_handle A CUDA stream object.
+   * @return The GXF CudaStream handle if found, or unexpected if not found.
+   */
+  expected<gxf::CudaStreamHandle, RuntimeError> stream_handle_from_stream(cudaStream_t stream);
+
  protected:
-  std::shared_ptr<GXFInputContext> gxf_input_context_;    ///< The GXF input context.
-  std::shared_ptr<GXFOutputContext> gxf_output_context_;  ///< The GXF output context.
+  friend class holoscan::gxf::GXFWrapper;
+  friend class holoscan::gxf::GXFInputContext;
+  friend class holoscan::gxf::GXFOutputContext;
+
+  std::shared_ptr<CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
+
+  /// @brief allocate a new GXF CudaStream object and return the GXF Handle to it
+  expected<CudaStreamHandle, RuntimeError> allocate_cuda_stream_handle(
+      const std::string& stream_name);
+
+  /// @brief initialize the CudaObjectHandler for the Operator
+  void init_cuda_object_handler(Operator* op);
+
+  /// @brief release any internal stream objects allocated by the operator
+  void release_internal_cuda_streams();
+
+  /// @brief clear the handler's received stream mappings from a prior `Operator::compute` call.
+  void clear_received_streams();
+
+  std::shared_ptr<GXFInputContext> gxf_input_context_{};    ///< The GXF input context.
+  std::shared_ptr<GXFOutputContext> gxf_output_context_{};  ///< The GXF output context.
+  std::shared_ptr<CudaObjectHandler> cuda_object_handler_{};
 };
 
 }  // namespace holoscan::gxf

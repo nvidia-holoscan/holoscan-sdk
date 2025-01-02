@@ -308,19 +308,17 @@ def pdb_main(scheduler_type="greedy"):
 This is an interactive session.
 Please type the following commands to check if the breakpoints are hit.
 
-  (Pdb) b test_pytracing.py:76
-  Breakpoint 1 at /workspace/holoscan-sdk/public/python/tests/system/test_pytracing.py:76
+  (Pdb) b test_pytracing.py:78
+  Breakpoint 1 at /workspace/holoscan-sdk/public/python/tests/system/test_pytracing.py:78
   (Pdb) c
   ...
-  > /workspace/holoscan-sdk/public/python/tests/system/test_pytracing.py(76)start()
+  > /workspace/holoscan-sdk/public/python/tests/system/test_pytracing.py(78)start()
   -> print("Mx start")
   (Pdb) exit
 """
     )
 
-    import pdb  # noqa: T100
-
-    pdb.set_trace()  # noqa: T100
+    breakpoint()  # noqa: T100
 
     main(scheduler_type)
 

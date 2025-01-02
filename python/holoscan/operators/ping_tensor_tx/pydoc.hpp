@@ -67,6 +67,11 @@ data_type : str or numpy.dtype, optional
     object can be provided to indicate the desired data type.
 tensor_name : str, optional
     The name of the output tensor.
+cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
+    CUDA stream pool to use for memory allocation when `async_device_allocation` is ``True``.
+async_device_allocation : bool, optional
+    If True, allocate memory using cudaMallocAsync on an internally allocated CUDA stream.
+    Otherwise, use cudaMalloc on the default stream.
 name : str, optional (constructor only)
     The name of the operator. Default value is ``"ping_tensor_tx"``.
 

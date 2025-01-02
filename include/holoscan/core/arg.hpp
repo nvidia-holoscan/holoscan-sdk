@@ -255,6 +255,17 @@ class Arg {
   }
 
   /**
+   * @brief Construct a new string Arg object from a C-style character array.
+   *
+   * @param name The name of the argument.
+   * @param value The value of the argument.
+   */
+  Arg(const std::string& name, const char* value) {
+    name_ = name;
+    set_value_<std::string>(std::string(value));
+  }
+
+  /**
    * @brief Define the assignment operator.
    *
    * @tparam ArgT The type of the argument.
@@ -278,6 +289,17 @@ class Arg {
   Arg&& operator=(ArgT&& value) {
     set_value_<ArgT>(std::forward<ArgT>(value));
     return std::move(*this);
+  }
+
+  /**
+   * @brief Assignment operator converting a C-style character array to a std::string.
+   *
+   * @param value The value of the argument.
+   * @return The reference to the argument.
+   */
+  Arg& operator=(const char* value) {
+    set_value_<std::string>(std::string(value));
+    return *this;
   }
 
   /**

@@ -133,6 +133,7 @@ void gen_primitive_vertices(PrimitiveTopology topology, uint32_t primitive_count
       const dim3 launch_grid((vertex_counts[0] + (block_dim.x - 1)) / block_dim.x);
       copy_and_add_zero<<<launch_grid, block_dim, 0, stream>>>(
           vertex_counts[0], reinterpret_cast<const float*>(src), reinterpret_cast<float*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
     } break;
     case PrimitiveTopology::CROSS_LIST: {
       const dim3 launch_grid((primitive_count + (block_dim.x - 1)) / block_dim.x);
@@ -141,16 +142,19 @@ void gen_primitive_vertices(PrimitiveTopology topology, uint32_t primitive_count
           aspect_ratio,
           reinterpret_cast<const float*>(src),
           reinterpret_cast<float*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
     } break;
     case PrimitiveTopology::OVAL_LIST: {
       const dim3 launch_grid((primitive_count + (block_dim.x - 1)) / block_dim.x);
       gen_oval_list_vertices<<<launch_grid, block_dim, 0, stream>>>(
           primitive_count, reinterpret_cast<const float*>(src), reinterpret_cast<float*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
     } break;
     case PrimitiveTopology::RECTANGLE_LIST: {
       const dim3 launch_grid((primitive_count + (block_dim.x - 1)) / block_dim.x);
       gen_rectangle_list_vertices<<<launch_grid, block_dim, 0, stream>>>(
           primitive_count, reinterpret_cast<const float*>(src), reinterpret_cast<float*>(dst));
+      CudaRTCheck(cudaPeekAtLastError());
     } break;
     case PrimitiveTopology::POINT_LIST_3D:
     case PrimitiveTopology::LINE_LIST_3D:

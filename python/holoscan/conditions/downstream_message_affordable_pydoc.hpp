@@ -40,8 +40,17 @@ fragment : holoscan.core.Fragment
     The fragment the condition will be associated with
 min_size : int
     The minimum number of free slots present in the back buffer.
+transmitter : str, optional
+    The name of the operator's output port to which the condition would apply.
 name : str, optional
     The name of the condition.
+
+Notes
+-----
+This condition is typically set within the `Operator.setup` method using the `IOSpec.condition`
+method with `ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE`. In that case, the transmitter name is
+already known from the port corresponding to the `IOSpec` object, so the "transmitter" argument is
+not needed.
 )doc")
 
 PYDOC(transmitter, R"doc(

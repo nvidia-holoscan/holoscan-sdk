@@ -16,6 +16,7 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
@@ -51,9 +52,11 @@ class PyCudaStreamCondition : public CudaStreamCondition {
 
   // Define a constructor that fully initializes the object.
   explicit PyCudaStreamCondition(Fragment* fragment,
+                                 std::optional<const std::string> receiver = std::nullopt,
                                  const std::string& name = "noname_cuda_stream_condition") {
     name_ = name;
     fragment_ = fragment;
+    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -65,8 +68,9 @@ void init_cuda_stream(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<CudaStreamCondition>>(
       m, "CudaStreamCondition", doc::CudaStreamCondition::doc_CudaStreamCondition)
-      .def(py::init<Fragment*, const std::string&>(),
+      .def(py::init<Fragment*, std::optional<const std::string>, const std::string&>(),
            "fragment"_a,
+           "receiver"_a = py::none(),
            "name"_a = "noname_cuda_stream_condition"s,
            doc::CudaStreamCondition::doc_CudaStreamCondition)
       .def_property(

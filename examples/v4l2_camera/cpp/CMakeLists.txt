@@ -74,15 +74,12 @@ if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
 
   # Modify testcase to only run 10 frames
   add_custom_command(OUTPUT v4l2_camera_test.cpp
-    PRE_LINK
     COMMAND sed 's/"visualizer",/"visualizer", make_condition<CountCondition>\(10\), /g'
             ${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.cpp > v4l2_camera_test.cpp
   )
 
   # Create the test executable
-  add_executable(v4l2_camera_test
-    v4l2_camera_test.cpp
-  )
+  add_executable(v4l2_camera_test v4l2_camera_test.cpp)
 
   target_link_libraries(v4l2_camera_test
     PRIVATE

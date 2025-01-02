@@ -35,7 +35,8 @@ namespace holoscan::gxf {
 static const std::vector<std::string> kExtensionSearchPrefixes{"", "gxf_extensions"};
 
 GXFExtensionManager::GXFExtensionManager(gxf_context_t context) : ExtensionManager(context) {
-  refresh();
+  // Should not call the virtual refresh() method from the constructor.
+  // It is called explicitly after construction instead.
 }
 
 GXFExtensionManager::~GXFExtensionManager() {

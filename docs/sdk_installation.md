@@ -17,7 +17,7 @@ Setup your developer kit:
 
 Developer Kit | User Guide | OS | GPU Mode
 ------------- | ---------- | --- | ---
-[NVIDIA IGX Orin][igx] | [Guide][igx-guide] | [IGX Software][igx-sw] 1.0 Production Release | iGPU **or*** dGPU
+[NVIDIA IGX Orin][igx] | [Guide][igx-guide] | [IGX Software][igx-sw] 1.1 Production Release | iGPU **or*** dGPU
 [NVIDIA Jetson AGX Orin and Orin Nano][jetson-orin] | [Guide][jetson-guide] | [JetPack][jp] 6.1 | iGPU
 [NVIDIA Clara AGX][clara-agx]<br>_Only supporting the NGC container_ | [Guide][clara-guide] | [HoloPack][sdkm] 1.2<br>_[Upgrade to 535+ drivers required][cagx-upgrade]_ | dGPU
 
@@ -82,11 +82,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.7.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -128,7 +128,7 @@ ImportError: libcudart.so.12: cannot open shared object file: No such file or di
 This could happen if your system has multiple CUDA Toolkit component versions installed. Find the path of the missing CUDA library (`libcudart.so.12` here) using `find /usr/local/cuda* -name libcudart.so.12` and select that path in `sudo update-alternatives --config cuda`. If that library is not found, or other cuda toolkit libraries become missing afterwards, you could try a clean reinstall of the full CUDA Toolkit:
 
 ```bash
-sudo apt update && sudo apt install -y cuda-toolkit-12-2
+sudo apt update && sudo apt install -y cuda-toolkit-12-6
 ```
 
 ---
@@ -179,7 +179,7 @@ pip install holoscan
 See details and troubleshooting on [PyPI][pypi].
 
 :::{note}
-For x86_64, ensure that the [CUDA Runtime is installed](https://developer.nvidia.com/cuda-12-2-2-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04).
+For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia.com/cuda-12-6-3-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network).
 :::
 
 ````
@@ -223,7 +223,7 @@ For x86_64, ensure that the [CUDA Runtime is installed](https://developer.nvidia
 [ort]: https://onnxruntime.ai/
 [mofed]: https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/
 [cli]: ./holoscan_packager.md
-[^1]: [CUDA 12](https://docs.nvidia.com/cuda/archive/12.1.1/cuda-installation-guide-linux/index.html) is required. Already installed on NVIDIA developer kits with IGX Software and JetPack.
+[^1]: [CUDA 12](https://docs.nvidia.com/cuda/archive/12.6.3/cuda-installation-guide-linux/index.html) is required. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^2]: Debian installation on x86_64 requires the [latest cuda-keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) to automatically install all dependencies.
 [^3]: NPP 12 needed for the FormatConverter and BayerDemosaic operators. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^4]: TensorRT 10.3+ needed for the Inference operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.

@@ -111,6 +111,13 @@ def create_run_parser(
         help="name and hostname of the container to create.",
     )
     advanced_group.add_argument(
+        "--health-check",
+        dest="health_check",
+        action="store_true",
+        default="False",
+        help="enable the health check service for a distributed application.  (default: False)",
+    )
+    advanced_group.add_argument(
         "-n",
         "--network",
         dest="network",

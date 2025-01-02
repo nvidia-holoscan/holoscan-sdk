@@ -16,6 +16,7 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
@@ -52,10 +53,12 @@ class PyDownstreamMessageAffordableCondition : public DownstreamMessageAffordabl
   // Define a constructor that fully initializes the object.
   explicit PyDownstreamMessageAffordableCondition(
       Fragment* fragment, uint64_t min_size = 1L,
+      std::optional<const std::string> transmitter = std::nullopt,
       const std::string& name = "noname_downstream_affordable_condition")
       : DownstreamMessageAffordableCondition(Arg{"min_size", min_size}) {
     name_ = name;
     fragment_ = fragment;
+    if (transmitter.has_value()) { this->add_arg(Arg("transmitter", transmitter.value())); }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // Note "transmitter" parameter is set automatically from GXFExecutor
     setup(*spec_);
@@ -70,9 +73,10 @@ void init_downstream_message_affordable(py::module_& m) {
       m,
       "DownstreamMessageAffordableCondition",
       doc::DownstreamMessageAffordableCondition::doc_DownstreamMessageAffordableCondition)
-      .def(py::init<Fragment*, uint64_t, const std::string&>(),
+      .def(py::init<Fragment*, uint64_t, std::optional<const std::string>, const std::string&>(),
            "fragment"_a,
            "min_size"_a = 1L,
+           "transmitter"_a = py::none(),
            "name"_a = "noname_downstream_affordable_condition"s,
            doc::DownstreamMessageAffordableCondition::doc_DownstreamMessageAffordableCondition)
       .def_property("min_size",

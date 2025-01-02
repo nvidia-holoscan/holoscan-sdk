@@ -38,7 +38,8 @@ class TrtInfer : public InferBase {
    */
   TrtInfer(const std::string& model_path, const std::string& model_name,
            const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
-           bool enable_fp16, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out);
+           bool enable_fp16, bool enable_cuda_graphs, bool is_engine_path, bool cuda_buf_in,
+           bool cuda_buf_out);
 
   /**
    * @brief Destructor
@@ -114,6 +115,9 @@ class TrtInfer : public InferBase {
   /// @brief Use FP16 in TRT engine file generation
   bool enable_fp16_;
 
+  ///  @brief Use CUDA Graphs
+  bool enable_cuda_graphs_;
+
   /// @brief Flag showing if input buffer is on cuda
   bool cuda_buf_in_;
 
@@ -161,8 +165,6 @@ class TrtInfer : public InferBase {
   /// CUDA event for device
   cudaEvent_t cuda_event_ = nullptr;
 
-  /// Use CUDA graphs if set
-  bool use_cuda_graph_ = true;
   /// This is set when the model is executed the first time, used for CUDA graph logic
   bool first_phase_ = true;
   /// CUDA graph instance

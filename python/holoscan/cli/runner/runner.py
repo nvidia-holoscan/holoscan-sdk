@@ -96,6 +96,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
     quiet: bool = args.quiet
     driver: bool = args.driver
     worker: bool = args.worker
+    health_check: bool = args.health_check
     fragments: str = args.fragments if args.fragments else None
     network: str = create_or_use_network(args.network, map_name)
     nic: str = args.nic if args.nic else None
@@ -149,6 +150,7 @@ def _run_app(args: Namespace, app_info: dict, pkg_info: dict):
         pkg_info,
         quiet,
         commands,
+        health_check,
         network,
         nic,
         use_all_nics,

@@ -29,6 +29,8 @@ namespace py = pybind11;
 
 namespace holoscan {
 
+class PyOperator;
+
 void init_execution_context(py::module_&);
 
 class PyExecutionContext : public gxf::GXFExecutionContext {
@@ -43,6 +45,13 @@ class PyExecutionContext : public gxf::GXFExecutionContext {
   std::shared_ptr<PyInputContext> py_input() const;
 
   std::shared_ptr<PyOutputContext> py_output() const;
+
+ protected:
+  // Make PyOperator a friend so it can call protected init_cuda_object_handler
+  friend class PyOperator;
+  using gxf::GXFExecutionContext::clear_received_streams;
+  using gxf::GXFExecutionContext::cuda_object_handler;
+  using gxf::GXFExecutionContext::init_cuda_object_handler;
 
  private:
   py::object py_op_ = py::none();
