@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,7 +85,10 @@ class PyUcxTransmitter : public UcxTransmitter {
 void init_transmitters(py::module_& m) {
   py::class_<Transmitter, gxf::GXFResource, std::shared_ptr<Transmitter>>(
       m, "Transmitter", doc::Transmitter::doc_Transmitter)
-      .def(py::init<>(), doc::Transmitter::doc_Transmitter);
+      .def(py::init<>(), doc::Transmitter::doc_Transmitter)
+      .def_property_readonly("capacity", &Transmitter::capacity, doc::Transmitter::doc_capacity)
+      .def_property_readonly("size", &Transmitter::size, doc::Transmitter::doc_size)
+      .def_property_readonly("back_size", &Transmitter::back_size, doc::Transmitter::doc_back_size);
 
   py::class_<DoubleBufferTransmitter,
              PyDoubleBufferTransmitter,

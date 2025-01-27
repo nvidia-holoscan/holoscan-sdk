@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@ namespace holoscan {
 /**
  * @brief Base class for all CUDA allocators.
  *
- * CudaAllocators are allocators for CUDA memory that support asynchronous allocation.
+ * CudaAllocators are allocators for CUDA memory that also support asynchronous allocation.
  */
 class CudaAllocator : public Allocator {
  public:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -300,7 +300,7 @@ class CudaObjectHandler {
   bool default_stream_warning_ = false;
 
   /// CUDA event used to synchronize the internal CUDA stream with multiple incoming streams
-  cudaEvent_t cuda_event_;
+  cudaEvent_t cuda_event_ = 0;
 
   /// Flag to indicate if the internal CUDA event has been created yet
   bool event_created_ = false;

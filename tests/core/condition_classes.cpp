@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -364,7 +364,7 @@ TEST(ConditionClasses, TestMultiMessageAvailableTimeoutConditionPerReceiver) {
   Fragment F;
   const std::string name{"multi-message-available-timeout"};
   ArgList arglist{
-      Arg{"execution_frequency", std::string("10ms")},
+      Arg{"execution_frequency", "10ms"},
       Arg{"sampling_mode", MultiMessageAvailableTimeoutCondition::SamplingMode::kPerReceiver},
       Arg{"min_sizes", std::vector<size_t>({1, 2, 1})}};
   auto condition = F.make_condition<MultiMessageAvailableTimeoutCondition>(name, arglist);

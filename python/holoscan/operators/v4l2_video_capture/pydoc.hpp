@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,60 +31,41 @@ Operator to get a video stream from a V4L2 source.
 https://www.kernel.org/doc/html/v4.9/media/uapi/v4l/v4l2.html
 
 Inputs a video stream from a V4L2 node, including USB cameras and HDMI IN.
-
- - Input stream is on host. If no pixel format is specified in the yaml configuration file, the
-   pixel format will be automatically selected. However, only `AB24`, `YUYV`, `MJPG`, and `RGB3`
-   are then supported.
-   If a pixel format is specified in the yaml file, then this format will be used. However, note
-   if `pass_through` is `false` that the operator then expects that this format can be encoded as
-   RGBA32. If not, the behavior is undefined.
- - Output stream is on host. if `pass_through` is `false` (the default) the video buffer is
-   converted to RGBA32, else output the input video buffer unmodified.
-
-Use ``holoscan.operators.FormatConverterOp`` to move data from the host to a GPU device.
+If no pixel format is specified in the yaml configuration file, the pixel format will be
+automatically selected.
+If a pixel format is specified in the yaml file, then this format will be used.
 
 **==Named Outputs==**
 
-    signal : nvidia::gxf::VideoBuffer
-        A message containing a video buffer on the host with format GXF_VIDEO_FORMAT_RGBA.
-
-**==Device Memory Requirements==**
-
-    When using this operator with a ``holoscan.resources.BlockMemoryPool``, a single device memory
-    block is needed (``storage_type=1``). The size of this memory block can be determined by
-    rounding the width and height up to the nearest even size and then padding the rows as needed
-    so that the row stride is a multiple of 256 bytes. C++ code to calculate the block size is as
-    follows:
-
-.. code-block:: python
-
-    def get_block_size(height, width):
-        height_even = height + (height & 1)
-        width_even = width + (width & 1)
-        row_bytes = width_even * 4  # 4 bytes per pixel for 8-bit RGBA
-        row_stride = row_bytes if (row_bytes % 256 == 0) else ((row_bytes // 256 + 1) * 256)
-        return height_even * row_stride
+    signal : nvidia::gxf::VideoBuffer or nvidia::gxf::Tensor
+        A message containing a video buffer if the V4L2 pixel format has equivalent
+        ``nvidia::gxf::VideoFormat``, else a tensor.
 
 Parameters
 ----------
 fragment : Fragment (constructor only)
     The fragment that the operator belongs to.
 allocator : holoscan.resources.Allocator
-    Memory allocator to use for the output.
+    Deprecated, do not use.
 device : str
     The device to target (e.g. "/dev/video0" for device 0). Default value is ``"/dev/video0"``.
 width : int, optional
-    Width of the video stream. Default value is ``0``.
+    Width of the video stream. If set to ``0``, use the default width of the device. Default value
+    is ``0``.
 height : int, optional
-    Height of the video stream. Default value is ``0``.
+    Height of the video stream. If set to ``0``, use the default height of the device. Default value
+    is ``0``.
+frame_rate: float, optional
+    Frame rate of the video stream. If the device does not support the exact frame rate, the nearest
+    match is used instead. If set to ``0``, use the default frame rate of the device. Default value
+    is ``0.0``.
 num_buffers : int, optional
     Number of V4L2 buffers to use. Default value is ``4``.
 pixel_format : str
     Video stream pixel format (little endian four character code (fourcc)).
     Default value is ``"auto"``.
 pass_through : bool
-    If set, pass through the input buffer to the output unmodified, else convert to RGBA32.
-    Default value is ``False``.
+    Deprecated, do not use.
 name : str, optional (constructor only)
     The name of the operator. Default value is ``"v4l2_video_capture"``.
 exposure_time : int, optional
@@ -104,6 +85,15 @@ gain : int, optional
     When not set by the user, V4L2_CID_AUTOGAIN is set to true (if supported).
     When set by the user, V4L2_CID_AUTOGAIN is set to false (if supported). The provided value is
     then used to set V4L2_CID_GAIN.
+
+Metadata
+--------
+V4L2_pixel_format : str
+    V4L2 pixel format.
+V4L2_ycbcr_encoding : str
+    V4L2 YCbCr encoding (``enum v4l2_ycbcr_encoding`` value as string).
+V4L2_quantization : str
+    V4L2 quantization (``enum v4l2_quantization`` value as string).
 )doc")
 
 }  // namespace holoscan::doc::V4L2VideoCaptureOp

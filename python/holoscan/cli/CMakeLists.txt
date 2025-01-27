@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copy the Holoscan CLI Python source code to the build dir
-# Note: installation handled by the CMakeLists.txt above for
-# the whole holoscan module
+# Holoscan CLI (bash) was migrated to a standalone project in Holoscan SDK v2.9.
+# Starting from 2.9, we include a stub to instruct users to install holoscan-cli.
 file(
   COPY .
   DESTINATION ${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/cli
@@ -23,11 +22,7 @@ file(
   PATTERN "holoscan" EXCLUDE
 )
 
-# Read the contents of requirements.txt to pass to the CLI bash script
-file(READ "../../requirements.txt" HOLOSCAN_CLI_DEPENDENCIES)
-string(STRIP "${HOLOSCAN_CLI_DEPENDENCIES}" HOLOSCAN_CLI_DEPENDENCIES)
-
-# Holoscan CLI (bash)
+# We install a stub to notify users that core support is deprecated.
 configure_file(holoscan ${CMAKE_BINARY_DIR}/bin @ONLY)
 install(
   FILES ${CMAKE_BINARY_DIR}/bin/holoscan

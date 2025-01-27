@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -139,6 +139,10 @@ class ThreadPool : public gxf::GXFSystemResourceBase {
  * Then any other components that need to be associated with this device can be added to that
  * same entity group.
  *
+ * ==Parameters==
+ *
+ * - **dev_id** (int32_t, optional): The CUDA device id specifying which device the memory pool
+ * will use (Default: 0).
  */
 class GPUDevice : public gxf::GXFSystemResourceBase {
  public:

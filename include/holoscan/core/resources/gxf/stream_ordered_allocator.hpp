@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,8 +30,34 @@ namespace holoscan {
 /**
  * @brief
  *
- * StreamOrderedAllocator uses cudaMallocFromPoolAsync / cudaFreeAsync dynamically without a pool.
- * Does not provide bounded execution times.
+ * StreamOrderedAllocator uses `cudaMallocFromPoolAsync`/`cudaFreeAsync` dynamically without a
+ * pool.
+ *
+ * This allocator only supports CUDA device memory. If host memory is also needed, see
+ * `RMMAllocator`. This allocator does not provide bounded execution times.
+ *
+ * Because it is a CudaAllocator it supports both synchronous (`allocate`, `free`) and
+ * asynchronous (`allocate_async`, `free_async`) APIs for memory allocation.
+ *
+ * The values for the memory parameters, such as `device_memory_initial_size` must be specified in
+ * the form of a string containing a non-negative integer value followed by a suffix representing
+ * the units. Supported units are B, KB, MB, GB and TB where the values are powers of 1024 bytes
+ * (e.g. MB = 1024 * 1024 bytes). Examples of valid units are "512MB", "256 KB", "1 GB". If a
+ * floating point number is specified that decimal portion will be truncated (i.e. the value is
+ * rounded down to the nearest integer).
+ *
+ * ==Parameters==
+ *
+ * - **device_memory_initial_size** (std::string, optional): The initial size of the device memory
+ * pool. See above for the format accepted. Defaults to "8MB" on aarch64 and "16MB" on x86_64.
+ * - **device_memory_max_size** (std::string, optional): The maximum size of the device memory
+ * pool. See above for the format accepted. The default is to use twice the value set for
+ * `device_memory_initial_size`.
+ * - **release_threshold** (std::string, optional): The amount of reserved memory to hold onto
+ * before trying to release memory back to the OS.  See above for the format accepted. The default
+ * value is "4MB".
+ * - **dev_id** (int32_t, optional): The CUDA device id specifying which device the memory pool
+ * will use. (Default: 0)
  */
 class StreamOrderedAllocator : public CudaAllocator {
  public:

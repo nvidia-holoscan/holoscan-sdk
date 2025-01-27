@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,12 +21,17 @@
 #include <list>
 #include <memory>
 
+#include "fragment_wrapper.hpp"
+#include "holoscan/core/gxf/gxf_execution_context.hpp"
+#include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/parameter.hpp"
-#include "operator_wrapper_fragment.hpp"
 
-#include "gxf/std/codelet.hpp"
 #include "gxf/core/parameter_parser_std.hpp"
+#include "gxf/std/codelet.hpp"
+
+// Include the utilities for parameter handling
+#include "parameter_utils.hpp"
 
 namespace holoscan::gxf {
 
@@ -56,16 +61,19 @@ class OperatorWrapper : public nvidia::gxf::Codelet {
   /// Delegate to the Operator's stop() method.
   gxf_result_t stop() override;
 
-  struct GXFParameter {
-    nvidia::gxf::Parameter<YAML::Node> param;  ///< The GXF parameter.
-    holoscan::ArgType arg_type;                ///< The type of the parameter (in Holoscan)
-    holoscan::Parameter<void*>* param_ptr;     ///< The pointer to the parameter (in Holoscan)
-  };
+  /// Determine if the operator has metadata enabled
+  bool is_metadata_enabled() { return op_ ? op_->is_metadata_enabled() : false; }
 
  protected:
-  std::shared_ptr<Operator> op_;        ///< The Operator to wrap.
-  OperatorWrapperFragment fragment_;    ///< The fragment to use for the Operator.
-  std::list<GXFParameter> parameters_;  ///< The parameters to use for the GXF Codelet.
+  std::shared_ptr<Operator> op_;  ///< The Operator to wrap.
+  FragmentWrapper fragment_;      ///< The fragment to use for the Operator.
+  std::list<std::shared_ptr<CommonGXFParameter>>
+      parameters_;  ///< The parameters for the GXF Codelet.
+
+ private:
+  std::unique_ptr<GXFExecutionContext> exec_context_{};
+  InputContext* op_input_{};
+  OutputContext* op_output_{};
 };
 
 }  // namespace holoscan::gxf

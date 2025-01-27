@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,9 +30,9 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "./arg.hpp"
-#include "./argument_setter.hpp"
 #include "./codec_registry.hpp"
 #include "./common.hpp"
 #include "./component.hpp"
@@ -451,75 +451,6 @@ class Operator : public ComponentBase {
                        [[maybe_unused]] OutputContext& op_output,
                        [[maybe_unused]] ExecutionContext& context) {}
 
-  /**
-   * @brief Register the argument setter for the given type.
-   *
-   * If the operator has an argument with a custom type, the argument setter must be registered
-   * using this method.
-   *
-   * The argument setter is used to set the value of the argument from the YAML configuration.
-   *
-   * This method can be called in the initialization phase of the operator (e.g., `initialize()`).
-   * The example below shows how to register the argument setter for the custom type (`Vec3`):
-   *
-   * ```cpp
-   * void MyOp::initialize() {
-   *   register_converter<Vec3>();
-   * }
-   * ```
-   *
-   * It is assumed that `YAML::convert<T>::encode` and `YAML::convert<T>::decode` are implemented
-   * for the given type.
-   * You need to specialize the `YAML::convert<>` template class.
-   *
-   * For example, suppose that you had a `Vec3` class with the following members:
-   *
-   * ```cpp
-   * struct Vec3 {
-   *   // make sure you have overloaded operator==() for the comparison
-   *   double x, y, z;
-   * };
-   * ```
-   *
-   * You can define the `YAML::convert<Vec3>` as follows in a '.cpp' file:
-   *
-   * ```cpp
-   * namespace YAML {
-   * template<>
-   * struct convert<Vec3> {
-   *   static Node encode(const Vec3& rhs) {
-   *     Node node;
-   *     node.push_back(rhs.x);
-   *     node.push_back(rhs.y);
-   *     node.push_back(rhs.z);
-   *     return node;
-   *   }
-   *
-   *   static bool decode(const Node& node, Vec3& rhs) {
-   *     if(!node.IsSequence() || node.size() != 3) {
-   *       return false;
-   *     }
-   *
-   *     rhs.x = node[0].as<double>();
-   *     rhs.y = node[1].as<double>();
-   *     rhs.z = node[2].as<double>();
-   *     return true;
-   *   }
-   * };
-   * }
-   * ```
-   *
-   * Please refer to the [yaml-cpp
-   * documentation](https://github.com/jbeder/yaml-cpp/wiki/Tutorial#converting-tofrom-native-data-types)
-   * for more details.
-   *
-   * @tparam typeT The type of the argument to register.
-   */
-  template <typename typeT>
-  static void register_converter() {
-    register_argument_setter<typeT>();
-  }
-
   /// Return operator name and port name from a string in the format of "<op_name>[.<port_name>]".
   static std::pair<std::string, std::string> parse_port_name(const std::string& op_port_name);
 
@@ -618,6 +549,17 @@ class Operator : public ComponentBase {
   bool is_metadata_enabled() { return is_metadata_enabled_; }
 
   /**
+   * @brief Enable or disable metadata for this operator.
+   *
+   * If this method has not been used to explicitly enable metadata, the value for
+   * `is_metadata_enabled()` will be determined by `Fragment::is_metadata_enabled()` when the
+   * operator is initialized.
+   *
+   * @param enable Boolean indicating if metadata should be enabled.
+   */
+  void enable_metadata(bool enable) { is_metadata_enabled_ = enable; }
+
+  /**
    * @brief Get the metadata update policy used by this operator.
    *
    * @returns The metadata update policy used by this operator.
@@ -635,6 +577,42 @@ class Operator : public ComponentBase {
    * @param policy The metadata update policy to be used by this operator.
    */
   void metadata_policy(MetadataPolicy policy) { dynamic_metadata_->policy(policy); }
+
+  /**
+   * @brief Add no CudaStreamPool parameter or argument already exists, add a default one.
+   *
+   * This method is available to be called by derived classes to add a default CudaStreamPool in
+   * the case that the user did not pass one in as an argument to `make_operator`.
+   *
+   * This function will not add an additional CUDA stream pool if one was already passed in as an
+   * argument to `make_operator` (i.e. it is in resources_) or if a "cuda_stream_pool" parameter
+   * already exists in the operator spec.
+   *
+   * @param dev_id The device id for the CudaStreamPool.
+   * @param stream_flags The stream flags for any streams allocated by the pool.
+   * @param stream_priority The stream priority for any streams allocated by the pool.
+   * @param reserved_size The number of initial streams to reserve in the pool.
+   * @param max_size The maximum number of streams that can be allocated by the pool
+   * (0 = unbounded).
+   */
+  void add_cuda_stream_pool(int32_t dev_id = 0, uint32_t stream_flags = 0,
+                            int32_t stream_priority = 0, uint32_t reserved_size = 1,
+                            uint32_t max_size = 0);
+
+  /**@brief Return the Receiver corresponding to a specific input port.
+   *
+   * @param port_name The name of the input port.
+   * @return The Receiver corresponding to the input port, if it exists. Otherwise, return nullopt.
+   */
+  std::optional<std::shared_ptr<Receiver>> receiver(const std::string& port_name);
+
+  /**@brief Return the Transmitter corresponding to a specific output port.
+   *
+   * @param port_name The name of the output port.
+   * @return The Transmitter corresponding to the output port, if it exists. Otherwise, return
+   * nullopt.
+   */
+  std::optional<std::shared_ptr<Transmitter>> transmitter(const std::string& port_name);
 
  protected:
   // Making the following classes as friend classes to allow them to access
@@ -688,6 +666,12 @@ class Operator : public ComponentBase {
    * Can only be called after GXFExecutor::create_input_port so the input ports (receivers) exist.
    */
   void update_connector_arguments();
+
+  /** @brief Determine ports whose transmitter or receiver are associated with an Arg for a Condition.
+   *
+   * Should be called before GXFExecutor::create_input_port or GXFExecutor::create_output_port.
+   */
+  void find_ports_used_by_condition_args();
 
   /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
   virtual void set_parameters();
@@ -748,63 +732,6 @@ class Operator : public ComponentBase {
    */
   void update_published_messages(std::string output_name);
 
-  /**
-   * @brief Register the argument setter for the given type.
-   *
-   * Please refer to the documentation of `::register_converter()` for more details.
-   *
-   * @tparam typeT The type of the argument to register.
-   */
-  template <typename typeT>
-  static void register_argument_setter() {
-    ArgumentSetter::get_instance().add_argument_setter<typeT>(
-        [](ParameterWrapper& param_wrap, Arg& arg) {
-          std::any& any_param = param_wrap.value();
-
-          // If arg has no name and value, that indicates that we want to set the default value for
-          // the native operator if it is not specified.
-          if (arg.name().empty() && !arg.has_value()) {
-            auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
-            param.set_default_value();
-            return;
-          }
-
-          std::any& any_arg = arg.value();
-
-          // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
-          auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
-          const auto& arg_type = arg.arg_type();
-
-          auto element_type = arg_type.element_type();
-          auto container_type = arg_type.container_type();
-
-          HOLOSCAN_LOG_DEBUG(
-              "Registering converter for parameter {} (element_type: {}, container_type: {})",
-              arg.name(),
-              static_cast<int>(element_type),
-              static_cast<int>(container_type));
-
-          if (element_type == ArgElementType::kYAMLNode) {
-            auto& arg_value = std::any_cast<YAML::Node&>(any_arg);
-            typeT new_value;
-            bool parse_ok = YAML::convert<typeT>::decode(arg_value, new_value);
-            if (!parse_ok) {
-              HOLOSCAN_LOG_ERROR("Unable to parse YAML node for parameter '{}'", arg.name());
-            } else {
-              param = std::move(new_value);
-            }
-          } else {
-            try {
-              auto& arg_value = std::any_cast<typeT&>(any_arg);
-              param = arg_value;
-            } catch (const std::bad_any_cast& e) {
-              HOLOSCAN_LOG_ERROR(
-                  "Bad any cast exception caught for argument '{}': {}", arg.name(), e.what());
-            }
-          }
-        });
-  }
-
   /// Reset the GXF GraphEntity of any components associated with this operator
   virtual void reset_graph_entities();
 
@@ -819,6 +746,9 @@ class Operator : public ComponentBase {
 
   bool is_initialized_ = false;  ///< Whether the operator is initialized.
 
+  std::vector<std::string>& non_default_input_ports() { return non_default_input_ports_; }
+  std::vector<std::string>& non_default_output_ports() { return non_default_output_ports_; }
+
  private:
   ///  Set the operator codelet or any other backend codebase.
   void set_op_backend();
@@ -830,6 +760,11 @@ class Operator : public ComponentBase {
 
   /// The number of published messages for each output indexed by output names.
   std::map<std::string, uint64_t> num_published_messages_map_;
+
+  // Keep track of which ports have a user-assigned condition involving its receiver or
+  // transmitter (a default condition will NOT be added to any such ports).
+  std::vector<std::string> non_default_input_ports_;
+  std::vector<std::string> non_default_output_ports_;
 
   /// The backend Codelet or other codebase pointer. It is used for DFFT.
   void* op_backend_ptr = nullptr;

@@ -211,13 +211,10 @@ The message `Connection dropped with status -25 (Connection reset by remote peer
 
 By default, device ID 0 is used by the UCX extensions to send/receive data between fragments. To override this default, the user can set environment variable `HOLOSCAN_UCX_DEVICE_ID`.
 
-#### 3. "Address already in use" errors in distributed applications due to the health check service.
+#### 3. Health check service is turned off by default
 
-If the environment variable `HOLOSCAN_ENABLE_HEALTH_CHECK` is set to true or false (can use "1" or "0", "on" or "off" as well, case-insensitive), the health check service is enabled or disabled accordingly. If the environment variable is not set or is invalid, the default value (disabled) is used.
+The health checker service in a distributed application is turned off by default. However, it can be enabled by setting the environment variable `HOLOSCAN_ENABLE_HEALTH_CHECK` to `true` (can use `1` and `on,` case-insensitive). If the environment variable is not set or is invalid, the default value (disabled) is used.
 
-In scenarios where distributed applications have both the driver and workers running on the same host with the health check service enabled, either within a Docker container or directly on the host, there's a possibility of encountering "Address already in use" errors.
-This issue can be avoided by setting the `HOLOSCAN_HEALTH_CHECK_PORT` environment variable to a different port number for the health check service. The default port number is `8777`. For example, the port number can be set to `8780` by using `export HOLOSCAN_HEALTH_CHECK_PORT=8780`.
-Alternatively, the health check service can be disabled by setting the `HOLOSCAN_ENABLE_HEALTH_CHECK` environment variable to `false`.
 
 #### 4. The use of the management port is unsupported on the NVIDIA IGX Orin Developer Kit.
 
@@ -244,8 +241,7 @@ Given a CMake project, a pre-built executable, or a Python application, you can 
 You can set environment variables to modify the default actions of services and the scheduler when executing a distributed application.
 
 - **HOLOSCAN_ENABLE_HEALTH_CHECK**: determines whether the health check service should be active for distributed applications. Accepts values such as "true," "1," or "on" (case-insensitive) as true, enabling the health check. If unspecified, it defaults to "false." When enabled, the [gRPC Health Checking Service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) is activated, allowing tools like [grpc-health-probe](https://github.com/grpc-ecosystem/grpc-health-probe) to monitor liveness and readiness.
-
-- **HOLOSCAN_HEALTH_CHECK_PORT** : designates the port number on which the Health Checking Service is launched. It must be an integer value representing a valid port number. If unspecified, it defaults to `8777`.
+This environment variable is only used when the distributed application is launched with `--driver` or `--worker` options. The health check service in a distributed application runs on the same port as the App Driver (default: `8765`) and/or the App Worker.
 
 - **HOLOSCAN_DISTRIBUTED_APP_SCHEDULER** : controls which scheduler is used for distributed applications. It can be set to either `greedy`, `multi_thread` or `event_based`. `multithread` is also allowed as a synonym for `multi_thread` for backwards compatibility. If unspecified, the default scheduler is `multi_thread`.
 

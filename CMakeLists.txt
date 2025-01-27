@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -343,12 +343,20 @@ COMPONENT "holoscan-gxf_libs"
 )
 
 # Install CMake script for GXF wrapping of extensions
-install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/WrapOperatorAsGXFExtension.cmake"
+install(
+FILES
+  "${CMAKE_SOURCE_DIR}/cmake/modules/WrapAsGXFComponent.cmake"
+  "${CMAKE_SOURCE_DIR}/cmake/modules/WrapOperatorAsGXFExtension.cmake"
 DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 COMPONENT "holoscan-gxf_libs"
 )
 
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/cmake/modules/wrap_operator_as_gxf_template"
+DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
+COMPONENT "holoscan-gxf_libs"
+)
+
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/cmake/modules/wrap_resource_as_gxf_template"
 DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 COMPONENT "holoscan-gxf_libs"
 )

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,7 +111,6 @@ set(CORE_PROTO_FILES
     core/services/proto/app_worker.proto
     core/services/proto/connection_item.proto
     core/services/proto/error_code.proto
-    core/services/proto/health_checking.proto
     core/services/proto/multi_fragment_port_info.proto
     core/services/proto/result.proto
     core/services/proto/system_resource.proto
@@ -169,6 +168,7 @@ add_holoscan_library(core
     core/gxf/gxf_operator.cpp
     core/gxf/gxf_resource.cpp
     core/gxf/gxf_scheduler.cpp
+    core/gxf/gxf_scheduling_term_wrapper.cpp
     core/gxf/gxf_utils.cpp
     core/gxf/gxf_wrapper.cpp
     core/io_spec.cpp
@@ -222,7 +222,6 @@ add_holoscan_library(core
     core/services/app_worker/server.cpp
     core/services/common/forward_op.cpp
     core/services/common/virtual_operator.cpp
-    core/services/health_checking/service_impl.cpp
     core/signal_handler.cpp
     core/system/cpu_resource_monitor.cpp
     core/system/gpu_resource_monitor.cpp

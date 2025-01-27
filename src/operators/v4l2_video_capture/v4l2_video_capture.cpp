@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,39 +17,175 @@
 
 #include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <jpeglib.h>
 #include <libv4l2.h>
-#include <libv4lconvert.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
 #include <algorithm>
 #include <cstring>
-#include <map>
-#include <numeric>
+#include <filesystem>
+#include <list>
+#include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
+
+#include <magic_enum.hpp>
 
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/utils/cuda_macros.hpp"
 
-#define CLEAR(x) memset(&(x), 0, sizeof(x))
+#define POSIX_CALL(stmt)                                                             \
+  ({                                                                                 \
+    int _result;                                                                     \
+    do { _result = stmt; } while ((_result == -1) && (errno == EINTR));              \
+    if (_result == -1) {                                                             \
+      throw std::runtime_error(                                                      \
+          fmt::format("Call `{}` in line {} of file {} failed with '{}' (errno {})", \
+                      #stmt,                                                         \
+                      __LINE__,                                                      \
+                      __FILE__,                                                      \
+                      strerror(errno),                                               \
+                      errno));                                                       \
+    }                                                                                \
+    _result;                                                                         \
+  })
 
-static bool pixel_format_supported(int fd, unsigned int pixel_format_fourcc) {
-  struct v4l2_fmtdesc fmtdesc;
-  CLEAR(fmtdesc);
-  fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  bool supported_format = false;
-  while (ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
-    if (fmtdesc.pixelformat == pixel_format_fourcc) {
-      supported_format = true;
-      break;
-    }
-    fmtdesc.index++;
+/// convert FOURCC value to string
+#define FOURCC2STRING(val)              \
+  fmt::format("{}{}{}{}",               \
+              char(val & 0x7F),         \
+              char((val >> 8) & 0x7F),  \
+              char((val >> 16) & 0x7F), \
+              char((val >> 24) & 0x7F))
+
+namespace holoscan::ops {
+
+/**
+ * Holds a nvidia::gxf::VideoFormat and the corresponding function to create the default color plane
+ * description
+ **/
+class GxfFormat {
+ public:
+  explicit GxfFormat(nvidia::gxf::VideoFormat format) : format_(format) {}
+  GxfFormat() = delete;
+
+  virtual ~GxfFormat() = default;
+
+  const nvidia::gxf::VideoFormat format_;
+  virtual std::vector<nvidia::gxf::ColorPlane> get_default_color_planes(
+      [[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height,
+      [[maybe_unused]] bool stride_align) const {
+    throw std::runtime_error("Unsupported");
   }
-  return supported_format;
-}
+  virtual std::tuple<nvidia::gxf::Shape, nvidia::gxf::PrimitiveType> get_shape_and_type(
+      [[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height) const {
+    throw std::runtime_error("Unsupported");
+  }
+};
+
+/**
+ * Template used to get a pointer to the default color plane description for a format.
+ */
+template <nvidia::gxf::VideoFormat FORMAT>
+class GxfFormatTemplate : public GxfFormat {
+ public:
+  GxfFormatTemplate() : GxfFormat(FORMAT) {}
+
+  std::vector<nvidia::gxf::ColorPlane> get_default_color_planes(uint32_t width, uint32_t height,
+                                                                bool stride_align) const override {
+    return const_cast<nvidia::gxf::VideoFormatSize<FORMAT>*>(&video_format_size_)
+        ->getDefaultColorPlanes(width, height, stride_align);
+  }
+
+ private:
+  nvidia::gxf::VideoFormatSize<FORMAT> video_format_size_;
+};
+
+class GxfFormatTensor : public GxfFormat {
+ public:
+  explicit GxfFormatTensor(uint32_t v4l2_pixel_format)
+      : GxfFormat(nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_CUSTOM),
+        v4l2_pixel_format_(v4l2_pixel_format) {}
+  GxfFormatTensor() = delete;
+
+  std::tuple<nvidia::gxf::Shape, nvidia::gxf::PrimitiveType> get_shape_and_type(
+      uint32_t width, uint32_t height) const override {
+    switch (v4l2_pixel_format_) {
+      case V4L2_PIX_FMT_YUYV:
+        return {{int(height), int(width), 2}, nvidia::gxf::PrimitiveType::kUnsigned8};
+      default:
+        throw std::runtime_error(
+            fmt::format("Unhandled pixel format {}", FOURCC2STRING(v4l2_pixel_format_)));
+    }
+  }
+
+ private:
+  const uint32_t v4l2_pixel_format_;
+};
+
+/**
+ * Map from a V4L2 format to a nvidia::gxf::VideoFormat
+ */
+static const V4L2VideoCaptureOp::FormatList v4l2_to_gxf_format{
+    {V4L2_PIX_FMT_RGBA32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>())},
+    {V4L2_PIX_FMT_BGRA32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRA>())},
+    {V4L2_PIX_FMT_ARGB32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_ARGB>())},
+    // caution, unless all other formats where the name matches the memory, the ABGR format is BGRA
+    // in memory
+    {V4L2_PIX_FMT_ABGR32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRA>())},
+    {V4L2_PIX_FMT_RGBX32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBX>())},
+    {V4L2_PIX_FMT_BGRX32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRX>())},
+    {V4L2_PIX_FMT_XRGB32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_XRGB>())},
+    // caution, unless all other formats where the name matches the memory, the XBGR format is BGRX
+    // in memory
+    {V4L2_PIX_FMT_XBGR32,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRX>())},
+    {V4L2_PIX_FMT_RGB24,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB>())},
+    {V4L2_PIX_FMT_BGR24,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGR>())},
+    {V4L2_PIX_FMT_GREY,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY>())},
+    {V4L2_PIX_FMT_Y16,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY16>())},
+    {V4L2_PIX_FMT_NV12,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12>())},
+    {V4L2_PIX_FMT_YUV420,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420>())},
+    {V4L2_PIX_FMT_NV24,
+     std::shared_ptr<GxfFormat>(
+         new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV24>())},
+    // these V4L2 formats have no equivalent GXF video buffer format, output as tensor instead
+    {V4L2_PIX_FMT_YUYV, std::shared_ptr<GxfFormat>(new GxfFormatTensor(V4L2_PIX_FMT_YUYV))},
+    {V4L2_PIX_FMT_MJPEG, nullptr},
+};
 
 static void YUYVToRGBA(const void* yuyv, void* rgba, size_t width, size_t height) {
   auto r_convert = [](int y, int cr) {
@@ -106,8 +242,8 @@ static void RGB24ToRGBA(const void* rgb3, void* rgba, size_t width, size_t heigh
 // Each frame is a JPEG image so use libjpeg to decompress the image and modify it to
 // add alpha channel
 static void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t height) {
-  struct jpeg_decompress_struct cinfo;
-  struct jpeg_error_mgr jerr;
+  jpeg_decompress_struct cinfo;
+  jpeg_error_mgr jerr;
   // Size of image is width * height * 3 (RGB)
   unsigned long jpg_size = width * height * 3;
   int row_stride;
@@ -147,26 +283,27 @@ static void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t heigh
   jpeg_destroy_decompress(&cinfo);
 }
 
-namespace holoscan::ops {
-
 void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
-  auto& signal = spec.output<gxf::Entity>("signal");
-
-  spec.param(signal_, "signal", "Output", "Output channel", &signal);
+  spec.output<std::shared_ptr<holoscan::gxf::Entity>>("signal");
 
   static constexpr char kDefaultDevice[] = "/dev/video0";
   static constexpr char kDefaultPixelFormat[] = "auto";
   static constexpr bool kDefaultPassThrough = false;
   static constexpr uint32_t kDefaultWidth = 0;
   static constexpr uint32_t kDefaultHeight = 0;
+  static constexpr float kDefaultFrameRate = 0.f;
   static constexpr uint32_t kDefaultNumBuffers = 4;
 
-  spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
+  spec.param(allocator_,
+             "allocator",
+             "Allocator",
+             "Deprecated. Memory allocator to use for the output if `pass_through` is `false`.");
 
   spec.param(
       device_, "device", "VideoDevice", "Path to the V4L2 device", std::string(kDefaultDevice));
   spec.param(width_, "width", "Width", "Width of the V4L2 image", kDefaultWidth);
   spec.param(height_, "height", "Height", "Height of the V4L2 image", kDefaultHeight);
+  spec.param(frame_rate_, "frame_rate", "Frame rate", "Capture frame rate", kDefaultFrameRate);
   spec.param(num_buffers_,
              "numBuffers",
              "NumBuffers",
@@ -177,12 +314,14 @@ void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
              "Pixel Format",
              "Pixel format of capture stream (little endian four character code (fourcc))",
              std::string(kDefaultPixelFormat));
-  spec.param(pass_through_,
-             "pass_through",
-             "Pass Through",
-             "If set, pass through the input buffer to the output unmodified, else convert to "
-             "RGBA32",
-             kDefaultPassThrough);
+  spec.param(
+      pass_through_,
+      "pass_through",
+      "Pass Through",
+      "Deprecated, use `FormatConverterOp` to convert the output buffer to the desired format. If "
+      "set, pass through the input buffer to the output unmodified, else convert to "
+      "RGBA32.",
+      kDefaultPassThrough);
   spec.param(exposure_time_,
              "exposure_time",
              "Exposure Time",
@@ -202,90 +341,119 @@ void V4L2VideoCaptureOp::initialize() {
 
 void V4L2VideoCaptureOp::start() {
   v4l2_initialize();
-  v4l2_set_mode();
+  v4l2_get_format();
   v4l2_check_formats();
-  v4l2_set_formats();
+  v4l2_set_format();
   v4l2_set_camera_settings();
-  v4l2_requestbuffers();
+  v4l2_request_buffers();
   v4l2_start();
 }
 
 void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                                  ExecutionContext& context) {
   // Read buffer.
-  struct v4l2_buffer buf;
-  CLEAR(buf);
+  v4l2_buffer buf{};
   v4l2_read_buffer(buf);
 
-  // Create video buffer
+  // Create tensor or video buffer
   auto out_message = nvidia::gxf::Entity::New(context.context());
   if (!out_message) { throw std::runtime_error("Failed to allocate video output; terminating."); }
-  auto video_buffer = out_message.value().add<nvidia::gxf::VideoBuffer>();
-  if (!video_buffer) { throw std::runtime_error("Failed to allocate video buffer; terminating."); }
 
-  Buffer& read_buf = buffers_[buf.index];
+  if (pass_through_ && ((v4l2_to_gxf_format_ == v4l2_to_gxf_format.end()) ||
+                        (v4l2_to_gxf_format_->second->format_ ==
+                         nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_CUSTOM))) {
+    // if pass through is enabled and this is a custom format (might be compressed
+    // (e.g. MJPEG, H264) or YUYV (common for USB cameras)), output as Tensor
+    nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>> tensor =
+        out_message.value().add<nvidia::gxf::Tensor>();
+    if (!tensor) { throw std::runtime_error("Failed to allocate tensor; terminating."); }
 
-  if (converter_) {
-    // Convert to RGBA output buffer
-
-    // Get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
-    auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
-                                                                         allocator_->gxf_cid());
-    // Allocate output buffer
-    video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
-        width_use_,
-        height_use_,
-        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
-        nvidia::gxf::MemoryStorageType::kHost,
-        allocator.value(),
-        false);
-    if (!video_buffer.value()->pointer()) {
-      throw std::runtime_error("Failed to allocate output buffer.");
-    }
-
-    (*converter_)(read_buf.ptr, video_buffer.value()->pointer(), width_use_, height_use_);
-
-    // Return (queue) the buffer.
-    if (ioctl(fd_, VIDIOC_QBUF, &buf) < 0) {
-      throw std::runtime_error(
-          fmt::format("Failed to queue buffer {} on {}", buf.index, device_.get().c_str()));
-    }
-  } else {
-    // Wrap memory into output buffer
-    nvidia::gxf::VideoBufferInfo video_buffer_info{};
-    video_buffer_info.width = width_use_;
-    video_buffer_info.height = height_use_;
-    video_buffer_info.surface_layout = nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR;
-    auto& color_plane = video_buffer_info.color_planes.emplace_back();
-    color_plane = nvidia::gxf::ColorPlane{};
-    color_plane.width = width_use_;
-    color_plane.height = height_use_;
-    color_plane.size = buf.length;
-
-    if (pixel_format_use_ == V4L2_PIX_FMT_RGBA32) {
-      video_buffer_info.color_format = nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA;
-      video_buffer_info.color_planes[0].bytes_per_pixel = 1;
-    } else if (pixel_format_use_ == V4L2_PIX_FMT_RGB24) {
-      video_buffer_info.color_format = nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB;
-      video_buffer_info.color_planes[0].bytes_per_pixel = 1;
+    nvidia::gxf::Shape shape;
+    nvidia::gxf::PrimitiveType element_type;
+    if ((format_desc_.flags & V4L2_FMT_FLAG_COMPRESSED) ||
+        (v4l2_to_gxf_format_ == v4l2_to_gxf_format.end())) {
+      // otuput compressed or unknown formats as a simple memory blob
+      shape = {int(buf.length)};
+      element_type = nvidia::gxf::PrimitiveType::kUnsigned8;
     } else {
-      // If there is no GXF VideoFormat for the V4L pixel format, set it to custom. In this case
-      // the downstream operator needs to be configured to expect the correct format.
-      video_buffer_info.color_format = nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_CUSTOM;
+      std::tie(shape, element_type) = v4l2_to_gxf_format_->second->get_shape_and_type(
+          format_.fmt.pix.width, format_.fmt.pix.height);
+    }
+    tensor.value()->wrapMemory(shape,
+                               element_type,
+                               nvidia::gxf::PrimitiveTypeSize(element_type),
+                               nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE},
+                               memory_storage_type_,
+                               buffers_[buf.index].ptr,
+                               [buffer = buf, fd = fd_](void*) mutable {
+                                 POSIX_CALL(ioctl(fd, VIDIOC_QBUF, &buffer));
+                                 return nvidia::gxf::Success;
+                               });
+  } else {
+    nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>> video_buffer =
+        out_message.value().add<nvidia::gxf::VideoBuffer>();
+    if (!video_buffer) {
+      throw std::runtime_error("Failed to allocate video buffer; terminating.");
     }
 
-    video_buffer.value()->wrapMemory(
-        video_buffer_info,
-        buf.length,
-        nvidia::gxf::MemoryStorageType::kHost,
-        read_buf.ptr,
-        [buffer = buf, fd = fd_, &device_ = device_](void*) mutable {
-          if (ioctl(fd, VIDIOC_QBUF, &buffer) < 0) {
-            throw std::runtime_error(fmt::format(
-                "Failed to queue buffer {} on {}", buffer.index, device_.get().c_str()));
-          }
-          return nvidia::gxf::Success;
-        });
+    if (converter_) {
+      if (!allocator_.get()) {
+        throw std::runtime_error("An allocator is required when converting to RGBA.");
+      }
+      // Get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
+      auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
+                                                                           allocator_->gxf_cid());
+      video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
+          format_.fmt.pix.width,
+          format_.fmt.pix.height,
+          nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
+          nvidia::gxf::MemoryStorageType::kHost,
+          allocator.value(),
+          false);
+      if (!video_buffer.value()->pointer()) {
+        throw std::runtime_error("Failed to allocate output buffer.");
+      }
+
+      // Convert to RGBA output buffer
+      (*converter_)(buffers_[buf.index].ptr,
+                    video_buffer.value()->pointer(),
+                    format_.fmt.pix.width,
+                    format_.fmt.pix.height);
+
+      // Return (queue) the buffer.
+      POSIX_CALL(ioctl(fd_, VIDIOC_QBUF, &buf));
+    } else {
+      // Wrap memory into output buffer
+      nvidia::gxf::VideoBufferInfo video_buffer_info{};
+      video_buffer_info.width = format_.fmt.pix.width;
+      video_buffer_info.height = format_.fmt.pix.height;
+      video_buffer_info.color_format = v4l2_to_gxf_format_->second->format_;
+      video_buffer_info.color_planes = v4l2_to_gxf_format_->second->get_default_color_planes(
+          video_buffer_info.width, video_buffer_info.height, false /*stride_align*/);
+      video_buffer_info.surface_layout =
+          nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR;
+
+      video_buffer.value()->wrapMemory(video_buffer_info,
+                                       buf.length,
+                                       memory_storage_type_,
+                                       buffers_[buf.index].ptr,
+                                       [buffer = buf, fd = fd_](void*) mutable {
+                                         POSIX_CALL(ioctl(fd, VIDIOC_QBUF, &buffer));
+                                         return nvidia::gxf::Success;
+                                       });
+    }
+  }
+
+  // add metadata if enabled
+  if (is_metadata_enabled()) {
+    auto meta = metadata();
+    meta->set("V4L2_pixel_format", FOURCC2STRING(format_desc_.pixelformat));
+    meta->set(
+        "V4L2_ycbcr_encoding",
+        std::string(magic_enum::enum_name((enum v4l2_ycbcr_encoding)(format_.fmt.pix.ycbcr_enc))));
+    meta->set(
+        "V4L2_quantization",
+        std::string(magic_enum::enum_name((enum v4l2_quantization)(format_.fmt.pix.quantization))));
   }
 
   auto result = gxf::Entity(std::move(out_message.value()));
@@ -295,36 +463,41 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
 void V4L2VideoCaptureOp::stop() {
   // stream off
   enum v4l2_buf_type buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (-1 == ioctl(fd_, VIDIOC_STREAMOFF, &buf_type)) {
-    throw std::runtime_error("StreamOFF Ioctl Failed");
-  }
+  POSIX_CALL(ioctl(fd_, VIDIOC_STREAMOFF, &buf_type));
 
   // free buffers
-  for (uint32_t i = 0; i < num_buffers_.get(); ++i)
-    if (-1 == munmap(buffers_[i].ptr, buffers_[i].length)) {
-      throw std::runtime_error(fmt::format("munmap Failed for index {}", i));
+  for (uint32_t i = 0; i < buffers_.size(); ++i) {
+    switch (memory_storage_type_) {
+      case nvidia::gxf::MemoryStorageType::kHost:
+        HOLOSCAN_CUDA_CALL(cudaFreeHost(buffers_[i].ptr));
+        break;
+      case nvidia::gxf::MemoryStorageType::kDevice:
+        HOLOSCAN_CUDA_CALL(cudaFree(buffers_[i].ptr));
+        break;
+      case nvidia::gxf::MemoryStorageType::kSystem:
+        POSIX_CALL(munmap(buffers_[i].ptr, buffers_[i].length));
+        break;
+      default:
+        throw std::runtime_error("Unhandled memory type");
     }
-  free(buffers_);
+  }
+  buffers_.clear();
 
   // close FD
-  if (-1 == v4l2_close(fd_)) { throw std::runtime_error("Close failed"); }
-
+  POSIX_CALL(v4l2_close(fd_));
   fd_ = -1;
 }
 
 void V4L2VideoCaptureOp::v4l2_initialize() {
   // Initialise V4L2 device
-  fd_ = v4l2_open(device_.get().c_str(), O_RDWR);
+  fd_ = v4l2_open(device_.get().c_str(), O_RDWR | O_NONBLOCK);
   if (fd_ < 0) {
     throw std::runtime_error(
         "Failed to open device! Possible permission issue with accessing the device.");
   }
 
-  struct v4l2_capability caps;
-  CLEAR(caps);
-  if (ioctl(fd_, VIDIOC_QUERYCAP, &caps)) {
-    throw std::runtime_error("ioctl VIDIOC_QUERYCAP failed");
-  }
+  v4l2_capability caps{};
+  POSIX_CALL(ioctl(fd_, VIDIOC_QUERYCAP, &caps));
   if (!(caps.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
     throw std::runtime_error("No V4l2 Video capture node");
   }
@@ -333,42 +506,83 @@ void V4L2VideoCaptureOp::v4l2_initialize() {
   }
 }
 
-void V4L2VideoCaptureOp::v4l2_requestbuffers() {
-  // Request V4L2 buffers
-  struct v4l2_requestbuffers req;
-  CLEAR(req);
-  req.count = num_buffers_.get();
+void V4L2VideoCaptureOp::v4l2_request_buffers() {
+  v4l2_requestbuffers req{};
+
+  // call with a count set to 0 to query capabilities
+  req.count = 0;
   req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   req.memory = V4L2_MEMORY_MMAP;
 
-  if (-1 == ioctl(fd_, VIDIOC_REQBUFS, &req)) {
-    if (errno == EINVAL)
-      throw std::runtime_error(fmt::format(
-          "Video capturing or DMABUF streaming is not supported type {} memory {} count {}",
-          req.type,
-          req.memory,
-          req.count));
-    else
-      throw std::runtime_error("Request buffers Ioctl failed");
+  POSIX_CALL(ioctl(fd_, VIDIOC_REQBUFS, &req));
+
+  capture_memory_method_ = V4L2_MEMORY_MMAP;
+  memory_storage_type_ = nvidia::gxf::MemoryStorageType::kSystem;
+  if (converter_) {
+    // the converters use CPU memory, therefore capture to `kSystem` memory (which is cached CPU
+    // memory)
+    HOLOSCAN_LOG_WARN(
+        "Deprecation warning. Converting the input stream from {} to RGBA using a CPU based "
+        "converter is deprecated. Please set `pass_through` to `true` and use the "
+        "`FormatConverterOp` to convert the image data.",
+        FOURCC2STRING(format_desc_.pixelformat));
+  } else if (req.capabilities & V4L2_BUF_CAP_SUPPORTS_USERPTR) {
+    capture_memory_method_ = V4L2_MEMORY_USERPTR;
+
+    // select memory type, start with pinned memory which has good write performance for the V4L2
+    // driver and can be access by CUDA (at PCIe performance)
+    memory_storage_type_ = nvidia::gxf::MemoryStorageType::kHost;
+
+    // when running on L4T and managed memory is supported, then output is managed memory
+    // which has the best combination of CPU and GPU access performance
+    if (std::filesystem::exists("/etc/nv_tegra_release")) {
+      const int device = 0;
+      int managed_memory = 0;
+      HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&managed_memory, cudaDevAttrManagedMemory, device));
+      // Workaround: frames are not updated when running bare metal on IGX with dGPU so enabled
+      // this on iGPU only for now
+      int integrated = 0;
+      HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&integrated, cudaDevAttrIntegrated, device));
+      if (managed_memory && integrated) {
+          memory_storage_type_ = nvidia::gxf::MemoryStorageType::kDevice;
+      }
+    }
   }
 
-  buffers_ = (Buffer*)calloc(req.count, sizeof(*buffers_));
-  if (!buffers_) { throw std::runtime_error("Allocate buffers failed"); }
+  // Request V4L2 buffers
+  req.count = num_buffers_.get();
+  req.memory = capture_memory_method_;
+  POSIX_CALL(ioctl(fd_, VIDIOC_REQBUFS, &req));
+
+  buffers_.resize(req.count);
 
   for (uint32_t i = 0; i < req.count; ++i) {
-    struct v4l2_buffer buf;
-    CLEAR(buf);
+    v4l2_buffer buf{};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buf.memory = V4L2_MEMORY_MMAP;
+    buf.memory = req.memory;
     buf.index = i;
 
-    if (-1 == ioctl(fd_, VIDIOC_QUERYBUF, &buf)) {
-      throw std::runtime_error("VIDIOC_QUERYBUF Ioctl failed");
-    }
+    POSIX_CALL(ioctl(fd_, VIDIOC_QUERYBUF, &buf));
 
     buffers_[i].length = buf.length;
-    buffers_[i].ptr = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.m.offset);
-    if (MAP_FAILED == buffers_[i].ptr) { throw std::runtime_error("MMAP failed"); }
+    switch (memory_storage_type_) {
+      case nvidia::gxf::MemoryStorageType::kHost:
+        HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMallocHost(&buffers_[i].ptr, buf.length),
+                                       "Failed to allocate CUDA host memory");
+        break;
+      case nvidia::gxf::MemoryStorageType::kDevice:
+        HOLOSCAN_CUDA_CALL_THROW_ERROR(
+            cudaMallocManaged(&buffers_[i].ptr, buf.length, cudaMemAttachGlobal),
+            "Failed to allocate CUDA malloced memory");
+        break;
+      case nvidia::gxf::MemoryStorageType::kSystem:
+        buffers_[i].ptr =
+            mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.m.offset);
+        if (MAP_FAILED == buffers_[i].ptr) { throw std::runtime_error("MMAP failed"); }
+        break;
+      default:
+        throw std::runtime_error("Unhandled memory type");
+    }
   }
 }
 
@@ -380,68 +594,146 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
                     pixel_format_.get()));
   }
 
-  if (pixel_format_.get() != "auto") {
+  // get all the supported formats
+  std::list<v4l2_fmtdesc> v4l2_formats;
+  v4l2_fmtdesc fmtdesc{};
+  fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  while (ioctl(fd_, VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
+    v4l2_formats.push_back(fmtdesc);
+    fmtdesc.index++;
+  }
+
+  // Before release 35 the HDMI IN capture driver reports `V4L2_PIX_FMT_ABGR32` (BGRA32) although it
+  // outputs `V4L2_PIX_FMT_RGBA32` (RGBA32). Fix this by reporting `V4L2_PIX_FMT_RGBA32` instead of
+  // `V4L2_PIX_FMT_ABGR32`.
+  auto patched_format = v4l2_formats.end();
+  v4l2_capability caps{};
+  POSIX_CALL(ioctl(fd_, VIDIOC_QUERYCAP, &caps));
+  const std::string busInfo = reinterpret_cast<const char*>(caps.bus_info);
+  if (busInfo.find("tegra-capture-vi") != std::string::npos) {
+    std::ifstream tegra_release_file("/etc/nv_tegra_release");
+    if (tegra_release_file.is_open()) {
+      // file format is '# R??', where `??` is the version
+      tegra_release_file.ignore(3, 'R');
+      uint32_t version;
+      tegra_release_file >> version;
+      if (!tegra_release_file.eof() && !tegra_release_file.bad()) {
+        if (version < 35) {
+          auto it = std::find_if(
+              v4l2_formats.begin(), v4l2_formats.end(), [](const v4l2_fmtdesc& format_desc) {
+                return format_desc.pixelformat == V4L2_PIX_FMT_ABGR32;
+              });
+          if (it != v4l2_formats.end()) {
+            HOLOSCAN_LOG_INFO(
+                "Detected HDMI IN source on L4T release < 35, replacing pixel format "
+                "`V4L2_PIX_FMT_ABGR32` with `V4L2_PIX_FMT_RGBA32`.");
+            patched_format = it;
+            it->pixelformat = V4L2_PIX_FMT_RGBA32;
+            std::strncpy(reinterpret_cast<char*>(it->description),
+                         "32-bit RGBA 8-8-8-8",
+                         sizeof(v4l2_fmtdesc::description));
+          }
+        }
+      }
+    }
+  }
+
+  if (pixel_format_.get() == "auto") {
+    FormatList::const_iterator it = v4l2_to_gxf_format.begin();
+    while (it != v4l2_to_gxf_format.end()) {
+      auto v4l_format = std::find_if(v4l2_formats.cbegin(),
+                                     v4l2_formats.cend(),
+                                     [pixel_format = it->first](const v4l2_fmtdesc& format_desc) {
+                                       return pixel_format == format_desc.pixelformat;
+                                     });
+      if (v4l_format != v4l2_formats.end()) {
+        format_desc_ = *v4l_format;
+        format_.fmt.pix.pixelformat = format_desc_.pixelformat;
+
+        if (v4l_format == patched_format) {
+          // if we patched this format use the original reported format to be passed to IOCTLs
+          format_.fmt.pix.pixelformat = V4L2_PIX_FMT_ABGR32;
+        }
+        break;
+      }
+      ++it;
+    }
+
+    if (it == v4l2_to_gxf_format.end()) {
+      std::vector<std::string> supported_formats;
+      for (auto&& format : v4l2_to_gxf_format) {
+        supported_formats.push_back(FOURCC2STRING(format.first));
+      }
+      throw std::runtime_error(
+          fmt::format("Automatic setting of pixel format failed: device does not support any of {}",
+                      fmt::join(supported_formats, ", ")));
+    }
+    v4l2_to_gxf_format_ = it;
+  } else {
     // Convert user given format to FourCC
-    uint32_t pixel_format = v4l2_fourcc(pixel_format_.get()[0],
-                                        pixel_format_.get()[1],
-                                        pixel_format_.get()[2],
-                                        pixel_format_.get()[3]);
+    const uint32_t pixel_format = v4l2_fourcc(pixel_format_.get()[0],
+                                              pixel_format_.get()[1],
+                                              pixel_format_.get()[2],
+                                              pixel_format_.get()[3]);
 
     // Check if the device supports the requested pixel format
-    bool supported_format = pixel_format_supported(fd_, pixel_format);
-    if (supported_format == false) {
+    auto v4l_format = std::find_if(v4l2_formats.cbegin(),
+                                   v4l2_formats.cend(),
+                                   [pixel_format](const v4l2_fmtdesc& format_desc) {
+                                     return pixel_format == format_desc.pixelformat;
+                                   });
+    if (v4l_format == v4l2_formats.end()) {
       throw std::runtime_error(
           fmt::format("Device does not support '{}' pixel format", pixel_format_.get()));
     }
-    // Update format with valid user-given format
-    pixel_format_use_ = pixel_format;
-  } else if (pixel_format_.get() == "auto") {
-    // Currently, AB24, YUYV, MJPG, and RGB3 are supported in auto mode
-    uint32_t ab24 = v4l2_fourcc('A', 'B', '2', '4');  // V4L2_PIX_FMT_RGBA32
-    uint32_t yuyv = v4l2_fourcc('Y', 'U', 'Y', 'V');  // V4L2_PIX_FMT_YUYV
-    uint32_t mjpg = v4l2_fourcc('M', 'J', 'P', 'G');  // V4L2_PIX_FMT_MJPEG
-    uint32_t rgb3 = v4l2_fourcc('R', 'G', 'B', '3');  // V4L2_PIX_FMT_RGB24
 
-    if (pixel_format_supported(fd_, ab24)) {
-      pixel_format_use_ = ab24;
-    } else if (pixel_format_supported(fd_, yuyv)) {
-      pixel_format_use_ = yuyv;
-    } else if (pixel_format_supported(fd_, rgb3)) {
-      pixel_format_use_ = rgb3;
-    } else if (pixel_format_supported(fd_, mjpg)) {
-      pixel_format_use_ = mjpg;
-    } else {
-      throw std::runtime_error(
-          "Automatic setting of pixel format failed: device does not support AB24, YUYV, MJPG, or "
-          "RGB3. If you are sure that the device pixel format is RGBA, please specify the pixel "
-          "format in the yaml configuration file.");
+    format_desc_ = *v4l_format;
+    format_.fmt.pix.pixelformat = format_desc_.pixelformat;
+
+    if (v4l_format == patched_format) {
+      // if we patched this format use the original reported format to be passed into IOCTLs
+      format_.fmt.pix.pixelformat = V4L2_PIX_FMT_ABGR32;
     }
+
+    // Update format with valid user-given format
+    v4l2_to_gxf_format_ =
+        std::find_if(v4l2_to_gxf_format.cbegin(),
+                     v4l2_to_gxf_format.cend(),
+                     [pixel_format = format_desc_.pixelformat](const FormatListItem& item) {
+                       return item.first == pixel_format;
+                     });
   }
 
   if (!pass_through_) {
-    if (pixel_format_use_ == V4L2_PIX_FMT_YUYV) {
+    if (format_desc_.pixelformat == V4L2_PIX_FMT_YUYV) {
       converter_ = &YUYVToRGBA;
-    } else if (pixel_format_use_ == V4L2_PIX_FMT_RGB24) {
+    } else if (format_desc_.pixelformat == V4L2_PIX_FMT_RGB24) {
       converter_ = &RGB24ToRGBA;
-    } else if (pixel_format_use_ == V4L2_PIX_FMT_MJPEG) {
+    } else if (format_desc_.pixelformat == V4L2_PIX_FMT_MJPEG) {
       converter_ = &MJPEGToRGBA;
+    } else if (format_desc_.pixelformat != V4L2_PIX_FMT_RGBA32) {
+      throw std::runtime_error(
+          fmt::format("Unsupported pixel format {}", FOURCC2STRING(format_desc_.pixelformat)));
     }
   }
 
-  if (width_.get() > 0 || height_.get() > 0) {
+  if ((width_.get() > 0) || (height_.get() > 0)) {
     // Check if the device supports the requested width and height
-    struct v4l2_frmsizeenum frmsize;
-    CLEAR(frmsize);
-    frmsize.pixel_format = pixel_format_use_;
+    v4l2_frmsizeenum frmsize{};
+    frmsize.pixel_format = format_.fmt.pix.pixelformat;
     int supported_formats = 0;
     while (ioctl(fd_, VIDIOC_ENUM_FRAMESIZES, &frmsize) == 0) {
       supported_formats = 0;
       if (frmsize.type != V4L2_FRMSIZE_TYPE_DISCRETE) {
         throw std::runtime_error("Non-discrete frame sizes not supported");
       }
-      if (width_.get() == 0 || frmsize.discrete.width == width_.get()) supported_formats += 1;
-      if (height_.get() == 0 || frmsize.discrete.height == height_.get()) supported_formats += 1;
-      if (supported_formats == 2) break;
+      if ((width_.get() == 0) || (frmsize.discrete.width == width_.get())) {
+        supported_formats += 1;
+      }
+      if ((height_.get() == 0) || (frmsize.discrete.height == height_.get())) {
+        supported_formats += 1;
+      }
+      if (supported_formats == 2) { break; }
       frmsize.index++;
     }
     if (supported_formats != 2) {
@@ -450,57 +742,121 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
     }
     // Update format with valid user-given format
     if (width_.get() > 0) {
-      width_use_ = width_.get();
+      format_.fmt.pix.width = width_.get();
     } else {
-      width_use_ = frmsize.discrete.width;
+      format_.fmt.pix.width = frmsize.discrete.width;
     }
     if (height_.get() > 0) {
-      height_use_ = height_.get();
+      format_.fmt.pix.height = height_.get();
     } else {
-      height_use_ = frmsize.discrete.height;
+      format_.fmt.pix.height = frmsize.discrete.height;
+    }
+  }
+
+  v4l2_frmivalenum frmival{};
+
+  frmival.pixel_format = format_.fmt.pix.pixelformat;
+  frmival.width = format_.fmt.pix.width;
+  frmival.height = format_.fmt.pix.height;
+
+  bool found = false;
+  v4l2_frmivalenum best_match{};
+
+  while (ioctl(fd_, VIDIOC_ENUM_FRAMEINTERVALS, &frmival) == 0) {
+    if (frmival.type != V4L2_FRMIVAL_TYPE_DISCRETE) {
+      throw std::runtime_error("Non-discrete frame intervals not supported");
+    }
+
+    // if setting the frame rate is not supported, take the first reported
+    if (!supports_frame_rate_) {
+      frame_rate_denominator_use_ = frmival.discrete.denominator;
+      frame_rate_numerator_use_ = frmival.discrete.numerator;
+      break;
+    }
+
+    // if the user requests a frame rate, check if the current frame interval is a better match
+    if (frame_rate_.get() != 0.f) {
+      if (!found || (std::abs(frame_rate_.get() - float(frmival.discrete.denominator) /
+                                                      float(frmival.discrete.numerator)) <
+                     std::abs(frame_rate_.get() - float(best_match.discrete.denominator) /
+                                                      float(best_match.discrete.numerator)))) {
+        best_match = frmival;
+        found = true;
+      }
+    }
+
+    ++frmival.index;
+  }
+  if (frame_rate_.get() != 0.f) {
+    if (!found) {
+      // this would only happen if the device is not supporting any frame interval
+      throw std::runtime_error(
+          fmt::format("Device does not support frame rate '{}'", frame_rate_.get()));
+    }
+
+    frame_rate_denominator_use_ = best_match.discrete.denominator;
+    frame_rate_numerator_use_ = best_match.discrete.numerator;
+
+    if (frame_rate_.get() !=
+        float(best_match.discrete.denominator) / float(best_match.discrete.numerator)) {
+      HOLOSCAN_LOG_INFO(
+          "Device does not support exact frame rate '{}', using nearest frame rate '{}' instead",
+          frame_rate_.get(),
+          float(frame_rate_denominator_use_) / float(frame_rate_numerator_use_));
+    }
+  }
+
+  HOLOSCAN_LOG_INFO("Using V4L2 format {} ({}), {}x{}, {} fps",
+                    FOURCC2STRING(format_desc_.pixelformat),
+                    reinterpret_cast<char*>(format_desc_.description),
+                    format_.fmt.pix.width,
+                    format_.fmt.pix.height,
+                    float(frame_rate_denominator_use_) / float(frame_rate_numerator_use_));
+}
+
+void V4L2VideoCaptureOp::v4l2_get_format() {
+  // Get the current format
+  format_.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  POSIX_CALL(ioctl(fd_, VIDIOC_G_FMT, &format_));
+
+  v4l2_streamparm streamparm{};
+  streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  // VIDIOC_G_PARM might not be supported
+  if (ioctl(fd_, VIDIOC_G_PARM, &streamparm) == 0) {
+    supports_frame_rate_ =
+        ((streamparm.parm.capture.capability & V4L2_CAP_TIMEPERFRAME) != 0);  // codespell-ignore
+    if (supports_frame_rate_) {
+      frame_rate_denominator_use_ =
+          streamparm.parm.capture.timeperframe.denominator;  // codespell-ignore
+      frame_rate_numerator_use_ =
+          streamparm.parm.capture.timeperframe.numerator;  // codespell-ignore
+    } else if (frame_rate_.get() > 0) {
+      throw std::runtime_error("The device does not support setting the frame rate.");
     }
   }
 }
 
-void V4L2VideoCaptureOp::v4l2_set_mode() {
-  // Set V4L2 device mode
-  struct v4l2_format vfmt;
-  CLEAR(vfmt);
-  vfmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (ioctl(fd_, VIDIOC_G_FMT, &vfmt) == -1) {
-    throw std::runtime_error("Get format Ioctl failed, is device set correctly?");
-  }
-  // Store default formats
-  width_use_ = vfmt.fmt.pix_mp.width;
-  height_use_ = vfmt.fmt.pix_mp.height;
-  pixel_format_use_ = vfmt.fmt.pix.pixelformat;
-}
+void V4L2VideoCaptureOp::v4l2_set_format() {
+  // Set format
+  POSIX_CALL(ioctl(fd_, VIDIOC_S_FMT, &format_));
 
-void V4L2VideoCaptureOp::v4l2_set_formats() {
-  // Get formats
-  struct v4l2_format vfmt;
-  CLEAR(vfmt);
-  vfmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (ioctl(fd_, VIDIOC_G_FMT, &vfmt) == -1) {
-    throw std::runtime_error("Get format Ioctl failed");
-  }
-  // Modify pixel format and image size
-  vfmt.fmt.pix_mp.width = width_use_;
-  vfmt.fmt.pix_mp.height = height_use_;
-  vfmt.fmt.pix.pixelformat = pixel_format_use_;
-  vfmt.fmt.pix_mp.plane_fmt[0].bytesperline = width_use_ * 4;
-  // Set formats
-  if (ioctl(fd_, VIDIOC_S_FMT, &vfmt) == -1) {
-    if (errno == EINVAL) {
-      throw std::runtime_error("Requested buffer type not supported in Set FMT");
-    } else {
-      throw std::runtime_error(fmt::format("Set FMT Ioctl failed with {}", errno));
-    }
+  if (supports_frame_rate_) {
+    // Get the current stream parameter
+    v4l2_streamparm streamparm{};
+    streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    POSIX_CALL(ioctl(fd_, VIDIOC_G_PARM, &streamparm));
+
+    streamparm.parm.capture.timeperframe.denominator =  // codespell-ignore
+        frame_rate_denominator_use_;
+    streamparm.parm.capture.timeperframe.numerator = frame_rate_numerator_use_;  // codespell-ignore
+
+    // Set the stream parameters
+    POSIX_CALL(ioctl(fd_, VIDIOC_S_PARM, &streamparm));
   }
 }
 
 bool V4L2VideoCaptureOp::v4l2_camera_supports_control(int cid, const char* control_name) {
-  struct v4l2_queryctrl queryctrl;
+  v4l2_queryctrl queryctrl;
 
   memset(&queryctrl, 0, sizeof(queryctrl));
   queryctrl.id = cid;
@@ -520,30 +876,20 @@ bool V4L2VideoCaptureOp::v4l2_camera_supports_control(int cid, const char* contr
 // Set the device's control settings if supported
 void V4L2VideoCaptureOp::v4l2_set_camera_control(v4l2_control control, const char* control_name,
                                                  bool warn) {
-  HOLOSCAN_LOG_DEBUG(fmt::format("Setting {} to {}", control_name, control.value));
+  HOLOSCAN_LOG_DEBUG("Setting {} to {}", control_name, control.value);
   if (v4l2_camera_supports_control(control.id, control_name)) {
-    if (ioctl(fd_, VIDIOC_S_CTRL, &control) == -1) {
-      HOLOSCAN_LOG_DEBUG(fmt::format("Setting {} to {} failed", control_name, control.value));
-      throw std::runtime_error(fmt::format("Setting {} to {} failed", control_name, control.value));
-    }
+    POSIX_CALL(ioctl(fd_, VIDIOC_S_CTRL, &control));
   } else {
-    auto msg = fmt::format("Device does not support {}", control_name);
-    if (warn) {
-      HOLOSCAN_LOG_WARN(msg);
-    } else {
-      HOLOSCAN_LOG_DEBUG(msg);
-    }
+    HOLOSCAN_LOG_CALL(
+        warn ? LogLevel::WARN : LogLevel::DEBUG, "Device does not support {}", control_name);
   }
 }
 
 void V4L2VideoCaptureOp::v4l2_set_camera_settings() {
-  struct v4l2_capability caps;
-  CLEAR(caps);
+  v4l2_capability caps{};
 
   // To check if the dev is v4l2loopback
-  if (ioctl(fd_, VIDIOC_QUERYCAP, &caps) == -1) {
-    throw std::runtime_error("Querying video capabilities failed");
-  }
+  POSIX_CALL(ioctl(fd_, VIDIOC_QUERYCAP, &caps));
   std::string busInfo = reinterpret_cast<const char*>(caps.bus_info);
   if (busInfo.find("v4l2loopback") != std::string::npos) {
     // Return before setting the camera parameters as loopback option
@@ -552,8 +898,7 @@ void V4L2VideoCaptureOp::v4l2_set_camera_settings() {
     return;
   }
 
-  struct v4l2_control control;
-  CLEAR(control);
+  v4l2_control control{};
 
   // Set Exposure
   if (exposure_time_.try_get().has_value()) {
@@ -568,7 +913,6 @@ void V4L2VideoCaptureOp::v4l2_set_camera_settings() {
       v4l2_set_camera_control(control, "V4L2_CID_EXPOSURE_AUTO", true);
     }
     // Then set the value
-    CLEAR(control);
     control.id = V4L2_CID_EXPOSURE_ABSOLUTE;
     control.value = exposure_time_;
     v4l2_set_camera_control(control, "V4L2_CID_EXPOSURE_ABSOLUTE", true);
@@ -593,7 +937,6 @@ void V4L2VideoCaptureOp::v4l2_set_camera_settings() {
     v4l2_set_camera_control(control, "V4L2_CID_AUTOGAIN", false);
 
     // Then set value
-    CLEAR(control);
     control.id = V4L2_CID_GAIN;
     control.value = gain_;
     v4l2_set_camera_control(control, "V4L2_CID_GAIN", true);
@@ -608,24 +951,23 @@ void V4L2VideoCaptureOp::v4l2_set_camera_settings() {
 void V4L2VideoCaptureOp::v4l2_start() {
   // Start streaming on V4L2 device
   // queue capture plane into device
-  for (uint32_t i = 0; i < num_buffers_.get(); i++) {
-    struct v4l2_buffer buf;
-    CLEAR(buf);
+  for (uint32_t i = 0; i < buffers_.size(); i++) {
+    v4l2_buffer buf{};
 
     buf.index = i;
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buf.memory = V4L2_MEMORY_MMAP;
-
-    if (-1 == ioctl(fd_, VIDIOC_QBUF, &buf)) {
-      throw std::runtime_error("Failed to queue buf, Ioctl failed");
+    buf.memory = capture_memory_method_;
+    if (buf.memory == V4L2_MEMORY_USERPTR) {
+      buf.m.userptr = reinterpret_cast<unsigned long>(buffers_[i].ptr);
+      buf.length = buffers_[i].length;
     }
+
+    POSIX_CALL(ioctl(fd_, VIDIOC_QBUF, &buf));
   }
 
   enum v4l2_buf_type buf_type;
   buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (-1 == ioctl(fd_, VIDIOC_STREAMON, &buf_type)) {
-    throw std::runtime_error("StreamOn Ioctl failed");
-  }
+  POSIX_CALL(ioctl(fd_, VIDIOC_STREAMON, &buf_type));
 }
 
 void V4L2VideoCaptureOp::v4l2_read_buffer(v4l2_buffer& buf) {
@@ -633,24 +975,30 @@ void V4L2VideoCaptureOp::v4l2_read_buffer(v4l2_buffer& buf) {
   FD_ZERO(&fds);
   FD_SET(fd_, &fds);
 
-  struct timeval tv;
+  timeval tv;
   tv.tv_sec = 15;
   tv.tv_usec = 0;
 
-  int r;
-  r = select(fd_ + 1, &fds, NULL, NULL, &tv);
+  int result;
+  do {
+    if (POSIX_CALL(select(fd_ + 1, &fds, NULL, NULL, &tv)) == 0) {
+      throw std::runtime_error("Querying file descriptor timed out");
+    }
 
-  if (-1 == r) { throw std::runtime_error("Error in querying file descriptor"); }
-  if (0 == r) { throw std::runtime_error("Querying file descriptor timed out"); }
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = capture_memory_method_;
+    do { result = ioctl(fd_, VIDIOC_DQBUF, &buf); } while ((result == -1) && (errno == EINTR));
+    if (result == -1) {
+      if (errno == EAGAIN) { continue; }
+      throw std::runtime_error(
+          fmt::format("VIDIOC_DQBUF failed with `{}` (errno {})", strerror(errno), errno));
+    }
 
-  buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  buf.memory = V4L2_MEMORY_MMAP;
-  if (-1 == ioctl(fd_, VIDIOC_DQBUF, &buf)) { throw std::runtime_error("Failed to deque buffer"); }
-
-  if (buf.index >= num_buffers_.get()) {
-    throw std::runtime_error(
-        fmt::format("Buf index is {} more than the queue size {}", buf.index, num_buffers_.get()));
-  }
+    if (buf.index >= buffers_.size()) {
+      throw std::runtime_error(
+          fmt::format("Buf index is {} more than the queue size {}", buf.index, buffers_.size()));
+    }
+  } while (result != 0);
 }
 
 }  // namespace holoscan::ops

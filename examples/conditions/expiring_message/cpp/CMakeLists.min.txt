@@ -29,12 +29,6 @@ target_link_libraries(ping_expiring_message
   holoscan::core
 )
 
-# Copy config file to the build tree
-add_custom_target(ping_expiring_message_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/ping_expiring_message.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-)
-add_dependencies(ping_expiring_message ping_expiring_message_yaml)
-
 # Testing
 if(BUILD_TESTING)
   add_test(NAME EXAMPLE_CPP_PING_EXPIRING_MESSAGE_TEST

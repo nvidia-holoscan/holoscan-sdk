@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,16 @@
 
 namespace holoscan::ops {
 
-enum class FormatDType { kUnknown, kRGB888, kRGBA8888, kUnsigned8, kFloat32, kYUV420, kNV12 };
+enum class FormatDType {
+  kUnknown,
+  kRGB888,
+  kRGBA8888,
+  kUnsigned8,
+  kFloat32,
+  kYUV420,
+  kNV12,
+  kYUYV
+};
 
 enum class FormatConversionType {
   kUnknown,
@@ -46,7 +55,8 @@ enum class FormatConversionType {
   kRGB888ToYUV420,
   kYUV420ToRGBA8888,
   kYUV420ToRGB888,
-  kNV12ToRGB888
+  kNV12ToRGB888,
+  kYUYVToRGB888,
 };
 
 /**
@@ -59,8 +69,9 @@ enum class FormatConversionType {
  *     GXF_VIDEO_FORMAT_RGBA, GXF_VIDEO_FORMAT_RGB or GXF_VIDEO_FORMAT_NV12. If a video buffer is
  *     not found, the input port message is searched for a tensor with the name specified by
  *     `in_tensor_name`. This must be a tensor in one of several supported formats (unsigned 8-bit
- *     int or float32 graycale, unsigned 8-bit int RGB or RGBA YUV420 or NV12). The tensor or video
- *     buffer may be in either host or device memory (a host->device copy is performed if needed).
+ *     int or float32 graycale, unsigned 8-bit int RGB or RGBA YUV420, NV12 or YUYV). The tensor or
+ *     video buffer may be in either host or device memory (a host->device copy is performed if
+ *     needed).
  *
  * ==Named Outputs==
  *
@@ -87,6 +98,7 @@ enum class FormatConversionType {
  *   - `"rgba8888"`
  *   - `"yuv420"`
  *   - `"nv12"`
+ *   - `"yuyv"`
  *   Optional (default: `"rgb888"`).
  * - **in_tensor_name**: The name of the input tensor. Optional (default: `""`).
  * - **out_tensor_name**: The name of the output tensor. Optional (default: `""`).

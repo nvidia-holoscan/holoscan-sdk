@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -207,8 +207,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
       dims_per_tensor[in_tensors[i]] = std::move(dims);
 
       if (to == storage_type) {
-        auto buffer =
-            std::make_shared<GxfTensorBuffer>(messages[message_index], in_tensor);
+        auto buffer = std::make_shared<GxfTensorBuffer>(messages[message_index], in_tensor);
         if (to == nvidia::gxf::MemoryStorageType::kDevice) {
           db->device_buffer_ = buffer;
         } else {
@@ -250,7 +249,15 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
 
     if (cuda_buffer_out) { to = nvidia::gxf::MemoryStorageType::kDevice; }
 
-    auto messages = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers").value();
+    auto maybe_messages = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers");
+    if (!maybe_messages || maybe_messages->empty()) {
+      std::string err_msg =
+          fmt::format("No input messages received by inference operator on port 'receivers': {}",
+                      maybe_messages.error().what());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
+    auto messages = maybe_messages.value();
 
     // get the CUDA stream from the input message (this call must be after the receive call)
     cuda_stream_out = op_input.receive_cuda_stream("receivers");

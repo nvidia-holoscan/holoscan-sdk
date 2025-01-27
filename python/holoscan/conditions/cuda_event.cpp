@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,10 +78,9 @@ void init_cuda_event(py::module_& m) {
            "receiver"_a = py::none(),
            "name"_a = "noname_cuda_event_condition"s,
            doc::CudaEventCondition::doc_CudaEventCondition)
-      .def_property(
-          "receiver",
-          py::overload_cast<>(&CudaEventCondition::receiver),
-          py::overload_cast<std::shared_ptr<gxf::GXFResource>>(&CudaEventCondition::receiver),
-          doc::CudaEventCondition::doc_receiver);
+      .def_property("receiver",
+                    py::overload_cast<>(&CudaEventCondition::receiver),
+                    py::overload_cast<std::shared_ptr<Receiver>>(&CudaEventCondition::receiver),
+                    doc::CudaEventCondition::doc_receiver);
 }
 }  // namespace holoscan

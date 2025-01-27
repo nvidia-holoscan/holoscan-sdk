@@ -45,7 +45,7 @@ To run the "multi_message_sum_of_all" example with `MultiMessageAvailableTimeout
 
 To run the "single_message_timeout" example with `MultiMessageAvailableTimeoutCondition` with only a single input port:
 ```bash
-./examples/conditions/multi_message/cpp/multi_message_sum_of_all
+./examples/conditions/multi_message/cpp/single_message_timeout
 ```
 
 ### Run instructions (Python)

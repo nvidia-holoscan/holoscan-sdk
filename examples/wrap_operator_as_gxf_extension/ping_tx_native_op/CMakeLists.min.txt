@@ -14,7 +14,7 @@
 # limitations under the License.
 
 cmake_minimum_required(VERSION 3.20)
-project(holoscan_wrap_operator_as_gxf_extension CXX)
+project(holoscan_wrap_operator_as_gxf_ping_tx_native_op CXX)
 
 # Finds the package holoscan
 find_package(holoscan REQUIRED CONFIG

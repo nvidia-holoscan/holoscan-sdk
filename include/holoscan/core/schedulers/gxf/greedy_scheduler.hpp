@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,24 @@
 
 namespace holoscan {
 
+/**
+ * @brief Greedy Scheduler.
+ *
+ * This is a single-threaded scheduler that will execute operators serially in a deterministic
+ * order. Holoscan sorts operators so that execution will occur in topological order (moving from
+ * the root to the leaves of the computation graph).
+ *
+ * ==Parameters==
+ *
+ * - **stop_on_deadlock** (bool): If True, the application will terminate if a deadlock state is
+ * reached. Defaults to true.
+ * - **stop_on_deadlock_timeout** (int64_t): The amount of time (in ms) before an application is
+ * considered to be in deadlock. Defaults to 0.
+ * - **check_recession_period_ms** (double): Duration to sleep before checking the condition of
+ * the next operator (default: 0 ms). The units are in ms.
+ * - **max_duration_ms_** (int64_t, optional): Terminate the application after the specified
+ * duration even if deadlock does not occur. If unspecified, the application can run indefinitely.
+ */
 class GreedyScheduler : public gxf::GXFScheduler {
  public:
   HOLOSCAN_SCHEDULER_FORWARD_ARGS_SUPER(GreedyScheduler, gxf::GXFScheduler)

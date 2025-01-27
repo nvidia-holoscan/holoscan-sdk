@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,10 @@ namespace holoscan {
  * @brief Unbounded memory allocator.
  *
  * An allocator that uses dynamic host or device memory allocation without an upper bound.
+ *
+ * ==Parameters==
+ *
+ * None
  */
 class UnboundedAllocator : public Allocator {
  public:

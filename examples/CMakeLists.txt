@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,11 +36,11 @@ if(NOT TARGET racerx_data)
   include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/modules/HoloscanDownloadData.cmake)
 
   set(RACERX_DATA_VERSION "20231009")
-  set(RACERX_DATA_MD5 "86cd7e5477bb9eaa0cfc0547912d77b2")
+  set(RACERX_DATA_MD5 "b67492afea29610105995c4c27bd5a05")
 
   # Download the racerX sample data
   holoscan_download_data(racerx
-      URL https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_racerx_video/versions/${RACERX_DATA_VERSION}/zip
+      URL https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/data/racerx/racerx_${RACERX_DATA_VERSION}.zip
       URL_MD5 ${RACERX_DATA_MD5}
       DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../data
       BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/../data/racerx/racerx-small.mp4"
@@ -59,6 +59,7 @@ endif()
 
 # C++ only examples
 if(HOLOSCAN_CPP_EXAMPLES)
+  add_subdirectory(wrap_holoscan_as_gxf_extension)
   add_subdirectory(wrap_operator_as_gxf_extension)
   add_subdirectory(ping_any)
   add_subdirectory(ping_conditional)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,11 +116,6 @@ class App : public holoscan::Application {
 
 int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<App>();
-
-  // Get the configuration
-  auto config_path = std::filesystem::canonical(argv[0]).parent_path();
-  config_path /= std::filesystem::path("ping_expiring_message.yaml");
-  app->config(config_path);
   auto& tracker = app->track(0, 0, 0);
   tracker.enable_logging();
   app->run();

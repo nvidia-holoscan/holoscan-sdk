@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,10 @@
 
 #include "holoscan/core/resources/gxf/receiver.hpp"
 
+#include <cstdint>
 #include <string>
+
+#include <gxf/std/receiver.hpp>
 
 namespace holoscan {
 
@@ -26,6 +29,18 @@ Receiver::Receiver(const std::string& name, nvidia::gxf::Receiver* component)
 
 nvidia::gxf::Receiver* Receiver::get() const {
   return static_cast<nvidia::gxf::Receiver*>(gxf_cptr_);
+}
+
+size_t Receiver::capacity() const {
+  return get()->capacity();
+}
+
+size_t Receiver::size() const {
+  return get()->size();
+}
+
+size_t Receiver::back_size() const {
+  return get()->back_size();
 }
 
 }  // namespace holoscan

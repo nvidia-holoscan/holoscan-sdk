@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,10 +66,8 @@ void init_operator(py::module_& m) {
       .def(
           "input",
           // Note: The return type needs to be specified explicitly because pybind11 can't
-          // deduce
-          //       it.
-          //       Otherwise, this method will return a new IOSpec object instead of a reference
-          //       to the existing one.
+          // deduce it. Otherwise, this method will return a new IOSpec object instead of a
+          // reference to the existing one.
           [](OperatorSpec& spec, const std::string& name, const py::object& size) -> IOSpec& {
             // Check if 'size' is an int and convert to IOSpec::IOSize if necessary
             if (py::isinstance<py::int_>(size)) {
@@ -191,6 +189,16 @@ void init_operator(py::module_& m) {
                     &Operator::spec_shared,
                     py::overload_cast<const std::shared_ptr<OperatorSpec>&>(&Operator::spec),
                     doc::Operator::doc_spec)
+      .def("receiver",
+           &Operator::receiver,
+           "port_name"_a,
+           doc::Operator::doc_receiver,
+           py::return_value_policy::reference_internal)
+      .def("transmitter",
+           &Operator::transmitter,
+           "port_name"_a,
+           doc::Operator::doc_transmitter,
+           py::return_value_policy::reference_internal)
       .def_property_readonly("conditions", &Operator::conditions, doc::Operator::doc_conditions)
       .def_property_readonly("resources", &Operator::resources, doc::Operator::doc_resources)
       .def_property_readonly(

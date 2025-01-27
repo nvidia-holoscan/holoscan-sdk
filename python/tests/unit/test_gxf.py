@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,8 @@ limitations under the License.
 
 import pytest
 
-from holoscan.core import Component, Condition
+from holoscan.core import Component
+from holoscan.core import _Condition as ConditionBase
 from holoscan.core import _Operator as OperatorBase
 from holoscan.core import _Resource as ResourceBase
 from holoscan.gxf import (
@@ -89,13 +90,12 @@ class TestGXFCondition(TestGXFComponent):
     def test_type(self):
         c = GXFCondition()
         assert isinstance(c, Component)
-        assert isinstance(c, Condition)
+        assert isinstance(c, ConditionBase)
         assert isinstance(c, GXFComponent)
 
-    def test_dynamic_attribute_not_allowed(self):
+    def test_dynamic_attribute_allowed(self):
         obj = GXFCondition()
-        with pytest.raises(AttributeError):
-            obj.custom_attribute = 5
+        obj.custom_attribute = 5
 
 
 class TestGXFResource(TestGXFComponent):

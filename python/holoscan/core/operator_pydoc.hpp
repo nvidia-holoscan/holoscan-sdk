@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -254,7 +254,7 @@ Resources associated with the operator.
 Parameters
 ----------
 name : str
-The name of the resource to retrieve
+    The name of the resource to retrieve
 
 Returns
 -------
@@ -315,6 +315,34 @@ The operator type.
 
 `holoscan.core.Operator.OperatorType` enum representing the type of
 the operator. The two types currently implemented are native and GXF.
+)doc")
+
+PYDOC(receiver, R"doc(
+Get the receiver used by an input port.
+
+Parameters
+----------
+port_name : str
+    The name of the input port.
+
+Returns
+-------
+receiver : holoscan.resources.Receiver
+    The receiver used by this input port. Will be None if the port does not exist.
+)doc")
+
+PYDOC(transmitter, R"doc(
+Get the transmitter used by an output port.
+
+Parameters
+----------
+port_name : str
+    The name of the output port.
+
+Returns
+-------
+transmitter : holoscan.resources.Transmitter or None
+    The transmitter used by this output port. Will be None if the port does not exist.
 )doc")
 
 PYDOC(description, R"doc(

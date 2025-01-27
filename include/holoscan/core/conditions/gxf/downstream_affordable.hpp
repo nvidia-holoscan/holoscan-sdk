@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,8 +58,8 @@ class DownstreamMessageAffordableCondition : public gxf::GXFCondition {
 
   void setup(ComponentSpec& spec) override;
 
-  void transmitter(std::shared_ptr<gxf::GXFResource> transmitter) { transmitter_ = transmitter; }
-  std::shared_ptr<gxf::GXFResource> transmitter() { return transmitter_; }
+  void transmitter(std::shared_ptr<Transmitter> transmitter) { transmitter_ = transmitter; }
+  std::shared_ptr<Transmitter> transmitter() { return transmitter_; }
 
   void min_size(uint64_t min_size) { min_size_ = min_size; }
   uint64_t min_size() { return min_size_; }
@@ -71,7 +71,7 @@ class DownstreamMessageAffordableCondition : public gxf::GXFCondition {
 
  private:
   // TODO(GXF4): this is now a std::set<Handle<Transmitter>> transmitters_
-  Parameter<std::shared_ptr<gxf::GXFResource>> transmitter_;
+  Parameter<std::shared_ptr<Transmitter>> transmitter_;
   Parameter<uint64_t> min_size_;
 };
 

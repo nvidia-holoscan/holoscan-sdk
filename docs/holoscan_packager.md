@@ -10,7 +10,6 @@ The [Holoscan App Packager](./cli/package.md), included as part of the [Holoscan
 
 Ensure the following are installed in the environment where you want to run the [CLI](./cli/cli.md):
 
-- [**PIP dependencies**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/requirements.txt): This is automatically installed with the Holoscan Python wheel.
 - [**NVIDIA Container Toolkit with Docker**](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#docker)
   - Developer Kits (aarch64): already included in IGX Software and JetPack
   - x86_64: tested with NVIDIA Container Toolkit 1.13.3 with Docker v24.0.1
@@ -50,45 +49,24 @@ Ensure the following are installed in the environment where you want to run the 
 
 ### CLI Installation
 
-The Holoscan CLI is installed as part of the Holoscan SDK and can be called with the following instructions depending on your installation:
-
-
-`````{tab-set}
-````{tab-item} Python Wheel
-
-- In a virtual environment: the `holoscan` CLI should already be in the PATH
-- System python: ensure that `$HOME/.local/bin` is added to your `PATH`. If using bash, the following command will make it persist across sessions:
-
-   ```bash
-   echo 'export PATH=$HOME/.local/bin:$PATH' >> ~/.bashrc
-   ```
-
-````
-````{tab-item} Debian Package
-
-Ensure that `/opt/nvidia/holoscan/` is added to your `PATH`. If using bash, the following command will make it persist across sessions:
+The Holoscan CLI is available as a PyPI package and can be installed with the following command:
 
 ```bash
-echo 'alias holoscan=/opt/nvidia/holoscan/bin/holoscan' >> ~/.bashrc
+$ pip install holoscan-cli
 ```
 
-````
-````{tab-item} From source
-
-If building the SDK from source and starting the build container with `run launch`, the `holoscan` CLI should already be in the PATH.
-
-If building bare-metal (advanced), ensure that `<BUILD_OR_INSTALL_DIR>/bin` is added to your `PATH`. If using bash, the following command will make it persist across sessions:
+Verify the installation:
 
 ```bash
-echo 'alias holoscan=<BUILD_OR_INSTALL_DIR>/bin/holoscan' >> ~/.bashrc
+$ holoscan version
 ```
 
-````
 
-````{tab-item} NGC Container
-The NGC container has the CLI installed already, no additional steps are required.
-````
-`````
+:::{tip}
+Always install Holoscan SDK first, followed by Holoscan CLI on a system that requires both. This ensures that all necessary dependencies and packages are installed correctly, allowing for smooth operation of the Holoscan CLI.
+:::
+
+
 
 ## Package an application
 

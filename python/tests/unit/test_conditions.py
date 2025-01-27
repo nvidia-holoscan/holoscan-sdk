@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,8 @@ from holoscan.conditions import (
     MultiMessageAvailableTimeoutCondition,
     PeriodicCondition,
 )
-from holoscan.core import Application, Condition, ConditionType, Operator
+from holoscan.core import Application, ConditionType, Operator, SchedulingStatusType
+from holoscan.core import _Condition as ConditionBase
 from holoscan.gxf import Entity, GXFCondition
 from holoscan.resources import RealtimeClock
 
@@ -44,7 +45,7 @@ class TestBooleanCondition:
         name = "boolean"
         cond = BooleanCondition(fragment=app, name=name, enable_tick=True)
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::BooleanSchedulingTerm"
 
         assert f"""
@@ -81,12 +82,21 @@ def test_aynchronous_event_state_enum(name):
     assert hasattr(AsynchronousEventState, name)
 
 
+class TestSchedulingStatusType:
+    def test_enum_values(self):
+        assert hasattr(SchedulingStatusType, "NEVER")
+        assert hasattr(SchedulingStatusType, "READY")
+        assert hasattr(SchedulingStatusType, "WAIT")
+        assert hasattr(SchedulingStatusType, "WAIT_TIME")
+        assert hasattr(SchedulingStatusType, "WAIT_EVENT")
+
+
 class TestAsynchronousCondition:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "async"
         cond = AsynchronousCondition(fragment=app, name=name)
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::AsynchronousSchedulingTerm"
 
         assert f"""
@@ -115,7 +125,7 @@ class TestCountCondition:
         name = "count"
         cond = CountCondition(fragment=app, name=name, count=100)
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::CountSchedulingTerm"
 
         assert f"""
@@ -151,7 +161,7 @@ class TestDownstreamMessageAffordableCondition:
             fragment=app, name=name, min_size=10, transmitter="out"
         )
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::DownstreamReceptiveSchedulingTerm"
 
         # assert no warnings or errors logged
@@ -182,7 +192,7 @@ class TestMessageAvailableCondition:
             fragment=app, name=name, min_size=1, front_stage_max_size=10, receiver="in"
         )
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::MessageAvailableSchedulingTerm"
 
         assert f"""
@@ -216,7 +226,7 @@ class TestExpiringMessageAvailableCondition:
             fragment=app, name=name, max_batch_size=1, max_delay_ns=10, receiver="in"
         )
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::ExpiringMessageAvailableSchedulingTerm"
 
         # verify that name is as expected and that clock argument was automatically added
@@ -229,6 +239,7 @@ args:
   - name: receiver
     type: std::string
     value: in
+component_type: native
 spec:
 """ in repr(cond)
 
@@ -256,7 +267,7 @@ class TestMultiMessageAvailableCondition:
             sampling_mode="SumOfAll",
         )
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::MultiMessageAvailableSchedulingTerm"
 
         assert f"""
@@ -284,7 +295,7 @@ class TestMultiMessageAvailableTimeoutCondition:
             sampling_mode="PerReceiver",
         )
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::MessageAvailableFrequencyThrottler"
 
         assert f"""
@@ -303,7 +314,7 @@ class TestPeriodicCondition:
         name = "periodic"
         cond = PeriodicCondition(fragment=app, name=name, recess_period=100)
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::PeriodicSchedulingTerm"
 
         # args empty here because recess_period is passed to the constructor directly, not as Arg
@@ -373,7 +384,7 @@ class TestCudaEventCondition:
             name=name,
         )
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::CudaEventSchedulingTerm"
 
         assert f"""
@@ -400,7 +411,7 @@ class TestCudaStreamCondition:
         name = "cuda_stream_condition"
         cond = CudaStreamCondition(fragment=app, receiver="in", name=name)
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::CudaStreamSchedulingTerm"
 
         assert f"""
@@ -426,7 +437,7 @@ class TestCudaBufferAvailableCondition:
         name = "cuda_buffer_available_condition"
         cond = CudaBufferAvailableCondition(fragment=app, receiver="in", name=name)
         assert isinstance(cond, GXFCondition)
-        assert isinstance(cond, Condition)
+        assert isinstance(cond, ConditionBase)
         assert cond.gxf_typename == "nvidia::gxf::CudaBufferAvailableSchedulingTerm"
 
         assert f"""

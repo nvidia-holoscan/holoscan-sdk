@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,20 +30,6 @@
 namespace holoscan {
 
 /**
- * TODO(Greg): This condition requires there be a CudaEvent component in the message Entity.
- *
- * e.g. it calls
- *    auto maybe_event = message->get<CudaEvent>(event_name_.get().c_str());
- *
- * See StreamBasedOps codelet in gxf/cuda/tests/test_cuda_helper.hpp
- *    specifically the methods `addNewEvent` and `initOpsEvent` and how they are used in the
- *    operators that inherit from StreamBasedOps
- *
- * We have not yet exposed CudaEvent object from Holoscan. Need to provide a convenient way to use
- * it.
- */
-
-/**
  * @brief Condition class to indicate data availability on CUDA stream completion via an event.
  *
  * A condition which specifies the availability of data at the receiver on completion of the
@@ -53,8 +39,9 @@ namespace holoscan {
  * This condition applies to a specific input port of the operator as determined by setting the
  * "receiver" argument.
  *
- * **Note:** The nvidia::gxf::CudaEvent class is currently unused by Holoscan SDK. This condition is
- * intended exclusively for interoperation with wrapped GXF Codelets that use GXF's CudaEvent type.
+ * **Note:** `The nvidia::gxf::CudaEvent` class is currently unused by Holoscan SDK. This condition
+ * is intended exclusively for interoperation with wrapped GXF Codelets that use GXF's `CudaEvent`
+ * type.
  *
  * ==Parameters==
  *
@@ -73,13 +60,13 @@ class CudaEventCondition : public gxf::GXFCondition {
   const char* gxf_typename() const override { return "nvidia::gxf::CudaEventSchedulingTerm"; }
   void setup(ComponentSpec& spec) override;
 
-  void receiver(std::shared_ptr<gxf::GXFResource> receiver) { receiver_ = receiver; }
-  std::shared_ptr<gxf::GXFResource> receiver() { return receiver_.get(); }
+  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = receiver; }
+  std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
 
   nvidia::gxf::CudaEventSchedulingTerm* get() const;
 
  private:
-  Parameter<std::shared_ptr<gxf::GXFResource>> receiver_;
+  Parameter<std::shared_ptr<Receiver>> receiver_;
   Parameter<std::string> event_name_;
 };
 

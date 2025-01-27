@@ -794,7 +794,7 @@ lint() {
     # Since we care about the success/failure of cpplint and not of grep, we:
     #  1. use `set -o pipefail` to fail if `cpplint` fails
     #  2. use `grep -v ... || true` to ignore whether grep hid any output
-    run_command set -o pipefail; ${HOLOSCAN_PY_EXE} -m cpplint \
+    run_command set -o pipefail && run_command ${HOLOSCAN_PY_EXE} -m cpplint \
             --exclude .cache \
             --exclude build \
             --exclude install \

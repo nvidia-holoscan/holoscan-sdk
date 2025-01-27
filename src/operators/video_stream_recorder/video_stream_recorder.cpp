@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -151,7 +151,15 @@ void VideoStreamRecorderOp::stop() {
 void VideoStreamRecorderOp::compute(InputContext& op_input,
                                     [[maybe_unused]] OutputContext& op_output,
                                     ExecutionContext& context) {
-  auto entity = op_input.receive<gxf::Entity>("input").value();
+  auto maybe_entity = op_input.receive<gxf::Entity>("input");
+  if (!maybe_entity || maybe_entity.value().is_null()) {
+    auto error_msg = fmt::format("Operator '{}' failed to receive message from port 'input': {}",
+                                 name_,
+                                 maybe_entity.error().what());
+    HOLOSCAN_LOG_ERROR(error_msg);
+    throw std::runtime_error(error_msg);
+  }
+  auto entity = maybe_entity.value();
 
   // dynamic cast from holoscan::Resource to holoscan::StdEntitySerializer
   auto vs_serializer =

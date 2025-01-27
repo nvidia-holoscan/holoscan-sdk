@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,13 @@ namespace holoscan {
  * overridden by setting environment variable HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE. Setting
  * HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE will automatically set UCX_TCP_TX_SEG_SIZE and
  * UCX_TCP_RX_SEG_SIZE if they were not explicitly set by the user.
+ *
+ * ==Parameters==
+ *
+ * - **allocator** (std::shared_ptr<holoscan::Allocator>, optional): The allocator used to
+ * allocate/free the buffer memory. If no allocator is set, an `UnboundedAllocator` will be used.
+ * - **buffer_size** (size_t, optional): The size of the buffer in bytes (Defaults to
+ * holoscan::kDefaultSerializationBufferSize).
  */
 constexpr size_t kDefaultUcxSerializationBufferSize = 7168;  // 7 kB
 

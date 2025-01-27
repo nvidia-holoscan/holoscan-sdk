@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,17 @@ namespace holoscan {
  * @brief Block memory pool allocator.
  *
  * This is a memory pool which provides a user-specified number of equally sized blocks of memory.
+ *
+ * ==Parameters==
+ *
+ * - **block_size** (uint64_t): The size of the individual memory blocks in the pool (in bytes).
+ * - **num_blocks** (uint64_t): The number of memory blocks available in the pool.
+ * - **storage_type** (int32_t, optional): The memory type allocated by the pool (0=Host, 1=Device,
+ * 2=System) will use (Default: 0). Here "host" and "system" are both CPU memory, but "host" refers
+ * to pinned host memory (allocated via `cudaMallocHost`) while "system" is memory allocated by
+ * standard C++ `new`.
+ * - **dev_id** (int32_t, optional): The CUDA device id specifying which device the memory pool
+ * will use (Default: 0).
  */
 class BlockMemoryPool : public Allocator {
  public:

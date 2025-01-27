@@ -44,11 +44,8 @@ This second branch has three operators we haven't yet encountered.
 
 To follow along this example, you can download the ultrasound dataset with the following commands:
 
-```
-$ wget --content-disposition \
-  https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_ultrasound_sample_data/versions/20220608/zip \
-  -O holoscan_ultrasound_sample_data_20220608.zip
-$ unzip holoscan_ultrasound_sample_data_20220608.zip -d <SDK_ROOT>/data/ultrasound_segmentation
+```sh
+./scripts/download_ngc_data --url nvidia/clara-holoscan/holoscan_ultrasound_sample_data:20220608
 ```
 
 You can also follow along using your own dataset by adjusting the operator parameters based on your input video and model, and converting your video and model to a format that is understood by Holoscan.

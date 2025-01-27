@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,22 +19,11 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 
-#include "gxf/cuda/cuda_stream_pool.hpp"
-#include "gxf/std/block_memory_pool.hpp"
-#include "gxf/std/scheduling_term.hpp"
-#include "gxf/std/unbounded_allocator.hpp"
-
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/conditions/gxf/asynchronous.hpp"
-#include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/io_context.hpp"
-#include "holoscan/core/resources/gxf/block_memory_pool.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
+
+#include "parameter_utils.hpp"  // include the new utility header
 
 namespace holoscan::gxf {
 
@@ -53,236 +42,17 @@ gxf_result_t OperatorWrapper::initialize() {
     HOLOSCAN_LOG_ERROR("OperatorWrapper::initialize() - op_ is null");
     return GXF_FAILURE;
   }
-  if (!fragment_.executor().context()) {
-    // Set the current GXF context to the fragment's executor.
-    fragment_.executor().context(context());
-    // Set the executor (GXFExecutor)'s 'op_eid_' to this codelet's eid
-    // so that the operator is initialized under this codelet's eid.
-    fragment_.gxf_executor().op_eid(eid());
-    // Set the executor (GXFExecutor)'s 'op_cid_' to this codelet's cid
-    // so that the operator is initialized with this codelet's cid.
-    fragment_.gxf_executor().op_cid(cid());
 
-    // Set the operator's name to the typename of the operator.
-    // (it doesn't affect anything)
-    op_->name(holoscan_typename());
-    // Set the operator's fragment to the fragment we created.
-    op_->fragment(&fragment_);
-    op_->spec()->fragment(&fragment_);  // lazy fragment setup
+  // Use the utility function. We pass a lambda for input_func to handle IOSpec.
+  auto input_func = [&](const std::string& tag) -> holoscan::IOSpec& {
+    return op_->spec()->input<gxf::Entity>(tag);
+  };
 
-    // Set parameters.
-    for (auto& gxf_param : parameters_) {
-      const auto& arg_type = gxf_param.arg_type;
-      const auto param_ptr = gxf_param.param_ptr;
-      const auto& arg = gxf_param.param.try_get();
-      if (arg) {
-        auto& param_gxf = const_cast<YAML::Node&>(arg.value());
-
-        // Handle cases where the argument is a handle such as a condition or a resource.
-        if (arg_type.element_type() == ArgElementType::kCondition) {
-          // Create a condition object based on the handle name.
-          HOLOSCAN_LOG_TRACE("  adding condition: {}", param_ptr->key());
-
-          // Parse string from node
-          std::string tag;
-          try {
-            tag = param_gxf.as<std::string>();
-          } catch (...) {
-            std::stringstream ss;
-            ss << param_gxf;
-            HOLOSCAN_LOG_ERROR("Could not parse parameter {} from {}", param_ptr->key(), ss.str());
-            continue;
-          }
-
-          gxf_uid_t condition_cid = find_component_handle<nvidia::gxf::SchedulingTerm>(
-              context(), cid(), param_ptr->key().c_str(), tag, "");
-
-          gxf_tid_t condition_tid{};
-          gxf_result_t code = GxfComponentType(context(), condition_cid, &condition_tid);
-          if (code != GXF_SUCCESS) {
-            HOLOSCAN_LOG_ERROR("Failed to get component type for component id '': {}",
-                               condition_cid,
-                               GxfResultStr(code));
-            continue;
-          }
-
-          gxf_tid_t boolean_condition_tid{};
-          GxfComponentTypeId(
-              context(), "nvidia::gxf::BooleanSchedulingTerm", &boolean_condition_tid);
-
-          gxf_tid_t async_condition_tid{};
-          GxfComponentTypeId(
-              context(), "nvidia::gxf::AsynchronousSchedulingTerm", &async_condition_tid);
-
-          if (condition_tid == boolean_condition_tid) {
-            nvidia::gxf::BooleanSchedulingTerm* boolean_condition_ptr = nullptr;
-            code = GxfComponentPointer(context(),
-                                       condition_cid,
-                                       condition_tid,
-                                       reinterpret_cast<void**>(&boolean_condition_ptr));
-            if (code != GXF_SUCCESS) {
-              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
-                                 condition_cid,
-                                 GxfResultStr(code));
-              continue;
-            }
-            if (boolean_condition_ptr) {
-              auto condition =
-                  std::make_shared<holoscan::BooleanCondition>(tag, boolean_condition_ptr);
-              op_->add_arg(Arg(param_ptr->key()) = condition);
-            }
-          } else if (condition_tid == async_condition_tid) {
-            nvidia::gxf::AsynchronousSchedulingTerm* async_condition_ptr = nullptr;
-            code = GxfComponentPointer(context(),
-                                       condition_cid,
-                                       condition_tid,
-                                       reinterpret_cast<void**>(&async_condition_ptr));
-            if (code != GXF_SUCCESS) {
-              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
-                                 condition_cid,
-                                 GxfResultStr(code));
-              continue;
-            }
-            if (async_condition_ptr) {
-              auto condition =
-                  std::make_shared<holoscan::AsynchronousCondition>(tag, async_condition_ptr);
-              op_->add_arg(Arg(param_ptr->key()) = condition);
-            }
-          } else {
-            HOLOSCAN_LOG_ERROR("Unsupported condition type for the handle: {}", tag);
-          }
-        } else if (arg_type.element_type() == ArgElementType::kResource) {
-          // Create a resource object based on the handle name.
-          HOLOSCAN_LOG_TRACE("  adding resource: {}", param_ptr->key());
-
-          // Parse string from node
-          std::string tag;
-          try {
-            tag = param_gxf.as<std::string>();
-          } catch (...) {
-            std::stringstream ss;
-            ss << param_gxf;
-            HOLOSCAN_LOG_ERROR("Could not parse parameter {} from {}", param_ptr->key(), ss.str());
-            continue;
-          }
-
-          gxf_uid_t resource_cid = find_component_handle<nvidia::gxf::Component>(
-              context(), cid(), param_ptr->key().c_str(), tag, "");
-
-          gxf_tid_t resource_tid{};
-          gxf_result_t code = GxfComponentType(context(), resource_cid, &resource_tid);
-          if (code != GXF_SUCCESS) {
-            HOLOSCAN_LOG_ERROR("Failed to get GXF component type for component id '': {}",
-                               resource_cid,
-                               GxfResultStr(code));
-            continue;
-          }
-          gxf_tid_t unbounded_allocator_tid{};
-          GxfComponentTypeId(
-              context(), "nvidia::gxf::UnboundedAllocator", &unbounded_allocator_tid);
-
-          gxf_tid_t block_memory_pool_tid{};
-          GxfComponentTypeId(context(), "nvidia::gxf::BlockMemoryPool", &block_memory_pool_tid);
-
-          gxf_tid_t cuda_stream_pool_tid{};
-          GxfComponentTypeId(context(), "nvidia::gxf::CudaStreamPool", &cuda_stream_pool_tid);
-
-          if (resource_tid == unbounded_allocator_tid) {
-            nvidia::gxf::UnboundedAllocator* unbounded_allocator_ptr = nullptr;
-            code = GxfComponentPointer(context(),
-                                       resource_cid,
-                                       resource_tid,
-                                       reinterpret_cast<void**>(&unbounded_allocator_ptr));
-            if (code != GXF_SUCCESS) {
-              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
-                                 resource_cid,
-                                 GxfResultStr(code));
-              continue;
-            }
-            if (unbounded_allocator_ptr) {
-              auto resource =
-                  std::make_shared<holoscan::UnboundedAllocator>(tag, unbounded_allocator_ptr);
-              op_->add_arg(Arg(param_ptr->key()) = resource);
-            }
-          } else if (resource_tid == block_memory_pool_tid) {
-            nvidia::gxf::BlockMemoryPool* block_memory_pool_ptr = nullptr;
-            code = GxfComponentPointer(context(),
-                                       resource_cid,
-                                       resource_tid,
-                                       reinterpret_cast<void**>(&block_memory_pool_ptr));
-            if (code != GXF_SUCCESS) {
-              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
-                                 resource_cid,
-                                 GxfResultStr(code));
-              continue;
-            }
-            if (block_memory_pool_ptr) {
-              auto resource =
-                  std::make_shared<holoscan::BlockMemoryPool>(tag, block_memory_pool_ptr);
-              op_->add_arg(Arg(param_ptr->key()) = resource);
-            }
-          } else if (resource_tid == cuda_stream_pool_tid) {
-            nvidia::gxf::CudaStreamPool* cuda_stream_pool_ptr = nullptr;
-            code = GxfComponentPointer(context(),
-                                       resource_cid,
-                                       resource_tid,
-                                       reinterpret_cast<void**>(&cuda_stream_pool_ptr));
-            if (code != GXF_SUCCESS) {
-              HOLOSCAN_LOG_ERROR("Failed to get GXF component pointer for component id '': {}",
-                                 resource_cid,
-                                 GxfResultStr(code));
-              continue;
-            }
-            if (cuda_stream_pool_ptr) {
-              auto resource = std::make_shared<holoscan::CudaStreamPool>(tag, cuda_stream_pool_ptr);
-              op_->add_arg(Arg(param_ptr->key()) = resource);
-            }
-          } else {
-            HOLOSCAN_LOG_ERROR("Unsupported resource type for the handle: {}", tag);
-          }
-        } else if (arg_type.element_type() == ArgElementType::kIOSpec &&
-                   arg_type.container_type() == ArgContainerType::kVector) {
-          // Create IOSpec objects based on the receivers name
-          HOLOSCAN_LOG_TRACE("  adding receivers: {}", param_ptr->key());
-
-          // Parse string from node
-          std::vector<std::string> tags;
-          try {
-            tags = param_gxf.as<std::vector<std::string>>();
-          } catch (...) {
-            std::stringstream ss;
-            ss << param_gxf;
-            HOLOSCAN_LOG_ERROR("Could not parse parameter {} from {}", param_ptr->key(), ss.str());
-            continue;
-          }
-
-          // Get the receivers parameter pointer.
-          auto receivers_param_ptr =
-              reinterpret_cast<Parameter<std::vector<holoscan::IOSpec*>>*>(param_ptr);
-          // Set the default value.
-          receivers_param_ptr->set_default_value();
-          // Get the vector of IOSpec pointers.
-          std::vector<holoscan::IOSpec*>& iospec_vector = receivers_param_ptr->get();
-          iospec_vector.reserve(tags.size());
-          for (auto& tag : tags) {
-            HOLOSCAN_LOG_TRACE("    creating new input port: {}", tag);
-            // Create and add the new input port to the vector.
-            auto& input_port = op_->spec()->input<gxf::Entity>(tag);
-            iospec_vector.push_back(&input_port);
-          }
-        } else {
-          // Add argument to the operator (as YAML::Node object).
-          op_->add_arg(Arg(param_ptr->key()) = param_gxf);
-        }
-      }
-    }
-
-    // Initialize the operator.
-    op_->initialize();
-  }
-
-  return GXF_SUCCESS;
+  op_->enable_metadata(true);  // enable metadata by default
+  return initialize_holoscan_object(
+      context(), eid(), cid(), fragment_, op_, parameters_, input_func);
 }
+
 gxf_result_t OperatorWrapper::deinitialize() {
   HOLOSCAN_LOG_TRACE("OperatorWrapper::deinitialize()");
   return GXF_SUCCESS;
@@ -297,6 +67,7 @@ gxf_result_t OperatorWrapper::registerInterface(nvidia::gxf::Registrar* registra
   }
 
   // This method (registerInterface()) is called before initialize() multiple times.
+  // Setup spec if not already done.
   if (!op_->spec()) {
     // Setup the operator.
     auto spec = std::make_shared<OperatorSpec>(nullptr);
@@ -313,26 +84,16 @@ gxf_result_t OperatorWrapper::registerInterface(nvidia::gxf::Registrar* registra
         HOLOSCAN_LOG_ERROR("OperatorWrapper::registerInterface() - storage_ptr is null");
         return GXF_FAILURE;
       }
-      parameters_.emplace_back(GXFParameter{{}, param.second.arg_type(), storage_ptr});
+      parameters_.push_back(
+          std::make_shared<CommonGXFParameter>(param.second.arg_type(), storage_ptr));
     }
   }
 
   // Call registerParameterlessComponent() regardless of whether there are parameters or not.
   // This will ensure that the component parameter information for this type (codelet) is available.
   result &= registrar->registerParameterlessComponent();
-
-  // Register the operator's parameters.
-  for (auto& gxf_param : parameters_) {
-    const auto param_ptr = gxf_param.param_ptr;
-    HOLOSCAN_LOG_TRACE("  registering param: {}", param_ptr->key());
-    // TODO(gbae): support parameter flags
-    result &= registrar->parameter(gxf_param.param,
-                                   param_ptr->key().c_str(),
-                                   param_ptr->headline().c_str(),
-                                   param_ptr->description().c_str(),
-                                   nvidia::gxf::Unexpected(),
-                                   GXF_PARAMETER_FLAGS_OPTIONAL);
-  }
+  auto code = register_parameters(registrar, parameters_);
+  if (code != GXF_SUCCESS) return code;
 
   return nvidia::gxf::ToResultCode(result);
 }
@@ -343,7 +104,18 @@ gxf_result_t OperatorWrapper::start() {
     HOLOSCAN_LOG_ERROR("OperatorWrapper::start() - Operator is not set");
     return GXF_FAILURE;
   }
+
   op_->start();
+
+  exec_context_ = std::make_unique<GXFExecutionContext>(context(), op_.get());
+  exec_context_->init_cuda_object_handler(op_.get());
+  HOLOSCAN_LOG_TRACE("GXFWrapper: exec_context_->cuda_object_handler() for op '{}' is {}null",
+                     op_->name(),
+                     exec_context_->cuda_object_handler() == nullptr ? "" : "not ");
+  op_input_ = exec_context_->input();
+  op_input_->cuda_object_handler(exec_context_->cuda_object_handler());
+  op_output_ = exec_context_->output();
+  op_output_->cuda_object_handler(exec_context_->cuda_object_handler());
   return GXF_SUCCESS;
 }
 
@@ -354,13 +126,14 @@ gxf_result_t OperatorWrapper::tick() {
     return GXF_FAILURE;
   }
 
+  // clear any existing values from a previous compute call
+  op_->metadata()->clear();
+
+  // clear any received streams from previous compute call
+  exec_context_->clear_received_streams();
+
   HOLOSCAN_LOG_TRACE("Calling operator: {}", op_->name());
-
-  GXFExecutionContext exec_context(context(), op_.get());
-  InputContext* op_input = exec_context.input();
-  OutputContext* op_output = exec_context.output();
-  op_->compute(*op_input, *op_output, exec_context);
-
+  op_->compute(*op_input_, *op_output_, *exec_context_);
   return GXF_SUCCESS;
 }
 
@@ -370,7 +143,10 @@ gxf_result_t OperatorWrapper::stop() {
     HOLOSCAN_LOG_ERROR("OperatorWrapper::stop() - Operator is not set");
     return GXF_FAILURE;
   }
+
   op_->stop();
+
+  exec_context_->release_internal_cuda_streams();
   return GXF_SUCCESS;
 }
 

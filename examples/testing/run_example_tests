@@ -28,4 +28,4 @@ cmake -S ${source_dir} -B ${build_dir}
 cmake --build ${build_dir} -j
 
 # Run CTest
-ctest --test-dir ${build_dir}
+ctest --test-dir ${build_dir} $*

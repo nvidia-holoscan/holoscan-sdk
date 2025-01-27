@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,10 @@
 add_library(gxf_holoscan_wrapper_lib SHARED
   operator_wrapper.cpp
   operator_wrapper.hpp
-  operator_wrapper_fragment.cpp
-  operator_wrapper_fragment.hpp
+  fragment_wrapper.cpp
+  fragment_wrapper.hpp
+  resource_wrapper.cpp
+  resource_wrapper.hpp
 )
 target_link_libraries(gxf_holoscan_wrapper_lib
   PUBLIC
@@ -33,7 +35,10 @@ target_compile_definitions(gxf_holoscan_wrapper
   PRIVATE HOLOSCAN_BUILD_VERSION=${HOLOSCAN_BUILD_VERSION}
 )
 target_link_libraries(gxf_holoscan_wrapper
-  PUBLIC gxf_holoscan_wrapper_lib
+  PUBLIC
+    gxf_holoscan_wrapper_lib
+    GXF::std
+    GXF::cuda
   PRIVATE holoscan_security_flags
 )
 
@@ -95,8 +100,9 @@ generate_gxf_registry_manifest(
       $<TARGET_FILE:GXF::ucx>
       $<TARGET_FILE:gxf_ucx_holoscan>
     --headers
+      "${CMAKE_CURRENT_SOURCE_DIR}/fragment_wrapper.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/operator_wrapper.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/operator_wrapper_fragment.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/resource_wrapper.hpp"
 )
 if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
   register_gxf_extension(
@@ -108,8 +114,10 @@ endif()
 
 # Install the header files
 install(FILES
+  fragment_wrapper.hpp
   operator_wrapper.hpp
-  operator_wrapper_fragment.hpp
+  parameter_utils.hpp
+  resource_wrapper.hpp
   # Install headers to the directory 'gxf_holoscan_wrapper' in the include directory
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gxf_holoscan_wrapper
   COMPONENT holoscan-gxf_extensions

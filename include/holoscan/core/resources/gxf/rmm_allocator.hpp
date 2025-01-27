@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,33 @@ namespace holoscan {
  * @brief RMM (RAPIDS memory manager) allocator.
  *
  * This is a memory pool which provides a user-specified number of equally sized blocks of memory.
+ *
+ * This allocator supports simultaneous memory pools for CUDA device memory and pinned host memory.
+ *
+ * Because it is a CudaAllocator it supports both synchronous (`allocate`, `free`) and
+ * asynchronous (`allocate_async` and `free_async`) APIs for memory allocation.
+ *
+ * The values for the memory parameters, such as `device_memory_initial_size` must be specified in
+ * the form of a string containing a non-negative integer value followed by a suffix representing
+ * the units. Supported units are B, KB, MB, GB and TB where the values are powers of 1024 bytes
+ * (e.g., MB = 1024 * 1024 bytes). Examples of valid units are "512MB", "256 KB", "1 GB". If a
+ * floating point number is specified that decimal portion will be truncated (i.e. the value is
+ * rounded down to the nearest integer).
+ *
+ * ==Parameters==
+ *
+ * - **device_memory_initial_size** (std::string, optional): The initial size of the device memory
+ * pool. See above for the format accepted. Defaults to "8MB" on aarch64 and "16MB" on x86_64.
+ * - **device_memory_max_size** (std::string, optional): The maximum size of the device memory
+ * pool. See above for the format accepted. The default is to use twice the value set for
+ * `device_memory_initial_size`.
+ * - **host_memory_initial_size** (std::string, optional): The initial size of the host memory
+ * pool. See above for the format accepted. Defaults to "8MB" on aarch64 and "16MB" on x86_64.
+ * - **host_memory_max_size** (std::string, optional): The maximum size of the host memory
+ * pool. See above for the format accepted. The default is to use twice the value set for
+ * `device_memory_initial_size`.
+ * - **dev_id** (int32_t, optional): The CUDA device id specifying which device the memory pool
+ * will use (Default: 0).
  */
 class RMMAllocator : public CudaAllocator {
  public:

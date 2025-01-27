@@ -12,7 +12,7 @@ The job statistics will be collected by the underlying Graph Execution Framework
 From the GXF perspective, each Holoscan Operator is a unique entity which contains a single codelet as well as its associated components (corresponding to Holoscan Condition or Resource classes). Any additional entities and codelets that get implicitly created by Holoscan will also appear in the report. For example, if an output port of an operator connects to multiple downstream operators, you will see a corresponding implicit "broadcast" codelet appearing in the report).
 
 
-#### Holoscan SDK environment variables related to GXF job statistics
+## Holoscan SDK environment variables related to GXF job statistics
 
 Collection of GXF job statistics can be enabled by setting HOLOSCAN_ENABLE_GXF_JOB_STATISTICS. 
 

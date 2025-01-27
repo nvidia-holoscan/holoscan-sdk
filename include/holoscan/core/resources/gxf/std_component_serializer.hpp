@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +32,11 @@ namespace holoscan {
 /**
  * @brief Standard GXF component serializer.
  *
- * The VideoStreamSerializer entity serializer uses this as its component serializer.
+ * This class is capable of serializing and deserialing various basic numeric types as well as
+ * `nvidia::gxf::Tensor` and `nvidia::gxf::Timestamp`.
+ *
+ * - **allocator** (std::shared_ptr<holoscan::Allocator>, optional): The allocator used for
+ * deserialization of Tensor components. Defaults to an `UnboundedAllocator` if none is provided.
  */
 class StdComponentSerializer : public gxf::GXFResource {
  public:

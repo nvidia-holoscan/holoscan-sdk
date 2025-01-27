@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,7 +51,21 @@ void ComponentBase::update_params_from_args(
   for (auto& arg : args_) {
     // Find if arg.name() is in spec_->params()
     if (params.find(arg.name()) == params.end()) {
-      HOLOSCAN_LOG_WARN("Arg '{}' not found in spec_.params()", arg.name());
+      auto msg_buf = fmt::memory_buffer();
+      for (const auto& kv : params) {
+        if (&kv == &(*params.begin())) {
+          fmt::format_to(std::back_inserter(msg_buf), "{}", kv.first);
+        } else {
+          fmt::format_to(std::back_inserter(msg_buf), ", {}", kv.first);
+        }
+      }
+      HOLOSCAN_LOG_WARN(
+          "component '{}': Arg '{}' not found in spec_.params(). The defined parameters are "
+          "({:.{}}).",
+          name_,
+          arg.name(),
+          msg_buf.data(),
+          msg_buf.size());
       continue;
     }
 

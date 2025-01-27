@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,7 @@ void CudaStreamCondition::setup(ComponentSpec& spec) {
   spec.param(receiver_,
              "receiver",
              "Queue channel",
-             "The receiver on which data will be available oncethe stream completes.");
+             "The receiver on which data will be available once the stream completes.");
 }
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,25 @@
 
 namespace holoscan {
 
+/**
+ * @brief Event-based scheduler.
+ *
+ * This is a multi-thread scheduler that uses an event-based design. Unlike the
+ * `MultiThreadScheduler`, it does not utilize a dedicated polling thread that is constantly
+ * polling operators to check which are ready to execute. Instead, certain events in the underlying
+ * framework will indicate that the scheduling status of an operator should be checked.
+ *
+ * ==Parameters==
+ *
+ * - **worker_thread_number** (int64_t): The number of (CPU) worker threads to use for executing
+ * operators. Defaults to 1.
+ * - **stop_on_deadlock** (bool): If True, the application will terminate if a deadlock state is
+ * reached. Defaults to true.
+ * - **stop_on_deadlock_timeout** (int64_t): The amount of time (in ms) before an application is
+ * considered to be in deadlock. Defaults to 0.
+ * - **max_duration_ms_** (int64_t, optional): Terminate the application after the specified
+ * duration even if deadlock does not occur. If unspecified, the application can run indefinitely.
+ */
 class EventBasedScheduler : public gxf::GXFScheduler {
  public:
   HOLOSCAN_SCHEDULER_FORWARD_ARGS_SUPER(EventBasedScheduler, gxf::GXFScheduler)

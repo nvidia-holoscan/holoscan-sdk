@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,30 @@ namespace holoscan {
  * @brief CUDA stream pool allocator.
  *
  * An allocator that creates a pool of CUDA streams.
+ *
+ * Internally, the streams created correspond to `nvidia::gxf::CudaStream` objects whose lifetime
+ * is managed by the underlying GXF framework.
+ *
+ * The user can pass this resource to any `make_operator` to allow an operator to control the CUDA
+ * stream pool it will use when a stream-related API calls such as
+ * `InputContext::receive_cuda_stream` is made from the `Operator::compute` method.
+ *
+ * ==Parameters==
+ *
+ * - **dev_id** (int32_t, optional): The CUDA device id specifying which device the memory pool
+ * will use (Default: 0).
+ * - **stream_flags** (uint32_t, optional): The flags passed to the underlying
+ * `cudaStreamCreateWithPriority` CUDA runtime API call when the streams for this pool are created
+ * (Default: 0).
+ * - **stream_priority_** (int32_t, optional): The priority passed to the underlying
+ * `cudaStreamCreateWithPriority` CUDA runtime API call when the streams for this pool are created
+ * (Default: 0).
+ * - **reserved_size** (uint32_t, optional): The number of streams to initialize the pool with
+ * (Default: 1).
+ * - **max_size** (uint32_t, optional): The maximum number of streams that can be allocated in the
+ * pool. A value of 0 indicates that the size is unlimited (Default: 0). Note that in practice the
+ * device hardware will limit the number of possible concurrent kernels and/or memory copy
+ * operations to a value defined by `CUDA_DEVICE_MAX_CONNECTIONS`.
  */
 class CudaStreamPool : public Allocator {
  public:

@@ -293,7 +293,7 @@ Example:
   }
 ```
 
-For details on the `register_converter()` and `register_codec()` methods, refer to {cpp:func}`holoscan::Operator::register_converter` for the custom parameter type and the section on {ref}`object serialization<object-serialization>` for distributed applications.
+For details on the `register_converter()` and `register_codec()` methods, refer to {cpp:func}`holoscan::ComponentBase::register_converter` for the custom parameter type and the section on {ref}`object serialization<object-serialization>` for distributed applications.
 
 
 (specifying-operator-parameters-cpp)=
@@ -314,7 +314,7 @@ spec.param(multiplier_, "multiplier", "Multiplier", "Multiply the input by this 
 ```
 
 :::{note}
-If your parameter is of a custom type, you must register that type and provide a YAML encoder/decoder, as documented under {cpp:func}`holoscan::Operator::register_converter`
+If your parameter is of a custom type, you must register that type and provide a YAML encoder/decoder, as documented under {cpp:func}`holoscan::ComponentBase::register_converter`
 :::
 
 *See the {ref}`configuring-app-operator-parameters` section to learn how an application can set these parameters.*
@@ -670,6 +670,7 @@ spec:
 ```
 :::
 
+(configuring-queue-size)=
 
 ##### Configuring input port queue size and message batch condition (C++)
 

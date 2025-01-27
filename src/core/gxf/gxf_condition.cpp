@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,7 +53,8 @@ void GXFCondition::initialize() {
     return;
   }
 
-  Condition::initialize();
+  // Set condition type before calling Condition::initialize()
+  condition_type_ = holoscan::Condition::ConditionComponentType::kGXF;
   auto& executor = fragment()->executor();
   auto gxf_executor = dynamic_cast<GXFExecutor*>(&executor);
   if (gxf_executor == nullptr) {
@@ -82,6 +83,7 @@ void GXFCondition::initialize() {
   // Set Handler parameters
   for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
   is_initialized_ = true;
+  Condition::initialize();
 }
 
 void GXFCondition::add_to_graph_entity(Operator* op) {

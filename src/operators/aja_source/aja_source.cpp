@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -506,11 +506,11 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
   bool have_overlay_in = false;
   holoscan::gxf::Entity overlay_in_message;
   auto maybe_overlay_message = op_input.receive<gxf::Entity>("overlay_buffer_input");
-  if (maybe_overlay_message) {
+  if (!maybe_overlay_message || maybe_overlay_message.value().is_null()) {
+    HOLOSCAN_LOG_TRACE("Operator '{}' failed to find overlay_buffer_input", name_);
+  } else {
     overlay_in_message = maybe_overlay_message.value();
     have_overlay_in = true;
-  } else {
-    HOLOSCAN_LOG_TRACE("Failed to find overlay_buffer_input");
   }
 
   if (enable_overlay_ && have_overlay_in) {

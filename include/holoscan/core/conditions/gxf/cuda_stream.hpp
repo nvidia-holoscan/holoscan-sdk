@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,15 +30,6 @@
 namespace holoscan {
 
 /**
- * TODO(Greg): This condition requires there be a CudaStreamId component in the message Entity.
- *
- * e.g., it calls
- *     auto stream_id = message->get<CudaStreamId>();
- *
- * Need to check if this works as-is with the existing Holoscan CudaStreamHandler utility
- */
-
-/**
  * @brief Condition class to indicate data availability on CUDA stream completion.
  *
  * This condition will register a call back function which will be called once the work on the
@@ -63,13 +54,13 @@ class CudaStreamCondition : public gxf::GXFCondition {
   const char* gxf_typename() const override { return "nvidia::gxf::CudaStreamSchedulingTerm"; }
   void setup(ComponentSpec& spec) override;
 
-  void receiver(std::shared_ptr<gxf::GXFResource> receiver) { receiver_ = receiver; }
-  std::shared_ptr<gxf::GXFResource> receiver() { return receiver_.get(); }
+  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = receiver; }
+  std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
 
   nvidia::gxf::CudaStreamSchedulingTerm* get() const;
 
  private:
-  Parameter<std::shared_ptr<gxf::GXFResource>> receiver_;
+  Parameter<std::shared_ptr<Receiver>> receiver_;
 };
 
 }  // namespace holoscan

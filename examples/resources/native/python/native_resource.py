@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@ limitations under the License.
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, ComponentSpec, Operator, Resource
+from holoscan.resources import CudaStreamPool
 
 
 class NativeResource(Resource):
@@ -53,8 +54,10 @@ class MinimalOp(Operator):
         # test retrieving all resources
         resources = self.resources
         assert isinstance(resources, dict)
-        assert len(resources) == 1
+        # Two resources are expected: the native resource and the default CudaStreamPool
+        assert len(resources) == 2
         assert isinstance(resources["msg_resource"], NativeResource)
+        assert isinstance(resources["default_cuda_stream_pool"], CudaStreamPool)
 
 
 class MinimalNativeResourceApp(Application):

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,7 +85,7 @@ void init_downstream_message_affordable(py::module_& m) {
                     doc::DownstreamMessageAffordableCondition::doc_min_size)
       .def_property("transmitter",
                     py::overload_cast<>(&DownstreamMessageAffordableCondition::transmitter),
-                    py::overload_cast<std::shared_ptr<gxf::GXFResource>>(
+                    py::overload_cast<std::shared_ptr<Transmitter>>(
                         &DownstreamMessageAffordableCondition::transmitter),
                     doc::DownstreamMessageAffordableCondition::doc_transmitter);
 }

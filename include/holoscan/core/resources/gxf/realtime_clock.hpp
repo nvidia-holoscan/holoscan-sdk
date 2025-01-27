@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,16 @@ namespace holoscan {
  *
  * The RealtimeClock respects the true duration of conditions such as `PeriodicCondition`. It is
  * the default clock type used in Holoscan SDK.
+ *
+ * ==Parameters==
+ *
+ * - **initial_time_offset** (double): The initial time offset (in seconds) used until the time
+ * scale is changed manually (default: 0.0).
+ * - **initial_time_scale** (double): The initial time scale used until the time scale is changed
+ * manually (default: 1.0).
+ * - **use_time_since_epoch_** (bool): If true, clock time is the time since epoch +
+ * `initial_time_offset`. Otherwise the clock time starts at `initial_time_offset` during
+ * `initialize()`.
  */
 class RealtimeClock : public Clock {
  public:

@@ -43,15 +43,14 @@ The Holoscan SDK added Python wrapping and native operators to further increase 
 
 1. The remaining GXF-based DemosaicOp operator was switched to a native implementation. Now all operators provided by the SDK are native operators.
 
-## Current Limitations
+### Holoscan SDK v2.9
 
-Here is a list of GXF capabilities not yet available in the Holoscan SDK which are planned to be supported in future releases:
-- {ref}`Job Statistics<job_stats>`
+The Holoscan SDK introduces a method to wrap Holoscan SDK native operators, resources, and types as GXF codelets, components, and types, enabling their use in GXF applications. For more details, GXF application developers can refer to [Using Holoscan Operators/Resources/Types in GXF Applications](gxf_wrap_holoscan.md).
+
+## Current Limitations
 
 The GXF capabilities below are not available in the Holoscan SDK either. There is no plan to support them at this time:
 - [Graph Composer](doc/composer/GraphComposer_Graph_Runtime.rst)
 - [Behavior Trees](doc/behavior_tree/behavior_trees.rst)
 - {ref}`Epoch Scheduler<epoch_scheduler>`
 - {ref}`Target Time Scheduling Term<target_time_scheduling_term>`
-- {ref}`Multi-Message Available Scheduling Term<multi_message_available_scheduling_term>`
-- {ref}`Expiring Message Available Scheduling Term<expiring_message_available_scheduling_term>`

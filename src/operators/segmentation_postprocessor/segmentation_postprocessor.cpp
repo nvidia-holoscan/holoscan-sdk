@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,7 +79,14 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
   // Process input message
   // The type of `in_message` is 'holoscan::gxf::Entity'.
   auto maybe_tensormap = op_input.receive<TensorMap>("in_tensor");
-  if (!maybe_tensormap) { throw std::runtime_error("Failed to receive input message"); }
+  if (!maybe_tensormap) {
+    std::string err_msg =
+        fmt::format("Operator '{}' failed to receive input message on port 'in_tensor': {}",
+                    name_,
+                    maybe_tensormap.error().what());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   auto& tensormap = maybe_tensormap.value();
 
   const std::string in_tensor_name = in_tensor_name_.get();

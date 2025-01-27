@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/metadata.hpp"
 #include "operator_wrapper.hpp"
+#include "resource_wrapper.hpp"
 
 // Helper macros to convert macro value to string
 #define STRINGIFY(x) #x
@@ -43,4 +44,8 @@ GXF_EXT_FACTORY_ADD_0(0x112607eb7b23407c, 0xb93fcd10ad8b2ba7, holoscan::Metadata
 // Register the wrapper codelet
 GXF_EXT_FACTORY_ADD(0x04f99794e01b4bd1, 0xb42653a2e6d07347, holoscan::gxf::OperatorWrapper,
                     nvidia::gxf::Codelet, "Codelet for wrapping Holoscan Operator");
+
+// Register the wrapper component
+GXF_EXT_FACTORY_ADD(0x9a790deec62646a0, 0x84e4a69d1fb671b0, holoscan::gxf::ResourceWrapper,
+                    nvidia::gxf::Component, "Component for wrapping Holoscan Resource");
 GXF_EXT_FACTORY_END()

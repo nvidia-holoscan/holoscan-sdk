@@ -55,9 +55,9 @@ The Holoscan SDK also includes some GXF extensions with GXF codelets, which are 
 
 ### GXF Holoscan Wrapper
 
-The `gxf_holoscan_wrapper` extension includes the `holoscan::gxf::OperatorWrapper` codelet. It is used as a utility base class to wrap a Holoscan operator to interface with the GXF framework.
+The `gxf_holoscan_wrapper` extension provides the `holoscan::gxf::OperatorWrapper` codelet and the `holoscan::gxf::ResourceWrapper` component. It serves as a utility base class for wrapping a Holoscan operator or resource as a GXF codelet or component, respectively. This extension allows Holoscan operators and resources to be integrated into GXF applications and GraphComposer workflows.
 
-Learn more about it in the [Using Holoscan Operators in GXF Applications](gxf/gxf_wrap_holoscan_op.md) section.
+Learn more about it in the [Using Holoscan Operators in GXF Applications](gxf/gxf_wrap_holoscan.md) section.
 
 (ucx-holoscan)=
 ### UCX (Holoscan)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,12 @@ namespace holoscan {
  * Used by UcxEntitySerializer to serialize and deserialize GXF components such as
  * nvidia::gxf::Tensor, nvidia::gxf::VideoBuffer, nvidia::gxf::AudioBuffer,
  * nvidia::gxf::Timestamp and nvidia::gxf::EndOfStream.
+ *
+ * ==Parameters==
+ *
+ * - **allocator** (std::shared_ptr<holoscan::Allocator>, optional): The allocator used for
+ * deserialization of `Tensor`, `VideoBuffer` or `AudioBuffer` components. Defaults to an
+ * `UnboundedAllocator` if none is provided.
  */
 class UcxComponentSerializer : public gxf::GXFResource {
  public:

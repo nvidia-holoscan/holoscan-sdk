@@ -125,7 +125,7 @@ Download and unzip datasets from NGC. This can optionally run a script to conver
 
 ## Prerequisites
 
-- `wget` or `curl` to download datasets using the format `https://api.ngc.nvidia.com/v2/resources/nvidia/[team]/<name>/versions/<version>/zip`
+- `wget` or `curl` to download datasets using curl. Note that as of Jan 2025, download full zip archives from NGC is not supported.
 - [NGC CLI](https://ngc.nvidia.com/setup/installers/cli) to download datasets using the `<org>/[team]/<name>:<version>` format (useful if the above fails or for private registries)
 
 ## Usage
@@ -133,7 +133,7 @@ Download and unzip datasets from NGC. This can optionally run a script to conver
 The example below will download and unzip the RacerX video from NGC:
 
 ```sh
-./scripts/download_ngc_data --url https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_racerx_video/versions/20231009/zip
+./scripts/download_ngc_data --url nvidia/clara-holoscan/holoscan_racerx_video:20231009
 ```
 
 Use `--help` for more options such as output dir/name or conversion to GXF tensor files.

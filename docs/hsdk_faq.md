@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.9.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.9.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).

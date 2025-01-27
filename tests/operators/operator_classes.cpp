@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -530,15 +530,16 @@ TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOp) {
   const std::string name{"video_capture"};
   uint32_t width = 1024;
   uint32_t height = 768;
+  uint32_t frame_rate = 30;
   uint32_t exposure_time = 500;
   uint32_t gain = 100;
 
   ArgList kwargs{Arg{"device", std::string("/dev/video0")},
                  Arg{"pixel_format", std::string("auto")},
-                 Arg{"pass_through", false},
+                 Arg{"pass_through", true},
                  Arg{"width", width},
                  Arg{"height", height},
-                 Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")},
+                 Arg{"frame_rate", frame_rate},
                  Arg{"exposure_time", exposure_time},
                  Arg{"gain", gain}};
 
@@ -575,8 +576,25 @@ TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpDefaults) {
   const std::string name{"video_capture"};
 
   // load most arguments from the YAML file
-  ArgList kwargs = F.from_config("demosaic");
-  kwargs.add(Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")});
+  ArgList kwargs = F.from_config("v4l2_video_capture");
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::V4L2VideoCaptureOp>(name, kwargs);
+  EXPECT_EQ(op->name(), name);
+  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::V4L2VideoCaptureOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpLegacy) {
+  const std::string name{"video_capture"};
+
+  ArgList kwargs{Arg{"pass_through", false},
+                 Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")}};
 
   testing::internal::CaptureStderr();
 

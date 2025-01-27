@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -1185,15 +1185,15 @@ class TestV4L2VideoCaptureOp:
             name=name,
             width=320,
             height=240,
+            frame_rate=30,
             pixel_format="auto",
-            pass_through=False,
+            pass_through=True,
             device="/dev/video0",
-            allocator=UnboundedAllocator(app, name="pool"),
             exposure_time=500,
             gain=100,
         )
         assert isinstance(op, _Operator)
-        assert len(op.args) == 9
+        assert len(op.args) == 10
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1207,10 +1207,9 @@ class TestV4L2VideoCaptureOp:
         op = V4L2VideoCaptureOp(
             app,
             name=name,
-            allocator=UnboundedAllocator(app, name="pool"),
         )
         assert isinstance(op, _Operator)
-        assert len(op.args) == 7  # No hardcoded defaults for exposure and gain
+        assert len(op.args) == 8  # No hardcoded defaults for exposure and gain
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1226,13 +1225,28 @@ class TestV4L2VideoCaptureOp:
         op = V4L2VideoCaptureOp(
             app,
             name=name,
-            allocator=UnboundedAllocator(app, name="pool"),
             **app.kwargs("v4l2_video_capture"),
         )
         assert isinstance(op, _Operator)
-        assert len(op.args) == 9
+        assert len(op.args) == 10
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_legacy(self, app, capfd):
+        name = "video_capture"
+        op = V4L2VideoCaptureOp(
+            app,
+            name=name,
+            pass_through=False,
+            allocator=UnboundedAllocator(app, name="pool"),
+        )
+
+        assert isinstance(op, _Operator)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,13 @@ constexpr size_t kDefaultSerializationBufferSize = 1 << 12;  // 4 kB
  *
  * Provides a memory buffer that can be used for serialization of GXF entities. The allocator
  * parameter can be used to set the memory allocator used for this buffer.
+ *
+ * ==Parameters==
+ *
+ * - **allocator** (std::shared_ptr<holoscan::Allocator>, optional): The allocator used to
+ * allocate/free the buffer memory. If no allocator is set, an `UnboundedAllocator` will be used.
+ * - **buffer_size** (size_t, optional): The size of the buffer in bytes (Defaults to
+ * holoscan::kDefaultSerializationBufferSize).
  */
 class SerializationBuffer : public gxf::GXFResource {
  public:

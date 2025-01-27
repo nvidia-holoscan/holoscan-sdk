@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <common/fixed_vector.hpp>
 
@@ -28,6 +29,65 @@
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 #include "holoscan/core/io_context.hpp"
+
+namespace fmt {
+
+format_context::iterator formatter<nvidia::gxf::Tensor>::format(const nvidia::gxf::Tensor& t,
+                                                                fmt::format_context& ctx) const {
+  const auto& shape = t.shape();
+  std::vector<int32_t> dimensions(shape.rank());
+  for (uint32_t index = 0; index < shape.rank(); ++index) {
+    dimensions[index] = shape.dimension(index);
+  }
+  std::vector<uint64_t> strides(t.rank());
+  for (uint32_t index = 0; index < t.rank(); ++index) { strides[index] = t.stride(index); }
+  fmt::format_to(
+      ctx.out(),
+      "storage_type: {}, shape: ( {} ), strides: ( {} ), element_type: {}, element_count: {}",
+      magic_enum::enum_name(t.storage_type()),
+      fmt::join(dimensions, ", "),
+      fmt::join(strides, ", "),
+      magic_enum::enum_name(t.element_type()),
+      t.element_count());
+  return ctx.out();
+}
+
+format_context::iterator formatter<nvidia::gxf::ColorPlane>::format(
+    const nvidia::gxf::ColorPlane& c, fmt::format_context& ctx) const {
+  return fmt::format_to(ctx.out(),
+                        "color_space: {}, bytes_per_pixel: {}, stride: {}, offset: {}, width: "
+                        "{}, height: {}, size: {}",
+                        c.color_space,
+                        c.bytes_per_pixel,
+                        c.stride,
+                        c.offset,
+                        c.width,
+                        c.height,
+                        c.bytes_per_pixel,
+                        c.size);
+}
+
+format_context::iterator formatter<nvidia::gxf::VideoBufferInfo>::format(
+    const nvidia::gxf::VideoBufferInfo& v, fmt::format_context& ctx) const {
+  return fmt::format_to(
+      ctx.out(),
+      "width: {}, height: {}, color_format: {}, color_planes: ( {} ), surface_layout: {}\n",
+      v.width,
+      v.height,
+      magic_enum::enum_name(v.color_format),
+      fmt::join(v.color_planes, "), ("),
+      magic_enum::enum_name(v.surface_layout));
+}
+
+format_context::iterator formatter<nvidia::gxf::VideoBuffer>::format(
+    const nvidia::gxf::VideoBuffer& v, fmt::format_context& ctx) const {
+  return fmt::format_to(ctx.out(),
+                        "storage_type: {}, {}",
+                        magic_enum::enum_name(v.storage_type()),
+                        v.video_frame_info());
+}
+
+}  // namespace fmt
 
 namespace holoscan::gxf {
 

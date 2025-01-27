@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,14 +21,6 @@ target_link_libraries(ping_periodic
   PRIVATE
   holoscan::core
 )
-
-# Copy config file to the build tree
-add_custom_target(ping_periodic_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/ping_periodic.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS "ping_periodic.yaml"
-    BYPRODUCTS "ping_periodic.yaml"
-)
-add_dependencies(ping_periodic ping_periodic_yaml)
 
 # Install examples
 
@@ -57,13 +49,6 @@ endif()
 
 # Install the compiled example
 install(TARGETS ping_periodic
-  DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-examples
-)
-
-# Install the configuration file
-install(FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/ping_periodic.yaml"
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )

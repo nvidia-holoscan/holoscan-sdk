@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,15 @@ void PingRxOp::setup(OperatorSpec& spec) {
 
 void PingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                        [[maybe_unused]] ExecutionContext& context) {
-  auto value = op_input.receive<int>("in").value();
+  auto maybe_value = op_input.receive<int>("in");
+  if (!maybe_value) {
+    auto error_msg = fmt::format("Operator '{}' failed to receive message from port 'in': {}",
+                                 name_,
+                                 maybe_value.error().what());
+    HOLOSCAN_LOG_ERROR(error_msg);
+    throw std::runtime_error(error_msg);
+  }
+  int value = maybe_value.value();
   HOLOSCAN_LOG_INFO("Rx message value: {}", value);
 }
 

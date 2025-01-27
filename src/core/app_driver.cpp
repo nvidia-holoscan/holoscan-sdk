@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -172,20 +172,12 @@ void AppDriver::run() {
     return;
   }
 
-  launch_app_driver();
-
   auto& fragment_graph = app_->fragment_graph();
 
   // If there are no separate fragments to run, we run the entire graph.
   if (fragment_graph.is_empty()) {
     // Application's graph is already composed in check_configuration() so we can run it directly.
     app_->executor().run(app_->graph());
-    // Stop the driver server if it is running.
-    if (driver_server_) {
-      driver_server_->stop();
-      driver_server_->wait();
-      driver_server_ = nullptr;
-    }
     return;
   }
 
@@ -195,83 +187,81 @@ void AppDriver::run() {
     auto future = launch_fragments_async(target_fragments);
     future.get();
     return;
-  } else {
-    if (need_worker_) {
-      launch_app_worker();
-      auto worker_server = app_->worker().server();
+  }
 
-      // Get parameters for connecting to the driver
-      auto max_connection_retry_count = get_int_env_var("HOLOSCAN_MAX_CONNECTION_RETRY_COUNT",
-                                                        service::kDefaultMaxConnectionRetryCount);
-      auto connection_retry_interval_ms = get_int_env_var(
-          "HOLOSCAN_CONNECTION_RETRY_INTERVAL_MS", service::kDefaultConnectionRetryIntervalMs);
+  if (need_driver_) { launch_app_driver(); }
 
-      // Connect to the driver
-      bool connection_result = worker_server->connect_to_driver(max_connection_retry_count,
-                                                                connection_retry_interval_ms);
-      if (connection_result) {
-        HOLOSCAN_LOG_INFO("Connected to driver");
-        // Install signal handler for app worker
-        auto sig_handler = [this]([[maybe_unused]] void* context, [[maybe_unused]] int signum) {
-          HOLOSCAN_LOG_ERROR("Interrupted by user for app worker");
+  if (need_worker_) {
+    launch_app_worker();
+    auto worker_server = app_->worker().server();
 
-          auto worker_server = app_->worker().server();
-          // Notify the driver that the worker is cancelled
-          worker_server->notify_worker_execution_finished(AppWorkerTerminationCode::kCancelled);
-          // Stop the worker server
-          worker_server->stop();
-          // Do not wait for the worker server to stop because it will block the main thread
-        };
-        SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
-        SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
+    // Get parameters for connecting to the driver
+    auto max_connection_retry_count = get_int_env_var("HOLOSCAN_MAX_CONNECTION_RETRY_COUNT",
+                                                      service::kDefaultMaxConnectionRetryCount);
+    auto connection_retry_interval_ms = get_int_env_var("HOLOSCAN_CONNECTION_RETRY_INTERVAL_MS",
+                                                        service::kDefaultConnectionRetryIntervalMs);
 
-        worker_server->wait();
-      } else {
-        HOLOSCAN_LOG_ERROR("Failed to connect to driver");
-        worker_server->stop();
-        worker_server->wait();
-        // Stop the driver server if it is running because the worker cannot connect to the driver
-        // and the driver server will block the main thread.
-        if (driver_server_) { driver_server_->stop(); }
-      }
-      if (!need_driver_ && driver_server_) {
-        // Stop the driver server if it is running as a health checking service.
-        driver_server_->stop();
-        driver_server_->wait();
-      }
-    } else {
-      // Install signal handler for app driver
+    // Connect to the driver
+    bool connection_result =
+        worker_server->connect_to_driver(max_connection_retry_count, connection_retry_interval_ms);
+    if (connection_result) {
+      HOLOSCAN_LOG_INFO("Connected to driver");
+      // Install signal handler for app worker
       auto sig_handler = [this]([[maybe_unused]] void* context, [[maybe_unused]] int signum) {
-        HOLOSCAN_LOG_ERROR("Interrupted by user for app driver");
+        HOLOSCAN_LOG_ERROR("Interrupted by user for app worker");
 
-        // If the app is already in error state, we set global signal handler.
-        if (app_status_ == AppStatus::kError) {
-          HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
-          SignalHandler::unregister_signal_handler(context, signum);
-          // Register the global signal handler.
-          SignalHandler::register_global_signal_handler(signum, []([[maybe_unused]] int sig) {
-            HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
-            exit(1);
-          });
-
-          return;
-        }
-
-        // Terminate all worker and close all worker connections
-        terminate_all_workers(AppWorkerTerminationCode::kCancelled);
-
-        // Set app status to error
-        app_status_ = AppStatus::kError;
-
-        // Stop the driver server
-        if (driver_server_) { driver_server_->stop(); }
-        // Do not wait for the driver server to stop because it will block the main thread
+        auto worker_server = app_->worker().server();
+        // Notify the driver that the worker is cancelled
+        worker_server->notify_worker_execution_finished(AppWorkerTerminationCode::kCancelled);
+        // Stop the worker server
+        worker_server->stop();
+        // Do not wait for the worker server to stop because it will block the main thread
       };
       SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
       SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
+
+      worker_server->wait();
+    } else {
+      HOLOSCAN_LOG_ERROR("Failed to connect to driver");
+      worker_server->stop();
+      worker_server->wait();
+      // Stop the driver server if it is running because the worker cannot connect to the driver
+      // and the driver server will block the main thread.
+      if (driver_server_) { driver_server_->stop(); }
     }
-    if (driver_server_) { driver_server_->wait(); }
+  } else {  // if only the app driver is launched
+    // Install signal handler for app driver
+    auto sig_handler = [this]([[maybe_unused]] void* context, [[maybe_unused]] int signum) {
+      HOLOSCAN_LOG_ERROR("Interrupted by user for app driver");
+
+      // If the app is already in error state, we set global signal handler.
+      if (app_status_ == AppStatus::kError) {
+        HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
+        SignalHandler::unregister_signal_handler(context, signum);
+        // Register the global signal handler.
+        SignalHandler::register_global_signal_handler(signum, []([[maybe_unused]] int sig) {
+          HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
+          exit(1);
+        });
+
+        return;
+      }
+
+      // Terminate all worker and close all worker connections
+      terminate_all_workers(AppWorkerTerminationCode::kCancelled);
+
+      // Set app status to error
+      app_status_ = AppStatus::kError;
+
+      // Stop the driver server
+      if (driver_server_) { driver_server_->stop(); }
+      // Do not wait for the driver server to stop because it will block the main thread
+    };
+    SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
+    SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
   }
+
+  if (driver_server_) { driver_server_->wait(); }
 }
 
 std::future<void> AppDriver::run_async() {
@@ -280,7 +270,7 @@ std::future<void> AppDriver::run_async() {
     return std::async(std::launch::async, []() {});
   }
 
-  launch_app_driver();
+  if (need_driver_) { launch_app_driver(); }
 
   auto& fragment_graph = app_->fragment_graph();
 
@@ -288,19 +278,6 @@ std::future<void> AppDriver::run_async() {
   if (is_local_) {
     // If there are no separate fragments to run, we run the entire graph.
     if (fragment_graph.is_empty()) {
-      if (driver_server_) {
-        auto future =
-            std::async(std::launch::async, [app = app_, &driver_server = driver_server_]() {
-              auto executor_future = app->executor().run_async(app->graph());
-              executor_future.get();
-              if (driver_server) {
-                driver_server->stop();
-                driver_server->wait();
-                driver_server = nullptr;
-              }
-            });
-        return future;
-      }
       // Application's graph is already composed in check_configuration() so we can run it directly.
       return app_->executor().run_async(app_->graph());
     }
@@ -308,6 +285,10 @@ std::future<void> AppDriver::run_async() {
     auto target_fragments = fragment_graph.get_nodes();
     auto future = launch_fragments_async(target_fragments);
     return future;
+  }
+
+  if (need_driver_ || need_worker_) {
+    HOLOSCAN_LOG_WARN("Distributed application doesn't support run_async() call");
   }
 
   return std::async(std::launch::async, []() {});
@@ -1172,35 +1153,30 @@ void AppDriver::terminate_all_workers(AppWorkerTerminationCode error_code) {
 }
 
 void AppDriver::launch_app_driver() {
-  // Launch the driver service if need_driver_ is true.`
-  // Even if need_driver_ is false, we still need to launch the driver service if
-  // need_health_check_ is true.
+  HOLOSCAN_LOG_INFO("Launching the driver/health checking service");
 
-  if (need_driver_ || need_health_check_) {
-    HOLOSCAN_LOG_INFO("Launching the driver/health checking service");
-
-    // Initialize fragment scheduler
-    if (!fragment_scheduler_) {
-      fragment_scheduler_ =
-          std::make_unique<FragmentScheduler>(std::make_unique<GreedyFragmentAllocationStrategy>());
-    }
-
-    // Get the system resource requirements for each fragment
-    const auto& app_config = app_->config();
-    auto& fragment_graph = app_->fragment_graph();
-    collect_resource_requirements(app_config, fragment_graph);
-
-    driver_server_ =
-        std::make_unique<service::AppDriverServer>(this, need_driver_, need_health_check_);
-    driver_server_->start();
+  // Initialize fragment scheduler
+  if (!fragment_scheduler_) {
+    fragment_scheduler_ =
+        std::make_unique<FragmentScheduler>(std::make_unique<GreedyFragmentAllocationStrategy>());
   }
+
+  // Get the system resource requirements for each fragment
+  const auto& app_config = app_->config();
+  auto& fragment_graph = app_->fragment_graph();
+  collect_resource_requirements(app_config, fragment_graph);
+
+  driver_server_ =
+      std::make_unique<service::AppDriverServer>(this, need_driver_, need_health_check_);
+  driver_server_->start();
 }
 
 void AppDriver::launch_app_worker() {
   HOLOSCAN_LOG_INFO("Launching the worker service");
   auto& app_worker = app_->worker();
   // Create and start server
-  auto worker_server = app_worker.server(std::make_unique<service::AppWorkerServer>(&app_worker));
+  auto worker_server = app_worker.server(
+      std::make_unique<service::AppWorkerServer>(&app_worker, need_health_check_));
   worker_server->start();
 }
 

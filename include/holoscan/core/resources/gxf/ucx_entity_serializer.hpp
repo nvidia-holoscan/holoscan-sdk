@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,13 @@ namespace holoscan {
  * @brief UCX-based entity serializer.
  *
  * Used by UcxReceiver and UcxTransmitter to serialize and deserialize entities, respectively.
+ *
+ * ==Parameters==
+ *
+ * - **component_serializers** (std::vector<std::shared_ptr<holoscan::Resource>>): The component
+ * serializers available for serialization/deserialization of components in the Entity. By
+ * default, Holoscan uses both `UcxComponentSerializer` and `UcxHoloscanComponentSerializer`.
+ * - **verbose_warning** (bool): If true, more verbose warnings are logged by the serializer.
  */
 class UcxEntitySerializer : public gxf::GXFResource {
  public:

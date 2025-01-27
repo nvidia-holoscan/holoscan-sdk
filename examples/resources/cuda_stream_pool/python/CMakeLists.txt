@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,4 +49,16 @@ if(HOLOSCAN_BUILD_TESTS)
     PASS_REGULAR_EXPRESSION "rx received message 10"
     FAIL_REGULAR_EXPRESSION "rx received message 11"
   )
+
+  add_test(NAME EXAMPLE_PYTHON_CUDA_STREAM_NO_ARRAY_INTERFACE_SYNC_TEST
+    COMMAND python3 cuda_stream.py --count=10
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_CUDA_STREAM_NO_ARRAY_INTERFACE_SYNC_TEST PROPERTIES
+    ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG;HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC=0;CUPY_CUDA_ARRAY_INTERFACE_SYNC=0"
+    PASS_REGULAR_EXPRESSION "rx received non-default CUDA stream from port 'in'"
+    PASS_REGULAR_EXPRESSION "rx received message 10"
+    FAIL_REGULAR_EXPRESSION "rx received message 11"
+  )
+
 endif()

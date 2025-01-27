@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,6 @@
 #include "holoscan/logger/logger.hpp"
 
 #include "../app_worker/client.hpp"
-#include "../health_checking/service_impl.hpp"
 #include "service_impl.hpp"
 
 namespace holoscan::service {
@@ -60,37 +59,6 @@ void AppDriverServer::run() {
   auto server_port = holoscan::CLIOptions::parse_port(server_address);
   server_address = fmt::format("{}:{}", server_ip, server_port);
 
-  // Start health checking server if needed
-  std::unique_ptr<grpc::Server> health_check_server;
-  grpc::health::v1::HealthImpl health_checking_service(app_driver_);
-  if (need_health_check_) {
-    int32_t health_check_port = kDefaultHealthCheckingPort;
-
-    // Check the environment variable for the port (`HOLOSCAN_HEALTH_CHECK_PORT`)
-    const char* env_health_check_port = std::getenv("HOLOSCAN_HEALTH_CHECK_PORT");
-    if (env_health_check_port != nullptr && env_health_check_port[0] != '\0') {
-      HOLOSCAN_LOG_DEBUG("Using environment variable HOLOSCAN_HEALTH_CHECK_PORT={}",
-                         env_health_check_port);
-      try {
-        health_check_port = std::stoi(env_health_check_port);
-      } catch (const std::exception& e) {
-        HOLOSCAN_LOG_ERROR(
-            "Failed to parse HOLOSCAN_HEALTH_CHECK_PORT={}: {}", env_health_check_port, e.what());
-      }
-    }
-
-    grpc::ServerBuilder health_check_builder;
-    health_check_builder.AddListeningPort(fmt::format("0.0.0.0:{}", health_check_port),
-                                          grpc::InsecureServerCredentials());
-    health_check_builder.RegisterService(&health_checking_service);
-    health_check_server = health_check_builder.BuildAndStart();
-    if (health_check_server) {
-      HOLOSCAN_LOG_INFO("Health checking server listening on 0.0.0.0:{}", health_check_port);
-    } else {
-      HOLOSCAN_LOG_ERROR("Failed to start health checking server on 0.0.0.0:{}", health_check_port);
-    }
-  }
-
   // Start AppDriver server if needed
   std::unique_ptr<grpc::Server> server;
   AppDriverServiceImpl app_driver_service(app_driver_);
@@ -103,6 +71,12 @@ void AppDriverServer::run() {
       HOLOSCAN_LOG_ERROR("Port {} is already in use", server_port_int);
       should_stop_ = true;
     } else {
+      // Start health checking server if needed
+      if (need_health_check_) {
+        grpc::EnableDefaultHealthCheckService(true);
+        HOLOSCAN_LOG_INFO("AppDriverServer/Health checking server listening on 0.0.0.0:{}",
+                          server_port_int);
+      }
       // Start the gRPC server
       grpc::ServerBuilder builder;
       builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
@@ -110,6 +84,10 @@ void AppDriverServer::run() {
       server = builder.BuildAndStart();
       if (server) {
         HOLOSCAN_LOG_INFO("AppDriverServer listening on {}", server_address);
+
+        if (need_health_check_) {
+          app_driver_service.set_health_check_service(server->GetHealthCheckService());
+        }
       } else {
         HOLOSCAN_LOG_ERROR("Failed to start AppDriverServer on {}", server_address);
         should_stop_ = true;
@@ -126,7 +104,6 @@ void AppDriverServer::run() {
   }
 
   if (server) { server->Shutdown(); }
-  if (health_check_server) { health_check_server->Shutdown(); }
 }
 
 void AppDriverServer::notify() {

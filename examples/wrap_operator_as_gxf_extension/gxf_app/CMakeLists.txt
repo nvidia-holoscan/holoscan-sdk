@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@ create_gxe_application(
   YAML ping.yaml
   EXTENSIONS
     GXF::std
+    GXF::cuda
     gxf_holoscan_wrapper
     gxf_wrapped_ping_rx_native_op
     gxf_wrapped_ping_tx_native_op
@@ -47,4 +48,6 @@ if(HOLOSCAN_BUILD_TESTS)
           )
   set_tests_properties(EXAMPLE_OPERATOR_AS_GXF_EXT_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "Number of pings received: 10")
+  set_tests_properties(EXAMPLE_OPERATOR_AS_GXF_EXT_TEST PROPERTIES
+                       FAIL_REGULAR_EXPRESSION "Unknown type")
 endif()

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +45,7 @@ constexpr int32_t kDefaultConnectionRetryIntervalMs = 1000;
 
 class AppWorkerServer {
  public:
-  explicit AppWorkerServer(holoscan::AppWorker* app_worker);
+  explicit AppWorkerServer(holoscan::AppWorker* app_worker, bool need_health_check = false);
   virtual ~AppWorkerServer();
 
   void start();
@@ -76,6 +76,7 @@ class AppWorkerServer {
 
   holoscan::AppWorker* app_worker_ = nullptr;  ///< Pointer to the application worker.
   std::unique_ptr<AppDriverClient> driver_client_;
+  bool need_health_check_ = false;  ///< Whether to check the health of the application.
 
   std::shared_future<void> fragment_executors_future_;  ///< Future for the fragment executors.
 };

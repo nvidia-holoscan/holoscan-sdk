@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,16 +95,7 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
    */
   expected<gxf::CudaStreamHandle, RuntimeError> stream_handle_from_stream(cudaStream_t stream);
 
- protected:
-  friend class holoscan::gxf::GXFWrapper;
-  friend class holoscan::gxf::GXFInputContext;
-  friend class holoscan::gxf::GXFOutputContext;
-
   std::shared_ptr<CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
-
-  /// @brief allocate a new GXF CudaStream object and return the GXF Handle to it
-  expected<CudaStreamHandle, RuntimeError> allocate_cuda_stream_handle(
-      const std::string& stream_name);
 
   /// @brief initialize the CudaObjectHandler for the Operator
   void init_cuda_object_handler(Operator* op);
@@ -114,6 +105,15 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
 
   /// @brief clear the handler's received stream mappings from a prior `Operator::compute` call.
   void clear_received_streams();
+
+ protected:
+  friend class holoscan::gxf::GXFWrapper;
+  friend class holoscan::gxf::GXFInputContext;
+  friend class holoscan::gxf::GXFOutputContext;
+
+  /// @brief allocate a new GXF CudaStream object and return the GXF Handle to it
+  expected<CudaStreamHandle, RuntimeError> allocate_cuda_stream_handle(
+      const std::string& stream_name);
 
   std::shared_ptr<GXFInputContext> gxf_input_context_{};    ///< The GXF input context.
   std::shared_ptr<GXFOutputContext> gxf_output_context_{};  ///< The GXF output context.

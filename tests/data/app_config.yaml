@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -192,7 +192,7 @@ v4l2_video_capture:
   width: 320
   height: 240
   pixel_format: "auto"
-  pass_through: false
+  pass_through: true
   device: "/dev/video0"
   exposure_time: 500
   gain: 100

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,31 @@ namespace holoscan {
  * @brief UCX-based double buffer transmitter class.
  *
  * The UcxTransmitter class is used to emit messages to an operator within another
- * fragment of a distributed application.
+ * fragment of a distributed application. This is based on the same double-buffer queue as the
+ * DoubleBufferTransmitter, but also handles serialization/deserialization of data for sending
+ * it over the network via UCX's active message APIs.
+ *
+ * Application authors are not expected to use this class directly. It will be automatically
+ * configured for output ports specified via `Operator::setup` when `Application::add_flow` has been
+ * used to make a connection across fragments of a distributed application.
+ *
+ * ==Parameters==
+ *
+ * - **capacity** (uint64_t, optional): The capacity of the double-buffer queue used by the
+ * transmitter. Defaults to 1.
+ * - **policy** (uint64_t, optional): The policy to use when a message arrives, but there is no
+ * space in the transmitter. The possible values are 0: pop, 1: reject, 2: fault (Default: 2).
+ * - **receiver_address** (std::string, optional): The (IPv4) address of the receiver. The
+ * default of "0.0.0.0" corresponds to INADDR_ANY.
+ * - **local_address** (std::string, optional): The local (IPv4) address to use for the connection.
+ * The default of "0.0.0.0" corresponds to INADDR_ANY.
+ * - **port** (uint32_t, optional): The receiver port (Default: holoscan::kDefaultUcxPort).
+ * - **local_port** (uint32_t, optional): The local port to use for connection (default: 0).
+ * - **maximum_connection_retries** (uint32_t, optional): The maximum number of times to retry
+ * when establishing a connection to the receiver (Default: 10).
+ * - **buffer** (std::shared_ptr<holoscan::UcxSerializationBuffer>, optional): The serialization
+ * buffer that should be used. This defaults to `UcxSerializationBuffer` and should not need to be
+ * set by the application author.
  */
 class UcxTransmitter : public Transmitter {
  public:

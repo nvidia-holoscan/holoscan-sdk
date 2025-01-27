@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +56,16 @@ struct BufferInfo {
       const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video,
       HolovizOp::ImageFormat input_image_format = HolovizOp::ImageFormat::AUTO_DETECT);
 
+  /**
+   * @returns a string describing the supported tensor formats
+   */
+  static std::string get_supported_tensor_formats_str();
+
+  /**
+   * @returns a string describing the supported video buffer formats
+   */
+  static std::string get_supported_video_buffer_formats_str();
+
   uint32_t rank = 0;
   uint32_t components = 0;
   uint32_t width = 0;
@@ -76,8 +86,7 @@ struct BufferInfo {
   /// plane information
   std::vector<nvidia::gxf::ColorPlane> color_planes;
 
-  HolovizOp::YuvModelConversion yuv_model_conversion =
-      HolovizOp::YuvModelConversion::YUV_601;
+  HolovizOp::YuvModelConversion yuv_model_conversion = HolovizOp::YuvModelConversion::YUV_601;
   HolovizOp::YuvRange yuv_range = HolovizOp::YuvRange::ITU_FULL;
 };
 

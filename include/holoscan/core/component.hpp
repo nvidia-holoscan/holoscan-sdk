@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -157,6 +157,76 @@ class ComponentBase {
   virtual void initialize() {}
 
   /**
+   * @brief Register the argument setter for the given type.
+   *
+   * If an operator or resource has an argument with a custom type, the argument setter must be
+   * registered using this method.
+   *
+   * The argument setter is used to set the value of the argument from the YAML configuration.
+   *
+   * This method can be called in the initialization phase of the operator/resource
+   * (e.g., `initialize()`).
+   * The example below shows how to register the argument setter for the custom type (`Vec3`):
+   *
+   * ```cpp
+   * void MyOp::initialize() {
+   *   register_converter<Vec3>();
+   * }
+   * ```
+   *
+   * It is assumed that `YAML::convert<T>::encode` and `YAML::convert<T>::decode` are implemented
+   * for the given type.
+   * You need to specialize the `YAML::convert<>` template class.
+   *
+   * For example, suppose that you had a `Vec3` class with the following members:
+   *
+   * ```cpp
+   * struct Vec3 {
+   *   // make sure you have overloaded operator==() for the comparison
+   *   double x, y, z;
+   * };
+   * ```
+   *
+   * You can define the `YAML::convert<Vec3>` as follows in a '.cpp' file:
+   *
+   * ```cpp
+   * namespace YAML {
+   * template<>
+   * struct convert<Vec3> {
+   *   static Node encode(const Vec3& rhs) {
+   *     Node node;
+   *     node.push_back(rhs.x);
+   *     node.push_back(rhs.y);
+   *     node.push_back(rhs.z);
+   *     return node;
+   *   }
+   *
+   *   static bool decode(const Node& node, Vec3& rhs) {
+   *     if(!node.IsSequence() || node.size() != 3) {
+   *       return false;
+   *     }
+   *
+   *     rhs.x = node[0].as<double>();
+   *     rhs.y = node[1].as<double>();
+   *     rhs.z = node[2].as<double>();
+   *     return true;
+   *   }
+   * };
+   * }
+   * ```
+   *
+   * Please refer to the [yaml-cpp
+   * documentation](https://github.com/jbeder/yaml-cpp/wiki/Tutorial#converting-tofrom-native-data-types)
+   * for more details.
+   *
+   * @tparam typeT The type of the argument to register.
+   */
+  template <typename typeT>
+  static void register_converter() {
+    register_argument_setter<typeT>();
+  }
+
+  /**
    * @brief Get a YAML representation of the component.
    *
    * @return YAML node including the id, name, fragment name, and arguments of the component.
@@ -179,6 +249,16 @@ class ComponentBase {
   // Make Fragment a friend class so it can call reset_graph_entities
   friend class holoscan::Fragment;
 
+  /**
+   * @brief Register the argument setter for the given type.
+   *
+   * Please refer to the documentation of `register_converter()` for more details.
+   *
+   * @tparam typeT The type of the argument to register.
+   */
+  template <typename typeT>
+  static void register_argument_setter();
+
   /// Update parameters based on the specified arguments
   void update_params_from_args(std::unordered_map<std::string, ParameterWrapper>& params);
 
@@ -198,7 +278,7 @@ class ComponentBase {
  * `holoscan::Condition`, `holoscan::Resource`, `holoscan::NetworkContext`, `holoscan::Scheduler`
  * It is used to define the common interface for all components.
  *
- * `holoscan::Operator` does not inherit from this class as it uses `holosccan::OperatorSpec`
+ * `holoscan::Operator` does not inherit from this class as it uses `holoscan::OperatorSpec`
  * instead of `holoscan::ComponentSpec`.
  */
 class Component : public ComponentBase {
@@ -218,5 +298,14 @@ class Component : public ComponentBase {
 };
 
 }  // namespace holoscan
+
+// ------------------------------------------------------------------------------------------------
+// Template definitions
+//
+//   Since the template definitions depends on template methods in other headers, we declare the
+//   template methods above, and define them below with the proper header files, so that we don't
+//   have circular dependencies.
+// ------------------------------------------------------------------------------------------------
+#include "./component-inl.hpp"
 
 #endif /* HOLOSCAN_CORE_COMPONENT_HPP */

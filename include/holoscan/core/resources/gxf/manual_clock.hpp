@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,10 @@ namespace holoscan {
  *
  * The manual clock compresses time intervals, rather than waiting for specified durations
  * (e.g. via PeriodicCondition). It is used mainly for testing applications.
+ *
+ * ==Parameters==
+ *
+ * - **initial_timestamp** (int64_t): The initial time offset in nanoseconds.
  */
 class ManualClock : public Clock {
  public:

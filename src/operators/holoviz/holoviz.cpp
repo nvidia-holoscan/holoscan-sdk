@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <magic_enum.hpp>
 
 #include "holoscan/core/codecs.hpp"
 #include "holoscan/core/condition.hpp"
@@ -398,23 +400,53 @@ static std::string colorSpaceToString(holoscan::ops::HolovizOp::ColorSpace color
  *
  *  @return input type enum
  */
-nvidia::gxf::Expected<holoscan::ops::HolovizOp::InputType> detectInputType(
+nvidia::gxf::Expected<holoscan::ops::HolovizOp::InputType> detect_input_type(
     const holoscan::ops::BufferInfo& buffer_info, bool has_lut) {
+  nvidia::gxf::Expected<holoscan::ops::HolovizOp::InputType> input_type =
+      nvidia::gxf::Unexpected{GXF_FAILURE};
+
   // auto detect type
   if ((buffer_info.components == 1) && has_lut) {
     // color image with lookup table
-    return holoscan::ops::HolovizOp::InputType::COLOR_LUT;
-  } else if ((buffer_info.width == 2) && (buffer_info.components == 1) &&
+    input_type = holoscan::ops::HolovizOp::InputType::COLOR_LUT;
+  } else if ((buffer_info.components == 2) &&
              (buffer_info.element_type == nvidia::gxf::PrimitiveType::kFloat32)) {
     // array of 2D coordinates, draw crosses
-    return holoscan::ops::HolovizOp::InputType::CROSSES;
-  } else if ((buffer_info.components == 3) || (buffer_info.components == 4)) {
-    // color image (RGB or RGBA)
-    return holoscan::ops::HolovizOp::InputType::COLOR;
-  } else {
-    HOLOSCAN_LOG_ERROR("Can't auto detect type of input '{}'", buffer_info.name);
+    input_type = holoscan::ops::HolovizOp::InputType::CROSSES;
+  } else if (buffer_info.image_format != holoscan::ops::HolovizOp::ImageFormat::AUTO_DETECT) {
+    // color image
+    input_type = holoscan::ops::HolovizOp::InputType::COLOR;
   }
-  return nvidia::gxf::Unexpected{GXF_FAILURE};
+
+  if (!input_type.has_value()) {
+    HOLOSCAN_LOG_ERROR(
+        "Can't auto detect type of input '{}'. Please provide a valid type value in the input "
+        "specification.\n"
+        "Auto detection recognizes\n"
+        "- `COLOR_LUT` when the `color_lut` parameter is set and the input buffer components is 1\n"
+        "- `CROSSES` when the input buffer components is 2 and element type is `float`\n"
+        "- `COLOR` when the input buffer has a valid color format",
+        buffer_info.name);
+  }
+  return input_type;
+}
+
+/**
+ * @brief Get the format string of input tensor/video buffer
+ */
+std::string get_format_str(
+    const std::string& tensor_name,
+    const nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>>& maybe_input_tensor,
+    const nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>>& maybe_input_video) {
+  std::string format_str;
+  if (maybe_input_tensor) {
+    format_str = fmt::format("Tensor '{}':\n{}", tensor_name, *maybe_input_tensor.value().get());
+
+  } else {
+    format_str =
+        fmt::format("VideoBuffer '{}':\n{}", tensor_name, *maybe_input_video.value().get());
+  }
+  return format_str;
 }
 
 /**
@@ -1024,10 +1056,16 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
   nvidia::gxf::VideoBufferInfo info;
   if (render_buffer_input_enabled_) {
     // check if there is a input buffer given to copy the output into
-    auto render_buffer_input = op_input.receive<gxf::Entity>("render_buffer_input").value();
-    if (!render_buffer_input) {
-      throw std::runtime_error("No message available at 'render_buffer_input'.");
+    auto maybe_render_buffer_input = op_input.receive<gxf::Entity>("render_buffer_input");
+    if (!maybe_render_buffer_input || maybe_render_buffer_input.value().is_null()) {
+      std::string err_msg =
+          fmt::format("Operator '{}': No message available at 'render_buffer_input': {}",
+                      name_,
+                      maybe_render_buffer_input.error().what());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     }
+    auto render_buffer_input = maybe_render_buffer_input.value();
 
     // Get the empty input buffer
     const auto& video_buffer_in =
@@ -1108,20 +1146,6 @@ void HolovizOp::set_input_spec_geometry(const InputSpec& input_spec) {
 }
 
 void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buffer_info) {
-  // sanity checks
-  if (buffer_info.rank != 3) {
-    throw std::runtime_error(fmt::format("Expected rank 3 for tensor '{}', type '{}', but got {}",
-                                         buffer_info.name,
-                                         inputTypeToString(input_spec.type_),
-                                         buffer_info.rank));
-  }
-  if (buffer_info.image_format == ImageFormat::AUTO_DETECT) {
-    std::runtime_error(
-        fmt::format("Color image: element type {} and channel count {} not supported",
-                    static_cast<int>(buffer_info.element_type),
-                    buffer_info.components));
-  }
-
   viz::ImageFormat image_format;
   if (input_spec.type_ == InputType::COLOR_LUT) {
     if (buffer_info.components != 1) {
@@ -1603,12 +1627,6 @@ void HolovizOp::render_depth_map(InputSpec* const input_spec_depth_map,
                       buffer_info_depth_map.width,
                       buffer_info_depth_map.height));
     }
-    if (buffer_info_depth_map_color.image_format == ImageFormat::AUTO_DETECT) {
-      throw std::runtime_error(
-          fmt::format("Depth map color: element type {} and channel count {} not supported",
-                      static_cast<int>(buffer_info_depth_map_color.element_type),
-                      buffer_info_depth_map_color.components));
-    }
     depth_map_color_fmt = viz::ImageFormat(buffer_info_depth_map_color.image_format);
 
     depth_map_color_device_ptr =
@@ -1866,7 +1884,16 @@ void HolovizOp::stop() {
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                         ExecutionContext& context) {
   // receive input messages
-  const auto receivers_messages = op_input.receive<std::vector<gxf::Entity>>("receivers").value();
+  auto maybe_receivers_messages = op_input.receive<std::vector<gxf::Entity>>("receivers");
+  if (!maybe_receivers_messages || maybe_receivers_messages->empty()) {
+    std::string err_msg =
+        fmt::format("No input messages received for op '{}' on port 'receivers': {}",
+                    name_,
+                    maybe_receivers_messages.error().what());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
+  const auto receivers_messages = maybe_receivers_messages.value();
 
   const auto input_specs_messages =
       op_input.receive<std::vector<holoscan::ops::HolovizOp::InputSpec>>("input_specs");
@@ -1929,14 +1956,22 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
           });
 
       if (it == std::end(input_spec_list)) {
-        // no input spec found, try to detect
+        // no input spec found, try to detect the input type. If we can't detect it, ignore the
+        // tensor
+        bool detected = false;
         BufferInfo buffer_info;
-        if (buffer_info.init(tensor.value()) != GXF_FAILURE) {
-          // try to detect the input type, if we can't detect it, ignore the tensor
-          const auto maybe_input_type = detectInputType(buffer_info, !lut_.empty());
+        if (buffer_info.init(tensor.value()) == GXF_SUCCESS) {
+          const auto maybe_input_type = detect_input_type(buffer_info, !lut_.empty());
           if (maybe_input_type) {
             input_spec_list.emplace_back(tensor->name(), maybe_input_type.value());
+            detected = true;
           }
+        }
+        if (!detected) {
+          HOLOSCAN_LOG_ERROR(
+              "Ignoring {}",
+              get_format_str(
+                  tensor->name(), *tensor, nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE}));
         }
       }
     }
@@ -1951,14 +1986,22 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
           });
 
       if (it == std::end(input_spec_list)) {
-        // no input spec found, try to detect
+        // no input spec found, try to detect the input type. If we can't detect it, ignore the
+        // video buffer
+        bool detected = false;
         BufferInfo buffer_info;
-        if (buffer_info.init(video_buffer.value()) != GXF_FAILURE) {
-          // try to detect the input type, if we can't detect it, ignore the tensor
-          const auto maybe_input_type = detectInputType(buffer_info, !lut_.empty());
+        if (buffer_info.init(video_buffer.value()) == GXF_SUCCESS) {
+          const auto maybe_input_type = detect_input_type(buffer_info, !lut_.empty());
           if (maybe_input_type) {
             input_spec_list.emplace_back(video_buffer->name(), maybe_input_type.value());
+            detected = true;
           }
+        }
+        if (!detected) {
+          HOLOSCAN_LOG_ERROR("Ignoring {}",
+                             get_format_str(video_buffer->name(),
+                                            nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE},
+                                            *video_buffer));
         }
       }
     }
@@ -1966,8 +2009,8 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
   // get the CUDA stream from the input message
   cudaStream_t cuda_stream = cudaStreamDefault;
-  // `receive_cuda_stream` returns the first stream found. If there are multiple streams, the
-  // remaining streams are synchronized to the first one.
+  // `receive_cuda_stream` returns a new stream if there is a cuda stream pool or the first input
+  // stream. If there are multiple streams, the streams are synchronized to the returned stream.
   if (receivers_messages.size() > 0) { cuda_stream = op_input.receive_cuda_stream("receivers"); }
 
   viz::SetCudaStream(cuda_stream);
@@ -2012,39 +2055,46 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
           fmt::format("Failed to retrieve input '{}'", input_spec.tensor_name_));
     }
 
+    // initialize buffer info
     BufferInfo buffer_info;
-    gxf_result_t result;
+    gxf_result_t result = GXF_SUCCESS;
     if (maybe_input_tensor) {
       result = buffer_info.init(maybe_input_tensor.value(), input_spec.image_format_);
     } else {
       result = buffer_info.init(maybe_input_video.value(), input_spec.image_format_);
     }
-
-    // update the input spec image format when auto detecting and we detected a format so the user
-    // can see the detected format in the console
-    if ((input_spec.image_format_ == ImageFormat::AUTO_DETECT) &&
-        (buffer_info.image_format != ImageFormat::AUTO_DETECT)) {
-      input_spec.image_format_ = buffer_info.image_format;
+    if (result == GXF_SUCCESS) {
+      // update the input spec image format when auto detecting and we detected a format so the
+      // user can see the detected format in the console
+      if ((input_spec.image_format_ == ImageFormat::AUTO_DETECT) &&
+          (buffer_info.image_format != ImageFormat::AUTO_DETECT)) {
+        input_spec.image_format_ = buffer_info.image_format;
+      }
     }
 
-    if (result != GXF_SUCCESS) {
-      throw std::runtime_error(fmt::format("Unsupported buffer format tensor/video buffer '{}'",
-                                           input_spec.tensor_name_));
+    // if the input type is unknown it now can be detected using the image format
+    if (input_spec.type_ == InputType::UNKNOWN) {
+      const auto maybe_input_type = detect_input_type(buffer_info, !lut_.empty());
+      if (maybe_input_type) { input_spec.type_ = maybe_input_type.value(); }
+    }
+
+    // if building buffer info failed, or input type is unknown or the image format is not set
+    // for required formats, log the format and the supported formats and trow an error.
+    if ((result != GXF_SUCCESS) || (input_spec.type_ == InputType::UNKNOWN) ||
+        ((buffer_info.image_format == ImageFormat::AUTO_DETECT) &&
+         (((input_spec.type_ == InputType::COLOR) || (input_spec.type_ == InputType::COLOR_LUT) ||
+           (input_spec.type_ == InputType::DEPTH_MAP) ||
+           (input_spec.type_ == InputType::DEPTH_MAP_COLOR))))) {
+      HOLOSCAN_LOG_ERROR(
+          "Format is not supported:\n{}\n\nSupported formats:\n{}",
+          get_format_str(input_spec.tensor_name_, maybe_input_tensor, maybe_input_video),
+          maybe_input_tensor ? BufferInfo::get_supported_tensor_formats_str()
+                             : BufferInfo::get_supported_video_buffer_formats_str());
+      throw std::runtime_error(fmt::format("Unsupported input `{}`", input_spec.tensor_name_));
     }
 
     // If the buffer is empty, skip processing it
     if (buffer_info.bytes_size == 0) { continue; }
-
-    // if the input type is unknown it now can be detected using the image properties
-    if (input_spec.type_ == InputType::UNKNOWN) {
-      const auto maybe_input_type = detectInputType(buffer_info, !lut_.empty());
-      if (!maybe_input_type) {
-        auto code = nvidia::gxf::ToResultCode(maybe_input_type);
-        throw std::runtime_error(
-            fmt::format("failed setting input type with error: {}", GxfResultStr(code)));
-      }
-      input_spec.type_ = maybe_input_type.value();
-    }
 
     switch (input_spec.type_) {
       case InputType::COLOR:

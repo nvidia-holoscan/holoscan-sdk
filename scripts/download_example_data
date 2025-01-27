@@ -26,10 +26,10 @@ mkdir -p ${DATA_DIR}
 
 # Download the racerx sample data
 racerx_version="20231009"
-racerx_md5="86cd7e5477bb9eaa0cfc0547912d77b2"
+racerx_md5="b67492afea29610105995c4c27bd5a05"
 
 ${SCRIPT_DIR}/../bin/download_ngc_data \
-    --url https://api.ngc.nvidia.com/v2/resources/nvidia/clara-holoscan/holoscan_racerx_video/versions/${racerx_version}/zip \
+    --url https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/data/racerx/racerx_${racerx_version}.zip \
     --download_dir ${DATA_DIR} \
     --download_name racerx \
     --md5 ${racerx_md5}

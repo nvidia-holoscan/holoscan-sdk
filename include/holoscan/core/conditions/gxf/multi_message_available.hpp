@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,10 +83,8 @@ class MultiMessageAvailableCondition : public gxf::GXFCondition {
     return "nvidia::gxf::MultiMessageAvailableSchedulingTerm";
   }
 
-  void receivers(std::vector<std::shared_ptr<gxf::GXFResource>> receivers) {
-    receivers_ = receivers;
-  }
-  std::vector<std::shared_ptr<gxf::GXFResource>>& receivers() { return receivers_.get(); }
+  void receivers(std::vector<std::shared_ptr<Receiver>> receivers) { receivers_ = receivers; }
+  std::vector<std::shared_ptr<Receiver>>& receivers() { return receivers_.get(); }
 
   void initialize() override;
 
@@ -116,7 +114,7 @@ class MultiMessageAvailableCondition : public gxf::GXFCondition {
   nvidia::gxf::MultiMessageAvailableSchedulingTerm* get() const;
 
  private:
-  Parameter<std::vector<std::shared_ptr<gxf::GXFResource>>> receivers_;
+  Parameter<std::vector<std::shared_ptr<Receiver>>> receivers_;
   Parameter<size_t> min_sum_;
   Parameter<std::vector<size_t>> min_sizes_;
   // use YAML::Node because GXFParameterAdaptor doesn't have a type specific to SamplingMode

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,27 @@
                         static_cast<int>(_holoscan_cuda_err));                               \
     }                                                                                        \
     _holoscan_cuda_err;                                                                      \
+  })
+
+#define HOLOSCAN_CUDA_CALL_DEBUG(stmt)                                                        \
+  ({                                                                                          \
+    cudaError_t _holoscan_cuda_err = stmt;                                                    \
+    if (cudaSuccess != _holoscan_cuda_err) {                                                  \
+      HOLOSCAN_LOG_DEBUG("CUDA Runtime call {} in line {} of file {} failed with '{}' ({}).", \
+                         #stmt,                                                               \
+                         __LINE__,                                                            \
+                         __FILE__,                                                            \
+                         cudaGetErrorString(_holoscan_cuda_err),                              \
+                         static_cast<int>(_holoscan_cuda_err));                               \
+    }                                                                                         \
+    _holoscan_cuda_err;                                                                       \
+  })
+
+#define HOLOSCAN_CUDA_CALL_DEBUG_MSG(stmt, ...)                                 \
+  ({                                                                            \
+    cudaError_t _holoscan_cuda_err = HOLOSCAN_CUDA_CALL_DEBUG(stmt);            \
+    if (_holoscan_cuda_err != cudaSuccess) { HOLOSCAN_LOG_DEBUG(__VA_ARGS__); } \
+    _holoscan_cuda_err;                                                         \
   })
 
 #define HOLOSCAN_CUDA_CALL_WARN_MSG(stmt, ...)                                 \

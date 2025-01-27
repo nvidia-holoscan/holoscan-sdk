@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,13 @@ namespace holoscan {
  * Used by UcxEntitySerializer to serialize and deserialize Holoscan SDK class holoscan::Message.
  * See the CodecRegistry class for adding serialization codecs for additional holoscan::Message
  * types.
+ *
+ * ==Parameters==
+ *
+ * - **allocator** (std::shared_ptr<holoscan::Allocator>): The allocator used for deserialization
+ * of Tensor, VideoBuffer or AudioBuffer components. Defaults to an `UnboundedAllocator` if none is
+ * provided.
+ *
  */
 class UcxHoloscanComponentSerializer : public gxf::GXFResource {
  public:

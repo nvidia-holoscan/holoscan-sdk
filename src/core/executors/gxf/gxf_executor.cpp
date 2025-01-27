@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,6 +57,7 @@
 #include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
+#include "holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/message.hpp"
@@ -82,6 +83,7 @@
 #include "gxf/std/extension_factory_helper.hpp"
 #include "gxf/std/monitor.hpp"
 #include "gxf/std/receiver.hpp"
+#include "gxf/std/scheduling_term.hpp"
 #include "gxf/test/components/entity_monitor.hpp"
 
 namespace holoscan::gxf {
@@ -626,12 +628,23 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
         break;
       }
     }
+
+    const auto& non_default_input_ports = op->non_default_input_ports();
+    bool port_has_user_supplied_condition =
+        std::find(non_default_input_ports.begin(), non_default_input_ports.end(), rx_name) !=
+        non_default_input_ports.end();
     // Only add a MessageAvailable condition if it is not already associated with a condition
-    if (!port_has_multi_port_condition) {
+    if (!port_has_multi_port_condition && !port_has_user_supplied_condition) {
       ArgList args;
       args.add(Arg("min_size") = static_cast<uint64_t>(queue_size));
       io_spec->condition(
           ConditionType::kMessageAvailable, Arg("receiver") = io_spec->connector(), args);
+    } else {
+      HOLOSCAN_LOG_DEBUG(
+          "Not adding default condition to port '{}' of operator '{}': "
+          "user-supplied condition found.",
+          rx_name,
+          op->name());
     }
   }
 
@@ -680,7 +693,7 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
             fmt::format("__{}_{}_message_timeout{}", op->name(), rx_name, condition_index);
 
         // vector with a single receiver corresponding to this IOSpec
-        std::vector<std::shared_ptr<GXFResource>> receivers({connector});
+        std::vector<std::shared_ptr<Receiver>> receivers({connector});
         multi_message_timeout_condition->receivers(std::move(receivers));
         multi_message_timeout_condition->name(cond_name);
         multi_message_timeout_condition->fragment(fragment);
@@ -874,9 +887,23 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
   // Set the default scheduling term for this output
   // For the UCX connector, we shouldn't set kDownstreamMessageAffordable condition.
   if (io_spec->conditions().empty() && (tx_type != IOSpec::ConnectorType::kUCX)) {
-    io_spec->condition(ConditionType::kDownstreamMessageAffordable,
-                       Arg("transmitter") = io_spec->connector(),
-                       Arg("min_size") = 1UL);
+    const auto& non_default_output_ports = op->non_default_output_ports();
+    bool port_has_user_supplied_condition =
+        std::find(non_default_output_ports.begin(), non_default_output_ports.end(), tx_name) !=
+        non_default_output_ports.end();
+    // Only add a DownstreamMessageAffordable condition if the port does not already
+    // have a user-supplied condition
+    if (!port_has_user_supplied_condition) {
+      io_spec->condition(ConditionType::kDownstreamMessageAffordable,
+                         Arg("transmitter") = io_spec->connector(),
+                         Arg("min_size") = 1UL);
+    } else {
+      HOLOSCAN_LOG_DEBUG(
+          "Not adding default condition to port '{}' of operator '{}': "
+          "user-supplied condition found.",
+          tx_name,
+          op->name());
+    }
   }
 
   // Initialize conditions for this output
@@ -1761,6 +1788,9 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   // Set GXF Codelet ID as the ID of the operator
   op->id(codelet_cid);
 
+  // Determine which ports have a user-supplied Condition involving its receiver or transmitter
+  op->find_ports_used_by_condition_args();
+
   // Create Components for input
   const auto& inputs = spec.inputs();
   for (const auto& [name, io_spec] : inputs) {
@@ -2275,8 +2305,13 @@ void GXFExecutor::register_extensions() {
         "A runtime hidden extension used by Holoscan SDK to provide the native operators",
         gxf_wrapper_tid);
 
+    // omit tid for GXFWrapper and GXFSchedulingTermWrapper so a new tid is generated
     extension_factory.add_component<holoscan::gxf::GXFWrapper, nvidia::gxf::Codelet>(
         "GXF wrapper to support Holoscan SDK native operators");
+    extension_factory
+        .add_component<holoscan::gxf::GXFSchedulingTermWrapper, nvidia::gxf::SchedulingTerm>(
+            "GXF wrapper to support Holoscan SDK native conditions",
+            {0x3b8b521cbda54bbe, 0xa241ed132937a1b5});
     extension_factory.add_type<holoscan::Message>("Holoscan message type",
                                                   {0x61510ca06aa9493b, 0x8a777d0bf87476b7});
     extension_factory.add_type<holoscan::Tensor>("Holoscan's Tensor type",

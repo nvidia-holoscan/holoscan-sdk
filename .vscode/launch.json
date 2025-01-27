@@ -1694,6 +1694,36 @@
             ]
         },
         {
+            "name": "(gdb) examples/wrap_holoscan_as_gxf_extension",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/bin/gxe",
+            "args": [
+                "--app",
+                "examples/wrap_holoscan_as_gxf_extension/gxf_app/ping.yaml",
+                "--manifest",
+                "examples/wrap_holoscan_as_gxf_extension/gxf_app/test_holoscan_as_gxf_ext_manifest.yaml",
+                "--severity",
+                "4"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) Python: tests",
             "type": "cppdbg",
             "request": "launch",

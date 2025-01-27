@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,9 +87,27 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
     }
   }
 
-  // TODO: automatically create one if there is no parameter available?
-  HOLOSCAN_LOG_DEBUG("No cuda_stream_pool parameter or resource found for operator '{}'",
-                     op->name());
+  // Add a CudaStreamPool with initial capacity 1 on the active device
+  int gpu_count = 0;
+  cudaError_t cuda_status = HOLOSCAN_CUDA_CALL_DEBUG_MSG(
+      cudaGetDeviceCount(&gpu_count),
+      "A default cuda_stream_pool parameter could not be added to operator '{}' because no GPU "
+      "device was found. ",
+      op->name());
+  if (cuda_status == cudaSuccess) {
+    // determine the currently active GPU device
+    int device = 0;
+    cuda_status = HOLOSCAN_CUDA_CALL_WARN_MSG(
+        cudaGetDevice(&device), "Failed to determine the currently active GPU device");
+    if (cuda_status == cudaSuccess) {
+      if (gpu_count > 0) { op->add_cuda_stream_pool(device, 0, 0, 1, 0); }
+      HOLOSCAN_LOG_DEBUG(
+          "No cuda_stream_pool parameter or resource found for operator '{}'."
+          "Added a default CUDA stream pool with initial size 1 on device {}.",
+          op->name(),
+          device);
+    }
+  }
 }
 
 gxf_result_t CudaObjectHandler::streams_from_message(gxf_context_t context,
@@ -265,8 +283,9 @@ expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::get_cuda_stream_hand
   auto internal_iter = received_cuda_stream_handles_.find("_internal");
   if (internal_iter != received_cuda_stream_handles_.end() && !internal_iter->second.empty()) {
     HOLOSCAN_LOG_TRACE("\t\tfound existing _internal received stream");
-    // A different stream from a prior `receive_stream` call was already selected for use as the
-    // internal stream. Return that stream if it was found and synchronize any other streams to it.
+    // A different stream from a prior `receive_cuda_stream` call was already selected for use as
+    // the internal stream. Return that stream if it was found and synchronize any other streams
+    // to it.
     auto maybe_stream = internal_iter->second[0];
     if (!maybe_stream.has_value()) {
       auto err_msg =
@@ -318,7 +337,7 @@ expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::get_cuda_stream_hand
         HOLOSCAN_LOG_TRACE("\t\tSynchronizing remaining streams as well");
         std::vector<std::optional<CudaStreamHandle>> remaining_streams(
             stream_handle_vec.begin() + i + 1, stream_handle_vec.end());
-        synchronize_streams(remaining_streams, output_stream, sync_to_default);
+        synchronize_streams(std::move(remaining_streams), output_stream, sync_to_default);
       } else {
         HOLOSCAN_LOG_TRACE("\t\tSynchronizing received stream with the default stream");
         synchronize_streams({output_stream->stream().value()}, cudaStreamDefault);

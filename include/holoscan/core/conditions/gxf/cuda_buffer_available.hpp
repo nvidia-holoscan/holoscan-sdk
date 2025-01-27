@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,14 +29,6 @@
 
 namespace holoscan {
 
-/*TODO(Greg): Can only use CudaBufferAvailableCondition when the message Entity contains a
- * CudaBuffer component. Would need to update HoloscanSDK to support a way to use this type of
- * object via Holoscan APIs in a way that is convenient to combine with existing TensorMap
- * functionality
- *
- * See, for example gxf/cuda/tests/test_cuda_helper.hpp's CudaAsyncBufferGenerator
- */
-
 /**
  * @brief Condition based on data availability in a cuda buffer.
  *
@@ -46,8 +38,9 @@ namespace holoscan {
  * This condition applies to a specific input port of the operator as determined by setting the
  * "receiver" argument.
  *
- * **Note:** The nvidia::gxf::CudaBuffer class is currently unused by Holoscan SDK. This condition
- * is intended exclusively for interoperation with wrapped GXF Codelets that use GXF's CudaBuffer type.
+ * **Note:** The `nvidia::gxf::CudaBuffer` class is currently unused by Holoscan SDK. This
+ * condition is intended exclusively for interoperation with wrapped GXF Codelets that use GXF's
+ * `CudaBuffer` type.
  *
  * ==Parameters==
  *
@@ -68,13 +61,13 @@ class CudaBufferAvailableCondition : public gxf::GXFCondition {
   }
   void setup(ComponentSpec& spec) override;
 
-  void receiver(std::shared_ptr<gxf::GXFResource> receiver) { receiver_ = receiver; }
-  std::shared_ptr<gxf::GXFResource> receiver() { return receiver_.get(); }
+  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = receiver; }
+  std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
 
   nvidia::gxf::CudaBufferAvailableSchedulingTerm* get() const;
 
  private:
-  Parameter<std::shared_ptr<gxf::GXFResource>> receiver_;
+  Parameter<std::shared_ptr<Receiver>> receiver_;
 };
 
 }  // namespace holoscan

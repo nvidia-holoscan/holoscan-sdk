@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -345,13 +345,12 @@ def yappi_main(scheduler_type="greedy"):
     threads.print_all()
 
     for thread in threads:
-        print("# Function stats for (%s) (%d)" % (thread.name, thread.id))
+        print(f"# Function stats for ({thread.name}) ({thread.id})")
 
         stats = yappi.get_func_stats(ctx_id=thread.id)
         for stat in stats:
             print(
-                "  %s %s:%d %d"
-                % (
+                "  {} {}:{} {}".format(
                     stat.module[stat.module.rfind("/") + 1 :],
                     stat.name,
                     stat.lineno,

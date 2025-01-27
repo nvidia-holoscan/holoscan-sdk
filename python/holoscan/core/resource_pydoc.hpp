@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,7 +99,7 @@ PYDOC(resource_type, R"doc(
 Resource type.
 
 `holoscan.core.Resource.ResourceType` enum representing the type of
-the operator. The two types currently implemented are NATIVE and GXF.
+the resource. The two types currently implemented are NATIVE and GXF.
 )doc")
 
 }  // namespace Resource

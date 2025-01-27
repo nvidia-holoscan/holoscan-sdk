@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,10 +95,8 @@ class MultiMessageAvailableTimeoutCondition : public gxf::GXFCondition {
     return "nvidia::gxf::MessageAvailableFrequencyThrottler";
   }
 
-  void receivers(std::vector<std::shared_ptr<gxf::GXFResource>> receivers) {
-    receivers_ = receivers;
-  }
-  std::vector<std::shared_ptr<gxf::GXFResource>>& receivers() { return receivers_.get(); }
+  void receivers(std::vector<std::shared_ptr<Receiver>> receivers) { receivers_ = receivers; }
+  std::vector<std::shared_ptr<Receiver>>& receivers() { return receivers_.get(); }
 
   void initialize() override;
 
@@ -107,7 +105,7 @@ class MultiMessageAvailableTimeoutCondition : public gxf::GXFCondition {
   nvidia::gxf::MessageAvailableFrequencyThrottler* get() const;
 
  private:
-  Parameter<std::vector<std::shared_ptr<gxf::GXFResource>>> receivers_;
+  Parameter<std::vector<std::shared_ptr<Receiver>>> receivers_;
   Parameter<std::string> execution_frequency_;
   Parameter<size_t> min_sum_;
   Parameter<std::vector<size_t>> min_sizes_;

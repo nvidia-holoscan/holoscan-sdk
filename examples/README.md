@@ -69,6 +69,7 @@ The following examples illustrate the use of specific **conditions** to modify t
 * [**AsynchronousCondition**](conditions/asynchronous): allow operators to run asynchronously (C++ API only)
 * [**ExpiringMessageAvailableCondition**](conditions/expiring_message): allow operators to run when a certain number of messages have arrived or after a specified time interval has elapsed.
 * [**MultiMessageAvailableCondition**, **MultiMessageAvailableTimeoutCondition**](conditions/multi_message): allow operators to run only once a certain number of messages have arrived across multiple associated input ports (optionally with a timeout on the interval to wait for messages).
+* [**native Conditions**](conditions/native): demonstrates how a Holoscan native Condition (not wrapping an underlying GXF SchedulingTerm) can be created and used.
 
 The following examples illustrate the use of specific resource classes that can be passed to operators or schedulers:
 
@@ -109,3 +110,4 @@ The following examples demonstrate how sensors can be used as input streams to y
 * [**Tensor interop**](tensor_interop): use the `Entity` message to pass tensors to/from Holoscan operators wrapping GXF codelets in Holoscan applications
 * [**Import GXF Components**](import_gxf_components): import the existing GXF Codelets and Components into Holoscan applications
 * [**Wrap operator as GXF extension**](wrap_operator_as_gxf_extension): wrap Holoscan native operators as GXF codelets to use in GXF applications
+* [**Wrap Holoscan as GXF Extension**](wrap_holoscan_as_gxf_extension): wrap Holoscan native operators and resources as GXF codelets and components within a single GXF extension for use in GXF applications

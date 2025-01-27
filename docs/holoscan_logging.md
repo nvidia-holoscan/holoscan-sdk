@@ -135,7 +135,7 @@ For more details on custom formatting and details of each flag, please see the [
 Additionally, at runtime, the user can also set the `HOLOSCAN_LOG_FORMAT` environment variable to modify the logger format.  The accepted string pattern is the same as the string pattern for
 the `set_log_pattern()` api mentioned above.
 
-#### Precedence of Logger Level and Logger Format
+### Precedence of Logger Level and Logger Format
 
 The `HOLOSCAN_LOG_LEVEL` environment variable takes precedence and overrides the application settings, such as `Logger::set_log_level()` ({cpp:func}`C++ <holoscan::set_log_level>`/{py:func}`Python <holoscan.logger.set_log_level>`).
 

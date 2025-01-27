@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,9 +25,9 @@ add_custom_target(python_v4l2_camera ALL
 
 # Copy config file
 add_custom_target(python_v4l2_camera_yaml
-  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml" "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera_yuv.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "v4l2_camera.yaml" "v4l2_camera_yuv.yaml"
-  BYPRODUCTS "v4l2_camera.yaml" "v4l2_camera_yuv.yaml"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml" ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS "v4l2_camera.yaml"
+  BYPRODUCTS "v4l2_camera.yaml"
 )
 
 add_dependencies(python_v4l2_camera python_v4l2_camera_yaml)
@@ -36,7 +36,6 @@ add_dependencies(python_v4l2_camera python_v4l2_camera_yaml)
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera_yuv.yaml"
     DESTINATION "${app_relative_dest_path}"
     COMPONENT "holoscan-examples"
 )
@@ -61,15 +60,6 @@ if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
   )
 
   set_tests_properties(EXAMPLE_PYTHON_V4L2_CAMERA_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Application has finished running"
-  )
-
-  add_test(NAME EXAMPLE_PYTHON_V4L2_YUV_CAMERA_TEST
-           COMMAND python3 v4l2_camera_test.py v4l2_camera_yuv.yaml
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-
-  set_tests_properties(EXAMPLE_PYTHON_V4L2_YUV_CAMERA_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Application has finished running"
   )
 

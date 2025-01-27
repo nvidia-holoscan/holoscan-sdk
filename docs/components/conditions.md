@@ -1,3 +1,4 @@
+(gxf-conditions)=
 
 # Conditions
 
@@ -45,17 +46,20 @@ conversely, the operator is unscheduled from execution whenever any one of the s
 
 The following table gives a rough categorization of the available condition types to help better understand their purpose and how they are assigned. More detailed descriptions of the individual conditions are given in the following sections.
 
-|           Condition Name               |  Classification  |   Associated With              |
-|----------------------------------------|------------------|--------------------------------|
-| MessageAvailableCondition              |  message-driven  | single input port              |
-| ExpiringMessageAvailableCondition      |  message-driven  | single input port              |
-| MultiMessageAffordableCondition        |  message-driven  | multiple input ports           |
-| MultiMessageAffordableTimeoutCondition |  message-driven  | single or multiple input ports |
-| DownstreamMessageAffordableCondition   |  message-driven  | single output port             |
-| PeriodicCondition                      |   clock-driven   | operator as a whole            |
-| CountCondition                         |      other       | operator as a whole            |
-| BooleanCondition                       | execution-driven | operator as a whole            |
-| AsynchronousCondition                  | execution-driven | operator as a whole            |
+|           Condition Name               |  Classification            |   Associated With              |
+|----------------------------------------|----------------------------|--------------------------------|
+| MessageAvailableCondition              | message-driven             | single input port              |
+| ExpiringMessageAvailableCondition      | message-driven             | single input port              |
+| MultiMessageAffordableCondition        | message-driven             | multiple input ports           |
+| MultiMessageAffordableTimeoutCondition | message-driven             | single or multiple input ports |
+| DownstreamMessageAffordableCondition   | message-driven             | single output port             |
+| PeriodicCondition                      | clock-driven               | operator as a whole            |
+| CountCondition                         | other                      | operator as a whole            |
+| BooleanCondition                       | execution-driven           | operator as a whole            |
+| AsynchronousCondition                  | execution-driven           | operator as a whole            |
+| CudaStreamCondition                    | message-driven (CUDA sync) | single input port              |
+| CudaEventCondition                     | message-driven (CUDA sync) | single input port              |
+| CudaBufferAvailableCondition           | message-driven (CUDA sync) | single input port              |
 
 Here, the various message-driven conditions are associated with an input port (receiver) or output port (transmitter). Message-driven conditions that are associated with a single input port are typically assigned via the `IOSpec::condition` method ({cpp:func}`C++ <holoscan::IOSPec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method. Those associated with multiple input ports would instead be assigned via the `OperatorSpec::multi_port_condition` method ({cpp:func}`C++ <holoscan::OperatorSpec::multi_port_condition>`/{py:func}`Python <holoscan.core.OperatorSpec.multi_port_condition>`) method as called from an operator's `setup` ({cpp:func}`C++ <holoscan::Operator::setup>`/{py:func}`Python <holoscan.core.Operator.setup>`) method.
 
@@ -81,7 +85,7 @@ in1_condition = MessageAvailableCondition(fragment, name="in1_condition", min_si
 
 The `PeriodicCondition` is clock-driven. It automatically takes effect based on timing from it's associated clock. The `CountCondition` is another condition type that automatically takes effect, stopping execution of an operator after a specified count is reached.
 
-The conditions that are marked as execution-driven, by contrast, require an application or operator thread to explicitly trigger a change in the condition. For example, the built-in `HolovizOp` operator's `compute` method implements logic to update an associated `BooleanCondition` to disable the operator when a user closes the display window. Similarly, the `AsynchronousCondition` requires some thread to emit events to trigger an update of its state. 
+The conditions that are marked as execution-driven, by contrast, require an application or operator thread to explicitly trigger a change in the condition. For example, the built-in `HolovizOp` operator's `compute` method implements logic to update an associated `BooleanCondition` to disable the operator when a user closes the display window. Similarly, the `AsynchronousCondition` requires some thread to emit events to trigger an update of its state.
 
 ## MessageAvailableCondition
 
@@ -187,3 +191,21 @@ The state of an asynchronous event is described using `AsynchronousEventState` a
 | EVENT\_NEVER                 | Operator does not want to be executed again, end of execution       |
 
 Operators associated with this scheduling term most likely have an asynchronous thread which can update the state of the condition outside of its regular execution cycle performed by the scheduler. When the asynchronous event state is in `WAIT` state, the scheduler regularly polls for the scheduling state of the operator. When the asynchronous event state is in `EVENT_WAITING` state, schedulers will not check the scheduling status of the operator again until they receive an event notification. Setting the state of the asynchronous event to `EVENT_DONE` automatically sends the event notification to the scheduler. Operators can use the `EVENT_NEVER` state to indicate the end of its execution cycle. As for all of the condition types, the condition type can be used with any of the schedulers.
+
+## CudaStreamCondition
+
+This condition can be used to require work on an input stream to complete before an operator is ready to schedule. When a message is sent to the port to which a `CudaStreamCondition` has been assigned, this condition sets an internal host callback function on the CUDA stream found on this input port. The callback function will set the operator's status to READY once other work on the stream has completed. This will then allow the scheduler to execute the operator.
+
+A limitation of `CudaStreamCondition` is that it only looks for a stream on the first message in the input port's queue. It does not currently support handling ports with multiple different input stream components within the same message (entity) or across multiple messages in the queue. The behavior of `CudaStreamCondition` is sufficient for Holoscan's default queue size of one and for use with `receive_cuda_stream` which places just a single CUDA stream component in an upstream operator's outgoing messages. Cases where it is not appropriate are:
+  - The input port's {ref}`queue size was explicitly set <configuring-queue-size>` with capacity greater than one and it is not known that all messages in the queue correspond to the same CUDA stream.
+  - The input port is a multi-receiver port (i.e. `IOSpec::kAnySize`) that any number of upstream operators could connect to.
+
+In cases where no stream is found in the input message, this condition will allow execution of the operator.
+
+## CudaEventCondition
+
+This condition is not intended for regular use in Holoscan applications as Holoscan does not provide any API related to GXF's `nvidia::gxf:CudaEvent` type. This condition is provided purely to allow writing an operator that could interoperate with a different operator that wraps a GXF codelet that includes a `CudaEvent` component in its emitted output messages. It checks for a `CudaEvent` with the specified `event_name` in the first message of the input queue. It will then only allow execution of an operator once a `cudaEventQuery` on the corresponding event indicates that it is ready.
+
+## CudaBufferAvailableCondition
+
+This condition is not intended for regular use in Holoscan applications as Holoscan does not provide any API related to GXF's `nvidia::gxf:CudaBuffer` type. This condition is provided purely to allow writing an operator that could interoperate with a different operator that wraps a GXF codelet that includes a `CudaBuffer` component in its emitted output messages. It checks for a `CudaBuffer` component in the first message of the input queue and will only allow execution of the operator once that buffer has status `CudaBuffer::State::DATA_AVAILABLE`.

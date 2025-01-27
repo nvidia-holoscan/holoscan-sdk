@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -172,21 +172,94 @@ class CuPyExternalStreamOp(Operator):
         self.index += 1
 
 
+class PingTxResourceCheckOp(Operator):
+    def setup(self, spec: OperatorSpec):
+        spec.output("out")
+
+    def compute(self, op_input, op_output, context):
+        if "default_cuda_stream_pool" in self.resources:
+            print("tx: default CudaStreamPool found")
+            assert isinstance(self.resources["default_cuda_stream_pool"], CudaStreamPool)
+        else:
+            print("tx: CudaStreamPool not found")
+        op_output.emit(0, "out")
+
+
+class PingRxResourceCheckOp(Operator):
+    def setup(self, spec: OperatorSpec):
+        spec.input("in")
+
+    def compute(self, op_input, op_output, context):
+        value = op_input.receive("in")
+        print(f"rx message value: {value}")
+
+        if "default_cuda_stream_pool" in self.resources:
+            print("rx: default CudaStreamPool found")
+            assert isinstance(self.resources["default_cuda_stream_pool"], CudaStreamPool)
+        else:
+            print("rx: CudaStreamPool not found")
+
+
+# Trivial ping app just to test that a default CUDA stream pool has been added
+class DefaultCudaStreamPoolApp(Application):
+    def __init__(self, *args, count=10, **kwargs):
+        self.count = count
+        super().__init__(*args, **kwargs)
+
+    def compose(self):
+        tx = PingTxResourceCheckOp(self, CountCondition(self, count=1), name="tx")
+        rx = PingRxResourceCheckOp(self, name="rx")
+        self.add_flow(tx, rx)
+
+
 @pytest.mark.parametrize("add_rx_stream_pool", [False, True])
 def test_stream_pool_methods(add_rx_stream_pool):
+    try:
+        cp.cuda.Device()
+    except RuntimeError:
+        pytest.skip("no available CUDA device: skipping stream test")
     app = MyStreamTestApp(add_rx_stream_pool=add_rx_stream_pool)
     app.run()
 
 
 @pytest.mark.skipif(not has_cupy, reason="CuPy is not installed")
 def test_cupy_external_stream():
+    try:
+        cp.cuda.Device()
+    except RuntimeError:
+        pytest.skip("no available CUDA device: skipping stream test")
     app = MyCuPyExternalStreamApp()
     app.run()
 
 
-if __name__ == "__main__":
-    app = MyStreamTestApp(add_rx_stream_pool=True)
+@pytest.mark.skipif(not has_cupy, reason="CuPy is not installed")
+def test_default_cuda_stream_pool(capfd):
+    """Test for automatically added CudaStreamPool
+
+    We can test the no-device case by running the following from the build folder:
+
+      CUDA_VISIBLE_DEVICES="" python -m pytest ./python/lib/tests/system/test_stream_handling.py
+
+    Cannot use `env_var_context` from `env_wrapper.py` to change CUDA_VISIBLE_DEVICES dynamically
+    at run time because it must be set before the CUDA driver has been initialized (e.g. before
+    CuPy import).
+    """
+    try:
+        cp.cuda.Device()
+        has_device = True
+    except RuntimeError:
+        has_device = False
+
+    app = DefaultCudaStreamPoolApp()
     app.run()
 
-    app2 = MyCuPyExternalStreamApp()
-    app2.run()
+    captured = capfd.readouterr()
+
+    if has_device:
+        assert "rx: default CudaStreamPool found" in captured.out
+        assert "rx message value: 0" in captured.out
+        assert "tx: default CudaStreamPool found" in captured.out
+    else:
+        assert "rx: CudaStreamPool not found" in captured.out
+        assert "rx message value: 0" in captured.out
+        assert "tx: CudaStreamPool not found" in captured.out

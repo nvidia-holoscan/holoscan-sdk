@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,18 @@ namespace Transmitter {
 
 PYDOC(Transmitter, R"doc(
 Base GXF transmitter class.
+)doc")
+
+PYDOC(size, R"doc(
+The size of the transmitter queue's main stage.
+)doc")
+
+PYDOC(back_size, R"doc(
+The size of the transmitter queue's back stage.
+)doc")
+
+PYDOC(capacity, R"doc(
+The capacity of the transmitter queue's main stage.
 )doc")
 
 }  // namespace Transmitter

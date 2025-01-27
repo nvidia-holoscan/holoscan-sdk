@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +33,14 @@ class Operator;
  * @brief HoloscanUcxReceiver class optionally tracks every received message with a MessageLabel
  * timestamp if data flow tracking is enabled
  *
+ * Application authors are not expected to use this class directly. It will be automatically
+ * configured for input ports specified via `Operator::setup` when `Application::add_flow` has been
+ * used to make a connection across fragments of a distributed application and data flow tracking
+ * has been enabled.
+ *
+ * ==Parameters==
+ *
+ * See UcxReceiver for parameter descriptions.
  */
 class HoloscanUcxReceiver : public nvidia::gxf::UcxReceiver {
  public:

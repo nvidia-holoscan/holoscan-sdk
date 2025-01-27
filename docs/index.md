@@ -29,6 +29,8 @@ holoscan_create_app
 holoscan_create_distributed_app
 holoscan_packager
 holoscan_create_operator
+holoscan_create_condition
+holoscan_cuda_stream_handling
 holoscan_logging
 holoscan_debugging
 holoscan_create_operator_python_bindings
@@ -78,7 +80,7 @@ cli/run_config
 gxf/gxf_core_concepts.md
 gxf/holoscan_and_gxf.md
 gxf/gxf_by_example.md
-gxf/gxf_wrap_holoscan_op.md
+gxf/gxf_wrap_holoscan.md
 gxf/doc/index.md
 ```
 

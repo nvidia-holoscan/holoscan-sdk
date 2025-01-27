@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -327,12 +327,20 @@ class Arg {
    * @return true if the argument contains a value.
    */
   bool has_value() const { return value_.has_value(); }
+
   /**
    * @brief Get the value of the argument.
    *
    * @return The reference to the value of the argument.
    */
   std::any& value() { return value_; }
+
+  /**
+   * @brief Get the value of the argument.
+   *
+   * @return The reference to the value of the argument.
+   */
+  const std::any& value() const { return value_; }
 
   /**
    * @brief Get a YAML representation of the argument.

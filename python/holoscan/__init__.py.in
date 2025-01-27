@@ -17,8 +17,8 @@ limitations under the License.
 
 import importlib.metadata
 
-# We import cli, core and gxf to make sure they're available before other modules that rely on them
-from . import cli, core, gxf
+# We import core and gxf to make sure they're available before other modules that rely on them
+from . import core, gxf
 
 
 def _set_version():
@@ -28,7 +28,7 @@ def _set_version():
         return "@holoscan_VERSION@" or "unknown version"
 
 
-__all__ = ["__version__", "as_tensor", "cli", "core", "gxf"]
+__all__ = ["__version__", "as_tensor", "core", "gxf"]
 __version__ = _set_version()
 
 

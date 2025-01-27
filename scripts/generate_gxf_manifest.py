@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -230,15 +230,19 @@ def load_extensions(context, ext_path, loaded_ext_path_set, loaded_ext_uuid_set)
     logger.info(f"Dependencies of {ext_path}: {dependencies}")
 
     for dep_path in dependencies:
-        load_extensions(context, dep_path, loaded_ext_path_set, loaded_ext_uuid_set)
+        try:
+            load_extensions(context, dep_path, loaded_ext_path_set, loaded_ext_uuid_set)
+        except ValueError as e:  # noqa: PERF203
+            logger.warning(
+                f"Extension {ext_path} failed to load dependency extension {dep_path}: {e}"
+            )
 
     logger.info(f"Loading extension {ext_path}")
-    gxf.core.load_extensions(context=context, extension_filenames=[ext_path])
-
-    loaded_ext_path_set.add(ext_path)
 
     # Cache identifying information about the loaded extension
     try:
+        gxf.core.load_extensions(context=context, extension_filenames=[ext_path])
+        loaded_ext_path_set.add(ext_path)
         ext_list = gxf.core.get_extension_list(context)
         # Identify the loaded extension uuid by comparing with loaded_ext_uuid_set
         for uuid in ext_list:
@@ -256,7 +260,6 @@ def load_extensions(context, ext_path, loaded_ext_path_set, loaded_ext_uuid_set)
                 )
     except ValueError as e:
         logger.error(f"Failed to load extension {ext_path}: {e}")
-        raise e
 
 
 def generate_extension_dependencies(arg_dict: dict) -> list[dict]:

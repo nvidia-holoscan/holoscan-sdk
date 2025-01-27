@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
-#define HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
+#ifndef INCLUDE_HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
+#define INCLUDE_HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
 
 #include <gxf/core/gxf.h>
 #include <cstdint>
@@ -30,6 +30,7 @@
 #include <common/assert.hpp>
 #include <common/backtrace.hpp>
 #include <common/type_name.hpp>
+#include <gxf/multimedia/video.hpp>
 #include "holoscan/logger/logger.hpp"
 
 // macro like GXF_ASSERT_SUCCESS, but uses HOLOSCAN_LOG_ERROR and includes line/filename info
@@ -91,6 +92,33 @@
     if (code != GXF_SUCCESS) { HOLOSCAN_LOG_WARN(__VA_ARGS__); } \
     code;                                                        \
   })
+
+// Formatters for GXF types
+namespace fmt {
+
+template <>
+struct formatter<nvidia::gxf::Tensor> : formatter<fmt::string_view> {
+  format_context::iterator format(const nvidia::gxf::Tensor& t, fmt::format_context& ctx) const;
+};
+
+template <>
+struct formatter<nvidia::gxf::ColorPlane> : formatter<fmt::string_view> {
+  format_context::iterator format(const nvidia::gxf::ColorPlane& c, fmt::format_context& ctx) const;
+};
+
+template <>
+struct formatter<nvidia::gxf::VideoBufferInfo> : formatter<fmt::string_view> {
+  format_context::iterator format(const nvidia::gxf::VideoBufferInfo& v,
+                                  fmt::format_context& ctx) const;
+};
+
+template <>
+struct formatter<nvidia::gxf::VideoBuffer> : formatter<fmt::string_view> {
+  format_context::iterator format(const nvidia::gxf::VideoBuffer& v,
+                                  fmt::format_context& ctx) const;
+};
+
+}  // namespace fmt
 
 namespace holoscan::gxf {
 
@@ -274,4 +302,4 @@ gxf_uid_t gxf_entity_group_id(gxf_context_t context, gxf_uid_t eid);
 
 }  // namespace holoscan::gxf
 
-#endif /* HOLOSCAN_CORE_GXF_GXF_UTILS_HPP */
+#endif /* INCLUDE_HOLOSCAN_CORE_GXF_GXF_UTILS_HPP */

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,10 +44,6 @@ class PingTensorDualRxOp : public Operator {
   void setup(OperatorSpec& spec) {
     spec.input<TensorMap>("in1");
     spec.input<TensorMap>("in2");
-    spec.param(cuda_stream_pool_,
-               "cuda_stream_pool",
-               "CUDA Stream Pool",
-               "Instance of gxf::CudaStreamPool.");
   }
 
   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
@@ -96,7 +92,6 @@ class PingTensorDualRxOp : public Operator {
   }
 
  private:
-  Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
   size_t count_ = 1;
 };
 
@@ -120,7 +115,7 @@ class PingTensorSizeFiveRxOp : public Operator {
 
     // Test InputContext::receive_cuda_stream
     cudaStream_t stream = op_input.receive_cuda_stream("in");
-    HOLOSCAN_LOG_INFO("{}: First stream found on port 'in' was a {}default CUDA stream",
+    HOLOSCAN_LOG_INFO("{}: Stream on port 'in' was a {}default CUDA stream",
                       name(),
                       stream == cudaStreamDefault ? "" : "non-");
 
@@ -177,9 +172,10 @@ class PingTensorMultiRxOp : public Operator {
     }
 
     cudaStream_t stream = op_input.receive_cuda_stream("in");
-    HOLOSCAN_LOG_INFO("{}: First stream found on port 'in' was a {}default CUDA stream",
+    HOLOSCAN_LOG_INFO("{}: Stream on port 'in' was a {}default CUDA stream {}",
                       name(),
-                      stream == cudaStreamDefault ? "" : "non-");
+                      stream == cudaStreamDefault ? "" : "non-",
+                      fmt::ptr(stream));
 
     auto stream_vec = op_input.receive_cuda_streams("in");
     size_t num_non_default = std::count_if(
@@ -265,8 +261,8 @@ class StreamDualRxApp : public holoscan::Application {
     auto converter2 = make_operator<ops::FormatConverterOp>("converter2", format_converter_args);
 
     ArgList rx_args{};
-    if (rx_use_stream_pool_) { rx_args.add(Arg("cuda_stream_pool", cuda_stream_pool)); }
     auto dual_rx = make_operator<ops::PingTensorDualRxOp>("dual_rx", rx_args);
+    if (rx_use_stream_pool_) { dual_rx->add_arg(cuda_stream_pool); }
 
     add_flow(source1, converter1, {{"out", "source_video"}});
     add_flow(source2, converter2, {{"out", "source_video"}});
@@ -374,6 +370,36 @@ class StreamSizeFiveRxApp : public holoscan::Application {
     add_flow(source3, five_rx);
     add_flow(source4, five_rx);
     add_flow(source5, five_rx);
+  }
+};
+
+/**
+ * @brief Application testing various aspects of CudaStreamHandling
+ */
+class StreamSingleSourceTwoSinks : public holoscan::Application {
+  void compose() override {
+    const int32_t width = 320;
+    const int32_t height = 240;
+    const std::shared_ptr<CudaStreamPool> cuda_stream_pool =
+        make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 10);
+
+    auto tx_args = ArgList({
+        Arg("rows", height),
+        Arg("columns", width),
+        Arg("channels", 4),
+        Arg("storage_type", std::string("device")),
+        Arg("cuda_stream_pool", cuda_stream_pool),
+        Arg("async_device_allocation", true),
+    });
+    // Make one source operator and two sinks
+    auto source = make_operator<ops::PingTensorTxOp>(
+        "ping_source", make_condition<CountCondition>(10), tx_args);
+
+    auto sink1 = make_operator<ops::PingTensorMultiRxOp>("ping_sink1", cuda_stream_pool);
+    auto sink2 = make_operator<ops::PingTensorMultiRxOp>("ping_sink2", cuda_stream_pool);
+
+    add_flow(source, sink1, {{"out", "in"}});
+    add_flow(source, sink2, {{"out", "in"}});
   }
 };
 
@@ -490,4 +516,30 @@ TEST(CudaStreamApps, TestStreamSizeFiveRxApp) {
       "five_rx received message 10 queue item 5: Tensor key: 'tensor', shape: (240, 320, 4)";
   EXPECT_TRUE(log_output.find(stream_msg) != std::string::npos) << "=== LOG ===\n"
                                                                 << log_output << "\n===========\n";
+}
+
+TEST(CudaStreamApps, TestStreamSingleSourceTwoSinks) {
+  using namespace holoscan;
+
+  auto app = make_application<StreamSingleSourceTwoSinks>();
+
+  // capture output to check that the expected messages were logged
+  testing::internal::CaptureStderr();
+
+  app->run();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  std::string sink1_msg = "ping_sink1: Stream on port 'in' was a non-default CUDA stream ";
+  auto sink1_msg_pos = log_output.find(sink1_msg);
+  EXPECT_NE(sink1_msg_pos, std::string::npos);
+  auto stream1 = std::stoull(log_output.substr(sink1_msg_pos + sink1_msg.length()), nullptr, 16);
+
+  std::string sink2_msg = "ping_sink2: Stream on port 'in' was a non-default CUDA stream ";
+  auto sink2_msg_pos = log_output.find(sink2_msg);
+  EXPECT_NE(sink2_msg_pos, std::string::npos);
+  auto stream2 = std::stoull(log_output.substr(sink2_msg_pos + sink2_msg.length()), nullptr, 16);
+
+  // the streams of the two sinks should be different
+  EXPECT_NE(stream1, stream2) << "=== LOG ===\n" << log_output << "\n===========\n";
 }

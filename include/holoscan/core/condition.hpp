@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,7 @@
 #include "./component.hpp"
 #include "./gxf/gxf_component.hpp"
 #include "./gxf/gxf_utils.hpp"
+#include "gxf/std/scheduling_condition.hpp"
 
 #define HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                                     \
   template <typename ArgT,                                                                        \
@@ -116,6 +117,16 @@ enum class ConditionType {
   kMultiMessageAvailableTimeout,  ///< nvidia::gxf::MessageAvailableFrequencyThrottler
 };
 
+enum class SchedulingStatusType : int32_t {
+  kNever,      ///< Will never execute again
+  kReady,      ///< Ready to execute now
+  kWait,       ///< Will execute again at some point in the future
+  kWaitTime,   ///< Will execute after a certain known time interval. Negative or zero interval will
+               ///< result in immediate execution.
+  kWaitEvent,  ///< Waiting for an event with unknown interval time. Entity will be put in a waiting
+               ///< queue until event done notification is signalled
+};
+
 /**
  * @brief Base class for all conditions.
  *
@@ -124,6 +135,14 @@ enum class ConditionType {
  */
 class Condition : public Component {
  public:
+  /**
+   * @brief Resource type used for the initialization of the resource.
+   */
+  enum class ConditionComponentType {
+    kNative,  ///< Native condition.
+    kGXF,     ///< GXF condition (scheduling term).
+  };
+
   Condition() = default;
 
   Condition(Condition&&) = default;
@@ -138,6 +157,49 @@ class Condition : public Component {
   }
 
   ~Condition() override = default;
+
+  /**
+   * @brief Check the condition status before allowing execution.
+   *
+   * If the condition is waiting for a time event 'target_timestamp' will contain the target
+   * timestamp.
+   *
+   * @param timestamp The current timestamp
+   * @param type The status of the condition
+   * @param target_timestamp The target timestamp (used if the term is waiting for a time event).
+   */
+  virtual void check([[maybe_unused]] int64_t timestamp,
+                     [[maybe_unused]] SchedulingStatusType* status_type,
+                     [[maybe_unused]] int64_t* target_timestamp) const {
+    // empty implementation (only used for native Conditions)
+    throw std::logic_error("check method not implemented");
+  }
+
+  /**
+   * @brief Called each time after the entity of this term was executed.
+   *
+   * @param timestamp The current timestamp
+   */
+  virtual void on_execute([[maybe_unused]] int64_t timestamp) {
+    // empty implementation (only used for native Conditions)
+    throw std::logic_error("on_execute method not implemented");
+  }
+
+  /**
+   * @brief Checks if the state of the condition can be updated and updates it
+   *
+   * @param timestamp The current timestamp
+   */
+  virtual void update_state([[maybe_unused]] int64_t timestamp) {
+    // empty implementation (only used for native Conditions)
+  }
+
+  /**
+   * @brief Get the condition type.
+   *
+   * @return The condition type.
+   */
+  ConditionComponentType condition_type() const { return condition_type_; }
 
   using Component::name;
   /**
@@ -229,6 +291,8 @@ class Condition : public Component {
    */
   virtual void setup([[maybe_unused]] ComponentSpec& spec) {}
 
+  void initialize() override;
+
   /**
    * @brief Get a YAML representation of the condition.
    *
@@ -236,16 +300,51 @@ class Condition : public Component {
    */
   YAML::Node to_yaml_node() const override;
 
+  /**@brief Return the Receiver corresponding to a specific input port of the Operator associated
+   * with this condition.
+   *
+   * @param port_name The name of the input port.
+   * @return The Receiver corresponding to the input port, if it exists. Otherwise, return nullopt.
+   */
+  std::optional<std::shared_ptr<Receiver>> receiver(const std::string& port_name);
+
+  /**@brief Return the Transmitter corresponding to a specific output port of the Operator
+   * associated with this condition.
+   *
+   * @param port_name The name of the output port.
+   * @return The Transmitter corresponding to the output port, if it exists. Otherwise, return
+   * nullopt.
+   */
+  std::optional<std::shared_ptr<Transmitter>> transmitter(const std::string& port_name);
+
  protected:
   // Add friend classes that can call reset_graph_entites
   friend class holoscan::Operator;
 
   using Component::reset_graph_entities;
 
+  using ComponentBase::update_params_from_args;
+
+  /**
+   * @brief Set the Operator this condition is associated with.
+   *
+   * @param op The pointer to the Operator object.
+   */
+  void set_operator(Operator* op) { op_ = op; }
+
+  /// Update parameters based on the specified arguments
+  void update_params_from_args();
+
+  /// Set the parameters based on defaults (sets GXF parameters for GXF components)
+  virtual void set_parameters();
+
   bool is_initialized_ = false;  ///< Whether the condition is initialized.
 
   std::unordered_map<std::string, std::shared_ptr<Resource>>
       resources_;  ///< The resources used by the condition.
+  ConditionComponentType condition_type_ =
+      ConditionComponentType::kNative;  ///< The type of the component.
+  Operator* op_ = nullptr;              ///< The operator this condition is associated with.
 };
 
 }  // namespace holoscan

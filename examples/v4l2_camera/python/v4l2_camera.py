@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,9 +17,59 @@ limitations under the License.
 
 import os
 
-from holoscan.core import Application
+from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core._core import Tensor as TensorBase
 from holoscan.operators import HolovizOp, V4L2VideoCaptureOp
-from holoscan.resources import BlockMemoryPool, UnboundedAllocator
+
+
+# This operator uses the metadata provided by the V4L2VideoCaptureOp and translates it to a
+# HolovizOp::InputSpec so HolovizOp can display the video data. It also sets the YCbCr encoding
+# model and quantization range.
+# For V4L2 pixel formats that have a equivalent nvidia::gxf::VideoFormat enum this is not required
+# since that information is then part of the video buffer send by V4L2VideoCaptureOp.
+class V4L2FormatTranslateOp(Operator):
+    def setup(self, spec: OperatorSpec):
+        spec.input("input")
+        spec.output("output_specs")
+
+    def compute(self, op_input, op_output, context):
+        if not self.is_metadata_enabled:
+            raise RuntimeError("Metadata needs to be enabled for this operator")
+
+        # we don't need the image data, just the metadata
+        entities = op_input.receive("input")
+
+        if len(entities) != 0 and isinstance(entities[""], TensorBase):
+            # use the metadata provided by the V4L2VideoCaptureOp to build the input spec for the
+            # HolovizOp
+            specs = []
+            spec = HolovizOp.InputSpec("", "color")
+            specs.append(spec)
+
+            v4l2_pixel_format = self.metadata["V4L2_pixel_format"]
+            if v4l2_pixel_format == "YUYV":
+                spec.image_format = HolovizOp.ImageFormat.Y8U8Y8V8_422_UNORM
+
+                # also set the encoding and quantization
+                if self.metadata["V4L2_ycbcr_encoding"] == "V4L2_YCBCR_ENC_601":
+                    spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_601
+                elif self.metadata["V4L2_ycbcr_encoding"] == "V4L2_YCBCR_ENC_709":
+                    spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_709
+                elif self.metadata["V4L2_ycbcr_encoding"] == "V4L2_YCBCR_ENC_2020":
+                    spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_2020
+
+                if self.metadata["V4L2_quantization"] == "V4L2_QUANTIZATION_FULL_RANGE":
+                    spec.yuv_range = HolovizOp.YuvRange.ITU_FULL
+                elif self.metadata["V4L2_quantization"] == "V4L2_QUANTIZATION_LIM_RANGE":
+                    spec.yuv_range = HolovizOp.YuvRange.ITU_NARROW
+            else:
+                raise RuntimeError(f"Unhandled V4L2 pixel format {v4l2_pixel_format}")
+
+            # don't pass the meta data along to avoid errors when MetadataPolicy is `kRaise`
+            self.metadata.clear()
+
+            # emit the output specs
+            op_output.emit(specs, "output_specs")
 
 
 # Now define a simple application using the operators defined above
@@ -31,55 +81,38 @@ class App(Application):
     - V4L2VideoCaptureOp
     - HolovizOp
 
-    The VideoStreamReplayerOp reads a video file and sends the frames to the ImageProcessingOp.
-    The HolovizOp displays the processed frames.
+    The V4L2VideoCaptureOp captures a video streams and visualizes it using HolovizOp.
     """
 
     def compose(self):
         source_args = self.kwargs("source")
+        source = V4L2VideoCaptureOp(
+            self,
+            name="source",
+            pass_through=True,
+            **source_args,
+        )
 
+        format_translate = V4L2FormatTranslateOp(self, name="format_translate")
+
+        viz_args = self.kwargs("visualizer")
         if "width" in source_args and "height" in source_args:
-            # width and height given, use BlockMemoryPool (better latency)
-            width = source_args["width"]
-            height = source_args["height"]
-            n_channels = 4
-            block_size = width * height * n_channels
-            allocator = BlockMemoryPool(
-                self, name="pool", storage_type=0, block_size=block_size, num_blocks=1
-            )
-
-            source = V4L2VideoCaptureOp(
-                self,
-                name="source",
-                allocator=allocator,
-                **source_args,
-            )
-
             # Set Holoviz width and height from source resolution
-            visualizer_args = self.kwargs("visualizer")
-            visualizer_args["width"] = width
-            visualizer_args["height"] = height
-            visualizer = HolovizOp(
-                self,
-                name="visualizer",
-                allocator=allocator,
-                **visualizer_args,
-            )
-        else:
-            # width and height not given, use UnboundedAllocator (worse latency)
-            source = V4L2VideoCaptureOp(
-                self,
-                name="source",
-                allocator=UnboundedAllocator(self, name="pool"),
-                **self.kwargs("source"),
-            )
-            visualizer = HolovizOp(
-                self,
-                name="visualizer",
-                **self.kwargs("visualizer"),
-            )
+            viz_args["width"] = source_args["width"]
+            viz_args["height"] = source_args["height"]
 
+        visualizer = HolovizOp(
+            self,
+            name="visualizer",
+            **viz_args,
+        )
+
+        self.add_flow(source, format_translate, {("signal", "input")})
+        self.add_flow(format_translate, visualizer, {("output_specs", "input_specs")})
         self.add_flow(source, visualizer, {("signal", "receivers")})
+
+        # enable metadata so V4L2FormatTranslateOp can translate the format
+        self.is_metadata_enabled = True
 
 
 def main(config_file):

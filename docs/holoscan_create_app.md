@@ -1146,7 +1146,7 @@ Templated {cpp:func}`~holoscan::MetadataObject::get` and {cpp:func}`~holoscan::M
 auto input_tensors = op_input.receive<TensorMap>("in");
 
 // Get a reference to the shared metadata dictionary
-auto& meta = metadata();
+auto meta = metadata();
 
 // Retrieve existing values.
 // Use get<Type> to automatically cast the `std::any` contained within the `holsocan::Message`
@@ -1162,8 +1162,14 @@ auto flag = meta->get("flag", false);
 std::vector<float> spacing{1.0, 1.0, 3.0};
 meta->set("pixel_spacing"s, spacing);
 
-// Remove a value
-meta->erase("patient_name")
+// Remove an item
+meta->erase("patient_name");
+
+// Check if a key exists
+bool has_patient_name = meta->has_key("patient_name");
+
+// Get a vector<std::string> of all keys in the metadata
+const auto& keys = meta->keys();
 
 // ... Some processing to produce output `data` could go here ...
 
@@ -1318,3 +1324,7 @@ The above restrictions only apply to metadata sent **between** fragments. Within
 ### Current limitations
 
 1. The current metadata API is only fully supported for native holoscan Operators and is not currently supported by operators that wrap a GXF codelet (i.e. inheriting from {cpp:class}`~holoscan::GXFOperator` or created via {cpp:class}`~holoscan::ops::GXFCodeletOp`). Aside from `GXFCodeletOp`, the built-in operators provided under the `holoscan::ops` namespace are all native operators, so the feature will work with these. Currently none of these built-in opereators add their own metadata, but any metadata received on input ports will automatically be passed on to their output ports (as long as `app->is_metadata_enabled(true)` was set to enable the metadata feature).
+
+## CUDA Stream Handling APIs
+
+Please see the dedicated {ref}`Holoscan CUDA stream handling<holoscan-cuda-stream-handling>` page for details on how Holoscan applications using non-default CUDA streams can be written.

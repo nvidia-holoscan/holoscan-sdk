@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,6 +74,8 @@ static FormatDType toFormatDType(const std::string& str) {
     return FormatDType::kYUV420;
   } else if (str == "nv12") {
     return FormatDType::kNV12;
+  } else if (str == "yuyv") {
+    return FormatDType::kYUYV;
   } else {
     return FormatDType::kUnknown;
   }
@@ -100,6 +102,8 @@ static constexpr FormatConversionType getFormatConversionType(FormatDType from, 
     return FormatConversionType::kYUV420ToRGB888;
   } else if (from == FormatDType::kNV12 && to == FormatDType::kUnsigned8) {
     return FormatConversionType::kNV12ToRGB888;
+  } else if (from == FormatDType::kYUYV && to == FormatDType::kUnsigned8) {
+    return FormatConversionType::kYUYVToRGB888;
   } else {
     return FormatConversionType::kUnknown;
   }
@@ -121,6 +125,7 @@ static constexpr nvidia::gxf::PrimitiveType primitiveTypeFromFormatDType(FormatD
     case FormatDType::kUnsigned8:
     case FormatDType::kYUV420:
     case FormatDType::kNV12:
+    case FormatDType::kYUYV:
       return nvidia::gxf::PrimitiveType::kUnsigned8;
     case FormatDType::kFloat32:
       return nvidia::gxf::PrimitiveType::kFloat32;
@@ -228,8 +233,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
                                 ExecutionContext& context) {
   // Process input message
   auto maybe_in_message = op_input.receive<gxf::Entity>("source_video");
-  if (!maybe_in_message) {
-    throw std::runtime_error("Failed to receive a message from input port 'source_video'");
+  if (!maybe_in_message || maybe_in_message.value().is_null()) {
+    auto error_msg =
+        fmt::format("Operator '{}' failed to receive message from port 'source_video': {}",
+                    name_,
+                    maybe_in_message.error().what());
+    HOLOSCAN_LOG_ERROR(error_msg);
+    throw std::runtime_error(error_msg);
   }
   auto in_message = maybe_in_message.value();
 
@@ -496,7 +506,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     case FormatConversionType::kRGBA8888ToRGB888:
     case FormatConversionType::kNV12ToRGB888:
     case FormatConversionType::kYUV420ToRGB888:
-    case FormatConversionType::kRGBA8888ToFloat32: {
+    case FormatConversionType::kRGBA8888ToFloat32:
+    case FormatConversionType::kYUYVToRGB888: {
       out_channels = 3;
       out_shape = nvidia::gxf::Shape{out_shape.dimension(0), out_shape.dimension(1), out_channels};
       break;
@@ -857,6 +868,20 @@ void FormatConverterOp::convertTensorFormat(
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(fmt::format(
             "NV12 to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
+      }
+      break;
+    }
+    case FormatConversionType::kYUYVToRGB888: {
+      const auto in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
+
+      const int32_t in_step = in_color_planes[0].stride;
+
+      const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
+
+      status = nppiYUV422ToRGB_8u_C2C3R(in_tensor_ptr, in_step, out_tensor_ptr, dst_step, roi);
+      if (status != NPP_SUCCESS) {
+        throw std::runtime_error(fmt::format(
+            "yuyv to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
       }
       break;
     }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,21 @@ class AnnotatedDoubleBufferReceiver;
  * @brief Double buffer receiver class.
  *
  * The DoubleBufferReceiver class is used to receive messages from another operator within a
- * fragment.
+ * fragment. This class uses a double buffer queue where messages first arrive in a "front stage".
+ * When an operator is selected for execution, any front stage messages are moved to the main stage
+ * just before the `compute` method of the operator is called. During compute, the front stage is
+ * now available to receive messages again (and these would then be processed during the next
+ * `compute` call).
+ *
+ * Application authors are not expected to use this class directly. It will be automatically
+ * configured for input ports specified via `Operator::setup`.
+ *
+ * ==Parameters==
+ *
+ * - **capacity** (uint64_t, optional): The capacity of the double-buffer queue used by the
+ * receiver. Defaults to 1.
+ * - **policy** (uint64_t, optional): The policy to use when a message arrives, but there is no
+ * space in the receiver. The possible values are 0: pop, 1: reject, 2: fault (Default: 2).
  */
 class DoubleBufferReceiver : public Receiver {
  public:

@@ -82,11 +82,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.9.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.8.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.9.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -211,7 +211,7 @@ For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia
 | [Torch][torch] support [^7] | **Included** | require manual [^8]<br>installation | require manual [^8]<br>installation |
 | [ONNX Runtime][ort] support [^9] | **Included** | require manual [^10]<br>installation | require manual [^10]<br>installation |
 | [MOFED][mofed] support [^11] | **User space included** <br>Install kernel drivers on the host | require manual <br>installation | require manual <br>installation |
-| [CLI] support | **Included** | needs docker w/<br>buildx plugin | needs docker w/<br>buildx plugin |
+| [CLI] support | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) |
 
 [examples]: https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#readme
 [data]: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/collections/clara_holoscan

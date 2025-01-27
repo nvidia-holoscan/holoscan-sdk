@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,13 +81,6 @@ class App : public holoscan::Application {
 
 int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<App>();
-
-  // Get the configuration
-  auto config_path = std::filesystem::canonical(argv[0]).parent_path();
-  config_path /= std::filesystem::path("ping_periodic.yaml");
-  app->config(config_path);
-
   app->run();
-
   return 0;
 }

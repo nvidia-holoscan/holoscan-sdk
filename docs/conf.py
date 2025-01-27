@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 import os
 import textwrap
+import warnings
 
 import sphinx_rtd_theme
 
@@ -265,4 +266,26 @@ def skip(app, what, name, obj, would_skip, options):
 
 
 def setup(app):
+    if not app.tags.has("noapi"):
+        try:
+            from holoscan.core import ExecutionContext, InputContext, OutputContext
+
+            # Trick: replace __name__ to make sure that Sphinx `autosummary`:
+            #   - documents all PyExecutionContext methods in the ExecutionContext docs
+            #   - documents all PyInputContext methods in the InputContext docs
+            #   - documents all PyOutputContext methods in the OutputContext docs
+            #
+            # Otherwise each of these classes would generate only a minimal doc like
+            # the following for InputContext:
+            #   "alias of holoscan.core._core.PyInputContext"
+            ExecutionContext.__name__ = "ExecutionContext"
+            InputContext.__name__ = "InputContext"
+            OutputContext.__name__ = "OutputContext"
+        except ImportError as e:
+            warnings.warn(
+                f"Failed to import holoscan during sphinx documentation setup: {str(e)}. "
+                "API docs for some class members may be incomplete.",
+                stacklevel=1,
+            )
+
     app.connect("autodoc-skip-member", skip)

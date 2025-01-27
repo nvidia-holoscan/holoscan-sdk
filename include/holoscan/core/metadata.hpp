@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,7 +84,7 @@ class MetadataDictionary {
    * @brief Get a shared pointer to the MetadataObject corresponding to the provided key
    *
    * See the templated variant of get for a version of this method that extracts the std::any value
-   * from the MetadataOjbect and performs the any_cast<ValueT> operation on it.
+   * from the MetadataObject and performs the any_cast<ValueT> operation on it.
    *
    * @param key The key for the value to retrieve.
    * @return The value corresponding to the key

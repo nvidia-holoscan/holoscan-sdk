@@ -8,7 +8,7 @@ This example wraps two C++ native operators:
   2. a receiver that receives `gxf::Entity` messages from it's "in" port.
      In this example we ignore the empty message and simply print to terminal that we received a ping.
 
-*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/gxf/gxf_wrap_holoscan_op.html) for step-by-step instructions.*
+*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/gxf/gxf_wrap_holoscan.html) for step-by-step instructions.*
 
 ## Run instructions
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,6 +100,11 @@ void init_multi_message_available_timeout(py::module_& m) {
            "min_sum"_a = py::none(),
            "min_sizes"_a = py::none(),
            "name"_a = "multi_message_timeout_condition"s,
-           doc::MultiMessageAvailableTimeoutCondition::doc_MultiMessageAvailableTimeoutCondition);
+           doc::MultiMessageAvailableTimeoutCondition::doc_MultiMessageAvailableTimeoutCondition)
+      .def_property("receivers",
+                    py::overload_cast<>(&MultiMessageAvailableTimeoutCondition::receivers),
+                    py::overload_cast<std::vector<std::shared_ptr<Receiver>>>(
+                        &MultiMessageAvailableTimeoutCondition::receivers),
+                    doc::MultiMessageAvailableTimeoutCondition::doc_receivers);
 }
 }  // namespace holoscan

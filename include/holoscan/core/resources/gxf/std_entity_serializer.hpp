@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,15 @@ namespace holoscan {
 /**
  * @brief Standard GXF entity serializer.
  *
- * The VideoStreamSerializer entity serializer uses this as its entity serializer.
+ * This class is capable of serializing and deserialing an `nvidia::gxf::Entity` (this is the
+ * underlying GXF type that Holoscan uses to send data between Operators).
+ *
+ * ==Parameters==
+ *
+ * - **component_serializers** (std::vector<std::shared_ptr<holoscan::Resource>>): The component
+ * serializers available for serialization/deserialization of components in the message entity. By
+ * default, Holoscan uses only `StdComponentSerializer`.
+ * - **verbose_warning** (bool): If true, more verbose warnings are logged by the serializer.
  */
 class StdEntitySerializer : public gxf::GXFResource {
  public:

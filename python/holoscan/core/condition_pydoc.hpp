@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,15 @@ Enum class for Condition types.
 )doc")
 
 }  // namespace ConditionType
+
+namespace SchedulingStatusType {
+
+//  Constructor
+PYDOC(SchedulingStatusType, R"doc(
+Enum class for Condition scheduling status.
+)doc")
+
+}  // namespace SchedulingStatusType
 
 namespace Condition {
 
@@ -102,6 +111,41 @@ initialization method for the condition.
 
 PYDOC(description, R"doc(
 YAML formatted string describing the condition.
+)doc")
+
+PYDOC(condition_type, R"doc(
+Condition type.
+
+`holoscan.core.Condition.ConditionComponentType` enum representing the type of
+the condition. The two types currently implemented are NATIVE and GXF.
+)doc")
+
+PYDOC(receiver, R"doc(
+Get the receiver used by an input port of the operator this condition is associated with.
+
+Parameters
+----------
+port_name : str
+    The name of the input port.
+
+Returns
+-------
+receiver : holoscan.resources.Receiver
+    The receiver used by this input port. Will be None if the port does not exist.
+)doc")
+
+PYDOC(transmitter, R"doc(
+Get the transmitter used by an output port of the operator this condition is associated with.
+
+Parameters
+----------
+port_name : str
+    The name of the output port.
+
+Returns
+-------
+transmitter : holoscan.resources.Transmitter or None
+    The transmitter used by this output port. Will be None if the port does not exist.
 )doc")
 
 }  // namespace Condition

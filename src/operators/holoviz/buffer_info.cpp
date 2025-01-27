@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include "holoscan/operators/holoviz/buffer_info.hpp"
 
+#include <string>
 #include <tuple>
 
 #include "holoscan/logger/logger.hpp"
@@ -24,6 +25,60 @@
 #include "gxf/multimedia/video.hpp"
 
 namespace viz = holoscan::viz;
+
+namespace holoscan::ops {
+
+struct TensorFormat {
+  nvidia::gxf::PrimitiveType type_;
+  int32_t channels_;
+  HolovizOp::ImageFormat format_;
+};
+
+struct VideoBufferFormat {
+  nvidia::gxf::VideoFormat color_format_;
+  nvidia::gxf::PrimitiveType element_type_;
+  int32_t channels_;
+  HolovizOp::ImageFormat format_;
+  viz::ComponentSwizzle component_swizzle[4];
+};
+
+struct VideoBufferYuvFormat {
+  nvidia::gxf::VideoFormat color_format_;
+  HolovizOp::ImageFormat format_;
+  HolovizOp::YuvModelConversion yuv_model_conversion_;
+  HolovizOp::YuvRange yuv_range_;
+};
+
+}  // namespace holoscan::ops
+
+namespace fmt {
+
+template <>
+struct formatter<holoscan::ops::TensorFormat> : formatter<fmt::string_view> {
+  format_context::iterator format(const holoscan::ops::TensorFormat& f,
+                                  fmt::format_context& ctx) const {
+    return fmt::format_to(
+        ctx.out(), "type: {}, channels: {}", magic_enum::enum_name(f.type_), f.channels_);
+  }
+};
+
+template <>
+struct formatter<holoscan::ops::VideoBufferFormat> : formatter<fmt::string_view> {
+  format_context::iterator format(const holoscan::ops::VideoBufferFormat& f,
+                                  fmt::format_context& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", magic_enum::enum_name(f.color_format_));
+  }
+};
+
+template <>
+struct formatter<holoscan::ops::VideoBufferYuvFormat> : formatter<fmt::string_view> {
+  format_context::iterator format(const holoscan::ops::VideoBufferYuvFormat& f,
+                                  fmt::format_context& ctx) const {
+    return fmt::format_to(ctx.out(), "{}", magic_enum::enum_name(f.color_format_));
+  }
+};
+
+}  // namespace fmt
 
 namespace holoscan::ops {
 
@@ -61,11 +116,17 @@ component_and_swizzle(HolovizOp::ImageFormat image_format) {
       component_swizzle[2] = viz::ComponentSwizzle::G;
       component_swizzle[3] = viz::ComponentSwizzle::ONE;
       break;
+    case HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM:
+    case HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM:
+      components = 2;
+      component_swizzle[0] = viz::ComponentSwizzle::IDENTITY;
+      component_swizzle[1] = viz::ComponentSwizzle::IDENTITY;
+      component_swizzle[2] = viz::ComponentSwizzle::IDENTITY;
+      component_swizzle[3] = viz::ComponentSwizzle::ONE;
+      break;
     case HolovizOp::ImageFormat::R8G8B8_UNORM:
     case HolovizOp::ImageFormat::R8G8B8_SNORM:
     case HolovizOp::ImageFormat::R8G8B8_SRGB:
-    case HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM:
-    case HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM:
     case HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
     case HolovizOp::ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
     case HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
@@ -116,6 +177,182 @@ component_and_swizzle(HolovizOp::ImageFormat image_format) {
           component_swizzle[3]};
 }
 
+static constexpr TensorFormat supported_tensor_formats[] = {
+    {nvidia::gxf::PrimitiveType::kUnsigned8, 1, HolovizOp::ImageFormat::R8_UNORM},
+    {nvidia::gxf::PrimitiveType::kInt8, 1, HolovizOp::ImageFormat::R8_SNORM},
+    {nvidia::gxf::PrimitiveType::kUnsigned16, 1, HolovizOp::ImageFormat::R16_UNORM},
+    {nvidia::gxf::PrimitiveType::kInt16, 1, HolovizOp::ImageFormat::R16_SNORM},
+    {nvidia::gxf::PrimitiveType::kUnsigned32, 1, HolovizOp::ImageFormat::R32_UINT},
+    {nvidia::gxf::PrimitiveType::kInt32, 1, HolovizOp::ImageFormat::R32_SINT},
+    {nvidia::gxf::PrimitiveType::kFloat32, 1, HolovizOp::ImageFormat::R32_SFLOAT},
+    {nvidia::gxf::PrimitiveType::kUnsigned8, 3, HolovizOp::ImageFormat::R8G8B8_UNORM},
+    {nvidia::gxf::PrimitiveType::kInt8, 3, HolovizOp::ImageFormat::R8G8B8_SNORM},
+    {nvidia::gxf::PrimitiveType::kUnsigned8, 4, HolovizOp::ImageFormat::R8G8B8A8_UNORM},
+    {nvidia::gxf::PrimitiveType::kInt8, 4, HolovizOp::ImageFormat::R8G8B8A8_SNORM},
+    {nvidia::gxf::PrimitiveType::kUnsigned16, 4, HolovizOp::ImageFormat::R16G16B16A16_UNORM},
+    {nvidia::gxf::PrimitiveType::kInt16, 4, HolovizOp::ImageFormat::R16G16B16A16_SNORM},
+    {nvidia::gxf::PrimitiveType::kFloat32, 4, HolovizOp::ImageFormat::R32G32B32A32_SFLOAT}};
+
+/*static*/ std::string BufferInfo::get_supported_tensor_formats_str() {
+  return fmt::format("({})", fmt::join(supported_tensor_formats, "), ("));
+}
+
+static constexpr VideoBufferFormat supported_video_buffer_formats[] = {
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     1,
+     HolovizOp::ImageFormat::R8_UNORM,
+     {viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::ONE}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY16,
+     nvidia::gxf::PrimitiveType::kUnsigned16,
+     1,
+     HolovizOp::ImageFormat::R16_UNORM,
+     {viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::ONE}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY32F,
+     nvidia::gxf::PrimitiveType::kFloat32,
+     1,
+     HolovizOp::ImageFormat::R32_SFLOAT,
+     {viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::ONE}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F,
+     nvidia::gxf::PrimitiveType::kFloat32,
+     1,
+     HolovizOp::ImageFormat::D32_SFLOAT,
+     {viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     3,
+     HolovizOp::ImageFormat::R8G8B8_UNORM,
+     {viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGR,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     3,
+     HolovizOp::ImageFormat::R8G8B8_UNORM,
+     {viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::IDENTITY}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRA,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::A}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_ARGB,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::A,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::B}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_ABGR,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::A,
+      viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::R}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBX,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::ONE}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRX,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::ONE}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_XRGB,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::A,
+      viz::ComponentSwizzle::ONE}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_XBGR,
+     nvidia::gxf::PrimitiveType::kUnsigned8,
+     4,
+     HolovizOp::ImageFormat::R8G8B8A8_UNORM,
+     {viz::ComponentSwizzle::A,
+      viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::ONE}},
+};
+
+static constexpr VideoBufferYuvFormat supported_yuv_video_buffer_formats[] = {
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420,
+     HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_601,
+     HolovizOp::YuvRange::ITU_NARROW},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_ER,
+     HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_601,
+     HolovizOp::YuvRange::ITU_FULL},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_709,
+     HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_709,
+     HolovizOp::YuvRange::ITU_NARROW},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_709_ER,
+     HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_709,
+     HolovizOp::YuvRange::ITU_FULL},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12,
+     HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_601,
+     HolovizOp::YuvRange::ITU_NARROW},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_ER,
+     HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_601,
+     HolovizOp::YuvRange::ITU_FULL},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709,
+     HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_709,
+     HolovizOp::YuvRange::ITU_NARROW},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709_ER,
+     HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+     HolovizOp::YuvModelConversion::YUV_709,
+     HolovizOp::YuvRange::ITU_FULL},
+};
+
+/*static*/ std::string BufferInfo::get_supported_video_buffer_formats_str() {
+  return fmt::format("{}, {}",
+                     fmt::join(supported_video_buffer_formats, ", "),
+                     fmt::join(supported_yuv_video_buffer_formats, ", "));
+}
+
 gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor,
                               HolovizOp::ImageFormat input_image_format) {
   rank = tensor->rank();
@@ -155,28 +392,7 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& te
   // get image format for 2D tensors
   if (input_image_format == HolovizOp::ImageFormat::AUTO_DETECT) {
     if (rank == 3) {
-      struct Format {
-        nvidia::gxf::PrimitiveType type_;
-        int32_t channels_;
-        HolovizOp::ImageFormat format_;
-      };
-      constexpr Format kGFXToHolovizFormats[] = {
-          {nvidia::gxf::PrimitiveType::kUnsigned8, 1, HolovizOp::ImageFormat::R8_UNORM},
-          {nvidia::gxf::PrimitiveType::kInt8, 1, HolovizOp::ImageFormat::R8_SNORM},
-          {nvidia::gxf::PrimitiveType::kUnsigned16, 1, HolovizOp::ImageFormat::R16_UNORM},
-          {nvidia::gxf::PrimitiveType::kInt16, 1, HolovizOp::ImageFormat::R16_SNORM},
-          {nvidia::gxf::PrimitiveType::kUnsigned32, 1, HolovizOp::ImageFormat::R32_UINT},
-          {nvidia::gxf::PrimitiveType::kInt32, 1, HolovizOp::ImageFormat::R32_SINT},
-          {nvidia::gxf::PrimitiveType::kFloat32, 1, HolovizOp::ImageFormat::R32_SFLOAT},
-          {nvidia::gxf::PrimitiveType::kUnsigned8, 3, HolovizOp::ImageFormat::R8G8B8_UNORM},
-          {nvidia::gxf::PrimitiveType::kInt8, 3, HolovizOp::ImageFormat::R8G8B8_SNORM},
-          {nvidia::gxf::PrimitiveType::kUnsigned8, 4, HolovizOp::ImageFormat::R8G8B8A8_UNORM},
-          {nvidia::gxf::PrimitiveType::kInt8, 4, HolovizOp::ImageFormat::R8G8B8A8_SNORM},
-          {nvidia::gxf::PrimitiveType::kUnsigned16, 4, HolovizOp::ImageFormat::R16G16B16A16_UNORM},
-          {nvidia::gxf::PrimitiveType::kInt16, 4, HolovizOp::ImageFormat::R16G16B16A16_SNORM},
-          {nvidia::gxf::PrimitiveType::kFloat32, 4, HolovizOp::ImageFormat::R32G32B32A32_SFLOAT}};
-
-      for (auto&& format : kGFXToHolovizFormats) {
+      for (auto&& format : supported_tensor_formats) {
         if ((format.type_ == element_type) && (format.channels_ == int32_t(components))) {
           image_format = format.format_;
           break;
@@ -221,129 +437,7 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer
 
   // here auto detect means to use the image format of the video buffer
   if (input_image_format == HolovizOp::ImageFormat::AUTO_DETECT) {
-    struct Format {
-      nvidia::gxf::VideoFormat color_format_;
-      nvidia::gxf::PrimitiveType element_type_;
-      int32_t channels_;
-      HolovizOp::ImageFormat format_;
-      viz::ComponentSwizzle component_swizzle[4];
-    };
-    constexpr Format kVideoToHolovizFormats[] = {
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         1,
-         HolovizOp::ImageFormat::R8_UNORM,
-         {viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::ONE}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY16,
-         nvidia::gxf::PrimitiveType::kUnsigned16,
-         1,
-         HolovizOp::ImageFormat::R16_UNORM,
-         {viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::ONE}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY32F,
-         nvidia::gxf::PrimitiveType::kFloat32,
-         1,
-         HolovizOp::ImageFormat::R32_SFLOAT,
-         {viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::ONE}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F,
-         nvidia::gxf::PrimitiveType::kFloat32,
-         1,
-         HolovizOp::ImageFormat::D32_SFLOAT,
-         {viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         3,
-         HolovizOp::ImageFormat::R8G8B8_UNORM,
-         {viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGR,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         3,
-         HolovizOp::ImageFormat::R8G8B8_UNORM,
-         {viz::ComponentSwizzle::B,
-          viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::IDENTITY}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY,
-          viz::ComponentSwizzle::IDENTITY}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRA,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::B,
-          viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::A}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_ARGB,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::A,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::B}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_ABGR,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::A,
-          viz::ComponentSwizzle::B,
-          viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::R}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBX,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::B,
-          viz::ComponentSwizzle::ONE}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRX,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::B,
-          viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::R,
-          viz::ComponentSwizzle::ONE}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_XRGB,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::B,
-          viz::ComponentSwizzle::A,
-          viz::ComponentSwizzle::ONE}},
-        {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_XBGR,
-         nvidia::gxf::PrimitiveType::kUnsigned8,
-         4,
-         HolovizOp::ImageFormat::R8G8B8A8_UNORM,
-         {viz::ComponentSwizzle::A,
-          viz::ComponentSwizzle::B,
-          viz::ComponentSwizzle::G,
-          viz::ComponentSwizzle::ONE}},
-    };
-
-    for (auto&& format : kVideoToHolovizFormats) {
+    for (auto&& format : supported_video_buffer_formats) {
       if (format.color_format_ == buffer_info.color_format) {
         element_type = format.element_type_;
         components = format.channels_;
@@ -357,48 +451,7 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer
     }
 
     if (image_format == HolovizOp::ImageFormat::AUTO_DETECT) {
-      struct YuvFormat {
-        nvidia::gxf::VideoFormat color_format_;
-        HolovizOp::ImageFormat format_;
-        HolovizOp::YuvModelConversion yuv_model_conversion_;
-        HolovizOp::YuvRange yuv_range_;
-      };
-      constexpr YuvFormat kYuvVideoToHolovizFormats[] = {
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420,
-          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_601,
-          HolovizOp::YuvRange::ITU_NARROW},
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_ER,
-          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_601,
-          HolovizOp::YuvRange::ITU_FULL},
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_709,
-          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_709,
-          HolovizOp::YuvRange::ITU_NARROW},
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420_709_ER,
-          HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_709,
-          HolovizOp::YuvRange::ITU_FULL},
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12,
-          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_601,
-          HolovizOp::YuvRange::ITU_NARROW},
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_ER,
-          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_601,
-          HolovizOp::YuvRange::ITU_FULL},
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709,
-          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_709,
-          HolovizOp::YuvRange::ITU_NARROW},
-          {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709_ER,
-          HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
-          HolovizOp::YuvModelConversion::YUV_709,
-          HolovizOp::YuvRange::ITU_FULL},
-      };
-
-      for (auto&& format : kYuvVideoToHolovizFormats) {
+      for (auto&& format : supported_yuv_video_buffer_formats) {
         if (format.color_format_ == buffer_info.color_format) {
           element_type = nvidia::gxf::PrimitiveType::kUnsigned8;
           components = 3;
@@ -414,12 +467,7 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer
       }
     }
 
-    if (image_format == HolovizOp::ImageFormat::AUTO_DETECT) {
-      HOLOSCAN_LOG_ERROR("Video buffer '{}': unsupported input format: '{}'\n",
-                         video.name(),
-                         static_cast<int64_t>(buffer_info.color_format));
-      return GXF_FAILURE;
-    }
+    if (image_format == HolovizOp::ImageFormat::AUTO_DETECT) { return GXF_FAILURE; }
   } else {
     image_format = input_image_format;
     auto result = component_and_swizzle(image_format);

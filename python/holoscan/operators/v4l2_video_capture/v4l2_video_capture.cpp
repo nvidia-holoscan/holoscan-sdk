@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,6 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
-// #include "holoscan/core/gxf/gxf_operator.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -59,7 +58,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
   PyV4L2VideoCaptureOp(Fragment* fragment, const py::args& args,
                        std::shared_ptr<::holoscan::Allocator> allocator,
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
-                       uint32_t height = 0, uint32_t num_buffers = 4,
+                       uint32_t height = 0, float frame_rate = 0, uint32_t num_buffers = 4,
                        const std::string& pixel_format = "auto", bool pass_through = false,
                        const std::string& name = "v4l2_video_capture",
                        std::optional<uint32_t> exposure_time = std::nullopt,
@@ -68,6 +67,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
                                    Arg{"device", device},
                                    Arg{"width", width},
                                    Arg{"height", height},
+                                   Arg{"frame_rate", frame_rate},
                                    Arg{"numBuffers", num_buffers},
                                    Arg{"pixel_format", pixel_format},
                                    Arg{"pass_through", pass_through}}) {
@@ -99,6 +99,7 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
                     const std::string&,
                     uint32_t,
                     uint32_t,
+                    float,
                     uint32_t,
                     const std::string&,
                     bool,
@@ -106,10 +107,11 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
                     std::optional<uint32_t>,
                     std::optional<uint32_t>>(),
            "fragment"_a,
-           "allocator"_a,
-           "device"_a = "0"s,
+           "allocator"_a = py::none(),
+           "device"_a = "/dev/video0"s,
            "width"_a = 0,
            "height"_a = 0,
+           "frame_rate"_a = 0.F,
            "num_buffers"_a = 4,
            "pixel_format"_a = "auto"s,
            "pass_through"_a = false,

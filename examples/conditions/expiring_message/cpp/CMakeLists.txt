@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,14 +21,6 @@ target_link_libraries(ping_expiring_message
   PRIVATE
   holoscan::core
 )
-
-# Copy config file to the build tree
-add_custom_target(ping_expiring_message_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/ping_expiring_message.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS "ping_expiring_message.yaml"
-    BYPRODUCTS "ping_expiring_message.yaml"
-)
-add_dependencies(ping_expiring_message ping_expiring_message_yaml)
 
 # Install examples
 
@@ -57,13 +49,6 @@ endif()
 
 # Install the compiled example
 install(TARGETS ping_expiring_message
-  DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-examples
-)
-
-# Install the configuration file
-install(FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/ping_expiring_message.yaml"
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )

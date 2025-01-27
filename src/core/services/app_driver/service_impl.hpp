@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,9 @@
 #ifndef CORE_SERVICES_APP_DRIVER_SERVICE_IMPL_HPP
 #define CORE_SERVICES_APP_DRIVER_SERVICE_IMPL_HPP
 
+#include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/health_check_service_interface.h>
 
 #include <string>
 #include <vector>
@@ -48,6 +50,8 @@ class AppDriverServiceImpl final : public AppDriverService::Service {
       const holoscan::service::WorkerExecutionFinishedRequest* request,
       holoscan::service::WorkerExecutionFinishedResponse* response) override;
 
+  void set_health_check_service(grpc::HealthCheckServiceInterface* health_check_service);
+
  private:
   /// Decode URI-encoded characters from the source string.
   static std::string uri_decode(const std::string& src);
@@ -66,6 +70,7 @@ class AppDriverServiceImpl final : public AppDriverService::Service {
                          const holoscan::service::AvailableSystemResource& resource);
 
   holoscan::AppDriver* app_driver_ = nullptr;
+  grpc::HealthCheckServiceInterface* health_check_service_ = nullptr;
 };
 
 }  // namespace service

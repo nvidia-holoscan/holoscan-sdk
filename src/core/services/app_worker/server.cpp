@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,8 @@
 
 namespace holoscan::service {
 
-AppWorkerServer::AppWorkerServer(holoscan::AppWorker* app_worker) : app_worker_(app_worker) {}
+AppWorkerServer::AppWorkerServer(holoscan::AppWorker* app_worker, bool need_health_check)
+    : app_worker_(app_worker), need_health_check_(need_health_check) {}
 
 AppWorkerServer::~AppWorkerServer() = default;
 
@@ -156,13 +157,19 @@ void AppWorkerServer::run() {
 
   AppWorkerServiceImpl app_worker_service(app_worker_);
 
+  // Start health checking server if needed
+  if (need_health_check_) { grpc::EnableDefaultHealthCheckService(true); }
   grpc::ServerBuilder builder;
   builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
   builder.RegisterService(&app_worker_service);
 
   std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
   if (server) {
+    if (need_health_check_) {
+      app_worker_service.set_health_check_service(server->GetHealthCheckService());
+    }
     HOLOSCAN_LOG_INFO("AppWorkerServer listening on {}", server_address);
+    HOLOSCAN_LOG_INFO("AppWorkerServer/Health checking server listening on {}", server_address);
   } else {
     HOLOSCAN_LOG_ERROR("Failed to start server on {}", server_address);
     return;

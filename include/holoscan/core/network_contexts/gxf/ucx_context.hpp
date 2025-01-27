@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,26 @@
 
 namespace holoscan {
 
+/**
+ * @brief UCX-based NetworkContext class used by distributed applications.
+ *
+ * Application authors do not need to use this class directly. It will be initialized by the
+ * application at runtime as needed.
+ *
+ * ==Parameters==
+ *
+ * - **entity_serializer** (std::shared_ptr<UcxEntitySerializer>): The entity serializer
+ * that will be used for any network connections (i.e. `add_flow` connections between fragments).
+ * A `UcxEntitySerializer` will be used by default.
+ * - **reconnect** (bool, optional): Try to reconnect if a connection is closed during run
+ * (default: true).
+ * - **cpu_data_only** (bool, optional): This flag should be set to true on a system which does not
+ * have any (visible) CUDA capable devices.
+ * - **enable_async** (bool, optional): If false, synchronous operation of message transmission
+ * will be used (Default: true). The `HOLOSCAN_UCX_ASYNCHRONOUS` environment variable can be used
+ * to set the value that Holoscan will use for this parameter when creating its internal
+ * `UcxNetworkContext`.
+ */
 class UcxContext : public gxf::GXFNetworkContext {
  public:
   HOLOSCAN_NETWORK_CONTEXT_FORWARD_ARGS_SUPER(UcxContext, gxf::GXFNetworkContext)

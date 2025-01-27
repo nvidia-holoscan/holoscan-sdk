@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,14 @@ class Operator;
  * @brief HoloscanUcxTransmitter class optionally adds a MessageLabel timestamp to every published
  * message if data flow tracking is enabled
  *
+ * Application authors are not expected to use this class directly. It will be automatically
+ * configured for output ports specified via `Operator::setup` when `Application::add_flow` has been
+ * used to make a connection across fragments of a distributed application and data flow tracking
+ * has been enabled.
+ *
+ * ==Parameters==
+ *
+ * See UcxTransmitter for parameter descriptions.
  */
 class HoloscanUcxTransmitter : public nvidia::gxf::UcxTransmitter {
  public:

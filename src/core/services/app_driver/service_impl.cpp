@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -283,6 +283,11 @@ grpc::Status AppDriverServiceImpl::ReportWorkerExecutionFinished(
       AppWorkerTerminationStatus{worker_id, worker_termination_code}});
 
   return grpc::Status::OK;
+}
+
+void AppDriverServiceImpl::set_health_check_service(
+    grpc::HealthCheckServiceInterface* health_check_service) {
+  health_check_service_ = health_check_service;
 }
 
 }  // namespace holoscan::service

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,7 @@ create a custom application.
     holoscan.core.OutputContext
     holoscan.core.ParameterFlag
     holoscan.core.Resource
+    holoscan.core.SchedulingStatusType
     holoscan.core.Tensor
     holoscan.core.Tracker
     holoscan.core.arg_to_py_object
@@ -67,6 +68,7 @@ import sys
 # Otherwise you will get an assert tlock.locked() error on exit.
 # (CLARAHOLOS-765)
 import threading as _threading  # noqa: F401, I001
+from typing import Optional
 
 # Temporarily set RTLD_GLOBAL to ensure that global symbols in the Holoscan C++ API
 # (including logging-related symbols like nvidia::LoggingFunction) are shared
@@ -89,33 +91,35 @@ try:
         ArgType,
         CLIOptions,
         Component,
-        Condition,
         ConditionType,
         Config,
         DataFlowMetric,
         DataFlowTracker,
         DLDevice,
         DLDeviceType,
-        ExecutionContext,
         Executor,
-        InputContext,
         IOSpec,
         Message,
         MetadataDictionary,
         MetadataPolicy,
+        MultiMessageConditionInfo,
         NetworkContext,
-        OutputContext,
         ParameterFlag,
         Scheduler,
+        SchedulingStatusType,
         arg_to_py_object,
         arglist_to_kwargs,
         kwargs_to_arglist,
         py_object_to_arg,
     )
+    from ._core import Condition as _Condition
     from ._core import Fragment as _Fragment
     from ._core import Operator as _Operator
     from ._core import PyComponentSpec as ComponentSpec
+    from ._core import PyExecutionContext as ExecutionContext
+    from ._core import PyInputContext as InputContext
     from ._core import PyOperatorSpec as OperatorSpec
+    from ._core import PyOutputContext as OutputContext
     from ._core import PyRegistryContext as _RegistryContext
     from ._core import PyTensor as Tensor
     from ._core import Resource as _Resource
@@ -168,6 +172,7 @@ __all__ = [
     "ParameterFlag",
     "Resource",
     "Scheduler",
+    "SchedulingStatusType",
     "Tensor",
     "Tracker",
     "arg_to_py_object",
@@ -292,15 +297,16 @@ Fragment.__init__.__doc__ = _Fragment.__init__.__doc__
 
 
 class Operator(_Operator):
+    _readonly_attributes = [
+        "fragment",
+        "conditions",
+        "resources",
+        "operator_type",
+        "description",
+    ]
+
     def __setattr__(self, name, value):
-        readonly_attributes = [
-            "fragment",
-            "conditions",
-            "resources",
-            "operator_type",
-            "description",
-        ]
-        if name in readonly_attributes:
+        if name in self._readonly_attributes:
             raise AttributeError(f'cannot override read-only property "{name}"')
         super().__setattr__(name, value)
 
@@ -345,7 +351,118 @@ Operator.__doc__ = _Operator.__doc__
 Operator.__init__.__doc__ = _Operator.__init__.__doc__
 
 
+class Condition(_Condition):
+    _readonly_attributes = [
+        "fragment",
+        "condition_type",
+        "description",
+    ]
+
+    def __setattr__(self, name, value):
+        if name in self._readonly_attributes:
+            raise AttributeError(f'cannot override read-only property "{name}"')
+        super().__setattr__(name, value)
+
+    def __init__(self, fragment, *args, **kwargs):
+        if not isinstance(fragment, _Fragment):
+            raise ValueError(
+                "The first argument to an Condition's constructor must be the Fragment "
+                "(Application) to which it belongs."
+            )
+        # It is recommended to not use super()
+        # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
+        _Condition.__init__(self, self, fragment, *args, **kwargs)
+        # Create a PyComponentSpec object and pass it to the C++ API
+        spec = ComponentSpec(fragment=self.fragment, component=self)
+        self.spec = spec
+        # Call setup method in PyCondition class
+        self.setup(spec)
+
+    def setup(self, spec: ComponentSpec):
+        """Default implementation of setup method."""
+        pass
+
+    def initialize(self):
+        """Default implementation of initialize"""
+        pass
+
+    def update_state(self, timestamp):
+        """Default implementation of update_state
+
+        Parameters
+        ----------
+        timestamp : int
+            The timestamp at which the update_state method was called.
+
+        Notes
+        -----
+        This method is always called by the underlying GXF framework immediately before the
+        `Condition.check` method. In some cases, the `Condition.on_execute` method may also wish
+        to call this method.
+        """
+        pass
+
+    def check(self, timestamp: int) -> tuple[SchedulingStatusType, Optional[int]]:
+        """Default implementation of check.
+
+        Parameters
+        ----------
+        timestamp : int
+            The timestamp at which the check method is called. This method is called by the
+            underlying GXF framework to determine whether an operator is ready to execute.
+
+        Returns
+        -------
+        status_type: SchedulingStatusType
+            The current status of the operator. See the documentation on native condition
+            creation for explanations of the various status types.
+        target_timestamp: int or None
+            Specifies a specific target timestamp at which the operator is expected to be ready.
+            This should only be provided if relevant (it helps the underlying framework avoid
+            overhead of repeated checks before the target time).
+
+        Notes
+        -----
+        The method should return SchedulingStatusType.READY when the desired condition has been met.
+
+        The operator will always execute with this default implementation that always execute with
+        this default implementation.
+        """
+        return SchedulingStatusType.READY, None
+
+    def on_execute(self, timestamp):
+        """Default implementation of on_execute
+
+        Parameters
+        ----------
+        timestamp : int
+            The timestamp at which the on_execute method was called.
+
+        Notes
+        -----
+        This method is called by the underlying GXF framework immediately after the
+        `Operator.compute` call for the operator to which the condition has been assigned.
+        """
+        pass
+
+
+# copy docstrings defined in core_pydoc.hpp
+Condition.__doc__ = _Condition.__doc__
+Condition.__init__.__doc__ = _Condition.__init__.__doc__
+
+
 class Resource(_Resource):
+    _readonly_attributes = [
+        "fragment",
+        "resource_type",
+        "description",
+    ]
+
+    def __setattr__(self, name, value):
+        if name in self._readonly_attributes:
+            raise AttributeError(f'cannot override read-only property "{name}"')
+        super().__setattr__(name, value)
+
     def __init__(self, fragment, *args, **kwargs):
         if not isinstance(fragment, _Fragment):
             raise ValueError(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,7 @@
 
 #include "dl_converter.hpp"
 #include "gxf/std/dlpack_utils.hpp"  // DLDeviceFromPointer, DLDataTypeFromTypeString
+#include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 #include "kwarg_handling.hpp"
@@ -470,7 +471,9 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
     py::object stream_obj = py::none();
     if (array_interface.contains("stream")) {
       stream_obj = array_interface["stream"];
-      process_array_interface_stream(stream_obj);
+      static bool sync_streams =
+          AppDriver::get_bool_env_var("HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC", true);
+      if (sync_streams) { process_array_interface_stream(stream_obj); }
     }
   }
   // Create DLManagedTensor object

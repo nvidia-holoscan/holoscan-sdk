@@ -1,8 +1,8 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
+* 
+* Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -54,8 +54,11 @@ class AppWorkerServiceImpl final : public AppWorkerService::Service {
                                const holoscan::service::TerminateWorkerRequest* request,
                                holoscan::service::TerminateWorkerResponse* response) override;
 
+  void set_health_check_service(grpc::HealthCheckServiceInterface* health_check_service);
+
  private:
   holoscan::AppWorker* app_worker_ = nullptr;
+  grpc::HealthCheckServiceInterface* health_check_service_ = nullptr;
 };
 
 }  // namespace service

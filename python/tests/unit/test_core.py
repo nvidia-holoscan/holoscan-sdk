@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,7 @@ from holoscan.core import (
     Graph,
     InputContext,
     IOSpec,
+    MultiMessageConditionInfo,
     NetworkContext,
     Operator,
     OperatorGraph,
@@ -108,6 +109,14 @@ class TestArgType:
         obj = ArgType()
         with pytest.raises(AttributeError):
             obj.custom_attribute = 5
+
+
+class TestMultiMessageConditionInfo:
+    def test_default_constructor(self):
+        m = MultiMessageConditionInfo()
+        assert m.kind == ConditionType.NONE
+        assert m.port_names == []
+        assert m.args.size == 0
 
 
 class TestArg:
@@ -227,55 +236,54 @@ class TestComponent:
 
 class TestCondition:
     def test_init(self, fragment):
-        c = Condition()
+        c = Condition(fragment)
         assert c.name == ""
-        assert c.fragment is None
+        assert c.fragment is not None
 
-    def test_init_with_kwargs(self):
-        c = Condition(a=5, b=(13.7, 15.2), c="abcd")
+    def test_init_with_kwargs(self, fragment):
+        c = Condition(fragment, a=5, b=(13.7, 15.2), c="abcd")
         assert c.name == ""
-        assert c.fragment is None
+        assert c.fragment is not None
         assert len(c.args) == 3
 
-    def test_init_with_name_and_kwargs(self):
+    def test_init_with_name_and_kwargs(self, fragment):
         # name provided by kwarg
-        c = Condition(name="c2", a=5, b=(13.7, 15.2), c="abcd")
+        c = Condition(fragment, name="c2", a=5, b=(13.7, 15.2), c="abcd")
         assert c.name == "c2"
-        assert c.fragment is None
+        assert c.fragment is not None
         assert len(c.args) == 3
 
-    def test_name(self):
-        c = Condition()
+    def test_name(self, fragment):
+        c = Condition(fragment)
         c.name = "cond1"
         assert c.name == "cond1"
 
-        c = Condition(name="cond3")
+        c = Condition(fragment, name="cond3")
         assert c.name == "cond3"
 
     def test_fragment(self, fragment):
-        c = Condition()
-        assert c.fragment is None
+        c = Condition(fragment)
+        assert c.fragment is not None
         # not allowed to assign fragment
         with pytest.raises(AttributeError):
             c.fragment = fragment
 
-    def test_add_arg(self):
-        c = Condition()
+    def test_add_arg(self, fragment):
+        c = Condition(fragment)
         c.add_arg(Arg("a1"))
 
-    def test_initialize(self):
-        c = Condition()
+    def test_initialize(self, fragment):
+        c = Condition(fragment)
         c.initialize()
 
     def test_setup(self, fragment):
         spec = ComponentSpecBase(fragment=fragment)
-        c = Condition()
+        c = Condition(fragment)
         c.setup(spec)
 
-    def test_dynamic_attribute_not_allowed(self):
-        obj = Condition()
-        with pytest.raises(AttributeError):
-            obj.custom_attribute = 5
+    def test_dynamic_attribute_allowed(self, fragment):
+        obj = Condition(fragment)
+        obj.custom_attribute = 5
 
 
 class TestResource:
@@ -490,6 +498,8 @@ class TestOperatorSpecBase:
         # check that the condition was added
         multi_port_conditions = spec.multi_port_conditions()
         assert len(multi_port_conditions) == 1
+        for c in multi_port_conditions:
+            assert isinstance(c, MultiMessageConditionInfo)
 
         # check the info on the condition
         multi_port_condition_info = multi_port_conditions[0]

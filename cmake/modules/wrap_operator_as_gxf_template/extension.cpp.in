@@ -15,8 +15,7 @@
  * limitations under the License.
  */
 
-#include "gxf/std/extension_factory_helper.hpp"
-#include "@CODELET_HEADER_INCLUDE@"
+@GXF_EXT_HEADER_INCLUDES@
 
 GXF_EXT_FACTORY_BEGIN()
 GXF_EXT_FACTORY_SET_INFO(@EXTENSION_ID_HASH1@, @EXTENSION_ID_HASH2@,
@@ -25,8 +24,5 @@ GXF_EXT_FACTORY_SET_INFO(@EXTENSION_ID_HASH1@, @EXTENSION_ID_HASH2@,
                          "@EXTENSION_AUTHOR@",
                          "@EXTENSION_VERSION@",
                          "@EXTENSION_LICENSE@");
-GXF_EXT_FACTORY_ADD(@CODELET_ID_HASH1@, @CODELET_ID_HASH2@,
-                    @CODELET_NAMESPACE@::@CODELET_NAME@,
-                    holoscan::gxf::OperatorWrapper,
-                    "@CODELET_DESCRIPTION@");
+@EXT_CPP_CONTENT@
 GXF_EXT_FACTORY_END()

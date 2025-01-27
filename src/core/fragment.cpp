@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,6 +76,11 @@ Application* Fragment::application() const {
 
 void Fragment::config(const std::string& config_file, const std::string& prefix) {
   if (config_) { HOLOSCAN_LOG_WARN("Config object was already created. Overwriting..."); }
+  if (is_composed_) {
+    HOLOSCAN_LOG_WARN(
+        "Graph has already been composed. Please make sure that graph composition is not dependent "
+        "on this config() call.");
+  }
 
   // If the application is executed with `--config` option or HOLOSCAN_CONFIG_PATH environment,
   // we ignore the config_file argument.
@@ -101,6 +106,12 @@ void Fragment::config(const std::string& config_file, const std::string& prefix)
 }
 
 void Fragment::config(std::shared_ptr<Config>& config) {
+  if (config_) { HOLOSCAN_LOG_WARN("Config object was already created. Overwriting..."); }
+  if (is_composed_) {
+    HOLOSCAN_LOG_WARN(
+        "Graph has already been composed. Please make sure that graph composition is not dependent "
+        "on this config() call.");
+  }
   config_ = config;
 }
 

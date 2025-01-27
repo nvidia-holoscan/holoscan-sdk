@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,13 +35,13 @@ import numpy as np
 
 from holoscan.conditions import BooleanCondition
 from holoscan.core import (
-    Condition,
     ConditionType,
     IOSpec,
     Operator,
     OperatorSpec,
-    Resource,
 )
+from holoscan.core import _Condition as ConditionBase
+from holoscan.core import _Resource as ResourceBase
 from holoscan.core._core import Fragment as FragmentBase
 from holoscan.core._core import Tensor as TensorBase
 
@@ -300,9 +300,11 @@ def create_op(
                     self.cast_tensors = cast_tensors
 
                     # remove conditions and resources from *args
-                    condition_args = tuple(a for a in args if isinstance(a, Condition))
-                    resource_args = tuple(a for a in args if isinstance(a, Resource))
-                    args = tuple(a for a in args if not isinstance(a, (Condition, Resource)))
+                    condition_args = tuple(a for a in args if isinstance(a, ConditionBase))
+                    resource_args = tuple(a for a in args if isinstance(a, ResourceBase))
+                    args = tuple(
+                        a for a in args if not isinstance(a, (ConditionBase, ResourceBase))
+                    )
                     self.func_args = args
 
                     # add a boolean condition to prevent triggering if the function is a generator

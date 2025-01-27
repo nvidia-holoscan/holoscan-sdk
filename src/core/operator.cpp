@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,7 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
+#include "holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
@@ -45,11 +46,37 @@ void Operator::initialize() {
       // (DFFT)
       this->set_op_backend();
     }
-    // enable metadata on a per-fragment basis
-    is_metadata_enabled_ = fragment_ptr->is_metadata_enabled();
+    if (!is_metadata_enabled_) {
+      // enable metadata on a per-fragment basis if the user didn't explicitly enable it
+      is_metadata_enabled_ = fragment_ptr->is_metadata_enabled();
+    }
   } else {
     HOLOSCAN_LOG_WARN("Operator::initialize() - Fragment is not set");
   }
+}
+
+void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32_t stream_priority,
+                                    uint32_t reserved_size, uint32_t max_size) {
+  // If a "cuda_stream_pool" parameter exists, do nothing
+  auto params = spec()->params();
+  auto param_iter = params.find("cuda_stream_pool");
+  if (param_iter != params.end()) { return; }
+
+  // If a CudaStreamPool resource is already present, do nothing
+  for (auto& resource : resources_) {
+    // If the user already passed in a CudaStreamPool argument, do nothing
+    auto stream_pool_resource = std::dynamic_pointer_cast<CudaStreamPool>(resource.second);
+    if (stream_pool_resource) { return; }
+  }
+
+  // If no CudaStreamPool was found, create a default one
+  auto cuda_stream_pool = std::make_shared<CudaStreamPool>(
+      dev_id, stream_flags, stream_priority, reserved_size, max_size);
+  cuda_stream_pool->name("default_cuda_stream_pool");
+
+  // set it to belong to the operator's GXF entity
+  if (graph_entity_) { cuda_stream_pool->gxf_eid(graph_entity_->eid()); }
+  add_arg(cuda_stream_pool);
 }
 
 bool Operator::is_root() {
@@ -200,10 +227,14 @@ gxf_uid_t Operator::initialize_graph_entity(void* context, const std::string& en
 
 gxf_uid_t Operator::add_codelet_to_graph_entity() {
   HOLOSCAN_LOG_TRACE("calling graph_entity()->addCodelet for {}", name());
-  if (!graph_entity_) { throw std::runtime_error("graph entity is not initialized"); }
+  if (!graph_entity_) {
+    throw std::runtime_error(
+        fmt::format("graph entity is not initialized for operator '{}'", name_));
+  }
   auto codelet_handle = graph_entity_->addCodelet<holoscan::gxf::GXFWrapper>(name().c_str());
   if (!codelet_handle) {
-    throw std::runtime_error("Failed to create GXFWrapper codelet corresponding to this operator");
+    throw std::runtime_error(
+        fmt::format("Failed to create GXFWrapper codelet corresponding to operator '{}'", name_));
   }
   codelet_handle->set_operator(this);
   HOLOSCAN_LOG_TRACE("\tadded codelet with cid {} to entity with eid {}",
@@ -235,15 +266,36 @@ YAML::Node Operator::to_yaml_node() const {
 
 void Operator::initialize_conditions() {
   for (const auto& [name, condition] : conditions_) {
+    // Set the operator for the condition (needed for Condition methods converting a port name to a
+    // Receiver or Transmitter object)
+    condition->set_operator(this);
+
     HOLOSCAN_LOG_TRACE("\top '{}': initializing condition: {}", name_, condition->name());
     auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
     if (gxf_condition) {
       // assign the condition to the same entity as the operator and initialize it
       gxf_condition->add_to_graph_entity(this);
     } else {
-      // currently no native Condition support so raise if it is not a GXFCondition
-      throw std::runtime_error(
-          fmt::format("condition {} was not a holoscan::gxf::GXFCondition", condition->name()));
+      // native Condition support via GXFSchedulingTermWrapper
+      HOLOSCAN_LOG_TRACE("calling graph_entity()->addSchedulingTerm for native condition '{}'",
+                         condition->name());
+      if (!graph_entity_) {
+        throw std::runtime_error(
+            fmt::format("graph entity is not initialized for condition '{}'", condition->name()));
+      }
+      auto term_handle = graph_entity_->addSchedulingTerm<holoscan::gxf::GXFSchedulingTermWrapper>(
+          condition->name().c_str());
+      if (!term_handle) {
+        throw std::runtime_error(fmt::format(
+            "Failed to create GXFSchedulingTermWrapper term corresponding to condition '{}'",
+            condition->name()));
+      }
+      term_handle->set_condition(condition);
+      HOLOSCAN_LOG_TRACE("\tadded native condition with cid {} to entity with eid {}",
+                         term_handle->cid(),
+                         graph_entity_->eid());
+      // initialize as a native (non-GXF) resource
+      condition->initialize();
     }
   }
 }
@@ -262,6 +314,41 @@ void Operator::initialize_resources() {
   }
 }
 
+void Operator::find_ports_used_by_condition_args() {
+  for (auto& condition : conditions_) {
+    auto& cond_args = condition.second->args();
+
+    // replace any string "receiver" with Receiver or "transmitter" with Transmitter object.
+    const std::vector<std::string> connector_arg_names = {"receiver", "transmitter"};
+    for (const auto& arg_name : connector_arg_names) {
+      auto connector_arg_iter =
+          std::find_if(cond_args.begin(), cond_args.end(), [arg_name](const auto& arg) {
+            return (arg.name() == arg_name &&
+                    (arg.arg_type().element_type() == ArgElementType::kString ||
+                     arg.arg_type().element_type() == ArgElementType::kYAMLNode) &&
+                    arg.arg_type().container_type() == ArgContainerType::kNative);
+          });
+      if (connector_arg_iter != cond_args.end()) {
+        std::string connector_name;
+        if (connector_arg_iter->arg_type().element_type() == ArgElementType::kYAMLNode) {
+          auto node = std::any_cast<YAML::Node>(connector_arg_iter->value());
+          // skip if this was not a scalar node or does not contain a string
+          if (!node.IsScalar()) { continue; }
+          connector_name = node.as<std::string>();
+          if (connector_name.empty()) { continue; }
+        } else {
+          connector_name = std::any_cast<std::string>(connector_arg_iter->value());
+        }
+        if (arg_name == "receiver") {
+          non_default_input_ports_.emplace_back(std::move(connector_name));
+        } else {
+          non_default_output_ports_.emplace_back(std::move(connector_name));
+        }
+      }
+    }
+  }
+}
+
 void Operator::update_connector_arguments() {
   for (auto& condition : conditions_) {
     auto& cond_args = condition.second->args();
@@ -269,24 +356,23 @@ void Operator::update_connector_arguments() {
     // replace any string "receiver" with Receiver or "transmitter" with Transmitter object.
     const std::vector<std::string> connector_arg_names = {"receiver", "transmitter"};
     for (const auto& arg_name : connector_arg_names) {
-      // find the existing std::string or YAML::Node argument
-      auto new_arg_end =
-          std::remove_if(cond_args.begin(), cond_args.end(), [arg_name](const auto& arg) {
+      auto connector_arg_iter =
+          std::find_if(cond_args.begin(), cond_args.end(), [arg_name](const auto& arg) {
             return (arg.name() == arg_name &&
                     (arg.arg_type().element_type() == ArgElementType::kString ||
                      arg.arg_type().element_type() == ArgElementType::kYAMLNode) &&
                     arg.arg_type().container_type() == ArgContainerType::kNative);
           });
-      if (new_arg_end != cond_args.end()) {
+      if (connector_arg_iter != cond_args.end()) {
         std::string connector_name;
-        if (new_arg_end->arg_type().element_type() == ArgElementType::kYAMLNode) {
-          auto node = std::any_cast<YAML::Node>(new_arg_end->value());
+        if (connector_arg_iter->arg_type().element_type() == ArgElementType::kYAMLNode) {
+          auto node = std::any_cast<YAML::Node>(connector_arg_iter->value());
           // skip if this was not a scalar node or does not contain a string
           if (!node.IsScalar()) { continue; }
           connector_name = node.as<std::string>();
           if (connector_name.empty()) { continue; }
         } else {
-          connector_name = std::any_cast<std::string>(new_arg_end->value());
+          connector_name = std::any_cast<std::string>(connector_arg_iter->value());
         }
         HOLOSCAN_LOG_DEBUG(fmt::format(
             "'{}' argument was specified via a string. Replacing that argument with one "
@@ -313,12 +399,16 @@ void Operator::update_connector_arguments() {
                 "Operator '{}' does not have an output port '{}'", name_, connector_name));
           }
         }
-        HOLOSCAN_LOG_INFO(
+        HOLOSCAN_LOG_DEBUG(
             "Operator '{}': removing old arg '{}' and adding actual connector for port '{}'",
             name_,
             arg_name,
             connector_name);
         // remove the old argument and add the new one
+        auto new_arg_end =
+            std::remove_if(cond_args.begin(), cond_args.end(), [arg_name](const auto& arg) {
+              return arg.name() == arg_name;
+            });
         cond_args.erase(new_arg_end, cond_args.end());
         condition.second->add_arg(Arg(arg_name, it->second->connector()));
       }
@@ -381,6 +471,26 @@ void Operator::reset_graph_entities() {
   reset_iospec(spec_->outputs());
   ComponentBase::reset_graph_entities();
   graph_entity_.reset();
+}
+
+std::optional<std::shared_ptr<Receiver>> Operator::receiver(const std::string& port_name) {
+  auto inputs = spec_->inputs();
+  auto input_iter = inputs.find(port_name);
+  if (input_iter == inputs.end()) { return std::nullopt; }
+  auto connector = input_iter->second->connector();
+  auto receiver = std::dynamic_pointer_cast<Receiver>(connector);
+  if (receiver == nullptr) { return std::nullopt; }
+  return receiver;
+}
+
+std::optional<std::shared_ptr<Transmitter>> Operator::transmitter(const std::string& port_name) {
+  auto outputs = spec_->outputs();
+  auto output_iter = outputs.find(port_name);
+  if (output_iter == outputs.end()) { return std::nullopt; }
+  auto connector = output_iter->second->connector();
+  auto transmitter = std::dynamic_pointer_cast<Transmitter>(connector);
+  if (transmitter == nullptr) { return std::nullopt; }
+  return transmitter;
 }
 
 }  // namespace holoscan

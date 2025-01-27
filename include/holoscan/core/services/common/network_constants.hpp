@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,6 @@ constexpr uint32_t kMinNetworkPort = 10000;
 constexpr uint32_t kMaxNetworkPort = 32767;
 
 constexpr int32_t kDefaultAppDriverPort = 8765;
-constexpr int32_t kDefaultHealthCheckingPort = 8777;
 
 }  // namespace holoscan::service
 

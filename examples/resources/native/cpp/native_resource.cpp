@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,8 +72,8 @@ class MinimalNativeResourceApp : public holoscan::Application {
   void compose() override {
     using namespace holoscan;
 
-    auto res =
-        make_resource<MinimalNativeResource>("string_native_resource", from_config("str_value"));
+    auto res = make_resource<MinimalNativeResource>("string_native_resource",
+                                                    Arg("str_value", std::string("test_string")));
     auto res2 = make_resource<MinimalNativeResource>(
         "hardcoded_native_resource", Arg("str_value") = std::string("hardcoded_string"));
     auto res3 = make_resource<MinimalNativeResource>("empty_native_resource");

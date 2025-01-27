@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,11 +81,11 @@ void init_message_available(py::module_& m) {
            "receiver"_a = py::none(),
            "name"_a = "noname_message_available_condition"s,
            doc::MessageAvailableCondition::doc_MessageAvailableCondition)
-      .def_property("receiver",
-                    py::overload_cast<>(&MessageAvailableCondition::receiver),
-                    py::overload_cast<std::shared_ptr<gxf::GXFResource>>(
-                        &MessageAvailableCondition::receiver),
-                    doc::MessageAvailableCondition::doc_receiver)
+      .def_property(
+          "receiver",
+          py::overload_cast<>(&MessageAvailableCondition::receiver),
+          py::overload_cast<std::shared_ptr<Receiver>>(&MessageAvailableCondition::receiver),
+          doc::MessageAvailableCondition::doc_receiver)
       .def_property("min_size",
                     py::overload_cast<>(&MessageAvailableCondition::min_size),
                     py::overload_cast<size_t>(&MessageAvailableCondition::min_size),
