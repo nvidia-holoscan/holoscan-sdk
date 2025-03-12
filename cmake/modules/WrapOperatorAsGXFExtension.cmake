@@ -49,7 +49,7 @@ function(generate_gxf_registry_manifest)
     return()
   endif()
   if(CMAKE_CROSSCOMPILING)
-    message(STATUS "Skipping GXF registry manifest generation due to cross-compilation.")
+    message(FATAL_ERROR "GXF registry manifest generation is not available for cross-compilation.")
     return()
   endif()
 
@@ -301,16 +301,16 @@ function(generate_gxf_extension)
       )
     endif()
 
-    generate_gxf_registry_manifest(
-      EXTENSION_NAME ${EXTENSION_NAME}
-      EXTENSION_TARGET ${EXTENSION_TARGET_NAME}
-      MANIFEST_NAME ${EXTENSION_NAME}_manifest.yaml
-      BINARY_FILES
-        $<TARGET_FILE:${EXTENSION_TARGET_NAME}>
-        ${REGISTER_BINARY_FILES}
-      FORWARD_ARGS ${MANIFEST_FORWARD_ARGS}
-    )
     if(REGISTER)
+      generate_gxf_registry_manifest(
+        EXTENSION_NAME ${EXTENSION_NAME}
+        EXTENSION_TARGET ${EXTENSION_TARGET_NAME}
+        MANIFEST_NAME ${EXTENSION_NAME}_manifest.yaml
+        BINARY_FILES
+          $<TARGET_FILE:${EXTENSION_TARGET_NAME}>
+          ${REGISTER_BINARY_FILES}
+        FORWARD_ARGS ${MANIFEST_FORWARD_ARGS}
+      )
       register_gxf_extension(
         EXTENSION_NAME ${EXTENSION_NAME}
         MANIFEST "${EXTENSION_NAME}_manifest.yaml"
@@ -446,8 +446,17 @@ function(wrap_operator_as_gxf_extension)
   if(NOT DEFINED EXTENSION_TARGET_NAME)
     string(TOLOWER ${EXTENSION_NAME} EXTENSION_TARGET_NAME)
   endif()
+  unset(REGISTER_ARGS)
+  if(REGISTER)
+    set(REGISTER_ARGS
+      MAKE_MANIFEST
+      REGISTER
+      REGISTER_BINARY_FILES "$<TARGET_FILE:${CODELET_TARGET_NAME}>"
+      REGISTER_DEPENDS "${REGISTER_DEPENDS}"
+      EXTENSION_DEPENDS "${EXTENSION_DEPENDS}"
+    )
+  endif()
   generate_gxf_extension(
-    MAKE_MANIFEST
     EXTENSION_NAME ${EXTENSION_NAME}
     EXTENSION_TARGET_NAME ${EXTENSION_TARGET_NAME}
     INCLUDE_HEADERS
@@ -455,12 +464,12 @@ function(wrap_operator_as_gxf_extension)
       ${ARG_EXT_INCLUDE_HEADERS}
     PUBLIC_DEPENDS ${CODELET_TARGET_NAME}
     EXTENSION_TARGET_PROPERTIES ${EXTENSION_TARGET_PROPERTIES}
-    REGISTER_BINARY_FILES "$<TARGET_FILE:${CODELET_TARGET_NAME}>"
     EXTENSION_ID_HASH1 ${EXTENSION_ID_HASH1}
     EXTENSION_ID_HASH2 ${EXTENSION_ID_HASH2}
     EXTENSION_DISPLAY_NAME ${EXTENSION_DISPLAY_NAME}
     EXTENSION_CATEGORY ${EXTENSION_CATEGORY}
     EXTENSION_BRIEF ${EXTENSION_BRIEF}
     EXT_CPP_CONTENT "${EXT_CPP_CONTENT}"
+    ${REGISTER_ARGS}
   )
 endfunction()

@@ -25,15 +25,6 @@ through how to modify the python example code to run the application with an ult
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/python/byom.py
   ```
-* **using deb package install**:
-  ```bash
-  sudo /opt/nvidia/holoscan/examples/download_example_data
-  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  # Enable write permission in the sample model directory to write the optimized TensorRT engine file (use with caution)
-  sudo chown $USER /opt/nvidia/holoscan/examples/bring_your_own_model/model
-  python3 /opt/nvidia/holoscan/examples/bring_your_own_model/python/byom.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/bring_your_own_model/python/byom.py

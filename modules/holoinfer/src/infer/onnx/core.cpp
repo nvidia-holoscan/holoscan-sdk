@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,12 +34,14 @@ namespace inference {
 class OnnxInferImpl {
  public:
   // Internal only
-  OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, bool cuda_flag,
-                bool cuda_buf_in, bool cuda_buf_out);
+  OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
+                bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out);
   ~OnnxInferImpl();
 
   const std::string model_path_;
   const bool enable_fp16_;
+  const int32_t dla_core_;
+  const bool dla_gpu_fallback_;
   const bool use_cuda_;
   const bool cuda_buf_in_;
   const bool cuda_buf_out_;
@@ -216,19 +218,26 @@ int OnnxInferImpl::set_holoscan_inf_onnx_session_options() {
     trt_engine_cache_path.replace_extension("");
     trt_engine_cache_path += "_onnx_cache_" + Ort::GetVersionString();
 
-    const std::vector<const char*> option_keys = {
-        "trt_fp16_enable",
-        "trt_engine_cache_enable",
-        "trt_engine_cache_path",
-        "trt_timing_cache_enable",
-        "trt_timing_cache_path",
-    };
+    if (!dla_gpu_fallback_) {
+      HOLOSCAN_LOG_WARN("Onnxruntime backend DLA GPU fallback can't be disabled");
+    }
+
+    const std::vector<const char*> option_keys = {"trt_fp16_enable",
+                                                  "trt_engine_cache_enable",
+                                                  "trt_engine_cache_path",
+                                                  "trt_timing_cache_enable",
+                                                  "trt_timing_cache_path",
+                                                  "trt_dla_enable",
+                                                  "trt_dla_core"};
+    const std::string dla_core_string = std::to_string(dla_core_);
     const std::vector<const char*> option_values = {
         enable_fp16_ ? "1" : "0",       // trt_fp16_enable
         "1",                            // trt_engine_cache_enable
         trt_engine_cache_path.c_str(),  // trt_engine_cache_path
         "1",                            // trt_timing_cache_enable
         trt_engine_cache_path.c_str(),  // trt_timing_cache_path
+        dla_core_ > -1 ? "1" : "0",     // trt_dla_enable
+        dla_core_string.c_str(),        // trt_dla_core
     };
     assert(option_keys.size() == option_values.size());
     Ort::ThrowOnError(Ort::GetApi().UpdateTensorRTProviderOptions(
@@ -252,14 +261,21 @@ int OnnxInferImpl::set_holoscan_inf_onnx_session_options() {
 }
 
 extern "C" OnnxInfer* NewOnnxInfer(const std::string& model_file_path, bool enable_fp16,
-                                   bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out) {
-  return new OnnxInfer(model_file_path, enable_fp16, cuda_flag, cuda_buf_in, cuda_buf_out);
+                                   int32_t dla_core, bool dla_gpu_fallback, bool cuda_flag,
+                                   bool cuda_buf_in, bool cuda_buf_out) {
+  return new OnnxInfer(model_file_path,
+                       enable_fp16,
+                       dla_core,
+                       dla_gpu_fallback,
+                       cuda_flag,
+                       cuda_buf_in,
+                       cuda_buf_out);
 }
 
-OnnxInfer::OnnxInfer(const std::string& model_file_path, bool enable_fp16, bool cuda_flag,
-                     bool cuda_buf_in, bool cuda_buf_out)
-    : impl_(new OnnxInferImpl(model_file_path, enable_fp16, cuda_flag, cuda_buf_in, cuda_buf_out)) {
-}
+OnnxInfer::OnnxInfer(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
+                     bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out)
+    : impl_(new OnnxInferImpl(model_file_path, enable_fp16, dla_core, dla_gpu_fallback, cuda_flag,
+                              cuda_buf_in, cuda_buf_out)) {}
 
 OnnxInfer::~OnnxInfer() {
   if (impl_) {
@@ -291,10 +307,13 @@ static void logging_function(void* param, OrtLoggingLevel severity, const char* 
   HOLOSCAN_LOG_CALL(log_level, "Onnxruntime {} {}", code_location, message);
 }
 
-OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, bool cuda_flag,
-                             bool cuda_buf_in, bool cuda_buf_out)
+OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
+                             bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in,
+                             bool cuda_buf_out)
     : model_path_(model_file_path),
       enable_fp16_(enable_fp16),
+      dla_core_(dla_core),
+      dla_gpu_fallback_(dla_gpu_fallback),
       use_cuda_(cuda_flag),
       cuda_buf_in_(cuda_buf_in),
       cuda_buf_out_(cuda_buf_out) {

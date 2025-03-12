@@ -69,10 +69,6 @@ jq (https://github.com/jqlang/jq)
 Copyright (C) 2012 Stephen Dolan authors.
 Licensed under MIT (https://github.com/jqlang/jq/raw/master/COPYING)
 
-AJA NTV2 SDK (https://github.com/nvidia-holoscan/libajantv2)
-Copyright (c) 2023 AJA Video Systems
-Licensed under MIT (https://github.com/nvidia-holoscan/libajantv2/blob/holoscan/LICENSE)
-
 libdecor-0-plugin-1-cairo (https://packages.ubuntu.com/jammy/libdecor-0-plugin-1-cairo)
 2010 Intel Corporation
 2011 Benjamin Franzke

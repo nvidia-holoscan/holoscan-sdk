@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,6 +114,18 @@ void init_application(py::module_& m) {
            &Application::run,
            doc::Application::doc_run,
            py::call_guard<py::gil_scoped_release>())  // note: virtual function/should release GIL
+      .def_property("is_metadata_enabled",
+                    py::overload_cast<>(&Application::is_metadata_enabled, py::const_),
+                    py::overload_cast<bool>(&Application::is_metadata_enabled),
+                    doc::Application::doc_is_metadata_enabled)
+      .def("enable_metadata",
+           &Application::enable_metadata,
+           "enabled"_a,
+           doc::Application::doc_enable_metadata)
+      .def_property("metadata_policy",
+                    py::overload_cast<>(&Application::metadata_policy, py::const_),
+                    py::overload_cast<MetadataPolicy>(&Application::metadata_policy),
+                    doc::Application::doc_metadata_policy)
       .def(
           "track_distributed",
           // This version of `track_distributed differs from the C++ API only in return type, using

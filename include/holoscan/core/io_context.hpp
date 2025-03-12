@@ -56,19 +56,27 @@ struct NoAccessibleMessageType : public std::string {
   explicit NoAccessibleMessageType(std::string&& message) : std::string(std::move(message)) {}
 };
 
+/**
+ * @brief Get a well-formed port name from a given name and IO specification list.
+ *
+ * When the input name is null or empty, this method attempts to determine an appropriate
+ * port name based on the following rules:
+ * - If there is exactly one port, use its name
+ * - Otherwise return an empty string
+ *
+ * @param name The input port name (can be null or empty).
+ * @param io_list Map of IO specifications containing port names and their specs.
+ * @return A well-formed port name or empty string if no appropriate name can be determined.
+ */
 static inline std::string get_well_formed_name(
     const char* name, const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_list) {
-  std::string well_formed_name;
-  if (name == nullptr || name[0] == '\0') {
-    if (io_list.size() == 1) {
-      well_formed_name = io_list.begin()->first;
-    } else {
-      well_formed_name = "";
-    }
-  } else {
-    well_formed_name = name;
-  }
-  return well_formed_name;
+  // If name is provided, use it directly
+  if (name != nullptr && name[0] != '\0') { return name; }
+
+  // Handle empty name with execution port case (relatively common) -> use the only port
+  if (io_list.size() == 1) { return io_list.begin()->first; }
+
+  return "";
 }
 
 /**
@@ -163,6 +171,16 @@ class InputContext {
     return true;
   }
 
+ protected:
+  /**
+   * @brief The input data type.
+   */
+  enum class InputType {
+    kGXFEntity,  ///< The message data to receive is a GXF entity.
+    kAny,        ///< The message data to receive is a std::any.
+  };
+
+ public:
   /**
    * @brief Receive a message from the input port with the given name.
    *
@@ -206,7 +224,14 @@ class InputContext {
   template <typename DataT>
   holoscan::expected<DataT, holoscan::RuntimeError> receive(const char* name = nullptr) {
     auto& params = op_->spec()->params();
-    auto param_it = params.find(std::string(name));
+    std::string input_name = holoscan::get_well_formed_name(name, inputs_);
+    auto param_it = params.find(input_name);
+    InputType in_type = InputType::kAny;
+    // Check if the type is a GXF entity or a vector of GXF entities
+    if constexpr (is_one_of_derived_v<typename holoscan::type_info<DataT>::element_type,
+                                      nvidia::gxf::Entity>) {
+      in_type = InputType::kGXFEntity;
+    }
 
     if constexpr (holoscan::is_vector_v<DataT>) {
       DataT input_vector;
@@ -215,22 +240,24 @@ class InputContext {
       if (param_it != params.end()) {
         auto& param_wrapper = param_it->second;
         if (!is_valid_param_type(param_wrapper.arg_type())) {
-          return make_unexpected<holoscan::RuntimeError>(
-              create_receive_error(name, "Input parameter is not of type 'std::vector<IOSpec*>'"));
+          return make_unexpected<holoscan::RuntimeError>(create_receive_error(
+              input_name.c_str(), "Input parameter is not of type 'std::vector<IOSpec*>'"));
         }
-        if (!fill_input_vector_from_params(param_wrapper, name, input_vector, error_message)) {
+        if (!fill_input_vector_from_params(
+                param_wrapper, input_name.c_str(), input_vector, in_type, error_message)) {
           return make_unexpected<holoscan::RuntimeError>(
-              create_receive_error(name, error_message.c_str()));
+              create_receive_error(input_name.c_str(), error_message.c_str()));
         }
       } else {
-        if (!fill_input_vector_from_inputs(name, input_vector, error_message)) {
+        if (!fill_input_vector_from_inputs(
+                input_name.c_str(), input_vector, in_type, error_message)) {
           return make_unexpected<holoscan::RuntimeError>(
-              create_receive_error(name, error_message.c_str()));
+              create_receive_error(input_name.c_str(), error_message.c_str()));
         }
       }
       return input_vector;
     } else {
-      return receive_single_value<DataT>(name);
+      return receive_single_value<DataT>(input_name.c_str(), in_type);
     }
   }
 
@@ -292,10 +319,7 @@ class InputContext {
    * @param name The name of the input port
    * @return True if the input port is empty or by default. Otherwise, false.
    */
-  virtual bool empty_impl(const char* name = nullptr) {
-    (void)name;
-    return true;
-  }
+  virtual bool empty_impl([[maybe_unused]] const char* name = nullptr) { return true; }
   /**
    * @brief The implementation of the `receive` method.
    *
@@ -307,9 +331,9 @@ class InputContext {
    * found.
    * @return The data received from the input port.
    */
-  virtual std::any receive_impl(const char* name = nullptr, bool no_error_message = false) {
-    (void)name;
-    (void)no_error_message;
+  virtual std::any receive_impl([[maybe_unused]] const char* name = nullptr,
+                                [[maybe_unused]] InputType in_type = InputType::kAny,
+                                [[maybe_unused]] bool no_error_message = false) {
     return nullptr;
   }
 
@@ -321,14 +345,15 @@ class InputContext {
 
   template <typename DataT>
   inline bool fill_input_vector_from_params(ParameterWrapper& param_wrapper, const char* name,
-                                            DataT& input_vector, std::string& error_message) {
+                                            DataT& input_vector, InputType in_type,
+                                            std::string& error_message) {
     auto& param = *std::any_cast<Parameter<std::vector<IOSpec*>>*>(param_wrapper.value());
     int num_inputs = param.get().size();
     input_vector.reserve(num_inputs);
 
     for (int index = 0; index < num_inputs; ++index) {
       std::string port_name = fmt::format("{}:{}", name, index);
-      auto value = receive_impl(port_name.c_str(), true);
+      auto value = receive_impl(port_name.c_str(), in_type, true);
       const std::type_info& value_type = value.type();
 
       if (value_type == typeid(kNoReceivedMessage)) {
@@ -346,7 +371,7 @@ class InputContext {
 
   template <typename DataT>
   inline bool fill_input_vector_from_inputs(const char* name, DataT& input_vector,
-                                            std::string& error_message) {
+                                            InputType in_type, std::string& error_message) {
     const auto& inputs = op_->spec()->inputs();
     const auto input_it = inputs.find(std::string(name));
 
@@ -354,7 +379,7 @@ class InputContext {
 
     int index = 0;
     while (true) {
-      auto value = receive_impl(name);
+      auto value = receive_impl(name, in_type);
       const std::type_info& value_type = value.type();
 
       if (value_type == typeid(kNoReceivedMessage)) {
@@ -418,8 +443,14 @@ class InputContext {
       handle_null_value<DataT>(input_vector);
     } else {
       try {
-        auto casted_value = std::any_cast<typename DataT::value_type>(value);
-        input_vector.push_back(casted_value);
+        if constexpr (is_one_of_v<typename DataT::value_type, nvidia::gxf::Entity>) {
+          // receive_impl returns a holoscan::gxf::Entity so we need to cast it to the correct type
+          auto casted_value = std::any_cast<holoscan::gxf::Entity>(value);
+          input_vector.push_back(casted_value);
+        } else {
+          auto casted_value = std::any_cast<typename DataT::value_type>(value);
+          input_vector.push_back(casted_value);
+        }
       } catch (const std::bad_any_cast& e) {
         is_bad_any_cast = true;
       } catch (const std::exception& e) {
@@ -499,8 +530,9 @@ class InputContext {
   }
 
   template <typename DataT>
-  inline holoscan::expected<DataT, holoscan::RuntimeError> receive_single_value(const char* name) {
-    auto value = receive_impl(name);
+  inline holoscan::expected<DataT, holoscan::RuntimeError> receive_single_value(const char* name,
+                                                                                InputType in_type) {
+    auto value = receive_impl(name, in_type);
     const std::type_info& value_type = value.type();
 
     if (value_type == typeid(NoMessageType)) {
@@ -509,7 +541,7 @@ class InputContext {
     } else if (value_type == typeid(NoAccessibleMessageType)) {
       auto casted_value = std::any_cast<NoAccessibleMessageType>(value);
       HOLOSCAN_LOG_ERROR(static_cast<std::string>(casted_value));
-      auto error_message = std::move(static_cast<std::string>(casted_value));
+      auto error_message = static_cast<std::string>(casted_value);
       return make_unexpected<holoscan::RuntimeError>(
           create_receive_error(name, error_message.c_str()));
     }
@@ -521,7 +553,8 @@ class InputContext {
         return handle_null_value<DataT>();
       } else if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) {
         // Handle nvidia::gxf::Entity
-        return std::any_cast<DataT>(value);
+        // receive_impl returns a holoscan::gxf::Entity so we need to cast it to the correct type
+        return std::any_cast<holoscan::gxf::Entity>(value);
       } else if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
         // Handle holoscan::TensorMap
         TensorMap tensor_map;
@@ -628,57 +661,16 @@ class OutputContext {
    */
   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs() const { return outputs_; }
 
+ protected:
   /**
    * @brief The output data type.
    */
   enum class OutputType {
-    kSharedPointer,  ///< The message data to send is a shared pointer.
-    kGXFEntity,      ///< The message data to send is a GXF entity.
-    kAny,            ///< The message data to send is a std::any.
+    kGXFEntity,  ///< The message data to send is a GXF entity.
+    kAny,        ///< The message data to send is a std::any.
   };
 
-  /**
-   * @brief Send a shared pointer of the message data to the output port with the given name.
-   *
-   * The object to be sent must be a shared pointer of the message data and the output port with
-   * the given name must exist.
-   *
-   * If the operator has a single output port, the output port name can be omitted.
-   *
-   * Example:
-   *
-   * ```cpp
-   * class PingTxOp : public holoscan::ops::GXFOperator {
-   *  public:
-   *   HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(PingTxOp, holoscan::ops::GXFOperator)
-   *
-   *   PingTxOp() = default;
-   *
-   *   void setup(OperatorSpec& spec) override {
-   *     spec.output<ValueData>("out");
-   *   }
-   *
-   *   void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
-   *                [[maybe_unused]] ExecutionContext& context) override {
-   *     auto value = std::make_shared<ValueData>(7);
-   *     op_output.emit(value, "out");
-   *   }
-   * };
-   * ```
-   *
-   * @tparam DataT The type of the data to send.
-   * @param data The shared pointer to the data.
-   * @param name The name of the output port.
-   * @param acq_timestamp The time when the message is acquired. For instance, this would generally
-   *                      be the timestamp of the camera when it captures an image.
-   */
-  template <typename DataT, typename = std::enable_if_t<!holoscan::is_one_of_derived_v<
-                                DataT, nvidia::gxf::Entity, std::any>>>
-  void emit(std::shared_ptr<DataT>& data, const char* name = nullptr,
-            const int64_t acq_timestamp = -1) {
-    emit_impl(data, name, OutputType::kSharedPointer, acq_timestamp);
-  }
-
+ public:
   /**
    * @brief Send message data (GXF Entity) to the output port with the given name.
    *
@@ -748,8 +740,8 @@ class OutputContext {
    *
    * This method is for interoperability with arbitrary data types.
    *
-   * The object to be sent can be any type except the shared pointer (std::shared_ptr<T>) or the
-   * GXF Entity (holoscan::gxf::Entity) type, and the output port with the given name must exist.
+   * The object to be sent can be any type except GXF Entity (holoscan::gxf::Entity), and
+   * the output port with the given name must exist.
    *
    * If the operator has a single output port, the output port name can be omitted.
    *
@@ -764,7 +756,7 @@ class OutputContext {
    *
    *   void setup(OperatorSpec& spec) override {
    *     spec.input<holoscan::gxf::Entity>("in");
-   *     spec.output<holoscan::gxf::Entity>("out");
+   *     spec.output<std::shared_ptr<holoscan::Tensor>>("out");
    *   }
    *
    *   void compute(InputContext& op_input, OutputContext& op_output,
@@ -773,23 +765,19 @@ class OutputContext {
    *     // The type of `in_message` is 'holoscan::gxf::Entity'.
    *     auto in_message = op_input.receive<holoscan::gxf::Entity>("in");
    *     // The type of `tensor` is 'std::shared_ptr<holoscan::Tensor>'.
-   *     auto tensor = in_message.get<Tensor>();
+   *     auto tensor = in_message.get<Tensor>();  // type: std::shared_ptr<holoscan::Tensor>
    *
    *     // Process with 'tensor' here.
    *     // ...
    *
-   *     // Create a new message (Entity)
-   *     auto out_message = holoscan::gxf::Entity::New(&context);
-   *     out_message.add(tensor, "tensor");
-   *
-   *     // Send the processed message.
-   *     op_output.emit(out_message, "out");
+   *     // Send the processed tensor.
+   *     op_output.emit(tensor, "out");
    *   }
    * };
    * ```
    *
-   * @tparam DataT The type of the data to send. It can be any type except the shared pointer
-   * (std::shared_ptr<T>) or the GXF Entity (holoscan::gxf::Entity) type.
+   * @tparam DataT The type of the data to send. It can be any type except GXF Entity
+   * (holoscan::gxf::Entity).
    * @param data The entity object to send (as `std::any`).
    * @param name The name of the output port.
    * @param acq_timestamp The time when the message is acquired. For instance, this would generally
@@ -801,6 +789,18 @@ class OutputContext {
     emit_impl(std::move(data), name, OutputType::kAny, acq_timestamp);
   }
 
+  /**
+   * @brief Send the message data (holoscan::TensorMap) to the output port with the given name.
+   *
+   * This method is for interoperability with holoscan::TensorMap type.
+   *
+   * The output port with the given name must exist.
+   *
+   * @param data The tensor map object to send (as `holoscan::TensorMap`).
+   * @param name The name of the output port.
+   * @param acq_timestamp The time when the message is acquired. For instance, this would generally
+   *                      be the timestamp of the camera when it captures an image.
+   */
   void emit(holoscan::TensorMap& data, const char* name = nullptr,
             const int64_t acq_timestamp = -1) {
     auto out_message = holoscan::gxf::Entity::New(execution_context_);
@@ -849,7 +849,7 @@ class OutputContext {
    */
   virtual void emit_impl([[maybe_unused]] std::any data,
                          [[maybe_unused]] const char* name = nullptr,
-                         [[maybe_unused]] OutputType out_type = OutputType::kSharedPointer,
+                         [[maybe_unused]] OutputType out_type = OutputType::kAny,
                          [[maybe_unused]] const int64_t acq_timestamp = -1) {}
 
   ExecutionContext* execution_context_ =

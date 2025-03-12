@@ -33,11 +33,6 @@ There are three operators involved in this example (tx -> mx -> rx):
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/ping_custom_op.py
   ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/ping_custom_op/python/ping_custom_op.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/ping_custom_op/python/ping_custom_op.py

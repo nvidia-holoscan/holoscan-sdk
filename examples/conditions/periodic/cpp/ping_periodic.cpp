@@ -61,10 +61,13 @@ class App : public holoscan::Application {
     using namespace holoscan;
     using namespace std::chrono_literals;
 
-    auto tx =
-        make_operator<ops::PingTxOp>("tx",
-                                     make_condition<CountCondition>("count-condition", 10),
-                                     make_condition<PeriodicCondition>("periodic-condition", 0.2s));
+    auto count_cond = make_condition<CountCondition>("count-condition", 10);
+    auto periodic_cond = make_condition<PeriodicCondition>(
+        "periodic-condition", 0.2s, PeriodicConditionPolicy::kMinTimeBetweenTicks);
+
+    // Create operators
+    auto tx = make_operator<ops::PingTxOp>("tx", count_cond, periodic_cond);
+
     // Note:: An alternative to using the standard C++ time literals
     // (e.g., `5ns`, `10us`, `1ms`, `0.5s`, `1min`, `0.5h`, etc.)
     // is to use a string format
@@ -79,7 +82,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main([[maybe_unused]] int argc, char** argv) {
+int main() {
   auto app = holoscan::make_application<App>();
   app->run();
   return 0;

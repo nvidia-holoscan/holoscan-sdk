@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.9.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.0.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v2.9.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.0.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -645,7 +645,7 @@ Please use `RMMAllocator` for this purpose. It supports simultaneous memory pool
 
 **Q1: What performance tools are available in Holoscan SDK?**
 
-A1: Holoscan SDK provides several performance tools, including Data Flow Tracking, GXF job statistics, and a Video Pipeline Latency Tool.
+A1: Holoscan SDK provides several performance tools, including Data Flow Tracking and GXF job statistics.
 
 **Q2: What is Data Flow Tracking in Holoscan SDK?**
 
@@ -670,18 +670,6 @@ A6:You can enable GXF job statistics by setting the environment variable `HOLOSC
 **Q7: Can I save GXF job statistics to a file?**
 
 A7:Yes, you can save GXF job statistics to a JSON file by setting the `HOLOSCAN_GXF_JOB_STATISTICS_PATH` environment variable. For more information on the GXF job statistics, please refer to [this](https://docs.nvidia.com/holoscan/sdk-user-guide/gxf_job_statistics.html) section in the User Guide.
-
-**Q8: How does the Video Pipeline Latency Tool work?**
-
-A8:It generates a sequence of known video frames, transfers them back to an input component using a physical loopback cable, and measures the latency at various stages of the process.
-
-**Q9: Can the Video Pipeline Latency Tool simulate GPU workload?**
-
-A9:Yes, the tool has an option to simulate GPU workload by running an arbitrary CUDA loop a specified number of times before frame generation. For more information on the Video Pipeline LAtency Tool , please refer to [this](https://docs.nvidia.com/holoscan/sdk-user-guide/latency_tool.html) section in the User Guide.
-
-**Q10: What types of producers and consumers are supported by the Video Pipeline Latency Tool?**
-
-A10:The tool supports various producers (OpenGL GPU Direct Rendering, GStreamer GPU Rendering, AJA Video Systems) and consumers (V4L2, GStreamer, AJA Video Systems) for different video input/output scenarios.
 
 **Q11:How do NVTX markers work in Holoscan SDK?**
 

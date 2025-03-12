@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,7 +51,6 @@ void add_positional_condition_and_resource_args(Operator* op, const py::args& ar
 ////////////////////////////////////////////////////////////////////////////////
 // The following methods have been adapted from kwarg_handling.hpp to enhance
 // the `kwargs_to_arglist()` method with these updates:
-// - Remove dependency on "holoscan/operators/aja_source/ntv2channel.hpp"
 // - Convert `py::object` to `Arg` using YAML::Node type, eliminating the need
 //   for a uniform type in the `Arg` class.
 //   - Except for `Resource` and `Condition` types, which are handled separately.

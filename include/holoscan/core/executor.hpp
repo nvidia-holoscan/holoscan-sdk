@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_EXECUTORS_EXECUTOR_HPP
-#define HOLOSCAN_CORE_EXECUTORS_EXECUTOR_HPP
+#ifndef HOLOSCAN_CORE_EXECUTOR_HPP
+#define HOLOSCAN_CORE_EXECUTOR_HPP
 
 #include <cstdint>
 #include <functional>
@@ -104,6 +104,13 @@ class Executor {
    * @return The context.
    */
   void* context() { return context_; }
+
+  /**
+   * @brief Get whether the context is owned by the executor.
+   *
+   * @return true if the context is owned by the executor. Otherwise, false.
+   */
+  bool owns_context() { return owns_context_; }
 
   // add uint64_t context getters/setters for Python API
   void context_uint64(uint64_t context) { context_ = reinterpret_cast<void*>(context); }
@@ -237,12 +244,29 @@ class Executor {
     return false;
   }
 
+  /**
+   * @brief Add a control flow between two operators.
+   *
+   * This method is called by Fragment::add_flow() to add a control flow between two operators.
+   *
+   * @param upstream_op The shared pointer to the upstream operator.
+   * @param downstream_op The shared pointer to the downstream operator.
+   * @return true if the control flow is added successfully. Otherwise, false.
+   */
+  virtual bool add_control_flow(const std::shared_ptr<Operator>& upstream_op,
+                                const std::shared_ptr<Operator>& downstream_op) {
+    (void)upstream_op;
+    (void)downstream_op;
+    return false;
+  }
+
   Fragment* fragment_ = nullptr;                         ///< The fragment of the executor.
   void* context_ = nullptr;                              ///< The context.
+  bool owns_context_ = false;  ///< Whether the context is owned by the executor.
   std::shared_ptr<ExtensionManager> extension_manager_;  ///< The extension manager.
   std::exception_ptr exception_;                         ///< The stored exception.
 };
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_EXECUTORS_EXECUTOR_HPP */
+#endif /* HOLOSCAN_CORE_EXECUTOR_HPP */

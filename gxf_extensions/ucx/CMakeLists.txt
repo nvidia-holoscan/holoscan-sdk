@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,21 +40,21 @@ target_link_libraries(gxf_ucx_holoscan
   PRIVATE holoscan_security_flags
 )
 
-include(WrapOperatorAsGXFExtension)
-generate_gxf_registry_manifest(
-  EXTENSION_TARGET gxf_ucx_holoscan
-  EXTENSION_NAME UcxHoloscanExtension
-  FORWARD_ARGS
-  --uuid "e549f7ce-9ecf-4d53-8156-418727c176df"
-  --version "${holoscan_VERSION}"
-  --extension-dependencies
-    $<TARGET_FILE:GXF::std>
-    $<TARGET_FILE:GXF::multimedia>
-    $<TARGET_FILE:GXF::serialization>
-  --headers
-    "${CMAKE_CURRENT_SOURCE_DIR}/ucx_holoscan_component_serializer.hpp"
-)
 if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
+  include(WrapOperatorAsGXFExtension)
+  generate_gxf_registry_manifest(
+    EXTENSION_TARGET gxf_ucx_holoscan
+    EXTENSION_NAME UcxHoloscanExtension
+    FORWARD_ARGS
+    --uuid "e549f7ce-9ecf-4d53-8156-418727c176df"
+    --version "${holoscan_VERSION}"
+    --extension-dependencies
+      $<TARGET_FILE:GXF::std>
+      $<TARGET_FILE:GXF::multimedia>
+      $<TARGET_FILE:GXF::serialization>
+    --headers
+      "${CMAKE_CURRENT_SOURCE_DIR}/ucx_holoscan_component_serializer.hpp"
+  )
   register_gxf_extension(
     EXTENSION_NAME UcxHoloscanExtension
     MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/UcxHoloscanExtension_manifest.yaml"

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,10 @@
  */
 #ifndef MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_HPP
 #define MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_HPP
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <nvrtc.h>
 
 #include <iostream>
 #include <map>
@@ -89,10 +93,14 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    *
    * @param process_operations   Map of tensor name as key, mapped to list of operations to be
    *                             applied in sequence on the tensor
+   * @param custom_kernels       Map of custom kernel identifier, mapped to related value as a
+   *                             string
+   * @param config_path          Configuration path as a string
    *
    * @return InferStatus with appropriate holoinfer_code and message.
    */
-  InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
+  InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
+                         const std::string config_path);
 
   /**
    * Process the tensors with operations as initialized.

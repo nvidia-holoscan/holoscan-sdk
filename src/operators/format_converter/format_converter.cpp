@@ -557,7 +557,7 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
   // Emit the tensor
   auto result = gxf::Entity(std::move(out_message.value()));
-  op_output.emit(result);
+  op_output.emit(result, "tensor");
 }
 
 nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(

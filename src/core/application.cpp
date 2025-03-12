@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <mutex>  // for std::call_once
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -31,6 +32,7 @@
 #include "holoscan/core/dataflow_tracker.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/metadata.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
@@ -212,9 +214,10 @@ void Application::set_v4l2_env() {
   const char* env_value = std::getenv("HOLOSCAN_DISABLE_V4L2_RTLD_NODELETE");
   // Workaround to avoid v4l2 seg fault https://nvbugs/4210082
   if (env_value == nullptr) {
-      HOLOSCAN_LOG_DEBUG("Enable the libnvv4l2 workaround by setting the "
-              "`LIBV4L2_ENABLE_RTLD_NODELETE` environment variable.");
-      setenv("LIBV4L2_ENABLE_RTLD_NODELETE", "1", 0);
+    HOLOSCAN_LOG_DEBUG(
+        "Enable the libnvv4l2 workaround by setting the "
+        "`LIBV4L2_ENABLE_RTLD_NODELETE` environment variable.");
+    setenv("LIBV4L2_ENABLE_RTLD_NODELETE", "1", 0);
   }
 }
 
@@ -237,6 +240,32 @@ std::future<void> Application::run_async() {
 
   set_ucx_env();
   return driver().run_async();
+}
+
+bool Application::is_metadata_enabled() const {
+  return is_metadata_enabled_;
+}
+
+void Application::is_metadata_enabled(bool enabled) {
+  static std::once_flag warn_flag;
+  std::call_once(warn_flag, []() {
+    HOLOSCAN_LOG_WARN(
+        "The Application::is_metadata_enabled(bool) setter is deprecated. Please use "
+        "Application::enable_metadata(bool) instead.");
+  });
+  is_metadata_enabled_ = enabled;
+}
+
+void Application::enable_metadata(bool enabled) {
+  is_metadata_enabled_ = enabled;
+}
+
+MetadataPolicy Application::metadata_policy() const {
+  return metadata_policy_;
+}
+
+void Application::metadata_policy(MetadataPolicy policy) {
+  metadata_policy_ = policy;
 }
 
 std::unordered_map<std::string, DataFlowTracker*> Application::track_distributed(

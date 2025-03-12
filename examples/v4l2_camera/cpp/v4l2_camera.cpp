@@ -51,7 +51,8 @@ class V4L2FormatTranslateOp : public holoscan::Operator {
     spec.output<std::vector<HolovizOp::InputSpec>>("output_specs");
   }
 
-  void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&) override {
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     if (!is_metadata_enabled()) {
       throw std::runtime_error("Metadata needs to be enabled for this operator");
     }
@@ -130,8 +131,10 @@ class App : public holoscan::Application {
     add_flow(format_translate, visualizer, {{"output_specs", "input_specs"}});
     add_flow(source, visualizer, {{"signal", "receivers"}});
 
-    // enable metadata so V4L2FormatTranslateOp can translate the format
-    is_metadata_enabled(true);
+    // need metadata so V4L2FormatTranslateOp can translate the format
+
+    // As of Holoscan 3.0, metadata is enabled by default, but if we wanted to explicitly
+    // disable it we could call `enable_metadata(false);` here
   }
 };
 

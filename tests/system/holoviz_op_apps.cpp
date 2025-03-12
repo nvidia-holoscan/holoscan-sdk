@@ -290,7 +290,10 @@ class FormatApp : public holoscan::Application {
         std::vector<std::vector<float>> color_lut;
         color_lut.emplace_back(std::vector<float>({1.f, 1.f, 1.f, 1.f}));
         args = ArgList({Arg("color_lut", color_lut)});
-      }
+      } break;
+      default:
+        // do nothing for FAIL_VIDEO_BUFFER_INPUT_TYPE_DETECT, DETECT_CROSSES
+        break;
     }
 
     auto renderer = make_operator<ops::HolovizOp>(

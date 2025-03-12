@@ -45,7 +45,7 @@ namespace holoscan {
  * - **cpu_data_only** (bool, optional): This flag should be set to true on a system which does not
  * have any (visible) CUDA capable devices.
  * - **enable_async** (bool, optional): If false, synchronous operation of message transmission
- * will be used (Default: true). The `HOLOSCAN_UCX_ASYNCHRONOUS` environment variable can be used
+ * will be used (Default: false). The `HOLOSCAN_UCX_ASYNCHRONOUS` environment variable can be used
  * to set the value that Holoscan will use for this parameter when creating its internal
  * `UcxNetworkContext`.
  */

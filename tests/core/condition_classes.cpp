@@ -24,9 +24,9 @@
 #include <utility>
 #include <vector>
 
+#include "../utils.hpp"
 #include "common/assert.hpp"
 #include "holoscan/core/arg.hpp"
-#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/asynchronous.hpp"
@@ -36,15 +36,17 @@
 #include "holoscan/core/conditions/gxf/cuda_event.hpp"
 #include "holoscan/core/conditions/gxf/cuda_stream.hpp"
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
-#include "holoscan/core/conditions/gxf/periodic.hpp"
+#include "holoscan/core/conditions/gxf/expiring_message.hpp"
+#include "holoscan/core/conditions/gxf/memory_available.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
 #include "holoscan/core/conditions/gxf/multi_message_available.hpp"
 #include "holoscan/core/conditions/gxf/multi_message_available_timeout.hpp"
-#include "holoscan/core/conditions/gxf/expiring_message.hpp"
+#include "holoscan/core/conditions/gxf/periodic.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/graph.hpp"
-#include "../utils.hpp"
+#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
 using namespace std::string_literals;
 
@@ -208,6 +210,35 @@ TEST(ConditionClasses, TestDownstreamMessageAffordableConditionSizeMethod) {
   auto condition = F.make_condition<DownstreamMessageAffordableCondition>(name, arglist);
   condition->min_size(16);
   EXPECT_EQ(condition->min_size(), 16);
+}
+
+TEST(ConditionClasses, TestMemoryAvailableCondition) {
+  Fragment F;
+  const std::string name{"memory-available-condition"};
+  ArgList arglist{Arg{"allocator", F.make_resource<UnboundedAllocator>()},
+                  Arg{"min_bytes", static_cast<uint64_t>(1'000'000)}};
+  auto condition = F.make_condition<MemoryAvailableCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<MemoryAvailableCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::MemoryAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
+TEST(ConditionClasses, TestMemoryAvailableConditionMinBlocks) {
+  Fragment F;
+  const std::string name{"memory-available-condition"};
+  ArgList arglist{Arg{"allocator", F.make_resource<UnboundedAllocator>()},
+                  Arg{"min_blocks", static_cast<uint64_t>(2)}};
+  auto condition = F.make_condition<MemoryAvailableCondition>(name, arglist);
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<MemoryAvailableCondition>(arglist)));
+  EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::MemoryAvailableSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
+TEST(ConditionClasses, TestMemoryAvailableConditionDefaultConstructor) {
+  Fragment F;
+  auto condition = F.make_condition<MemoryAvailableCondition>();
 }
 
 TEST(ConditionClasses, TestMessageAvailableCondition) {
@@ -415,12 +446,31 @@ TEST(ConditionClasses, TestMultiMessageAvailableTimeoutConditionPerReceiverStrin
 TEST(ConditionClasses, TestPeriodicCondition) {
   Fragment F;
   const std::string name{"periodic-condition"};
-  auto condition =
-      F.make_condition<PeriodicCondition>(name, Arg{"recess_period", std::string("1000000")});
+  auto condition = F.make_condition<PeriodicCondition>(
+      name,
+      Arg{"recess_period", std::string("1000000")},
+      Arg{"policy", PeriodicConditionPolicy::kMinTimeBetweenTicks});
   EXPECT_EQ(condition->name(), name);
   EXPECT_EQ(typeid(condition), typeid(std::make_shared<PeriodicCondition>(1000000)));
   EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::PeriodicSchedulingTerm"s);
   EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+  // have to initialize before checking policy (in normal usage GXFExecutor/Operator would do this)
+  condition->initialize();
+  EXPECT_EQ(condition->policy(), PeriodicConditionPolicy::kMinTimeBetweenTicks);
+}
+
+TEST(ConditionClasses, TestPeriodicConditionPolicyAsString) {
+  Fragment F;
+  const std::string name{"periodic-condition"};
+  auto condition = F.make_condition<PeriodicCondition>(
+      name, Arg{"recess_period", std::string("1000000")}, Arg{"policy", "NoCatchUpMissedTicks"});
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_EQ(typeid(condition), typeid(std::make_shared<PeriodicCondition>(1000000)));
+  EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::PeriodicSchedulingTerm"s);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+  // have to initialize before checking policy (in normal usage GXFExecutor/Operator would do this)
+  condition->initialize();
+  EXPECT_EQ(condition->policy(), PeriodicConditionPolicy::kNoCatchUpMissedTicks);
 }
 
 TEST(ConditionClasses, TestPeriodicConditionDefaultConstructor) {

@@ -264,7 +264,7 @@ GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
     HOLOSCAN_LOG_INFO("{}Creating context", frag_name_display);
     HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate(&context_));
     // }
-    own_gxf_context_ = true;
+    owns_context_ = true;
     extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
     extension_manager_->refresh();
     // Register extensions for holoscan (GXFWrapper codelet)
@@ -286,8 +286,8 @@ GXFExecutor::~GXFExecutor() {
   network_context_entity_.reset();
   connections_entity_.reset();
 
-  // Deinitialize GXF context only if `own_gxf_context_` is true
-  if (own_gxf_context_) {
+  // Deinitialize GXF context only if `owns_context_` is true
+  if (owns_context_) {
     auto frag_name_display = fragment_->name();
     if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
     try {
@@ -410,9 +410,21 @@ void bind_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t ei
   HOLOSCAN_GXF_CALL_FATAL(
       GxfComponentTypeId(gxf_context, "nvidia::gxf::Receiver", &receiver_find_tid));
 
+  int64_t queue_size = io_spec->queue_size();
+  if (queue_size == static_cast<int64_t>(IOSpec::kAnySize)) {
+    // Do not create a receiver for this as we are using the parameterized receiver method.
+    return;
+  }
+
   gxf_uid_t receiver_cid = 0;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfComponentFind(gxf_context, eid, receiver_find_tid, rx_name, nullptr, &receiver_cid));
+  HOLOSCAN_GXF_CALL_MSG_FATAL(
+      GxfComponentFind(gxf_context, eid, receiver_find_tid, rx_name, nullptr, &receiver_cid),
+      "Unable to find the Receiver component with name '{}' in the entity '{}' for binding the "
+      "operator ('{}')'s input port ('{}')",
+      rx_name,
+      entity_name,
+      op->name(),
+      rx_name);
 
   gxf_tid_t receiver_tid{};
   HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context, receiver_cid, &receiver_tid));
@@ -517,10 +529,9 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
             connection_count += target_ports.count(rx_name);
           }
         }
-
-        // Set the queue size to the number of preceding connections
-        queue_size = connection_count;
       }
+      // Set the queue size to the number of preceding connections
+      queue_size = connection_count;
     } else {
       HOLOSCAN_LOG_ERROR("Failed to find node for operator '{}'", op->name());
       throw std::runtime_error(fmt::format("Failed to find node for operator '{}'", op->name()));
@@ -534,14 +545,31 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
         "Invalid queue size: {} (op: '{}', input port: '{}')", queue_size, op->name(), rx_name));
   }
 
+  bool queue_policy_set = io_spec->queue_policy().has_value();
   auto connector = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
   if (connector && (connector->gxf_cptr() != nullptr)) {
+    if (queue_policy_set) {
+      HOLOSCAN_LOG_WARN(
+          "The queue policy set for input port '{}' of operator '{}' via `OperatorSpec::input` or "
+          "`Operator::queue_policy` will be ignored because a connector (receiver) was "
+          "explicitly set.",
+          rx_name,
+          op->name());
+    }
     auto gxf_receiver = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(connector);
     if (gxf_receiver && graph_entity) {
       gxf_receiver->gxf_eid(graph_entity->eid());
       gxf_receiver->gxf_graph_entity(graph_entity);
     }
   } else {
+    if (queue_policy_set && rx_type != IOSpec::ConnectorType::kDefault) {
+      HOLOSCAN_LOG_WARN(
+          "The queue policy set for input port '{}' of operator '{}' via `OperatorSpec::input` or "
+          "`Operator::queue_policy` will be ignored because a connector (receiver) was "
+          "explicitly set via `IOSpec::connector`.",
+          rx_name,
+          op->name());
+    }
     // Create Receiver component for this input
     std::shared_ptr<Receiver> rx_resource;
     switch (rx_type) {
@@ -550,6 +578,10 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
         rx_resource = std::make_shared<DoubleBufferReceiver>();
         // Set the capacity of the DoubleBufferReceiver with the queue_size
         rx_resource->add_arg(Arg("capacity", queue_size));
+        if (queue_policy_set) {
+          rx_resource->add_arg(
+              Arg("policy", static_cast<uint64_t>(io_spec->queue_policy().value())));
+        }
         if (fragment->data_flow_tracker()) {
           std::dynamic_pointer_cast<DoubleBufferReceiver>(rx_resource)->track();
         }
@@ -739,8 +771,14 @@ void bind_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t e
       GxfComponentTypeId(gxf_context, "nvidia::gxf::Transmitter", &transmitter_find_tid));
 
   gxf_uid_t transmitter_cid = 0;
-  HOLOSCAN_GXF_CALL_FATAL(
-      GxfComponentFind(gxf_context, eid, transmitter_find_tid, tx_name, nullptr, &transmitter_cid));
+  HOLOSCAN_GXF_CALL_MSG_FATAL(
+      GxfComponentFind(gxf_context, eid, transmitter_find_tid, tx_name, nullptr, &transmitter_cid),
+      "Unable to find the Transmitter component with name '{}' in the entity '{}' for binding the "
+      "operator ('{}')'s output port ('{}')",
+      tx_name,
+      entity_name,
+      op->name(),
+      tx_name);
 
   gxf_tid_t transmitter_tid{};
   HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context, transmitter_cid, &transmitter_tid));
@@ -817,20 +855,41 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
     return;
   }
 
+  bool queue_policy_set = io_spec->queue_policy().has_value();
   auto connector = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
   if (connector && (connector->gxf_cptr() != nullptr)) {
+    if (queue_policy_set) {
+      HOLOSCAN_LOG_WARN(
+          "The queue policy set for output port '{}' of operator '{}' via `OperatorSpec::output` "
+          "or `Operator::queue_policy` will be ignored because a connector (transmitter) was "
+          "explicitly set.",
+          tx_name,
+          op->name());
+    }
     auto gxf_transmitter = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(connector);
     if (gxf_transmitter && graph_entity) {
       gxf_transmitter->gxf_eid(graph_entity->eid());
       gxf_transmitter->gxf_graph_entity(graph_entity);
     }
   } else {
+    if (queue_policy_set && tx_type != IOSpec::ConnectorType::kDefault) {
+      HOLOSCAN_LOG_WARN(
+          "The queue policy set for output port '{}' of operator '{}' via `OperatorSpec::output` "
+          "or `Operator::queue_policy` will be ignored because a connector (transmitter) was "
+          "explicitly set via `IOSpec::connector`.",
+          tx_name,
+          op->name());
+    }
     // Create Transmitter component for this output
     std::shared_ptr<Transmitter> tx_resource;
     switch (tx_type) {
       case IOSpec::ConnectorType::kDefault:
         HOLOSCAN_LOG_DEBUG("creating output port using DoubleBufferReceiver");
         tx_resource = std::make_shared<DoubleBufferTransmitter>();
+        if (queue_policy_set) {
+          tx_resource->add_arg(
+              Arg("policy", static_cast<uint64_t>(io_spec->queue_policy().value())));
+        }
         if (fragment->data_flow_tracker()) {
           std::dynamic_pointer_cast<DoubleBufferTransmitter>(tx_resource)->track();
         }
@@ -1321,10 +1380,11 @@ void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType 
 
   for (const auto& [source_cid, target_info] : connections) {
     auto& [source_cname, connector_type, target_ports] = target_info;
-    if (target_ports.empty()) {
+    const auto target_ports_size = target_ports.size();
+    if (target_ports_size == 0) {
       HOLOSCAN_LOG_ERROR("No target component found for source_id: {}", source_cid);
       continue;
-    } else if (target_ports.size() == 1) {
+    } else if (target_ports_size == 1) {
       continue;
     }
     // Insert GXF's Broadcast component if source port is connected to multiple targets
@@ -1498,6 +1558,47 @@ bool GXFExecutor::initialize_fragment() {
     visited_nodes.insert(op);
 
     HOLOSCAN_LOG_DEBUG("Operator: {}", op_name);
+
+    // If one of the preceding nodes of this operator wasn't visited yet (or the same operator)
+    // and has the input execution port, it means that there is a cycle in the graph.
+    // We will set the DoubleBufferReceiver's capacity to kSizeOne instead of kPrecedingCount to
+    // avoid deadlock.
+    auto prev_operators = graph.get_previous_nodes(op);
+    if (op->input_exec_spec()) {
+      bool cycle_detected = false;
+      bool self_cycle = false;
+      for (auto& prev_op : prev_operators) {
+        if (prev_op == op) {
+          self_cycle = true;
+          cycle_detected = true;
+          break;
+        }
+        if (visited_nodes.find(prev_op) == visited_nodes.end()) { cycle_detected = true; }
+      }
+      if (cycle_detected) {
+        HOLOSCAN_LOG_DEBUG(
+            "Cycle detected for operator ('{}') with the input execution port (self-cycle: {})",
+            op_name,
+            self_cycle);
+        HOLOSCAN_LOG_DEBUG(
+            "\tSetting input execution port's queue size to kSizeOne for operator: {}", op_name);
+        auto& input_exec_spec = op->input_exec_spec();
+        input_exec_spec->queue_size(IOSpec::kSizeOne);
+        HOLOSCAN_LOG_DEBUG("\tSetting metadata policy to kUpdate for operator: {}", op_name);
+        op->metadata_policy(MetadataPolicy::kUpdate);
+        // Set output execution port's condition to kNone to avoid deadlock, especially
+        // when the operator has a self-cycle.
+        if (self_cycle) {
+          HOLOSCAN_LOG_DEBUG(
+              "\tSetting output execution port's condition to kNone for operator '{}' to prevent "
+              "deadlock caused by the self-cycle",
+              op_name);
+          auto& output_exec_spec = op->output_exec_spec();
+          output_exec_spec->condition(ConditionType::kNone);
+        }
+      }
+    }
+
     // Initialize the operator while we are visiting a node in the graph
     try {
       op->initialize();
@@ -1512,9 +1613,17 @@ bool GXFExecutor::initialize_fragment() {
     HOLOSCAN_LOG_DEBUG("Connecting earlier operators of Op: {}", op_name);
     // Add the connections from the previous operator to the current operator, for both direct and
     // Broadcast connections.
-    auto prev_operators = graph.get_previous_nodes(op);
-
     for (auto& prev_op : prev_operators) {
+      // If the previous operator is same as the current operator, then we don't need to connect it.
+      // GXF has an issue with self-connections where it fails to unschedule the entity from
+      // execution.
+      //   [gxf_executor.cpp:2358] Deactivating Graph...
+      //   [message_router.cpp:67] Expression 'disconnect(connection->source(),
+      //       connection->target())' failed with error 'GXF_ENTITY_COMPONENT_NOT_FOUND'.
+      //   [runtime.cpp:777] Could not unschedule entity '_holoscan_connections_entity' (E3) from
+      //       execution: GXF_ENTITY_COMPONENT_NOT_FOUND
+      if (prev_op == op) { continue; }
+
       auto port_map = graph.get_port_map(prev_op, op);
       if (!port_map.has_value()) {
         HOLOSCAN_LOG_ERROR("Could not find port map for {} -> {}", prev_op->name(), op->name());
@@ -1752,14 +1861,14 @@ bool GXFExecutor::initialize_fragment() {
 }
 
 bool GXFExecutor::initialize_operator(Operator* op) {
-  if (own_gxf_context_ && !is_gxf_graph_initialized_) {
+  if (owns_context_ && !is_gxf_graph_initialized_) {
     HOLOSCAN_LOG_ERROR(
         "Fragment graph is not composed yet. Operator should not be initialized in GXFExecutor. "
         "Op: {}.",
         op->name());
     return false;
-  } else if (!own_gxf_context_) {  // GXF context was created outside
-    HOLOSCAN_LOG_DEBUG("Not an own GXF context. Op: {}", op->name());
+  } else if (!owns_context_) {  // GXF context was created outside
+    HOLOSCAN_LOG_DEBUG("Not an owned GXF context. Op: {}", op->name());
   }
 
   // Skip if the operator is already initialized
@@ -1778,8 +1887,11 @@ bool GXFExecutor::initialize_operator(Operator* op) {
 
   auto& spec = *(op->spec());
 
-  // op_eid_ should only be nonzero if OperatorWrapper wraps a codelet created by GXF.
-  // In that case GXF has already created the entity and we can't create a GraphEntity.
+  // op_eid_/op_cid_ is nonzero only if OperatorWrapper wraps a codelet created by GXF.
+  // In this case, GXF has already created the entity for the operator, so we use the existing
+  // entity/component ID instead of creating a GraphEntity.
+  // Note that op_eid_ and op_cid_ are set by the OperatorWrapper::initialize() and
+  // ResourceWrapper::initialize() methods via the initialize_holoscan_object() method.
   gxf_uid_t eid = (op_eid_ == 0) ? op->initialize_graph_entity(context_, entity_prefix_) : op_eid_;
 
   // Create Codelet component if `op_cid_` is 0
@@ -1788,19 +1900,28 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   // Set GXF Codelet ID as the ID of the operator
   op->id(codelet_cid);
 
+  if (op->metadata_policy() == MetadataPolicy::kDefault) {
+    // use the default metadata policy associated with the fragment.
+    op->metadata_policy(fragment()->metadata_policy());
+  }
+
   // Determine which ports have a user-supplied Condition involving its receiver or transmitter
   op->find_ports_used_by_condition_args();
+
+  // Keep in mind that the optional input/output execution ports are managed in the
+  // GXFExecutor::add_control_flow() method, which is invoked by Fragment::add_flow().
 
   // Create Components for input
   const auto& inputs = spec.inputs();
   for (const auto& [name, io_spec] : inputs) {
-    HOLOSCAN_LOG_INFO("creating input IOSpec named '{}'", name);
+    HOLOSCAN_LOG_DEBUG("creating input IOSpec named '{}'", name);
     gxf::GXFExecutor::create_input_port(fragment(), context_, eid, io_spec.get(), op_eid_ != 0, op);
   }
 
   // Create Components for output
   const auto& outputs = spec.outputs();
   for (const auto& [name, io_spec] : outputs) {
+    HOLOSCAN_LOG_DEBUG("creating output IOSpec named '{}'", name);
     gxf::GXFExecutor::create_output_port(
         fragment(), context_, eid, io_spec.get(), op_eid_ != 0, op);
   }
@@ -1808,7 +1929,7 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   // Add any multi-message conditions
   size_t multi_port_condition_index = 0;
   for (auto& condition_info : spec.multi_port_conditions()) {
-    HOLOSCAN_LOG_INFO("Found a multi-message condition, adding it...");
+    HOLOSCAN_LOG_DEBUG("Found a multi-message condition, adding it...");
     // get receiver objects corresponding to the input port names specified
     std::vector<std::shared_ptr<Resource>> condition_receivers;
     condition_receivers.reserve(condition_info.port_names.size());
@@ -1907,6 +2028,35 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
 
   // Add new label to the label vector so that the port map of the graph edge can be updated.
   new_input_labels.push_back(new_input_label);
+
+  return true;
+}
+
+bool GXFExecutor::add_control_flow(const std::shared_ptr<Operator>& upstream_op,
+                                   const std::shared_ptr<Operator>& downstream_op) {
+  // Add control flow between the upstream and downstream operators
+  HOLOSCAN_LOG_DEBUG("Adding control flow between operators: {} -> {}",
+                     upstream_op->name(),
+                     downstream_op->name());
+  auto& upstream_op_spec = *(upstream_op->spec());
+  auto& downstream_op_spec = *(downstream_op->spec());
+
+  if (!upstream_op->output_exec_spec()) {
+    // Create a new output port for the control flow.
+    upstream_op_spec.output<holoscan::gxf::Entity>(Operator::kOutputExecPortName);
+    upstream_op->set_output_exec_spec(upstream_op_spec.outputs().begin()->second);
+  }
+
+  if (!downstream_op->input_exec_spec()) {
+    // Queue size is set to the number of control flow messages to the input port.
+    // The connector type needs to be set to kDefault (instead of kDoubleBuffer) to set the capacity
+    // to be the same as the queue size.
+    // If the this input port is connected from the distance operator, creating a cycle, the queue
+    // size would be set to `kSizeOne` to avoid deadlock in initialize_fragment() method.
+    downstream_op_spec.input<holoscan::gxf::Entity>(Operator::kInputExecPortName,
+                                                    IOSpec::kPrecedingCount);
+    downstream_op->set_input_exec_spec(downstream_op_spec.inputs().begin()->second);
+  }
 
   return true;
 }
@@ -2305,9 +2455,9 @@ void GXFExecutor::register_extensions() {
         "A runtime hidden extension used by Holoscan SDK to provide the native operators",
         gxf_wrapper_tid);
 
-    // omit tid for GXFWrapper and GXFSchedulingTermWrapper so a new tid is generated
     extension_factory.add_component<holoscan::gxf::GXFWrapper, nvidia::gxf::Codelet>(
-        "GXF wrapper to support Holoscan SDK native operators");
+        "GXF wrapper to support Holoscan SDK native operators",
+        {0xbcfb5603b060495b, 0xad0e47c3523ee88e});
     extension_factory
         .add_component<holoscan::gxf::GXFSchedulingTermWrapper, nvidia::gxf::SchedulingTerm>(
             "GXF wrapper to support Holoscan SDK native conditions",

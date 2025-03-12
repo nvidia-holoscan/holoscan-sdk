@@ -255,7 +255,7 @@ This environment variable is only used when the distributed application is launc
 
 - **HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE** : can be used to override the default 7 kB serialization buffer size. This should typically not be needed as tensor types store only a small header in this buffer to avoid explicitly making a copy of their data. However, other data types do get directly copied to the serialization buffer and in some cases it may be necessary to increase it.
 
-- **HOLOSCAN_UCX_ASYNCHRONOUS** : If set to true, asynchronous transmit of UCX messages between fragments is enabled (this is the default). Setting this to False, forces synchronous transmission. Synchronous mode makes it easier to use an allocator like `BlockMemoryPool` as additional tensors would not be queued before the prior one was sent.
+- **HOLOSCAN_UCX_ASYNCHRONOUS** : If set to false, asynchronous transmit of UCX messages is disabled (this is the default since Holoscan 3.0, which matches the prior behavior from Holoscan 1.0). In Holoscan 2.x, the default was true, but this was deemed harder for application developers to use, so that decision has been reverted. Synchronous mode makes it easier to use an allocator like `BlockMemoryPool` as additional tensors would not be queued before the prior one was sent.
 
 - **HOLOSCAN_UCX_DEVICE_ID** : The GPU ID of the device that will be used by UCX transmitter/receivers in distributed applications. If unspecified, it defaults to 0. A list of discrete GPUs available in a system can be obtained via `nvidia-smi -L`. GPU data sent between fragments of a distributed application must be on this device.
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,7 +129,7 @@ bool AppWorker::execute_fragments(
   }
 
   // Add the UCX network context
-  bool enable_async = AppDriver::get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", true);
+  bool enable_async = AppDriver::get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", false);
   for (auto& fragment : scheduled_fragments) {
     auto network_context = fragment->make_network_context<holoscan::UcxContext>(
         "ucx_context", Arg("cpu_data_only", gpu_count == 0), Arg("enable_async", enable_async));

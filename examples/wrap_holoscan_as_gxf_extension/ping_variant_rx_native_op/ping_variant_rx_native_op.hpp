@@ -15,8 +15,10 @@
  * limitations under the License.
  */
 
-#ifndef PING_RX_NATIVE_OP_HPP
-#define PING_RX_NATIVE_OP_HPP
+#ifndef WRAP_HOLOSCAN_AS_GXF_EXTENSION_PING_VARIANT_RX_NATIVE_OP_PING_VARIANT_RX_NATIVE_OP_HPP
+#define WRAP_HOLOSCAN_AS_GXF_EXTENSION_PING_VARIANT_RX_NATIVE_OP_PING_VARIANT_RX_NATIVE_OP_HPP
+
+#include <memory>
 
 #include "holoscan/holoscan.hpp"
 
@@ -35,8 +37,9 @@ class PingVarRxNativeOp : public holoscan::Operator {
 
  private:
   int count_ = 1;
+  holoscan::Parameter<std::shared_ptr<holoscan::BooleanCondition>> boolean_condition_;
 };
 
 }  // namespace myops
 
-#endif /* PING_RX_NATIVE_OP_HPP */
+#endif  // WRAP_HOLOSCAN_AS_GXF_EXTENSION_PING_VARIANT_RX_NATIVE_OP_PING_VARIANT_RX_NATIVE_OP_HPP

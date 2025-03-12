@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@ namespace holoscan {
 namespace inference {
 
 InferStatus ManagerProcessor::initialize(const MultiMappings& process_operations,
+                                         const Mappings& custom_kernels,
                                          const std::string config_path = {}) {
   try {
     infer_data_ = std::make_unique<DataProcessor>();
@@ -33,7 +34,7 @@ InferStatus ManagerProcessor::initialize(const MultiMappings& process_operations
     return InferStatus(holoinfer_code::H_ERROR,
                        "Process Manager, Holoscan out data core: Memory allocation error");
   }
-  return infer_data_->initialize(process_operations, config_path);
+  return infer_data_->initialize(process_operations, custom_kernels, config_path);
 }
 
 InferStatus ManagerProcessor::process_multi_tensor_operation(
@@ -258,8 +259,9 @@ InferStatus ProcessorContext::process(const MultiMappings& tensor_to_oper_map,
 }
 
 InferStatus ProcessorContext::initialize(const MultiMappings& process_operations,
+                                         const Mappings& custom_kernels,
                                          const std::string config_path = {}) {
-  return process_manager_->initialize(process_operations, config_path);
+  return process_manager_->initialize(process_operations, custom_kernels, config_path);
 }
 
 }  // namespace inference

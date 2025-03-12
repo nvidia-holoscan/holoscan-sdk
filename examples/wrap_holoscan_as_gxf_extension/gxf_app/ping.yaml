@@ -21,6 +21,10 @@ components:
     parameters:
       custom_int_type: 4  # type is `myres::CustomIntType4Resource`
       float_type: 3.5
+      numeric: 1
+      numeric_array: [10, 20, 30]
+      boolean: true
+      string: "string text"
   # spec.output<gxf::Entity>("out");
   - name: out
     type: nvidia::gxf::DoubleBufferTransmitter
@@ -32,6 +36,10 @@ components:
     type: myexts::PingVarTxNativeOpCodelet
     parameters:
       custom_resource: custom_res
+      numeric: 1
+      numeric_array: [10, 20, 30]
+      boolean: true
+      string: "string text"
   - name: count_condition
     type: nvidia::gxf::CountSchedulingTerm
     parameters:
@@ -46,14 +54,28 @@ components:
     parameters:
       receiver: in
       min_size: 1
+  # spec.input<std::vector<holoscan::gxf::Entity>>("receivers", IOSpec::kAnySize);
+  - name: receivers:0
+    type: nvidia::gxf::DoubleBufferReceiver
+  - name: boolean_condition
+    type: nvidia::gxf::BooleanSchedulingTerm
   - name: ping_variant_rx_native_op
     type: myexts::PingVarRxNativeOpCodelet
+    parameters:
+      receivers: ["receivers:0"]
+      boolean_condition: boolean_condition
 ---
 components:
   - type: nvidia::gxf::Connection
     parameters:
       source: tx/out
       target: rx/in
+---
+components:
+  - type: nvidia::gxf::Connection
+    parameters:
+      source: tx/out
+      target: rx/receivers:0
 ---
 components:
   - name: rt_clock

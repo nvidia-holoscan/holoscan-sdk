@@ -163,7 +163,9 @@ This operator has no input ports and three optional keyword arguments. It splits
 The {py:class}`holoscan.decorator.Output` class also supports `condition`, `condition_kwargs`, `connector` and `connector_kwargs` that work in the same way as shown for {py:class}`holoscan.decorator.Input` above. For example, to override the transmitter queue policy for a single output port named "output_tensor"
 
 ```{code-block} python
-@create_op(inputs=Output("output_tensor", connector=ConditionType.DOUBLE_BUFFER, connector_kwargs=dict(capacity=1, policy=1))
+@create_op(outputs=Output("output_tensor",
+                           connector=IOSpec.ConnectorType.DOUBLE_BUFFER,
+                           connector_kwargs=dict(capacity=1, policy=1)))
 ```
 
 note that `tensor_names` was not specified which means that the returned object does not need to be a `dict`. The object itself will be emitted on the "output_tensor" port.
@@ -172,10 +174,127 @@ note that `tensor_names` was not specified which means that the returned object 
 When specifying the `inputs` and `outputs` arguments to `create_op`, please make sure that all ports have unique names. As a concrete example, if an operator has a single input and output port that are used to send images, one should use unique port names like "image_in" and "image_out" rather than using "image" for both.
 :::
 
+(holoscan-operator-from-decorator-queue-size-policy)=
+## Configuring the queue size and policy for an input or output port
+
+When using the decorator approach to create operators, you can configure the queue size and policy for input and output ports using the `Input` and `Output` classes. Here's how to configure these parameters:
+
+```python
+from holoscan.core import ConditionType, IOSpec
+from holoscan.decorator import Input, Output, create_op
+
+# Example with input port configuration
+@create_op(
+    op_param="self",
+    inputs=Input(
+        "input",
+        arg_map="value",
+        size=IOSpec.SIZE_ONE,  # Set queue size to 1
+        policy=IOSpec.QueuePolicy.POP  # Pop oldest item if queue is full
+    ),
+    outputs="output"
+)
+def my_operator(self, value):
+    return value * 2
+
+# Example with output port configuration
+@create_op(
+    op_param="self",
+    inputs="input",
+    outputs=Output(
+        "output",
+        size=2,  # Set queue size to 2
+        policy=IOSpec.QueuePolicy.REJECT,  # Reject new items if queue is full
+        condition_type=ConditionType.NONE
+    )
+)
+def another_operator(self, value):
+    return value
+```
+
+### Queue Size Options
+
+The `size` parameter can be set to:
+- `IOSpec.SIZE_ONE`: Queue size of 1 (default)
+- `IOSpec.ANY_SIZE`: Any size queue
+- `IOSpec.PRECEDING_COUNT`: Size based on number of preceding connections
+- An integer value: Custom queue size
+
+### Queue Policy Options
+
+The `policy` parameter accepts these values:
+- `IOSpec.QueuePolicy.POP`: Pop oldest item when queue is full
+- `IOSpec.QueuePolicy.REJECT`: Reject new items when queue is full
+- `IOSpec.QueuePolicy.FAULT`: Log warning and reject when queue is full
+
+### Example Use Cases
+
+1. Throttling execution with POP policy:
+```python
+@create_op(
+    op_param="self",
+    inputs=Input("input", arg_map="value"),
+    outputs=Output(
+        "output",
+        policy=IOSpec.QueuePolicy.POP,
+        condition_type=ConditionType.NONE
+    )
+)
+def execution_throttler_op(self, value):
+    if value is not None:
+        return value
+```
+
+2. Multiple input handling:
+```python
+@create_op(
+    op_param="self",
+    inputs=Input("input", arg_map="value", size=IOSpec.ANY_SIZE),
+    outputs="output"
+)
+def multi_input_op(self, value):
+    return value
+```
+
+(holoscan-operator-from-decorator-op-param)=
+## Using the op_param argument to access the operator instance
+
+The `op_param` argument to `create_op` can be used to access the operator instance within the function body. This is useful if the operator needs to access its own name or other attributes.
+
+```{code-block} python
+@create_op(op_param="self")
+def simple_op(self, param1, param2=5):
+    print(f"I am here - {self.name} (param1: {param1}, param2: {param2})")
+```
+
+The operator can then be used in an application like this:
+
+```{code-block} python
+class OpParamApp(Application):
+    def compose(self):
+        node1 = simple_op(self, param1=1, name="node1")
+        node2 = simple_op(self, param1=2, name="node2")
+        node3 = simple_op(self, param1=3, name="node3")
+
+        self.add_flow(self.start_op(), node1)
+        self.add_flow(node1, node2)
+        self.add_flow(node2, node3)
+```
+
+The output of this application will be:
+
+```
+I am here - node1 (param1: 1, param2: 5)
+I am here - node2 (param1: 2, param2: 5)
+I am here - node3 (param1: 3, param2: 5)
+```
+
+When this application runs, each operator instance will print its name along with its parameter values. The `op_param` argument allows the function to access operator attributes like `name` through the specified parameter (in this case `self`). This is particularly useful when you need to access operator-specific information or methods within your function's implementation.
+
 
 ## Interoperability with wrapped C++ operators
 
-There SDK includes a [python_decorator example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/python_decorator) showing interoperability of wrapped C++ operators (`VideoStreamReplayerOp` and `HolovizOp`) alongside native Python operators created via the `create_op` decorator. 
+The SDK includes a [python_decorator example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/python_decorator) showing interoperability of wrapped C++ operators (`VideoStreamReplayerOp` and `HolovizOp`) alongside native Python operators created via the `create_op` decorator.
 
 The start of this application imports a couple of the built in C++-based operators with Python bindings (`HolovizOp` and `VideoStreamReplayerOp`). In addition to these, two new operators are created via the `create_op` decorator APIs.
 

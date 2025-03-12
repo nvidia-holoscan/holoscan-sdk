@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,8 @@
 
 #include <string>
 #include <chrono>
+
+#include <gxf/std/scheduling_terms.hpp>
 
 #include "../../gxf/gxf_condition.hpp"
 
@@ -64,26 +66,93 @@ namespace holoscan {
  * (type `int64_t`) in nanoseconds. Alternatively, a `std::chrono::duration` can be used
  * (see example above).
  */
+
+enum class PeriodicConditionPolicy {
+  // scheduler will try to "catch up" on missed ticks
+  // eg. assume recess period of 100ms:
+  // tick 0 at 0ms   -> next_target_ = 100ms
+  // tick 1 at 250ms -> next_target_ = 200ms (next_target_ < timestamp)
+  // tick 2 at 255ms -> next_target_ = 300ms (double tick before 300ms)
+  kCatchUpMissedTicks,
+  // scheduler guarantees recess period will have passed before next tick
+  // eg. assume recess period of 100ms:
+  // tick 0 at 0ms   -> next_target_ = 100ms
+  // tick 1 at 101ms -> next_target_ = 201ms
+  // tick 2 at 350ms -> next_target_ = 450ms
+  kMinTimeBetweenTicks,
+  // scheduler will not try to "catch up" on missed ticks
+  // eg. assume recess period of 100ms:
+  // tick 0 at 0ms   -> next_target_ = 100ms
+  // tick 1 at 250ms -> next_target_ = 300ms (single tick before 300ms)
+  // tick 2 at 305ms -> next_target_ = 400ms
+  kNoCatchUpMissedTicks
+};
+
 class PeriodicCondition : public gxf::GXFCondition {
  public:
   HOLOSCAN_CONDITION_FORWARD_ARGS_SUPER(PeriodicCondition, GXFCondition)
-
+  // using PeriodicConditionPolicy = nvidia::gxf::PeriodicSchedulingPolicy;
   PeriodicCondition() = default;
 
-  explicit PeriodicCondition(int64_t recess_period_ns);
+  explicit PeriodicCondition(
+      int64_t recess_period_ns,
+      PeriodicConditionPolicy policy = PeriodicConditionPolicy::kCatchUpMissedTicks);
 
   template <typename Rep, typename Period>
-  explicit PeriodicCondition(std::chrono::duration<Rep, Period> recess_period_duration) {
-    recess_period_ns_ =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(recess_period_duration).count();
+  explicit PeriodicCondition(
+      std::chrono::duration<Rep, Period> recess_period_duration,
+      PeriodicConditionPolicy policy = PeriodicConditionPolicy::kCatchUpMissedTicks)
+      : recess_period_ns_(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(recess_period_duration).count()) {
     recess_period_ = std::to_string(recess_period_ns_);
+    switch (policy) {
+      case PeriodicConditionPolicy::kCatchUpMissedTicks:
+        policy_ = YAML::Node("CatchUpMissedTicks");
+        break;
+      case PeriodicConditionPolicy::kMinTimeBetweenTicks:
+        policy_ = YAML::Node("MinTimeBetweenTicks");
+        break;
+      case PeriodicConditionPolicy::kNoCatchUpMissedTicks:
+        policy_ = YAML::Node("NoCatchUpMissedTicks");
+        break;
+      default:
+        HOLOSCAN_LOG_ERROR("Unrecognized policy enum value: {}", static_cast<int>(policy));
+    }
+  }
+
+  nvidia::gxf::PeriodicSchedulingPolicy convertToGXFPolicy(PeriodicConditionPolicy policy) {
+    switch (policy) {
+      case PeriodicConditionPolicy::kCatchUpMissedTicks:
+        return nvidia::gxf::PeriodicSchedulingPolicy::kCatchUpMissedTicks;
+      case PeriodicConditionPolicy::kMinTimeBetweenTicks:
+        return nvidia::gxf::PeriodicSchedulingPolicy::kMinTimeBetweenTicks;
+      case PeriodicConditionPolicy::kNoCatchUpMissedTicks:
+        return nvidia::gxf::PeriodicSchedulingPolicy::kNoCatchUpMissedTicks;
+      default:
+        throw std::runtime_error("Unknown PeriodicConditionPolicy value");
+    }
   }
 
   PeriodicCondition(const std::string& name, nvidia::gxf::PeriodicSchedulingTerm* term);
 
   const char* gxf_typename() const override { return "nvidia::gxf::PeriodicSchedulingTerm"; }
 
+  void initialize() override;
+
   void setup(ComponentSpec& spec) override;
+
+  PeriodicConditionPolicy policy() {
+    auto gxf_policy = policy_.get().as<std::string>();
+    if (gxf_policy == "CatchUpMissedTicks") {
+      return PeriodicConditionPolicy::kCatchUpMissedTicks;
+    } else if (gxf_policy == "MinTimeBetweenTicks") {
+      return PeriodicConditionPolicy::kMinTimeBetweenTicks;
+    } else if (gxf_policy == "NoCatchUpMissedTicks") {
+      return PeriodicConditionPolicy::kNoCatchUpMissedTicks;
+    } else {
+      throw std::runtime_error(fmt::format("unknown mode: {}", gxf_policy));
+    }
+  }
 
   /**
    * @brief Set recess period.
@@ -129,6 +198,7 @@ class PeriodicCondition : public gxf::GXFCondition {
  private:
   Parameter<std::string> recess_period_;
   int64_t recess_period_ns_ = 0;
+  Parameter<YAML::Node> policy_;  // = YAML::Node("CatchUpMissedTicks");
 };
 
 }  // namespace holoscan

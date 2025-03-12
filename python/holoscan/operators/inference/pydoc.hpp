@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,9 @@ Inference operator.
         Any number of upstream ports may be connected to this ``receivers`` port. The operator will
         search across all messages for tensors matching those specified in ``in_tensor_names``.
         These are the set of input tensors used by the models in ``inference_map``.
+    model_activation_specs: list[holoscan.operators.ActivationSpecs], optional
+        A list of ``ActivationSpec`` objects. This port is used together with ``activation_map`` to
+        select a subset of models to inference.
 
 **==Named Outputs==**
 
@@ -71,6 +74,8 @@ pre_processor_map : dict[str, List[str]]
     Pre processed data to model map.
 device_map : dict[str, int], optional
     Mapping of model to GPU ID for inference.
+dla_core_map : dict[str, int], optional
+    Mapping of model to DLA core index for inference.
 temporal_map : dict[str, int], optional
     Mapping of model to frame delay for inference.
 activation_map : dict[str, int], optional
@@ -97,6 +102,13 @@ enable_fp16 : bool, optional
     Use 16-bit floating point computations. Default value is ``False``.
 enable_cuda_graphs : bool, optional
     Use CUDA Graphs. Default value is ``True``.
+dla_core : int, optional
+    The DLA core index to execute the engine on, starts at 0. Set to -1 to disable. Default value
+    is ``-1``.
+dla_gpu_fallback : bool, optional
+    If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is
+    disabled, engine creation will fail if a layer cannot executed on DLA. Default value is
+    ``True``.
 is_engine_path : bool, optional
     Whether the input model path mapping is for trt engine files. Default value is ``False``.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional

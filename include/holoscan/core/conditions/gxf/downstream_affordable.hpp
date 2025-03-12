@@ -20,7 +20,10 @@
 
 #include <memory>
 
+#include <gxf/std/scheduling_terms.hpp>
+
 #include "../../gxf/gxf_condition.hpp"
+#include "../../resources/gxf/transmitter.hpp"
 
 namespace holoscan {
 
@@ -58,19 +61,18 @@ class DownstreamMessageAffordableCondition : public gxf::GXFCondition {
 
   void setup(ComponentSpec& spec) override;
 
+  // TODO(GXF4):   Expected<void> setTransmitter(Handle<Transmitter> value)
   void transmitter(std::shared_ptr<Transmitter> transmitter) { transmitter_ = transmitter; }
   std::shared_ptr<Transmitter> transmitter() { return transmitter_; }
 
-  void min_size(uint64_t min_size) { min_size_ = min_size; }
+  void min_size(uint64_t min_size);
   uint64_t min_size() { return min_size_; }
 
   void initialize() override { GXFCondition::initialize(); }
 
-  // TODO(GXF4):   Expected<void> setTransmitter(Handle<Transmitter> value)
-  // TODO(GXF4):   Expected<void> setMinSize(uint64_t value)
+  nvidia::gxf::DownstreamReceptiveSchedulingTerm* get() const;
 
  private:
-  // TODO(GXF4): this is now a std::set<Handle<Transmitter>> transmitters_
   Parameter<std::shared_ptr<Transmitter>> transmitter_;
   Parameter<uint64_t> min_size_;
 };

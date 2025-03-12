@@ -31,6 +31,7 @@ PYDOC(ParameterFlag, R"doc(
 Enum class for parameter flags.
 
 The following flags are supported:
+
 - `NONE`: The parameter is mendatory and static. It cannot be changed at runtime.
 - `OPTIONAL`: The parameter is optional and might not be available at runtime.
 - `DYNAMIC`: The parameter is dynamic and might change at runtime.
@@ -75,6 +76,12 @@ size : int | holoscan.core.IOSpec.IOSize
 
     Please refer to the [Holoscan SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-python)
     to see how to receive any number of inputs in Python.
+policy : IOSpec.QueuePolicy, optional
+    The queue policy to set. Valid values are:
+
+   - QueuePolicy.POP : If the queue is full, pop the oldest item, then add the new one.
+   - QueuePolicy.REJECT : If the queue is full, reject (discard) the new item.
+   - QueuePolicy.FAULT : If the queue is full, log a warning and reject the new item.
 
 Notes
 -----
@@ -102,6 +109,22 @@ Parameters
 ----------
 name : str
     The name of the output port.
+size : int | holoscan.core.IOSpec.IOSize
+    The size of the queue for the output port.
+    By default, `IOSpec.SIZE_ONE` (== `IOSpec.IOSize(1)`) is used.
+    The following size constants are supported for the output port:
+    - ``IOSpec.SIZE_ONE``: The queue size is 1.
+policy : IOSpec.QueuePolicy, optional
+    The queue policy to set. Valid values are:
+
+   - QueuePolicy.POP : If the queue is full, pop the oldest item, then add the new one.
+   - QueuePolicy.REJECT : If the queue is full, reject (discard) the new item.
+   - QueuePolicy.FAULT : If the queue is full, log a warning and reject the new item.
+
+Notes
+-----
+The 'size' parameter is used for initializing the queue size of the output port.
+The queue size is set by this method or the 'IOSpec.queue_size' property.
 )doc")
 
 PYDOC(outputs, R"doc(
@@ -158,6 +181,7 @@ flag: holoscan.core.ParameterFlag, optional
     By default, `ParameterFlag.NONE` is used.
 
     The following flags are supported:
+
     - `ParameterFlag.NONE`: The parameter is mendatory and static. It cannot be changed at runtime.
     - `ParameterFlag.OPTIONAL`: The parameter is optional and might not be available at runtime.
     - `ParameterFlag.DYNAMIC`: The parameter is dynamic and might change at runtime.
@@ -232,8 +256,23 @@ PYDOC(is_metadata_enabled, R"doc(
 Boolean indicating whether the fragment this operator belongs to has metadata transmission enabled.
 )doc")
 
+PYDOC(enable_metadata, R"doc(
+Configure whether or not the metadata feature is enabled for this operator. If it is not set, the
+default value will be determined by the enable_metadata setting from the Fragment that this operator
+belongs to.
+)doc")
+
 PYDOC(metadata_policy, R"doc(
-The metadata dictionary (``holoscan.core.MetadataPolicy``) associated with the operator.
+The metadata policy (``holoscan.core.MetadataPolicy``) associated with the operator.
+
+The supported policies are:
+
+- `MetadataPolicy.REJECT`: Reject the new value if the key already exists
+- `MetadataPolicy.UPDATE`: Replace existing value with the new one if the key already exists
+- `MetadataPolicy.INPLACE_UPDATE`: Update the value stored within an existing MetadataObject in-place
+  if the key already exists (in contrast to UPDATE which always replaces the existing MetadataObject
+  with a new one).
+- `MetadataPolicy.RAISE`: Raise an exception if the key already exists
 )doc")
 
 PYDOC(spec, R"doc(
@@ -345,8 +384,133 @@ transmitter : holoscan.resources.Transmitter or None
     The transmitter used by this output port. Will be None if the port does not exist.
 )doc")
 
+PYDOC(queue_policy, R"doc(
+Set the queue policy to be used by an input (or output) port's receiver (or transmitter).
+
+Parameters
+----------
+port_name : str
+    The name of the port.
+port_type : IOSpec.IOType, optional
+    Enum indicating whether `port_name` corresponds to an input port or output port.
+policy : IOSpec.QueuePolicy, optional
+    The queue policy to set. Valid values are:
+
+   - QueuePolicy.POP : If the queue is full, pop the oldest item, then add the new one.
+   - QueuePolicy.REJECT : If the queue is full, reject (discard) the new item.
+   - QueuePolicy.FAULT : If the queue is full, log a warning and reject the new item.
+
+Returns
+-------
+transmitter : holoscan.resources.Transmitter or None
+    The transmitter used by this output port. Will be None if the port does not exist.
+)doc")
+
 PYDOC(description, R"doc(
 YAML formatted string describing the operator.
+)doc")
+
+PYDOC(add_dynamic_flow, R"doc(
+Add a dynamic flow from this operator to another operator.
+
+Parameters
+----------
+next_op : holoscan.core.Operator
+    The downstream operator to connect to.
+next_input_port_name : str, optional
+    The name of the input port on the downstream operator to connect to.
+    If not specified, the first available input port will be used.
+
+Notes
+-----
+This method has several overloads to support different ways of creating dynamic flows:
+
+1. add_dynamic_flow(next_op: Operator, next_input_port_name: str = '')
+   - Basic connection using default output port. This is the simplest form for connecting
+     two operators when you only need to specify the destination.
+
+2. add_dynamic_flow(curr_output_port_name: str, next_op: Operator, next_input_port_name: str = '')
+   - Connection with explicit output port specification. Use this when the source operator has
+     multiple output ports and you need to specify which one to use.
+
+3. add_dynamic_flow(flow: FlowInfo)
+   - Connection using a FlowInfo object, which encapsulates all connection details including:
+     - Source operator and its output port specification
+     - Destination operator and its input port specification
+     - Port names and associated IOSpecs
+   - This is useful for complex connections or when reusing connection patterns.
+
+4. add_dynamic_flow(flows: List[FlowInfo])
+   - Batch connection using multiple FlowInfo objects. Use this to set up multiple
+     connections in a single call, which is more efficient than making multiple
+     individual connections.
+
+The FlowInfo class provides a complete description of a flow connection between operators,
+including all port specifications and naming. It's particularly useful when you need to:
+
+- Store and reuse connection patterns
+- Create complex routing configurations
+- Handle dynamic port specifications
+- Manage multiple connections systematically
+)doc")
+
+PYDOC(next_flows, R"doc(
+Get the list of flow information for connections to downstream operators.
+
+Returns
+-------
+list[holoscan.core.FlowInfo]
+    List of flow information objects describing connections to downstream operators.
+)doc")
+
+PYDOC(FlowInfo, R"doc(
+Information about a flow connection between operators.
+
+This class contains details about the connection between two operators,
+including the source and destination operators, port names, and port specifications.
+
+Attributes
+----------
+curr_operator : holoscan.core.Operator
+    The source operator of the flow connection.
+output_port_name : str
+    The name of the output port on the source operator.
+output_port_spec : holoscan.core.IOSpec
+    The specification of the output port.
+next_operator : holoscan.core.Operator
+    The destination operator of the flow connection.
+input_port_name : str
+    The name of the input port on the destination operator.
+input_port_spec : holoscan.core.IOSpec
+    The specification of the input port.
+)doc")
+
+PYDOC(find_flow_info, R"doc(
+Find a flow info in the operator's next flows based on a given predicate.
+
+Parameters
+----------
+predicate : callable
+    A function that takes a FlowInfo object and returns a boolean.
+
+Returns
+-------
+holoscan.core.FlowInfo or None
+    The first matching FlowInfo object, or None if not found.
+)doc")
+
+PYDOC(find_all_flow_info, R"doc(
+Find all flow info objects in the operator's next flows that match a given condition.
+
+Parameters
+----------
+predicate : callable
+    A function that takes a FlowInfo object and returns a boolean.
+
+Returns
+-------
+list[holoscan.core.FlowInfo]
+    List of matching FlowInfo objects.
 )doc")
 
 }  // namespace Operator

@@ -36,7 +36,7 @@ exhale_dir = os.getenv("EXHALEDIR")
 # -- Project information -----------------------------------------------------
 
 project = "Holoscan SDK"
-copyright = "2022-2024, NVIDIA"  # noqa: A001
+copyright = "2022-2025, NVIDIA"  # noqa: A001
 author = "NVIDIA"
 
 # The full version, including alpha/beta/rc tags
@@ -169,6 +169,9 @@ latex_toplevel_sectioning = None
 # Setup the breathe extension
 breathe_projects = {"Holoscan": f"{doxygen_dir}/xml"}
 breathe_default_project = "Holoscan"
+# Better handling of modern C++ features
+breathe_default_members = ("members", "undoc-members")
+cpp_id_attributes = ["static", "auto"]
 
 exhale_args = {
     "containmentFolder": exhale_dir,

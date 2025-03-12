@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,8 +46,12 @@ static void get_proc_stats(uint64_t* stats) {
 }
 
 static void get_proc_meminfo(uint64_t* stats) {
+  // Define a type alias for the custom deleter to avoid 'ignored-attributes' warning/error with
+  // gcc-13 when using decltype(&std::fclose) as the type for the custom deleter
+  // in std::unique_ptr<FILE>.
+  using FileDeleter = int (*)(FILE*);
   // Get the total CPU time
-  std::unique_ptr<FILE, decltype(&std::fclose)> file(fopen("/proc/meminfo", "r"), &std::fclose);
+  std::unique_ptr<FILE, FileDeleter> file(fopen("/proc/meminfo", "r"), &std::fclose);
   if (file == nullptr) {
     HOLOSCAN_LOG_ERROR("CPUResourceMonitor::get_proc_meminfo() - Failed to open /proc/meminfo");
     return;

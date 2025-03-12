@@ -52,59 +52,58 @@ target_include_directories(gxf_holoscan_wrapper_lib
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-# Generate the GXF registry manifest
-include(WrapOperatorAsGXFExtension)
-generate_gxf_registry_manifest(
-  EXTENSION_TARGET gxf_holoscan_wrapper
-  EXTENSION_NAME HoloscanWrapperExtension
-  BINARY_FILES
-    $<TARGET_FILE:gxf_holoscan_wrapper>
-    $<TARGET_FILE:gxf_holoscan_wrapper_lib>
-    $<TARGET_FILE:GXF::logger>
-    $<TARGET_FILE:holoscan::core>
-    $<TARGET_FILE:holoscan::infer>
-    $<TARGET_FILE:holoscan::infer::onnx_runtime>
-    $<TARGET_FILE:holoscan::infer::torch>
-    $<TARGET_FILE:holoscan::logger>
-    $<TARGET_FILE:holoscan::ops::aja>
-    $<TARGET_FILE:holoscan::ops::async_ping_rx>
-    $<TARGET_FILE:holoscan::ops::async_ping_tx>
-    $<TARGET_FILE:holoscan::ops::bayer_demosaic>
-    $<TARGET_FILE:holoscan::ops::format_converter>
-    $<TARGET_FILE:holoscan::ops::gxf_codelet>
-    $<TARGET_FILE:holoscan::ops::holoviz>
-    $<TARGET_FILE:holoscan::ops::inference>
-    $<TARGET_FILE:holoscan::ops::inference_processor>
-    $<TARGET_FILE:holoscan::ops::ping_rx>
-    $<TARGET_FILE:holoscan::ops::ping_tensor_rx>
-    $<TARGET_FILE:holoscan::ops::ping_tensor_tx>
-    $<TARGET_FILE:holoscan::ops::ping_tx>
-    $<TARGET_FILE:holoscan::ops::segmentation_postprocessor>
-    $<TARGET_FILE:holoscan::ops::v4l2>
-    $<TARGET_FILE:holoscan::ops::video_stream_recorder>
-    $<TARGET_FILE:holoscan::ops::video_stream_replayer>
-    $<TARGET_FILE:holoscan::spdlog_logger>
-    $<TARGET_FILE:holoscan::viz>
-    $<TARGET_FILE:ucx::ucp>
-    $<TARGET_FILE:ucx::ucs>
-    $<TARGET_FILE:ucx::uct>
-    $<TARGET_FILE:yaml-cpp::yaml-cpp>
-  FORWARD_ARGS
-    --uuid "12d01b4e-e06f-49ef-93c4-961834347385"
-    --version "${holoscan_VERSION}"
-    --extension-dependencies
-      $<TARGET_FILE:GXF::std>
-      $<TARGET_FILE:GXF::cuda>
-      $<TARGET_FILE:GXF::multimedia>
-      $<TARGET_FILE:GXF::serialization>
-      $<TARGET_FILE:GXF::ucx>
-      $<TARGET_FILE:gxf_ucx_holoscan>
-    --headers
-      "${CMAKE_CURRENT_SOURCE_DIR}/fragment_wrapper.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/operator_wrapper.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/resource_wrapper.hpp"
-)
 if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
+  # Generate the GXF registry manifest
+  include(WrapOperatorAsGXFExtension)
+  generate_gxf_registry_manifest(
+    EXTENSION_TARGET gxf_holoscan_wrapper
+    EXTENSION_NAME HoloscanWrapperExtension
+    BINARY_FILES
+      $<TARGET_FILE:gxf_holoscan_wrapper>
+      $<TARGET_FILE:gxf_holoscan_wrapper_lib>
+      $<TARGET_FILE:GXF::logger>
+      $<TARGET_FILE:holoscan::core>
+      $<TARGET_FILE:holoscan::infer>
+      $<TARGET_FILE:holoscan::infer::onnx_runtime>
+      $<TARGET_FILE:holoscan::infer::torch>
+      $<TARGET_FILE:holoscan::logger>
+      $<TARGET_FILE:holoscan::ops::async_ping_rx>
+      $<TARGET_FILE:holoscan::ops::async_ping_tx>
+      $<TARGET_FILE:holoscan::ops::bayer_demosaic>
+      $<TARGET_FILE:holoscan::ops::format_converter>
+      $<TARGET_FILE:holoscan::ops::gxf_codelet>
+      $<$<TARGET_EXISTS:holoscan::ops::holoviz>:$<TARGET_FILE:holoscan::ops::holoviz>>
+      $<TARGET_FILE:holoscan::ops::inference>
+      $<TARGET_FILE:holoscan::ops::inference_processor>
+      $<TARGET_FILE:holoscan::ops::ping_rx>
+      $<TARGET_FILE:holoscan::ops::ping_tensor_rx>
+      $<TARGET_FILE:holoscan::ops::ping_tensor_tx>
+      $<TARGET_FILE:holoscan::ops::ping_tx>
+      $<TARGET_FILE:holoscan::ops::segmentation_postprocessor>
+      $<TARGET_FILE:holoscan::ops::v4l2>
+      $<TARGET_FILE:holoscan::ops::video_stream_recorder>
+      $<TARGET_FILE:holoscan::ops::video_stream_replayer>
+      $<TARGET_FILE:holoscan::spdlog_logger>
+      $<$<TARGET_EXISTS:holoscan::viz>:$<TARGET_FILE:holoscan::viz>>
+      $<TARGET_FILE:ucx::ucp>
+      $<TARGET_FILE:ucx::ucs>
+      $<TARGET_FILE:ucx::uct>
+      $<TARGET_FILE:yaml-cpp::yaml-cpp>
+    FORWARD_ARGS
+      --uuid "12d01b4e-e06f-49ef-93c4-961834347385"
+      --version "${holoscan_VERSION}"
+      --extension-dependencies
+        $<TARGET_FILE:GXF::std>
+        $<TARGET_FILE:GXF::cuda>
+        $<TARGET_FILE:GXF::multimedia>
+        $<TARGET_FILE:GXF::serialization>
+        $<TARGET_FILE:GXF::ucx>
+        $<TARGET_FILE:gxf_ucx_holoscan>
+      --headers
+        "${CMAKE_CURRENT_SOURCE_DIR}/fragment_wrapper.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/operator_wrapper.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resource_wrapper.hpp"
+  )
   register_gxf_extension(
     EXTENSION_NAME HoloscanWrapperExtension
     MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/HoloscanWrapperExtension_manifest.yaml"

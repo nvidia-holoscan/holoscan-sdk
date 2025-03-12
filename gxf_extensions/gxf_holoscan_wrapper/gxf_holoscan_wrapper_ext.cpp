@@ -17,6 +17,8 @@
 #include "gxf/std/extension_factory_helper.hpp"
 
 #include "holoscan/core/domain/tensor.hpp"
+#include "holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp"
+#include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/metadata.hpp"
 #include "operator_wrapper.hpp"
@@ -34,6 +36,13 @@ GXF_EXT_FACTORY_SET_INFO(0x12d01b4ee06f49ef, 0x93c4961834347385, "HoloscanWrappe
                          "LICENSE");
 
 // Register types/components that are used by Holoscan
+GXF_EXT_FACTORY_ADD(0xbcfb5603b060495b, 0xad0e47c3523ee88e, holoscan::gxf::GXFWrapper,
+                    nvidia::gxf::Codelet, "GXF wrapper to support Holoscan SDK native operators");
+
+GXF_EXT_FACTORY_ADD(0x3b8b521cbda54bbe, 0xa241ed132937a1b5, holoscan::gxf::GXFSchedulingTermWrapper,
+                    nvidia::gxf::SchedulingTerm,
+                    "GXF wrapper to support Holoscan SDK native conditions");
+
 GXF_EXT_FACTORY_ADD_0(0x61510ca06aa9493b, 0x8a777d0bf87476b7, holoscan::Message,
                       "Holoscan message type");
 GXF_EXT_FACTORY_ADD_0(0xa5eb0ed57d7f4aa2, 0xb5865ccca0ef955c, holoscan::Tensor,

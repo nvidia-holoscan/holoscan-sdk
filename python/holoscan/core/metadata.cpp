@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,49 +41,50 @@ class MetaNoneValue {};
 
 namespace holoscan {
 
-void set_scalar_metadata_via_dtype(const py::object& obj, const py::dtype& dt,
-                                   MetadataObject& out) {
+void set_scalar_metadata_via_dtype(const std::string& key, const py::object& obj,
+                                   const py::dtype& dt, MetadataDictionary& out) {
   auto dtype_name = dt.attr("name").cast<std::string>();
   if (dtype_name == "float32") {
-    out.set_value(obj.cast<float>());
+    out.set(key, obj.cast<float>());
   } else if (dtype_name == "float64") {
-    out.set_value(obj.cast<double>());
+    out.set(key, obj.cast<double>());
   } else if (dtype_name == "bool") {
-    out.set_value(obj.cast<bool>());
+    out.set(key, obj.cast<bool>());
   } else if (dtype_name == "int8") {
-    out.set_value(obj.cast<int8_t>());
+    out.set(key, obj.cast<int8_t>());
   } else if (dtype_name == "int16") {
-    out.set_value(obj.cast<int16_t>());
+    out.set(key, obj.cast<int16_t>());
   } else if (dtype_name == "int32") {
-    out.set_value(obj.cast<int32_t>());
+    out.set(key, obj.cast<int32_t>());
   } else if (dtype_name == "int64") {
-    out.set_value(obj.cast<int64_t>());
+    out.set(key, obj.cast<int64_t>());
   } else if (dtype_name == "uint8") {
-    out.set_value(obj.cast<uint8_t>());
+    out.set(key, obj.cast<uint8_t>());
   } else if (dtype_name == "uint16") {
-    out.set_value(obj.cast<uint16_t>());
+    out.set(key, obj.cast<uint16_t>());
   } else if (dtype_name == "uint32") {
-    out.set_value(obj.cast<uint32_t>());
+    out.set(key, obj.cast<uint32_t>());
   } else if (dtype_name == "uint64") {
-    out.set_value(obj.cast<uint64_t>());
+    out.set(key, obj.cast<uint64_t>());
   } else if (dtype_name == "complex64") {
-    out.set_value(obj.cast<std::complex<float>>());
+    out.set(key, obj.cast<std::complex<float>>());
   } else if (dtype_name == "complex128") {
-    out.set_value(obj.cast<std::complex<double>>());
+    out.set(key, obj.cast<std::complex<double>>());
   } else {
     throw std::runtime_error("unsupported dtype: "s + dtype_name);
   }
 }
 
 template <typename T>
-void set_vector_metadata_via_numpy_array(const py::array& obj, MetadataObject& out) {
+void set_vector_metadata_via_numpy_array(const std::string& key, const py::array& obj,
+                                         MetadataDictionary& out) {
   // not intended for images or other large tensors, just
   // for short arrays containing parameter settings to operators
   if (obj.attr("ndim").cast<int>() == 1) {
     std::vector<T> v;
     v.reserve(obj.attr("size").cast<size_t>());
     for (const auto& item : obj) { v.push_back(item.cast<T>()); }
-    out.set_value(v);
+    out.set(key, v);
   } else if (obj.attr("ndim").cast<int>() == 2) {
     std::vector<std::vector<T>> v;
     auto shape = obj.attr("shape").cast<std::vector<py::ssize_t>>();
@@ -94,14 +95,15 @@ void set_vector_metadata_via_numpy_array(const py::array& obj, MetadataObject& o
       for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
       v.push_back(vv);
     }
-    out.set_value(v);
+    out.set(key, v);
   } else {
     throw std::runtime_error("Only 1d and 2d NumPy arrays are supported.");
   }
 }
 
 template <typename T>
-void set_vector_metadata_via_py_sequence(const py::sequence& seq, MetadataObject& out) {
+void set_vector_metadata_via_py_sequence(const std::string& key, const py::sequence& seq,
+                                         MetadataDictionary& out) {
   // not intended for images or other large tensors, just
   // for short arrays containing parameter settings to operators
 
@@ -116,18 +118,19 @@ void set_vector_metadata_via_py_sequence(const py::sequence& seq, MetadataObject
       for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
       v.push_back(vv);
     }
-    out.set_value(v);
+    out.set(key, v);
   } else {
     // 1d vector to handle a sequence of elements
     std::vector<T> v;
     size_t length = py::len(seq);
     v.reserve(length);
     for (const auto& item : seq) { v.push_back(item.cast<T>()); }
-    out.set_value(v);
+    out.set(key, v);
   }
 }
 
-void set_vector_metadata_via_iterable(const py::object& obj, MetadataObject& out) {
+void set_vector_metadata_via_iterable(const std::string& key, const py::object& obj,
+                                      MetadataDictionary& out) {
   py::sequence seq;
   if (py::isinstance<py::sequence>(obj)) {
     seq = obj;
@@ -149,91 +152,92 @@ void set_vector_metadata_via_iterable(const py::object& obj, MetadataObject& out
       throw std::runtime_error("Nested sequences of depth > 2 levels are not supported.");
     }
     if (py::isinstance<py::bool_>(item)) {
-      set_vector_metadata_via_py_sequence<bool>(seq, out);
+      set_vector_metadata_via_py_sequence<bool>(key, seq, out);
     } else if (py::isinstance<py::int_>(item)) {
-      set_vector_metadata_via_py_sequence<int64_t>(seq, out);
+      set_vector_metadata_via_py_sequence<int64_t>(key, seq, out);
     } else if (py::isinstance<py::float_>(item)) {
-      set_vector_metadata_via_py_sequence<double>(seq, out);
+      set_vector_metadata_via_py_sequence<double>(key, seq, out);
     } else if (py::isinstance<py::str>(item)) {
-      set_vector_metadata_via_py_sequence<std::string>(seq, out);
+      set_vector_metadata_via_py_sequence<std::string>(key, seq, out);
     } else {
       throw std::runtime_error("Nested sequence of unsupported type.");
     }
   } else {
     const auto& item = item0;
     if (py::isinstance<py::bool_>(item)) {
-      set_vector_metadata_via_py_sequence<bool>(seq, out);
+      set_vector_metadata_via_py_sequence<bool>(key, seq, out);
     } else if (py::isinstance<py::int_>(item)) {
-      set_vector_metadata_via_py_sequence<int64_t>(seq, out);
+      set_vector_metadata_via_py_sequence<int64_t>(key, seq, out);
     } else if (py::isinstance<py::float_>(item)) {
-      set_vector_metadata_via_py_sequence<double>(seq, out);
+      set_vector_metadata_via_py_sequence<double>(key, seq, out);
     } else if (py::isinstance<py::str>(item)) {
-      set_vector_metadata_via_py_sequence<std::string>(seq, out);
+      set_vector_metadata_via_py_sequence<std::string>(key, seq, out);
     }
   }
 }
 
-void set_vector_metadata_via_dtype(const py::object& obj, const py::dtype& dt,
-                                   MetadataObject& out) {
+void set_vector_metadata_via_dtype(const std::string& key, const py::object& obj,
+                                   const py::dtype& dt, MetadataDictionary& out) {
   auto dtype_name = dt.attr("name").cast<std::string>();
   if (dtype_name == "float32") {
-    set_vector_metadata_via_numpy_array<float>(obj, out);
+    set_vector_metadata_via_numpy_array<float>(key, obj, out);
   } else if (dtype_name == "float64") {
-    set_vector_metadata_via_numpy_array<double>(obj, out);
+    set_vector_metadata_via_numpy_array<double>(key, obj, out);
   } else if (dtype_name == "bool") {
-    set_vector_metadata_via_numpy_array<bool>(obj, out);
+    set_vector_metadata_via_numpy_array<bool>(key, obj, out);
   } else if (dtype_name == "int8") {
-    set_vector_metadata_via_numpy_array<int8_t>(obj, out);
+    set_vector_metadata_via_numpy_array<int8_t>(key, obj, out);
   } else if (dtype_name == "int16") {
-    set_vector_metadata_via_numpy_array<int16_t>(obj, out);
+    set_vector_metadata_via_numpy_array<int16_t>(key, obj, out);
   } else if (dtype_name == "int32") {
-    set_vector_metadata_via_numpy_array<int32_t>(obj, out);
+    set_vector_metadata_via_numpy_array<int32_t>(key, obj, out);
   } else if (dtype_name == "int64") {
-    set_vector_metadata_via_numpy_array<int64_t>(obj, out);
+    set_vector_metadata_via_numpy_array<int64_t>(key, obj, out);
   } else if (dtype_name == "uint8") {
-    set_vector_metadata_via_numpy_array<uint8_t>(obj, out);
+    set_vector_metadata_via_numpy_array<uint8_t>(key, obj, out);
   } else if (dtype_name == "uint16") {
-    set_vector_metadata_via_numpy_array<uint16_t>(obj, out);
+    set_vector_metadata_via_numpy_array<uint16_t>(key, obj, out);
   } else if (dtype_name == "uint32") {
-    set_vector_metadata_via_numpy_array<uint32_t>(obj, out);
+    set_vector_metadata_via_numpy_array<uint32_t>(key, obj, out);
   } else if (dtype_name == "uint64") {
-    set_vector_metadata_via_numpy_array<uint64_t>(obj, out);
+    set_vector_metadata_via_numpy_array<uint64_t>(key, obj, out);
   } else if (dtype_name == "complex64") {
-    set_vector_metadata_via_numpy_array<std::complex<float>>(obj, out);
+    set_vector_metadata_via_numpy_array<std::complex<float>>(key, obj, out);
   } else if (dtype_name == "complex128") {
-    set_vector_metadata_via_numpy_array<std::complex<double>>(obj, out);
+    set_vector_metadata_via_numpy_array<std::complex<double>>(key, obj, out);
   } else {
     throw std::runtime_error("unsupported dtype: "s + dtype_name);
   }
 }
 
-void py_object_to_metadata_object(MetadataObject& meta_obj, const py::object& value,
-                                  const std::optional<py::dtype>& dtype = std::nullopt,
-                                  bool cast_to_cpp = false) {
+void py_object_to_metadata_dictionary(MetadataDictionary& meta_dict, const std::string& key,
+                                      const py::object& value,
+                                      const std::optional<py::dtype>& dtype = std::nullopt,
+                                      bool cast_to_cpp = false) {
   if (cast_to_cpp) {
     if (py::isinstance<py::str>(value)) {
-      meta_obj.set_value(value.cast<std::string>());
+      meta_dict.set(key, value.cast<std::string>());
     } else if (py::isinstance<py::array>(value)) {
       // handle numpy arrays
       py::dtype array_dtype = value.cast<py::array>().dtype();
-      set_vector_metadata_via_dtype(value, array_dtype, meta_obj);
+      set_vector_metadata_via_dtype(key, value, array_dtype, meta_dict);
     } else if (py::isinstance<py::iterable>(value) && !py::isinstance<py::dict>(value)) {
       // does not handle every possible type of iterable (e.g. dict)
       // will work for any that can be cast to py::list
-      set_vector_metadata_via_iterable(value, meta_obj);
+      set_vector_metadata_via_iterable(key, value, meta_dict);
     } else if (py::isinstance<py::bool_>(value)) {
-      meta_obj.set_value(value.cast<bool>());
+      meta_dict.set(key, value.cast<bool>());
     } else if (py::isinstance<py::int_>(value)) {
       if (dtype.has_value()) {
-        set_scalar_metadata_via_dtype(value, dtype.value(), meta_obj);
+        set_scalar_metadata_via_dtype(key, value, dtype.value(), meta_dict);
       } else {
-        meta_obj.set_value(value.cast<int64_t>());
+        meta_dict.set(key, value.cast<int64_t>());
       }
     } else if (py::isinstance<py::float_>(value)) {
       if (dtype.has_value()) {
-        set_scalar_metadata_via_dtype(value, dtype.value(), meta_obj);
+        set_scalar_metadata_via_dtype(key, value, dtype.value(), meta_dict);
       } else {
-        meta_obj.set_value(value.cast<double>());
+        meta_dict.set(key, value.cast<double>());
       }
     } else {
       throw std::runtime_error(
@@ -242,7 +246,7 @@ void py_object_to_metadata_object(MetadataObject& meta_obj, const py::object& va
     }
   } else {
     auto data_ptr = std::make_shared<GILGuardedPyObject>(value);
-    meta_obj.set_value(data_ptr);
+    meta_dict.set(key, std::move(data_ptr));
   }
 }
 
@@ -393,8 +397,10 @@ void init_metadata(py::module_& m) {
 
   py::enum_<MetadataPolicy>(m, "MetadataPolicy", doc::MetadataPolicy::doc_MetadataPolicy)
       .value("REJECT", MetadataPolicy::kReject)
+      .value("INPLACE_UPDATE", MetadataPolicy::kInplaceUpdate)
       .value("UPDATE", MetadataPolicy::kUpdate)
-      .value("RAISE", MetadataPolicy::kRaise);
+      .value("RAISE", MetadataPolicy::kRaise)
+      .value("DEFAULT", MetadataPolicy::kDefault);
 
   // MetadataDictionary provides a Python dict-like interface to the C++ MetadataDictionary.
   py::class_<MetadataDictionary, std::shared_ptr<MetadataDictionary>>(
@@ -472,9 +478,13 @@ void init_metadata(py::module_& m) {
               auto data_ptr = std::make_shared<GILGuardedPyObject>(value);
               meta_dict.set<std::shared_ptr<GILGuardedPyObject>>(key, std::move(data_ptr));
             } else {
-              auto meta_obj = std::make_shared<MetadataObject>();
-              py_object_to_metadata_object(*meta_obj, value, dtype, cast_to_cpp);
-              meta_dict.set(key, meta_obj);
+              std::shared_ptr<MetadataObject> meta_obj;
+              if (meta_dict.has_key(key)) {
+                meta_obj = meta_dict.get(key);
+              } else {
+                meta_obj = std::make_shared<MetadataObject>();
+              }
+              py_object_to_metadata_dictionary(meta_dict, key, value, dtype, cast_to_cpp);
             }
           },
           "key"_a,

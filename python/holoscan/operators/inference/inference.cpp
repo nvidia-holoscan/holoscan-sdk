@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "../../core/emitter_receiver_registry.hpp"  // EmitterReceiverRegistry
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
@@ -30,13 +31,13 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/operators/inference/codecs.hpp"
 #include "holoscan/operators/inference/inference.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
-
 namespace holoscan::ops {
 
 InferenceOp::DataMap _dict_to_inference_datamap(const py::dict& dict) {
@@ -77,6 +78,7 @@ class PyInferenceOp : public InferenceOp {
                 const py::dict& model_path_map,     // InferenceOp::DataMap
                 const py::dict& pre_processor_map,  // InferenceOp::DataVecMap
                 const py::dict& device_map,         // InferenceOp::DataMap
+                const py::dict& dla_core_map,         // InferenceOp::DataMap
                 const py::dict& temporal_map,       // InferenceOp::DataMap
                 const py::dict& activation_map,     // InferenceOp::DataMap
                 const py::dict& backend_map,        // InferenceOp::DataMap
@@ -85,7 +87,7 @@ class PyInferenceOp : public InferenceOp {
                 const std::vector<int32_t>& trt_opt_profile, bool infer_on_cpu = false,
                 bool parallel_inference = true, bool input_on_cuda = true,
                 bool output_on_cuda = true, bool transmit_on_cuda = true, bool enable_fp16 = false,
-                bool enable_cuda_graphs = true,
+                bool enable_cuda_graphs = true, int32_t dla_core = -1, bool dla_gpu_fallback = true,
                 bool is_engine_path = false,
                 std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                 // TODO(grelee): handle receivers similarly to HolovizOp?  (default: {})
@@ -103,6 +105,8 @@ class PyInferenceOp : public InferenceOp {
                             Arg{"transmit_on_cuda", transmit_on_cuda},
                             Arg{"enable_fp16", enable_fp16},
                             Arg{"enable_cuda_graphs", enable_cuda_graphs},
+                            Arg{"dla_core", dla_core},
+                            Arg{"dla_gpu_fallback", dla_gpu_fallback},
                             Arg{"is_engine_path", is_engine_path}}) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
     add_positional_condition_and_resource_args(this, args);
@@ -146,6 +150,11 @@ class PyInferenceOp : public InferenceOp {
       if (!py::isinstance<py::str>(value)) { device_map_infer[key] = py::str(value); }
     }
 
+    auto dla_core_map_infer = dla_core_map.cast<py::dict>();
+    for (const auto& [key, value] : dla_core_map_infer) {
+      if (!py::isinstance<py::str>(value)) { dla_core_map_infer[key] = py::str(value); }
+    }
+
     // convert from Python dict to InferenceOp::DataVecMap
     auto inference_map_datavecmap = _dict_to_inference_datavecmap(inference_map_dict);
     this->add_arg(Arg("inference_map", inference_map_datavecmap));
@@ -155,6 +164,9 @@ class PyInferenceOp : public InferenceOp {
 
     auto device_datamap = _dict_to_inference_datamap(device_map_infer);
     this->add_arg(Arg("device_map", device_datamap));
+
+    auto dla_core_datamap = _dict_to_inference_datamap(dla_core_map_infer);
+    this->add_arg(Arg("dla_core_map", dla_core_datamap));
 
     auto temporal_datamap = _dict_to_inference_datamap(temporal_map_infer);
     this->add_arg(Arg("temporal_map", temporal_datamap));
@@ -197,6 +209,7 @@ PYBIND11_MODULE(_inference, m) {
                             py::dict,
                             py::dict,
                             py::dict,
+                            py::dict,
                             const std::vector<std::string>&,
                             const std::vector<std::string>&,
                             const std::vector<int32_t>&,
@@ -206,6 +219,8 @@ PYBIND11_MODULE(_inference, m) {
                             bool,
                             bool,
                             bool,
+                            bool,
+                            int32_t,
                             bool,
                             bool,
                             std::shared_ptr<holoscan::CudaStreamPool>,
@@ -217,6 +232,7 @@ PYBIND11_MODULE(_inference, m) {
                    "model_path_map"_a,
                    "pre_processor_map"_a,
                    "device_map"_a = py::dict(),
+                   "dla_core_map"_a = py::dict(),
                    "temporal_map"_a = py::dict(),
                    "activation_map"_a = py::dict(),
                    "backend_map"_a = py::dict(),
@@ -230,6 +246,8 @@ PYBIND11_MODULE(_inference, m) {
                    "transmit_on_cuda"_a = true,
                    "enable_fp16"_a = false,
                    "enable_cuda_graphs"_a = true,
+                   "dla_core"_a = -1,
+                   "dla_gpu_fallback"_a = true,
                    "is_engine_path"_a = false,
                    "cuda_stream_pool"_a = py::none(),
                    "name"_a = "inference"s,
@@ -244,5 +262,23 @@ PYBIND11_MODULE(_inference, m) {
       .def(py::init<>())
       .def("insert", &InferenceOp::DataVecMap::get_map)
       .def("get_map", &InferenceOp::DataVecMap::get_map);
+
+  py::class_<InferenceOp::ActivationSpec>(inference_op, "ActivationSpec")
+      .def(py::init<const std::string&, bool>())
+      .def("is_active", &InferenceOp::ActivationSpec::is_active, "Get model active flag")
+      .def("model", &InferenceOp::ActivationSpec::model, "Get model name")
+      .def("set_active",
+           &InferenceOp::ActivationSpec::set_active,
+           "Set model active flag",
+           py::arg("active") = true);
+
+  CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>(
+      "std::vector<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>", true);
+  // See python bindings for holoviz operator
+  m.def("register_types", [](EmitterReceiverRegistry& registry) {
+    HOLOSCAN_LOG_INFO("Call in register types for ActivationSpec");
+    registry.add_emitter_receiver<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>(
+        "std::vector<InferenceOp::ActivationSpec>"s);
+  });
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

@@ -27,8 +27,9 @@ limitations under the License.
 import ast
 import inspect
 import textwrap
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import cupy as cp
 import numpy as np
@@ -78,6 +79,27 @@ class Input:
         function argument specified by `arg_map`. If `arg_map` is a dict, the input is assumed to be
         a TensorMap (dictionary of tensors). In this case the keys of the dict are the tensor names
         and the values are the names of the function arguments that the tensors map to.
+    size: int | holoscan.core.IOSpec.IOSize, optional
+        The size of the queue for the input port.
+        By default, `IOSpec.SIZE_ONE` (== `IOSpec.IOSize(1)`) is used.
+        If `IOSpec.ANY_SIZE` is used, it defines multiple receivers internally for the input port.
+        Otherwise, the size of the input queue is set to the specified value, and the message
+        available condition for the input port is set with `min_size` equal to the same value.
+
+        The following size constants are supported:
+        - ``IOSpec.ANY_SIZE``: Any size.
+        - ``IOSpec.PRECEDING_COUNT``: Number of preceding connections.
+        - ``IOSpec.SIZE_ONE``: The queue size is 1.
+
+        Please refer to the [Holoscan SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-python)
+        to see how to receive any number of inputs in Python.
+    policy : holoscan.core.IOSpec.QueuePolicy, optional
+        The queue policy for the input port.
+        The queue policy to set. Valid values are:
+
+        - QueuePolicy.POP : If the queue is full, pop the oldest item, then add the new one.
+        - QueuePolicy.REJECT : If the queue is full, reject (discard) the new item.
+        - QueuePolicy.FAULT : If the queue is full, log a warning and reject the new item.
     condition_type : holoscan.core.ConditionType, optional
         The condition type for the input port.
     condition_kwargs : dict[str, Any], optional
@@ -90,13 +112,24 @@ class Input:
 
     name: str
     arg_map: Optional[Union[str, dict[str, str]]] = ()
+    size: Union[int, IOSpec.IOSize] = IOSpec.SIZE_ONE
+    policy: Optional[IOSpec.QueuePolicy] = None
     condition_type: Optional[ConditionType] = None
     condition_kwargs: dict[str, Any] = field(default_factory=dict)
     connector_type: Optional[IOSpec.ConnectorType] = None
     connector_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def create_input(self, spec: OperatorSpec) -> IOSpec:
-        iospec = spec.input(self.name)
+        if isinstance(self.size, int):
+            self.size = IOSpec.IOSize(self.size)
+        elif not isinstance(self.size, IOSpec.IOSize):
+            raise ValueError(f"Invalid size: {self.size}")
+
+        if self.policy is not None and not isinstance(self.policy, IOSpec.QueuePolicy):
+            raise ValueError(f"Invalid policy: {self.policy}")
+
+        iospec = spec.input(self.name, size=self.size, policy=self.policy)
+
         if self.condition_type is not None:
             iospec = iospec.condition(self.condition_type, **self.condition_kwargs)
         if self.connector_type is not None:
@@ -119,6 +152,16 @@ class Output:
         port. There is no need to specify `tensor_names` if all tensors in a dict returned by the
         function are to be transmitted. In the case of a single tensor name, a string can be
         provided instead of a tuple.
+    size: int | holoscan.core.IOSpec.IOSize, optional
+        The size of the queue for the output port.
+        By default, `IOSpec.SIZE_ONE` (== `IOSpec.IOSize(1)`) is used.
+    policy : holoscan.core.IOSpec.QueuePolicy, optional
+        The queue policy for the output port.
+        The queue policy to set. Valid values are:
+
+        - QueuePolicy.POP : If the queue is full, pop the oldest item, then add the new one.
+        - QueuePolicy.REJECT : If the queue is full, reject (discard) the new item.
+        - QueuePolicy.FAULT : If the queue is full, log a warning and reject the new item.
     condition_type : holoscan.core.ConditionType, optional
         The condition type for the input port.
     condition_kwargs : dict[str, Any], optional
@@ -131,13 +174,23 @@ class Output:
 
     name: str
     tensor_names: Optional[Union[str, tuple[str]]] = ()
+    size: Union[int, IOSpec.IOSize] = IOSpec.SIZE_ONE
+    policy: Optional[IOSpec.QueuePolicy] = None
     condition_type: Optional[ConditionType] = None
     condition_kwargs: dict[str, Any] = field(default_factory=dict)
     connector_type: Optional[IOSpec.ConnectorType] = None
     connector_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def create_output(self, spec: OperatorSpec) -> IOSpec:
-        iospec = spec.output(self.name)
+        if isinstance(self.size, int):
+            self.size = IOSpec.IOSize(self.size)
+        elif not isinstance(self.size, IOSpec.IOSize):
+            raise ValueError(f"Invalid size: {self.size}")
+
+        if self.policy is not None and not isinstance(self.policy, IOSpec.QueuePolicy):
+            raise ValueError(f"Invalid policy: {self.policy}")
+
+        iospec = spec.output(self.name, size=self.size, policy=self.policy)
         if self.condition_type is not None:
             iospec = iospec.condition(self.condition_type, **self.condition_kwargs)
         if self.connector_type is not None:
@@ -209,11 +262,12 @@ def _has_function_returns_value(func):
 
 
 def create_op(
-    function_or_class=None,
-    inputs: Union[str, Input, tuple[Union[str, Input]]] = (),
-    outputs: Union[str, Output, tuple[Union[str, Output]]] = (),
-    cast_tensors=True,
-):
+    function_or_class: Optional[Union[type, Callable[..., Any]]] = None,
+    inputs: Union[str, Input, Sequence[Union[str, Input]]] = (),
+    outputs: Union[str, Output, Sequence[Union[str, Output]]] = (),
+    cast_tensors: bool = True,
+    op_param: Optional[str] = None,
+) -> Callable:
     """Decorator for creating an operator from a function or a class.
 
     When the decorator is used on a class, the class must have a `__call__` method that will be
@@ -238,6 +292,10 @@ def create_op(
         device tensors, respectively). If set to False, these will be left as `holoscan.Tensor` and
         the user will have to cast to the desired type within the body of the decorated function or
         class.
+    op_param : str, optional
+        If provided, adds this parameter name to the function signature which will
+        contain a reference to the operator instance. This allows the function to
+        access operator methods and attributes.
 
     Notes
     -----
@@ -265,6 +323,9 @@ def create_op(
             "`outputs` must be a single port name or Output object or a tuple of these"
         )
 
+    if op_param is not None and not isinstance(op_param, str):
+        raise TypeError(f"op_param must be a string or None, got {type(op_param)}")
+
     def decorator(func_or_cls):
         nonlocal function_or_class, class_obj
 
@@ -290,6 +351,7 @@ def create_op(
                     inputs,
                     outputs,
                     cast_tensors=cast_tensors,
+                    op_param=op_param,
                     **kwargs,
                 ):
                     self.func = func_or_cls
@@ -298,6 +360,7 @@ def create_op(
                     self.is_generator = inspect.isgeneratorfunction(self.func)
                     self.gen_obj = None
                     self.cast_tensors = cast_tensors
+                    self.op_param = op_param
 
                     # remove conditions and resources from *args
                     condition_args = tuple(a for a in args if isinstance(a, ConditionBase))
@@ -374,6 +437,10 @@ def create_op(
                             for arg_name in input_map.values():
                                 self._add_dynamic_arg(arg_name, kwargs)
                     self.fixed_kwargs = kwargs
+
+                    # add the operator instance to the kwargs if op_param was specified
+                    if self.op_param:
+                        self.fixed_kwargs[self.op_param] = self
 
                     # store any positional args with specified defaults in fixed_kwargs instead
                     argspec = self.func_argspec
@@ -547,7 +614,9 @@ def create_op(
                             # print(f"tensormap emit of {out_tensors=}")
                             op_output.emit(out_tensors, port_name)
 
-            op = DynamicOp(fragment, *args, inputs=inputs, outputs=outputs, **kwargs)
+            op = DynamicOp(
+                fragment, *args, inputs=inputs, outputs=outputs, op_param=op_param, **kwargs
+            )
 
             def _to_camel_case(name):
                 """Convert name to camel case"""

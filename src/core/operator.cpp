@@ -46,12 +46,21 @@ void Operator::initialize() {
       // (DFFT)
       this->set_op_backend();
     }
-    if (!is_metadata_enabled_) {
-      // enable metadata on a per-fragment basis if the user didn't explicitly enable it
+    if (!is_metadata_enabled_.has_value()) {
+      // Enable or disable metadata on a per-fragment basis if the user didn't explicitly specify
+      // a setting for this operator.
       is_metadata_enabled_ = fragment_ptr->is_metadata_enabled();
     }
   } else {
     HOLOSCAN_LOG_WARN("Operator::initialize() - Fragment is not set");
+  }
+}
+
+bool Operator::is_metadata_enabled() const {
+  if (is_metadata_enabled_.has_value()) {
+    return is_metadata_enabled_.value();
+  } else {
+    return fragment_->is_metadata_enabled();
   }
 }
 
@@ -198,7 +207,7 @@ void Operator::set_op_backend() {
     auto fragment_ptr = fragment();
     if (fragment_ptr) {
       auto& executor = static_cast<holoscan::gxf::GXFExecutor&>(fragment_ptr->executor());
-      if (executor.own_gxf_context()) {
+      if (executor.owns_context()) {
         HOLOSCAN_GXF_CALL(GxfComponentTypeId(executor.context(), codelet_typename, &codelet_tid));
 
         HOLOSCAN_GXF_CALL(GxfComponentPointer(
@@ -483,6 +492,21 @@ std::optional<std::shared_ptr<Receiver>> Operator::receiver(const std::string& p
   return receiver;
 }
 
+void Operator::queue_policy(const std::string& port_name, IOSpec::IOType port_type,
+                            IOSpec::QueuePolicy policy) {
+  const auto& iospecs = port_type == IOSpec::IOType::kInput ? spec_->inputs() : spec_->outputs();
+  auto iospec_iter = iospecs.find(port_name);
+  if (iospec_iter == iospecs.end()) {
+    throw std::runtime_error(fmt::format(
+        "No {} port with name '{}' found",
+        port_type == IOSpec::IOType::kInput ? std::string("input") : std::string("output"),
+        port_name));
+  }
+  auto iospec = iospec_iter->second;
+  iospec->queue_policy(policy);
+  return;
+}
+
 std::optional<std::shared_ptr<Transmitter>> Operator::transmitter(const std::string& port_name) {
   auto outputs = spec_->outputs();
   auto output_iter = outputs.find(port_name);
@@ -491,6 +515,148 @@ std::optional<std::shared_ptr<Transmitter>> Operator::transmitter(const std::str
   auto transmitter = std::dynamic_pointer_cast<Transmitter>(connector);
   if (transmitter == nullptr) { return std::nullopt; }
   return transmitter;
+}
+
+const std::shared_ptr<IOSpec>& Operator::input_exec_spec() {
+  return input_exec_spec_;
+}
+
+const std::shared_ptr<IOSpec>& Operator::output_exec_spec() {
+  return output_exec_spec_;
+}
+
+const std::function<void(const std::shared_ptr<Operator>&)>& Operator::dynamic_flow_func() {
+  return dynamic_flow_func_;
+}
+
+std::shared_ptr<Operator> Operator::self_shared() {
+  return self_shared_.lock();
+}
+
+void Operator::set_input_exec_spec(const std::shared_ptr<IOSpec>& input_exec_spec) {
+  input_exec_spec_ = input_exec_spec;
+}
+
+void Operator::set_output_exec_spec(const std::shared_ptr<IOSpec>& output_exec_spec) {
+  output_exec_spec_ = output_exec_spec;
+}
+
+void Operator::set_self_shared(const std::shared_ptr<Operator>& this_op) {
+  self_shared_ = this_op;
+}
+
+void Operator::initialize_next_flows() {
+  if (!next_flows_) {
+    next_flows_ = std::make_shared<std::vector<std::shared_ptr<FlowInfo>>>();
+
+    auto& graph = fragment()->graph();
+    auto curr_op = graph.find_node(name());
+    auto next_ops = graph.get_next_nodes(curr_op);
+    // Reserve enough space for the next flows (assuming each output port has a flow to each next
+    // operator)
+    next_flows_->reserve(curr_op->spec()->outputs().size() * next_ops.size());
+    for (auto& next_op : next_ops) {
+      auto port_map = graph.get_port_map(curr_op, next_op).value_or(nullptr);
+      if (port_map) {
+        for (const auto& [out_port_name, in_port_names] : *port_map) {
+          for (const auto& in_port_name : in_port_names) {
+            next_flows_->emplace_back(
+                std::make_shared<FlowInfo>(curr_op, out_port_name, next_op, in_port_name));
+          }
+        }
+      }
+    }
+  }
+}
+
+const std::vector<std::shared_ptr<Operator::FlowInfo>>& Operator::next_flows() {
+  if (!next_flows_) { initialize_next_flows(); }
+  return *next_flows_;
+}
+
+void Operator::add_dynamic_flow(const std::shared_ptr<FlowInfo>& flow) {
+  if (!dynamic_flows_) {
+    dynamic_flows_ = std::make_shared<std::vector<std::shared_ptr<FlowInfo>>>();
+    dynamic_flows_->reserve(next_flows().size());
+  }
+  dynamic_flows_->push_back(flow);
+}
+
+void Operator::add_dynamic_flow(const std::vector<std::shared_ptr<FlowInfo>>& flows) {
+  if (!dynamic_flows_) {
+    dynamic_flows_ = std::make_shared<std::vector<std::shared_ptr<FlowInfo>>>();
+    dynamic_flows_->reserve(next_flows().size());
+  }
+  dynamic_flows_->insert(dynamic_flows_->end(), flows.begin(), flows.end());
+}
+
+void Operator::add_dynamic_flow(const std::string& curr_output_port_name,
+                                const std::shared_ptr<Operator>& next_op,
+                                const std::string& next_input_port_name) {
+  if (!dynamic_flows_) {
+    dynamic_flows_ = std::make_shared<std::vector<std::shared_ptr<FlowInfo>>>();
+    dynamic_flows_->reserve(next_flows().size());
+  }
+
+  std::string output_port_name = curr_output_port_name;
+
+  if (curr_output_port_name.empty() && spec()->outputs().size() == 1) {
+    output_port_name = spec()->outputs().begin()->first;
+  }
+
+  std::string input_port_name = next_input_port_name;
+
+  if (next_input_port_name.empty() && next_op->spec()->inputs().size() == 1) {
+    input_port_name = next_op->spec()->inputs().begin()->first;
+  }
+
+  if (spec()->outputs().find(output_port_name) == spec()->outputs().end()) {
+    throw std::runtime_error(
+        fmt::format("The upstream operator({}) does not have an output port with label '{}'",
+                    name(),
+                    output_port_name));
+  }
+
+  if (next_op->spec()->inputs().find(input_port_name) == next_op->spec()->inputs().end()) {
+    throw std::runtime_error(
+        fmt::format("The downstream operator({}) does not have an input port with label '{}'",
+                    next_op->name(),
+                    input_port_name));
+  }
+
+  auto flow = std::make_shared<FlowInfo>(self_shared(), output_port_name, next_op, input_port_name);
+  dynamic_flows_->push_back(flow);
+}
+
+void Operator::add_dynamic_flow(const std::shared_ptr<Operator>& next_op,
+                                const std::string& next_input_port_name) {
+  add_dynamic_flow("", next_op, next_input_port_name);
+}
+
+const std::shared_ptr<std::vector<std::shared_ptr<Operator::FlowInfo>>>& Operator::dynamic_flows() {
+  return dynamic_flows_;
+}
+
+const std::shared_ptr<Operator::FlowInfo>& Operator::find_flow_info(
+    const std::function<bool(const std::shared_ptr<Operator::FlowInfo>&)>& predicate) {
+  const auto& flows = next_flows();
+  auto it = std::find_if(flows.begin(), flows.end(), predicate);
+  if (it == flows.end()) { return kEmptyFlowInfo; }
+  return *it;
+}
+
+std::vector<std::shared_ptr<Operator::FlowInfo>> Operator::find_all_flow_info(
+    const std::function<bool(const std::shared_ptr<Operator::FlowInfo>&)>& predicate) {
+  std::vector<std::shared_ptr<FlowInfo>> result;
+  if (!next_flows().empty()) {
+    std::copy_if(next_flows().begin(), next_flows().end(), std::back_inserter(result), predicate);
+  }
+  return result;
+}
+
+void Operator::set_dynamic_flows(
+    const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func) {
+  dynamic_flow_func_ = dynamic_flow_func;
 }
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -304,6 +304,67 @@ class Application : public Fragment {
       uint64_t num_last_messages_to_discard = kDefaultNumLastMessagesToDiscard,
       int latency_threshold = kDefaultLatencyThreshold, bool is_limited_tracking = false);
 
+  /**
+   * @brief Determine whether metadata is enabled by default for operators in this application.
+   *
+   * Note that individual fragments may override the application-level default via
+   * `Fragment::enable_metadata` and individual operators may override their fragment's default
+   * via `Operator::enable_metadata`.
+   *
+   * @param enable Boolean indicating whether metadata is enabled.
+   */
+  bool is_metadata_enabled() const override;
+
+  /**
+   * @brief Deprecated method to enable or disable metadata for the application.
+   *
+   * Please use `enable_metadata` instead.
+   *
+   * @param enable Boolean indicating whether metadata should be enabled.
+   */
+  void is_metadata_enabled(bool) override;
+
+  /**
+   * @brief Enable or disable metadata for the application.
+   *
+   * Controls whether metadata is enabled or disabled by default for fragments in this application.
+   * Individual fragments of a distributed application can override this setting using the
+   * `Fragment::enable_metadata()` method. Similarly, individual operators can override the
+   * default for their fragment by using the `Operator::enable_metadata()` method.
+   *
+   * @param enable Boolean indicating whether metadata should be enabled.
+   */
+  void enable_metadata(bool enable) override;
+
+  /**
+   * @brief Set the default metadata update policy to be used for fragments within this
+   * application.
+   *
+   * The metadata policy determines how metadata is merged across multiple receive calls:
+   *    - `MetadataPolicy::kUpdate`: Update the existing value when a key already exists.
+   *    - `MetadataPolicy::kInplaceUpdate`: Update the existing MetadataObject's value in-place
+   *    when a key already exists.
+   *    - `MetadataPolicy::kReject`: Do not modify the existing value if a key already exists.
+   *    - `MetadataPolicy::kRaise`: Raise an exception if a key already exists (default).
+   *
+   * For distributed applications, individual fragments can override the application-level
+   * default via `Fragment::metadata_policy`.
+   *
+   * @param policy The metadata update policy to be used by this operator.
+   */
+  void metadata_policy(MetadataPolicy policy) override;
+
+  /**
+   * @brief Get the default metadata update policy used for fragments within this application.
+   *
+   * If a value was set for a specific fragment via `Fragment::metadata_policy` that value will
+   * take precedence over this application default. Similarly individual operators can override
+   * the default policy for their fragment via `Operator::metadata_policy`.
+   *
+   * @returns The default metadata update policy used by operators in this fragment.
+   */
+  MetadataPolicy metadata_policy() const override;
+
  protected:
   friend class AppDriver;
   friend class AppWorker;
@@ -374,6 +435,8 @@ class Application : public Fragment {
    */
   void set_ucx_env();
   void set_v4l2_env();
+  MetadataPolicy metadata_policy_ = kDefaultMetadataPolicy;
+  bool is_metadata_enabled_ = kDefaultMetadataEnabled;
 };
 
 }  // namespace holoscan

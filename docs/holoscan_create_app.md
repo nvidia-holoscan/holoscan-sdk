@@ -1026,6 +1026,19 @@ If there is a cycle in the graph with an implicit root operator which has no inp
 
 (building-and-running-your-application)=
 
+### Dynamic Flow Control for Complex Workflows
+
+As of Holoscan v3.0, the dynamic flow control feature is available, enabling operators to modify their connections with other operators at runtime. This allows for the creation of complex workflows with conditional branching, loops, and dynamic routing patterns.
+
+Key features include:
+
+  - Implicit input/output execution ports for execution dependency control
+  - The Start operator concept (`start_op()` ({cpp:func}`C++ <holoscan::Fragment::start_op>`/{py:func}`Python <holoscan.core.Fragment.start_op>`)) for managing workflow entry points
+  - Dynamic flow modification using `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`) and `add_dynamic_flow()` ({cpp:func}`C++ <holoscan::Operator::add_dynamic_flow>`/{py:func}`Python <holoscan.core.Operator.add_dynamic_flow>`) methods
+  - Flow information management via the `FlowInfo` ({cpp:class}`C++ <holoscan::Operator::FlowInfo>`/{py:class}`Python <holoscan.core.FlowInfo>`) class
+
+For details, please refer to the {ref}`Dynamic Flow Control <holoscan-dynamic-flow-control>` section of the user guide.
+
 ## Building and running your Application
 
 `````{tab-set}
@@ -1098,20 +1111,19 @@ Given a CMake project, a pre-built executable, or a Python application, you can 
 
 ## Dynamic Application Metadata
 
-As of Holoscan v2.3 (for C++) or v2.4 (for Python) it is possible to send metadata alongside the data emitted from an operator's output ports. This metadata can then be used and/or modified by any downstream operators. The subsections below describe how this feature can be enabled and used.
+As of Holoscan v2.3 (for C++) or v2.4 (for Python) it is possible to send metadata alongside the data emitted from an operator's output ports. This metadata can then be used and/or modified by any downstream operators. The subsections below describe how this feature can be used.
 
 ### Enabling application metadata
 
-Currently the metadata feature is disabled by default and must be explicitly enabled as shown in the code block below
-
+As of Holoscan v3.0, the metadata feature is enabled by default (in older releases it had to be explicitly enabled). If the application author does not wish to use the metadata feature it will not hurt to leave the feature enabled. To avoid even the minor overhead of checking for metadata in received messages, the feature can be explicitly disabled as shown below. 
 
 `````{tab-set}
 ````{tab-item} C++
 ```cpp
 app = holoscan::make_application<MyApplication>();
 
-// Enable metadata feature before calling app->run() or app->run_async()
-app->is_metadata_enabled(true);
+// Disable metadata feature before calling app->run() or app->run_async()
+app->enable_metadata(false);
 
 app->run();
 ```
@@ -1120,12 +1132,16 @@ app->run();
 ```cpp
 app = MyApplication()
 
-# Enable metadata feature before calling app.run() or app.run_async()
-app.is_metadata_enabled = True
+# Disable metadata feature before calling app.run() or app.run_async()
+app.enable_metadata(False)
 app.run()
 ```
 ````
 `````
+
+None of the built-in operators provided by the SDK itself currently require that the feature be enabled, but it is possible that some third-party operators might require it in order to work as expected. An example is the `V4L2FormatTranslateOp` defined as part of the [v4l2_camera example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/v4l2_camera) (video format information is stored in the metadata).
+
+Note that the `enable_metadata` method exists on the Application, Fragment and Operator classes. Calling this method on the application sets the default for all fragments of a distributed application. Calling the method on an individual fragment sets the default to be used for that fragment (overrides the application-level default). Similarly, calling the method on an individual operator overrides the setting for that specific operator within a fragment.
 
 ### Understanding Metadata Flow
 
@@ -1310,7 +1326,8 @@ my_op.metadata_policy = holoscan.core.MetadataPolicy.RAISE
 ```
 ````
 `````
-The policy only applies to the operator on which it was set.
+
+The policy applied as in the example above only applies to the operator on which it was set. The default metadata policy can also be set for the application as a whole via `Application::metadata_policy` ({cpp:func}`C++ <holoscan::Application::metadata_policy>`/{py:func}`Python <holoscan.core.Application.metadata_policy>`) or for individual fragments of a distributed application via `Fragment::metadata_policy` ({cpp:func}`C++ <holoscan::Fragment::metadata_policy>`/{py:func}`Python <holoscan.core.Fragment.metadata_policy>`).
 
 ### Use of Metadata in Distributed Applications
 
@@ -1321,9 +1338,11 @@ Sending metadata between two fragments of a distributed application is supported
 
 The above restrictions only apply to metadata sent **between** fragments. Within a fragment there is no size limit on metadata (aside from system memory limits) and no serialization or deserialization step is needed.
 
+(metadata-limitations)=
+
 ### Current limitations
 
-1. The current metadata API is only fully supported for native holoscan Operators and is not currently supported by operators that wrap a GXF codelet (i.e. inheriting from {cpp:class}`~holoscan::GXFOperator` or created via {cpp:class}`~holoscan::ops::GXFCodeletOp`). Aside from `GXFCodeletOp`, the built-in operators provided under the `holoscan::ops` namespace are all native operators, so the feature will work with these. Currently none of these built-in opereators add their own metadata, but any metadata received on input ports will automatically be passed on to their output ports (as long as `app->is_metadata_enabled(true)` was set to enable the metadata feature).
+1. The current metadata API is only fully supported for native holoscan Operators and is not currently supported by operators that wrap a GXF codelet (i.e. inheriting from {cpp:class}`~holoscan::GXFOperator` or created via {cpp:class}`~holoscan::ops::GXFCodeletOp`). Aside from `GXFCodeletOp`, the built-in operators provided under the `holoscan::ops` namespace are all native operators, so the feature will work with these. Currently none of these built-in opereators add their own metadata, but any metadata received on input ports will automatically be passed on to their output ports (as long as `app->enable_metadata(false)` was not set to disable the metadata feature).
 
 ## CUDA Stream Handling APIs
 

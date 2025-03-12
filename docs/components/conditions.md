@@ -25,6 +25,7 @@ By default, operators are always `READY`, meaning they are scheduled to continuo
 - MultiMessageAvailableCondition
 - MultiMessageAvailableTimeoutCondition
 - DownstreamMessageAffordableCondition
+- MemoryAvailableCondition
 - CountCondition
 - BooleanCondition
 - PeriodicCondition
@@ -57,6 +58,7 @@ The following table gives a rough categorization of the available condition type
 | CountCondition                         | other                      | operator as a whole            |
 | BooleanCondition                       | execution-driven           | operator as a whole            |
 | AsynchronousCondition                  | execution-driven           | operator as a whole            |
+| MemoryAvailableCondition               | other                      | single holoscan::Allocator     |
 | CudaStreamCondition                    | message-driven (CUDA sync) | single input port              |
 | CudaEventCondition                     | message-driven (CUDA sync) | single input port              |
 | CudaBufferAvailableCondition           | message-driven (CUDA sync) | single input port              |
@@ -173,8 +175,135 @@ def compute(self, op_input, op_output, context):
 
 ## PeriodicCondition
 
-An operator associated with `PeriodicCondition` ({cpp:class}`C++ <holoscan::gxf::PeriodicCondition>`/{py:class}`Python <holoscan.conditions.PeriodicCondition>`) is executed after periodic time intervals specified using its `recess_period` parameter. The scheduling status of the operator associated with this condition can either be in `READY` or `WAIT_TIME` state.
-For the first time or after periodic time intervals, the scheduling status of the operator associated with this condition is set to `READY` and the operator is executed. After the operator is executed, the scheduling status is set to `WAIT_TIME`, and the operator is not executed until the `recess_period` time interval.
+An operator associated with `PeriodicCondition` ({cpp:class}`C++ <holoscan::PeriodicCondition>`/{py:class}`Python <holoscan.conditions.PeriodicCondition>`) is executed after periodic time intervals specified using its `recess_period` parameter. The scheduling status of the operator associated with this condition can either be in `READY` or `WAIT_TIME` state.
+For the first time or after periodic time intervals, the scheduling status of the operator associated with this condition is set to `READY` and the operator is executed. After the operator is executed, the scheduling status is set to `WAIT_TIME`, and the operator is not executed until the `recess_period` time interval. The `PeriodicConditionPolicy` specifies how the scheduler handles the recess period: `CatchUpMissedTicks (default)`,`MinTimeBetweenTicks`, or `NoCatchUpMissedTicks`.
+
+The `PeriodicSchedulingPolicy` enum defines three different policies for handling periodic tasks:
+
+`CatchUpMissedTicks`:
+- Tries to catch up on any missed ticks by executing them as quickly as possible
+- If multiple ticks were missed, it will try to execute them in rapid succession
+- For example, if a tick at 100ms was missed and the time at next tick was 250ms, it will still set the next target time as 200ms resulting in possible immediate rescheduling of the operator since we are already at time 250 ms (i.e. next tick is shown at 255 ms in the example below). After this tick at 255 ms, the target time is then 300 ms.
+
+```bash 
+// eg. assume recess period of 100ms:
+ tick 0 at 0ms -> next_target_ = 100ms
+ tick 1 at 250ms -> next_target_ = 200ms (next_target_ < timestamp)
+ tick 2 at 255ms -> next_target_ = 300ms (double tick before 300ms)
+```
+
+`MinTimeBetweenTicks`:
+
+- Ensures that at least the specified period has elapsed between ticks
+- Won't try to catch up, but guarantees minimum spacing between ticks
+- For example, with 100ms period, if current time is 350ms, next tick will be at 450ms (current time + period)
+
+```bash
+// eg. assume recess period of 100ms:
+// tick 0 at 0ms -> next_target_ = 100ms
+// tick 1 at 101ms -> next_target_ = 201ms
+// tick 2 at 350ms -> next_target_ = 450ms
+```
+
+`NoCatchUpMissedTicks`:
+
+- Simply continues with the regular schedule without trying to catch up
+- If ticks are missed, they stay missed and scheduling continues from current time
+- For example, if at 250ms and period is 100ms, next tick will be at 300ms (rounds up to next period boundary)
+      
+```bash 
+// eg. assume recess period of 100ms:
+// tick 0 at 0ms -> next_target_ = 100ms
+// tick 1 at 250ms -> next_target_ = 300ms (single tick before 300ms)
+// tick 2 at 305ms -> next_target_ = 400ms
+```
+
+## MemoryAvailableCondition
+
+For operators that have an associated `Allocator` ({cpp:class}`C++ <holoscan::Allocator>`/{py:class}`Python <holoscan.resources.Allocator>`), that allocator can be assigned to a `MemoryAvailableCondition` ({cpp:class}`C++ <holoscan::MemoryAvailableCondition>`/{py:class}`Python <holoscan.conditions.MemoryAvailableCondition>`). This condition will prevent the operator from executing unless the allocatore has a specified number of bytes free to be allocated. 
+
+For the `BlockMemoryPool`, the user can optionally specify the condition in terms of the minimum number of memory blocks instead of in terms of raw bytes.
+
+This condition can be used with `BlockMemoryPool` or `StreamOrderedAllocator` classes to prevent operators using one of those allocator types from executing if there is not sufficient memory available. 
+
+:::{note}
+This condition type will have no effect if it is used with an `UnboundedAllocator` as there is no associated memory limit for that allocator type. It also currently does **not** have any affect when applied with an `RMMAllocator` because that allocator supports dual (host and device) memory pools and does not meet the API assumptions of this condition.
+:::
+
+Example code for how the condition would be configured from an application's `compose` method is shown below. 
+
+````{tab-set-code}
+```{code-block} c++
+  void compose() override {
+    // ...
+
+    // declare an allocator
+    auto block_allocator = make_resource<BlockMemoryPool>(
+        "block_mem_pool",
+        Arg("storage_type", MemoryStorageType::kDevice),
+        Arg("block_size", 1024*768*4),
+        Arg("num_blocks", 4));
+
+    // create a Memory available condition associate with that allocator
+    // can use `min_blocks` for BlockMemoryPool, but for other, non-block
+    // allocators, the user should specify `min_bytes` instead.
+    auto mem_available_condition = make_condition<MemoryAvailableCondition>(
+        "mem_avail_tx"
+        Arg("allocator", block_allocator),
+        Arg("min_blocks, static_cast<uint64_t>(1));
+
+    // pass the condition as a positional argument to an operator that uses that
+    // same allocator. This will prevent the operator from executing unless the
+    // amount of memory specified by the condition is available.
+    auto tx = make_operator<PingTensorTxOp>(
+        "tx",
+        mem_available_condition,
+        Arg("allocator", block_allocator),
+        Arg("rows", 768),
+        Arg("columns", 1024),
+        Arg("channels", 4));
+
+    // ...
+```
+```{code-block} python
+    def compose(self):
+        # ...
+
+        # declare an allocator
+        block_allocator = BlockMemoryPool(
+            self,
+            storage_type=MemoryStorageType.DEVICE,
+            block_size=1024*768*4,
+            num_blocks=4,
+            name="block_mem_pool",
+        )
+
+        # create a Memory available condition associate with that allocator
+        # can use `min_blocks` for BlockMemoryPool, but for other, non-block
+        # allocators, the user should specify `min_bytes` instead.
+        mem_available_condition = MemoryAvailableCondition(
+            self,
+            allocator=block_allocator,
+            min_blocks=1,
+            name="mem_avail_tx",
+        )
+
+        # pass the condition as a positional argument to an operator that uses that
+        # same allocator. This will prevent the operator from executing unless the
+        # amount of memory specified by the condition is available.
+        tx = PingTensorTxOp(
+            self
+            mem_available_condition,
+            allocator=block_allocator,
+            rows=768,
+            columns=1024,
+            channels=4,
+            name="tx",
+        )
+
+        # ...
+```
+````
 
 ## AsynchronousCondition
 

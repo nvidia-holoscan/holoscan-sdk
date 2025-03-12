@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -147,23 +147,24 @@ std::vector<std::optional<cudaStream_t>> GXFInputContext::receive_cuda_streams(
   return streams;
 }
 
-std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) {
+std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool no_error_message) {
   std::string input_name = holoscan::get_well_formed_name(name, inputs_);
 
   auto it = inputs_.find(input_name);
   if (it == inputs_.end()) {
     if (no_error_message) { return kNoReceivedMessage; }
     // Show error message because the input name is not found.
-    if (inputs_.size() == 1) {
+    const auto input_port_size = inputs_.size();
+    if (input_port_size == 1) {
       auto no_accessible_error_message = NoAccessibleMessageType(fmt::format(
           "The operator({}) has only one port with label '{}' but the non-existent port label "
           "'{}' was specified in the receive() method",
           op_->name(),
           inputs_.begin()->first,
-          name));
+          input_name));
       return no_accessible_error_message;
     } else {
-      if (inputs_.empty()) {
+      if (input_port_size == 0) {
         auto no_accessible_error_message = NoAccessibleMessageType(
             fmt::format("The operator({}) does not have any input port but '{}' was specified in "
                         "receive() method",
@@ -232,6 +233,13 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
   // Handle any streams found in the entity
   retrieve_cuda_streams(entity, input_name);
 
+  // If the input type is GXFEntity, return the entity directly
+  if (in_type == InputType::kGXFEntity) {
+    // Convert nvidia::gxf::Entity to holoscan::gxf::Entity
+    holoscan::gxf::Entity entity_wrapper(entity);
+    return entity_wrapper;  // to handle gxf::Entity as it is
+  }
+
   auto message = entity.get<holoscan::Message>();
   if (!message) {
     // Convert nvidia::gxf::Entity to holoscan::gxf::Entity
@@ -239,6 +247,7 @@ std::any GXFInputContext::receive_impl(const char* name, bool no_error_message) 
     return entity_wrapper;  // to handle gxf::Entity as it is
   }
 
+  // Return the value of the message
   auto message_ptr = message.value();
   auto value = message_ptr->value();
 
@@ -308,6 +317,60 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
                                  const int64_t acq_timestamp) {
   std::string output_name = holoscan::get_well_formed_name(name, outputs_);
 
+  // Fast path: direct lookup of the output port
+  auto it = outputs_.find(output_name);
+  if (it == outputs_.end()) {  // Not found case
+    const auto output_port_size = outputs_.size();
+
+    // Handle empty name with execution port case (relatively common)
+    if (output_name.empty() && output_port_size == 2 && op_->output_exec_spec()) {
+      it = std::find_if(outputs_.begin(),
+                        outputs_.end(),
+                        [exec_spec = op_->output_exec_spec()](const auto& pair) {
+                          return pair.second != exec_spec;
+                        });
+      if (it != outputs_.end()) { output_name = it->first; }
+    }
+
+    // If still not found, handle error cases and return
+    if (it == outputs_.end()) {
+      if (output_port_size == 1) {
+        HOLOSCAN_LOG_ERROR(
+            "The operator({}) has only one port with label '{}' but the non-existent port label "
+            "'{}' was specified in the emit() method",
+            op_->name(),
+            outputs_.begin()->first,
+            name);
+      } else if (output_port_size == 0) {
+        HOLOSCAN_LOG_ERROR(
+            "The operator({}) does not have any output port but '{}' was specified in "
+            "the emit() method",
+            op_->name(),
+            output_name);
+      } else {
+        auto msg_buf = fmt::memory_buffer();
+        const auto& op_outputs = op_->spec()->outputs();
+        bool is_first = true;
+        for (const auto& [label, _] : op_outputs) {
+          if (is_first) {
+            fmt::format_to(std::back_inserter(msg_buf), "{}", label);
+            is_first = false;
+          } else {
+            fmt::format_to(std::back_inserter(msg_buf), ", {}", label);
+          }
+        }
+        HOLOSCAN_LOG_ERROR(
+            "The operator({}) does not have an output port with label '{}'. It should be "
+            "one of ({:.{}}) passed to the emit() method.",
+            op_->name(),
+            output_name,
+            msg_buf.data(),
+            msg_buf.size());
+      }
+      return;
+    }
+  }
+
   // check if there is a CUDA stream to be emitted on this output port
   bool stream_found = false;
   gxf_uid_t stream_cid{kNullUid};
@@ -318,47 +381,6 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
     auto maybe_stream_cid = object_handler->get_output_stream_cid(output_name);
     stream_found = maybe_stream_cid.has_value();
     if (stream_found) { stream_cid = maybe_stream_cid.value(); }
-  }
-
-  auto it = outputs_.find(output_name);
-  if (it == outputs_.end()) {
-    // Show error message because the output name is not found.
-    if (outputs_.size() == 1) {
-      HOLOSCAN_LOG_ERROR(
-          "The operator({}) has only one port with label '{}' but the non-existent port label "
-          "'{}' was specified in the emit() method",
-          op_->name(),
-          outputs_.begin()->first,
-          name);
-      return;
-    } else {
-      if (outputs_.empty()) {
-        HOLOSCAN_LOG_ERROR(
-            "The operator({}) does not have any output port but '{}' was specified in "
-            "emit() method",
-            op_->name(),
-            output_name);
-        return;
-      }
-
-      auto msg_buf = fmt::memory_buffer();
-      auto& op_outputs = op_->spec()->outputs();
-      for (const auto& [label, _] : op_outputs) {
-        if (&label == &(op_outputs.begin()->first)) {
-          fmt::format_to(std::back_inserter(msg_buf), "{}", label);
-        } else {
-          fmt::format_to(std::back_inserter(msg_buf), ", {}", label);
-        }
-      }
-      HOLOSCAN_LOG_ERROR(
-          "The operator({}) does not have an output port with label '{}'. It should be "
-          "one of ({:.{}}) in emit() method",
-          op_->name(),
-          output_name,
-          msg_buf.data(),
-          msg_buf.size());
-      return;
-    }
   }
 
   const std::shared_ptr<IOSpec>& output_spec = it->second;
@@ -378,13 +400,12 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
   HOLOSCAN_GXF_CALL_FATAL(GxfComponentPointer(context, gxf_resource->gxf_cid(), tx_tid, &tx_ptr));
 
   switch (out_type) {
-    case OutputType::kSharedPointer:
     case OutputType::kAny: {
       // Create an Entity object and add a Message object to it.
       auto gxf_entity = nvidia::gxf::Entity::New(gxf_context());
       auto buffer = gxf_entity.value().add<Message>();
       // Set the data to the value of the Message object.
-      buffer.value()->set_value(data);
+      buffer.value()->set_value(std::move(data));
 
       if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
         auto metadata = gxf_entity.value().add<MetadataDictionary>("metadata_");
@@ -400,18 +421,26 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       }
 
       // Publish the Entity object.
-      // TODO(gbae): Check error message
+      nvidia::gxf::Expected<void> gxf_result;
       if (acq_timestamp != -1) {
-        static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(gxf_entity.value(), acq_timestamp);
+        gxf_result = static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(gxf_entity.value(),
+                                                                             acq_timestamp);
       } else {
-        static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity.value()));
+        gxf_result =
+            static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity.value()));
+      }
+      if (!gxf_result) {
+        auto error_msg = fmt::format("Failed to publish output message with error: {}",
+                                     GxfResultStr(gxf_result.error()));
+        HOLOSCAN_LOG_ERROR(error_msg);
+        throw std::runtime_error(error_msg);
       }
       break;
     }
     case OutputType::kGXFEntity: {
       // Cast to an Entity object and publish it.
       try {
-        auto gxf_entity = std::any_cast<nvidia::gxf::Entity>(data);
+        auto gxf_entity = std::any_cast<nvidia::gxf::Entity>(std::move(data));
 
         if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
           auto metadata = gxf_entity.add<MetadataDictionary>("metadata_");
@@ -426,11 +455,19 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           }
         }
 
-        // TODO(gbae): Check error message
+        nvidia::gxf::Expected<void> gxf_result;
         if (acq_timestamp != -1) {
-          static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(gxf_entity, acq_timestamp);
+          gxf_result =
+              static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(gxf_entity, acq_timestamp);
         } else {
-          static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity));
+          gxf_result =
+              static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity));
+        }
+        if (!gxf_result) {
+          auto error_msg = fmt::format("Failed to publish output message with error: {}",
+                                       GxfResultStr(gxf_result.error()));
+          HOLOSCAN_LOG_ERROR(error_msg);
+          throw std::runtime_error(error_msg);
         }
       } catch (const std::bad_any_cast& e) {
         HOLOSCAN_LOG_ERROR("Unable to cast to gxf::Entity: {}", e.what());

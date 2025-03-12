@@ -112,7 +112,10 @@ class App(Application):
         self.add_flow(source, visualizer, {("signal", "receivers")})
 
         # enable metadata so V4L2FormatTranslateOp can translate the format
-        self.is_metadata_enabled = True
+
+        # As of Holoscan 3.0, metadata is enabled by default at the Fragment
+        # level. If we wanted to override that default for some operator, we
+        # would call ``self.enable_metadata(False)``.
 
 
 def main(config_file):

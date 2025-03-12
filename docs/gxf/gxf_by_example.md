@@ -364,7 +364,7 @@ gxf_result_t MyRecorder::stop() {
 
 :::{tip}
 
-For a detailed implementation of `start()` and `stop()`, and how memory management can be handled therein, please refer to the implementation of the [AJA Video source extension](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/gxf_extensions/aja).
+For a detailed implementation of `start()` and `stop()`, and how memory management can be handled therein, please refer to the implementation of the [UCX extension](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/gxf_extensions/ucx).
 
 :::
 

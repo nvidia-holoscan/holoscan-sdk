@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_INFERENCE_HPP
-#define HOLOSCAN_OPERATORS_INFERENCE_HPP
+#ifndef INCLUDE_HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
+#define INCLUDE_HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
 
 #include <map>
 #include <memory>
@@ -68,6 +68,7 @@ namespace holoscan::ops {
  * - **model_path_map**: Path to the ONNX model to be loaded.
  * - **pre_processor_map**: Pre processed data to model map.
  * - **device_map**: Mapping of model (`DataMap`) to GPU ID for inference. Optional.
+ * - **dla_core_map**: Mapping of model (`DataMap`) to DLA core index for inference. Optional.
  * - **backend_map**: Mapping of model (`DataMap`) to backend type for inference.
  *   Backend options: `"trt"` or `"torch"`. Optional.
  * - **temporal_map**: Mapping of model (`DataMap`) to a frame delay for model inference. Optional.
@@ -83,6 +84,11 @@ namespace holoscan::ops {
  * - **transmit_on_cuda**: Whether to transmit the message on the GPU. Optional (default: `true`).
  * - **enable_fp16**: Use 16-bit floating point computations. Optional (default: `false`).
  * - **enable_cuda_graphs**: Use CUDA Graphs. Optional (default: `true`).
+ * - **dla_core**: The DLA core index to execute the engine on, starts at 0. Set to -1 to disable
+ *   DLA. Optional (default: `-1`).
+ * - **dla_gpu_fallback**: If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If
+ *   this is disabled engine creation will fail if a layer cannot executed on DLA. Optional
+ *   (default: `true`).
  * - **is_engine_path**: Whether the input model path mapping is for trt engine files. Optional
  *   (default: `false`).
  * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams. Optional
@@ -138,6 +144,9 @@ class InferenceOp : public holoscan::Operator {
     std::map<std::string, std::vector<std::string>> mappings_;
   };
 
+  // Activation input specification
+  using ActivationSpec = holoscan::inference::ActivationSpec;
+
  private:
   ///  @brief Map with key as model name and value as vector of inferred tensor name
   Parameter<DataVecMap> inference_map_;
@@ -150,6 +159,9 @@ class InferenceOp : public holoscan::Operator {
 
   /// @brief Map with key as model name and value as GPU ID for inference
   Parameter<DataMap> device_map_;
+
+  /// @brief Map with key as model name and value as DLA core ID for inference
+  Parameter<DataMap> dla_core_map_;
 
   /// @brief Map with key as model name and value as frame delay for model inference
   Parameter<DataMap> temporal_map_;
@@ -191,6 +203,14 @@ class InferenceOp : public holoscan::Operator {
   ///  @brief Flag showing if using CUDA Graphs. Default is True.
   Parameter<bool> enable_cuda_graphs_;
 
+  /// @brief The DLA core index to execute the engine on, starts at 0. Set to -1 (the default) to
+  /// disable DLA.
+  Parameter<int32_t> dla_core_;
+
+  /// @brief If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is
+  /// disabled, engine creation will fail if a layer cannot executed on DLA.
+  Parameter<bool> dla_gpu_fallback_;
+
   ///  @brief Flag to show if input model path mapping is for cached trt engine files. Default is
   ///  False.
   Parameter<bool> is_engine_path_;
@@ -227,4 +247,4 @@ class InferenceOp : public holoscan::Operator {
 
 }  // namespace holoscan::ops
 
-#endif /* HOLOSCAN_OPERATORS_INFERENCE_HPP */
+#endif /* INCLUDE_HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP */

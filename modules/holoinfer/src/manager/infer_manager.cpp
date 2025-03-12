@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +37,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
   auto multi_model_map = inference_specs->get_path_map();
   auto device_map = inference_specs->get_device_map();
+  auto dla_core_map = inference_specs->get_dla_core_map();
   auto temporal_map = inference_specs->get_temporal_map();
   auto backend_type = inference_specs->backend_type_;
   auto backend_map = inference_specs->get_backend_map();
@@ -190,6 +191,12 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
       infer_param_.at(model_name)->set_device_id(device_id);
 
+      auto dla_core = inference_specs->dla_core_;
+      if (dla_core_map.find(model_name) != dla_core_map.end()) {
+        dla_core = std::stoi(dla_core_map.at(model_name));
+        HOLOSCAN_LOG_INFO("DLA core: {} for Model: {}", dla_core, model_name);
+      }
+
       unsigned int temporal_id = 1;
       if (temporal_map.find(model_name) != temporal_map.end()) {
         try {
@@ -229,8 +236,13 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
       switch (current_backend) {
         case holoinfer_backend::h_trt: {
-          if (inference_specs->use_fp16_ && inference_specs->is_engine_path_) {
-            HOLOSCAN_LOG_WARN("Engine files are the input, fp16 check/conversion is ignored");
+          if (inference_specs->is_engine_path_) {
+            if (inference_specs->use_fp16_) {
+              HOLOSCAN_LOG_WARN("Engine files are the input, fp16 check/conversion is ignored");
+            }
+            if (dla_core > -1) {
+              HOLOSCAN_LOG_WARN("Engine files are the input, DLA core is ignored");
+            }
           }
           if (!inference_specs->oncuda_) {
             status.set_message("ERROR: TRT backend supports inference on GPU only");
@@ -245,6 +257,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
                                                                  device_gpu_dt_,
                                                                  inference_specs->use_fp16_,
                                                                  inference_specs->use_cuda_graphs_,
+                                                                 dla_core,
+                                                                 inference_specs->dla_gpu_fallback_,
                                                                  inference_specs->is_engine_path_,
                                                                  cuda_buffer_in_,
                                                                  cuda_buffer_out_)});
@@ -273,7 +287,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
           HOLOSCAN_LOG_INFO("Found ONNX Runtime libraries");
-          using NewOnnxInfer = OnnxInfer* (*)(const std::string&, bool, bool, bool, bool);
+          using NewOnnxInfer =
+              OnnxInfer* (*)(const std::string&, bool, int32_t, bool, bool, bool, bool);
           auto new_ort_infer = reinterpret_cast<NewOnnxInfer>(dlsym(handle, "NewOnnxInfer"));
           if (!new_ort_infer) {
             HOLOSCAN_LOG_ERROR(dlerror());
@@ -290,6 +305,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           // for more information.
           auto context = new_ort_infer(model_path,
                                        inference_specs->use_fp16_,
+                                       dla_core,
+                                       inference_specs->dla_gpu_fallback_,
                                        inference_specs->oncuda_,
                                        cuda_buffer_in_,
                                        cuda_buffer_out_);

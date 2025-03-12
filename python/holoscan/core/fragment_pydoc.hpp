@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,6 +110,32 @@ Get the executor associated with the fragment.
 
 PYDOC(is_metadata_enabled, R"doc(
 Property to get or set the boolean controlling whether operator metadata transmission is enabled.
+
+Notes
+-----
+Setting metadata to be enabled/disabled via this method is deprecated. Please use `enable_metadata`
+instead.
+)doc")
+
+PYDOC(enable_metadata, R"doc(
+Method to set whether operator metadata transmission is enabled by default for an operators added
+to this fragment. Individual operators can override this default via `Operator.enable_metadata`.
+)doc")
+
+PYDOC(metadata_policy, R"doc(
+The default metadata policy (``holoscan.core.MetadataPolicy``) associated with the fragment.
+
+Individual operators can override this via ``Operator.metadata_policy``.
+
+
+The supported policies are:
+
+- `MetadataPolicy.REJECT`: Reject the new value if the key already exists
+- `MetadataPolicy.UPDATE`: Replace existing value with the new one if the key already exists
+- `MetadataPolicy.INPLACE_UPDATE`: Update the value stored within an existing MetadataObject in-place
+  if the key already exists (in contrast to UPDATE which always replaces the existing MetadataObject
+  with a new one).
+- `MetadataPolicy.RAISE`: Raise an exception if the key already exists
 )doc")
 
 PYDOC(from_config, R"doc(
@@ -258,6 +284,31 @@ The run method of the Fragment.
 
 This method runs the computation. It must have first been initialized via
 `config` and `compose`.
+)doc")
+
+PYDOC(start_op, R"doc(
+Get or create the start operator for this fragment.
+
+Returns
+-------
+Operator
+    The start operator instance. If it doesn't exist, it will be created with a CountCondition(1).
+)doc")
+
+PYDOC(set_dynamic_flows, R"doc(
+Set a callback function to define dynamic flows for an operator at runtime.
+
+This method allows operators to modify their connections with other operators during execution.
+The callback function is called after the operator executes and can add dynamic flows using
+the operator's `add_dynamic_flow()` methods.
+
+Parameters
+----------
+op : holoscan.core.Operator
+    The operator for which to set dynamic flows.
+dynamic_flow_func : callable
+    The callback function that defines the dynamic flows. Takes an operator as input and returns
+    ``None``.
 )doc")
 
 }  // namespace Fragment

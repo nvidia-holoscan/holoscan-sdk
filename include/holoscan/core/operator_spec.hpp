@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@
 #include <iostream>
 #include <list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <typeinfo>
 #include <unordered_map>
@@ -102,13 +103,27 @@ class OperatorSpec : public ComponentSpec {
    * Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-c)
    *       to see how to receive any number of inputs in C++.
    *
+   * Note: The 'policy' parameter controls the queue's behavior if a message arrives when the queue
+   *       is already full. By default, a DownstreamAffordableCondition is added to output
+   *       ports to prevent an upstream operator from sending a message if there is no
+   *       available queue space. However, if such a condition is not present
+   *       (e.g., by calling `condition(ConditionType::kNone)` on `IOSpec` object),
+   *       a message may still arrive when the queue is already full.
+   *       In that case, the possible policies are:
+   *
+   *       - IOSpec::QueuePolicy::kPop - Replace the oldest message in the queue with the new one.
+   *       - IOSpec::QueuePolicy::kReject - Reject (discard) the new message.
+   *       - IOSpec::QueuePolicy::kFault - Log a warning and reject the new item.
+   *
    * @tparam DataT The type of the input data.
    * @param name The name of the input specification.
    * @param size The size of the queue for the input port.
+   * @param policy The queue policy used for the input port.
    * @return The reference to the input specification.
    */
   template <typename DataT>
-  IOSpec& input(std::string name, IOSpec::IOSize size = IOSpec::kSizeOne) {
+  IOSpec& input(std::string name, IOSpec::IOSize size = IOSpec::kSizeOne,
+                std::optional<IOSpec::QueuePolicy> policy = std::nullopt) {
     if (size == IOSpec::kAnySize) {
       // Create receivers object
       receivers_params_.emplace_back();
@@ -118,10 +133,24 @@ class OperatorSpec : public ComponentSpec {
       param(parameter, name.c_str(), "", "", {}, ParameterFlag::kNone);
     }
 
-    auto spec = std::make_shared<IOSpec>(this, name, IOSpec::IOType::kInput, &typeid(DataT), size);
+    auto spec =
+        std::make_shared<IOSpec>(this, name, IOSpec::IOType::kInput, &typeid(DataT), size, policy);
     auto [iter, is_exist] = inputs_.insert_or_assign(name, std::move(spec));
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Input port '{}' already exists", name); }
     return *(iter->second.get());
+  }
+
+  /**
+   * @brief Define an input specification for this operator.
+   *
+   * @tparam DataT The type of the input data.
+   * @param name The name of the input specification.
+   * @param policy The queue policy used for the input port.
+   * @return The reference to the input specification.
+   */
+  template <typename DataT>
+  IOSpec& input(std::string name, std::optional<IOSpec::QueuePolicy> policy) {
+    return input<DataT>(name, IOSpec::kSizeOne, policy);
   }
 
   /**
@@ -145,16 +174,47 @@ class OperatorSpec : public ComponentSpec {
   /**
    * @brief Define an output specification for this operator.
    *
+   * Note: The 'policy' parameter controls the queue's behavior if a message is emitted when the
+   *       output queue is already full. The possible policies are:
+   *
+   *       - IOSpec::QueuePolicy::kPop - Replace the oldest message in the queue with the new one.
+   *       - IOSpec::QueuePolicy::kReject - Reject (discard) the new message.
+   *       - IOSpec::QueuePolicy::kFault - Log a warning and reject the new item.
+   *
    * @tparam DataT The type of the output data.
    * @param name The name of the output specification.
+   * @param size The size of the queue for the output port.
+   * @param policy The queue policy used for the output port.
    * @return The reference to the output specification.
    */
   template <typename DataT>
-  IOSpec& output(std::string name) {
-    auto spec = std::make_shared<IOSpec>(this, name, IOSpec::IOType::kOutput, &typeid(DataT));
+  IOSpec& output(std::string name, IOSpec::IOSize size = IOSpec::kSizeOne,
+                std::optional<IOSpec::QueuePolicy> policy = std::nullopt) {
+    if (size == IOSpec::kAnySize || size == IOSpec::kPrecedingCount) {
+      HOLOSCAN_LOG_WARN("Output port '{}' size cannot be 'any size' or 'preceding count'. Setting "
+                        "size to 1.",
+                        name);
+      size = IOSpec::kSizeOne;
+    }
+
+    auto spec = std::make_shared<IOSpec>(
+        this, name, IOSpec::IOType::kOutput, &typeid(DataT), size, policy);
     auto [iter, is_exist] = outputs_.insert_or_assign(name, std::move(spec));
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Output port '{}' already exists", name); }
     return *(iter->second.get());
+  }
+
+  /**
+   * @brief Define an output specification for this operator.
+   *
+   * @tparam DataT The type of the output data.
+   * @param name The name of the output specification.
+   * @param policy The queue policy used for the output port.
+   * @return The reference to the output specification.
+   */
+  template <typename DataT>
+  IOSpec& output(std::string name, std::optional<IOSpec::QueuePolicy> policy) {
+    return output<DataT>(std::move(name), IOSpec::kSizeOne, policy);
   }
 
   using ComponentSpec::param;

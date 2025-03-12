@@ -7,7 +7,7 @@ See [HoloHub](https://github.com/nvidia-holoscan/holohub) to find additional ref
 
 - **From source**: See the [building guide](../DEVELOP.md)
 - **Python wheels**: Download the python examples from GitHub, no building necessary.
-- **NGC container or debian package**: the python examples and pre-built C++ examples are already included under `/opt/nvidia/holoscan/examples`. You can rebuild the C++ examples like so:
+- **NGC container**: the python examples and pre-built C++ examples are already included under `/opt/nvidia/holoscan/examples`. You can rebuild the C++ examples like so:
 
    ```sh
    export src_dir="/opt/nvidia/holoscan/examples/" # Add "<example_of_your_choice>/cpp" to build a specific example
@@ -15,6 +15,8 @@ See [HoloHub](https://github.com/nvidia-holoscan/holohub) to find additional ref
    cmake -S $src_dir -B $build_dir -D Holoscan_ROOT="/opt/nvidia/holoscan"
    cmake --build $build_dir -j
    ```
+- **Debian package**: Run pre-built examples under `/opt/nvidia/holoscan/examples` or rebuild the C++ examples as shown above. Debian packages
+support C++ examples only.
 
 ## Run instructions
 
@@ -55,12 +57,16 @@ The following examples demonstrate the basics of the Holoscan core API, and are 
 4. [**Distributed Video Replayer**](video_replayer_distributed): switch the source/sink from Tx/Rx
    to loading a video from disk and displaying its frames, with a distributed application
 5. [**Flow Tracker**](flow_tracker): simple application demonstrating data flow tracking for latency analysis
+6. [**Custom CUDA kernel 1d**](custom_cuda_kernel_1d_sample): application demonstrating ingestion of 1D custom CUDA kernel in Holoscan SDK
+7. [**Custom CUDA kernel multi sample**](custom_cuda_kernel_multi_sample): application demonstrating ingestion of multiple custom CUDA kernels of multi dimension in Holoscan SDK
+8. [**Flow Control**](flow_control): demonstrate how to control dynamic operator execution flow in a pipeline (e.g. condition flow paths and loops)
 
 ## Core: additional configurations
 
 The following examples illustrate the use of specific **schedulers** to define when operators are run:
 
 * [**Multithread or Event-Based Schedulers**](multithread): run operators in parallel
+* [**Round-Robin Broadcast and Gather**](round_robin_parallel): Illustrates processing of multiple sequential frames in parallel to allow removing a bottleneck. Multiple copies of a "slow" operator are launched in parallel for subsequent frames and then results are gathered back into a common pipeline for further processing/display. This app makes use of the event-based scheduler for this purpose.
 * [**Multi-Rate Pipeline**](multi_branch_pipeline): Demonstrates how to override default operator port properties to allow parallel downstream branches of a pipeline to operate at different frame rates
 
 The following examples illustrate the use of specific **conditions** to modify the behavior of operators:
@@ -89,6 +95,7 @@ The following examples illustrate the use of specific resource classes that can 
 * [**Holoviz**](holoviz): display overlays of various geometric primitives
 
 ## Inference
+* [**Activation-map**](activation_map): A simple inference pipeline demonstrates selecting a subset of models.
 * [**Bring-Your-Own-Model**](bring_your_own_model): create a simple inference pipeline for ML applications
 
 ### Working with third-party frameworks

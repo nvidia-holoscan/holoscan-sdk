@@ -28,11 +28,6 @@ This example demonstrates a hello world application using the holoscan SDK.
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/hello_world.py
   ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/hello_world/python/hello_world.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/hello_world/python/hello_world.py

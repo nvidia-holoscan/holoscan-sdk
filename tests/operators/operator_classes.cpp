@@ -42,9 +42,6 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
-#ifdef HOLOSCAN_BUILD_AJA
-#include "holoscan/operators/aja_source/aja_source.hpp"
-#endif
 #include "holoscan/operators/async_ping_rx/async_ping_rx.hpp"
 #include "holoscan/operators/async_ping_tx/async_ping_tx.hpp"
 #include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
@@ -64,55 +61,6 @@ using namespace std::string_literals;
 namespace holoscan {
 
 using OperatorClassesWithGXFContext = TestWithGXFContext;
-
-#ifdef HOLOSCAN_BUILD_AJA
-TEST_F(OperatorClassesWithGXFContext, TestAJASourceOpChannelFromYAML) {
-  const std::string name{"aja-source"};
-
-  ArgList args{
-      Arg{"device", "0"s},
-      Arg{"channel", YAML::Load("NTV2_CHANNEL1"s)},
-      Arg{"width", static_cast<uint32_t>(1920)},
-      Arg{"height", static_cast<uint32_t>(1080)},
-      Arg{"framerate", static_cast<uint32_t>(60)},
-      Arg{"rdma", false},
-  };
-  testing::internal::CaptureStderr();
-
-  auto op = F.make_operator<ops::AJASourceOp>(name, args);
-  EXPECT_EQ(op->name(), name);
-  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::AJASourceOp>(args)));
-  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
-
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
-}
-
-TEST_F(TestWithGXFContext, TestAJASourceOpChannelFromEnum) {
-  const std::string name{"aja-source"};
-
-  ArgList args{
-      Arg{"device", "0"s},
-      Arg{"channel", NTV2Channel::NTV2_CHANNEL1},
-      Arg{"width", static_cast<uint32_t>(1920)},
-      Arg{"height", static_cast<uint32_t>(1080)},
-      Arg{"framerate", static_cast<uint32_t>(60)},
-      Arg{"rdma", false},
-  };
-  testing::internal::CaptureStderr();
-
-  auto op = F.make_operator<ops::AJASourceOp>(name, args);
-  EXPECT_EQ(op->name(), name);
-  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::AJASourceOp>(args)));
-  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
-
-  std::string log_output = testing::internal::GetCapturedStderr();
-
-  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
-}
-#endif
 
 TEST_F(OperatorClassesWithGXFContext, TestFormatConverterOp) {
   const std::string name{"format_converter"};
@@ -445,33 +393,65 @@ TEST_F(OperatorClassesWithGXFContext, TestPingRxOp) {
                                                              << log_output << "\n===========\n";
 }
 
-TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataAttributes) {
+TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataFragmentDefault) {
   const std::string name{"rx"};
-
-  testing::internal::CaptureStderr();
-
-  // defaults to disabled
-  EXPECT_FALSE(F.is_metadata_enabled());
-
-  // enable metadata on the fragment
-  F.is_metadata_enabled(true);
-  EXPECT_TRUE(F.is_metadata_enabled());
 
   // add an operator
   auto op = F.make_operator<ops::PingRxOp>(name);
   EXPECT_EQ(op->name(), name);
 
-  // default metadata policy is kRaise
-  EXPECT_EQ(op->metadata_policy(), MetadataPolicy::kRaise);
+  // default metadata policy is kDefault if not set by user
+  EXPECT_EQ(op->metadata_policy(), MetadataPolicy::kDefault);
 
-  // at construction metadata is disabled
-  EXPECT_FALSE(op->is_metadata_enabled());
-
-  // after initialize, operator metadata will be enabled if it was enabled on the Fragment
-  op->initialize();
+  // at construction metadata value match the Fragment default of true
+  EXPECT_TRUE(F.is_metadata_enabled());
   EXPECT_TRUE(op->is_metadata_enabled());
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataFragmentDisabled) {
+  F.enable_metadata(false);
+
+  // operator will have the value from the Fragment
+  auto op = F.make_operator<ops::PingRxOp>("rx");
+  EXPECT_FALSE(op->is_metadata_enabled());
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataFragmentEnabled) {
+  F.enable_metadata(true);
+  EXPECT_TRUE(F.is_metadata_enabled());
+
+  // operator will have the value from the Fragment
+  auto op = F.make_operator<ops::PingRxOp>("rx");
+  EXPECT_TRUE(op->is_metadata_enabled());
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestOperatorMetadataFragmentDisabledOverride) {
+  const std::string name{"rx"};
+
+  F.enable_metadata(false);
+  EXPECT_FALSE(F.is_metadata_enabled());
+
+  // add an operator and explicitly enable metadata
+  auto op = F.make_operator<ops::PingRxOp>(name);
+  op->enable_metadata(true);
+
+  // operator will have the value we set (opposite of the Fragment in this case)
+  EXPECT_TRUE(op->is_metadata_enabled());
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestFragmentMetadataAttributeDeprecation) {
+  const std::string name{"rx"};
+
+  testing::internal::CaptureStderr();
+
+  // test that the deprecated is_metadata_enabled setter logs a warning
+  F.is_metadata_enabled(false);
 
   std::string log_output = testing::internal::GetCapturedStderr();
+  std::string deprecation_warning_msg{"Fragment::is_metadata_enabled(bool) setter is deprecated"};
+  EXPECT_TRUE(log_output.find(deprecation_warning_msg) != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestPingTxOp) {

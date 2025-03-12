@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,14 +31,16 @@ namespace inference {
 
 TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
                    const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
-                   bool enable_fp16, bool enable_cuda_graphs, bool is_engine_path, bool cuda_buf_in,
-                   bool cuda_buf_out)
+                   bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
+                   bool dla_gpu_fallback, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out)
     : model_path_(model_path),
       model_name_(model_name),
       trt_opt_profile_(trt_opt_profile),
       device_id_(device_id),
       enable_fp16_(enable_fp16),
       enable_cuda_graphs_(enable_cuda_graphs),
+      dla_core_(dla_core),
+      dla_gpu_fallback_(dla_gpu_fallback),
       is_engine_path_(is_engine_path),
       cuda_buf_in_(cuda_buf_in),
       cuda_buf_out_(cuda_buf_out) {
@@ -59,6 +61,8 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
   network_options_.device_index = device_id_;
 
   network_options_.use_fp16 = enable_fp16_;
+  network_options_.dla_core = dla_core_;
+  network_options_.dla_gpu_fallback = dla_gpu_fallback_;
   initLibNvInferPlugins(nullptr, "");
 
   if (!is_engine_path_) {
@@ -128,6 +132,18 @@ bool TrtInfer::load_engine() {
   if (status != 0) {
     HOLOSCAN_LOG_ERROR("Load Engine: Setting cuda device failed.");
     throw std::runtime_error("Error setting cuda device in load engine.");
+  }
+
+  if (network_options_.dla_core > -1) {
+    // set the DLA core
+    const int32_t available_dla_cores = infer_runtime_->getNbDLACores();
+    if (network_options_.dla_core > available_dla_cores - 1) {
+      HOLOSCAN_LOG_ERROR("DLA core '{}' is requested but max DLA core index is '{}'",
+                         network_options_.dla_core,
+                         available_dla_cores - 1);
+      throw std::runtime_error("Error setting DLA core in load engine.");
+    }
+    infer_runtime_->setDLACore(network_options_.dla_core);
   }
 
   engine_ = std::unique_ptr<nvinfer1::ICudaEngine>(

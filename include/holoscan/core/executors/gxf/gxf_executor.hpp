@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,8 +27,8 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <unordered_map>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -161,32 +161,42 @@ class GXFExecutor : public holoscan::Executor {
    * @brief Set the GXF entity ID of the operator initialized by this executor.
    *
    * If this is 0, a new entity is created for the operator.
-   * Otherwise, the operator as a codelet will be added to the existing entity specified by this ID.
-   * This is useful when initializing operators inside the existing entity.
-   * (e.g., when initializing an operator from `holoscan::gxf::OperatorWrapper` class)
+   * Otherwise, the operator, as a codelet, will be added to the existing entity specified by this
+   * ID.
+   *
+   * This is useful when initializing operators within an existing entity, e.g., when
+   * initializing an operator from the `holoscan::gxf::OperatorWrapper` class.
    *
    * @param eid The GXF entity ID.
    */
   void op_eid(gxf_uid_t eid) { op_eid_ = eid; }
 
   /**
+   * @brief Get the GXF entity ID of the operator initialized by this executor.
+   *
+   * Note: This method is used by OperatorRunner to get the GXF entity ID of the operator.
+   * @return The GXF entity ID.
+   */
+  gxf_uid_t op_eid() { return op_eid_; }
+
+  /**
    * @brief Set the GXF component ID of the operator initialized by this executor.
    *
    * If this is 0, a new component is created for the operator.
-   * This is useful when initializing operators using the existing component inside the existing
-   * entity.
-   * (e.g., when initializing an operator from `holoscan::gxf::OperatorWrapper` class)
+   *
+   * This is useful when initializing operators using an existing component within an existing
+   * entity, e.g., when initializing an operator from the `holoscan::gxf::OperatorWrapper` class.
    *
    * @param cid The GXF component ID.
    */
   void op_cid(gxf_uid_t cid) { op_cid_ = cid; }
 
   /**
-   * @brief Returns whether the GXF context is created by this executor.
+   * @brief Get the GXF component ID of the operator initialized by this executor.
    *
-   * @return true if the GXF context is created by this executor. Otherwise, false.
+   * @return The GXF component ID.
    */
-  bool own_gxf_context() { return own_gxf_context_; }
+  gxf_uid_t op_cid() { return op_cid_; }
 
   /**
    * @brief Get the entity prefix string.
@@ -203,6 +213,8 @@ class GXFExecutor : public holoscan::Executor {
   bool add_receivers(const std::shared_ptr<Operator>& op, const std::string& receivers_name,
                      std::vector<std::string>& new_input_labels,
                      std::vector<holoscan::IOSpec*>& iospec_vector) override;
+  bool add_control_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Operator>& downstream_op) override;
 
   friend class holoscan::AppDriver;
   friend class holoscan::AppWorker;
@@ -216,11 +228,10 @@ class GXFExecutor : public holoscan::Executor {
                                     std::shared_ptr<Operator> op);
 
   void register_extensions();
-  bool own_gxf_context_ = false;  ///< Whether this executor owns the GXF context.
   gxf_uid_t op_eid_ = 0;          ///< The GXF entity ID of the operator. Create new entity for
                                   ///< initializing a new operator if this is 0.
-  gxf_uid_t op_cid_ = 0;  ///< The GXF component ID of the operator. Create new component for
-                          ///< initializing a new operator if this is 0.
+  gxf_uid_t op_cid_ = 0;          ///< The GXF component ID of the operator. Create new component
+                                  ///< for initializing a new operator if this is 0.
   nvidia::gxf::Extension* gxf_holoscan_extension_ = nullptr;  ///< The GXF holoscan extension.
 
   /// The flag to indicate whether the GXF graph is initialized.

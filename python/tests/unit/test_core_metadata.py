@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,7 @@ import pytest
 from holoscan.core import MetadataDictionary, MetadataPolicy
 
 
-@pytest.mark.parametrize("name", ["REJECT", "UPDATE", "RAISE"])
+@pytest.mark.parametrize("name", ["REJECT", "UPDATE", "INPLACE_UPDATE", "RAISE"])
 def test_policy_type(name):
     assert hasattr(MetadataPolicy, name)
 
@@ -133,6 +133,7 @@ class TestMetadataDictionary:
             ("merge", None),
             ("update", MetadataPolicy.REJECT),
             ("update", MetadataPolicy.UPDATE),
+            ("update", MetadataPolicy.INPLACE_UPDATE),
             ("update", None),  # policy is RAISE if not otherwise specified
             ("update", MetadataPolicy.RAISE),
         ],

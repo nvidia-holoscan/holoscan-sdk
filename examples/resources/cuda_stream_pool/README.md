@@ -42,24 +42,19 @@ For DALI, the `cuda_stream` argument used by some functions needs to be provided
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
-  python3 <APP_DIR>/stream_pool.py
-  ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/resources/cuda_stream_pool/python/stream_pool.py
+  python3 <APP_DIR>/cuda_stream.py
   ```
 * **from NGC container**:
   ```bash
-  python3 /opt/nvidia/holoscan/examples/resources/cuda_stream_pool/python/stream_pool.py
+  python3 /opt/nvidia/holoscan/examples/resources/cuda_stream_pool/python/cuda_stream.py
   ```
 * **source (dev container)**:
   ```bash
   ./run launch # optional: append `install` for install tree
-  python3 ./examples/resources/cuda_stream_pool/python/stream_pool.py
+  python3 ./examples/resources/cuda_stream_pool/python/cuda_stream.py
   ```
 * **source (local env)**:
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
-  python3 ${BUILD_OR_INSTALL_DIR}/examples/resources/cuda_stream_pool/python/stream_pool.py
+  python3 ${BUILD_OR_INSTALL_DIR}/examples/resources/cuda_stream_pool/python/cuda_stream.py
   ```

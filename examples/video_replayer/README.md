@@ -64,13 +64,6 @@ and then follow the same instructions as above to run the application.
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/video_replayer.py
   ```
-* **using deb package install**:
-  ```bash
-  sudo /opt/nvidia/holoscan/examples/download_example_data
-  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/video_replayer/python/video_replayer.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/video_replayer/python/video_replayer.py

@@ -20,8 +20,10 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "holoscan/holoscan.hpp"
 
@@ -58,6 +60,15 @@ class PingVarCustomNativeRes : public holoscan::Resource {
  private:
   holoscan::Parameter<CustomIntType4Resource> custom_int_type_;
   holoscan::Parameter<float> float_type_;
+  // Additional parameters for test purposes.
+  holoscan::Parameter<int> numeric_;
+  holoscan::Parameter<std::vector<float>> numeric_array_;
+  holoscan::Parameter<int> optional_numeric_;
+  holoscan::Parameter<std::vector<int>> optional_numeric_array_;
+  holoscan::Parameter<bool> boolean_;
+  holoscan::Parameter<void*> optional_void_ptr_;
+  holoscan::Parameter<std::string> string_;
+  holoscan::Parameter<std::shared_ptr<holoscan::Resource>> optional_resource_;
 };
 
 }  // namespace myres

@@ -80,6 +80,11 @@ Required parameters and related features available with the Holoscan Inference M
         - Using CUDA Graphs reduces CPU launch costs and enables optimizations which might not be possible with the piecewise work submission mechanism of streams.
         - Models including loops or conditions are not supported with CUDA Graphs. For these models usage of CUDA Graphs needs to be disabled.
         - It can be either `true` or `false`. Default value is `true`.
+    - `dla_core`: The DLA core index to execute the engine on, starts at `0`.
+        - It can be either `-1` or the DLA core index. Default value is `-1`.
+    - `dla_gpu_fallback`: Enable DLA GPU fallback
+        - If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is disabled, engine creation will fail if a layer cannot executed on DLA.
+        - It can be either `true` or `false`. Default value is `true`.
     - `is_engine_path`: if the input models are specified in __trt engine format__ in `model_path_map`, this flag must be set to `true`. Default value is `false`.
     - `in_tensor_names`: Input tensor names to be used by `pre_processor_map`. This parameter is optional. If absent in the parameter map, values are derived from `pre_processor_map`.
     - `out_tensor_names`: Output tensor names to be used by `inference_map`. This parameter is optional. If absent in the parameter map, values are derived from `inference_map`.
@@ -87,6 +92,8 @@ Required parameters and related features available with the Holoscan Inference M
         - Each entry in `device_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and GPU identifier as the value. This GPU ID is used to execute the inference for the specified model.
         - GPUs specified in the `device_map` must have P2P (peer to peer) access and they must be connected to the same PCIE configuration. If P2P access is not possible among GPUs, the host (CPU memory) will be used to transfer the data.
         - Multi-GPU inferencing is supported for all backends.
+    - `dla_core_map`: DLA cores are used for inferencing if `dla_core_map` is populated in the parameter set.
+        - Each entry in `dla_core_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and a DLA core index as the value. This DLA core index is used to execute the inference for the specified model.
     - `temporal_map`: Temporal inferencing is enabled if `temporal_map` is populated in the parameter set.
         - Each entry in `temporal_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and frame delay as the value. Frame delay represents the frame count that are skipped by the operator in doing the inference for that particular model. A model with the value of 1, is inferred per frame. A model with a value of 10 is inferred for every 10th frame coming into the operator, which is the 1st frame, 11th frame, 21st frame and so on. Additionally, the operator will transmit the last inferred result for all the frames that are not inferred. For example, a model with a value of 10 will be inferred at 11th frame and from 12th to 20th frame, the result from 11th frame is transmitted.
         - If the `temporal_map` is absent in the parameter set, all models are inferred for all the frames.
@@ -97,7 +104,7 @@ Required parameters and related features available with the Holoscan Inference M
         - When the activation state is 0 for a particular model in the `activation_map`, the inference operator will not launch the inference for the model and will emits the last inferred result for the model.
         - If the `activation_map` is absent in the parameter set, all of the models are inferred for all frames.
         - All models are not mandatory in the `activation_map`.  The missing models are active on every frame.
-        - Activation map based dynamic inferencing is supported for all backends.
+        - Dynamic inferenceing based on `activation_map` along with the `model_activation_specs` input port is supported for all backends.
     - `backend_map`: Multiple backends can be used in the same application with this parameter.
         - Each entry in `backend_map` has a unique keyword representing the model (same as used in `model_path_map`), and the `backend` as the value.
         - A sample backend_map is shown below. In the example, model_1 uses the `tensorRT` backend, and model 2 and model 3 uses the `torch` backend for inference.
@@ -127,6 +134,7 @@ Required parameters and related features available with the Holoscan Inference M
 - Multi Receiver and Single Transmitter support
     - The Holoscan Inference Module provides an API to extract the data from multiple receivers.
     - The Holoscan Inference Module provides an API to transmit multiple tensors via a single transmitter.
+    - The Holoscan Inference Module provides an API to allow selecting the set of active models for inference at runtime (see example under the directory `examples/activation_map`).
 
 ### Parameter Specification
 

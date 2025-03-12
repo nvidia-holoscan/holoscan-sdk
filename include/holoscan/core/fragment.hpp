@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +47,9 @@ class GXFExecutor;
 
 class ThreadPool;
 
+/// The name of the start operator. Used to identify the start operator in the graph.
+constexpr static const char* kStartOperatorName = "<|start|>";
+
 // key = operator name,  value = (input port names, output port names, multi-receiver names)
 using FragmentPortMap =
     std::unordered_map<std::string,
@@ -57,6 +60,9 @@ using FragmentPortMap =
 // the workers and port information is sent back to the driver for addition to this map.
 // The keys are the fragment names.
 using MultipleFragmentsPortMap = std::unordered_map<std::string, FragmentPortMap>;
+
+constexpr MetadataPolicy kDefaultMetadataPolicy = MetadataPolicy::kRaise;
+constexpr bool kDefaultMetadataEnabled = true;
 
 /**
  * @brief The fragment of the application.
@@ -266,14 +272,14 @@ class Fragment {
    * source: "replayer"
    * do_record: false   # or 'true' if you want to record input video stream.
    *
-   * aja:
+   * capture_card:
    *   width: 1920
    *   height: 1080
    *   rdma: true
    * ```
    *
-   * `from_config("aja")` returns an ArgList (vector-like) object that contains the following
-   * items:
+   * `from_config("capture_card")` returns an ArgList (vector-like) object that contains the
+   * following items:
    *
    * - `Arg("width") = 1920`
    * - `Arg("height") = 1080`
@@ -281,11 +287,11 @@ class Fragment {
    *
    * You can use '.' (dot) to access nested fields.
    *
-   * `from_config("aja.rdma")` returns an ArgList object that contains only one item and it can be
-   * converted to `bool` through `ArgList::as()` method:
+   * `from_config("capture_card.rdma")` returns an ArgList object that contains only one item and it
+   * can be converted to `bool` through `ArgList::as()` method:
    *
    * ```cpp
-   * auto is_rdma = from_config("aja.rdma").as<bool>();
+   * auto is_rdma = from_config("capture_card.rdma").as<bool>();
    * ```
    *
    * @param key The key of the configuration.
@@ -499,6 +505,23 @@ class Fragment {
   std::shared_ptr<ThreadPool> make_thread_pool(const std::string& name, int64_t initial_size = 1);
 
   /**
+   * @brief Get the start operator of the fragment.
+   *
+   * This operator is nothing but the first operator that was added to the fragment.
+   * It has the name of `<|start|>` and has a condition of `CountCondition(1)`.
+   * This Operator is used to start the execution of the fragment.
+   * Entry operators who want to start the execution of the fragment should connect to this
+   * operator.
+   *
+   * If this method is not called, no start operator is created.
+   * Otherwise, the start operator is created if it does not exist, and the shared pointer to the
+   * start operator is returned.
+   *
+   * @return The shared pointer to the start operator.
+   */
+  const std::shared_ptr<Operator>& start_op();
+
+  /**
    * @brief Add an operator to the graph.
    *
    * The information of the operator is stored in the Graph object.
@@ -620,6 +643,21 @@ class Fragment {
                         std::set<std::pair<std::string, std::string>> port_pairs);
 
   /**
+   * @brief Set a callback function to define dynamic flows for an operator at runtime.
+   *
+   * This method allows operators to modify their connections with other operators during execution.
+   * The callback function is called after the operator executes and can add dynamic flows using
+   * the operator's `add_dynamic_flow()` methods.
+   *
+   * @param op The operator to set dynamic flows for
+   * @param dynamic_flow_func The callback function that defines the dynamic flows. Takes a shared
+   *                         pointer to the operator as input and returns void.
+   */
+  virtual void set_dynamic_flows(
+      const std::shared_ptr<Operator>& op,
+      const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func);
+
+  /**
    * @brief Compose a graph.
    *
    * The graph is composed by adding operators and flows in this method.
@@ -687,8 +725,63 @@ class Fragment {
    */
   FragmentPortMap port_info() const;
 
-  bool is_metadata_enabled() const { return is_metadata_enabled_; }
-  void is_metadata_enabled(bool enabled) { is_metadata_enabled_ = enabled; }
+  /**
+   * @brief Determine whether metadata is enabled by default for operators in this fragment.
+   *
+   * Note that individual operators may still have been configured to override this default
+   * via Operator::enable_metadata.
+   *
+   * @param enable Boolean indicating whether metadata is enabled.
+   */
+  virtual bool is_metadata_enabled() const;
+
+  /**
+   * @brief Deprecated method for controlling whether metadata is enabled for the fragment.
+   *
+   * Please use `enable_metadata` instead.
+   *
+   * @param enable Boolean indicating whether metadata should be enabled.
+   */
+  virtual void is_metadata_enabled(bool enabled);
+
+  /**
+   * @brief Enable or disable metadata for the fragment.
+   *
+   * Controls whether metadata is enabled or disabled by default for operators within this fragment.
+   * If this method is not called, and this fragment is part of a distributed application, then the
+   * the parent application's metadata policy will be used. Otherwise metadata is enabled by
+   * default. Individual operators can override this setting using the Operator::enable_metadata()
+   * method.
+   *
+   * @param enable Boolean indicating whether metadata should be enabled.
+   */
+  virtual void enable_metadata(bool enable);
+
+  /**
+   * @brief Get the default metadata update policy used for operators within this fragment.
+   *
+   * If a value was set for a specific operator via `Operator::metadata_policy` that value will
+   * take precedence over this fragment default. If no policy was set for the fragment and this
+   * fragment is part of a distributed application, the default metadata policy of the application
+   * will be used.
+   *
+   * @returns The default metadata update policy used by operators in this fragment.
+   */
+  virtual MetadataPolicy metadata_policy() const;
+
+  /**
+   * @brief Set the default metadata update policy to be used for operators within this fragment.
+   *
+   * The metadata policy determines how metadata is merged across multiple receive calls:
+   *    - `MetadataPolicy::kUpdate`: Update the existing value when a key already exists.
+   *    - `MetadataPolicy::kInplaceUpdate`: Update the existing MetadataObject's value in-place
+   *    when a key already exists.
+   *    - `MetadataPolicy::kReject`: Do not modify the existing value if a key already exists.
+   *    - `MetadataPolicy::kRaise`: Raise an exception if a key already exists (default).
+   *
+   * @param policy The metadata update policy to be used by this operator.
+   */
+  virtual void metadata_policy(MetadataPolicy policy);
 
  protected:
   friend class Application;  // to access 'scheduler_' in Application
@@ -734,9 +827,13 @@ class Fragment {
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
   std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment
   std::vector<std::shared_ptr<ThreadPool>>
-      thread_pools_;                  ///< Any thread pools used by the fragment
-  bool is_composed_ = false;          ///< Whether the graph is composed or not.
-  bool is_metadata_enabled_ = false;  ///< Whether metadata is enabled or not.
+      thread_pools_;          ///< Any thread pools used by the fragment
+  bool is_composed_ = false;  ///< Whether the graph is composed or not.
+  std::optional<bool> is_metadata_enabled_ =
+      std::nullopt;  ///< Whether metadata is enabled or not. If nullopt, value from Application()
+                     ///< is used if it has been set. Otherwise defaults to true.
+  std::optional<MetadataPolicy> metadata_policy_ = std::nullopt;
+  std::shared_ptr<Operator> start_op_;  ///< The start operator of the fragment (optional).
 };
 
 }  // namespace holoscan

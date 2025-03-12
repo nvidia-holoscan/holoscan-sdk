@@ -90,7 +90,10 @@ generate_gxf_operator_wrapper(RX_CODELET_HDRS RX_CODELET_SRCS EXT_CPP_CONTENT
 )
 
 if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
-  set(REGISTER_ARG "REGISTER")
+  set(REGISTER_ARGS
+    MAKE_MANIFEST
+    REGISTER
+  )
 endif()
 
 generate_gxf_extension(
@@ -112,8 +115,11 @@ generate_gxf_extension(
     gxf_wrapped_ping_variant_tx_native_op_lib
     gxf_wrapped_ping_variant_rx_native_op_lib
   EXTENSION_TARGET_PROPERTIES ${COMMON_TARGET_PROPERTIES}
-  MAKE_MANIFEST
-  ${REGISTER_ARG}
+  ${REGISTER_ARGS}
+  EXTENSION_DEPENDS
+    $<TARGET_FILE:GXF::std>
+    $<TARGET_FILE:GXF::cuda>
+    $<TARGET_FILE:gxf_holoscan_wrapper>
   REGISTER_DEPENDS
     register_HoloscanWrapperExtension
   EXT_CPP_CONTENT "${EXT_CPP_CONTENT}"

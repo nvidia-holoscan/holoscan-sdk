@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,10 @@ namespace holoscan {
 void CountCondition::setup(ComponentSpec& spec) {
   spec.param(
       count_, "count", "Count", "The total number of times this term will permit execution.", 1L);
+}
+
+nvidia::gxf::CountSchedulingTerm* CountCondition::get() const {
+  return static_cast<nvidia::gxf::CountSchedulingTerm*>(gxf_cptr_);
 }
 
 }  // namespace holoscan

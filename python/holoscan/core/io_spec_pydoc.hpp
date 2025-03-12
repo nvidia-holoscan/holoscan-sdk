@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,15 @@ Enum representing the receiver type (for input specs) or transmitter type (for o
 )doc")
 
 }  // namespace ConnectorType
+
+namespace QueuePolicy {
+
+PYDOC(QueuePolicy, R"doc(
+Enum representing the queue policy for a receiver (for input specs) or transmitter (for output
+specs).
+)doc")
+
+}  // namespace QueuePolicy
 
 namespace IOType {
 
@@ -188,6 +197,23 @@ the connector/condition settings will be ignored.
 If the queue size is set to other values, the default connector (DoubleBufferReceiver/UcxReceiver)
 and condition (MessageAvailableCondition) will use the queue size for initialization
 ('capacity' for the connector and 'min_size' for the condition) if they are not set.
+)doc")
+
+PYDOC(queue_policy, R"doc(
+The queue policy used by the input (or output) port's receiver (or transmitter).
+
+Notes
+-----
+This value is only used for initializing input and output ports. The policy is set by the
+`OperatorSpec.input`, `OperatorSpec.output` or `IOSpec.queue_policy` method.
+
+The following IOSpec.QueuePolicy values are supported:
+
+   - QueuePolicy.POP : If the queue is full, pop the oldest item, then add the new one.
+   - QueuePolicy::REJECT : If the queue is full, reject (discard) the new item.
+   - QueuePolicy.REJECT : If the queue is full, reject (discard) the new item.
+   - QueuePolicy.FAULT : If the queue is full, log a warning and reject the new item.
+
 )doc")
 
 }  // namespace IOSpec

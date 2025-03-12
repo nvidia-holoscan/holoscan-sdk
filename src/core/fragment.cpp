@@ -21,6 +21,7 @@
 #include <functional>
 #include <iterator>  // for std::back_inserter
 #include <memory>
+#include <mutex>  // for std::call_once
 #include <set>
 #include <string>
 #include <typeinfo>
@@ -37,6 +38,7 @@
 #include "holoscan/core/gxf/entity_group.hpp"
 #include "holoscan/core/gxf/gxf_network_context.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
+#include "holoscan/core/metadata.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
@@ -72,6 +74,44 @@ Fragment& Fragment::application(Application* app) {
 
 Application* Fragment::application() const {
   return app_;
+}
+
+bool Fragment::is_metadata_enabled() const {
+  if (is_metadata_enabled_.has_value()) {
+    return is_metadata_enabled_.value();
+  } else if (app_ != nullptr) {
+    return app_->is_metadata_enabled();
+  } else {
+    return kDefaultMetadataEnabled;
+  }
+}
+
+void Fragment::enable_metadata(bool enabled) {
+  is_metadata_enabled_ = enabled;
+}
+
+void Fragment::is_metadata_enabled(bool enabled) {
+  static std::once_flag warn_flag;
+  std::call_once(warn_flag, []() {
+    HOLOSCAN_LOG_WARN(
+        "The Fragment::is_metadata_enabled(bool) setter is deprecated. Please use "
+        "Fragment::enable_metadata(bool) instead.");
+  });
+  is_metadata_enabled_ = enabled;
+}
+
+MetadataPolicy Fragment::metadata_policy() const {
+  if (metadata_policy_.has_value()) {
+    return metadata_policy_.value();
+  } else if (app_ != nullptr) {
+    return app_->metadata_policy();
+  } else {
+    return kDefaultMetadataPolicy;
+  }
+}
+
+void Fragment::metadata_policy(MetadataPolicy policy) {
+  metadata_policy_ = policy;
 }
 
 void Fragment::config(const std::string& config_file, const std::string& prefix) {
@@ -266,7 +306,18 @@ ArgList Fragment::from_config(const std::string& key) {
   return args;
 }
 
+const std::shared_ptr<Operator>& Fragment::start_op() {
+  if (!start_op_) {
+    // According to `GxfEntityCreateInfo` definition, the entity name should not start with
+    // a double underscore. So, we use this unique name to avoid any conflicts.
+    start_op_ = make_operator<Operator>(kStartOperatorName, make_condition<CountCondition>(1));
+    add_operator(start_op_);
+  }
+  return start_op_;
+}
+
 void Fragment::add_operator(const std::shared_ptr<Operator>& op) {
+  op->set_self_shared(op);
   graph().add_node(op);
 }
 
@@ -294,6 +345,34 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
   auto& op_outputs = upstream_op_spec->outputs();
   auto& op_inputs = downstream_op_spec->inputs();
   if (port_pairs.empty()) {
+    // Check if this is a control flow addition.
+    // We also allow control flow addition if the the upstream operator has output ports but the
+    // downstream operator has no input ports.
+    if (op_inputs.empty() || downstream_op->input_exec_spec()) {
+      // Both upstream_op and downstream_op should be the native operators
+      if (upstream_op->operator_type() != Operator::OperatorType::kNative ||
+          downstream_op->operator_type() != Operator::OperatorType::kNative) {
+        HOLOSCAN_LOG_ERROR(
+            "Both upstream ('{}', type: {}) and downstream ('{}', type: {}) operators should be "
+            "native operators to connect execution ports. Please check the operator types. "
+            "Ignoring the control flow addition.",
+            upstream_op->name(),
+            upstream_op->operator_type() == Operator::OperatorType::kNative ? "Native" : "GXF",
+            downstream_op->name(),
+            downstream_op->operator_type() == Operator::OperatorType::kNative ? "Native" : "GXF");
+        return;
+      }
+
+      // Add the control flow between the operators
+      (*port_map)[Operator::kOutputExecPortName] = {Operator::kInputExecPortName};
+
+      upstream_op->set_self_shared(upstream_op);
+      downstream_op->set_self_shared(downstream_op);
+      graph().add_flow(upstream_op, downstream_op, port_map);
+      // Handle the control flow addition in the executor
+      executor().add_control_flow(upstream_op, downstream_op);
+      return;
+    }
     if (op_outputs.size() > 1) {
       std::vector<std::string> output_labels;
       for (const auto& [key, _] : op_outputs) { output_labels.push_back(key); }
@@ -494,7 +573,15 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     // Do not use 'new_input_labels' after this point
   }
 
+  upstream_op->set_self_shared(upstream_op);
+  downstream_op->set_self_shared(downstream_op);
   graph().add_flow(upstream_op, downstream_op, port_map);
+}
+
+void Fragment::set_dynamic_flows(
+    const std::shared_ptr<Operator>& op,
+    const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func) {
+  if (op) { op->set_dynamic_flows(dynamic_flow_func); }
 }
 
 void Fragment::compose() {}

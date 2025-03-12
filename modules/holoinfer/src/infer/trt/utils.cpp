@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #include "utils.hpp"
 
 #include <NvInferPlugin.h>
+#include <NvInferVersion.h>
 #include <NvOnnxParser.h>
 
 #include <filesystem>
@@ -57,6 +58,8 @@ bool generate_engine_path(const NetworkOptions& options, const std::string& onnx
   } else {
     engine_path += ".fp32";
   }
+
+  if (options.dla_core > -1) { engine_path += ".dla" + std::to_string(options.dla_core); }
 
   return true;
 }
@@ -131,6 +134,29 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, network_options.max_memory);
 
   if (network_options.use_fp16) { config->setFlag(nvinfer1::BuilderFlag::kFP16); }
+  if (network_options.dla_core > -1) {
+    const int32_t available_dla_cores = builder->getNbDLACores();
+    if (network_options.dla_core > available_dla_cores - 1) {
+      HOLOSCAN_LOG_ERROR("DLA core '{}' is requested but max DLA core index is '{}'",
+                         network_options.dla_core,
+                         available_dla_cores - 1);
+      return false;
+    }
+    config->setDefaultDeviceType(nvinfer1::DeviceType::kDLA);
+    config->setFlag(nvinfer1::BuilderFlag::kPREFER_PRECISION_CONSTRAINTS);
+    config->setDLACore(network_options.dla_core);
+    // if requested, enable GPU fallback. If this is not set and a layer is not supported by DLA,
+    // building the engine will fail with an error.
+    if (network_options.dla_gpu_fallback) {
+      config->setFlag(nvinfer1::BuilderFlag::kGPU_FALLBACK);
+    } else {
+      // Deprecated in TensorRT 10.7
+#if (NV_TENSORRT_MAJOR * 10000 + NV_TENSORRT_MINOR * 100 + NV_TENSORRT_PATCH) < 100700
+      // Reformatting runs on GPU, so avoid I/O reformatting.
+      config->setFlag(nvinfer1::BuilderFlag::kDIRECT_IO);
+#endif
+    }
+  }
 
   auto profileStream = makeCudaStream();
   if (!profileStream) { return false; }

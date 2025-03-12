@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,8 @@ class PingTxOp(Operator):
         outputs: "out"
 
     On each tick, it transmits an integer on the "out" port. The value on the first call to
-    compute is equal to `start` and it increments by `increment` on each subsequent call.
+    compute is equal to `initial_value` and it increments by `increment` on each subsequent
+    call.
     """
 
     def __init__(self, fragment, *args, initial_value=0, increment=0, **kwargs):
@@ -67,12 +68,12 @@ class IncrementOp(Operator):
         """Setup the input and output ports with custom settings on the input port.
 
         Notes
-        =====
+        -----
         For policy:
-
-          - 0 = pop the oldest value in favor of the new one when the queue is full
-          - 1 = reject the new value when the queue is full
-          - 2 = fault if queue is full (default)
+          - IOSpec.QueuePolicy.POP = pop the oldest value in favor of the new one when the queue
+            is full
+          - IOSpec.QueuePolicy.REJECT = reject the new value when the queue is full
+          - IOSpec.QueuePolicy.FAULT = fault if queue is full (default)
 
         For capacity:
           When capacity > 1, even once messages stop arriving, this entity will continue to
@@ -81,12 +82,30 @@ class IncrementOp(Operator):
         The ``condition`` method call here is the same as the default setting, and is shown
         only for completeness. `min_size` = 1 means that this operator will not call compute
         unless there is at least one message in the queue.
+
+        One could also set the receiver's capacity and policy via the connector method:
+
+            .connector(
+                IOSpec.ConnectorType.DOUBLE_BUFFER,
+                capacity=1,
+                policy=1,  # 1 = reject
+            )
+
+        but that is less flexible as `IOSpec::ConnectorType::kDoubleBuffer` is appropriate for
+        within-fragment connections, but will not work if the operator was connected to a
+        different fragment. By passing the capacity and policy as arguments to the
+        `OperatorSpec::input` method, the SDK can still select the appropriate default receiver
+        type depending on whether the connection is within-fragment or across fragments (or
+        whether an annotated variants of the receiver class is needed for data flow tracking).
+
+        Note that if policy was not specific in the `input` call as done here, it would also be
+        possible for an application author to set the `policy` after the operator is constructed
+        by using the `Operator.queue_policy` property (see commented code in
+        `MultiRateApp.compose` below).
         """
-        spec.input("in").connector(
-            IOSpec.ConnectorType.DOUBLE_BUFFER,
-            capacity=1,
-            policy=1,  # 1 = reject
-        ).condition(ConditionType.MESSAGE_AVAILABLE, min_size=1, front_stage_max_size=1)
+        spec.input("in", policy=IOSpec.QueuePolicy.REJECT).condition(
+            ConditionType.MESSAGE_AVAILABLE, min_size=1, front_stage_max_size=1
+        )
 
         spec.output("out")
 
@@ -149,7 +168,7 @@ class MultiRateApp(Application):
             self,
             CountCondition(self, 100),
             PeriodicCondition(self, recess_period=period_source_ns),
-            start=1,
+            initial_value=0,
             increment=1,
             name="tx",
         )
@@ -162,6 +181,11 @@ class MultiRateApp(Application):
             PeriodicCondition(self, recess_period=period_ns1),
             name="increment1",
         )
+        # could set the queue policy here if it wasn't already set to REJECT in IncrementOp.start
+        # increment1.queue_policy(
+        #     "in", port_type=IOSpec.IOType.INPUT, policy=IOSpec.QueuePolicy.REJECT
+        # )
+
         rx1 = PingRxOp(self, name="rx1")
         self.add_flow(tx, increment1)
         self.add_flow(increment1, rx1)
@@ -171,6 +195,11 @@ class MultiRateApp(Application):
             self,
             name="increment2",
         )
+        # could set the queue policy here if it wasn't already set to REJECT in IncrementOp.start
+        # increment2.queue_policy(
+        #     "in", port_type=IOSpec.IOType.INPUT, policy=IOSpec.QueuePolicy.REJECT
+        # )
+
         rx2 = PingRxOp(self, name="rx2")
         self.add_flow(tx, increment2)
         self.add_flow(increment2, rx2)

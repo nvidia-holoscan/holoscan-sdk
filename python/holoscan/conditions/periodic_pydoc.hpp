@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,24 @@ fragment : holoscan.core.Fragment
 recess_period : int or datetime.timedelta
     The recess (pause) period value used by the condition.
     If an integer is provided, the units are in nanoseconds.
+policy : PeriodicConditionPolicy, optional
+    The scheduling policy for handling periodic ticks. One of:
+
+    - CATCH_UP_MISSED_TICKS (default): Attempts to catch up on missed ticks by executing
+      multiple ticks in quick succession. With a 100ms period:
+      * tick 0 at 0ms   -> next_target = 100ms
+      * tick 1 at 250ms -> next_target = 200ms (executes as next_target < current_time)
+      * tick 2 at 255ms -> next_target = 300ms (double tick before 300ms)
+    - MIN_TIME_BETWEEN_TICKS: Guarantees the recess period will elapse between ticks.
+      With a 100ms period:
+      * tick 0 at 0ms   -> next_target = 100ms
+      * tick 1 at 101ms -> next_target = 201ms
+      * tick 2 at 350ms -> next_target = 450ms
+    - NO_CATCH_UP_MISSED_TICKS: Skips missed ticks without catch-up. With a 100ms period:
+      * tick 0 at 0ms   -> next_target = 100ms
+      * tick 1 at 250ms -> next_target = 300ms (single tick, no catch-up)
+      * tick 2 at 305ms -> next_target = 400ms
+
 name : str, optional
     The name of the condition.
 )doc")
@@ -67,6 +85,10 @@ Gets the recess (pause) period value in nanoseconds.
 
 PYDOC(last_run_timestamp, R"doc(
 Gets the integer representing the last run time stamp.
+)doc")
+
+PYDOC(policy, R"doc(
+Gets the PeriodicConditionPolicy being used by the PeriodicCondition.
 )doc")
 
 }  // namespace PeriodicCondition

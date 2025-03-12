@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -108,7 +108,10 @@ RUN apt-get update \
         libcusolver-12-6 \
         cuda-cupti-12-6 \
         cuda-nvtx-12-6 \
-        cudnn9-cuda-12-6 \
+        libcudnn9-cuda-12="9.6.0.74-1" \
+        libcudnn9-dev-cuda-12="9.6.0.74-1" \
+        libcudnn9-static-cuda-12="9.6.0.74-1" \
+        cudnn9-cuda-12-6="9.6.0.74-1" \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/lib/*/libcudnn*train.so*
 
@@ -228,12 +231,6 @@ FROM runtime_cpp_pip_mkl AS runtime_cpp_py
 #    pip - 20.3+ needed for PEP 600
 #    cupy-cuda - dependency for holoscan python + examples
 #    cloudpickle - dependency for distributed apps
-#    python-on-whales - dependency for holoscan CLI
-#    Jinja2 - dependency for holoscan CLI
-#    packaging - dependency for holoscan CLI
-#    pyyaml - dependency for holoscan CLI
-#    requests - dependency for holoscan CLI
-#    psutil - dependency for holoscan CLI
 COPY python/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
 

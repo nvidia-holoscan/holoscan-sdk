@@ -93,16 +93,20 @@ nvidia::gxf::Handle<nvidia::gxf::Component> add_component_to_graph_entity(
 }  // namespace
 
 void GXFComponent::gxf_initialize() {
+  const char* type_name = gxf_typename();
   if (gxf_context_ == nullptr) {
-    HOLOSCAN_LOG_ERROR("Initializing with null GXF context");
+    HOLOSCAN_LOG_ERROR("Initializing with null GXF context for component '{}' (type: '{}')",
+                       gxf_cname_,
+                       type_name);
     return;
   }
   if (gxf_eid_ == 0) {
-    HOLOSCAN_LOG_ERROR("Initializing with null GXF Entity");
+    HOLOSCAN_LOG_ERROR("Initializing with null GXF Entity ID for component '{}' (type: '{}')",
+                       gxf_cname_,
+                       type_name);
     return;
   }
 
-  const char* type_name = gxf_typename();
   // set the type id
   HOLOSCAN_GXF_CALL(GxfComponentTypeId(gxf_context_, type_name, &gxf_tid_));
 

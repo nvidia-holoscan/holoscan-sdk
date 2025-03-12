@@ -35,11 +35,6 @@ There are two operators involved in this example:
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/ping_clock.py
   ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/resources/clock/python/ping_clock.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/resources/clock/python/ping_clock.py

@@ -26,11 +26,6 @@ This example demonstrates how a C++ `holoscan::Resource` (or Python `holoscan.co
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/native_resource.py
   ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/resources/native/python/native_resource.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/resources/native/python/native_resource.py

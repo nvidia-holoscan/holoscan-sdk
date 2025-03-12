@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,14 @@
 #include <nvh/cameramanipulator.hpp>
 #include <nvh/timesampler.hpp>
 #include <nvvk/error_vk.hpp>
+
+#if VK_HEADER_VERSION < 213
+namespace vk {
+VULKAN_HPP_INLINE void resultCheck(Result result, char const* message) {
+  if (result != Result::eSuccess) { throwResultException(result, message); }
+}
+}  // namespace vk
+#endif
 
 namespace holoscan::viz {
 
@@ -526,9 +534,7 @@ vk::SurfaceKHR GLFWWindow::create_surface(vk::PhysicalDevice physical_device,
   VkSurfaceKHR surface;
   const vk::Result result =
       vk::Result(glfwCreateWindowSurface(instance, impl_->window_, nullptr, &surface));
-  if (result != vk::Result::eSuccess) {
-    vk::throwResultException(result, "Failed to create glfw window surface");
-  }
+  vk::resultCheck(result, "Failed to create glfw window surface");
   return surface;
 }
 

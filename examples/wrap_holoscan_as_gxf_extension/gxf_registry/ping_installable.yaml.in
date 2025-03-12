@@ -15,14 +15,16 @@
 # limitations under the License.
 ---
 dependencies:
-- extension: PingVarRxNativeOpExtension
-  uuid: 8696b57e-67fb-47a9-90de-22e17c88bfa6
-  version: @holoscan_VERSION@
-- extension: PingVarTxNativeOpExtension
-  uuid: f2858e38-2000-4df6-b3ce-c7a3c24098d4
+- extension: PingVarCustomNativeResExtension
+  uuid: 2b8381ed-5c27-40a1-be58-6c019eaa87be
   version: @holoscan_VERSION@
 name: tx
 components:
+  - name: custom_res
+    type: myexts::PingVarCustomNativeResComponent
+    parameters:
+      custom_int_type: 4  # type is `myres::CustomIntType4Resource`
+      float_type: 3.5
   # spec.output<gxf::Entity>("out");
   - name: out
     type: nvidia::gxf::DoubleBufferTransmitter
@@ -32,6 +34,8 @@ components:
       min_size: 1
   - name: ping_tx_native_op
     type: myexts::PingVarTxNativeOpCodelet
+    parameters:
+      custom_resource: custom_res
   - name: count_condition
     type: nvidia::gxf::CountSchedulingTerm
     parameters:

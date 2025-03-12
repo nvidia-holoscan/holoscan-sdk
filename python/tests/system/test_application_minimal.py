@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,7 +116,7 @@ def test_app_config_keys(config_file):
     assert isinstance(keys, set)
 
     # verify that various expected keys are present
-    assert "aja.enable_overlay" in keys
+    assert "replayer.frame_rate" in keys
     assert "replayer.basename" in keys
     assert "source" in keys
     assert "visualizer" in keys

@@ -18,17 +18,8 @@ extensions:
   # extensions are automatically loaded upon Python App initialization so
   # should not be included again here
 
-source: "replayer" # or "aja"
+source: "replayer"
 do_record: false # or 'true' if you want to record input video stream.
-
-aja:
-  width: 1920
-  height: 1080
-  rdma: true
-  enable_overlay: false
-  overlay_rdma: true
-  channel: "NTV2_CHANNEL1"
-
 replayer:
   basename: "racerx"
   frame_rate: 0 # as specified in timestamps
@@ -50,25 +41,9 @@ format_converter_replayer:
   scale_min: 0.0
   scale_max: 255.0
 
-format_converter_aja:
-  in_dtype: "rgba8888"
-  out_tensor_name: source_video
-  out_dtype: "float32"
-  scale_min: 0.0
-  scale_max: 255.0
-  resize_width: 854
-  resize_height: 480
-
 visualizer_format_converter_replayer:
   in_dtype: "rgb888"
   out_dtype: "rgba8888"
-  out_tensor_name: video
-
-visualizer_format_converter_aja:
-  in_dtype: "rgba8888"
-  out_dtype: "rgba8888"
-  resize_width: 854
-  resize_height: 480
   out_tensor_name: video
 
 visualizer:

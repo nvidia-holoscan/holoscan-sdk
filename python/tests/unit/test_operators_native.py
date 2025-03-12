@@ -16,11 +16,9 @@ limitations under the License.
 """  # noqa: E501
 
 import os
-from contextlib import suppress
 
 import pytest
 
-import holoscan.operators
 from holoscan.conditions import CountCondition
 from holoscan.core import (
     Application,
@@ -34,11 +32,6 @@ from holoscan.core import (
 )
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.gxf import Entity
-
-# Import AJA if possible
-with suppress(ImportError):
-    from holoscan.operators.aja_source import AJASourceOp, NTV2Channel
-
 from holoscan.operators import (
     BayerDemosaicOp,
     FormatConverterOp,
@@ -102,9 +95,11 @@ class TestOperator:
         assert op.fragment is fragment
         assert op.operator_type == Operator.OperatorType.NATIVE
 
-    def test_metadata(self, fragment):
+    @pytest.mark.parametrize("fragment_metadata_enable", [None, True, False])
+    @pytest.mark.parametrize("operator_metadata_enable", [None, True, False])
+    def test_metadata(self, fragment, fragment_metadata_enable, operator_metadata_enable):
         op = Operator(fragment)
-        assert op.metadata_policy == MetadataPolicy.RAISE
+        assert op.metadata_policy == MetadataPolicy.DEFAULT
         assert isinstance(op.metadata, MetadataDictionary)
         meta = op.metadata
         assert len(meta) == 0
@@ -114,9 +109,18 @@ class TestOperator:
         assert "name" in op.metadata
         assert "age" in op.metadata
 
-        # metadata transmission is disabled by default
-        assert not fragment.is_metadata_enabled
-        assert not op.is_metadata_enabled
+        if fragment_metadata_enable is not None:
+            fragment.enable_metadata(fragment_metadata_enable)
+
+        if operator_metadata_enable is not None:
+            op.enable_metadata(operator_metadata_enable)
+            assert op.is_metadata_enabled == operator_metadata_enable
+        else:
+            if fragment_metadata_enable is not None:
+                assert op.is_metadata_enabled == fragment_metadata_enable
+            else:
+                # default for fragment is true
+                assert op.is_metadata_enabled
 
     def test_basic_kwarg_init(self, fragment, capfd):
         op = Operator(fragment=fragment)
@@ -372,72 +376,6 @@ class TestTensor:
         xp.testing.assert_array_equal(arr_in, arr_out2)
 
 
-# Test cases for specific bundled native operators
-@pytest.mark.skipif(not hasattr(holoscan.operators, "AJASourceOp"), reason="AJA not built")
-class TestAJASourceOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
-        name = "source"
-        op = AJASourceOp(
-            fragment=app,
-            name=name,
-            channel=NTV2Channel.NTV2_CHANNEL1,
-            width=1920,
-            height=1080,
-            rdma=True,
-            enable_overlay=False,
-            overlay_rdma=True,
-        )
-        assert isinstance(op, _Operator)
-        assert op.operator_type == Operator.OperatorType.NATIVE
-        assert f"name: {name}" in repr(op)
-
-        # assert no warnings or errors logged
-        captured = capfd.readouterr()
-        assert "error" not in captured.err
-        assert "warning" not in captured.err
-
-    def test_channel_kwarg_string_variant(self, app, config_file, capfd):
-        app.config(config_file)
-        name = "source"
-        op = AJASourceOp(
-            fragment=app,
-            name=name,
-            channel="NTV2_CHANNEL1",
-            width=1920,
-            height=1080,
-            rdma=True,
-            enable_overlay=False,
-            overlay_channel="NTV2_CHANNEL2",
-            overlay_rdma=True,
-        )
-        assert isinstance(op, _Operator)
-        assert op.operator_type == Operator.OperatorType.NATIVE
-        assert f"name: {name}" in repr(op)
-
-        # assert no warnings or errors logged
-        captured = capfd.readouterr()
-        assert "error" not in captured.err
-        assert "warning" not in captured.err
-
-    def test_initialization_from_yaml(self, app, config_file, capfd):
-        app.config(config_file)
-        name = "source"
-        op = AJASourceOp(
-            fragment=app,
-            name=name,
-            **app.kwargs("aja"),
-        )
-        assert isinstance(op, _Operator)
-        assert op.operator_type == Operator.OperatorType.NATIVE
-        assert f"name: {name}" in repr(op)
-
-        # assert no warnings or errors logged
-        captured = capfd.readouterr()
-        assert "error" not in captured.err
-        assert "warning" not in captured.err
-
-
 class TestFormatConverterOp:
     def test_kwarg_based_initialization(self, app, config_file, capfd):
         app.config(config_file)
@@ -464,6 +402,15 @@ class TestFormatConverterOp:
         captured = capfd.readouterr()
         assert "error" not in captured.err
         assert "warning" not in captured.err
+
+        # metadata transmission is enabled by default on Fragments
+        assert app.is_metadata_enabled
+        # metadata on operator will match the fragment since we didn't explicitly disable it
+        assert op.is_metadata_enabled == app.is_metadata_enabled
+
+        # set operator metadata to be disabled
+        op.enable_metadata(False)
+        assert not op.is_metadata_enabled
 
 
 class TestInferenceOp:

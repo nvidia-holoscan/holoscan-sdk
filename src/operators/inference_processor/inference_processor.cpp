@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,6 +129,7 @@ void InferenceProcessorOp::setup(OperatorSpec& spec) {
              DataVecMap());
   spec.param(in_tensor_names_, "in_tensor_names", "Input Tensors", "Input tensors", {});
   spec.param(config_path_, "config_path", "Path to config file", "Config File", {});
+  spec.param(custom_kernels_, "custom_kernels", "Custom Cuda Kernel", "Custom kernel", DataMap());
   spec.param(out_tensor_names_, "out_tensor_names", "Output Tensors", "Output tensors", {});
   spec.param(input_on_cuda_, "input_on_cuda", "Input buffer on CUDA", "", false);
   spec.param(output_on_cuda_, "output_on_cuda", "Output buffer on CUDA", "", false);
@@ -199,8 +200,8 @@ void InferenceProcessorOp::start() {
   } catch (...) { HoloInfer::raise_error(module_, "Start, Unknown exception"); }
 
   // Initialize holoscan processing context
-  auto status = holoscan_postprocess_context_->initialize(process_operations_.get().get_map(),
-                                                          config_path_.get());
+  auto status = holoscan_postprocess_context_->initialize(
+      process_operations_.get().get_map(), custom_kernels_.get().get_map(), config_path_.get());
   if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
     status.display_message();
     HoloInfer::raise_error(module_, "Start, Out data setup");

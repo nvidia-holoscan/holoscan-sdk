@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -166,6 +166,38 @@ trackers : dict[str, holoscan.core.DataFlowTracker]
     A dictionary where the keys are the fragment names and the values are the corresponding data
     flow tracker for that fragment. These can be used to display metrics data for profiling along
     the different paths through the computation graph.
+)doc")
+
+PYDOC(is_metadata_enabled, R"doc(
+Whether operator metadata transmission is enabled by default for the application.
+
+Notes
+-----
+Setting metadata to be enabled/disabled via this method is deprecated. Please use `enable_metadata`
+instead.
+)doc")
+
+PYDOC(enable_metadata, R"doc(
+Method to set whether operator metadata transmission is enabled by default for fragments
+in this application. Individual fragments can override this default via `Fragment.enable_metadata`.
+Similarly individual operators can override their fragment default via `Operator.enable_metadata`.
+)doc")
+
+PYDOC(metadata_policy, R"doc(
+The default metadata policy (``holoscan.core.MetadataPolicy``) associated with the application.
+
+Individual fragments of a distributed application can override this via
+``Fragment.metadata_policy``. Similarly, individual operators can override this via
+``Operator.metadata_policy``.
+
+The supported policies are:
+
+- `MetadataPolicy.REJECT`: Reject the new value if the key already exists
+- `MetadataPolicy.UPDATE`: Replace existing value with the new one if the key already exists
+- `MetadataPolicy.INPLACE_UPDATE`: Update the value stored within an existing MetadataObject in-place
+  if the key already exists (in contrast to UPDATE which always replaces the existing MetadataObject
+  with a new one).
+- `MetadataPolicy.RAISE`: Raise an exception if the key already exists
 )doc")
 
 }  // namespace Application

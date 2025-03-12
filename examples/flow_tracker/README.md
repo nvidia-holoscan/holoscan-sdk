@@ -30,11 +30,6 @@ This example demonstrates data flow tracking for an application graph with 2 roo
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/flow_tracker.py
   ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/flow_tracker/python/flow_tracker.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/flow_tracker/python/flow_tracker.py

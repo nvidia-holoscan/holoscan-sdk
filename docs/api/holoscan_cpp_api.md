@@ -101,8 +101,6 @@
 
 ### Operators
 
-- {ref}`exhale_class_classholoscan_1_1ops_1_1AJASourceOp`
-- {ref}`exhale_struct_structYAML_1_1convert_3_01NTV2Channel_01_4`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1AsyncPingRxOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1AsyncPingTxOp`
 - {ref}`exhale_class_classholoscan_1_1ops_1_1BayerDemosaicOp`

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,8 +58,37 @@ class GXFWrapper : public nvidia::gxf::Codelet {
    */
   void set_operator(Operator* op) { op_ = op; }
 
+  /**
+   * @brief Get the Operator object.
+   *
+   * @return The pointer to the Operator object.
+   */
+  Operator* op() const { return op_; }
+
+  /**
+   * @brief Get the ExecutionContext object.
+   *
+   * @return The pointer to the ExecutionContext object.
+   */
+  ExecutionContext* exec_context() const { return exec_context_.get(); }
+
+  /**
+   * @brief Get the InputContext object.
+   *
+   * @return The pointer to the InputContext object.
+   */
+  InputContext* input_context() const { return op_input_; }
+
+  /**
+   * @brief Get the OutputContext object.
+   *
+   * @return The pointer to the OutputContext object.
+   */
+  OutputContext* output_context() const { return op_output_; }
+
  private:
   void store_exception();
+  void initialize_contexts();
 
   Operator* op_{};
   std::unique_ptr<GXFExecutionContext> exec_context_{};

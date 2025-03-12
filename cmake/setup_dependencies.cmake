@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,9 +31,6 @@ endfunction()
 # https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_versions.html#cpm-version-format
 rapids_cpm_init()
 
-if(HOLOSCAN_BUILD_AJA)
-  superbuild_depend(ajantv2_rapids)
-endif()
 superbuild_depend(cli11_rapids)
 superbuild_depend(cudatoolkit_rapids)
 superbuild_depend(dlpack_rapids)

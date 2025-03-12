@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define HOLOSCAN_UTILS_HOLOINFER_HPP
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -110,7 +111,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
  * @param context GXF context for transmission
  * @param model_to_tensor_map Map of model name as key, mapped to a vector of tensor names
  * @param input_data_map Map of tensor name as key, mapped to the data buffer as a vector
- * @param op_output Output context
+ * @param op_output Output context. Assume that the output port's name is "transmitter".
  * @param out_tensors Output tensor names
  * @param data_per_model Map is updated with output tensor name as key mapped to data buffer
  * @param tensor_out_dims_map Map is updated with model name as key mapped to dimension of
@@ -138,7 +139,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
  * @param context GXF context for transmission
  * @param model_to_tensor_map Map of model name as key, mapped to a vector of tensor names
  * @param input_data_map Map of tensor name as key, mapped to the data buffer as a vector
- * @param op_output Output context
+ * @param op_output Output context. Assume that the output port's name is "transmitter".
  * @param out_tensors Output tensor names
  * @param data_per_model Map is updated with output tensor name as key mapped to data buffer
  * @param tensor_out_dims_map Map is updated with model name as key mapped to dimension of
@@ -159,6 +160,20 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
                                      const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_,
                                      const std::string& module, const cudaStream_t& cstream);
 
+/**
+ * Setting up activation for each model by activation_map and ActivationSpec
+ *
+ * @param inference_specs: Inference spec that are needed to set the it's activation_map.
+ * @param activation_map: The predefined activation_map comes from the InferenceOp's
+ * `activation_map` parameter.
+ * @param activation_specs: Activation specs received from the input port
+ * `model_activation_specs` of InferenceOp.
+ * @param module Module that called for setting up activation specifications
+ */
+gxf_result_t set_activation_per_model(
+    std::shared_ptr<HoloInfer::InferenceSpecs>& inference_specs,
+    const HoloInfer::Mappings& activation_map,
+    const std::vector<HoloInfer::ActivationSpec>& activation_specs, const std::string& module);
 }  // namespace holoscan::utils
 
 #endif /* HOLOSCAN_UTILS_HOLOINFER_HPP */

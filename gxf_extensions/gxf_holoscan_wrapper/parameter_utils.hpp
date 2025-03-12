@@ -87,7 +87,7 @@ inline gxf_parameter_flags_t_ find_gxf_param_flag(holoscan::ParameterFlag param_
 /**
  * @brief Helper function to register parameters using a registrar.
  *
- * Uses an empty YAML::Node as the default value and GXF_PARAMETER_FLAGS_OPTIONAL.
+ * This method is used by only OperatorWrapper and ResourceWrapper.
  */
 inline gxf_result_t register_parameters(
     nvidia::gxf::Registrar* registrar, std::list<std::shared_ptr<CommonGXFParameter>>& parameters) {
@@ -97,13 +97,14 @@ inline gxf_result_t register_parameters(
     auto param_flag = param_ptr->flag();
     auto gxf_param_flag = find_gxf_param_flag(param_flag);
 
-    // Provide a default YAML::Node and optional flags
+    // Register parameters as optional so that only arguments from YAML are processed by the
+    // initialize_holoscan_object() method
     result &= registrar->parameter(gxf_param->param,
                                    param_ptr->key().c_str(),
                                    param_ptr->headline().c_str(),
                                    param_ptr->description().c_str(),
-                                   YAML::Node(),
-                                   gxf_param_flag);
+                                   nvidia::gxf::Registrar::NoDefaultParameter(),
+                                   GXF_PARAMETER_FLAGS_OPTIONAL);
   }
 
   return nvidia::gxf::ToResultCode(result);
@@ -114,6 +115,7 @@ inline gxf_result_t register_parameters(
  */
 inline void process_condition_arg(void* gxf_context, uint64_t cid,
                                   holoscan::Parameter<void*>* param_ptr, YAML::Node& param_gxf,
+                                  FragmentWrapper& fragment_,
                                   std::function<void(const Arg&)> add_arg_func) {
   std::string tag;
   try {
@@ -143,6 +145,11 @@ inline void process_condition_arg(void* gxf_context, uint64_t cid,
         gxf_context, condition_cid, condition_tid, reinterpret_cast<void**>(&condition_ptr));
     if (code == GXF_SUCCESS && condition_ptr) {
       auto condition = std::make_shared<decltype(condition_type)>(tag, condition_ptr);
+      condition->fragment(&fragment_);
+      // Setup the condition.
+      auto spec = std::make_shared<ComponentSpec>(&fragment_);
+      condition->setup(*spec.get());
+      condition->spec(spec);
       add_arg_func(Arg(param_ptr->key()) = condition);
     } else {
       HOLOSCAN_LOG_ERROR("Failed to get {} for '{}': {}",
@@ -193,6 +200,7 @@ inline void process_condition_arg(void* gxf_context, uint64_t cid,
  */
 inline void process_resource_arg(void* gxf_context, uint64_t cid,
                                  holoscan::Parameter<void*>* param_ptr, YAML::Node& param_gxf,
+                                 FragmentWrapper& fragment_,
                                  std::function<void(const Arg&)> add_arg_func) {
   std::string tag;
   try {
@@ -217,9 +225,12 @@ inline void process_resource_arg(void* gxf_context, uint64_t cid,
   }
 
   gxf_tid_t gxf_holoscan_resource_wrapper_tid{};
-  GxfComponentTypeId(
+  code = GxfComponentTypeId(
       gxf_context, "holoscan::gxf::ResourceWrapper", &gxf_holoscan_resource_wrapper_tid);
-
+  if (code != GXF_SUCCESS) {
+    HOLOSCAN_LOG_ERROR("Failed to get ResourceWrapper type id: {}", GxfResultStr(code));
+    return;
+  }
   auto add_resource_arg = [&](auto* ptr, const std::shared_ptr<holoscan::Resource>& resource) {
     if (ptr) { add_arg_func(Arg(param_ptr->key()) = resource); }
   };
@@ -229,6 +240,11 @@ inline void process_resource_arg(void* gxf_context, uint64_t cid,
         gxf_context, resource_cid, resource_tid, reinterpret_cast<void**>(&resource_ptr));
     if (code == GXF_SUCCESS && resource_ptr) {
       auto resource = std::make_shared<decltype(resource_type)>(tag, resource_ptr);
+      resource->fragment(&fragment_);
+      // Setup the resource.
+      auto spec = std::make_shared<ComponentSpec>(&fragment_);
+      resource->setup(*spec.get());
+      resource->spec(spec);
       add_resource_arg(resource_ptr, resource);
     } else {
       HOLOSCAN_LOG_ERROR("Failed to get {} for '{}': {}",
@@ -328,6 +344,8 @@ inline void process_iospec_vector_arg(
 /**
  * @brief Initialize a Holoscan object (Operator or Resource) by setting parameters and context.
  *
+ * This method is used by both OperatorWrapper and ResourceWrapper to set YAML arguments.
+ *
  * @tparam T Holoscan object type (Operator or Resource)
  * @param gxf_context GXF context pointer
  * @param eid entity id
@@ -352,11 +370,15 @@ inline gxf_result_t initialize_holoscan_object(
     fragment_.gxf_executor().op_eid(eid);
     fragment_.gxf_executor().op_cid(cid);
 
-    // Set fragment and name (optional)
-    obj->name(obj->name());
+    // Get the component name and set it to the object
+    const char* cname = "";
+    HOLOSCAN_GXF_CALL_FATAL(GxfComponentName(gxf_context, cid, &cname));
+    obj->name(cname);
+    // Set the fragment to the object
     obj->fragment(&fragment_);
     obj->spec()->fragment(&fragment_);
 
+    // Set parameters from GXF parameter values (YAML::Node)
     for (auto& gxf_param : parameters) {
       const auto& arg_type = gxf_param->arg_type;
       auto param_ptr = gxf_param->param_ptr;
@@ -368,10 +390,10 @@ inline gxf_result_t initialize_holoscan_object(
 
       switch (arg_type.element_type()) {
         case ArgElementType::kCondition:
-          process_condition_arg(gxf_context, cid, param_ptr, param_gxf, add_arg_func);
+          process_condition_arg(gxf_context, cid, param_ptr, param_gxf, fragment_, add_arg_func);
           break;
         case ArgElementType::kResource:
-          process_resource_arg(gxf_context, cid, param_ptr, param_gxf, add_arg_func);
+          process_resource_arg(gxf_context, cid, param_ptr, param_gxf, fragment_, add_arg_func);
           break;
         case ArgElementType::kIOSpec:
           if (arg_type.container_type() == ArgContainerType::kVector && input_func) {

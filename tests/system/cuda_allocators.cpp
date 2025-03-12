@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -108,7 +108,7 @@ class CudaAllocatorApp : public holoscan::Application {
           "stream_ordered_allocator",
           Arg{"device_memory_initial_size", std::string{"1KB"}},
           Arg{"device_memory_max_size", std::string{"32MB"}},
-          Arg{"release_threadhold", std::string{"0B"}},
+          Arg{"release_threshold", std::string{"4MB"}},
           Arg{"dev_id", static_cast<int32_t>(0)});
     } else if (stream_pool_type_ == PoolType::kRMM) {
       // TODO(grelee): Why does allocation fail unless `device_memory_initial_size` is larger than

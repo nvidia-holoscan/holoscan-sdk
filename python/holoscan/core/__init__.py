@@ -38,6 +38,7 @@ create a custom application.
     holoscan.core.ExecutionContext
     holoscan.core.Executor
     holoscan.core.Fragment
+    holoscan.core.FlowInfo
     holoscan.core.Graph
     holoscan.core.InputContext
     holoscan.core.IOSpec
@@ -98,6 +99,7 @@ try:
         DLDevice,
         DLDeviceType,
         Executor,
+        FlowInfo,
         IOSpec,
         Message,
         MetadataDictionary,
@@ -155,6 +157,7 @@ __all__ = [
     "DLDeviceType",
     "ExecutionContext",
     "Executor",
+    "FlowInfo",
     "Fragment",
     "FragmentGraph",
     "Graph",

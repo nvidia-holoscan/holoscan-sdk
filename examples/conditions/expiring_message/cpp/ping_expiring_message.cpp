@@ -114,7 +114,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main([[maybe_unused]] int argc, char** argv) {
+int main() {
   auto app = holoscan::make_application<App>();
   auto& tracker = app->track(0, 0, 0);
   tracker.enable_logging();

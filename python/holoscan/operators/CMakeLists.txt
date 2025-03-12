@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,9 +14,6 @@
 # limitations under the License.
 
 # operator submodules
-if(HOLOSCAN_BUILD_AJA)
-  add_subdirectory(aja_source)
-endif()
 add_subdirectory(bayer_demosaic)
 add_subdirectory(format_converter)
 add_subdirectory(gxf_codelet)
@@ -31,11 +28,6 @@ add_subdirectory(segmentation_postprocessor)
 add_subdirectory(v4l2_video_capture)
 add_subdirectory(video_stream_recorder)
 add_subdirectory(video_stream_replayer)
-
-if(HOLOSCAN_BUILD_AJA)
-  set(AJASOURCEOp_autosummary "holoscan.operators.AJASourceOp")
-  set(AJASource_operator_module "\"aja_source\": [\"AJASourceOp\", \"NTV2Channel\"],")
-endif()
 
 file(RELATIVE_PATH relative_dest_path ${CMAKE_CURRENT_BINARY_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR})
 set(INIT_FILE_OUT ${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/${relative_dest_path}/__init__.py)

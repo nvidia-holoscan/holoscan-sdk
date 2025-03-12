@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,13 +41,8 @@
 namespace holoscan::ops {
 
 void VideoStreamReplayerOp::setup(OperatorSpec& spec) {
-  auto& output = spec.output<gxf::Entity>("output");
+  spec.output<gxf::Entity>("output");
 
-  spec.param(transmitter_,
-             "transmitter",
-             "Entity transmitter",
-             "Transmitter channel for replaying entities",
-             &output);
   spec.param(allocator_,
              "allocator",
              "Tensor Memory Allocator",
@@ -313,7 +308,7 @@ void VideoStreamReplayerOp::compute([[maybe_unused]] InputContext& op_input,
 
     // emit the entity
     auto result = gxf::Entity(std::move(entity.value()));
-    op_output.emit(result);
+    op_output.emit(result, "output");
 
     // Increment frame counter and index
     ++playback_count_;

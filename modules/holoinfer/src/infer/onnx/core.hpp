@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,12 +44,16 @@ class OnnxInfer : public InferBase {
    * @brief Constructor
    * @param model_file_path Path to onnx model file
    * @param enable_fp16 Flag showing if trt engine file conversion will use FP16.
+   * @param dla_core The DLA core index to execute the engine on, starts at 0. Set to -1 to disable
+   * DLA.
+   * @param dla_gpu_fallback If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If
+   * the fallback is disabled, engine creation will fail if a layer cannot executed on DLA.
    * @param cuda_flag Flag to show if inference will happen using CUDA
    * @param cuda_buf_in Flag to demonstrate if input data buffer is on cuda
    * @param cuda_buf_out Flag to demonstrate if output data buffer will be on cuda
    * */
-  OnnxInfer(const std::string& model_file_path, bool enable_fp16, bool cuda_flag, bool cuda_buf_in,
-            bool cuda_buf_out);
+  OnnxInfer(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
+            bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out);
 
   /**
    * @brief Destructor

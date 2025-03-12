@@ -86,11 +86,6 @@ There are a few parameters that can be specified:
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/v4l2_camera.py
   ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/v4l2_camera/python/v4l2_camera.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/v4l2_camera/python/v4l2_camera.py

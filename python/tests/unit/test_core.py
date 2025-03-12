@@ -639,11 +639,6 @@ class TestOutputContext:
         with pytest.raises(TypeError):
             OutputContext()
 
-    def test_output_type(self):
-        assert hasattr(OutputContext, "OutputType")
-        assert hasattr(OutputContext.OutputType, "GXF_ENTITY")
-        assert hasattr(OutputContext.OutputType, "SHARED_POINTER")
-
 
 def test_condition_type():
     # just verifies that the various enums exist
@@ -726,17 +721,17 @@ class TestFragment:
     def test_from_config(self, fragment, config_file):
         fragment.config(config_file)
 
-        aja_kwargs = fragment.from_config("aja")
-        assert isinstance(aja_kwargs, ArgList)
-        assert aja_kwargs.size == len(aja_kwargs.args) == 6
+        replayer_kwargs = fragment.from_config("replayer")
+        assert isinstance(replayer_kwargs, ArgList)
+        assert replayer_kwargs.size == len(replayer_kwargs.args) == 5
         # all arguments in the ArgList are YAML nodes
-        for arg in aja_kwargs.args:
+        for arg in replayer_kwargs.args:
             assert arg.arg_type.element_type == ArgElementType.YAML_NODE
 
     def test_from_config_nested_key(self, fragment, config_file):
         fragment.config(config_file)
 
-        width = fragment.from_config("aja.width")
+        width = fragment.from_config("replayer.frame_rate")
         assert isinstance(width, Arg)
         assert width.arg_type.element_type == ArgElementType.YAML_NODE
 
@@ -944,16 +939,16 @@ class TestApplication:
     def test_from_config(self, app, config_file):
         app.config(config_file)
 
-        aja_kwargs = app.from_config("aja")
-        assert isinstance(aja_kwargs, ArgList)
-        assert aja_kwargs.size == 6
+        replayer_kwargs = app.from_config("replayer")
+        assert isinstance(replayer_kwargs, ArgList)
+        assert replayer_kwargs.size == 5
 
     def test_kwargs(self, app, config_file):
         app.config(config_file)
 
-        replayer_kwargs = app.kwargs("aja")
+        replayer_kwargs = app.kwargs("replayer")
         assert isinstance(replayer_kwargs, dict)
-        assert "enable_overlay" in replayer_kwargs
+        assert "frame_rate" in replayer_kwargs
 
     def test_from_config_missing_key(self, app, config_file, capfd):
         app.config(config_file)

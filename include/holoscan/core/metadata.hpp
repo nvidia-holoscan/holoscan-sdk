@@ -44,9 +44,13 @@ enum class MetadataPolicy {
   kReject,         ///< Reject the new value if the key already exists
   kInplaceUpdate,  ///< Replace the `std:::any` value within the existing
                    ///< `std::shared_ptr<MetadataObject>` if the key already exists
-  kUpdate,  ///< Replace the `std::shared_ptr<MetadataObject>` with a newly constructed one if the
-            ///< key already exists
-  kRaise,   ///< Raise an exception if the key already exists
+  kUpdate,   ///< Replace the `std::shared_ptr<MetadataObject>` with a newly constructed one if the
+             ///< key already exists
+  kRaise,    ///< Raise an exception if the key already exists
+  kDefault,  ///< Default value indicating that the user did not explicitly set a policy via
+             ///< `Operator::metadata_policy`. The policy used will be that set via
+             ///< `Fragment::metadata_policy` if that was set. Otherwise the default of kRaise is
+             ///< used.
 };
 
 /**
@@ -59,7 +63,7 @@ class MetadataDictionary {
   using ConstIterator = MapType::const_iterator;
 
   // Constructors
-  explicit MetadataDictionary(const MetadataPolicy& policy = MetadataPolicy::kRaise)
+  explicit MetadataDictionary(const MetadataPolicy& policy = MetadataPolicy::kDefault)
       : dictionary_(std::make_shared<MapType>()), policy_(policy) {}
   MetadataDictionary(const MetadataDictionary&) = default;
   MetadataDictionary(MetadataDictionary&&) = default;
@@ -183,6 +187,7 @@ class MetadataDictionary {
           // replace the MetadataObject with a newly constructed one
           (*dictionary_)[key] = std::make_shared<MetadataObject>(value);
           break;
+        case MetadataPolicy::kDefault:
         case MetadataPolicy::kRaise:
           throw std::runtime_error(
               fmt::format("Key '{}' already exists. The application should be updated to avoid "
@@ -268,8 +273,8 @@ class MetadataDictionary {
   /// If the dictionary is shared, make a copy of it so that it is unique
   bool ensure_unique();
 
-  std::shared_ptr<MapType> dictionary_{};           ///< The underlying dictionary object
-  MetadataPolicy policy_{MetadataPolicy::kUpdate};  ///< The policy for handling metadata
+  std::shared_ptr<MapType> dictionary_{};            ///< The underlying dictionary object
+  MetadataPolicy policy_{MetadataPolicy::kDefault};  ///< The policy for handling metadata
 };
 
 }  // namespace holoscan

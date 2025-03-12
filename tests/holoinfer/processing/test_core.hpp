@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +63,7 @@ class ProcessingTests {
   bool process_with_cuda = false;
   cudaStream_t cuda_stream = 0;
   std::string config_path = "";
+  std::map<std::string, std::string> custom_kernels;
 
   const std::map<unsigned int, std::string> test_identifier_process = {
       {1, "Processing Params, input tensors are empty"},
@@ -81,7 +82,12 @@ class ProcessingTests {
       {14, "Processing Params, Empty data buffer"},
       {15, "Processing Params, Empty config for generate boxes"},
       {16, "Processing Params, Incorrect config path for generate boxes"},
-      {17, "Processing Params, incorrect tensor for generate boxes"}};
+      {17, "Processing Params, incorrect tensor for generate boxes"},
+      {18, "Processing Params, Custom CUDA kernel: empty cuda kernels map"},
+      {19, "Processing Params, Custom CUDA kernel: Incorrect naming"},
+      {20, "Processing Params, Custom CUDA kernel: Incorrect key in custom kernel map"},
+      {21, "Processing Params, Custom CUDA kernel: Empty kernel in custom kernel map"},
+      {22, "Processing Params, Custom CUDA kernel: Incorrect kernel in custom kernel map"}};
 };
 
 #endif /* HOLOINFER_PROCESSING_TEST_CORE_HPP */

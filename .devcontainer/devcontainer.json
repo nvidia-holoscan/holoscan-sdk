@@ -19,10 +19,8 @@
         "--net=host",
         // Current VSCode DevContainer doesn't support dynamic 'runArgs' for docker
         // (see https://github.com/microsoft/vscode-remote-release/issues/3972).
-        // So, we need to comment out the following lines when we don't use AJA Capture Card or video device.
+        // So, we need to comment out the following lines when we don't use video device.
         //
-        // Uncomment the following line to use AJA Capture Card
-        // "--device=/dev/ajantv20:/dev/ajantv20",
         // Uncomment the following 2 lines to use /dev/video0.
         // "--group-add=video",
         // "--device=/dev/video0:/dev/video0",

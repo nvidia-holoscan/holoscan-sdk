@@ -20,7 +20,10 @@
 
 #include <memory>
 
+#include <gxf/std/scheduling_terms.hpp>
+
 #include "../../gxf/gxf_condition.hpp"
+#include "../../resources/gxf/receiver.hpp"
 
 namespace holoscan {
 
@@ -77,7 +80,6 @@ class MessageAvailableCondition : public gxf::GXFCondition {
   // TODO(GXF4):   Expected<void> setReceiver(Handle<Receiver> value)
 
  private:
-  // TODO(GXF4): this is now a std::set<Handle<Receiver>> receivers_
   Parameter<std::shared_ptr<Receiver>> receiver_;
   Parameter<uint64_t> min_size_;
   Parameter<size_t> front_stage_max_size_;

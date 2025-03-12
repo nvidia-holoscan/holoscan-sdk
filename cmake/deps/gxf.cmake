@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -124,19 +124,22 @@ find_path(GXF_PYTHON_MODULE_PATH
 
 # Test that the GXF Python module is in PYTHONPATH
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
-execute_process(
-    COMMAND "${Python3_EXECUTABLE}" -c "import os; import gxf; print(os.pathsep.join(gxf.__path__).strip())"
-    RESULT_VARIABLE GXF_MODULE_FOUND
-    OUTPUT_VARIABLE GXF_MODULE_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-if(NOT GXF_MODULE_FOUND EQUAL 0)
-    message(FATAL_ERROR "GXF Python module not found in PYTHONPATH")
-endif()
-if(NOT GXF_MODULE_DIR STREQUAL "${GXF_PYTHON_MODULE_PATH}")
-    message(WARNING
-        "Expected GXF Python module at ${GXF_PYTHON_MODULE_PATH} but found at ${GXF_MODULE_DIR}."
-        " Do you need to update your PYTHONPATH?")
+if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
+    # GXF Python module is required for registering GXF extensions
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" -c "import os; import gxf; print(os.pathsep.join(gxf.__path__).strip())"
+        RESULT_VARIABLE GXF_MODULE_FOUND
+        OUTPUT_VARIABLE GXF_MODULE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT GXF_MODULE_FOUND EQUAL 0)
+        message(FATAL_ERROR "GXF Python module not found in PYTHONPATH")
+    endif()
+    if(NOT GXF_MODULE_DIR STREQUAL "${GXF_PYTHON_MODULE_PATH}")
+        message(WARNING
+            "Expected GXF Python module at ${GXF_PYTHON_MODULE_PATH} but found at ${GXF_MODULE_DIR}."
+            " Do you need to update your PYTHONPATH?")
+    endif()
 endif()
 
 # Set variables in parent scope for use throughout the Holoscan project

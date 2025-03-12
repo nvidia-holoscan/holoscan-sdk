@@ -69,14 +69,6 @@ The following dataset is used by this example:
   python3 -m pip install "numpy<2.0"
   python3 <APP_DIR>/holoviz_geometry.py
   ```
-* **using deb package install**:
-  ```bash
-  sudo /opt/nvidia/holoscan/examples/download_example_data
-  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
-  python3 -m pip install "numpy<2.0"
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_geometry.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_geometry.py
@@ -108,12 +100,6 @@ As for `example/tensor_interop/python/tensor_interop.py`, this application demon
   # [Optional] Start the virtualenv where holoscan is installed
   python3 -m pip install "numpy<2.0"
   python3 <APP_DIR>/holoviz_geometry_3d.py
-  ```
-* **using deb package install**:
-  ```bash
-  python3 -m pip install "numpy<2.0"
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_geometry_3d.py
   ```
 * **from NGC container**:
   ```bash
@@ -155,14 +141,6 @@ The following dataset is used by this example:
   # [Optional] Start the virtualenv where holoscan is installed
   python3 -m pip install "numpy<2.0"
   python3 <APP_DIR>/holoviz_views.py
-  ```
-* **using deb package install**:
-  ```bash
-  # [Prerequisite] Download NGC dataset above to `DATA_DIR`
-  export HOLOSCAN_INPUT_PATH=<DATA_DIR>
-  python3 -m pip install "numpy<2.0"
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_views.py
   ```
 * **from NGC container**:
   ```bash

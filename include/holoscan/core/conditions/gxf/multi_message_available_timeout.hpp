@@ -28,6 +28,7 @@
 #include "../../gxf/gxf_condition.hpp"
 #include "../../resource.hpp"
 #include "../../resources/gxf/realtime_clock.hpp"
+#include "../../resources/gxf/receiver.hpp"
 
 namespace holoscan {
 

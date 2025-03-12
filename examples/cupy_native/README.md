@@ -10,12 +10,6 @@ This minimal application multiplies two randomly generated matrices on the GPU, 
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/matmul.py
   ```
-* **using deb package install**:
-  ```bash
-  python3 -m pip install cupy-cuda12x
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/cupy_native/matmul.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/cupy_native/matmul.py

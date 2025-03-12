@@ -53,10 +53,6 @@ endif()
 # Enable testing
 include(CTest)
 
-if(HOLOSCAN_BUILD_AJA)
-  add_subdirectory(aja_capture)
-endif()
-
 # C++ only examples
 if(HOLOSCAN_CPP_EXAMPLES)
   add_subdirectory(wrap_holoscan_as_gxf_extension)
@@ -74,9 +70,11 @@ if(HOLOSCAN_PYTHON_EXAMPLES)
 endif()
 
 # C++ and Python examples
+add_subdirectory(activation_map)
 add_subdirectory(bring_your_own_model)
 add_subdirectory(cli_packager)
 add_subdirectory(conditions)
+add_subdirectory(flow_control)
 add_subdirectory(flow_tracker)
 add_subdirectory(hello_world)
 add_subdirectory(holoviz)
@@ -90,23 +88,17 @@ add_subdirectory(ping_multi_port)
 add_subdirectory(ping_distributed)
 add_subdirectory(ping_vector)
 add_subdirectory(resources)
+add_subdirectory(round_robin_parallel)
 add_subdirectory(tensor_interop)
 add_subdirectory(v4l2_camera)
 add_subdirectory(video_replayer)
 add_subdirectory(video_replayer_distributed)
+add_subdirectory(custom_cuda_kernel_1d_sample)
+add_subdirectory(custom_cuda_kernel_multi_sample)
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
-# Generates the install CMakeLists.txt to compile all the cpp examples
-set(cmake_example_directories)
-file(GLOB_RECURSE cmakeinstallfiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} */CMakeLists.min.txt)
-foreach(cmakeinstallfile IN LISTS cmakeinstallfiles)
-  string(REPLACE "/CMakeLists.min.txt" "" cmakedirectory ${cmakeinstallfile})
-  string(APPEND cmake_example_directories "add_subdirectory(${cmakedirectory})\n")
-endforeach()
 
-configure_file(CMakeLists.min.txt.in CMakeLists.min.txt @ONLY)
-
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/CMakeLists.min.txt"
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.min.txt"
         RENAME "CMakeLists.txt"
         DESTINATION examples
         COMPONENT holoscan-examples

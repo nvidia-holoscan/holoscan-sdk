@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the \"License\");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an \"AS IS\" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cmake_minimum_required(VERSION 3.20)
+project(holoscan_activation_map CXX)
+
+# Finds the package holoscan
+find_package(holoscan REQUIRED CONFIG
+             PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
+
+add_executable(activation_map
+  activation_map.cpp
+)
+
+target_link_libraries(activation_map
+  PRIVATE
+  holoscan::core
+  holoscan::ops::inference
+  CUDA::cuda_driver
+)
+
+# Testing
+if(BUILD_TESTING)
+  file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/activation_map.yaml
+      DESTINATION  ${CMAKE_CURRENT_BINARY_DIR}/)
+  add_test(NAME EXAMPLE_CPP_ACTIVATION_MAP_TEST
+           COMMAND activation_map ${CMAKE_CURRENT_BINARY_DIR}/activation_map.yaml
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  set_tests_properties(EXAMPLE_CPP_ACTIVATION_MAP_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Model first, second, third was selected to infer"
+    PASS_REGULAR_EXPRESSION "7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7"
+    PASS_REGULAR_EXPRESSION "8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8"
+    PASS_REGULAR_EXPRESSION "9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9")
+endif()

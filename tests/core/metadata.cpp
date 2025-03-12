@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -187,9 +187,9 @@ TEST(MetadataDictionary, TestMetadataPolicy) {
   MetadataDictionary d{};
 
   d.set("patient name", "John Doe"s);
-  EXPECT_EQ(d.policy(), MetadataPolicy::kRaise);
+  EXPECT_EQ(d.policy(), MetadataPolicy::kDefault);
 
-  // raise if new value is provided for existing key
+  // default will raise if new value is provided for existing key
   EXPECT_THROW(d.set("patient name", "Mr. Smith"s), std::runtime_error);
 
   // reject new value

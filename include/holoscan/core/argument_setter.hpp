@@ -63,8 +63,7 @@ class ArgumentSetter {
   /**
    * @brief Default @ref SetterFunc for Arg.
    */
-  inline static SetterFunc none_argument_setter = []([[maybe_unused]] ParameterWrapper& param_wrap,
-                                                     Arg& arg) {
+  inline static SetterFunc none_argument_setter = [](ParameterWrapper& /*param_wrap*/, Arg& arg) {
     HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", arg.name());
   };
 

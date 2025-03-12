@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,6 +76,7 @@ if(HOLOSCAN_BUILD_TESTS)
   # rx2 should receive close to 100 message (values 0 - 99)
   # rx1 will receive only some of these, but it is hard to know exactly which ones so just verify the first
   set_tests_properties(EXAMPLE_CPP_MULTI_BRANCH_OPERATOR_TEST PROPERTIES
+                       FAIL_REGULAR_EXPRESSION "Push failed on 'in'"
                        PASS_REGULAR_EXPRESSION "receiver 'rx2' received value: 90"
                        PASS_REGULAR_EXPRESSION "receiver 'rx1' received value: 0")
 endif()

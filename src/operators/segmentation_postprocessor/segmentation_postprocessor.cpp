@@ -191,7 +191,7 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
                    cuda_stream);
 
   auto result = gxf::Entity(std::move(out_message.value()));
-  op_output.emit(result);
+  op_output.emit(result, "out_tensor");
 }
 
 void SegmentationPostprocessorOp::start() {

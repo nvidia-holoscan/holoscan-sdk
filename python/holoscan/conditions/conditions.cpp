@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,7 @@ void init_cuda_event(py::module_&);
 void init_cuda_stream(py::module_&);
 void init_periodic(py::module_&);
 void init_downstream_message_affordable(py::module_&);
+void init_memory_available(py::module_&);
 void init_message_available(py::module_&);
 void init_multi_message_available(py::module_&);
 void init_multi_message_available_timeout(py::module_&);
@@ -49,6 +50,7 @@ PYBIND11_MODULE(_conditions, m) {
   init_cuda_stream(m);
   init_periodic(m);
   init_downstream_message_affordable(m);
+  init_memory_available(m);
   init_message_available(m);
   init_multi_message_available(m);
   init_multi_message_available_timeout(m);

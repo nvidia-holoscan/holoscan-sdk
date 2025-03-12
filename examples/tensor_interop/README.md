@@ -54,14 +54,6 @@ The following dataset is used by this example:
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/tensor_interop.py
   ```
-* **using deb package install**:
-  ```bash
-  sudo /opt/nvidia/holoscan/examples/download_example_data
-  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
-  python3 -m pip install cupy-cuda12x
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/tensor_interop/python/tensor_interop.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/tensor_interop/python/tensor_interop.py

@@ -79,15 +79,6 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
   # Set the application folder
   APP_DIR=<APP_DIR>
   ```
-* **using deb package install**:
-  ```bash
-  sudo /opt/nvidia/holoscan/examples/download_example_data
-  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-
-  # Set the application folder
-  APP_DIR=/opt/nvidia/holoscan/examples/video_replayer_distributed/python
-  ```
 * **from NGC container**:
   ```bash
   # Set the application folder

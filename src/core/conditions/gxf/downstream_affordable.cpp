@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +37,23 @@ void DownstreamMessageAffordableCondition::setup(ComponentSpec& spec) {
              "The term permits execution if the receiver connected to the transmitter has at least "
              "the specified number of free slots in its back buffer.",
              1UL);
+}
+
+nvidia::gxf::DownstreamReceptiveSchedulingTerm* DownstreamMessageAffordableCondition::get() const {
+  return static_cast<nvidia::gxf::DownstreamReceptiveSchedulingTerm*>(gxf_cptr_);
+}
+
+void DownstreamMessageAffordableCondition::min_size(uint64_t min_size) {
+  auto cond = get();
+  if (cond) {
+    auto maybe_set = cond->setMinSize(min_size);
+    if (!maybe_set) {
+      throw std::runtime_error(
+          fmt::format("Failed to set min_size: {}", GxfResultStr(maybe_set.error())));
+    }
+  }
+  min_size_ = min_size;
+  return;
 }
 
 }  // namespace holoscan

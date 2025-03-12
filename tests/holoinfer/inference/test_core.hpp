@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +70,7 @@ class HoloInferTests {
   };
 
   std::map<std::string, std::string> device_map = {{"model_1", "0"}, {"model_2", "0"}};
+  std::map<std::string, std::string> dla_core_map = {{"model_1", "-1"}, {"model_2", "-1"}};
 
   std::map<std::string, std::string> temporal_map = {{"model_1", "1"}, {"model_2", "1"}};
   std::map<std::string, std::string> activation_map = {{"model_1", "1"}, {"model_2", "1"}};
@@ -98,6 +99,8 @@ class HoloInferTests {
   bool output_on_cuda = true;
   bool is_engine_path = false;
   bool use_cuda_graphs = true;
+  int32_t dla_core = -1;
+  bool dla_gpu_fallback = true;
 
   /// Pointer to inference context.
   std::unique_ptr<HoloInfer::InferContext> holoscan_infer_context_;

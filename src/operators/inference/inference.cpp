@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/operators/inference/codecs.hpp"
 #include "holoscan/utils/holoinfer_utils.hpp"
 
 /**
@@ -123,6 +124,8 @@ void InferenceOp::setup(OperatorSpec& spec) {
   register_converter<DataMap>();
   register_converter<DataVecMap>();
   spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
+  spec.input<std::any>("model_activation_specs").condition(ConditionType::kNone);
+
   spec.output<gxf::Entity>("transmitter");
 
   spec.param(backend_, "backend", "Supported backend", "backend", {});
@@ -136,6 +139,12 @@ void InferenceOp::setup(OperatorSpec& spec) {
              "device_map",
              "Model Keyword with associated device",
              "Device ID on which model will do inference.",
+             DataMap());
+  spec.param(dla_core_map_,
+             "dla_core_map",
+             "Model Keyword with associated DLA core index",
+             "The DLA core index on which model will do inference, starts at 0. Set to -1 to "
+             "disable DLA.",
              DataMap());
   spec.param(temporal_map_,
              "temporal_map",
@@ -174,6 +183,22 @@ void InferenceOp::setup(OperatorSpec& spec) {
              "Use CUDA graphs",
              "Enable usage of CUDA Graphs for backends which support it.",
              true);
+
+  spec.param(dla_core_,
+             "dla_core",
+             "DLA core index",
+             "The DLA core index to execute the engine on, starts at 0. Set to -1 (the default) to "
+             "disable DLA.",
+             -1);
+
+  spec.param(
+      dla_gpu_fallback_,
+      "dla_gpu_fallback",
+      "Enable DLA GPU fallback",
+      "If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is "
+      "disabled, engine creation will fail if a layer cannot executed on DLA.",
+      true);
+
   spec.param(input_on_cuda_, "input_on_cuda", "Input buffer on CUDA", "", true);
   spec.param(output_on_cuda_, "output_on_cuda", "Output buffer on CUDA", "", true);
   spec.param(transmit_on_cuda_, "transmit_on_cuda", "Transmit message on CUDA", "", true);
@@ -189,6 +214,8 @@ void InferenceOp::setup(OperatorSpec& spec) {
 void InferenceOp::initialize() {
   register_converter<DataMap>();
   register_converter<DataVecMap>();
+  register_codec<std::vector<ActivationSpec>>("std::vector<holoscan::ops::InferenceOp::InputSpec>",
+                                              true);
   Operator::initialize();
 }
 
@@ -213,6 +240,7 @@ void InferenceOp::start() {
                                                     pre_processor_map_.get().get_map(),
                                                     inference_map_.get().get_map(),
                                                     device_map_.get().get_map(),
+                                                    dla_core_map_.get().get_map(),
                                                     temporal_map_.get().get_map(),
                                                     activation_map_.get().get_map(),
                                                     trt_opt_profile_.get(),
@@ -222,7 +250,9 @@ void InferenceOp::start() {
                                                     enable_fp16_.get(),
                                                     input_on_cuda_.get(),
                                                     output_on_cuda_.get(),
-                                                    enable_cuda_graphs_.get());
+                                                    enable_cuda_graphs_.get(),
+                                                    dla_core_.get(),
+                                                    dla_gpu_fallback_.get());
     HOLOSCAN_LOG_INFO("Inference Specifications created");
     // Create holoscan inference context
     holoscan_infer_context_ = std::make_unique<HoloInfer::InferContext>();
@@ -255,6 +285,14 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
       nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(), allocator_->gxf_cid());
   auto cont = context.context();
   try {
+    // Get activation maps spec from user, if any, build filters on inference specs
+    const auto act_map_specs_message =
+        op_input.receive<std::vector<ActivationSpec>>("model_activation_specs");
+    std::vector<ActivationSpec> maybe_act_map_specs;
+
+    // Update activation_map by specs
+    if (act_map_specs_message) { maybe_act_map_specs = act_map_specs_message.value(); }
+
     // Extract relevant data from input GXF Receivers, and update inference specifications
     // (cuda_stream will be set by get_data_per_model)
     cudaStream_t cuda_stream{};
@@ -290,8 +328,12 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
 
-    inference_specs_->set_activation_map(activation_map_.get().get_map());
-
+    // Set activation map for inference specifications
+    stat = holoscan::utils::set_activation_per_model(
+        inference_specs_, activation_map_.get().get_map(), maybe_act_map_specs, module_);
+    if (stat != GXF_SUCCESS) {
+      HoloInfer::raise_error(module_, "Compute, Inference activation specification");
+    }
     auto status = holoscan_infer_context_->execute_inference(inference_specs_, cuda_stream);
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, "Inference Operator: Inference execution");

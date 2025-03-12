@@ -25,6 +25,7 @@
 #include "../../gxf/gxf_condition.hpp"
 #include "../../resources/gxf/clock.hpp"
 #include "../../resources/gxf/realtime_clock.hpp"
+#include "../../resources/gxf/receiver.hpp"
 
 namespace holoscan {
 
@@ -135,7 +136,6 @@ class ExpiringMessageAvailableCondition : public gxf::GXFCondition {
   // TODO(GXF4):   Expected<void> setReceiver(Handle<Receiver> value)
 
  private:
-  // TODO(GXF4): this is now a std::set<Handle<Receiver>> receivers_
   Parameter<std::shared_ptr<Receiver>> receiver_;
   Parameter<int64_t> max_batch_size_;
   Parameter<int64_t> max_delay_ns_;

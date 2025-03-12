@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -124,15 +124,15 @@ if(HOLOSCAN_BUILD_TESTS)
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 
-  # repeat the default test, but with HOLOSCAN_UCX_ASYNCHRONOUS=False to set
-  # enable_async=false for UcxContext
-  add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_SYNCHRONOUS_MODE_TEST
+  # repeat the default test, but with HOLOSCAN_UCX_ASYNCHRONOUS=TRUE to set
+  # enable_async=true for UcxContext
+  add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_ASYNCHRONOUS_MODE_TEST
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed_test --config ${CONFIG_FILE}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
 
-  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_SYNCHRONOUS_MODE_TEST PROPERTIES
-    ENVIRONMENT "HOLOSCAN_UCX_ASYNCHRONOUS=False"
+  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_ASYNCHRONOUS_MODE_TEST PROPERTIES
+    ENVIRONMENT "HOLOSCAN_UCX_ASYNCHRONOUS=True"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )

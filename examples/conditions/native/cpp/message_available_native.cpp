@@ -48,7 +48,7 @@ class NativeMessageAvailableCondition : public Condition {
                static_cast<uint64_t>(1));
   }
 
-  void check(int64_t timestamp, SchedulingStatusType* type,
+  void check([[maybe_unused]] int64_t timestamp, SchedulingStatusType* type,
              int64_t* target_timestamp) const override {
     if (type == nullptr) {
       throw std::runtime_error(fmt::format("Condition '{}' received nullptr for type", name()));
@@ -111,7 +111,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main([[maybe_unused]] int argc, char** argv) {
+int main() {
   auto app = holoscan::make_application<App>();
 
   app->run();

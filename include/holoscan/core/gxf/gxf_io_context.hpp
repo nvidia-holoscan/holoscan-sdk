@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,7 +104,8 @@ class GXFInputContext : public InputContext {
 
  protected:
   bool empty_impl(const char* name = nullptr) override;
-  std::any receive_impl(const char* name = nullptr, bool no_error_message = false) override;
+  std::any receive_impl(const char* name = nullptr, InputType in_type = InputType::kAny,
+                        bool no_error_message = false) override;
 
   gxf_result_t retrieve_cuda_streams(nvidia::gxf::Entity& message, const std::string& input_name);
 };
@@ -153,8 +154,7 @@ class GXFOutputContext : public OutputContext {
   void set_cuda_stream(const cudaStream_t stream, const char* output_port_name = nullptr) override;
 
  protected:
-  void emit_impl(std::any data, const char* name = nullptr,
-                 OutputType out_type = OutputType::kSharedPointer,
+  void emit_impl(std::any data, const char* name = nullptr, OutputType out_type = OutputType::kAny,
                  const int64_t acq_timestamp = -1) override;
 
  private:

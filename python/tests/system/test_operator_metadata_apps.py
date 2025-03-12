@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -113,7 +113,7 @@ class MyPingApp(Application):
         )
         mx = PingMetadataMiddleOp(self, name="mx")
         rx = PingMetadataRxOp(self, name="rx")
-        rx.metadata_policy = MetadataPolicy.UPDATE
+        rx.metadata_policy = MetadataPolicy.INPLACE_UPDATE
         self.add_flow(tx, mx, {("out1", "in1"), ("out2", "in2")})
         self.add_flow(mx, rx, {("out1", "receivers"), ("out2", "receivers")})
 
@@ -160,7 +160,7 @@ class MyPingParallelApp(Application):
         rx = PingMetadataRxOp(self, name="rx")
         # leave at default policy for rx_policy=None
         if self.rx_policy is None:
-            assert rx.metadata_policy == MetadataPolicy.RAISE
+            assert rx.metadata_policy == MetadataPolicy.DEFAULT
         else:
             rx.metadata_policy = self.rx_policy
 
@@ -199,7 +199,14 @@ def test_my_ping_app(capfd, is_metadata_enabled):
 )
 @pytest.mark.parametrize("is_metadata_enabled", [False, True])
 @pytest.mark.parametrize(
-    "update_policy", [MetadataPolicy.UPDATE, MetadataPolicy.RAISE, MetadataPolicy.REJECT, None]
+    "update_policy",
+    [
+        MetadataPolicy.UPDATE,
+        MetadataPolicy.INPLACE_UPDATE,
+        MetadataPolicy.RAISE,
+        MetadataPolicy.REJECT,
+        None,
+    ],
 )
 def test_my_ping_parallel_app(capfd, scheduler_class, is_metadata_enabled, update_policy):
     count = 3

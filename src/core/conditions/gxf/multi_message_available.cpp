@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,7 +70,13 @@ nvidia::gxf::MultiMessageAvailableSchedulingTerm* MultiMessageAvailableCondition
 
 void MultiMessageAvailableCondition::min_sum(size_t min_sum) {
   auto cond = get();
-  if (cond) { cond->setMinSum(min_sum); }
+  if (cond) {
+    auto maybe_set = cond->setMinSum(min_sum);
+    if (!maybe_set) {
+      throw std::runtime_error(
+          fmt::format("Failed to set min_sum: {}", GxfResultStr(maybe_set.error())));
+    }
+  }
   min_sum_ = min_sum;
 }
 
@@ -138,7 +144,13 @@ void MultiMessageAvailableCondition::initialize() {
 
 void MultiMessageAvailableCondition::sampling_mode(SamplingMode sampling_mode) {
   auto cond = get();
-  if (cond) { cond->setSamplingMode(sampling_mode); }
+  if (cond) {
+    auto maybe_set = cond->setSamplingMode(sampling_mode);
+    if (!maybe_set) {
+      throw std::runtime_error(
+          fmt::format("Failed to set sampling_mode: {}", GxfResultStr(maybe_set.error())));
+    }
+  }
   switch (sampling_mode) {
     case SamplingMode::kSumOfAll:
       sampling_mode_ = YAML::Node("SumOfAll");
@@ -154,7 +166,13 @@ void MultiMessageAvailableCondition::sampling_mode(SamplingMode sampling_mode) {
 
 void MultiMessageAvailableCondition::add_min_size(size_t value) {
   auto cond = get();
-  if (cond) { cond->addMinSize(value); }
+  if (cond) {
+    auto maybe_add = cond->addMinSize(value);
+    if (!maybe_add) {
+      throw std::runtime_error(
+          fmt::format("Failed to add value to min_size: {}", GxfResultStr(maybe_add.error())));
+    }
+  }
   auto min_sizes = std::any_cast<std::vector<size_t>>(min_sizes_);
   min_sizes.push_back(value);
   min_sizes_ = min_sizes;

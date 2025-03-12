@@ -29,12 +29,13 @@ holoscan_create_app
 holoscan_create_distributed_app
 holoscan_packager
 holoscan_create_operator
+holoscan_create_operator_via_decorator
 holoscan_create_condition
+holoscan_dynamic_flow_control
 holoscan_cuda_stream_handling
 holoscan_logging
 holoscan_debugging
 holoscan_create_operator_python_bindings
-holoscan_create_operator_via_decorator
 ```
 
 ```{toctree}
@@ -91,7 +92,6 @@ gxf/doc/index.md
 flow_tracking
 gxf_job_statistics
 nsight_profiling
-latency_tool.rst
 ```
 
 ```{toctree}

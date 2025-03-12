@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,8 +38,8 @@ class TrtInfer : public InferBase {
    */
   TrtInfer(const std::string& model_path, const std::string& model_name,
            const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
-           bool enable_fp16, bool enable_cuda_graphs, bool is_engine_path, bool cuda_buf_in,
-           bool cuda_buf_out);
+           bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core, bool dla_gpu_fallback,
+           bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out);
 
   /**
    * @brief Destructor
@@ -60,7 +60,7 @@ class TrtInfer : public InferBase {
    * */
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
                            std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
-                           cudaEvent_t cuda_event_data, cudaEvent_t *cuda_event_inference);
+                           cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference);
 
   /**
    * @brief Get input data dimensions to the model
@@ -117,6 +117,13 @@ class TrtInfer : public InferBase {
 
   ///  @brief Use CUDA Graphs
   bool enable_cuda_graphs_;
+
+  /// @brief The DLA core index to execute the engine on, starts at 0. Set to -1 to disable DLA.
+  int32_t dla_core_;
+
+  /// @brief If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is
+  /// disabled, engine creation will fail if a layer cannot executed on DLA.
+  bool dla_gpu_fallback_;
 
   /// @brief Flag showing if input buffer is on cuda
   bool cuda_buf_in_;

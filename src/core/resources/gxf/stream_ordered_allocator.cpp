@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,7 +81,7 @@ void StreamOrderedAllocator::setup(ComponentSpec& spec) {
              "B, KB, MB, GB and TB where the values are powers of 1024 bytes.",
              std::string(kPoolMaxSize));
   spec.param(release_threshold_,
-             "release_threadhold",
+             "release_threshold",
              "Amount of reserved memory to hold onto before trying to release memory back "
              "to the OS",
              "The release threshold specifies the maximum amount of memory the pool caches. "

@@ -11,12 +11,6 @@ This minimal signal processing application generates a time-varying impulse, con
   python3 -m pip install numpy
   python3 <APP_DIR>/convolve.py
   ```
-* **using deb package install**:
-  ```bash
-  python3 -m pip install numpy
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/numpy_native/convolve.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/numpy_native/convolve.py

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -173,4 +173,46 @@ void ProcessingTests::parameter_setup_test() {
       status, test_module, 17, test_identifier_process.at(17), HoloInfer::holoinfer_code::H_ERROR);
   clear_processor();
   process_operations.erase("plax_cham_infer:tensor2");
+
+  // Test: Processing Params, Empty custom_kernels map with custom_cuda kernel operation
+  config_path = "";
+  process_operations.at("plax_cham_infer").push_back("custom_cuda_kernel-1");
+  status = setup_processor();
+  processing_assert(
+      status, test_module, 18, test_identifier_process.at(18), HoloInfer::holoinfer_code::H_ERROR);
+  clear_processor();
+  process_operations.at("plax_cham_infer").pop_back();
+
+  // Test: Processing Params, custom cuda kernel incorrect name
+  process_operations.at("plax_cham_infer").push_back("custom_cuda_kernel-1-2");
+  status = setup_processor();
+  processing_assert(
+      status, test_module, 19, test_identifier_process.at(19), HoloInfer::holoinfer_code::H_ERROR);
+  clear_processor();
+  process_operations.at("plax_cham_infer").pop_back();
+
+  // Test: Processing Params, custom cuda kernel key not present in custom_kernels map
+  process_operations.at("plax_cham_infer").push_back("custom_cuda_kernel-1");
+  custom_kernels["cuda_kernel"] = "";
+  status = setup_processor();
+  processing_assert(
+      status, test_module, 20, test_identifier_process.at(20), HoloInfer::holoinfer_code::H_ERROR);
+  clear_processor();
+  custom_kernels.erase("cuda_kernel");
+
+  // Test: Processing Params, custom cuda kernel empty in the custom_kernels map
+  custom_kernels["cuda_kernel-1"] = "";
+  status = setup_processor();
+  processing_assert(
+      status, test_module, 21, test_identifier_process.at(21), HoloInfer::holoinfer_code::H_ERROR);
+  clear_processor();
+
+  // Test: Processing Params, Incorrect custom cuda kernel definition
+  custom_kernels["cuda_kernel-1"] = "Cuda Kernel";
+  status = setup_processor();
+  processing_assert(
+      status, test_module, 22, test_identifier_process.at(22), HoloInfer::holoinfer_code::H_ERROR);
+  clear_processor();
+
+  process_operations.at("plax_cham_infer").pop_back();
 }

@@ -101,7 +101,7 @@ class App : public holoscan::Application {
   }
 };
 
-int main([[maybe_unused]] int argc, char** argv) {
+int main() {
   auto app = holoscan::make_application<App>();
 
   app->run();

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +40,7 @@
 #include "holoscan/core/expected.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
+#include "holoscan/operators/inference/inference.hpp"
 #include "io_context_pydoc.hpp"
 #include "operator.hpp"  // for PyOperator
 #include "tensor.hpp"    // for PyTensor
@@ -256,6 +257,25 @@ bool PyOutputContext::handle_holoviz_op(py::object& data, const std::string& nam
   return false;
 }
 
+bool PyOutputContext::handle_inference_op(py::object& data, const std::string& name,
+                                          int64_t acq_timestamp,
+                                          EmitterReceiverRegistry& registry) {
+  // Emit a sequence of InferenceOp.ActivationSpec as a C++ object without having to explicitly set
+  // emitter_name="std::vector<holoscan::ops::InferenceOp::ActivationSpec>" when calling emit.
+  if ((py::isinstance<py::list>(data) || py::isinstance<py::tuple>(data)) && py::len(data) > 0) {
+    auto seq = data.cast<py::sequence>();
+    if (py::isinstance<holoscan::ops::InferenceOp::ActivationSpec>(seq[0])) {
+      HOLOSCAN_LOG_DEBUG(
+          "py_emit: emitting a std::vector<holoscan::ops::InferenceOp::ActivationSpec> object");
+      const auto& emit_func =
+          registry.get_emitter(typeid(std::vector<holoscan::ops::InferenceOp::ActivationSpec>));
+      emit_func(data, name, *this, acq_timestamp);
+      return true;
+    }
+  }
+  return false;
+}
+
 bool PyOutputContext::check_distributed_app(const std::string& name) {
   bool is_ucx_connector = false;
   if (outputs_.find(name) != outputs_.end()) {
@@ -334,6 +354,7 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   /// If we don't do the cast here the operator receives a python list object. There should be a
   /// generic way for this, or the operator needs to register expected types.
   if (handle_holoviz_op(data, name, acq_timestamp, registry)) { return; }
+  if (handle_inference_op(data, name, acq_timestamp, registry)) { return; }
 
   // handle pybind11::dict separately from other Python types for special TensorMap treatment
   if (handle_py_dict(data, name, acq_timestamp, registry)) { return; }
@@ -377,10 +398,6 @@ void init_io_context(py::module_& m) {
       [](const OutputContext&, py::object&, const std::string&) {},
       "data"_a,
       "name"_a = "");
-
-  py::enum_<OutputContext::OutputType>(output_context, "OutputType")
-      .value("SHARED_POINTER", OutputContext::OutputType::kSharedPointer)
-      .value("GXF_ENTITY", OutputContext::OutputType::kGXFEntity);
 
   py::class_<PyInputContext, InputContext, std::shared_ptr<PyInputContext>>(
       m, "PyInputContext", R"doc(Input context class.)doc")

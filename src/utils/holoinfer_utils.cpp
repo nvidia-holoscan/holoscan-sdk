@@ -681,7 +681,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
     // single transmitter used
     auto result = gxf::Entity(std::move(out_message.value()));
-    op_output.emit(result);
+    op_output.emit(result, "transmitter");
     HoloInfer::timer_init(e_time);
   } catch (std::exception& _ex) {
     return HoloInfer::report_error(module,
@@ -891,7 +891,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
     // single transmitter used
     auto result = gxf::Entity(std::move(out_message.value()));
-    op_output.emit(result);
+    op_output.emit(result, "transmitter");
     HoloInfer::timer_init(e_time);
   } catch (std::exception& _ex) {
     return HoloInfer::report_error(module,
@@ -899,6 +899,29 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
   } catch (...) { return HoloInfer::report_error(module, "Data transmission, Unknown exception"); }
   HoloInfer::timer_init(e_time);
   HoloInfer::timer_check(s_time, e_time, module + " Data transmission ");
+
+  return GXF_SUCCESS;
+}
+
+gxf_result_t set_activation_per_model(
+    std::shared_ptr<HoloInfer::InferenceSpecs>& inference_specs,
+    const HoloInfer::Mappings& activation_map,
+    const std::vector<HoloInfer::ActivationSpec>& activation_specs, const std::string& module) {
+  if (!inference_specs) { return HoloInfer::report_error(module, "Inference specs is null"); }
+
+  HoloInfer::Mappings on_fly_act_map;
+  // Merge predefined act with on_fly_act_map
+  for (auto it : activation_map) { on_fly_act_map[it.first] = it.second; }
+
+  // Update activation_map by specs
+  for (const auto& x : activation_specs) {
+    if (x.is_active()) {
+      on_fly_act_map[x.model()] = "1";
+    } else {
+      on_fly_act_map[x.model()] = "0";
+    }
+  }
+  inference_specs->set_activation_map(on_fly_act_map);
 
   return GXF_SUCCESS;
 }

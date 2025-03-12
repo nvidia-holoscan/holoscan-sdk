@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -118,8 +118,8 @@ TEST(Fragment, TestFragmentConfigNestedArgs) {
   Config& C = F.config();
   ASSERT_TRUE(C.config_file() == config_file);
 
-  // can directly access a specific argument under the "aja" section
-  ArgList arglist = F.from_config("aja.width"s);
+  // can directly access a specific argument under the "replayer" section
+  ArgList arglist = F.from_config("replayer.frame_rate"s);
   EXPECT_EQ(arglist.size(), 1);
   Arg width = arglist.args()[0];
   EXPECT_EQ(width.arg_type().element_type(), ArgElementType::kYAMLNode);

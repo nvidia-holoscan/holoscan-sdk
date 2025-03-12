@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,10 @@
  */
 #ifndef MODULES_HOLOINFER_SRC_PROCESS_DATA_PROCESSOR_HPP
 #define MODULES_HOLOINFER_SRC_PROCESS_DATA_PROCESSOR_HPP
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <nvrtc.h>
 
 #include <bits/stdc++.h>
 #include <cstring>
@@ -44,6 +48,12 @@ using processor_FP = std::function<InferStatus(
     const std::vector<std::string>& output_tensors, const std::vector<std::string>& custom_strings,
     bool process_with_cuda, cudaStream_t cuda_stream)>;
 
+/// Declaration of function callback for custom cuda kernels used by DataProcessor.
+using cuda_FP = std::function<InferStatus(const std::string&, const std::vector<int>&, const void*,
+                                          std::vector<int64_t>&, DataMap&,
+                                          const std::vector<std::string>& output_tensors,
+                                          bool process_with_cuda, cudaStream_t cuda_stream)>;
+
 // Declaration of function callback for transforms that need configuration (via a yaml file).
 // Transforms additionally support multiple inputs and outputs from the processing.
 using transforms_FP =
@@ -61,16 +71,23 @@ class DataProcessor {
   DataProcessor() {}
 
   /**
+   * @brief Default Destructor
+   */
+  ~DataProcessor();
+
+  /**
    * @brief Checks the validity of supported operations
    *
    * @param process_operations Map where tensor name is the key, and operations to perform on
    * the tensor as vector of strings. Each value in the vector of strings is the supported
    * operation.
+   * @param custom_kernels Map of custom kernel identifier, mapped to related value as a string
    * @param config_path Path to the processing configuration settings
    *
    * @return InferStatus with appropriate code and message
    */
-  InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
+  InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
+                         const std::string config_path);
 
   /**
    * @brief Executes an operation via function callback.
@@ -182,6 +199,28 @@ class DataProcessor {
   InferStatus export_binary_classification_to_csv(const std::vector<int>& in_dims,
                                                   const void* in_data,
                                                   const std::vector<std::string>& custom_strings);
+  /**
+   * @brief Launches custom kernel at runtime.
+   *
+   * @param id Unique custom kernel id
+   * @param dimensions Dimensions of input buffer
+   * @param input Input data buffer
+   * @param processed_dims Dimension of the output tensor, is populated during the processing
+   * @param processed_data_map Output data map, that will be populated
+   * @param output_tensors Output tensor names, used to populate out_data_map
+   * @param process_with_cuda Flag defining if processing should be done with CUDA
+   * @param cuda_stream CUDA stream to use when procseeing is done with CUDA
+   */
+  InferStatus launchCustomKernel(const std::string& id, const std::vector<int>& dimensions,
+                                 const void* input, std::vector<int64_t>& processed_dims,
+                                 DataMap& processed_data_map,
+                                 const std::vector<std::string>& output_tensors,
+                                 bool process_with_cuda, cudaStream_t cuda_stream);
+
+  /**
+   * @brief Initialization and preparation of all custom cuda kernels
+   */
+  InferStatus prepareCustomKernel();
 
  private:
   /// Map defining supported operations by DataProcessor Class.
@@ -190,6 +229,7 @@ class DataProcessor {
   /// Operations are defined with fixed number of input and outputs. Currently one for each.
   inline static const std::map<std::string, holoinfer_data_processor> supported_compute_operations_{
       {"max_per_channel_scaled", holoinfer_data_processor::h_CUDA_AND_HOST},
+      {"custom_cuda_kernel", holoinfer_data_processor::h_CUDA_AND_HOST},
       {"scale_intensity_cpu", holoinfer_data_processor::h_HOST}};
 
   /// Map defining supported transforms by DataProcessor Class.
@@ -261,6 +301,15 @@ class DataProcessor {
              auto& output_tensors, auto& custom_strings, bool process_with_cuda,
              cudaStream_t cuda_stream) { return print_results_int32(in_dims, in_data); };
 
+  /// Mapped function call for the function pointer of custom_cuda_kernel
+  cuda_FP custom_cuda_kernel_fp_ = [this](const std::string& id, auto& in_dims, const void* in_data,
+                                          std::vector<int64_t>& out_dims, DataMap& out_data,
+                                          auto& output_tensors, bool process_with_cuda,
+                                          cudaStream_t cuda_stream) {
+    return launchCustomKernel(
+        id, in_dims, in_data, out_dims, out_data, output_tensors, process_with_cuda, cuda_stream);
+  };
+
   /// Map with supported operation as the key and related function pointer as value
   const std::map<std::string, processor_FP> oper_to_fp_{
       {"max_per_channel_scaled", max_per_channel_scaled_fp_},
@@ -269,6 +318,9 @@ class DataProcessor {
       {"print_int32", print_results_i32_fp_},
       {"print_custom_binary_classification", print_custom_binary_classification_fp_},
       {"export_binary_classification_to_csv", export_binary_classification_to_csv_fp_}};
+
+  /// Map with custom cuda operation as the key and related function pointer as value
+  const std::map<std::string, cuda_FP> cuda_to_fp_{{"custom_cuda_kernel", custom_cuda_kernel_fp_}};
 
   /// Mapped function call for the function pointer of generate_boxes
   transforms_FP generate_boxes_fp_ = [this](const std::string& key,
@@ -300,7 +352,18 @@ class DataProcessor {
 
   /// Data exporter
   std::unique_ptr<DataExporter> data_exporter_ = nullptr;
+
+  // Custom CUDA kernel feature related parameters
+
+  CUdevice device_ = 0;
+  CUcontext context_ = nullptr;
+  CUmodule module_ = nullptr;
+  std::string custom_cuda_src_;
+  std::map<std::string, CUfunction> kernel_;
+  std::map<std::string, holoinfer_datatype> output_dtype_;
+  std::map<std::string, std::string> custom_kernel_thread_per_block_;
 };
+
 }  // namespace inference
 }  // namespace holoscan
 

@@ -21,6 +21,7 @@
 #include "holoscan/core/gxf/gxf_condition.hpp"
 
 #include <memory>
+#include <utility>
 
 #include "../condition.hpp"
 #include "./gxf_execution_context.hpp"
@@ -75,7 +76,7 @@ class GXFSchedulingTermWrapper : public nvidia::gxf::SchedulingTerm {
    *
    * @param condition The pointer to the native Condition object.
    */
-  void set_condition(std::shared_ptr<Condition> condition) { condition_ = condition; }
+  void set_condition(std::shared_ptr<Condition> condition) { condition_ = std::move(condition); }
 
  private:
   void store_exception() const;

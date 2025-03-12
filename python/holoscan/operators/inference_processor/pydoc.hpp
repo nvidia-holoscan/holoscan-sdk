@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,6 +76,8 @@ cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
     Default value is ``None``.
 config_path : str, optional
     File path to the config file. Default value is ``""``.
+custom_kernels : holoscan.operators.InferenceProcessorOp.DataMap
+    Custom kernels and the kernel parameters as string Key/Value pair.
 disable_transmitter : bool, optional
     If ``True``, disable the transmitter output port of the operator.
     Default value is ``False``.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,14 +68,13 @@ class CodecRegistry {
   using Codec = std::pair<SerializeFunc, DeserializeFunc>;
 
   inline static SerializeFunc none_serialize =
-      []([[maybe_unused]] const Message& message,
-         [[maybe_unused]] GXFEndpoint* buffer) -> nvidia::gxf::Expected<size_t> {
+      [](const Message& /*message*/, GXFEndpoint* /*buffer*/) -> nvidia::gxf::Expected<size_t> {
     HOLOSCAN_LOG_ERROR("Unable to serialize message");
-    return 0;
+    return static_cast<size_t>(0);
   };
 
   inline static DeserializeFunc none_deserialize =
-      []([[maybe_unused]] GXFEndpoint* buffer) -> nvidia::gxf::Expected<Message> {
+      [](GXFEndpoint* /*buffer*/) -> nvidia::gxf::Expected<Message> {
     HOLOSCAN_LOG_ERROR("Unable to deserialize message");
     return Message();
   };

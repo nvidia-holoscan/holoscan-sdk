@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,10 +30,14 @@ PYDOC(MetadataPolicy, R"doc(
 Enum to define the policy for handling behavior of MetadataDictionary::set when a key already
 exists.
 
-MetadataPolicy.REJECT - Reject the new value if the key already exists
-MetadataPolicy.UPDATE - Update the new value if the key already exists
-MetadataPolicy.RAISE - Raise an exception if the key already exists
+The supported policies are:
 
+- `MetadataPolicy.REJECT`: Reject the new value if the key already exists
+- `MetadataPolicy.UPDATE`: Replace existing value with the new one if the key already exists
+- `MetadataPolicy.INPLACE_UPDATE`: Update the value stored within an existing MetadataObject in-place
+  if the key already exists (in contrast to UPDATE which always replaces the existing MetadataObject
+  with a new one).
+- `MetadataPolicy.RAISE`: Raise an exception if the key already exists
 )doc")
 }  // namespace MetadataPolicy
 
@@ -204,22 +208,14 @@ other : MetadataDictionary
 PYDOC(policy, R"doc(
 Metadata policy property that governs the behavior of the `set` and `update` methods.
 
-It can be set to one of the following modes:
+The supported policies are:
 
-MetadataPolicy.REJECT - Reject the new value if the key already exists
-MetadataPolicy.UPDATE - Update the new value if the key already exists
-MetadataPolicy.RAISE - Raise an exception if the key already exists
-
-)doc")
-
-PYDOC(MetadataPolicy, R"doc(
-Enum to define the policy for handling behavior of MetadataDictionary::set when a key already
-exists.
-
-MetadataPolicy.REJECT - Reject the new value if the key already exists
-MetadataPolicy.UPDATE - Update the new value if the key already exists
-MetadataPolicy.RAISE - Raise an exception if the key already exists
-
+- `MetadataPolicy.REJECT`: Reject the new value if the key already exists
+- `MetadataPolicy.UPDATE`: Replace existing value with the new one if the key already exists
+- `MetadataPolicy.INPLACE_UPDATE`: Update the value stored within an existing MetadataObject in-place
+  if the key already exists (in contrast to UPDATE which always replaces the existing MetadataObject
+  with a new one).
+- `MetadataPolicy.RAISE`: Raise an exception if the key already exists
 )doc")
 
 }  // namespace MetadataDictionary

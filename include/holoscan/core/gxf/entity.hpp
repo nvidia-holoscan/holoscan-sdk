@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,7 +111,7 @@ class Entity : public nvidia::gxf::Entity {
   template <typename DataT,
             typename = std::enable_if_t<!holoscan::is_vector_v<DataT> &&
                                         holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
-  void add(std::shared_ptr<DataT>& data, const char* name = nullptr) {
+  void add(const std::shared_ptr<DataT>& data, const char* name = nullptr) {
     gxf_tid_t tid;
     HOLOSCAN_GXF_CALL_FATAL(
         GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid));

@@ -64,7 +64,7 @@ class GXFOperator : public holoscan::Operator {
    * The returned string is the type name of the GXF component and is used to
    * create the GXF component.
    *
-   * Example: "nvidia::holoscan::AJASource"
+   * Example: "nvidia::holoscan::Source"
    *
    * @return The type name of the GXF component.
    */

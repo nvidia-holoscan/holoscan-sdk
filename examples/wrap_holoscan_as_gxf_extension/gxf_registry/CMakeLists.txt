@@ -19,17 +19,17 @@ if(BUILD_TESTING AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
     configure_file(ping_installable.yaml.in ping_installable.yaml @ONLY)
 
     find_program(GXF_REGISTRY_EXECUTABLE registry REQUIRED)
-    add_test(NAME gxf_registry_inspection_test
-        COMMAND registry extn info -n PingVarRxNativeOpExtension
+    add_test(NAME gxf_native_res_registry_inspection_test
+        COMMAND registry extn info -n PingVarCustomNativeResExtension
     )
-    set_tests_properties(gxf_registry_inspection_test PROPERTIES
-        PASS_REGULAR_EXPRESSION "name :        PingVarRxNativeOpExtension"
-        PASS_REGULAR_EXPRESSION "uuid :        8696b57e-67fb-47a9-90de-22e17c88bfa6"
+    set_tests_properties(gxf_native_res_registry_inspection_test PROPERTIES
+        PASS_REGULAR_EXPRESSION "name :        PingVarCustomNativeResExtension"
+        PASS_REGULAR_EXPRESSION "uuid :        2b8381ed-5c27-40a1-be58-6c019eaa87be"
         PASS_REGULAR_EXPRESSION "version :     ${holoscan_VERSION}"
         PASS_REGULAR_EXPRESSION "myexts::PingVarRxNativeOpCodelet :"
     )
 
-    add_test(NAME gxf_registry_install_graph_test
+    add_test(NAME gxf_native_res_registry_install_graph_test
         COMMAND registry
             graph install
             -g ping_installable.yaml
@@ -38,7 +38,7 @@ if(BUILD_TESTING AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
             -i ""
             -d target.yaml
         )
-    set_tests_properties(gxf_registry_install_graph_test PROPERTIES
+    set_tests_properties(gxf_native_res_registry_install_graph_test PROPERTIES
         PASS_REGULAR_EXPRESSION "Graph installed to output directory"
     )
 
@@ -49,14 +49,14 @@ if(BUILD_TESTING AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
             ${HOLOSCAN_GXE_LOCATION}
         REQUIRED
     )
-    add_test(NAME gxf_registry_run_graph_test
+    add_test(NAME gxf_native_res_registry_run_graph_test
         COMMAND ${GXE_EXECUTABLE}
             -app ping_installable.yaml
             -manifest test_install_app/manifest.yaml
             -app_root ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(gxf_registry_run_graph_test PROPERTIES
-        DEPENDS gxf_registry_install_graph_test
+    set_tests_properties(gxf_native_res_registry_run_graph_test PROPERTIES
+        DEPENDS gxf_native_res_registry_install_graph_test
         PASS_REGULAR_EXPRESSION "Number of pings received: 10"
         FAIL_REGULAR_EXPRESSION "[^a-z]Error;ERROR;Failed"
     )

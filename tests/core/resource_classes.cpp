@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -122,7 +122,7 @@ TEST_F(ResourceClassesWithGXFContext, TestStreamOrderedAllocator) {
   ArgList arglist{
       Arg{"device_memory_initial_size", std::string{"10MB"}},
       Arg{"device_memory_max_size", std::string{"20MB"}},
-      Arg{"release_threadhold", std::string{"0B"}},
+      Arg{"release_threshold", std::string{"4MB"}},
       Arg{"dev_id", static_cast<int32_t>(0)},
   };
   auto resource = F.make_resource<StreamOrderedAllocator>(name, arglist);

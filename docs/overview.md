@@ -32,7 +32,6 @@ Packaging and deploying applications is a complex problem that can require large
 
 As highlighted in the relevant technologies section, the soul of the Holoscan project is to achieve peak performance by leveraging hardware and software developed at NVIDIA or provided by third parties. To validate this, Holoscan provides performance tools to help users and developers track their application performance. They currently include:
 
-- a {ref}`Video Pipeline Latency Measurement Tool <latency_tool>` to measure and estimate the total end-to-end latency of a video streaming application including the video capture, processing, and output using various hardware and software components that are supported by the NVIDIA Developer Kits.
 - the [Data Flow Tracking](./flow_tracking.md) feature to profile your application and analyze the data flow between operators in its graph.
 
 8. **Documentation**

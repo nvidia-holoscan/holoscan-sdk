@@ -1232,7 +1232,7 @@ std::future<void> AppDriver::launch_fragments_async(
   }
 
   // Add the UCX network context
-  bool enable_async = get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", true);
+  bool enable_async = get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", false);
   for (auto& fragment : target_fragments) {
     auto network_context = fragment->make_network_context<holoscan::UcxContext>(
         "ucx_context", Arg("cpu_data_only", gpu_count == 0), Arg("enable_async", enable_async));

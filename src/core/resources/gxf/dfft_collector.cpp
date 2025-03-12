@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +56,7 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
   if (leaf_ops_.find(codelet_id) != leaf_ops_.end() &&
       codelet.value()->getExecutionCount() > leaf_last_execution_count_[codelet_id]) {
     leaf_last_execution_count_[codelet_id] = codelet.value()->getExecutionCount();
-    MessageLabel m = std::move(leaf_ops_[codelet_id]->get_consolidated_input_label());
+    MessageLabel m = leaf_ops_[codelet_id]->get_consolidated_input_label();
     leaf_ops_[codelet_id]->reset_input_message_labels();
 
     if (m.num_paths()) {

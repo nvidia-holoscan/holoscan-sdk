@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +77,7 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
                          const py::dict& processed_map,       // InferenceProcessorOp::DataVecMap
                          const std::vector<std::string>& in_tensor_names,
                          const std::vector<std::string>& out_tensor_names,
+                         const py::dict& custom_kernels,  // InferenceProcessorOp::DataMap
                          bool input_on_cuda = false, bool output_on_cuda = false,
                          bool transmit_on_cuda = false, bool disable_transmitter = false,
                          std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
@@ -126,6 +127,16 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
     auto processed_map_datavecmap = _dict_to_processor_datavecmap(processed_map_dict);
     this->add_arg(Arg("processed_map", processed_map_datavecmap));
 
+    auto custom_kernels_process = custom_kernels.cast<py::dict>();
+    for (const auto& [key, value] : custom_kernels_process) {
+      if (!py::isinstance<py::str>(value)) { custom_kernels_process[key] = py::str(value); }
+    }
+
+    // convert from Python dict to InferenceProcessorOp::DataMap
+    auto custom_kernels_datamap =
+        _dict_to_processor_datamap(custom_kernels_process.cast<py::dict>());
+    this->add_arg(Arg("custom_kernels", custom_kernels_datamap));
+
     spec_ = std::make_shared<OperatorSpec>(fragment);
 
     setup(*spec_);
@@ -155,6 +166,7 @@ PYBIND11_MODULE(_inference_processor, m) {
                                       py::dict,
                                       const std::vector<std::string>&,
                                       const std::vector<std::string>&,
+                                      py::dict,
                                       bool,
                                       bool,
                                       bool,
@@ -168,6 +180,7 @@ PYBIND11_MODULE(_inference_processor, m) {
                              "processed_map"_a = py::dict(),
                              "in_tensor_names"_a = std::vector<std::string>{},
                              "out_tensor_names"_a = std::vector<std::string>{},
+                             "custom_kernels"_a = py::dict(),
                              "input_on_cuda"_a = false,
                              "output_on_cuda"_a = false,
                              "transmit_on_cuda"_a = false,

@@ -37,6 +37,7 @@ GXFCondition::GXFCondition(const std::string& name, nvidia::gxf::SchedulingTerm*
     HOLOSCAN_LOG_ERROR(err_msg);
     throw std::runtime_error(err_msg);
   }
+  condition_type_ = holoscan::Condition::ConditionComponentType::kGXF;
   id_ = term->cid();
   name_ = name;
   gxf_context_ = term->context();
@@ -45,6 +46,8 @@ GXFCondition::GXFCondition(const std::string& name, nvidia::gxf::SchedulingTerm*
   HOLOSCAN_GXF_CALL_FATAL(GxfComponentType(gxf_context_, gxf_cid_, &gxf_tid_));
   gxf_cname_ = name;
   gxf_cptr_ = term;
+
+  is_initialized_ = true;
 }
 
 void GXFCondition::initialize() {

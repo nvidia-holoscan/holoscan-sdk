@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -254,6 +254,26 @@ using DimType = std::map<std::string, std::vector<std::vector<int64_t>>>;
 using MultiMappings = std::map<std::string, std::vector<std::string>>;
 
 /**
+ * @brief Activation specification struct, using along with activation_map parameter to
+ * select a subset models at runtime.
+ */
+struct ActivationSpec {
+  /**
+   * @brief Construct a new Activation Spec object.
+   * @param model_name: Name of model which defined in model_path_map parameter.
+   * @param active: Active model flag (true or false), default true.
+   */
+  ActivationSpec() = default;
+  explicit ActivationSpec(const std::string& model_name, bool active = true)
+      : model_name_(model_name), active_(active) {}
+  bool is_active() const { return active_; }
+  std::string model() const { return model_name_; }
+  void set_active(bool value = true) { active_ = value; }
+  std::string model_name_;
+  bool active_;
+};
+
+/**
  * @brief Struct that holds specifications related to inference, along with input and
  * output data buffer.
  */
@@ -268,6 +288,7 @@ struct InferenceSpecs {
    * @param pre_processor_map Map with model name as key, input tensor names in vector form as value
    * @param inference_map Map with model name as key, output tensor names in vector form as value
    * @param device_map Map with model name as key, GPU ID for inference as value
+   * @param dla_core_map Map with model name as key, DLA core index for inference as value
    * @param temporal_map Map with model name as key, frame number to skip for inference as value
    * @param activation_map Map with key as model name and activation state for inference as value
    * @param trt_opt_profile Vector of values for TensorRT optimization profile during engine
@@ -279,20 +300,25 @@ struct InferenceSpecs {
    * @param cuda_buffer_in Input buffers on CUDA
    * @param cuda_buffer_out Output buffers on CUDA
    * @param use_cuda_graphs Use CUDA graphs, only supported for trt
+   * @param dla_core The DLA core index to execute the engine on, only supported for trt. Set to -1
+   * to disable DLA.
+   * @param dla_gpu_fallback If DLA is enabled, use the GPU if a layer cannot be executed on DLA.
    */
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
+                 const Mappings& dla_core_map,
                  const Mappings& temporal_map, const Mappings& activation_map,
                  const std::vector<int32_t>& trt_opt_profile, bool is_engine_path, bool oncpu,
                  bool parallel_proc, bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out,
-                 bool use_cuda_graphs)
+                 bool use_cuda_graphs, int32_t dla_core, bool dla_gpu_fallback)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
         pre_processor_map_(pre_processor_map),
         inference_map_(inference_map),
         device_map_(device_map),
+        dla_core_map_(dla_core_map),
         temporal_map_(temporal_map),
         activation_map_(activation_map),
         trt_opt_profile_(trt_opt_profile),
@@ -302,7 +328,9 @@ struct InferenceSpecs {
         use_fp16_(use_fp16),
         cuda_buffer_in_(cuda_buffer_in),
         cuda_buffer_out_(cuda_buffer_out),
-        use_cuda_graphs_(use_cuda_graphs) {}
+        use_cuda_graphs_(use_cuda_graphs),
+        dla_core_(dla_core),
+        dla_gpu_fallback_(dla_gpu_fallback) {}
 
   /**
    * @brief Get the model data path map
@@ -323,6 +351,12 @@ struct InferenceSpecs {
   Mappings get_device_map() const { return device_map_; }
 
   /**
+   * @brief Get the DLA core map
+   * @return Mappings data
+   */
+  Mappings get_dla_core_map() const { return dla_core_map_; }
+
+  /**
    * @brief Get the Temporal map
    * @return Mappings data
    */
@@ -339,9 +373,8 @@ struct InferenceSpecs {
    * @param activation_map Map that will be used to update the activation_map_ of specs.
    */
   void set_activation_map(const Mappings& activation_map) {
-    for (const auto& [key, value] : activation_map) {
-      if (activation_map_.find(key) != activation_map_.end()) { activation_map_.at(key) = value; }
-    }
+    activation_map_.clear();
+    for (const auto& [key, value] : activation_map) { activation_map_[key] = value; }
   }
 
   /// @brief Backend type (for all models)
@@ -361,6 +394,9 @@ struct InferenceSpecs {
 
   /// @brief Map with key as model name and value as GPU ID for inference
   Mappings device_map_;
+
+  /// @brief Map with key as model name and value as DLA core index for inference
+  Mappings dla_core_map_;
 
   /// @brief Map with key as model name and frame number to skip for inference as value
   Mappings temporal_map_;
@@ -391,6 +427,14 @@ struct InferenceSpecs {
 
   ///  @brief Flag showing if using CUDA Graphs. Default is True.
   bool use_cuda_graphs_ = true;
+
+  /// @brief The DLA core index to execute the engine on, starts at 0. Set to -1 (the default) to
+  /// disable DLA.
+  int32_t dla_core_ = -1;
+
+  /// @brief If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is
+  /// disabled, engine creation will fail if a layer cannot executed on DLA.
+  bool dla_gpu_fallback_ = true;
 
   /// @brief Input Data Map with key as tensor name and value as DataBuffer
   DataMap data_per_tensor_;

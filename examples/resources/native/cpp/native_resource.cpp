@@ -86,7 +86,7 @@ class MinimalNativeResourceApp : public holoscan::Application {
 
 }  // namespace holoscan
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
+int main() {
   auto app = holoscan::make_application<holoscan::MinimalNativeResourceApp>();
   app->run();
 

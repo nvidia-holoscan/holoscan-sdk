@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -98,7 +98,6 @@ class VideoStreamReplayerOp : public holoscan::Operator {
                ExecutionContext& context) override;
 
  private:
-  Parameter<holoscan::IOSpec*> transmitter_;
   Parameter<std::shared_ptr<holoscan::Allocator>> allocator_;
   Parameter<std::shared_ptr<holoscan::Resource>> entity_serializer_;
   Parameter<std::shared_ptr<BooleanCondition>> boolean_scheduling_term_;

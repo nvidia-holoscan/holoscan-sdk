@@ -81,10 +81,6 @@ Copyright © 2015      Research Organization for Information Science and Technol
 Copyright © 2015-2016 Intel, Inc.  All rights reserved.
 Licensed under BSD-3-clause (https://github.com/open-mpi/hwloc/blob/hwloc-2.9.0/COPYING)
 
-AJA NTV2 SDK (https://github.com/nvidia-holoscan/libajantv2)
-Copyright (c) 2023 AJA Video Systems
-Licensed under MIT (https://github.com/nvidia-holoscan/libajantv2/blob/holoscan/LICENSE)
-
 libdecor-0-plugin-1-cairo (https://packages.ubuntu.com/jammy/libdecor-0-plugin-1-cairo)
 2010 Intel Corporation
 2011 Benjamin Franzke

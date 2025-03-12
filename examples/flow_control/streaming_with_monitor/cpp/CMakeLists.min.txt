@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the \"License\");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an \"AS IS\" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cmake_minimum_required(VERSION 3.20)
+project(streaming_with_monitor CXX)
+
+# Finds the package holoscan
+find_package(holoscan REQUIRED CONFIG
+             PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
+
+add_executable(streaming_with_monitor
+  streaming_with_monitor.cpp
+)
+
+target_link_libraries(streaming_with_monitor
+  PRIVATE
+  holoscan::core
+)
+
+# Testing
+if(BUILD_TESTING)
+  add_test(NAME EXAMPLE_CPP_STREAMING_WITH_MONITOR_TEST
+           COMMAND streaming_with_monitor
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  set_tests_properties(EXAMPLE_CPP_STREAMING_WITH_MONITOR_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "gen_signal - Sending value 1.*#iteration: 1.*visualize - Received value 1.*gen_signal - Sending value [2-5].*#iteration: [2-5].*visualize - Received value [2-5].*gen_signal - Sending value [6-9].*#iteration: [6-9].*visualize - Received value [6-9].*gen_signal - Sending value 10.*#iteration: 10.*visualize - Received value 10"
+                      )
+endif()

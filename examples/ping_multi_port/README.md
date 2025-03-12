@@ -35,11 +35,6 @@ There are three operators involved in this example:
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/ping_multi_port.py
   ```
-* **using deb package install**:
-  ```bash
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/ping_multi_port/python/ping_multi_port.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/ping_multi_port/python/ping_multi_port.py

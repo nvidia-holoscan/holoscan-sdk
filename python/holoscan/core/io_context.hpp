@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,6 +87,10 @@ class PyOutputContext : public gxf::GXFOutputContext {
   /// @brief Handle emitting data if it is a list or tuple of HolovizOp.InputSpec
   bool handle_holoviz_op(py::object& data, const std::string& name, int64_t acq_timestamp,
                          EmitterReceiverRegistry& registry);
+
+  /// @brief Handle emitting data if it is a list or tuple of InferenceOp.ActivationSpec
+  bool handle_inference_op(py::object& data, const std::string& name, int64_t acq_timestamp,
+                           EmitterReceiverRegistry& registry);
 
   /// @brief Handle emitting data if it is a Python dict
   bool handle_py_dict(py::object& data, const std::string& name, int64_t acq_timestamp,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,10 +50,13 @@ class ManagerProcessor {
    * @param process_operations Map where tensor name is the key, and operations to perform on
    * the tensor as vector of strings. Each value in the vector of strings is the supported
    * operation.
+   * @param custom_kernels Map of custom kernel identifier, mapped to related value as a string
+   * @param config_path Path to the processing configuration settings
    *
    * @return InferStatus with appropriate code and message
    */
-  InferStatus initialize(const MultiMappings& process_operations, const std::string config_path);
+  InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
+                         const std::string config_path);
 
   /*
    * @brief Executes post processing operations and generates the result

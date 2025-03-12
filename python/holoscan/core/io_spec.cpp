@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +49,11 @@ void init_io_spec(py::module_& m) {
       .value("DEFAULT", IOSpec::ConnectorType::kDefault)
       .value("DOUBLE_BUFFER", IOSpec::ConnectorType::kDoubleBuffer)
       .value("UCX", IOSpec::ConnectorType::kUCX);
+
+  py::enum_<IOSpec::QueuePolicy>(iospec, "QueuePolicy", doc::QueuePolicy::doc_QueuePolicy)
+      .value("POP", IOSpec::QueuePolicy::kPop)
+      .value("REJECT", IOSpec::QueuePolicy::kReject)
+      .value("FAULT", IOSpec::QueuePolicy::kFault);
 
   py::class_<IOSpec::IOSize, std::shared_ptr<IOSpec::IOSize>>(
       iospec, "IOSize", doc::IOSpec::IOSize::doc_IOSize)
@@ -106,6 +111,10 @@ void init_io_spec(py::module_& m) {
                     py::overload_cast<>(&IOSpec::queue_size, py::const_),
                     py::overload_cast<int64_t>(&IOSpec::queue_size),
                     doc::IOSpec::doc_queue_size)
+      .def_property("queue_policy",
+                    py::overload_cast<>(&IOSpec::queue_policy, py::const_),
+                    py::overload_cast<IOSpec::QueuePolicy>(&IOSpec::queue_policy),
+                    doc::IOSpec::doc_queue_policy)
       .def("__repr__",
            // use py::object and obj.cast to avoid a segfault if object has not been initialized
            [](const IOSpec& iospec) { return iospec.description(); });

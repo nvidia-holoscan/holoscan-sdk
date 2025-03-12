@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -177,7 +177,7 @@ class TestStreamOrderedAllocator:
             name=name,
             device_memory_initial_size="16MB",
             device_memory_max_size="32MB",
-            release_threshold="0B",
+            release_threshold="1MB",
             dev_id=0,
         )
         assert isinstance(pool, CudaAllocator)
@@ -192,6 +192,8 @@ class TestStreamOrderedAllocator:
         # assert no warnings or errors logged
         captured = capfd.readouterr()
         assert "error" not in captured.err
+        assert "warning" not in captured.err
+        assert "not found in spec_.params()" not in captured.err
 
     def test_default_initialization(self, app):
         StreamOrderedAllocator(app)

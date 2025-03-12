@@ -24,7 +24,6 @@ set(HOLOSCAN_PACKAGE_NAME holoscan)
 option(BUILD_SHARED_LIBS "Build Shared Libraries" ON)
 option(HOLOSCAN_BUILD_LIBTORCH "Build support for the LibTorch backend" ON)
 option(HOLOSCAN_BUILD_ORT "Build support for the ONNX Runtime backend" ON)
-option(HOLOSCAN_BUILD_AJA "Build support for AJA" ON)
 option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
 option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
 option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Datasets" ON)
@@ -239,9 +238,6 @@ endif()
 if(HOLOSCAN_BUILD_ORT)
     list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_ort)
 endif()
-if(HOLOSCAN_BUILD_AJA)
-  list(APPEND HOLOSCAN_INSTALL_TARGETS op_aja ajantv2)
-endif()
 
 # Add PUBLIC dependencies to our install target
 # Note: required due to. However, could only export but not install?
@@ -329,11 +325,13 @@ foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
     endif()
 endforeach()
 
-install(
-  DIRECTORY ${GXF_PYTHON_MODULE_PATH}
-  DESTINATION python/${HOLOSCAN_INSTALL_LIB_DIR}
-  COMPONENT "holoscan-gxf_libs"
-)
+if(HOLOSCAN_BUILD_PYTHON)
+  install(
+    DIRECTORY ${GXF_PYTHON_MODULE_PATH}
+    DESTINATION python/${HOLOSCAN_INSTALL_LIB_DIR}
+    COMPONENT "holoscan-gxf_libs"
+  )
+endif()
 
 # Install CMake script to build GXE applications
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/GenerateGXEAppInstall.cmake"

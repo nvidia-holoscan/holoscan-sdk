@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,6 +116,7 @@ void HoloInferTests::setup_specifications() {
                                                                  pre_processor_map,
                                                                  inference_map,
                                                                  device_map,
+                                                                 dla_core_map,
                                                                  temporal_map,
                                                                  activation_map,
                                                                  batch_sizes,
@@ -125,7 +126,9 @@ void HoloInferTests::setup_specifications() {
                                                                  enable_fp16,
                                                                  input_on_cuda,
                                                                  output_on_cuda,
-                                                                 use_cuda_graphs);
+                                                                 use_cuda_graphs,
+                                                                 dla_core,
+                                                                 dla_gpu_fallback);
 }
 
 HoloInfer::InferStatus HoloInferTests::create_specifications() {

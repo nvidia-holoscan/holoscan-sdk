@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,7 +62,7 @@ struct YAMLNodeParser<typeT> {
 
 template <>
 struct YAMLNodeParser<int8_t> {
-  static uint8_t parse(const YAML::Node& node) {
+  static int8_t parse(const YAML::Node& node) {
     try {
       return static_cast<int8_t>(node.as<int32_t>());
     } catch (...) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,12 +33,12 @@ class CLIParser;
 template <typename typeT>
 struct codec;
 class CodecRegistry;
-class Condition;
-enum class ConditionType;
-class Config;
 class ComponentBase;
 class Component;
 class ComponentSpec;
+class Condition;
+enum class ConditionType;
+class Config;
 class Endpoint;
 class ExecutionContext;
 class ExtensionManager;
@@ -53,6 +53,7 @@ class Logger;
 class Message;
 class MessageLabel;
 class MetadataDictionary;
+enum class MetadataPolicy;
 class Operator;
 class OperatorSpec;
 class OperatorTimestampLabel;
@@ -120,6 +121,7 @@ class CudaEventCondition;
 class CudaStreamCondition;
 class DownstreamMessageAffordableCondition;
 class ExpiringMessageAvailableCondition;
+class MemoryAvailableCondition;
 class MessageAvailableCondition;
 class MultiMessageAvailableCondition;
 class MultiMessageAvailableTimeoutCondition;

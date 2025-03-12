@@ -1942,7 +1942,7 @@ There is a special serialization code for tensor types for emit/receive of tenso
 This avoids NumPy or CuPy arrays being serialized to a string via cloudpickle so that they can efficiently be transmitted and the same type is returned again on the opposite side. Worth mentioning is that ,if the type emitted was e.g. a PyTorch host/device tensor on emit, the received value will be a numpy/cupy array since ANY object implementing the interfaces returns those types.
 :::
 
-### Automated operator class creation
+### Automated operator class creation from a function using the `@create_op` decorator
 
 Holoscan also provides a `holoscan.decorator` module which provides ways to autogenerate Operators by adding decorators to an existing function or class. Please see the separate section on {ref}`operator creation via holoscan.decorator.create_op <holoscan-operator-from-decorator>`.
 
@@ -1960,7 +1960,7 @@ It is possible to modify the global default queue policy via the `HOLOSCAN_QUEUE
   - "reject": a new item that arrives when the queue is discarded
   - "fail": terminate the application if a new item arrives when the queue is full
 
-The default behavior is "fail" when `HOLOSCAN_QUEUE_POLICY` is not specified. If an operator's `setup` method explicitly sets a receiver or transmitter via the `connector` ({cpp:func}`C++ <holoscan::IOSpec::connector>`/{py:func}`Python <holoscan.core.IOSpec.connector>`) method as describe below, that connector's policy will not be overridden by the default.
+The default behavior is "fail" when `HOLOSCAN_QUEUE_POLICY` is not specified. If an operator's `setup` method explicitly sets a receiver or transmitter via the `connector` ({cpp:func}`C++ <holoscan::IOSpec::connector>`/{py:func}`Python <holoscan.core.IOSpec.connector>`) method as describe below, that connector's policy will not be overridden by the default. As of Holoscan 3.0, rather than specifying a custom policy via `connector`, it is preferred to just specify the `policy` argument to `OperatorSpec::input` or `OperatorSpec::output` directly and that policy will be applied to whichever connector type is assigned by the SDK (e.g. the receiver/transmitter class chosen by the SDK depends on whether connections are made within a fragment or across fragments of a distributed application). An `IOSpec::QueuePolicy` ({cpp:enum}`C++ <holoscan::IOSpec::QueuePolicy>`/{py:class}`Python <holoscan.core.IOSpec.QueuePolicy>`) enum is provided for specifying the policy.
 
 :::{note}
 Overriding operator port properties is an advanced topic. Developers may want to skip this section until they come across a case where the default behavior is not sufficient for their application.
@@ -1977,10 +1977,13 @@ spec.output<TensorMap>("out1")
 
 spec.output<TensorMap>("out2").condition(ConditionType::kNone);
 
-spec.output<TensorMap>("in")
-        .connector(IOSpec::ConnectorType::kDoubleBuffer,
-                   Arg("capacity", static_cast<uint64_t>(2)),
-                   Arg("policy", static_cast<uint64_t>(1)))  // 0=pop, 1=reject, 2=fault (default)
+// specify a specific non-default capacity (2) and policy (reject) for the Receiver queue
+spec.input<TensorMap>("in", IOSpec::IOSize(2), IOSpec::QueuePolicy::kReject)
+      // can specify a specific connector type with capacity and policy arguments as in the commented
+      // code below, but it is better to just supply these arguments to the `input` method instead.
+      //  .connector(IOSpec::ConnectorType::kDoubleBuffer,
+      //             Arg("capacity", static_cast<uint64_t>(2)),
+      //             Arg("policy", static_cast<uint64_t>(1)))  // 0=pop, 1=reject, 2=fault (default)
         .condition(ConditionType::kMessageAvailable,
                    Arg("min_size", static_cast<uint64_t>(2)),
                    Arg("front_stage_max_size", static_cast<size_t>(2)));
@@ -1988,9 +1991,20 @@ spec.output<TensorMap>("in")
 This would define
 - an output port named "out1" with the default properties
 - an output port named "out2" that still has the default connector (a {cpp:class}`holoscan::gxf::DoubleBufferTransmitter`), but the default condition of `ConditionType::kDownstreamMessageAffordable` is removed by setting `ConditionType::kNone`. This indicates that the operator will not check if any port downstream of "out2" has space available in its receiver queue before calling `compute`.
-- an input port named "in" where both the connector and condition have different parameters than the default. For example, the queue size is increased to 2 and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue.
+- an input port named "in" where both the connector and condition have parameters different from the default. For example, the queue size is increased to 2, and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue. The actual default Receiver class type (e.g. `DoubleBufferReceiver` for local connections or `UcxReceiver` for distributed connections) will still be automatically determined by the SDK.
 
+Note that if the `connector` method was **not** used to set a specific `Receiver` or `Transmitter` class, then it is also possible to change a port's queue policy after an operator has been constructed via the {cpp:func}`Operator::queue_policy <holoscan::Operator::queue_policy>` method.
+
+```{code-block} cpp
+    // (from within Application.compose or Fragment.compose)
+
+    op = make_operator<MyOperator>("my_op");
+
+    // modify the queue policy that would be applied to the default Receiver for a specific input port
+    op->queue_policy("in", IOSpec::IOType::kInput, IOSpec::QueuePolicy::kReject);
+```
 ````
+
 ````{tab-item} Python Example
 Consider the following code from within the {cpp:func}`holoscan::Operator::setup` method of an operator.
 ```{code-block} python
@@ -1998,18 +2012,35 @@ spec.output("out1")
 
 spec.output("out2").condition(ConditionType.NONE)
 
-spec.input("in").connector(
-    IOSpec.ConnectorType.DOUBLE_BUFFER,
-    capacity=2,
-    policy=1,  # 0=pop, 1=reject, 2=fault (default)
-).condition(ConditionType.MESSAGE_AVAILABLE, min_size=2, front_stage_max_size=2)
+# specify a specific non-default capacity (2) and policy (reject) for the Receiver queue
+spec.input("in", capacity=2, policy=IOSpec.QueuePolicy.REJECT).condition(
+    ConditionType.MESSAGE_AVAILABLE, min_size=2, front_stage_max_size=2
+)
+# Could specify a specific connector type with capacity and policy arguments as in the commented
+# code below, but it is better to just supply these arguments to the `input` method as shown
+# above instead.
+#    .connector(
+#        IOSpec.ConnectorType.DOUBLE_BUFFER,
+#        capacity=2,
+#        policy=1,  # 0=pop, 1=reject, 2=fault (default)
+#    )
 
 ```
 This would define
 - an output port named "out1" with the default properties
 - an output port named "out2" that still has the default connector (a {py:class}`holoscan.resources.DoubleBufferTransmitter`), but the default condition of `ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE` is removed by setting `ConditionType.NONE`. This indicates that the operator will not check if any port downstream of "out2" has space available in its receiver queue before calling `compute`.
-- an input port named "in1" where both the connector and condition have different parameters than the default. For example, the queue size is increased to 2 and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue.
+- an input port named "in1" where both the connector and condition have parameters different from the default. For example, the queue size is increased to 2, and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue. The actual default Receiver class type (e.g. `DoubleBufferReceiver` for local connections or `UcxReceiver` for distributed connections) will still be automatically determined by the SDK.
 
+Note that if the `connector` method was **not** used to set a specific `Receiver` or `Transmitter` class, then it is also possible to change a port's queue policy after an operator has been constructed via the {py:func}`Operator.queue_policy <holoscan.core.Operator.queue_policy>`
+
+```{code-block} python
+    # (from within Application.compose or Fragment.compose)
+
+    op = MyOperator(self, name="my_op")
+
+    # modify the queue policy that would be applied to the default Receiver for a specific input port
+    op.queue_policy(port_name="in", port_type=IOSpec.IOType.INPUT, policy=IOSpec.QueuePolicy.REJECT)
+```
 ````
 `````
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +47,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
   # Run the test from the main bin directory to access data as needed
   add_test(NAME ${CMAKE_TEST_NAME} COMMAND ${CMAKE_TEST_NAME} WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
   set_property(TEST ${CMAKE_TEST_NAME} PROPERTY ENVIRONMENT
-    "LD_LIBRARY_PATH=${BIN_DIR}/lib:${BIN_DIR}/gxf_extensions/aja:${BIN_DIR}/gxf_extensions/format_converter:${BIN_DIR}/gxf_extensions/holoviz:${BIN_DIR}/gxf_extensions/stream_playback:$ENV{LD_LIBRARY_PATH}")
+    "LD_LIBRARY_PATH=${BIN_DIR}/lib:${BIN_DIR}/gxf_extensions/format_converter:${BIN_DIR}/gxf_extensions/holoviz:${BIN_DIR}/gxf_extensions/stream_playback:$ENV{LD_LIBRARY_PATH}")
 
   install(
     TARGETS ${CMAKE_TEST_NAME}
@@ -128,11 +128,6 @@ target_link_libraries(OPERATORS_CLASSES_TEST
   holoscan::ops::video_stream_replayer
 )
 
-if(HOLOSCAN_BUILD_AJA)
-  target_link_libraries(OPERATORS_CLASSES_TEST PRIVATE holoscan::ops::aja)
-  target_compile_definitions(OPERATORS_CLASSES_TEST PRIVATE HOLOSCAN_BUILD_AJA)
-endif()
-
 add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 
 # ##################################################################################################
@@ -142,6 +137,7 @@ ConfigureTest(
   system/cycle.cpp
   system/cuda_allocators.cpp
   system/cuda_stream.cpp
+  system/emit_receive_port_name_test.cpp
   system/env_wrapper.cpp
   system/exception_handling.cpp
   system/demosaic_op_app.cpp
@@ -159,6 +155,7 @@ ConfigureTest(
   system/operator_metadata_apps.cpp
   system/ping_rx_op.cpp
   system/ping_tx_op.cpp
+  system/receive_as_entity_test.cpp
   system/tensor_compare_op.cpp
   system/video_stream_replayer_op.cpp
 )
@@ -187,6 +184,7 @@ endif()
 ConfigureTest(
   UTILS_TEST
   utils/cuda_macros.cpp
+  utils/operator_runner_test.cpp
 )
 
 # ##################################################################################################

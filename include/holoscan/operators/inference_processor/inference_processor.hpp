@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,6 +131,9 @@ class InferenceProcessorOp : public holoscan::Operator {
 
   ///  @brief Path to configuration file
   Parameter<std::string> config_path_;
+
+  ///  @brief Custom cuda kernel
+  Parameter<DataMap> custom_kernels_;
 
   ///  @brief Vector of input tensor names
   Parameter<std::vector<std::string>> in_tensor_names_;

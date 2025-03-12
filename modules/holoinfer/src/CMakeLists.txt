@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +55,8 @@ target_link_libraries(${PROJECT_NAME}
         GXF::cuda
         GXF::multimedia
         GXF::std
+        CUDA::cuda_driver
+        CUDA::nvrtc
         yaml-cpp
     PRIVATE
         ${CMAKE_DL_LIBS} # to dlopen holoinfer_torch

@@ -19,4 +19,5 @@ examples/ping_multi_port
 examples/video_replayer
 examples/video_replayer_distributed
 examples/byom
+examples/custom_cuda_kernel_sample
 ```

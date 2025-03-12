@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <typeinfo>
@@ -113,6 +114,28 @@ class IOSpec {
   enum class ConnectorType { kDefault, kDoubleBuffer, kUCX };
 
   /**
+   * @enum QueuePolicy
+   * @brief Enum class representing the policy for handling queue operations.
+   *
+   * This enum class defines the different policies that can be applied to queue operations when
+   * a queue is full.
+   *
+   * @var QueuePolicy::kPop
+   * Policy to pop the oldest item in the queue so the new item can be added.
+   *
+   * @var QueuePolicy::kReject
+   * Policy to reject the incoming item.
+   *
+   * @var QueuePolicy::kFault
+   * Policy to log a warning and reject the new item if the queue is full.
+   */
+  enum class QueuePolicy : uint8_t {
+    kPop = 0,
+    kReject = 1,
+    kFault = 2,
+  };
+
+  /**
    * @brief Construct a new IOSpec object.
    *
    * @param op_spec The pointer to the operator specification that contains this input/output.
@@ -123,8 +146,13 @@ class IOSpec {
    */
   IOSpec(OperatorSpec* op_spec, const std::string& name, IOType io_type,
          const std::type_info* typeinfo = &typeid(holoscan::gxf::Entity),
-         IOSpec::IOSize size = IOSpec::kSizeOne)
-      : op_spec_(op_spec), io_type_(io_type), typeinfo_(typeinfo), queue_size_(size) {
+         IOSpec::IOSize size = IOSpec::kSizeOne,
+         std::optional<IOSpec::QueuePolicy> policy = std::nullopt)
+      : op_spec_(op_spec),
+        io_type_(io_type),
+        typeinfo_(typeinfo),
+        queue_size_(size),
+        queue_policy_(policy) {
     // Operator::parse_port_name requires that "." is not allowed in the IOSPec name
     if (name.find(".") != std::string::npos) {
       throw std::invalid_argument(fmt::format(
@@ -184,7 +212,9 @@ class IOSpec {
    * The following ConditionTypes are supported:
    *
    * - ConditionType::kMessageAvailable
+   * - ConditionType::kExpiringMessageAvailable
    * - ConditionType::kDownstreamAffordable
+   * - ConditionType::kMultiMessageAvailableTimeout
    * - ConditionType::kNone
    *
    * @param type The type of the condition.
@@ -260,6 +290,16 @@ class IOSpec {
    * - ConnectorType::kDefault
    * - ConnectorType::kDoubleBuffer
    * - ConnectorType::kUCX
+   *
+   * Note: Typically the application author does not need to call this method. The SDK will assign
+   *       an appropriate transmitter or receiver type automatically (e.g. DoubleBufferReceiver or
+   *       DoubleBufferTransmitter for with-fragment connections, but UcxReceiver or UcxTransmitter
+   *       for intra-fragment connections in distributed applications). Similarly, annotated
+   *       variants of these are used when data flow tracking is enabled.
+   *
+   * Note: If you just want to keep the default transmitter or receiver class, but override the
+   *       queue capacity or policy, it is easier to specify the `capacity` and/or `policy`
+   *       arguments to `IOSpec::input` or `IOSpec::output` instead of using this method.
    *
    * @param type The type of the connector (receiver/transmitter).
    * @param args The arguments of the connector (receiver/transmitter).
@@ -342,6 +382,38 @@ class IOSpec {
   }
 
   /**
+   * @brief Get the queue policy of the input/output port.
+   *
+   * Note: This value is only used for initializing input and output ports. 'queue_policy_' is set
+   *       by the 'OperatorSpec::input()', 'OperatorSpec::output()' or 'IOSpec::queue_policy'
+   *       method.
+   *
+   * @return The queue policy of the input/output port.
+   */
+  std::optional<IOSpec::QueuePolicy> queue_policy() const { return queue_policy_; }
+
+  /**
+   * @brief Set the queue policy of the input/output port.
+   *
+   * Note: This value is only used for initializing input and output ports. 'queue_policy_' is set
+   *       by the 'OperatorSpec::input()', 'OperatorSpec::output()' or 'IOSpec::queue_policy'
+   *       method.
+   *
+   * The following IOSpec::QueuePolicy values are supported:
+   *
+   * - QueuePolicy::kPop    - If the queue is full, pop the oldest item, then add the new one.
+   * - QueuePolicy::kReject - If the queue is full, reject (discard) the new item.
+   * - QueuePolicy::kFault  - If the queue is full, log a warning and reject the new item.
+   *
+   * @param policy The queue policy of the input/output port.
+   * @return The reference to this IOSpec.
+   */
+  IOSpec& queue_policy(IOSpec::QueuePolicy policy) {
+    queue_policy_ = policy;
+    return *this;
+  }
+
+  /**
    * @brief Get a YAML representation of the IOSpec.
    *
    * @return YAML node including the parameters of this component.
@@ -365,6 +437,7 @@ class IOSpec {
   std::vector<std::pair<ConditionType, std::shared_ptr<Condition>>> conditions_;
   ConnectorType connector_type_ = ConnectorType::kDefault;
   IOSize queue_size_ = kSizeOne;
+  std::optional<QueuePolicy> queue_policy_ = std::nullopt;
 };
 
 }  // namespace holoscan

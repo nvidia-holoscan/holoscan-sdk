@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,9 +73,10 @@ class IncrementOp : public Operator {
    *  Notes
    *  =====
    *  For policy:
-   *    - 0 = pop the oldest value in favor of the new one when the queue is full
-   *    - 1 = reject the new value when the queue is full
-   *    - 2 = fault if queue is full (default)
+   *    - IOSpec::QueuePolicy::kPop = pop the oldest value in favor of the new one when the
+   *      queue is full
+   *    - IOSpec::QueuePolicy::kReject = reject the new value when the queue is full
+   *    - IOSpec::QueuePolicy::kFault = fault if queue is full (default)
    *
    *  For capacity:
    *    When capacity > 1, even once messages stop arriving, this entity will continue to
@@ -84,13 +85,22 @@ class IncrementOp : public Operator {
    *  The ``condition`` method call here is the same as the default setting, and is shown
    *  only for completeness. `min_size` = 1 means that this operator will not call compute
    *  unless there is at least one message in the queue.
+   *
+   *  One could also set the receiver's capacity and policy via the connector method:
+   *
+   *          .connector(IOSpec::ConnectorType::kDoubleBuffer,
+   *                     Arg("capacity", static_cast<uint64_t>(1)),
+   *                     Arg("policy", static_cast<uint64_t>(1)))  // 1 = reject
+   *
+   *  but that is less flexible as `IOSpec::ConnectorType::kDoubleBuffer` is appropriate for
+   *  within-fragment connections, but will not work if the operator was connected to a different
+   *  fragment. By passing the capacity and policy as arguments to the OperatorSpec::input method,
+   *  the SDK can still select the appropriate default receiver type depending on whether the
+   *  connection is within-fragment or across fragments (or whether an annotated variants of the
+   *  receiver class is needed for data flow tracking).
    */
   void setup(OperatorSpec& spec) override {
-    spec.input<int64_t>("in")
-        .connector(IOSpec::ConnectorType::kDoubleBuffer,
-                   Arg("capacity", static_cast<uint64_t>(1)),
-                   Arg("policy", static_cast<uint64_t>(1))  // 1 = reject
-                   )
+    spec.input<int64_t>("in", IOSpec::IOSize(1), IOSpec::QueuePolicy::kReject)
         .condition(  // arguments to condition here are the same as the defaults
             ConditionType::kMessageAvailable,
             Arg("min_size", static_cast<uint64_t>(1)),
@@ -168,12 +178,18 @@ class MultiRateApp : public holoscan::Application {
     int64_t period_ns1 = 1'000'000'000 / branch1_hz;
     auto increment1 = make_operator<ops::IncrementOp>(
         "increment1", make_condition<PeriodicCondition>("increment1-period", period_ns1));
+    // could set the queue policy here if it wasn't already set to `IOSpec::QueuePolicy::kReject`
+    // in IncrementOp::setup() method as follows:
+    //   increment1->queue_policy("in", IOSpec::IOType::kInput, IOSpec::QueuePolicy::kReject);
     auto rx1 = make_operator<ops::PingRxOp>("rx1");
     add_flow(tx, increment1);
     add_flow(increment1, rx1);
 
     // second branch is the same, but no periodic condition so will tick on every received message
     auto increment2 = make_operator<ops::IncrementOp>("increment2");
+    // could set the queue policy here if it wasn't already set to `IOSpec::QueuePolicy::kReject`
+    // in IncrementOp::setup() method as follows:
+    //   increment2->queue_policy("in", IOSpec::IOType::kInput, IOSpec::QueuePolicy::kReject);
     auto rx2 = make_operator<ops::PingRxOp>("rx2");
     add_flow(tx, increment2);
     add_flow(increment2, rx2);

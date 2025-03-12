@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -208,7 +208,7 @@ def test_tensor_tuple_output_app(capfd):
 
 # test tuple transmission
 def get_source_tuple_op(n_ports=2, count=5):
-    _outputs = tuple(f"out{i+1}" for i in range(n_ports))
+    _outputs = tuple(f"out{i + 1}" for i in range(n_ports))
 
     @create_op(outputs=_outputs)
     def source_tuple(count=count):
@@ -311,3 +311,30 @@ def test_tensor_input_cast_app(capfd):
     assert "error" not in captured.out
     assert captured.out.count("holoscan.Tensor check succeeded") == 2
     assert captured.out.count("cupy.ndarray check succeeded") == 2
+
+
+@create_op(op_param="self")
+def simple_op(self, param1, param2=5):
+    print(f"I am here - {self.name} (param1: {param1}, param2: {param2})")
+
+
+class OpParamApp(Application):
+    def compose(self):
+        node1 = simple_op(self, param1=1, name="node1")
+        node2 = simple_op(self, param1=2, name="node2")
+        node3 = simple_op(self, param1=3, name="node3")
+
+        self.add_flow(self.start_op(), node1)
+        self.add_flow(node1, node2)
+        self.add_flow(node2, node3)
+
+
+def test_op_param_app(capfd):
+    app = OpParamApp()
+    app.run()
+
+    captured = capfd.readouterr()
+    assert "error" not in captured.out
+    assert captured.out.count("I am here - node1 (param1: 1, param2: 5)") == 1
+    assert captured.out.count("I am here - node2 (param1: 2, param2: 5)") == 1
+    assert captured.out.count("I am here - node3 (param1: 3, param2: 5)") == 1

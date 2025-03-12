@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -146,6 +146,14 @@ void init_fragment(py::module_& m) {
                     py::overload_cast<>(&Fragment::is_metadata_enabled, py::const_),
                     py::overload_cast<bool>(&Fragment::is_metadata_enabled),
                     doc::Fragment::doc_is_metadata_enabled)
+      .def("enable_metadata",
+           &Fragment::enable_metadata,
+           "enabled"_a,
+           doc::Fragment::doc_enable_metadata)
+      .def_property("metadata_policy",
+                    py::overload_cast<>(&Fragment::metadata_policy, py::const_),
+                    py::overload_cast<MetadataPolicy>(&Fragment::metadata_policy),
+                    doc::Fragment::doc_metadata_policy)
       .def("make_thread_pool",
            &Fragment::make_thread_pool,
            "name"_a,
@@ -155,6 +163,24 @@ void init_fragment(py::module_& m) {
            &Fragment::run,
            doc::Fragment::doc_run,
            py::call_guard<py::gil_scoped_release>())  // note: virtual function/should release GIL
+      .def("start_op",
+           &Fragment::start_op,
+           doc::Fragment::doc_start_op,
+           py::return_value_policy::reference_internal)
+      .def(
+          "set_dynamic_flows",
+          [](Fragment& fragment, const std::shared_ptr<Operator>& op, py::function func) {
+            fragment.set_dynamic_flows(
+                op, [func = std::move(func)](const std::shared_ptr<Operator>& op_) {
+                  // Acquire GIL before calling into Python code
+                  py::gil_scoped_acquire gil;
+                  func(op_);
+                });
+          },
+          "op"_a,
+          "dynamic_flow_func"_a,
+          doc::Fragment::doc_set_dynamic_flows,
+          py::keep_alive<1, 2>())  // keep op alive as long as the Fragment exists
       .def(
           "__repr__",
           [](const py::object& obj) {

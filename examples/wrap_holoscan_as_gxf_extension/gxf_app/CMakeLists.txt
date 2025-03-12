@@ -47,4 +47,10 @@ if(HOLOSCAN_BUILD_TESTS)
           )
   set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "Number of pings received: 10")
+  set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "PingVarCustomNativeRes: custom_int_type=4, float_type=3.5, numeric=1, numeric_array=\\[10, 20, 30\\], optional_numeric=-1, optional_numeric_array=\\[\\], boolean=true, optional_void_ptr=null, string=string text, optional_resource=null")
+  set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "PingVarTxNativeOp: custom_resource=non-null, numeric=1, numeric_array=\\[10, 20, 30\\], optional_numeric=-1, optional_numeric_array=\\[\\], boolean=true, optional_void_ptr=null, string=string text, optional_resource=null")
+  set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
+                       FAIL_REGULAR_EXPRESSION "ERROR;Error;error")
 endif()

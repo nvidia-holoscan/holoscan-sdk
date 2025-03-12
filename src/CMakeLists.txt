@@ -16,7 +16,7 @@
 # ##############################################################################
 # # Common properties
 # ##############################################################################
-# TODO (grelee): I removed -Wold-style-cast due to it raising errors for ajantv2 code in .cache. After restructuring we can add it back in
+# TODO (grelee): Removed -Wold-style-cast due to it raising errors for yaml-cpp code in .cache.
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Werror$<SEMICOLON>-Wall$<SEMICOLON>-Wextra>)
 
 function(add_holoscan_library target)
@@ -101,6 +101,11 @@ target_link_libraries(profiler
     PUBLIC
         nvtx3-cpp
 )
+target_include_directories(profiler
+    PUBLIC
+      $<BUILD_INTERFACE:${nvtx3_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
+)
 
 # ##############################################################################
 # # Add library: holoscan::core
@@ -140,6 +145,7 @@ add_holoscan_library(core
     core/conditions/gxf/cuda_stream.cpp
     core/conditions/gxf/downstream_affordable.cpp
     core/conditions/gxf/periodic.cpp
+    core/conditions/gxf/memory_available.cpp
     core/conditions/gxf/message_available.cpp
     core/conditions/gxf/multi_message_available.cpp
     core/conditions/gxf/multi_message_available_timeout.cpp
@@ -229,6 +235,7 @@ add_holoscan_library(core
     core/system/system_resource_manager.cpp
     core/system/topology.cpp
     utils/cuda_stream_handler.cpp  # keep here instead of separate lib for backwards compatibility with 1.0
+    utils/operator_runner.cpp
     ${CORE_GRPC_SRCS}
 )
 

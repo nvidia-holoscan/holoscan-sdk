@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +70,14 @@
 #include "texture.hpp"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+
+#if VK_HEADER_VERSION < 213
+namespace vk {
+VULKAN_HPP_INLINE void resultCheck(Result result, char const* message) {
+  if (result != Result::eSuccess) { throwResultException(result, message); }
+}
+}  // namespace vk
+#endif
 
 namespace holoscan::viz {
 
@@ -379,7 +387,9 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
 
   // Find all compatible devices
   const std::vector<uint32_t> compatible_devices = nvvk_.vk_ctx_.getCompatibleDevices(context_info);
-  if (compatible_devices.empty()) { throw std::runtime_error("No Vulkan capable GPU present."); }
+  if (compatible_devices.empty()) {
+    throw std::runtime_error("No Vulkan capable NVIDIA GPU present.");
+  }
 
   // Build a list of compatible physical devices
   const std::vector<vk::PhysicalDevice> physical_devices = instance_.enumeratePhysicalDevices();
@@ -744,9 +754,7 @@ void Vulkan::Impl::end_transfer_pass() {
   // submit staged transfers
   const vk::Result result =
       vk::Result(nvvk_.transfer_batch_submission_.execute(transfer_job.fence_.get(), 0b0000'0001));
-  if (result != vk::Result::eSuccess) {
-    vk::throwResultException(result, "Failed to execute batch submission");
-  }
+  vk::resultCheck(result, "Failed to execute batch submission");
 
   // next graphics submission must wait for transfer completion
   nvvk_.batch_submission_.enqueueWait(transfer_job.semaphore_.get(),
@@ -777,7 +785,7 @@ void Vulkan::Impl::begin_render_pass() {
   render_pass_begin_info.pClearValues = clear_values.data();
   render_pass_begin_info.renderPass = render_pass_.get();
   render_pass_begin_info.framebuffer = framebuffers_[cur_frame].get();
-  render_pass_begin_info.renderArea = {{0, 0}, size_};
+  render_pass_begin_info.renderArea = vk::Rect2D{{0, 0}, size_};
   cmd_buf.beginRenderPass(render_pass_begin_info, vk::SubpassContents::eInline);
 
   // set the dynamic viewport
@@ -815,7 +823,7 @@ void Vulkan::Impl::cleanup_transfer_jobs() {
 
         it->fence_triggered_ = true;
       } else if (result != vk::Result::eNotReady) {
-        vk::throwResultException(result, "Failed to get upload fence status");
+        vk::resultCheck(result, "Failed to get upload fence status");
       }
     }
 
@@ -833,7 +841,7 @@ void Vulkan::Impl::cleanup_transfer_jobs() {
           it = next;
           continue;
         } else if (result != vk::Result::eNotReady) {
-          vk::throwResultException(result, "Failed to get frame fence status");
+          vk::resultCheck(result, "Failed to get frame fence status");
         }
       } else {
         // this is a stale transfer buffer (no end_transfer_pass()?), remove it
@@ -864,7 +872,7 @@ void Vulkan::Impl::prepare_frame() {
   if (result != vk::Result::eSuccess) {
     // This allows Aftermath to do things and exit below
     usleep(1000);
-    vk::throwResultException(result, "Failed to wait for frame fences");
+    vk::resultCheck(result, "Failed to wait for frame fences");
     exit(-1);
   }
 
@@ -896,9 +904,7 @@ void Vulkan::Impl::submit_frame() {
 
   const vk::Result result =
       vk::Result(nvvk_.batch_submission_.execute(wait_fences_[image_index].get(), 0b0000'0001));
-  if (result != vk::Result::eSuccess) {
-    vk::throwResultException(result, "Failed to execute batch submission");
-  }
+  vk::resultCheck(result, "Failed to execute batch submission");
 
   // Presenting frame
   fb_sequence_->present(queue_gct_);
@@ -2140,7 +2146,7 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
     if (result != vk::Result::eSuccess) {
       // This allows Aftermath to do things and exit below
       usleep(1000);
-      vk::throwResultException(result, "Failed to wait for frame fences");
+      vk::resultCheck(result, "Failed to wait for frame fences");
       exit(-1);
     }
 
@@ -2195,9 +2201,7 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
   // submit the command buffer
   const vk::Result result =
       vk::Result(nvvk_.batch_submission_.execute(read_job.fence_.get(), 0b0000'0001));
-  if (result != vk::Result::eSuccess) {
-    vk::throwResultException(result, "Failed to execute batch submission");
-  }
+  vk::resultCheck(result, "Failed to execute batch submission");
 
   // copy the buffer to CUDA memory
   {

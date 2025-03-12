@@ -457,7 +457,7 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
   }
 
   auto result = gxf::Entity(std::move(out_message.value()));
-  op_output.emit(result);
+  op_output.emit(result, "signal");
 }
 
 void V4L2VideoCaptureOp::stop() {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,13 +49,25 @@ nvidia::gxf::MessageAvailableSchedulingTerm* MessageAvailableCondition::get() co
 
 void MessageAvailableCondition::min_size(uint64_t min_size) {
   auto cond = get();
-  if (cond) { cond->setMinSize(min_size); }
+  if (cond) {
+    auto maybe_set = cond->setMinSize(min_size);
+    if (!maybe_set) {
+      throw std::runtime_error(
+          fmt::format("Failed to set min_size: {}", GxfResultStr(maybe_set.error())));
+    }
+  }
   min_size_ = min_size;
 }
 
 void MessageAvailableCondition::front_stage_max_size(size_t front_stage_max_size) {
   auto cond = get();
-  if (cond) { cond->setFrontStageMaxSize(front_stage_max_size); }
+  if (cond) {
+    auto maybe_set = cond->setFrontStageMaxSize(front_stage_max_size);
+    if (!maybe_set) {
+      throw std::runtime_error(
+          fmt::format("Failed to set front_stage_max_size: {}", GxfResultStr(maybe_set.error())));
+    }
+  }
   front_stage_max_size_ = front_stage_max_size;
 }
 

@@ -16,7 +16,6 @@ Vulkan
 nvidia
 Mellanox
 dev
-aja
 Corvid
 shader
 softmax

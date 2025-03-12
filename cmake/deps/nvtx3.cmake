@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,8 +28,8 @@ rapids_cpm_find(nvtx3 3.1
 
 if(nvtx3_ADDED)
     # Install the headers needed for development with the SDK
-    install(DIRECTORY ${nvtx3_SOURCE_DIR}/include
-        DESTINATION "include"
+    install(DIRECTORY ${nvtx3_SOURCE_DIR}/include/nvtx3/
+        DESTINATION include/3rdparty/nvtx3
         COMPONENT "holoscan-dependencies"
         )
 endif()

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,23 +15,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
+import datetime
+
 from holoscan.conditions import CountCondition, PeriodicCondition
 from holoscan.core import Application
 from holoscan.operators import PingRxOp, PingTxOp
 
-# Now define a simple application using the operators defined above
-
 
 class MyPingApp(Application):
     def compose(self):
-        # Configure the operators. Here we use CountCondition to terminate
-        # execution after a specific number of messages have been sent.
-        # PeriodicCondition is used so that each subsequent message is
-        # sent only after a period of 200 milliseconds has elapsed.
-        tx = PingTxOp(self, CountCondition(self, 10), PeriodicCondition(self, 200000000), name="tx")
+        # Note: Arguments must be positional, not keyword arguments
+        tx = PingTxOp(
+            self,
+            CountCondition(self, 10),
+            PeriodicCondition(
+                fragment=self,
+                recess_period=datetime.timedelta(microseconds=200_000),
+                policy="MinTimeBetweenTicks",
+                name="noname_periodic_condition",
+            ),
+            name="tx",
+        )
         rx = PingRxOp(self, name="rx")
 
-        # Connect the operators into the workflow:  tx -> rx
         self.add_flow(tx, rx)
 
 

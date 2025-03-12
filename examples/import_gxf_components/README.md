@@ -47,14 +47,6 @@ Python example shows how to utilize the `GXFCodeletOp` and `GXFComponentResource
   python3 -m pip install cupy-cuda12x
   python3 <APP_DIR>/import_gxf_components.py
   ```
-* **using deb package install**:
-  ```bash
-  /opt/nvidia/holoscan/examples/download_example_data
-  export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
-  python3 -m pip install cupy-cuda12x
-  export PYTHONPATH=/opt/nvidia/holoscan/python/lib
-  python3 /opt/nvidia/holoscan/examples/import_gxf_components/python/import_gxf_components.py
-  ```
 * **from NGC container**:
   ```bash
   python3 /opt/nvidia/holoscan/examples/import_gxf_components/python/import_gxf_components.py

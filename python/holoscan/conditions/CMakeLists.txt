@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ holoscan_pybind11_module(conditions
     cuda_stream.cpp
     downstream_message_affordable.cpp
     expiring_message.cpp
+    memory_available.cpp
     message_available.cpp
     multi_message_available.cpp
     multi_message_available_timeout.cpp

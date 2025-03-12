@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,8 @@
 
 #ifndef HOLOSCAN_CORE_CONDITIONS_GXF_COUNT_HPP
 #define HOLOSCAN_CORE_CONDITIONS_GXF_COUNT_HPP
+
+#include <gxf/std/scheduling_terms.hpp>
 
 #include "../../gxf/gxf_condition.hpp"
 
@@ -44,6 +46,8 @@ class CountCondition : public gxf::GXFCondition {
   int64_t count() { return count_; }
 
   void setup(ComponentSpec& spec) override;
+
+  nvidia::gxf::CountSchedulingTerm* get() const;
 
  private:
   Parameter<int64_t> count_;

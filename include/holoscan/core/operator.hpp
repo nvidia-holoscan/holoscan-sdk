@@ -25,6 +25,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -45,8 +46,8 @@
 #include "./operator_spec.hpp"
 #include "./resource.hpp"
 
-#include "gxf/core/gxf.h"
 #include "gxf/app/graph_entity.hpp"
+#include "gxf/core/gxf.h"
 
 #define HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()                                            \
   template <typename ArgT,                                                              \
@@ -102,13 +103,13 @@
  * Example:
  *
  * ```cpp
- * class AJASourceOp : public holoscan::ops::GXFOperator {
+ * class SourceOp : public holoscan::ops::GXFOperator {
  *  public:
- *   HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(AJASourceOp, holoscan::ops::GXFOperator)
+ *   HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(SourceOp, holoscan::ops::GXFOperator)
  *
- *   AJASourceOp() = default;
+ *   SourceOp() = default;
  *
- *   const char* gxf_typename() const override { return "nvidia::holoscan::AJASource"; }
+ *   const char* gxf_typename() const override { return "nvidia::holoscan::Source"; }
  *
  *   void setup(OperatorSpec& spec) override;
  *
@@ -153,6 +154,11 @@ class Operator : public ComponentBase {
     kVirtual,  ///< Virtual operator.
                ///< (for internal use, not intended for use by application authors)
   };
+
+  /// Default input execution port name.
+  static constexpr const char* kInputExecPortName = "__input_exec__";
+  /// Default output execution port name.
+  static constexpr const char* kOutputExecPortName = "__output_exec__";
 
   /**
    * @brief Construct a new Operator object.
@@ -542,16 +548,17 @@ class Operator : public ComponentBase {
   std::shared_ptr<MetadataDictionary> metadata() { return dynamic_metadata_; }
 
   /**
-   * @brief Determine if metadata is enabled for the fragment this operator belongs to.
+   * @brief Determine if metadata is enabled for this operator.
    *
-   * @returns Boolean indicating if metadata is enabled.
+   * @returns Boolean indicating if metadata is enabled (returns `fragment()->is_metadata_enabled()`
+   * if `enable_metadata` was not explicitly called for the operator.
    */
-  bool is_metadata_enabled() { return is_metadata_enabled_; }
+  bool is_metadata_enabled() const;
 
   /**
    * @brief Enable or disable metadata for this operator.
    *
-   * If this method has not been used to explicitly enable metadata, the value for
+   * If this method has not been used to explicitly enable or disable metadata, the value for
    * `is_metadata_enabled()` will be determined by `Fragment::is_metadata_enabled()` when the
    * operator is initialized.
    *
@@ -570,9 +577,11 @@ class Operator : public ComponentBase {
    * @brief Set the metadata update policy used by this operator.
    *
    * The metadata policy determines how metadata is merged across multiple receive calls:
-   *    - `MetadataPolicy::kUpdate`: Update the existing value when a key already exists (default).
+   *    - `MetadataPolicy::kUpdate`: Update the existing value when a key already exists.
+   *    - `MetadataPolicy::kInplaceUpdate`: Update the existing MetadataObject's value in-place
+   *    when a key already exists.
    *    - `MetadataPolicy::kReject`: Do not modify the existing value if a key already exists.
-   *    - `MetadataPolicy::kRaise`: Raise an exception if a key already exists.
+   *    - `MetadataPolicy::kRaise`: Raise an exception if a key already exists (default).
    *
    * @param policy The metadata update policy to be used by this operator.
    */
@@ -613,6 +622,133 @@ class Operator : public ComponentBase {
    * nullopt.
    */
   std::optional<std::shared_ptr<Transmitter>> transmitter(const std::string& port_name);
+
+  /**@brief Set the queue policy to be used by an input or output port.
+   *
+   * The following IOSpec::QueuePolicy values are supported:
+   *
+   * - QueuePolicy::kPop    - If the queue is full, pop the oldest item, then add the new one.
+   * - QueuePolicy::kReject - If the queue is full, reject (discard) the new item.
+   * - QueuePolicy::kFault  - If the queue is full, log a warning and reject the new item.
+   *
+   * @param port_name The name of the port.
+   * @param port_type Enum flag indicating whether `port_name` specifies an input or output port.
+   * @param policy The queue policy to set for the port.
+   */
+  void queue_policy(const std::string& port_name, IOSpec::IOType port_type = IOSpec::IOType::kInput,
+                    IOSpec::QueuePolicy policy = IOSpec::QueuePolicy::kFault);
+  const std::shared_ptr<IOSpec>& input_exec_spec();
+  const std::shared_ptr<IOSpec>& output_exec_spec();
+  const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func();
+  std::shared_ptr<Operator> self_shared();
+
+  /**
+   * @brief Information about a flow connection between two operators.
+   *
+   * This struct encapsulates all the necessary information about a connection between two
+   * operators, including the source and destination operators, their respective ports, and port
+   * specifications.
+   */
+  struct FlowInfo {
+    /**
+     * @brief Construct a new FlowInfo object.
+     *
+     * @param curr_operator The source operator of the flow.
+     * @param output_port_name The name of the output port on the source operator.
+     * @param next_operator The destination operator of the flow.
+     * @param input_port_name The name of the input port on the destination operator.
+     */
+    FlowInfo(const std::shared_ptr<Operator>& curr_operator, const std::string& output_port_name,
+             const std::shared_ptr<Operator>& next_operator, const std::string& input_port_name)
+        : curr_operator(curr_operator),
+          output_port_name(output_port_name),
+          output_port_spec(curr_operator->spec()->outputs()[output_port_name]),
+          next_operator(next_operator),
+          input_port_name(input_port_name),
+          input_port_spec(next_operator->spec()->inputs()[input_port_name]) {}
+
+    /// The source operator of the flow connection
+    const std::shared_ptr<Operator> curr_operator;
+    /// The name of the output port on the source operator
+    const std::string output_port_name;
+    /// The specification of the output port
+    const std::shared_ptr<IOSpec> output_port_spec;
+    /// The destination operator of the flow connection
+    const std::shared_ptr<Operator> next_operator;
+    /// The name of the input port on the destination operator
+    const std::string input_port_name;
+    /// The specification of the input port
+    const std::shared_ptr<IOSpec> input_port_spec;
+  };
+
+  /**
+   * @brief Get the list of next flows connected to this operator.
+   *
+   * @return A vector of FlowInfo objects representing the flows to downstream operators.
+   */
+  const std::vector<std::shared_ptr<FlowInfo>>& next_flows();
+
+  /**
+   * @brief Add a dynamic flow from this operator to another operator using a FlowInfo object.
+   *
+   * @param flow The flow information object describing the connection between operators.
+   */
+  void add_dynamic_flow(const std::shared_ptr<FlowInfo>& flow);
+
+  /**
+   * @brief Add multiple dynamic flows from this operator using a list of FlowInfo objects.
+   *
+   * @param flows List of flow information objects describing the connections between operators.
+   */
+  void add_dynamic_flow(const std::vector<std::shared_ptr<FlowInfo>>& flows);
+
+  /**
+   * @brief Add a dynamic flow from this operator to another operator with specified output port.
+   *
+   * @param curr_output_port_name The name of the output port on this operator to connect from.
+   * @param next_op The downstream operator to connect to.
+   * @param next_input_port_name The name of the input port on the downstream operator to connect
+   * to. If not specified, the first available input port will be used.
+   */
+  void add_dynamic_flow(const std::string& curr_output_port_name,
+                        const std::shared_ptr<Operator>& next_op,
+                        const std::string& next_input_port_name = "");
+
+  /**
+   * @brief Add a dynamic flow from this operator to another operator using default output port.
+   *
+   * @param next_op The downstream operator to connect to.
+   * @param next_input_port_name The name of the input port on the downstream operator to connect
+   * to. If not specified, the first available input port will be used.
+   */
+  void add_dynamic_flow(const std::shared_ptr<Operator>& next_op,
+                        const std::string& next_input_port_name = "");
+
+  /**
+   * @brief Get the list of dynamic flows that have been added to this operator.
+   *
+   * @return A shared pointer to a vector of FlowInfo objects representing the dynamic flows.
+   */
+  const std::shared_ptr<std::vector<std::shared_ptr<FlowInfo>>>& dynamic_flows();
+
+  /**
+   * @brief Locate a flow info in the operator's next flows based on a given predicate.
+   *
+   * @param predicate Lambda function that takes a FlowInfo shared pointer and returns a boolean.
+   * @return Shared pointer to the matching FlowInfo, or nullptr if not found.
+   */
+  const std::shared_ptr<Operator::FlowInfo>& find_flow_info(
+      const std::function<bool(const std::shared_ptr<Operator::FlowInfo>&)>& predicate);
+
+  /**
+   * @brief Find all FlowInfo objects in the operator's next flows that match a given condition.
+   *
+   * @param predicate A lambda function that takes a shared pointer to a FlowInfo object and returns
+   * a boolean.
+   * @return A vector of shared pointers to the matching FlowInfo objects.
+   */
+  std::vector<std::shared_ptr<Operator::FlowInfo>> find_all_flow_info(
+      const std::function<bool(const std::shared_ptr<Operator::FlowInfo>&)>& predicate);
 
  protected:
   // Making the following classes as friend classes to allow them to access
@@ -667,7 +803,8 @@ class Operator : public ComponentBase {
    */
   void update_connector_arguments();
 
-  /** @brief Determine ports whose transmitter or receiver are associated with an Arg for a Condition.
+  /** @brief Determine ports whose transmitter or receiver are associated with an Arg for a
+   * Condition.
    *
    * Should be called before GXFExecutor::create_input_port or GXFExecutor::create_output_port.
    */
@@ -735,6 +872,9 @@ class Operator : public ComponentBase {
   /// Reset the GXF GraphEntity of any components associated with this operator
   virtual void reset_graph_entities();
 
+  /// Initialize the next flows for the operator.
+  void initialize_next_flows();
+
   OperatorType operator_type_ = OperatorType::kNative;  ///< The type of the operator.
   std::shared_ptr<OperatorSpec> spec_;                  ///< The operator spec of the operator.
   std::unordered_map<std::string, std::shared_ptr<Condition>>
@@ -749,7 +889,16 @@ class Operator : public ComponentBase {
   std::vector<std::string>& non_default_input_ports() { return non_default_input_ports_; }
   std::vector<std::string>& non_default_output_ports() { return non_default_output_ports_; }
 
+  void set_input_exec_spec(const std::shared_ptr<IOSpec>& input_exec_spec);
+  void set_output_exec_spec(const std::shared_ptr<IOSpec>& output_exec_spec);
+  void set_dynamic_flows(
+      const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func);
+  void set_self_shared(const std::shared_ptr<Operator>& this_op);
+
  private:
+  /// An empty shared pointer to FlowInfo.
+  static inline const std::shared_ptr<FlowInfo> kEmptyFlowInfo{nullptr};
+
   ///  Set the operator codelet or any other backend codebase.
   void set_op_backend();
 
@@ -771,9 +920,16 @@ class Operator : public ComponentBase {
 
   std::shared_ptr<MetadataDictionary> dynamic_metadata_ =
       std::make_shared<MetadataDictionary>();  ///< The metadata dictionary for the operator.
-  bool is_metadata_enabled_ = false;           ///< Flag to enable metadata for the operator.
-  MetadataPolicy metadata_policy_ = MetadataPolicy::kRaise;  ///< The metadata policy for the
-                                                             ///< operator.
+  std::optional<bool> is_metadata_enabled_ =
+      std::nullopt;  ///< Flag to enable or disable metadata for the operator.
+                     ///< If not set, the value from the Fragment is used.
+
+  std::shared_ptr<IOSpec> input_exec_spec_;   ///< The input execution port specification.
+  std::shared_ptr<IOSpec> output_exec_spec_;  ///< The output execution port specification.
+  std::function<void(const std::shared_ptr<Operator>&)> dynamic_flow_func_ = nullptr;
+  std::weak_ptr<Operator> self_shared_;
+  std::shared_ptr<std::vector<std::shared_ptr<FlowInfo>>> next_flows_;
+  std::shared_ptr<std::vector<std::shared_ptr<FlowInfo>>> dynamic_flows_;
 };
 
 }  // namespace holoscan

@@ -29,15 +29,17 @@ from holoscan.conditions import (
     CudaStreamCondition,
     DownstreamMessageAffordableCondition,
     ExpiringMessageAvailableCondition,
+    MemoryAvailableCondition,
     MessageAvailableCondition,
     MultiMessageAvailableCondition,
     MultiMessageAvailableTimeoutCondition,
     PeriodicCondition,
+    PeriodicConditionPolicy,
 )
 from holoscan.core import Application, ConditionType, Operator, SchedulingStatusType
 from holoscan.core import _Condition as ConditionBase
 from holoscan.gxf import Entity, GXFCondition
-from holoscan.resources import RealtimeClock
+from holoscan.resources import RealtimeClock, UnboundedAllocator
 
 
 class TestBooleanCondition:
@@ -185,6 +187,45 @@ args:
         DownstreamMessageAffordableCondition(app, 4, "out", "affordable")
 
 
+class TestMemoryAvailableCondition:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "memory_available"
+        cond = MemoryAvailableCondition(
+            fragment=app, name=name, min_bytes=1_000_000, allocator=UnboundedAllocator(app)
+        )
+        assert isinstance(cond, GXFCondition)
+        assert isinstance(cond, ConditionBase)
+        assert cond.gxf_typename == "nvidia::gxf::MemoryAvailableSchedulingTerm"
+
+        assert f"""
+name: {name}
+fragment: ""
+args:
+  - name: allocator
+    type: std::shared_ptr<Resource>
+  - name: min_bytes
+    type: uint64_t
+    value: 1000000
+""" in repr(cond)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_error_on_providing_both_min_bytes_and_blocks(self, app):
+        errmsg = "Only one of `min_bytes` or `min_blocks` can be set."
+        with pytest.raises(ValueError, match=errmsg):
+            MemoryAvailableCondition(
+                app, min_bytes=5, min_blocks=1, allocator=UnboundedAllocator(app)
+            )
+
+    def test_error_on_providing_neither_min_bytes_or_blocks(self, app):
+        errmsg = "Either `min_bytes` or `min_blocks` must be provided."
+        with pytest.raises(ValueError, match=errmsg):
+            MemoryAvailableCondition(app, allocator=UnboundedAllocator(app))
+
+
 class TestMessageAvailableCondition:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "message_available"
@@ -322,7 +363,8 @@ class TestPeriodicCondition:
 name: {name}
 fragment: ""
 args:
-  []
+  - name: policy
+    type: CustomType
 """ in repr(cond)
 
         # assert no warnings or errors logged
@@ -364,6 +406,31 @@ args:
             period if isinstance(period, int) else int(period.total_seconds() * 1_000_000_000)
         )
         assert cond.recess_period_ns() == expected_ns
+
+    @pytest.mark.parametrize(
+        "policy",
+        [
+            "CatchUpMissedTicks",
+            "MinTimeBetweenTicks",
+            "NoCatchUpMissedTicks",
+            PeriodicConditionPolicy.CATCH_UP_MISSED_TICKS,
+            PeriodicConditionPolicy.MIN_TIME_BETWEEN_TICKS,
+            PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS,
+        ],
+    )
+    def test_policy_kwarg(self, app, capfd, policy):
+        cond = PeriodicCondition(fragment=app, name="periodic", recess_period=1, policy=policy)
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+        cond.initialize()
+        if policy in ["CatchUpMissedTicks", PeriodicConditionPolicy.CATCH_UP_MISSED_TICKS]:
+            assert cond.policy == PeriodicConditionPolicy.CATCH_UP_MISSED_TICKS
+        elif policy in ["MinTimeBetweenTicks", PeriodicConditionPolicy.MIN_TIME_BETWEEN_TICKS]:
+            assert cond.policy == PeriodicConditionPolicy.MIN_TIME_BETWEEN_TICKS
+        elif policy in ["NoCatchUpMissedTicks", PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS]:
+            assert cond.policy == PeriodicConditionPolicy.NO_CATCH_UP_MISSED_TICKS
 
     def test_positional_initialization(self, app):
         PeriodicCondition(app, 100000, "periodic")

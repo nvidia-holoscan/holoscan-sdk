@@ -338,12 +338,6 @@ RUN apt-get update \
 #    pip - 20.3+ needed for PEP 600
 #    cupy-cuda - dependency for holoscan python + examples
 #    cloudpickle - dependency for distributed apps
-#    python-on-whales - dependency for holoscan CLI
-#    Jinja2 - dependency for holoscan CLI
-#    packaging - dependency for holoscan CLI
-#    pyyaml - dependency for holoscan CLI
-#    requests - dependency for holoscan CLI
-#    psutil - dependency for holoscan CLI
 RUN if [ $(uname -m) = "x86_64" ]; then \
         python3 -m pip install --no-cache-dir \
             mkl==2021.1.1 \

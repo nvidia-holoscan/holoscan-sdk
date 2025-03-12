@@ -19,6 +19,7 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>  // for unordered_map -> dict, etc.
+#include <pybind11/functional.h>  // for lambda functions
 
 #include <list>
 #include <memory>
@@ -56,6 +57,27 @@ void init_operator(py::module_& m) {
       .def_readwrite("port_names", &MultiMessageConditionInfo::port_names)
       .def_readwrite("args", &MultiMessageConditionInfo::args);
 
+  py::class_<Operator::FlowInfo, std::shared_ptr<Operator::FlowInfo>>(
+      m, "FlowInfo", doc::Operator::doc_FlowInfo)
+      .def_readonly("curr_operator",
+                    &Operator::FlowInfo::curr_operator,
+                    "Current operator in the flow connection.")
+      .def_readonly("output_port_name",
+                    &Operator::FlowInfo::output_port_name,
+                    "Name of the output port from the current operator.")
+      .def_readonly("output_port_spec",
+                    &Operator::FlowInfo::output_port_spec,
+                    "Specification of the output port.")
+      .def_readonly("next_operator",
+                    &Operator::FlowInfo::next_operator,
+                    "Next operator in the flow connection.")
+      .def_readonly("input_port_name",
+                    &Operator::FlowInfo::input_port_name,
+                    "Name of the input port on the next operator.")
+      .def_readonly("input_port_spec",
+                    &Operator::FlowInfo::input_port_spec,
+                    "Specification of the input port.");
+
   py::class_<OperatorSpec, ComponentSpec, std::shared_ptr<OperatorSpec>>(
       m, "OperatorSpec", R"doc(Operator specification class.)doc")
       .def(py::init<Fragment*>(), "fragment"_a, doc::OperatorSpec::doc_OperatorSpec)
@@ -68,16 +90,19 @@ void init_operator(py::module_& m) {
           // Note: The return type needs to be specified explicitly because pybind11 can't
           // deduce it. Otherwise, this method will return a new IOSpec object instead of a
           // reference to the existing one.
-          [](OperatorSpec& spec, const std::string& name, const py::object& size) -> IOSpec& {
+          [](OperatorSpec& spec,
+             const std::string& name,
+             const py::object& size,
+             std::optional<IOSpec::QueuePolicy> policy = std::nullopt) -> IOSpec& {
             // Check if 'size' is an int and convert to IOSpec::IOSize if necessary
             if (py::isinstance<py::int_>(size)) {
               auto size_int = size.cast<int>();
               // Assuming IOSpec::IOSize can be constructed from an int
-              return spec.input<gxf::Entity>(name, IOSpec::IOSize(size_int));
+              return spec.input<gxf::Entity>(name, IOSpec::IOSize(size_int), policy);
             }
             if (py::isinstance<IOSpec::IOSize>(size)) {
               // Directly pass IOSpec::IOSize if 'size' is already the correct type
-              return spec.input<gxf::Entity>(name, size.cast<IOSpec::IOSize>());
+              return spec.input<gxf::Entity>(name, size.cast<IOSpec::IOSize>(), policy);
             }
             throw std::runtime_error(
                 "Invalid type for 'size'. Expected 'int' or 'holoscan.core.IOSpec.IOSize'.");
@@ -85,6 +110,7 @@ void init_operator(py::module_& m) {
           "name"_a,
           py::kw_only(),
           "size"_a = IOSpec::kSizeOne,
+          "policy"_a = py::none(),
           doc::OperatorSpec::doc_input_kwargs,
           py::return_value_policy::reference_internal)
       .def_property_readonly("inputs",
@@ -95,11 +121,34 @@ void init_operator(py::module_& m) {
            py::overload_cast<>(&OperatorSpec::output<gxf::Entity>),
            doc::OperatorSpec::doc_output,
            py::return_value_policy::reference_internal)
-      .def("output",
-           py::overload_cast<std::string>(&OperatorSpec::output<gxf::Entity>),
-           "name"_a,
-           doc::OperatorSpec::doc_output_kwargs,
-           py::return_value_policy::reference_internal)
+      .def(
+          "output",
+          // Note: The return type needs to be specified explicitly because pybind11 can't
+          // deduce it. Otherwise, this method will return a new IOSpec object instead of a
+          // reference to the existing one.
+          [](OperatorSpec& spec,
+             const std::string& name,
+             const py::object& size,
+             std::optional<IOSpec::QueuePolicy> policy = std::nullopt) -> IOSpec& {
+            // Check if 'size' is an int and convert to IOSpec::IOSize if necessary
+            if (py::isinstance<py::int_>(size)) {
+              auto size_int = size.cast<int>();
+              // Assuming IOSpec::IOSize can be constructed from an int
+              return spec.output<gxf::Entity>(name, IOSpec::IOSize(size_int), policy);
+            }
+            if (py::isinstance<IOSpec::IOSize>(size)) {
+              // Directly pass IOSpec::IOSize if 'size' is already the correct type
+              return spec.output<gxf::Entity>(name, size.cast<IOSpec::IOSize>(), policy);
+            }
+            throw std::runtime_error(
+                "Invalid type for 'size'. Expected 'int' or 'holoscan.core.IOSpec.IOSize'.");
+          },
+          "name"_a,
+          py::kw_only(),
+          "size"_a = IOSpec::kSizeOne,
+          "policy"_a = py::none(),
+          doc::OperatorSpec::doc_output_kwargs,
+          py::return_value_policy::reference_internal)
       .def(
           "multi_port_condition",
           [](OperatorSpec& spec,
@@ -199,14 +248,65 @@ void init_operator(py::module_& m) {
            "port_name"_a,
            doc::Operator::doc_transmitter,
            py::return_value_policy::reference_internal)
+      .def("enable_metadata",
+           &Operator::enable_metadata,
+           "enable"_a,
+           doc::Operator::doc_enable_metadata)
+      .def("queue_policy",
+           &Operator::queue_policy,
+           "port_name"_a,
+           "port_type"_a = IOSpec::IOType::kInput,
+           "policy"_a = IOSpec::QueuePolicy::kFault,
+           doc::Operator::doc_queue_policy,
+           py::return_value_policy::reference_internal)
       .def_property_readonly("conditions", &Operator::conditions, doc::Operator::doc_conditions)
       .def_property_readonly("resources", &Operator::resources, doc::Operator::doc_resources)
+      // TODO(unknown): sphinx API doc build complains if more than one overloaded add_dynamic_flow
+      // method has a docstring specified. For now using the docstring defined for 2-argument
+      // Operator-based version and describing the other variants in the Notes section.
+      .def("add_dynamic_flow",
+           py::overload_cast<const std::shared_ptr<Operator::FlowInfo>&>(
+               &Operator::add_dynamic_flow),
+           "flow"_a)
+      .def("add_dynamic_flow",
+           py::overload_cast<const std::vector<std::shared_ptr<Operator::FlowInfo>>&>(
+               &Operator::add_dynamic_flow),
+           "flows"_a)
+      .def("add_dynamic_flow",
+           py::overload_cast<const std::shared_ptr<Operator>&, const std::string&>(
+               &Operator::add_dynamic_flow),
+           "next_op"_a,
+           "next_input_port_name"_a = "",
+           doc::Operator::doc_add_dynamic_flow)
+      .def("add_dynamic_flow",
+           py::overload_cast<const std::string&,
+                             const std::shared_ptr<Operator>&,
+                             const std::string&>(&Operator::add_dynamic_flow),
+           "curr_output_port_name"_a,
+           "next_op"_a,
+           "next_input_port_name"_a = "")
+      .def_property_readonly("next_flows",
+                             &Operator::next_flows,
+                             doc::Operator::doc_next_flows,
+                             py::return_value_policy::reference_internal)
+      // Note: We don't need to expose `dynamic_flows()` here because it is used internally by the
+      // GXFWrapper class
+      .def("find_flow_info",
+           &Operator::find_flow_info,
+           "predicate"_a,
+           doc::Operator::doc_find_flow_info,
+           py::return_value_policy::reference_internal)
+      .def("find_all_flow_info",
+           &Operator::find_all_flow_info,
+           "predicate"_a,
+           doc::Operator::doc_find_all_flow_info,
+           py::return_value_policy::reference_internal)
       .def_property_readonly(
           "operator_type", &Operator::operator_type, doc::Operator::doc_operator_type)
       .def_property_readonly(
           "metadata", py::overload_cast<>(&Operator::metadata), doc::Operator::doc_metadata)
       .def_property_readonly("is_metadata_enabled",
-                             py::overload_cast<>(&Operator::is_metadata_enabled),
+                             py::overload_cast<>(&Operator::is_metadata_enabled, py::const_),
                              doc::Operator::doc_is_metadata_enabled)
       .def_property("metadata_policy",
                     py::overload_cast<>(&Operator::metadata_policy, py::const_),
@@ -262,6 +362,14 @@ void init_operator(py::module_& m) {
            doc::Operator::doc_compute,
            py::call_guard<py::gil_scoped_release>())  // note: should release GIL
       .def_property_readonly("description", &Operator::description, doc::Operator::doc_description)
+      .def_property_readonly_static(
+          "INPUT_EXEC_PORT_NAME",
+          [](py::object /* self */) { return Operator::kInputExecPortName; },
+          "Default input execution port name.")
+      .def_property_readonly_static(
+          "OUTPUT_EXEC_PORT_NAME",
+          [](py::object /* self */) { return Operator::kOutputExecPortName; },
+          "Default output execution port name.")
       .def(
           "__repr__",
           [](const py::object& obj) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,8 @@ HoloInfer::InferStatus ProcessingTests::call_parameter_check_processing() {
 
 HoloInfer::InferStatus ProcessingTests::setup_processor() {
   holoscan_processor_context_ = std::make_unique<HoloInfer::ProcessorContext>();
-  auto status = holoscan_processor_context_->initialize(process_operations, config_path);
+  auto status =
+      holoscan_processor_context_->initialize(process_operations, custom_kernels, config_path);
   return status;
 }
 

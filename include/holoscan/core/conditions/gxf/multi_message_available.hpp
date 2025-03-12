@@ -28,6 +28,7 @@
 #include "../../gxf/gxf_condition.hpp"
 #include "../../resource.hpp"
 #include "../../resources/gxf/realtime_clock.hpp"
+#include "../../resources/gxf/receiver.hpp"
 
 namespace holoscan {
 
@@ -91,7 +92,6 @@ class MultiMessageAvailableCondition : public gxf::GXFCondition {
   void setup(ComponentSpec& spec) override;
 
   // wrap setters available on the underling nvidia::gxf::MultiMessageAvailableSchedulingTerm
-  // void min_size(size_t value);  // min_size parameter is deprecated
   void min_sum(size_t value);
   size_t min_sum() { return min_sum_; }
 
