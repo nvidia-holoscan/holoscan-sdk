@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,7 @@ const char** ExclusiveWindow::get_required_device_extensions(uint32_t* count) {
 uint32_t ExclusiveWindow::select_device(vk::Instance instance,
                                         const std::vector<vk::PhysicalDevice>& physical_devices) {
   std::string first_display;
-  uint32_t first_device_index;
+  uint32_t first_device_index = 0;
   for (uint32_t index = 0; index < physical_devices.size(); ++index) {
     const std::vector<vk::DisplayPropertiesKHR> display_properties =
         physical_devices[index].getDisplayPropertiesKHR();

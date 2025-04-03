@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,9 +88,39 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const 
   }
 }
 
+/// Remove a node and all its edges from the graph
+template <typename NodeT, typename EdgeDataElementT>
+void FlowGraph<NodeT, EdgeDataElementT>::remove_node(const NodeType& node) {
+  auto it_prev = pred_.find(node);
+  if (it_prev == pred_.end()) {
+    HOLOSCAN_LOG_WARN("Node with name '{}' not found in graph: no node was removed.", node->name());
+    return;
+  }
+
+  // remove node from the predecessors map of its successor nodes
+  for (auto& [s_node, _] : succ_[node]) {
+    auto& pred_map = pred_[s_node];
+    if (pred_map.find(node) != pred_map.end()) { pred_map.erase(node); }
+  }
+
+  // remove node from the successors map of its predecessor nodes
+  for (auto& [p_node, _] : pred_[node]) {
+    auto& succ_map = succ_[p_node];
+    if (succ_map.find(node) != succ_map.end()) { succ_map.erase(node); }
+  }
+
+  // Remove the node itself
+  succ_.erase(node);
+  pred_.erase(node);
+  auto it = std::find(ordered_nodes_.begin(), ordered_nodes_.end(), node);
+  if (it != ordered_nodes_.end()) { ordered_nodes_.erase(it); }
+  name_map_.erase(node->name());
+}
+
 template <typename NodeT, typename EdgeDataElementT>
 std::optional<typename FlowGraph<NodeT, EdgeDataElementT>::EdgeDataType>
-FlowGraph<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u, const NodeType& node_v) {
+FlowGraph<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u,
+                                                 const NodeType& node_v) const {
   auto it_u = succ_.find(node_u);
   if (it_u == succ_.end()) { return std::nullopt; }
   auto it_v = it_u->second.find(node_v);
@@ -99,7 +129,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u, const N
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) {
+bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) const {
   auto it_pred = pred_.find(node);
   if (it_pred->second.empty()) { return true; }
 
@@ -107,7 +137,7 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) {
+bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) const {
   auto it_succ = succ_.find(node);
   if (it_succ->second.empty()) { return true; }
   return false;
@@ -115,7 +145,7 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) {
 
 template <typename NodeT, typename EdgeDataElementT>
 std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::has_cycle() {
+FlowGraph<NodeT, EdgeDataElementT>::has_cycle() const {
   std::vector<NodeType> cyclic_roots;
 
   // List of visited nodes across DFS from multiple roots
@@ -147,14 +177,17 @@ FlowGraph<NodeT, EdgeDataElementT>::has_cycle() {
 
       global_visited.insert(node);
 
-      for (const auto& [node_next, _] : succ_[node]) {
-        if (current_visited.find(node_next) != current_visited.end()) {
-          // The currently visited set of nodes already includes the successor node
-          // Therefore, it must be a cycle
-          cyclic_roots.push_back(node_next);
-          continue;  // skip adding the node to the stack
+      auto succ_it = succ_.find(node);
+      if (succ_it != succ_.end()) {
+        for (const auto& [node_next, _] : succ_it->second) {
+          if (current_visited.find(node_next) != current_visited.end()) {
+            // The currently visited set of nodes already includes the successor node
+            // Therefore, it must be a cycle
+            cyclic_roots.push_back(node_next);
+            continue;  // skip adding the node to the stack
+          }
+          stack.push_back(node_next);
         }
-        stack.push_back(node_next);
       }
     }
   }
@@ -163,7 +196,7 @@ FlowGraph<NodeT, EdgeDataElementT>::has_cycle() {
 
 template <typename NodeT, typename EdgeDataElementT>
 std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_root_nodes() {
+FlowGraph<NodeT, EdgeDataElementT>::get_root_nodes() const {
   std::vector<NodeType> roots;
   for (const auto& [node, _] : pred_) {
     if (is_root(node)) { roots.push_back(node); }
@@ -173,7 +206,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_root_nodes() {
 
 template <typename NodeT, typename EdgeDataElementT>
 std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_nodes() {
+FlowGraph<NodeT, EdgeDataElementT>::get_nodes() const {
   std::vector<NodeType> nodes;
   nodes.reserve(ordered_nodes_.size());  // pre-allocate memory
   for (const auto& node : ordered_nodes_) { nodes.push_back(node); }
@@ -182,7 +215,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_nodes() {
 
 template <typename NodeT, typename EdgeDataElementT>
 std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_next_nodes(const NodeType& node) {
+FlowGraph<NodeT, EdgeDataElementT>::get_next_nodes(const NodeType& node) const {
   std::vector<NodeType> nodes;
   auto it_succ = succ_.find(node);
   if (it_succ == succ_.end()) { return nodes; }
@@ -193,7 +226,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_next_nodes(const NodeType& node) {
 
 template <typename NodeT, typename EdgeDataElementT>
 std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_previous_nodes(const NodeType& node) {
+FlowGraph<NodeT, EdgeDataElementT>::get_previous_nodes(const NodeType& node) const {
   std::vector<NodeType> nodes;
   auto it_prev = pred_.find(node);
   if (it_prev == pred_.end()) { return nodes; }
@@ -204,7 +237,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_previous_nodes(const NodeType& node) {
 
 template <typename NodeT, typename EdgeDataElementT>
 typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
-    const NodePredicate& pred) {
+    const NodePredicate& pred) const {
   for (const auto& [node, _] : succ_) {
     if (pred(node)) { return node; }
   }
@@ -213,7 +246,7 @@ typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataE
 
 template <typename NodeT, typename EdgeDataElementT>
 typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
-    const NodeType& node) {
+    const NodeType& node) const {
   auto it_prev = pred_.find(node);
   if (it_prev == pred_.end()) { return nullptr; }
   return it_prev->first;
@@ -221,9 +254,10 @@ typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataE
 
 template <typename NodeT, typename EdgeDataElementT>
 typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
-    std::string name) {
-  if (name_map_.find(name) == name_map_.end()) { return nullptr; }
-  return name_map_[name];
+    const std::string& name) const {
+  auto it = name_map_.find(name);
+  if (it == name_map_.end()) { return nullptr; }
+  return it->second;
 }
 
 }  // namespace holoscan

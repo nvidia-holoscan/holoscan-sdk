@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,11 +30,23 @@
 
 namespace holoscan {
 
-// TODO(unknown): keep old class name as an alias?
-//       also differs in that DLManagedTensorContext has additional members dl_shape and dl_strides
-// using DLManagedTensorCtx = nvidia::gxf::DLManagedTensorContext;
 using DLManagedTensorContext = nvidia::gxf::DLManagedTensorContext;
 using DLManagedMemoryBuffer = nvidia::gxf::DLManagedMemoryBuffer;
+
+class DLManagedMemoryBufferVersioned {
+ public:
+  explicit DLManagedMemoryBufferVersioned(DLManagedTensorVersioned* self);
+  ~DLManagedMemoryBufferVersioned();
+
+ private:
+  DLManagedTensorVersioned* self_ = nullptr;
+};
+
+// May want to use a fixed, older version of DLPack than the one in the DLPack header
+// constexpr uint32_t HOLOSCAN_DLPACK_IMPL_VERSION_MAJOR{DLPACK_MAJOR_VERSION};
+// constexpr uint32_t HOLOSCAN_DLPACK_IMPL_VERSION_MINOR{DLPACK_MINOR_VERSION};
+constexpr uint32_t HOLOSCAN_DLPACK_IMPL_VERSION_MAJOR{1};
+constexpr uint32_t HOLOSCAN_DLPACK_IMPL_VERSION_MINOR{0};
 
 /**
  * @brief Tensor class.
@@ -66,6 +78,17 @@ class Tensor {
    * construction.
    */
   explicit Tensor(DLManagedTensor* dl_managed_tensor_ptr);
+
+  /**
+   * @brief Construct a new Tensor from an existing DLManagedTensorVersioned pointer.
+   *
+   * Note that currently holoscan::Tensor does not support versioned tensors from the C++ API, so
+   * any version information and flags from DLPack >= 1.0 will not be stored.
+   *
+   * @param dl_managed_tensor_ver_ptr A pointer to the DLManagedTensorVersioned to be used in Tensor
+   * construction.
+   */
+  explicit Tensor(DLManagedTensorVersioned* dl_managed_tensor_ver_ptr);
 
   virtual ~Tensor() = default;
 
@@ -163,6 +186,13 @@ class Tensor {
    * @return A DLManagedTensor* pointer corresponding to the Tensor.
    */
   DLManagedTensor* to_dlpack();
+
+  /**
+   * @brief Get a DLPack versioned managed tensor pointer to the Tensor.
+   *
+   * @return A DLManagedTensorVersioned* pointer corresponding to the Tensor.
+   */
+  DLManagedTensorVersioned* to_dlpack_versioned();
 
   /**
    * @brief Get the internal DLManagedTensorContext of the Tensor.

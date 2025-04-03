@@ -671,6 +671,25 @@ FragmentPortMap Fragment::port_info() const {
   return fragment_port_info;
 }
 
+void Fragment::stop_execution(const std::string& op_name) {
+  if (!op_name.empty()) {
+    // Stop the execution of the operator with the given name
+    auto op = graph().find_node(op_name);
+    if (op) {
+      op->stop_execution();
+    } else {
+      HOLOSCAN_LOG_WARN("Operator with name '{}' not found, no operator was stopped", op_name);
+    }
+  } else {
+    // Stop the execution of all operators in the fragment in the order they were added to the
+    // graph.
+    // (`get_nodes()` returns the nodes in the order they were added to the graph.)
+    // If needed, we can use more sophisticated termination logic to stop the operators
+    // (e.g., monitoring the operator statuses and stopping the operators when they are finished).
+    for (auto& op : graph().get_nodes()) { op->stop_execution(); }
+  }
+}
+
 void Fragment::reset_graph_entities() {
   // Explicitly clean up graph entities. This is necessary for Python apps, because the Python
   // object lifetime may outlive the Application runtime and these must be released prior to the

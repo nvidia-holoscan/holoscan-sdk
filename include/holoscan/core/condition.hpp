@@ -36,6 +36,7 @@
 #include "./gxf/gxf_component.hpp"
 #include "./gxf/gxf_utils.hpp"
 #include "gxf/std/scheduling_condition.hpp"
+#include "gxf/std/scheduling_terms.hpp"  // for AsynchronousEventState
 
 #define HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                                     \
   template <typename ArgT,                                                                        \
@@ -101,6 +102,13 @@ namespace holoscan {
 // Forward declarations
 class Operator;
 class Resource;
+
+/// Make AsynchronousEventState available to the holoscan namespace.
+/// This enum is used for controlling and querying the state of asynchronous conditions.
+/// Moving it to the holoscan namespace improves usability when working with async operators.
+/// See Operator::async_condition() for accessing the internal condition to control execution
+/// timing.
+using nvidia::gxf::AsynchronousEventState;
 
 // Note: Update `IOSpec::to_yaml_node()` if you add new condition types
 enum class ConditionType {
@@ -317,6 +325,16 @@ class Condition : public Component {
    */
   std::optional<std::shared_ptr<Transmitter>> transmitter(const std::string& port_name);
 
+  /**
+   * Get the GXF component ID of the underlying GXFSchedulingTermWrapper
+   *
+   * This method is only relevant for native conditions. For conditions
+   * inheriting from GXFCondition, please use GXFCondition::gxf_cid() instead.
+   *
+   * @return The unique GXF component id for this condition.
+   */
+  gxf_uid_t wrapper_cid() const;
+
  protected:
   // Add friend classes that can call reset_graph_entites
   friend class holoscan::Operator;
@@ -332,6 +350,13 @@ class Condition : public Component {
    */
   void set_operator(Operator* op) { op_ = op; }
 
+  /**
+   * Store GXF component ID of underlying GXFSchedulingTermWrapper
+   *
+   * @param GXF component id.
+   */
+  void wrapper_cid(gxf_uid_t cid);
+
   /// Update parameters based on the specified arguments
   void update_params_from_args();
 
@@ -345,6 +370,7 @@ class Condition : public Component {
   ConditionComponentType condition_type_ =
       ConditionComponentType::kNative;  ///< The type of the component.
   Operator* op_ = nullptr;              ///< The operator this condition is associated with.
+  gxf_uid_t wrapper_cid_ = 0;           ///< Component ID of underlying GXFSchedulingTermWrapper
 };
 
 }  // namespace holoscan

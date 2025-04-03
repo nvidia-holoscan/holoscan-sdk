@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -364,6 +364,13 @@ void Context::set_present_mode(PresentMode present_mode) {
   impl_->present_mode_ = present_mode;
   // update Vulkan present mode if Vulkan has already been initialized
   if (impl_->vulkan_) { impl_->vulkan_->set_present_mode(impl_->present_mode_); }
+}
+
+std::vector<ImageFormat> Context::get_image_formats() const {
+  if (!impl_->vulkan_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+  return impl_->vulkan_->get_image_formats();
 }
 
 void Context::set_cuda_stream(CUstream stream) {

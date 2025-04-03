@@ -22,6 +22,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "../execution_context.hpp"
@@ -39,6 +40,8 @@ class GXFWrapper;  // forward declaration
  */
 class GXFExecutionContext : public holoscan::ExecutionContext {
  public:
+  GXFExecutionContext() = default;
+
   /**
    * @brief Construct a new GXFExecutionContext object
    *
@@ -83,6 +86,11 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
   // @brief determine the CUDA device corresponding to the given stream
   expected<int, RuntimeError> device_from_stream(cudaStream_t stream) override;
 
+  std::shared_ptr<Operator> find_operator(const std::string& op_name /* = "" */) override;
+
+  expected<holoscan::OperatorStatus, RuntimeError> get_operator_status(
+      const std::string& op_name /* = "" */) override;
+
   /**
    * @brief Return the CudaStreamHandle corresponding to a given cudaStream_t.
    *
@@ -115,9 +123,15 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
   expected<CudaStreamHandle, RuntimeError> allocate_cuda_stream_handle(
       const std::string& stream_name);
 
+  /// @brief get the GXF entity ID of the operator
+  expected<gxf_uid_t, RuntimeError> get_operator_eid(const std::string& op_name);
+
+  Operator* op_ = nullptr;                                  ///< The operator pointer.
+  gxf_uid_t eid_ = kNullUid;                                ///< The GXF entity ID of the operator.
   std::shared_ptr<GXFInputContext> gxf_input_context_{};    ///< The GXF input context.
   std::shared_ptr<GXFOutputContext> gxf_output_context_{};  ///< The GXF output context.
   std::shared_ptr<CudaObjectHandler> cuda_object_handler_{};
+  std::unordered_map<std::string, gxf_uid_t> operator_eid_cache_{};  ///< Cache for operator EIDs.
 };
 
 }  // namespace holoscan::gxf

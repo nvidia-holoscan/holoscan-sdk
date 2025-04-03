@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -133,6 +133,29 @@ void GetSurfaceFormats(uint32_t* surface_format_count, SurfaceFormat* surface_fo
         std::min((size_t)*surface_format_count, supported_surface_formats.size());
     for (uint32_t index = 0; index < *surface_format_count; ++index) {
       surface_formats[index] = supported_surface_formats[index];
+    }
+  }
+}
+
+void GetImageFormats(uint32_t* image_format_count, ImageFormat* image_formats) {
+  if (!image_format_count) {
+    throw std::invalid_argument("`image_format_count` must be a valid pointer.");
+  }
+  const std::vector<ImageFormat> supported_image_formats = Context::get().get_image_formats();
+
+  if (*image_format_count == 0) {
+    *image_format_count = supported_image_formats.size();
+  } else {
+    if (!image_formats) {
+      throw std::invalid_argument(
+          "`image_formats` must be a valid pointer if the value referenced by "
+          "`image_format_count` "
+          "is not 0.");
+    }
+    *image_format_count =
+        std::min((size_t)*image_format_count, supported_image_formats.size());
+    for (uint32_t index = 0; index < *image_format_count; ++index) {
+      image_formats[index] = supported_image_formats[index];
     }
   }
 }

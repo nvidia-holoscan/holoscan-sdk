@@ -34,8 +34,8 @@ void AsyncPingRxOp::async_ping() {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_.get()));
 
-    if (async_condition_->event_state() == AsynchronousEventState::EVENT_WAITING) {
-      async_condition_->event_state(AsynchronousEventState::EVENT_DONE);
+    if (async_condition()->event_state() == AsynchronousEventState::EVENT_WAITING) {
+      async_condition()->event_state(AsynchronousEventState::EVENT_DONE);
     }
   }
 }
@@ -43,28 +43,6 @@ void AsyncPingRxOp::async_ping() {
 void AsyncPingRxOp::setup(OperatorSpec& spec) {
   spec.input<int>("in");
   spec.param(delay_, "delay", "Ping delay in ms", "Ping delay in ms", 10L);
-  spec.param(async_condition_,
-             "async_condition",
-             "asynchronous condition",
-             "AsynchronousCondition adding async support to the operator");
-}
-
-void AsyncPingRxOp::initialize() {
-  // Set up prerequisite parameters before calling Operator::initialize()
-  auto frag = fragment();
-
-  // Find if there is an argument for 'async_condition_'
-  auto has_async_condition = std::find_if(args().begin(), args().end(), [](const auto& arg) {
-    return (arg.name() == "async_condition");
-  });
-
-  // Create the AsynchronousCondition if there is no argument provided.
-  if (has_async_condition == args().end()) {
-    async_condition_ = frag->make_condition<holoscan::AsynchronousCondition>("async_condition");
-    add_arg(async_condition_.get());
-  }
-
-  Operator::initialize();
 }
 
 void AsyncPingRxOp::start() {
@@ -84,7 +62,7 @@ void AsyncPingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputConte
   int value = maybe_value.value();
   HOLOSCAN_LOG_INFO("Rx message value: {}", value);
 
-  async_condition_->event_state(AsynchronousEventState::EVENT_WAITING);
+  async_condition()->event_state(AsynchronousEventState::EVENT_WAITING);
 }
 
 void AsyncPingRxOp::stop() {

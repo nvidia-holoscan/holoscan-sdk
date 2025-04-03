@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -300,6 +300,9 @@ void tick() {
         break;
       case RenderMode::POINTS:
         ImGui::SliderFloat("Point size", &point_size, 1.F, 20.F);
+        break;
+      case RenderMode::TRIANGLES:
+        // No specific UI controls needed for triangles mode
         break;
     }
 

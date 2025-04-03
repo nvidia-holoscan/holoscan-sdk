@@ -199,11 +199,13 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseNone) {
   testing::internal::CaptureStderr();
 
   auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
-  op->initialize();
+
+  // Expect an exception when initializing without properly set up fragment
+  EXPECT_THROW({ op->initialize(); }, std::runtime_error);
+
   std::string log_output = testing::internal::GetCapturedStderr();
-  // error will be logged due to initialize before Fragment was composed
-  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
+
+  // Check for expected log messages
   // no warnings if no window close argument is provided
   EXPECT_TRUE(log_output.find("window_close_condition") == std::string::npos)
       << "=== LOG ===\n"
@@ -222,11 +224,12 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseCurrentName) {
   testing::internal::CaptureStderr();
 
   auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
-  op->initialize();
+
+  // Expect an exception when initializing without properly set up fragment
+  EXPECT_THROW({ op->initialize(); }, std::runtime_error);
+
   std::string log_output = testing::internal::GetCapturedStderr();
-  // error will be logged due to initialize before Fragment was composed
-  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
+
   // no warnings about window close arguments if the new name is provided
   EXPECT_TRUE(log_output.find("window_close_condition") == std::string::npos)
       << "=== LOG ===\n"
@@ -245,12 +248,13 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseDeprecatedName) {
   testing::internal::CaptureStderr();
 
   auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
-  op->initialize();
+
+  // Expect an exception when initializing without properly set up fragment
+  EXPECT_THROW({ op->initialize(); }, std::runtime_error);
+
   std::string log_output = testing::internal::GetCapturedStderr();
-  // error will be logged due to initialize before Fragment was composed
-  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
-  // warnings about
+
+  // warnings about deprecated parameter name
   EXPECT_TRUE(log_output.find("\"window_close_scheduling_term\" was provided, but this parameter "
                               "name is deprecated") != std::string::npos)
       << "=== LOG ===\n"
@@ -267,12 +271,13 @@ TEST_F(OperatorClassesWithGXFContext, TestHolovizOpWindowCloseBothNames) {
   testing::internal::CaptureStderr();
 
   auto op = F.make_operator<ops::HolovizOp>(name, kwargs);
-  op->initialize();
+
+  // Expect an exception when initializing without properly set up fragment
+  EXPECT_THROW({ op->initialize(); }, std::runtime_error);
+
   std::string log_output = testing::internal::GetCapturedStderr();
-  // error will be logged due to initialize before Fragment was composed
-  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
-  // warnings about
+
+  // warnings about duplicate argument
   EXPECT_TRUE(
       log_output.find("discarding the duplicate \"window_close_scheduling_term\" argument") !=
       std::string::npos)

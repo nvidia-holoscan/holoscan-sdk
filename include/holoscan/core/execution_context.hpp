@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #ifndef HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 #define HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,7 @@
 #include "./expected.hpp"
 #include "./gxf/gxf_cuda.hpp"
 #include "./io_context.hpp"
+#include "./operator_status.hpp"
 
 namespace holoscan {
 
@@ -46,16 +48,16 @@ class ExecutionContext {
   /**
    * @brief Get the input context.
    *
-   * @return The pointer to the input context.
+   * @return The shared pointer to the input context.
    */
-  InputContext* input() const { return input_context_; }
+  std::shared_ptr<InputContext> input() const { return input_context_; }
 
   /**
    * @brief Get the output context.
    *
-   * @return The pointer to the output context.
+   * @return The shared pointer to the output context.
    */
-  OutputContext* output() const { return output_context_; }
+  std::shared_ptr<OutputContext> output() const { return output_context_; }
 
   /**
    * @brief Get the context.
@@ -75,9 +77,30 @@ class ExecutionContext {
   /// @brief determine the CUDA device corresponding to the given stream
   virtual expected<int, RuntimeError> device_from_stream(cudaStream_t stream) = 0;
 
+  /**
+   * @brief Find an operator by name.
+   *
+   * If the operator name is not provided, the current operator is returned.
+   *
+   * @param op_name The name of the operator.
+   * @return A shared pointer to the operator or nullptr if the operator is not found.
+   */
+  virtual std::shared_ptr<Operator> find_operator(const std::string& op_name = "") = 0;
+
+  /**
+   * @brief Get the status of the operator.
+   *
+   * If the operator name is not provided, the status of the current operator is returned.
+   *
+   * @param op_name The name of the operator.
+   * @return The status of the operator or an error if the operator is not found.
+   */
+  virtual expected<holoscan::OperatorStatus, RuntimeError> get_operator_status(
+      const std::string& op_name = "") = 0;
+
  protected:
-  InputContext* input_context_ = nullptr;    ///< The input context.
-  OutputContext* output_context_ = nullptr;  ///< The output context.
+  std::shared_ptr<InputContext> input_context_ = nullptr;    ///< The input context.
+  std::shared_ptr<OutputContext> output_context_ = nullptr;  ///< The output context.
   void* context_ = nullptr;                  ///< The context.
 };
 

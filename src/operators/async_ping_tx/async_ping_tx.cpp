@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,8 +34,8 @@ void AsyncPingTxOp::async_ping() {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_.get()));
 
-    if (async_condition_->event_state() == AsynchronousEventState::EVENT_WAITING) {
-      async_condition_->event_state(AsynchronousEventState::EVENT_DONE);
+    if (async_condition()->event_state() == AsynchronousEventState::EVENT_WAITING) {
+      async_condition()->event_state(AsynchronousEventState::EVENT_DONE);
     }
   }
 }
@@ -45,28 +45,6 @@ void AsyncPingTxOp::setup(OperatorSpec& spec) {
 
   spec.param(delay_, "delay", "Ping delay in ms", "Ping delay in ms", 10L);
   spec.param(count_, "count", "Ping count", "Ping count", 0UL);
-  spec.param(async_condition_,
-             "async_condition",
-             "asynchronous condition",
-             "AsynchronousCondition adding async support to the operator");
-}
-
-void AsyncPingTxOp::initialize() {
-  // Set up prerequisite parameters before calling Operator::initialize()
-  auto frag = fragment();
-
-  // Find if there is an argument for 'async_condition_'
-  auto has_async_condition = std::find_if(args().begin(), args().end(), [](const auto& arg) {
-    return (arg.name() == "async_condition");
-  });
-
-  // Create the BooleanCondition if there is no argument provided.
-  if (has_async_condition == args().end()) {
-    async_condition_ = frag->make_condition<holoscan::AsynchronousCondition>("async_condition");
-    add_arg(async_condition_.get());
-  }
-
-  Operator::initialize();
 }
 
 void AsyncPingTxOp::start() {
@@ -78,9 +56,9 @@ void AsyncPingTxOp::compute([[maybe_unused]] InputContext& op_input, OutputConte
   ++index_;
   if (index_ == count_) {
     // Reached max count of ticks
-    async_condition_->event_state(AsynchronousEventState::EVENT_NEVER);
+    async_condition()->event_state(AsynchronousEventState::EVENT_NEVER);
   } else {
-    async_condition_->event_state(AsynchronousEventState::EVENT_WAITING);
+    async_condition()->event_state(AsynchronousEventState::EVENT_WAITING);
   }
 
   int value = index_;

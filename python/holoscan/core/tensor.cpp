@@ -22,8 +22,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -39,12 +41,6 @@
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
-
-namespace {
-
-constexpr const char* dlpack_capsule_name{"dltensor"};
-constexpr const char* used_dlpack_capsule_name{"used_dltensor"};
-}  // namespace
 
 namespace holoscan {
 
@@ -96,13 +92,83 @@ void init_tensor(py::module_& m) {
       .def_property_readonly("device", &PyTensor::device, doc::Tensor::doc_device)
       .def("is_contiguous", &PyTensor::is_contiguous, doc::Tensor::doc_is_contiguous)
       // DLPack protocol
-      .def("__dlpack__", &PyTensor::dlpack, "stream"_a = py::none(), doc::Tensor::doc_dlpack)
+      .def(
+          "__dlpack__",
+          [](const py::object& obj,
+             py::object stream,
+             py::object max_version,
+             py::object dl_device,
+             py::object copy) {
+            // Convert Python objects to C++ types
+            std::optional<std::tuple<int, int>> cpp_max_version;
+            std::optional<std::tuple<DLDeviceType, int>> cpp_dl_device;
+            std::optional<bool> cpp_copy;
+
+            // Handle max_version
+            if (!max_version.is_none()) {
+              if (!py::isinstance<py::tuple>(max_version)) {
+                throw py::value_error("max_version must be a tuple of (major, minor)");
+              }
+              try {
+                py::tuple version = max_version.cast<py::tuple>();
+                if (version.size() == 2) {
+                  int major = version[0].cast<int>();
+                  int minor = version[1].cast<int>();
+                  cpp_max_version = std::make_tuple(major, minor);
+                } else {
+                  throw py::value_error("max_version must be a tuple of (major, minor)");
+                }
+              } catch (const py::cast_error& e) {
+                throw py::value_error("max_version must be a tuple of (major, minor)");
+              }
+            }
+
+            // Handle dl_device
+            if (!dl_device.is_none()) {
+              if (!py::isinstance<py::tuple>(dl_device)) {
+                throw py::value_error("dl_device must be a tuple of (DLDeviceType, device_id)");
+              }
+
+              try {
+                py::tuple device = dl_device.cast<py::tuple>();
+                if (device.size() == 2) {
+                  DLDeviceType device_type = device[0].cast<DLDeviceType>();
+                  int device_id = device[1].cast<int>();
+                  cpp_dl_device = std::make_tuple(device_type, device_id);
+                } else {
+                  throw py::value_error("dl_device must be a tuple of (DLDeviceType, device_id)");
+                }
+              } catch (const py::cast_error& e) {
+                throw py::value_error("dl_device must be a tuple of (DLDeviceType, device_id)");
+              }
+            }
+
+            // Handle copy
+            if (!copy.is_none()) {
+              try {
+                cpp_copy = copy.cast<bool>();
+              } catch (const py::cast_error& e) { throw py::value_error("copy must be a boolean"); }
+            }
+
+            // Call the C++ function with the converted parameters
+            return PyTensor::dlpack(obj, stream, cpp_max_version, cpp_dl_device, cpp_copy);
+          },
+          py::kw_only(),
+          "stream"_a = py::none(),
+          "max_version"_a = py::none(),
+          "dl_device"_a = py::none(),
+          "copy"_a = py::none(),
+          doc::Tensor::doc_dlpack)
       .def("__dlpack_device__", &PyTensor::dlpack_device, doc::Tensor::doc_dlpack_device);
 
   py::class_<PyTensor, Tensor, std::shared_ptr<PyTensor>>(m, "PyTensor", doc::Tensor::doc_Tensor)
       .def_static("as_tensor", &PyTensor::as_tensor, "obj"_a, doc::Tensor::doc_as_tensor)
-      .def_static(
-          "from_dlpack", &PyTensor::from_dlpack_pyobj, "obj"_a, doc::Tensor::doc_from_dlpack);
+      .def_static("from_dlpack",
+                  &PyTensor::from_dlpack_pyobj,
+                  "obj"_a,
+                  "device"_a = py::none(),
+                  "copy"_a = py::none(),
+                  doc::Tensor::doc_from_dlpack);
 
   py::enum_<DLDataTypeCode>(m, "DLDataTypeCode", py::module_local())
       .value("DLINT", kDLInt)
@@ -135,6 +201,17 @@ PyDLManagedMemoryBuffer::PyDLManagedMemoryBuffer(DLManagedTensor* self) : self_(
 
 PyDLManagedMemoryBuffer::~PyDLManagedMemoryBuffer() {
   // Add the DLManagedTensor pointer to the queue for asynchronous deletion.
+  // Without this, the deleter function will be called immediately, which can cause deadlock
+  // when the deleter function is called from another non-python thread with GXF runtime mutex
+  // acquired (issue 4293741).
+  LazyDLManagedTensorDeleter::add(self_);
+}
+
+PyDLManagedMemoryBufferVersioned::PyDLManagedMemoryBufferVersioned(DLManagedTensorVersioned* self)
+    : self_(self) {}
+
+PyDLManagedMemoryBufferVersioned::~PyDLManagedMemoryBufferVersioned() {
+  // Add the DLManagedTensorVersioned pointer to the queue for asynchronous deletion.
   // Without this, the deleter function will be called immediately, which can cause deadlock
   // when the deleter function is called from another non-python thread with GXF runtime mutex
   // acquired (issue 4293741).
@@ -216,6 +293,14 @@ void LazyDLManagedTensorDeleter::add(DLManagedTensor* dl_managed_tensor_ptr) {
   s_cv.notify_all();
 }
 
+void LazyDLManagedTensorDeleter::add(DLManagedTensorVersioned* dl_managed_tensor_ver_ptr) {
+  {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_dlmanaged_tensors_queue.push(dl_managed_tensor_ver_ptr);
+  }
+  s_cv.notify_all();
+}
+
 void LazyDLManagedTensorDeleter::run() {
   while (true) {
     std::unique_lock<std::mutex> lock(s_mutex);
@@ -232,20 +317,27 @@ void LazyDLManagedTensorDeleter::run() {
     if (s_cv_do_not_wait_thread) { continue; }
 
     // move queue onto the local stack before releasing the lock
-    std::queue<DLManagedTensor*> local_queue;
+    std::queue<TensorPtr> local_queue;
     local_queue.swap(s_dlmanaged_tensors_queue);
 
     lock.unlock();
     // Call the deleter function for each pointer in the queue
     while (!local_queue.empty()) {
-      auto* dl_managed_tensor_ptr = local_queue.front();
-      // Note: the deleter function can be nullptr (e.g. when the tensor is created from
-      // __cuda_array_interface__ protocol)
-      if (dl_managed_tensor_ptr != nullptr && dl_managed_tensor_ptr->deleter != nullptr) {
-        // Call the deleter function with GIL acquired
-        py::gil_scoped_acquire scope_guard;
-        dl_managed_tensor_ptr->deleter(dl_managed_tensor_ptr);
-      }
+      auto tensor_ptr = local_queue.front();
+
+      // Use a visitor to handle both types of pointers
+      std::visit(
+          [](auto* ptr) {
+            // Note: the deleter function can be nullptr (e.g. when the tensor is created from
+            // __cuda_array_interface__ protocol)
+            if (ptr != nullptr && ptr->deleter != nullptr) {
+              // Call the deleter function with GIL acquired
+              py::gil_scoped_acquire scope_guard;
+              ptr->deleter(ptr);
+            }
+          },
+          tensor_ptr);
+
       local_queue.pop();
     }
   }
@@ -324,6 +416,17 @@ PyTensor::PyTensor(DLManagedTensor* dl_managed_tensor_ptr) {
   dl_managed_tensor = *dl_managed_tensor_ptr;
 }
 
+PyTensor::PyTensor(DLManagedTensorVersioned* dl_managed_tensor_ver_ptr) {
+  dl_ctx_ = std::make_shared<DLManagedTensorContext>();
+  dl_ctx_->memory_ref =
+      std::make_shared<PyDLManagedMemoryBufferVersioned>(dl_managed_tensor_ver_ptr);
+  // DLManagedTensorContext uses unversioned tensor, so any version
+  // information and flags from DLPack >= 1.0 are discarded.
+  dl_ctx_->tensor.dl_tensor = dl_managed_tensor_ver_ptr->dl_tensor;
+  dl_ctx_->tensor.manager_ctx = dl_managed_tensor_ver_ptr->manager_ctx;
+  dl_ctx_->tensor.deleter = nullptr;
+}
+
 py::object PyTensor::as_tensor(const py::object& obj) {
   // This method could have been used as a constructor for the PyTensor class, but it was not
   // possible to get the py::object to be passed to the constructor. Instead, this method is used
@@ -342,6 +445,7 @@ py::object PyTensor::as_tensor(const py::object& obj) {
   if (py::hasattr(obj, "__cuda_array_interface__")) {
     tensor = PyTensor::from_cuda_array_interface(obj);
   } else if (py::hasattr(obj, "__dlpack__") && py::hasattr(obj, "__dlpack_device__")) {
+    // Note: not currently exposing device or copy kwargs to as_tensor
     tensor = PyTensor::from_dlpack(obj);
   } else if (py::hasattr(obj, "__array_interface__")) {
     tensor = PyTensor::from_array_interface(obj);
@@ -355,10 +459,10 @@ py::object PyTensor::as_tensor(const py::object& obj) {
   return py_tensor;
 }
 
-py::object PyTensor::from_dlpack_pyobj(const py::object& obj) {
+py::object PyTensor::from_dlpack_pyobj(const py::object& obj, py::object device, py::object copy) {
   std::shared_ptr<PyTensor> tensor;
   if (py::hasattr(obj, "__dlpack__") && py::hasattr(obj, "__dlpack_device__")) {
-    tensor = PyTensor::from_dlpack(obj);
+    tensor = PyTensor::from_dlpack(obj, device, copy);
   } else {
     throw std::runtime_error("Unsupported Python object type");
   }
@@ -504,12 +608,17 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
   return tensor;
 }
 
-std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
+std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj, py::object device,
+                                                py::object copy) {
   // Pybind11 doesn't have a way to get/set a pointer with a name so we have to use the C API
   // for efficiency.
   // auto dlpack_capsule = py::reinterpret_borrow<py::capsule>(obj.attr("__dlpack__")());
-  auto dlpack_device_func = obj.attr("__dlpack_device__");
 
+  if (!device.is_none()) {
+    // Might support the user picking a specific GPU in the future
+    throw pybind11::value_error("from_dlpack() does not support non-default device kwarg yet.");
+  }
+  auto dlpack_device_func = obj.attr("__dlpack_device__");
   // We don't handle backward compatibility with older versions of DLPack
   if (dlpack_device_func.is_none()) { throw std::runtime_error("DLPack device is not set"); }
 
@@ -518,7 +627,7 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
   DLDeviceType device_type = static_cast<DLDeviceType>(dlpack_device[0].cast<int>());
   auto device_id = dlpack_device[1].cast<int32_t>();
 
-  DLDevice device = {device_type, device_id};
+  DLDevice dl_device = {device_type, device_id};
 
   auto dlpack_func = obj.attr("__dlpack__");
   py::capsule dlpack_capsule;
@@ -541,12 +650,44 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
     case kDLCUDA:
     case kDLCUDAManaged: {
       py::int_ stream_ptr(1);  // legacy stream
-      dlpack_capsule = py::reinterpret_borrow<py::capsule>(dlpack_func("stream"_a = stream_ptr));
+      try {
+        // TODO: update to use user-provided copy kwarg
+        dlpack_capsule = py::reinterpret_borrow<py::capsule>(
+            dlpack_func("stream"_a = stream_ptr,
+                        "max_version"_a = py::make_tuple(HOLOSCAN_DLPACK_IMPL_VERSION_MAJOR,
+                                                         HOLOSCAN_DLPACK_IMPL_VERSION_MINOR),
+                        "copy"_a = copy.is_none() ? copy : py::bool_(copy.cast<bool>())));
+      } catch (const py::error_already_set& e) {
+        // retry without v1.0 kwargs like max_version and copy if TypeError was raised
+        if (e.matches(PyExc_TypeError)) {
+          PyErr_Clear();  // Clear any residual error state
+          if (!copy.is_none()) { throw pybind11::type_error("copy kwarg not supported"); }
+          dlpack_capsule =
+              py::reinterpret_borrow<py::capsule>(dlpack_func("stream"_a = stream_ptr));
+        } else {
+          throw;  // Re-throw other exceptions
+        }
+      }
       break;
     }
     case kDLCPU:
     case kDLCUDAHost: {
-      dlpack_capsule = py::reinterpret_borrow<py::capsule>(dlpack_func());
+      try {
+        // TODO: update to use user-provided copy kwarg
+        dlpack_capsule = py::reinterpret_borrow<py::capsule>(
+            dlpack_func("max_version"_a = py::make_tuple(HOLOSCAN_DLPACK_IMPL_VERSION_MAJOR,
+                                                         HOLOSCAN_DLPACK_IMPL_VERSION_MINOR),
+                        "copy"_a = copy.is_none() ? copy : py::bool_(copy.cast<bool>())));
+      } catch (const py::error_already_set& e) {
+        // retry without v1.0 kwargs like max_version and copy if TypeError was raised
+        if (e.matches(PyExc_TypeError)) {
+          PyErr_Clear();  // Clear any residual error state
+          if (!copy.is_none()) { throw pybind11::type_error("copy kwarg not supported"); }
+          dlpack_capsule = py::reinterpret_borrow<py::capsule>(dlpack_func());
+        } else {
+          throw;  // Re-throw other exceptions
+        }
+      }
       break;
     }
     default:
@@ -560,7 +701,13 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
 
   PyObject* dlpack_capsule_ptr = dlpack_obj.ptr();
 
-  if (PyCapsule_IsValid(dlpack_capsule_ptr, dlpack_capsule_name) == 0) {
+  // Check for both versioned and unversioned capsules
+  bool is_versioned = PyCapsule_IsValid(dlpack_capsule_ptr, dlpack_versioned_capsule_name) != 0;
+  const char* valid_name = is_versioned ? dlpack_versioned_capsule_name : dlpack_capsule_name;
+  const char* used_name =
+      is_versioned ? used_dlpack_versioned_capsule_name : used_dlpack_capsule_name;
+
+  if (!is_versioned && PyCapsule_IsValid(dlpack_capsule_ptr, valid_name) == 0) {
     const char* capsule_name = PyCapsule_GetName(dlpack_capsule_ptr);
     throw std::runtime_error(
         fmt::format("Received an invalid DLPack capsule ('{}'). You might have already consumed "
@@ -568,32 +715,40 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj) {
                     capsule_name));
   }
 
-  auto* dl_managed_tensor =
-      static_cast<DLManagedTensor*>(PyCapsule_GetPointer(dlpack_capsule_ptr, dlpack_capsule_name));
+  void* tensor_ptr = PyCapsule_GetPointer(dlpack_capsule_ptr, valid_name);
+  std::shared_ptr<PyTensor> tensor;
 
-  // Set device
-  dl_managed_tensor->dl_tensor.device = device;
+  if (is_versioned) {
+    auto* dl_managed_tensor_ver = static_cast<DLManagedTensorVersioned*>(tensor_ptr);
+    // Check version compatibility
+    if (dl_managed_tensor_ver->version.major > DLPACK_MAJOR_VERSION) {
+      throw std::runtime_error("DLPack version not supported");
+    }
+    // Set device
+    dl_managed_tensor_ver->dl_tensor.device = dl_device;
+    tensor = std::make_shared<PyTensor>(dl_managed_tensor_ver);
+  } else {
+    auto* dl_managed_tensor = static_cast<DLManagedTensor*>(tensor_ptr);
+    dl_managed_tensor->dl_tensor.device = dl_device;
+    tensor = std::make_shared<PyTensor>(dl_managed_tensor);
+  }
 
-  // Create PyTensor
-  std::shared_ptr<PyTensor> tensor = std::make_shared<PyTensor>(dl_managed_tensor);
-
-  // Set the capsule name to 'used_dltensor' so that it will not be consumed again.
-  PyCapsule_SetName(dlpack_capsule_ptr, used_dlpack_capsule_name);
-
-  // Steal the ownership of the capsule so that it will not be destroyed when the capsule object
-  // goes out of scope.
+  // Mark capsule as used
+  PyCapsule_SetName(dlpack_capsule_ptr, used_name);
   PyCapsule_SetDestructor(dlpack_capsule_ptr, nullptr);
 
   return tensor;
 }
 
-py::capsule PyTensor::dlpack(const py::object& obj, py::object stream) {
+py::capsule PyTensor::dlpack(const py::object& obj, py::object stream,
+                             std::optional<std::tuple<int, int>> max_version,
+                             std::optional<std::tuple<DLDeviceType, int>> dl_device,
+                             std::optional<bool> copy) {
   auto tensor = py::cast<std::shared_ptr<Tensor>>(obj);
   if (!tensor) { throw std::runtime_error("Failed to cast to Tensor"); }
-  // Do not copy 'obj' or a shared pointer here in the lambda expression's initializer, otherwise
-  // the refcount of it will be increased by 1 and prevent the object from being destructed. Use a
-  // raw pointer here instead.
-  return py_dlpack(tensor.get(), std::move(stream));
+
+  // Call the new py_dlpack function with separate parameters
+  return py_dlpack(tensor.get(), std::move(stream), max_version, dl_device, copy);
 }
 
 py::tuple PyTensor::dlpack_device(const py::object& obj) {

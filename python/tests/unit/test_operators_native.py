@@ -23,6 +23,7 @@ from holoscan.conditions import CountCondition
 from holoscan.core import (
     Application,
     Arg,
+    DLDeviceType,
     MetadataDictionary,
     MetadataPolicy,
     Operator,
@@ -244,14 +245,69 @@ class TestOperator:
 
 
 class TestTensor:
-    def _check_dlpack_attributes(self, t):
+    def _check_dlpack_attributes(self, t, expected_device_type=None):
         assert hasattr(t, "__dlpack__")
-        assert type(t.__dlpack__()).__name__ == "PyCapsule"
+        dlpack_capsule = t.__dlpack__()
+        assert type(dlpack_capsule).__name__ == "PyCapsule"
+        assert "dltensor" in str(dlpack_capsule)
+        assert "dltensor_versioned" not in str(dlpack_capsule)
 
         assert hasattr(t, "__dlpack_device__")
         dev = t.__dlpack_device__()
         assert isinstance(dev, tuple)
         assert len(dev) == 2
+        if expected_device_type:
+            assert dev[0] == expected_device_type
+
+    def _check_dlpack_versioned_attributes(self, t, max_version=(1, 0), expected_device_type=None):
+        assert hasattr(t, "__dlpack__")
+        dlpack_capsule = t.__dlpack__(max_version=max_version, copy=False)
+        assert type(dlpack_capsule).__name__ == "PyCapsule"
+        assert "dltensor_versioned" in str(dlpack_capsule)
+
+        assert hasattr(t, "__dlpack_device__")
+        dev = t.__dlpack_device__()
+        assert isinstance(dev, tuple)
+        assert len(dev) == 2
+        if expected_device_type:
+            assert dev[0] == expected_device_type
+
+        # unsupported copy raises BufferError
+        with pytest.raises(BufferError):
+            # copy=True case is not currently implemented
+            t.__dlpack__(max_version=max_version, copy=True)
+
+        # unsupported dl_device conversion raises BufferError
+        with pytest.raises(BufferError):
+            t.__dlpack__(max_version=max_version, dl_device=(DLDeviceType.DLCUDAMANAGED, 0))
+
+        # invalid argument type for dl_device raises ValueError
+        with pytest.raises(
+            ValueError, match=r"dl_device must be a tuple of \(DLDeviceType, device_id\)"
+        ):
+            # dl_device must be a tuple[DLDeviceType, int] not tuple[int, int]
+            t.__dlpack__(max_version=max_version, dl_device=(4, 0))
+
+        with pytest.raises(
+            ValueError, match=r"dl_device must be a tuple of \(DLDeviceType, device_id\)"
+        ):
+            # dl_device must be a tuple[DLDeviceType, int]
+            t.__dlpack__(max_version=max_version, dl_device=DLDeviceType.DLCUDA)
+
+        # invalid argument type for copy raises ValueError
+        with pytest.raises(ValueError, match="copy must be a boolean"):
+            # copy must be boolean
+            t.__dlpack__(max_version=max_version, copy="false")
+
+        # invalid argument type for max_version raises ValueError
+        with pytest.raises(ValueError, match=r"max_version must be a tuple of \(major, minor\)"):
+            # max_version must be a tuple[int, int]
+            t.__dlpack__(max_version=1.1)
+
+        # invalid argument type for max_version raises ValueError
+        with pytest.raises(ValueError, match=r"max_version must be a tuple of \(major, minor\)"):
+            # max_version must be a 2-tuple
+            t.__dlpack__(max_version=(1, 0, 2))
 
     def _check_array_interface_attribute(self, t, arr, cuda=False):
         if cuda:
@@ -309,7 +365,8 @@ class TestTensor:
         t = Tensor.as_tensor(a)
         assert isinstance(t, Tensor)
 
-        self._check_dlpack_attributes(t)
+        self._check_dlpack_attributes(t, expected_device_type=DLDeviceType.DLCPU)
+        self._check_dlpack_versioned_attributes(t, expected_device_type=DLDeviceType.DLCPU)
         self._check_array_interface_attribute(t, a, cuda=False)
         self._check_tensor_property_values(t, a)
 
@@ -323,7 +380,8 @@ class TestTensor:
         t = Tensor.as_tensor(a)
         assert isinstance(t, Tensor)
 
-        self._check_dlpack_attributes(t)
+        self._check_dlpack_attributes(t, expected_device_type=DLDeviceType.DLCUDA)
+        self._check_dlpack_versioned_attributes(t, expected_device_type=DLDeviceType.DLCUDA)
         self._check_array_interface_attribute(t, a, cuda=True)
         self._check_tensor_property_values(t, a)
 

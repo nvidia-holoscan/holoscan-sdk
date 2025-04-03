@@ -402,10 +402,11 @@ A relatively simple example of this is the {cpp:class}`~holoscan::ops::Inference
 
 A more complicated case is the use of a {cpp:class}`~holoscan::ops::HolovizOp::InputSpec` type in the `HolovizOp` bindings. This case involves creating Python bindings for classes {cpp:class}`~holoscan::ops::HolovizOp::InputSpec` and {cpp:class}`~holoscan::ops::HolovizOp::InputSpec::View` as well as a couple of enum types. To avoid the user having to build a `list[holoscan.operators.HolovizOp.InputSpec]` directly to pass as the `tensors` argument, an [additional Python wrapper class](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/python/holoscan/operators/holoviz/__init__.py#L100-L182) was defined in the `__init__.py` to allow passing a simple Python dict for the `tensors` argument and any corresponding InputSpec classes are automatically created in its constructor before calling the underlying Python bindings class.
 
+(customizing-python-emit-receive-of-cpp-types)=
 
 ### Customizing the C++ types a Python operator can emit or receive
 
-In some instances, users may wish to be able to have a Python operator receive and/or emit a custom C++ type. As a first example, suppose we are wrapping an operator that emits a custom C++ type. We need any downstream native Python operators to be able to receive that type. By default the SDK is able to handle the needed C++ types for built in operators like `std::vector<holoscan::ops::HolovizOp::InputSpec>`. The SDK provides an `EmitterReceiverRegistry` class that 3rd party projects can use to register `receiver` and `emitter` methods for any custom C++ type that needs to be handled. To handle a new type, users should implement an `emitter_receiver<T>` struct for the desired type as in the example below. We will first cover the general steps necessary to register such a type and then cover where some steps may be omitted in certain simple cases.
+In some instances, users may wish to be able to have a Python operator receive and/or emit other custom C++ types. As a first example, suppose we are wrapping an operator that emits a custom C++ type. We need any downstream native Python operators to be able to receive that type. By default the SDK is able to handle the needed C++ types for built in operators like `std::vector<holoscan::ops::HolovizOp::InputSpec>`. The SDK provides an `EmitterReceiverRegistry` class that third-party projects can use to register `receiver` and `emitter` methods for any custom C++ type that needs to be handled. To handle a new type, users should implement an `emitter_receiver<T>` struct for the desired type as in the example below. We will first cover the general steps necessary to register such a type and then cover where some steps may be omitted in certain simple cases.
 
 #### Step 1: define emitter_receiver<T>::emit and emitter_receiver<T>::receive methods
 
@@ -532,7 +533,7 @@ The list of types that are registered with the SDK's `EmitterReceiverRegistry` a
 
 C++ Type                                               | name in the EmitterReceiverRegistry
 -------------------------------------------------------|-------------------------------------------
-holoscan::Tensor                                       | "holoscan::Tensor"
+holoscan::TensorMap (with single tensor)               | "holoscan::Tensor"
 std::shared_ptr&lt;holoscan::GILGuardedPyObject&gt;    | "PyObject"
 std::string                                            | "std::string"
 pybind11::dict                                         | "pybind11::dict"
@@ -550,7 +551,11 @@ There is no requirement that the registered name match any particular convention
 the C++ type as the name to avoid ambiguity, but that is not required.
 :::
 
-The sections above explain how a `register_types` function can be added to bindings to expand this list. It is also possible to get a list of all currently registered types, including those that have been registered by any additional imported 3rd party modules. This can be done via
+The sections above explain how a `register_types` function can be added to bindings to expand this list. It is also possible to get a list of all currently registered types, including those that have been registered by any additional imported third-party modules. This can be done via.
+
+:::{note}
+For more details on emit/receive behavior for tensor-like types see {ref}`this dedicated section <cpp-python-tensor-interop>`.
+:::
 
 ```py
 from holoscan.core import io_type_registry

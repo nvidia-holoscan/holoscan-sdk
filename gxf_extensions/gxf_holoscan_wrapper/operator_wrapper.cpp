@@ -112,9 +112,9 @@ gxf_result_t OperatorWrapper::start() {
   HOLOSCAN_LOG_TRACE("GXFWrapper: exec_context_->cuda_object_handler() for op '{}' is {}null",
                      op_->name(),
                      exec_context_->cuda_object_handler() == nullptr ? "" : "not ");
-  op_input_ = exec_context_->input();
+  op_input_ = exec_context_->input().get();
   op_input_->cuda_object_handler(exec_context_->cuda_object_handler());
-  op_output_ = exec_context_->output();
+  op_output_ = exec_context_->output().get();
   op_output_->cuda_object_handler(exec_context_->cuda_object_handler());
   return GXF_SUCCESS;
 }

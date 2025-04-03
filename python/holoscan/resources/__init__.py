@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
     holoscan.resources.GXFComponentResource
     holoscan.resources.ManualClock
     holoscan.resources.MemoryStorageType
+    holoscan.resources.OrConditionCombiner
     holoscan.resources.RealtimeClock
     holoscan.resources.Receiver
     holoscan.resources.RMMAllocator
@@ -56,6 +57,7 @@ from ._resources import (
     DoubleBufferTransmitter,
     ManualClock,
     MemoryStorageType,
+    OrConditionCombiner,
     RealtimeClock,
     Receiver,
     RMMAllocator,
@@ -88,6 +90,7 @@ __all__ = [
     "GXFComponentResource",
     "ManualClock",
     "MemoryStorageType",
+    "OrConditionCombiner",
     "RealtimeClock",
     "Receiver",
     "RMMAllocator",

@@ -45,13 +45,17 @@ add_dependencies(custom_cuda_kernel_multi_sample custom_cuda_kernel_multi_sample
 if(BUILD_TESTING)
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_multi_sample.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING "${CONFIG_STRING}")
+  string(REPLACE
+    "cuda_kernel-2: \"../examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu\""
+    "cuda_kernel-2: ${CMAKE_CURRENT_SOURCE_DIR}/edge_detection.cu"
+    CONFIG_STRING "${CONFIG_STRING}")
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_custom_cuda_kernel_multi_sample_config.yaml)
   file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
 
   # Add the test and make sure it runs
   add_test(NAME EXAMPLE_CPP_CUSTOM_CUDA_MULTI_SAMPLE_TEST
     COMMAND custom_cuda_kernel_multi_sample ${CONFIG_FILE}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_CUSTOM_CUDA_MULTI_SAMPLE_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."

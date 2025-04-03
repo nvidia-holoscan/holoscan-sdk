@@ -783,6 +783,23 @@ class Fragment {
    */
   virtual void metadata_policy(MetadataPolicy policy);
 
+  /**
+   * @brief Stop the execution of all operators in the fragment.
+   *
+   * This method is used to stop the execution of all operators in the fragment by setting the
+   * internal async condition of each operator to EVENT_NEVER state, which sets the scheduling
+   * condition to NEVER.
+   * Once stopped, the operators will not be scheduled for execution
+   * (the `compute()` method will not be called), which may lead to application termination
+   * depending on the application's design.
+   *
+   * Note that executing this method does not trigger the operators' `stop()` method.
+   * The `stop()` method is called only when the scheduler deactivates all operators together.
+   *
+   * @param op_name The name of the operator to stop. If empty, all operators will be stopped.
+   */
+  virtual void stop_execution(const std::string& op_name = "");
+
  protected:
   friend class Application;  // to access 'scheduler_' in Application
   friend class AppDriver;

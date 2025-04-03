@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,9 @@
  */
 
 #include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
+
+#include <algorithm>
+#include <memory>
 
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -34,7 +37,7 @@ nvidia::gxf::UcxComponentSerializer* UcxComponentSerializer::get() const {
 
 void UcxComponentSerializer::initialize() {
   HOLOSCAN_LOG_DEBUG("UcxComponentSerializer::initialize");
-  // Set up prerequisite parameters before calling GXFOperator::initialize()
+  // Set up prerequisite parameters before calling GXFResource::initialize()
   auto frag = fragment();
 
   // Find if there is an argument for 'allocator'
@@ -46,6 +49,18 @@ void UcxComponentSerializer::initialize() {
     add_arg(Arg("allocator") = allocator);
     allocator->gxf_cname(allocator->name().c_str());
     if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
+  } else {
+    // must set the gxf_eid for the provided allocator or GXF parameter registration will fail
+    auto allocator_arg = *has_allocator;
+    auto allocator = std::any_cast<std::shared_ptr<Resource>>(allocator_arg.value());
+    auto gxf_allocator_resource = std::dynamic_pointer_cast<gxf::GXFResource>(allocator);
+    if (gxf_eid_ != 0 && gxf_allocator_resource->gxf_eid() == 0) {
+      HOLOSCAN_LOG_TRACE("allocator '{}': setting gxf_eid({}) from UcxComponentSerializer '{}'",
+                         allocator->name(),
+                         gxf_eid_,
+                         name());
+      gxf_allocator_resource->gxf_eid(gxf_eid_);
+    }
   }
   GXFResource::initialize();
 }

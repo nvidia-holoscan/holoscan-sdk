@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/conditions/gxf/boolean.hpp"
@@ -885,6 +886,155 @@ class HolovizOp : public Operator {
   using LayerCallbackFunction =
       std::function<void(const std::vector<holoscan::gxf::Entity>& inputs)>;
 
+  /// table to convert input type to string
+  static const std::array<std::pair<InputType, std::string>, 17> kInputTypeToStr;
+
+  /**
+   * Convert a string to a input type enum
+   *
+   * @param string input type string
+   * @return input type enum
+   */
+  static nvidia::gxf::Expected<holoscan::ops::HolovizOp::InputType> inputTypeFromString(
+      const std::string& string);
+
+  /**
+   * Convert a input type enum to a string
+   *
+   * @param input_type input type enum
+   * @return input type string
+   */
+  static std::string inputTypeToString(holoscan::ops::HolovizOp::InputType input_type);
+
+  /// table to convert image format to string
+  static const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 41>
+      kImageFormatToStr;
+
+  /**
+   * Convert a string to a image format enum
+   *
+   * @param string image format string
+   * @return image format enum
+   */
+  static nvidia::gxf::Expected<holoscan::ops::HolovizOp::ImageFormat> imageFormatFromString(
+      const std::string& string);
+
+  /**
+   * Convert a image format enum to a string
+   *
+   * @param input_type image format enum
+   * @return image format string
+   */
+  static std::string imageFormatToString(holoscan::ops::HolovizOp::ImageFormat image_format);
+
+  /// table to convert depth map render mode to string
+  static const std::array<std::pair<holoscan::ops::HolovizOp::DepthMapRenderMode, std::string>, 3>
+      kDepthMapRenderModeToStr;
+
+  /**
+   * Convert a string to a depth map render mode enum
+   *
+   * @param string depth map render mode string
+   * @return depth map render mode enum
+   */
+  static nvidia::gxf::Expected<holoscan::ops::HolovizOp::DepthMapRenderMode>
+  depthMapRenderModeFromString(const std::string& string);
+
+  /**
+   * Convert a depth map render mode enum to a string
+   *
+   * @param depth_map_render_mode depth map render mode enum
+   * @return depth map render mode string
+   */
+  static std::string depthMapRenderModeToString(
+      holoscan::ops::HolovizOp::DepthMapRenderMode depth_map_render_mode);
+
+  /// table to convert yuv model conversion enum to string
+  static const std::array<std::pair<holoscan::ops::HolovizOp::YuvModelConversion, std::string>, 3>
+      kYuvModelConversionToStr;
+
+  /**
+   * Convert a string to a yuv model conversion enum
+   *
+   * @param string yuv model conversion string
+   * @return yuv model conversion enum
+   */
+  static nvidia::gxf::Expected<holoscan::ops::HolovizOp::YuvModelConversion>
+  yuvModelConversionFromString(const std::string& string);
+
+  /**
+   * Convert a yuv model conversion enum to a string
+   *
+   * @param yuv_model_conversion yuv model conversion enum
+   * @return depth map render mode string
+   */
+  static std::string yuvModelConversionToString(
+      holoscan::ops::HolovizOp::YuvModelConversion yuv_model_conversion);
+
+  /// table to convert yuv range enum to string
+  static const std::array<std::pair<holoscan::ops::HolovizOp::YuvRange, std::string>, 2>
+      kYuvRangeToStr;
+
+  /**
+   * Convert a string to a yuv range enum
+   *
+   * @param string yuv range string
+   * @return yuv range enum
+   */
+  static nvidia::gxf::Expected<holoscan::ops::HolovizOp::YuvRange> yuvRangeFromString(
+      const std::string& string);
+
+  /**
+   * Convert a yuv range enum to a string
+   *
+   * @param yuv_range yuv range enum
+   * @return yuv range string
+   */
+  static std::string yuvRangeToString(holoscan::ops::HolovizOp::YuvRange yuv_range);
+
+  /// table to convert chroma location enum to string
+  static const std::array<std::pair<holoscan::ops::HolovizOp::ChromaLocation, std::string>, 2>
+      kChromaLoactionToStr;
+
+  /**
+   * Convert a string to a chroma location enum
+   *
+   * @param string chroma location string
+   * @return chroma location enum
+   */
+  static nvidia::gxf::Expected<holoscan::ops::HolovizOp::ChromaLocation> chromaLocationFromString(
+      const std::string& string);
+
+  /**
+   * Convert a chroma location enum to a string
+   *
+   * @param chroma_location chroma location enum
+   * @return chroma location string
+   */
+  static std::string chromaLocationToString(
+      holoscan::ops::HolovizOp::ChromaLocation chroma_location);
+
+  /// table to convert color space enum to string
+  static const std::array<std::pair<holoscan::ops::HolovizOp::ColorSpace, std::string>, 7>
+      kColorSpaceToStr;
+
+  /**
+   * Convert a string to a color space enum
+   *
+   * @param string color space string
+   * @return color space enum
+   */
+  static nvidia::gxf::Expected<holoscan::ops::HolovizOp::ColorSpace> colorSpaceFromString(
+      const std::string& string);
+
+  /**
+   * Convert a color space enum to a string
+   *
+   * @param color_space color space enum
+   * @return color space string
+   */
+  static std::string colorSpaceToString(holoscan::ops::HolovizOp::ColorSpace color_space);
+
  private:
   bool enable_conditional_port(const std::string& name,
                                bool set_none_condition_on_disabled = false);
@@ -927,6 +1077,7 @@ class HolovizOp : public Operator {
   Parameter<std::array<float, 3>> camera_eye_;
   Parameter<std::array<float, 3>> camera_look_at_;
   Parameter<std::array<float, 3>> camera_up_;
+  std::vector<ImageFormat> supported_image_formats_;
 
   holoscan::Parameter<KeyCallbackFunction> key_callback_;
   holoscan::Parameter<UnicodeCharCallbackFunction> unicode_char_callback_;
@@ -960,5 +1111,270 @@ class HolovizOp : public Operator {
   std::array<float, 3> camera_up_cur_;       //< current camera up vector
 };
 }  // namespace holoscan::ops
+
+/**
+ * Custom YAML parser for InputSpec class
+ */
+template <>
+struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
+  static Node encode(const holoscan::ops::HolovizOp::InputSpec& input_spec) {
+    Node node;
+    node["type"] = holoscan::ops::HolovizOp::inputTypeToString(input_spec.type_);
+    node["name"] = input_spec.tensor_name_;
+    node["opacity"] = std::to_string(input_spec.opacity_);
+    node["priority"] = std::to_string(input_spec.priority_);
+    switch (input_spec.type_) {
+      case holoscan::ops::HolovizOp::InputType::COLOR:
+      case holoscan::ops::HolovizOp::InputType::COLOR_LUT:
+      case holoscan::ops::HolovizOp::InputType::DEPTH_MAP_COLOR:
+        node["image_format"] =
+            holoscan::ops::HolovizOp::imageFormatToString(input_spec.image_format_);
+        switch (input_spec.image_format_) {
+          case holoscan::ops::HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::U8Y8V8Y8_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
+          case holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+            node["yuv_model_conversion"] = holoscan::ops::HolovizOp::yuvModelConversionToString(
+                input_spec.yuv_model_conversion_);
+            node["yuv_range"] = holoscan::ops::HolovizOp::yuvRangeToString(input_spec.yuv_range_);
+            node["x_chroma_location"] =
+                holoscan::ops::HolovizOp::chromaLocationToString(input_spec.x_chroma_location_);
+            node["y_chroma_location"] =
+                holoscan::ops::HolovizOp::chromaLocationToString(input_spec.y_chroma_location_);
+            break;
+          default:
+            break;
+        }
+        break;
+      case holoscan::ops::HolovizOp::InputType::POINTS:
+      case holoscan::ops::HolovizOp::InputType::LINES:
+      case holoscan::ops::HolovizOp::InputType::LINE_STRIP:
+      case holoscan::ops::HolovizOp::InputType::TRIANGLES:
+      case holoscan::ops::HolovizOp::InputType::CROSSES:
+      case holoscan::ops::HolovizOp::InputType::RECTANGLES:
+      case holoscan::ops::HolovizOp::InputType::OVALS:
+      case holoscan::ops::HolovizOp::InputType::POINTS_3D:
+      case holoscan::ops::HolovizOp::InputType::LINES_3D:
+      case holoscan::ops::HolovizOp::InputType::LINE_STRIP_3D:
+      case holoscan::ops::HolovizOp::InputType::TRIANGLES_3D:
+        node["color"] = input_spec.color_;
+        node["line_width"] = std::to_string(input_spec.line_width_);
+        node["point_size"] = std::to_string(input_spec.point_size_);
+        break;
+      case holoscan::ops::HolovizOp::InputType::TEXT:
+        node["color"] = input_spec.color_;
+        node["text"] = input_spec.text_;
+        break;
+      case holoscan::ops::HolovizOp::InputType::DEPTH_MAP:
+        node["depth_map_render_mode"] =
+            holoscan::ops::HolovizOp::depthMapRenderModeToString(input_spec.depth_map_render_mode_);
+        break;
+      default:
+        break;
+    }
+    for (auto&& view : input_spec.views_) { node["views"].push_back(view); }
+    return node;
+  }
+
+  static bool decode(const Node& node, holoscan::ops::HolovizOp::InputSpec& input_spec) {
+    if (!node.IsMap()) {
+      HOLOSCAN_LOG_ERROR("InputSpec: expected a map");
+      return false;
+    }
+
+    // YAML is using exceptions, catch them
+    try {
+      const auto maybe_input_type =
+          holoscan::ops::HolovizOp::inputTypeFromString(node["type"].as<std::string>());
+      if (!maybe_input_type) { return false; }
+
+      input_spec.tensor_name_ = node["name"].as<std::string>();
+      input_spec.type_ = maybe_input_type.value();
+      input_spec.opacity_ = node["opacity"].as<float>(input_spec.opacity_);
+      input_spec.priority_ = node["priority"].as<int32_t>(input_spec.priority_);
+      switch (input_spec.type_) {
+        case holoscan::ops::HolovizOp::InputType::COLOR:
+        case holoscan::ops::HolovizOp::InputType::COLOR_LUT:
+        case holoscan::ops::HolovizOp::InputType::DEPTH_MAP_COLOR:
+          if (node["image_format"]) {
+            const auto maybe_image_format = holoscan::ops::HolovizOp::imageFormatFromString(
+                node["image_format"].as<std::string>());
+            if (maybe_image_format) { input_spec.image_format_ = maybe_image_format.value(); }
+          }
+          if (node["yuv_model_conversion"]) {
+            const auto maybe_yuv_model_conversion =
+                holoscan::ops::HolovizOp::yuvModelConversionFromString(
+                    node["yuv_model_conversion"].as<std::string>());
+            if (maybe_yuv_model_conversion) {
+              input_spec.yuv_model_conversion_ = maybe_yuv_model_conversion.value();
+            }
+          }
+          if (node["yuv_range"]) {
+            const auto maybe_yuv_range =
+                holoscan::ops::HolovizOp::yuvRangeFromString(node["yuv_range"].as<std::string>());
+            if (maybe_yuv_range) { input_spec.yuv_range_ = maybe_yuv_range.value(); }
+          }
+          if (node["x_chroma_location"]) {
+            const auto maybe_x_chroma_location = holoscan::ops::HolovizOp::chromaLocationFromString(
+                node["x_chroma_location"].as<std::string>());
+            if (maybe_x_chroma_location) {
+              input_spec.x_chroma_location_ = maybe_x_chroma_location.value();
+            }
+          }
+          if (node["chroma_y_location"]) {
+            const auto maybe_y_chroma_location = holoscan::ops::HolovizOp::chromaLocationFromString(
+                node["y_chroma_location"].as<std::string>());
+            if (maybe_y_chroma_location) {
+              input_spec.y_chroma_location_ = maybe_y_chroma_location.value();
+            }
+          }
+          break;
+        case holoscan::ops::HolovizOp::InputType::LINES:
+        case holoscan::ops::HolovizOp::InputType::LINE_STRIP:
+        case holoscan::ops::HolovizOp::InputType::TRIANGLES:
+        case holoscan::ops::HolovizOp::InputType::CROSSES:
+        case holoscan::ops::HolovizOp::InputType::RECTANGLES:
+        case holoscan::ops::HolovizOp::InputType::OVALS:
+        case holoscan::ops::HolovizOp::InputType::POINTS_3D:
+        case holoscan::ops::HolovizOp::InputType::LINES_3D:
+        case holoscan::ops::HolovizOp::InputType::LINE_STRIP_3D:
+        case holoscan::ops::HolovizOp::InputType::TRIANGLES_3D:
+          input_spec.color_ = node["color"].as<std::vector<float>>(input_spec.color_);
+          input_spec.line_width_ = node["line_width"].as<float>(input_spec.line_width_);
+          input_spec.point_size_ = node["point_size"].as<float>(input_spec.point_size_);
+          break;
+        case holoscan::ops::HolovizOp::InputType::TEXT:
+          input_spec.color_ = node["color"].as<std::vector<float>>(input_spec.color_);
+          input_spec.text_ = node["text"].as<std::vector<std::string>>(input_spec.text_);
+          break;
+        case holoscan::ops::HolovizOp::InputType::DEPTH_MAP:
+          if (node["depth_map_render_mode"]) {
+            const auto maybe_depth_map_render_mode =
+                holoscan::ops::HolovizOp::depthMapRenderModeFromString(
+                    node["depth_map_render_mode"].as<std::string>());
+            if (maybe_depth_map_render_mode) {
+              input_spec.depth_map_render_mode_ = maybe_depth_map_render_mode.value();
+            }
+          }
+          break;
+        default:
+          break;
+      }
+
+      if (node["views"]) {
+        input_spec.views_ =
+            node["views"].as<std::vector<holoscan::ops::HolovizOp::InputSpec::View>>();
+      }
+
+      return true;
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_ERROR(e.what());
+      return false;
+    }
+  }
+};
+
+/**
+ * Custom YAML parser for InputSpec::View class
+ */
+template <>
+struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
+  static Node encode(const holoscan::ops::HolovizOp::InputSpec::View& view) {
+    Node node;
+    node["offset_x"] = view.offset_x_;
+    node["offset_y"] = view.offset_y_;
+    node["width"] = view.width_;
+    node["height"] = view.height_;
+    if (view.matrix_.has_value()) { node["matrix"] = view.matrix_.value(); }
+    return node;
+  }
+
+  static bool decode(const Node& node, holoscan::ops::HolovizOp::InputSpec::View& view) {
+    if (!node.IsMap()) {
+      HOLOSCAN_LOG_ERROR("InputSpec: expected a map");
+      return false;
+    }
+
+    // YAML is using exceptions, catch them
+    try {
+      view.offset_x_ = node["offset_x"].as<float>(view.offset_x_);
+      view.offset_y_ = node["offset_y"].as<float>(view.offset_y_);
+      view.width_ = node["width"].as<float>(view.width_);
+      view.height_ = node["height"].as<float>(view.height_);
+      if (node["matrix"]) { view.matrix_ = node["matrix"].as<std::array<float, 16>>(); }
+
+      return true;
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_ERROR(e.what());
+      return false;
+    }
+  }
+};
+
+/**
+ * Custom YAML parser for ColorSpace enum
+ */
+template <>
+struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
+  static Node encode(const holoscan::ops::HolovizOp::ColorSpace& color_space) {
+    Node node;
+    node.push_back(holoscan::ops::HolovizOp::colorSpaceToString(color_space));
+    return node;
+  }
+
+  static bool decode(const Node& node, holoscan::ops::HolovizOp::ColorSpace& color_space) {
+    if (!node.IsScalar()) { return false; }
+
+    // YAML is using exceptions, catch them
+    try {
+      const auto maybe_color_space = holoscan::ops::HolovizOp::colorSpaceFromString(node.Scalar());
+      if (maybe_color_space) {
+        color_space = maybe_color_space.value();
+        return true;
+      }
+      return false;
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_ERROR(e.what());
+      return false;
+    }
+  }
+};
+
+/**
+ * @brief This macro defining a YAML converter which throws for unsupported types.
+ *
+ * Background: Holoscan supports setting parameters through YAML files. But for some parameters
+ * accepted by the receiver operators like callbacks it makes no sense to specify them in YAML
+ * files. Therefore use a converter which throws for these types.
+ *
+ * @tparam TYPE
+ */
+#define HOLOVIZ_YAML_CONVERTER(TYPE)                             \
+  template <>                                                    \
+  struct YAML::convert<TYPE> {                                   \
+    static Node encode(TYPE&) {                                  \
+      throw std::runtime_error(#TYPE " is unsupported in YAML"); \
+    }                                                            \
+                                                                 \
+    static bool decode(const Node&, TYPE&) {                     \
+      throw std::runtime_error(#TYPE " is unsupported in YAML"); \
+    }                                                            \
+  };
+
+HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::KeyCallbackFunction);
+HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::UnicodeCharCallbackFunction);
+HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::MouseButtonCallbackFunction);
+HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::ScrollCallbackFunction);
+// don't need CursorPosCallbackFunction since it has the same signature as ScrollCallbackFunction
+HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::FramebufferSizeCallbackFunction);
+// don't need WindowSizeCallbackFunction since it has the same signature as
+// FramebufferSizeCallbackFunction
+HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::LayerCallbackFunction);
 
 #endif /* HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP */

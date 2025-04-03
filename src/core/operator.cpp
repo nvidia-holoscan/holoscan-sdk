@@ -24,15 +24,19 @@
 
 #include "gxf/std/clock.hpp"
 #include "gxf/std/codelet.hpp"
+#include "holoscan/core/conditions/gxf/asynchronous.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/gxf/gxf_execution_context.hpp"
 #include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
 #include "holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/resources/gxf/condition_combiner.hpp"
+#include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
 
@@ -51,6 +55,9 @@ void Operator::initialize() {
       // a setting for this operator.
       is_metadata_enabled_ = fragment_ptr->is_metadata_enabled();
     }
+
+    // Now we can set the contexts for the operator
+    ensure_contexts();
   } else {
     HOLOSCAN_LOG_WARN("Operator::initialize() - Fragment is not set");
   }
@@ -234,6 +241,14 @@ gxf_uid_t Operator::initialize_graph_entity(void* context, const std::string& en
   return graph_entity_->eid();
 }
 
+void Operator::initialize_async_condition() {
+  if (!internal_async_condition_) {
+    internal_async_condition_ =
+        fragment()->make_condition<holoscan::AsynchronousCondition>("_internal_async_condition");
+    add_arg(internal_async_condition_);
+  }
+}
+
 gxf_uid_t Operator::add_codelet_to_graph_entity() {
   HOLOSCAN_LOG_TRACE("calling graph_entity()->addCodelet for {}", name());
   if (!graph_entity_) {
@@ -274,6 +289,46 @@ YAML::Node Operator::to_yaml_node() const {
 }
 
 void Operator::initialize_conditions() {
+  // Inspect resources for any ConditionCombiner and automatically add any conditions
+  // associated with those so they don't also have to also be passed individually to
+  // Fragment::make_operator when creating the operator.
+  for (const auto& [name, resource] : resources_) {
+    HOLOSCAN_LOG_TRACE("\top '{}': initializing resource: {}", name_, resource->name());
+    auto condition_combiner = std::dynamic_pointer_cast<ConditionCombiner>(resource);
+    if (condition_combiner) {
+      HOLOSCAN_LOG_DEBUG(
+          "Found ConditionCombiner resource '{}'. Adding the associated conditions to "
+          "operator '{}'",
+          name,
+          this->name());
+
+      // Extract the required "terms" argument to the combiner and add each as an argument to
+      // the operator.
+      auto terms_arg_it = std::find_if(resource->args().begin(),
+                                       resource->args().end(),
+                                       [](const auto& arg) { return (arg.name() == "terms"); });
+      if (terms_arg_it == resource->args().end()) {
+        HOLOSCAN_LOG_ERROR(
+            "ConditionCombiner '{}' did not have a 'terms' argument. There are no conditions to "
+            "add as arguments to operator '{}'.",
+            name,
+            this->name());
+      } else {
+        HOLOSCAN_LOG_DEBUG(
+            "Found ConditionCombiner resource '{}' with terms argument (for operator '{}')",
+            name,
+            this->name());
+        auto terms_arg = *terms_arg_it;
+        auto terms = std::any_cast<std::vector<std::shared_ptr<Condition>>>(terms_arg.value());
+        // In the context of OperatorSpec::or_combiner_port_names, these port conditions will have
+        // already been initialized. It should not hurt to call add_arg again on them again. It
+        // will just result in debug level messages about initialize having already been called
+        // for each.
+        for (const auto& term : terms) { add_arg(term); }
+      }
+    }
+  }
+
   for (const auto& [name, condition] : conditions_) {
     // Set the operator for the condition (needed for Condition methods converting a port name to a
     // Receiver or Transmitter object)
@@ -303,6 +358,10 @@ void Operator::initialize_conditions() {
       HOLOSCAN_LOG_TRACE("\tadded native condition with cid {} to entity with eid {}",
                          term_handle->cid(),
                          graph_entity_->eid());
+
+      // need to store the GXF cid for potential use by GXFParameterAdapter
+      condition->wrapper_cid(term_handle->cid());
+
       // initialize as a native (non-GXF) resource
       condition->initialize();
     }
@@ -657,6 +716,47 @@ std::vector<std::shared_ptr<Operator::FlowInfo>> Operator::find_all_flow_info(
 void Operator::set_dynamic_flows(
     const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func) {
   dynamic_flow_func_ = dynamic_flow_func;
+}
+
+std::shared_ptr<holoscan::AsynchronousCondition> Operator::async_condition() {
+  return internal_async_condition_;
+}
+
+void Operator::stop_execution() {
+  if (internal_async_condition_) {
+    internal_async_condition_->event_state(holoscan::AsynchronousEventState::EVENT_NEVER);
+  }
+}
+
+std::shared_ptr<holoscan::ExecutionContext> Operator::execution_context() const {
+  return execution_context_;
+}
+
+void Operator::ensure_contexts() {
+  if (!is_initialized_) {
+    auto message = fmt::format("Operator::ensure_contexts(): Operator '{}' is not initialized yet",
+                                name());
+    HOLOSCAN_LOG_ERROR(message);
+    throw std::runtime_error(message);
+  }
+
+  if (!execution_context_) {
+    auto gxf_context = fragment()->executor().context();
+    // Initialize the execution context
+    execution_context_ = std::make_shared<gxf::GXFExecutionContext>(gxf_context, this);
+    auto gxf_exec_context = static_cast<gxf::GXFExecutionContext*>(execution_context_.get());
+    auto input_context = static_cast<gxf::GXFInputContext*>(gxf_exec_context->input().get());
+    auto output_context = static_cast<gxf::GXFOutputContext*>(gxf_exec_context->output().get());
+
+    gxf_exec_context->init_cuda_object_handler(this);
+    HOLOSCAN_LOG_TRACE(
+        "Operator::ensure_contexts(): gxf_exec_context->cuda_object_handler() for op '{}' is "
+        "{}null",
+        name(),
+        gxf_exec_context->cuda_object_handler() == nullptr ? "" : "not ");
+    input_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
+    output_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
+  }
 }
 
 }  // namespace holoscan

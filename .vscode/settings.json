@@ -125,7 +125,9 @@
         "__functional_base_03": "cpp",
         "annotated_ptr": "cpp",
         "stream_ref": "cpp",
-        "expected": "cpp"
+        "expected": "cpp",
+        "simd": "cpp",
+        "stacktrace": "cpp"
     },
     "git.alwaysSignOff": true,
     "git.untrackedChanges": "separate",
@@ -202,7 +204,7 @@
         "./public/python",
         "./python",
     ],
-    "cpplint.cpplintPath": "/home/holoscan-sdk/.local/bin/cpplint",
+    "cpplint.cpplintPath": "/home/holoscan/.local/bin/cpplint",
     "[python]": {
         // ruff linting and formatting configuration
         // see: https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff

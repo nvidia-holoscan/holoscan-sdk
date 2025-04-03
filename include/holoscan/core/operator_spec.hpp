@@ -89,6 +89,23 @@ class OperatorSpec : public ComponentSpec {
   std::vector<MultiMessageConditionInfo>& multi_port_conditions() { return multi_port_conditions_; }
 
   /**
+   * @brief Assign the conditions on the specified input ports to be combined with an OR operation.
+   *
+   * This is intended to allow using OR instead of AND combination of single-port conditions
+   * like MessageAvailableCondition for the specified input ports.
+   *
+   * @param port_names The names of the input ports whose conditions will be OR combined.
+   */
+  void or_combine_port_conditions(const std::vector<std::string>& port_names) {
+    or_combiner_port_names_.push_back(port_names);
+  }
+
+  /// @brief vector of the names of ports for each OrConditionCombiner
+  std::vector<std::vector<std::string>>& or_combiner_port_names() {
+    return or_combiner_port_names_;
+  }
+
+  /**
    * @brief Define an input specification for this operator.
    *
    * Note: The 'size' parameter is used for initializing the queue size of the input port. The
@@ -189,16 +206,17 @@ class OperatorSpec : public ComponentSpec {
    */
   template <typename DataT>
   IOSpec& output(std::string name, IOSpec::IOSize size = IOSpec::kSizeOne,
-                std::optional<IOSpec::QueuePolicy> policy = std::nullopt) {
+                 std::optional<IOSpec::QueuePolicy> policy = std::nullopt) {
     if (size == IOSpec::kAnySize || size == IOSpec::kPrecedingCount) {
-      HOLOSCAN_LOG_WARN("Output port '{}' size cannot be 'any size' or 'preceding count'. Setting "
-                        "size to 1.",
-                        name);
+      HOLOSCAN_LOG_WARN(
+          "Output port '{}' size cannot be 'any size' or 'preceding count'. Setting "
+          "size to 1.",
+          name);
       size = IOSpec::kSizeOne;
     }
 
-    auto spec = std::make_shared<IOSpec>(
-        this, name, IOSpec::IOType::kOutput, &typeid(DataT), size, policy);
+    auto spec =
+        std::make_shared<IOSpec>(this, name, IOSpec::IOType::kOutput, &typeid(DataT), size, policy);
     auto [iter, is_exist] = outputs_.insert_or_assign(name, std::move(spec));
     if (!is_exist) { HOLOSCAN_LOG_ERROR("Output port '{}' already exists", name); }
     return *(iter->second.get());
@@ -374,6 +392,9 @@ class OperatorSpec : public ComponentSpec {
 
   // multi-message conditions span multiple IOSpec objects, so store them on OperatorSpec instead
   std::vector<MultiMessageConditionInfo> multi_port_conditions_;
+
+  // vector of the names of ports for each OrConditionCombiner
+  std::vector<std::vector<std::string>> or_combiner_port_names_;
 
   /// Container for receivers parameters
   std::list<Parameter<std::vector<IOSpec*>>> receivers_params_;

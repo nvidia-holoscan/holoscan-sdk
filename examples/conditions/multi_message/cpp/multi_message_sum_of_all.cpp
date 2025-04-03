@@ -36,16 +36,17 @@ class SumOfAllThrottledRxOp : public Operator {
     spec.input<std::shared_ptr<std::string>>("in2", IOSpec::IOSize(10));
     spec.input<std::shared_ptr<std::string>>("in3", IOSpec::IOSize(10));
 
-    // Use kMultiMessageAvailableTimeout to considers all three ports together. In this
+    // Use kMultiMessageAvailableTimeout to consider all three ports together. In this
     // "SumOfAll" mode, it only matters that `min_sum` messages have arrived across all the ports
-    // that are listed in `input_port_names` below, but it does not matter which ports the messages
-    // arrived on. The "execution_frequency" is set to 30ms, so the operator can run once 30 ms has
-    // elapsed even if 20 messages have not arrived. Use ConditionType::kMultiMessageAvailable
-    // instead if the timeout interval is not desired.
+    // {"in1", "in2", "in3"}, but it does not matter which ports the messages arrived on. The
+    // "execution_frequency" is set to 30ms, so the operator can run once 30 ms has elapsed even
+    // if 20 messages have not arrived. Use ConditionType::kMultiMessageAvailable instead if the
+    // timeout interval is not desired.
     ArgList multi_message_args{
         holoscan::Arg("execution_frequency", std::string{"30ms"}),
         holoscan::Arg("min_sum", static_cast<size_t>(20)),
-        holoscan::Arg("sampling_mode", MultiMessageAvailableCondition::SamplingMode::kSumOfAll)};
+        holoscan::Arg("sampling_mode",
+                      MultiMessageAvailableTimeoutCondition::SamplingMode::kSumOfAll)};
     spec.multi_port_condition(
         ConditionType::kMultiMessageAvailableTimeout, {"in1", "in2", "in3"}, multi_message_args);
   }

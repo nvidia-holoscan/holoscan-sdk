@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,6 +96,9 @@ class PingMessageTxOp(Operator):
         elif self.value == "cupy":
             z = cp.zeros((16, 8, 4), dtype=cp.float32)
             op_output.emit(z, "out")
+        elif self.value == "cupy-as-holoscan-tensor":
+            z = cp.zeros((16, 8, 4), dtype=cp.float32)
+            op_output.emit(z, "out", emitter_name="holoscan::Tensor")
         elif self.value == "cupy-complex":
             tensormap = dict(z=cp.ones((16, 8, 4), dtype=cp.complex64))
             op_output.emit(tensormap, "out")
@@ -125,7 +128,7 @@ def _check_value(value, expected_value):
         # object with __array_attribute__ is deserialized as a NumPy array
         assert isinstance(value, np.ndarray)
         assert value.shape == (16, 8, 4)
-    elif expected_value == "cupy":
+    elif expected_value == "cupy" or expected_value == "cupy-as-holoscan-tensor":
         # object with __cuda_array_attribute__ is deserialized as a CuPy array
         assert isinstance(value, cp.ndarray)
         assert value.shape == (16, 8, 4)
@@ -224,6 +227,20 @@ class MultiFragmentPyObjectPingApp(Application):
         self.add_flow(tx_fragment, rx_fragment, {("tx", "rx")})
 
 
+class SingleFragmentDataPingApp(Application):
+    def __init__(self, *args, value=1, expected_value=1, **kwargs):
+        self.expected_value = expected_value
+        self.value = value
+        super().__init__(*args, **kwargs)
+
+    def compose(self):
+        tx = PingMessageTxOp(self, CountCondition(self, 1), name="tx", value=self.value)
+        rx = PingMessageRxOp(
+            self, CountCondition(self, 1), name="rx", expected_value=self.expected_value
+        )
+        self.add_flow(tx, rx)
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -233,6 +250,40 @@ class MultiFragmentPyObjectPingApp(Application):
         "cupy-tensormap",  # dict of cupy arrays
         "numpy",  # single numpy array
         "cupy",  # single cupy array
+        "cupy-as-holoscan-tensor",  # single cupy array as holoscan::Tensor
+        "cupy-complex",  # single complex-valued cupy array
+        "input_specs",  # list of HolovizOp.InputSpec
+    ],
+)
+def test_single_fragment_data_ping_app(ping_config_file, value, capfd):
+    """Testing UCX-based serialization of PyObject, tensors, etc."""
+    if value in ["numpy", "numpy-tensormap"]:
+        pytest.importorskip("numpy")
+    elif value in ["cupy", "cupy-as-holoscan-tensor", "cupy-complex", "cupy-tensormap"]:
+        pytest.importorskip("cupy")
+    elif value == "input_specs":
+        value = test_input_specs
+
+    app = SingleFragmentDataPingApp(value=value)
+    app.run()
+
+    # assert that no errors were logged
+    captured = capfd.readouterr()
+    assert "received expected value" in captured.err
+    assert "error" not in captured.err
+    assert "Exception occurred" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        3.5,
+        dict(a=5, b=7, c=[1, 2, 3], d="abc"),
+        "numpy-tensormap",  # dict of numpy arrays
+        "cupy-tensormap",  # dict of cupy arrays
+        "numpy",  # single numpy array
+        "cupy",  # single cupy array
+        "cupy-as-holoscan-tensor",  # single cupy array as holoscan::Tensor
         "cupy-complex",  # single complex-valued cupy array
         "input_specs",  # list of HolovizOp.InputSpec
     ],
@@ -241,7 +292,7 @@ def test_ucx_object_serialization_app(ping_config_file, value, capfd):
     """Testing UCX-based serialization of PyObject, tensors, etc."""
     if value in ["numpy", "numpy-tensormap"]:
         pytest.importorskip("numpy")
-    elif value in ["cupy", "cupy-complex", "cupy-tensormap"]:
+    elif value in ["cupy", "cupy-as-holoscan-tensor", "cupy-complex", "cupy-tensormap"]:
         pytest.importorskip("cupy")
     elif value == "input_specs":
         value = test_input_specs
@@ -319,14 +370,15 @@ class MultiFragmentPyObjectReceiversPingApp(Application):
         "cupy-tensormap",  # dict of cupy arrays
         "numpy",  # single numpy array
         "cupy",  # single cupy array
+        "cupy-as-holoscan-tensor",  # single cupy array as holoscan::Tensor
         "input_specs",  # list of HolovizOp.InputSpec
     ],
 )
 def test_ucx_object_receivers_serialization_app(ping_config_file, value, capfd):
     """Testing UCX-based serialization of PyObject, tensors, etc."""
-    if value == "numpy":
+    if value in ["numpy", "numpy-tensormap"]:
         pytest.importorskip("numpy")
-    elif value == "cupy":
+    elif value in ["cupy", "cupy-as-holoscan-tensor", "cupy-tensormap"]:
         pytest.importorskip("cupy")
     elif value == "input_specs":
         value = test_input_specs

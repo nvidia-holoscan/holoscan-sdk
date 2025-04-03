@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,12 +26,29 @@
 
 namespace holoscan {
 
+DLManagedMemoryBufferVersioned::DLManagedMemoryBufferVersioned(DLManagedTensorVersioned* self)
+    : self_(self) {}
+
+DLManagedMemoryBufferVersioned::~DLManagedMemoryBufferVersioned() {
+  if (self_ && self_->deleter != nullptr) { self_->deleter(self_); }
+}
+
 Tensor::Tensor(DLManagedTensor* dl_managed_tensor_ptr) {
   dl_ctx_ = std::make_shared<DLManagedTensorContext>();
   dl_ctx_->memory_ref = std::make_shared<DLManagedMemoryBuffer>(dl_managed_tensor_ptr);
 
   auto& dl_managed_tensor = dl_ctx_->tensor;
   dl_managed_tensor = *dl_managed_tensor_ptr;
+}
+
+Tensor::Tensor(DLManagedTensorVersioned* dl_managed_tensor_ver_ptr) {
+  dl_ctx_ = std::make_shared<DLManagedTensorContext>();
+  dl_ctx_->memory_ref = std::make_shared<DLManagedMemoryBufferVersioned>(dl_managed_tensor_ver_ptr);
+  // DLManagedTensorContext uses unversioned tensor, so any version
+  // information and flags from DLPack >= 1.0 are discarded.
+  dl_ctx_->tensor.dl_tensor = dl_managed_tensor_ver_ptr->dl_tensor;
+  dl_ctx_->tensor.manager_ctx = dl_managed_tensor_ver_ptr->manager_ctx;
+  dl_ctx_->tensor.deleter = nullptr;
 }
 
 bool Tensor::is_contiguous() const {
@@ -66,6 +83,29 @@ DLManagedTensor* Tensor::to_dlpack() {
   dl_tensor = dl_ctx_->tensor.dl_tensor;
 
   return &dl_managed_tensor;
+}
+
+DLManagedTensorVersioned* Tensor::to_dlpack_versioned() {
+  auto* dl_managed_tensor_ver = new DLManagedTensorVersioned();
+
+  // Set version info
+  dl_managed_tensor_ver->version.major = HOLOSCAN_DLPACK_IMPL_VERSION_MAJOR;
+  dl_managed_tensor_ver->version.minor = HOLOSCAN_DLPACK_IMPL_VERSION_MINOR;
+
+  // Copy existing DLTensor data
+  dl_managed_tensor_ver->dl_tensor = dl_ctx_->tensor.dl_tensor;
+
+  // Set flags (default to 0 - not read only, not copied)
+  dl_managed_tensor_ver->flags = 0;
+
+  // Set manager context and deleter
+  dl_managed_tensor_ver->manager_ctx = dl_ctx_.get();
+  dl_managed_tensor_ver->deleter = [](DLManagedTensorVersioned* self) {
+    // Don't delete the context here, as it's managed by the shared_ptr in the original tensor
+    delete self;
+  };
+
+  return dl_managed_tensor_ver;
 }
 
 std::vector<int64_t> Tensor::shape() const {

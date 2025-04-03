@@ -190,6 +190,7 @@ add_holoscan_library(core
     core/resources/gxf/annotated_double_buffer_transmitter.cpp
     core/resources/gxf/block_memory_pool.cpp
     core/resources/gxf/clock.cpp
+    core/resources/gxf/condition_combiner.cpp
     core/resources/gxf/cpu_thread.cpp
     core/resources/gxf/cuda_allocator.cpp
     core/resources/gxf/cuda_stream_pool.cpp

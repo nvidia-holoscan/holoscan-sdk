@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,9 +21,11 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_io_context.hpp"
 #include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
@@ -32,12 +34,14 @@
 namespace holoscan::gxf {
 
 GXFExecutionContext::GXFExecutionContext(gxf_context_t context, Operator* op) {
+  op_ = op;
+  if (op && op->graph_entity()) { eid_ = op->graph_entity()->eid(); }
   gxf_input_context_ = std::make_shared<GXFInputContext>(this, op);
   gxf_output_context_ = std::make_shared<GXFOutputContext>(this, op);
 
   context_ = context;
-  input_context_ = gxf_input_context_.get();
-  output_context_ = gxf_output_context_.get();
+  input_context_ = gxf_input_context_;
+  output_context_ = gxf_output_context_;
 }
 
 GXFExecutionContext::GXFExecutionContext(gxf_context_t context,
@@ -120,6 +124,70 @@ expected<int, RuntimeError> GXFExecutionContext::device_from_stream(cudaStream_t
   return make_unexpected(RuntimeError(ErrorCode::kFailure,
                                       "device_from_stream only supports retrieving the device ID "
                                       "from streams being managed by Holoscan SDK"));
+}
+
+std::shared_ptr<Operator> GXFExecutionContext::find_operator(
+    const std::string& op_name /* = "" */) {
+  if (op_name.empty()) { return op_->self_shared(); }
+  return op_->fragment()->graph().find_node(op_name);
+}
+
+expected<holoscan::OperatorStatus, RuntimeError> GXFExecutionContext::get_operator_status(
+    const std::string& op_name) {
+  gxf_uid_t eid = eid_;
+
+  // If op_name is provided, get the GXF entity ID of the operator
+  if (!op_name.empty()) {
+    auto maybe_eid = get_operator_eid(op_name);
+    if (!maybe_eid) { return forward_error(maybe_eid); }
+    eid = maybe_eid.value();
+  }
+
+  gxf_entity_status_t status;
+  gxf_result_t result = GxfEntityGetStatus(context_, eid, &status);
+  if (result != GXF_SUCCESS) {
+    return make_unexpected(RuntimeError(
+        ErrorCode::kFailure, fmt::format("Failed to get status for operator '{}'", op_name)));
+  }
+
+  switch (status) {
+    case GXF_ENTITY_STATUS_NOT_STARTED:
+      return holoscan::OperatorStatus::kNotStarted;
+    case GXF_ENTITY_STATUS_START_PENDING:
+      return holoscan::OperatorStatus::kStartPending;
+    case GXF_ENTITY_STATUS_STARTED:
+      return holoscan::OperatorStatus::kStarted;
+    case GXF_ENTITY_STATUS_TICK_PENDING:
+      return holoscan::OperatorStatus::kTickPending;
+    case GXF_ENTITY_STATUS_TICKING:
+      return holoscan::OperatorStatus::kTicking;
+    case GXF_ENTITY_STATUS_IDLE:
+      return holoscan::OperatorStatus::kIdle;
+    case GXF_ENTITY_STATUS_STOP_PENDING:
+      return holoscan::OperatorStatus::kStopPending;
+    default:
+      return make_unexpected(RuntimeError(ErrorCode::kFailure,
+                                          fmt::format("Unknown operator status: {}", int(status))));
+  }
+}
+
+expected<gxf_uid_t, RuntimeError> GXFExecutionContext::get_operator_eid(
+    const std::string& op_name) {
+  // Check if the entity ID is already in the cache
+  auto cache_it = operator_eid_cache_.find(op_name);
+  if (cache_it != operator_eid_cache_.end()) { return cache_it->second; }
+
+  // Not in cache, look up the operator
+  auto op = find_operator(op_name);
+  if (!op) {
+    return make_unexpected(
+        RuntimeError(ErrorCode::kFailure, fmt::format("Operator '{}' not found", op_name)));
+  }
+
+  // Cache the entity ID and return it
+  gxf_uid_t eid = op->graph_entity()->eid();
+  operator_eid_cache_[op_name] = eid;
+  return eid;
 }
 
 }  // namespace holoscan::gxf

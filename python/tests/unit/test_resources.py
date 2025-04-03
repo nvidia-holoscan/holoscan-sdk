@@ -15,6 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
+from holoscan.conditions import CountCondition
 from holoscan.core import ComponentSpec, Resource
 from holoscan.core import _Resource as ResourceBase
 from holoscan.gxf import GXFResource, GXFSystemResourceBase
@@ -29,6 +30,7 @@ from holoscan.resources import (
     DoubleBufferTransmitter,
     ManualClock,
     MemoryStorageType,
+    OrConditionCombiner,
     RealtimeClock,
     Receiver,
     RMMAllocator,
@@ -538,6 +540,29 @@ class TestUcxTransmitter:
         captured = capfd.readouterr()
         assert "error" not in captured.err
         assert "warning" not in captured.err
+
+
+class TestOrConditionCombiner:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "or-condition-combiner"
+        count1 = CountCondition(app, count=10, name="count1")
+        count2 = CountCondition(app, count=20, name="count2")
+        count3 = CountCondition(app, count=30, name="count3")
+        combiner = OrConditionCombiner(
+            fragment=app,
+            name=name,
+            terms=[count1, count2, count3],
+        )
+        assert isinstance(combiner, GXFResource)
+        assert isinstance(combiner, ResourceBase)
+        assert combiner.id == -1
+        assert combiner.gxf_typename == "nvidia::gxf::OrSchedulingTermCombiner"
+
+        assert f"name: {name}" in repr(combiner)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
 
 
 class DummyNativeResource(Resource):

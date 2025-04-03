@@ -157,11 +157,6 @@ find_package(Threads REQUIRED)
 
 include(cmake/setup_dependencies.cmake)
 
-# ##############################################################################
-# # Build sub modules (holoviz, holoinfer)
-# ##############################################################################
-add_subdirectory(modules)
-
 # If enabling clang-tidy
 if(HOLOSCAN_ENABLE_CLANG_TIDY)
   # TODO: move above add_subdirectory(modules) later
@@ -174,6 +169,11 @@ if(HOLOSCAN_ENABLE_CLANG_TIDY)
       "--extra-arg=-std=c++17"
   )
 endif()
+
+# ##############################################################################
+# # Build sub modules (holoviz, holoinfer)
+# ##############################################################################
+add_subdirectory(modules)
 
 # ##############################################################################
 # # Build core and operators

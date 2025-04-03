@@ -10,14 +10,14 @@ In most cases, applications will be built using one of several provided conditio
 
 When assembling a C++ application, two types of conditions can be used:
 
- 1. **{ref}`Native C++ conditions<native-cpp-conditions>`**: custom conditions defined in C++ without using the GXF API, by creating a subclass of {cpp:class}`holoscan::Condition`.
+ 1. **{ref}`Native C++ conditions<native-conditions>`**: custom conditions defined in C++ without using the GXF API, by creating a subclass of {cpp:class}`holoscan::Condition`.
  2. **{ref}`GXF Conditions<gxf-conditions>`**: conditions defined in the underlying C++ library by inheriting from the {cpp:class}`holoscan::ops::GXFCondition <holoscan::GXFCondition>` class. These conditions wrap GXF scheduling term components from GXF extensions. Examples are {cpp:class}`~holoscan::CountCondition` for limiting operator execution to a specified count and {cpp:class}`~holoscan::PeriodicCondition` for restricting the rate of execution of an operator to a specified period. Several additional built-in conditions are documented in the [condition components section](components/conditions.md).
 
 :::{note}
 It is possible to assign a mixture of GXF conditions and native conditions to an operator.
 :::
 
-(native-cpp-conditions)=
+(native-conditions)=
 ### Native Conditions
 
 #### Understanding operator scheduling
@@ -40,7 +40,7 @@ The overall readiness of an operator to execute will be determined by AND combin
 When multiple operators are ready to execute at the same time, the order in which they execute will depend on the specific {cpp:class}`~holoscan::Scheduler` being used by the application. For example, the {cpp:class}`~holoscan::GreedyScheduler` executes one operator at a time in a fixed, deterministic order while the {cpp:class}`~holoscan::EventBasedScheduler` and {cpp:class}`~holoscan::MultiThreadScheduler` can have multiple worker threads that allow operators to execute in parallel.
 ````
 ````{tab-item} Python
-The {py::class}`holoscan.core.SchedulingStatusType` enum defines the current status of the condition.
+The {py:class}`holoscan.core.SchedulingStatusType` enum defines the current status of the condition.
 
 | **Condition Scheduling Status**         | **Description**                                                         |
 |-----------------------------------------|-------------------------------------------------------------------------|
@@ -292,7 +292,7 @@ One custom condition, `NativePeriodicCondition` is created by inheriting from th
 
 The `setup` method of `NativePeriodicCondition` defines a single parameter named "recess_period", which represents the amount of time in nanoseconds that an operator will have to wait after executing before it can execute again.
 
-In defining the `initialize` method, note that we start by calling `initialize` ({cpp:func}`C++ <holoscan::Condition::initialize>`/{py::func}`Python <holoscan.core.Condition.initialize>`) so that we can get the value for the built in "recess_period" parameter. This initialize method then sets the initial state of the private member variables for this operator.
+In defining the `initialize` method, note that we start by calling `initialize` ({cpp:func}`C++ <holoscan::Condition::initialize>`/{py:func}`Python <holoscan.core.Condition.initialize>`) so that we can get the value for the built in "recess_period" parameter. This initialize method then sets the initial state of the private member variables for this operator.
 
 The `check` method is implemented to set `type` to `SchedulingStatusType::kReady` (C++) / `SchedulingStatusType.READY` (Python) if the specified period has elapsed. Otherwise, it sets the `target_timestamp` and sets `type` to `SchedulingStatusType::kWaitTime` (C++) / `SchedulingStatusType.WAIT_TIME` (Python). In this case `kWaitTime` is used because we know specifically what the target timestamp is. Note that for other types of conditions, we may not know the specific time at which the condition will be satisfied. In such a case where a target timestamp isn't known, one should instead set the status to `kWait` (C++) / `WAIT` (Python) and would not need to set `target_timestamp`. There is also a `kWaitEvent` (C++) / `WAIT_EVENT` (Python) state which can be used, but this is less common. Currently only the built-in `AsynchronousCondition` uses this status type. Finally, if we wanted to indicate that an operator would never execute again, we would return `kNever` (C++) / `NEVER` (Python) (a concrete example that uses never is the `CountCondition` ({cpp:class}`C++ <holoscan::CountCondition>`/{py:class}`Python <holoscan.core.CountCondition>`) which sets that state once the specified count has been reached).
 
@@ -301,6 +301,14 @@ The `on_execute` method sets the internal `next_target_` timestamp to the timest
 The `update_state` method was not needed for this operator. This method is always called immediately prior to `check` and sometimes conditions choose to call it from the `on_execute` method. It is intended to perform some update of the internal state of the condition based on the timestamp at the time it is called.
 
 For the C++ API, we can construct a shared pointer to an instance of the condition using the `make_condition` method. That condition can then be passed to the `make_operator` method for the operator the condition will apply to (in this case `PingTxOp`). For the Python API, we instead directly pass the constructed `NativePeriodicCondition` as a positional argument to the `tx` operator.
+
+#### Condition Evaluation Timing Diagram
+
+To better understand when a condition's `check`, `update_state` and `on_execute` methods would be called by the underlying GXF entity executor, please see the following diagram.
+
+![Fragment graph with a cycle and an implicit root operator](native_condition_sequence_diagram.png)
+
+It can be seen that when checking if an operator is ready to execute the `Condition::update_state` method will be called immediately before `Condition::check`. If the check was successful (across the combination of all conditions on the operator), then the compute method would be called for that operator. The `Condition::on_execute` method is only called once compute completes.
 
 #### Creating a custom condition involving transmitter or receiver queues
 
@@ -392,7 +400,7 @@ class NativeMessageAvailableCondition : public Condition {
 ```
 ````
 ````{tab-item} Python
-In the case of a native Python condition, the name of the input or output port corresponding to the receiver or transmitter of interest should be passed to the constructor as shown on lines 78-79. The {py::func}`holoscan.core.Condition.receiver` (or {py::func}`holoscan.core.Condition.transmitter`) method can then be used to retrieve the actual `Receiver` (or `Transmitter`) object corresponding to a specific port name as shown on lines 94-98. Once that object has been retrieved, methods to query the queue size can be used as shown for the `check_min_size` method.
+In the case of a native Python condition, the name of the input or output port corresponding to the receiver or transmitter of interest should be passed to the constructor as shown on lines 78-79. The {py:func}`holoscan.core.Condition.receiver` (or {py:func}`holoscan.core.Condition.transmitter`) method can then be used to retrieve the actual `Receiver` (or `Transmitter`) object corresponding to a specific port name as shown on lines 94-98. Once that object has been retrieved, methods to query the queue size can be used as shown for the `check_min_size` method.
 
 **Code Snippet:** [**examples/conditions/native/python/message_available_native.py**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/native/python/message_available_native.py)
 

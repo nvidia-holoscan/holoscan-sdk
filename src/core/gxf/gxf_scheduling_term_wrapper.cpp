@@ -56,29 +56,10 @@ nvidia::gxf::SchedulingConditionType to_gxf_scheduling_type(
       return nvidia::gxf::SchedulingConditionType::WAIT_EVENT;
     default:
       throw std::runtime_error(
-          fmt::format("Unknown SchedulingStatusType: {}", static_cast<int>(status_type)));
+          fmt::format("Unknown holoscan::SchedulingStatusType: {}", static_cast<int>(status_type)));
   }
 }
 
-/// @brief Convert a GXF scheduling status enum to the corresponding Holoscan one
-holoscan::SchedulingStatusType to_holoscan_scheduling_type(
-    nvidia::gxf::SchedulingConditionType status_type) {
-  switch (status_type) {
-    case nvidia::gxf::SchedulingConditionType::NEVER:
-      return holoscan::SchedulingStatusType::kNever;
-    case nvidia::gxf::SchedulingConditionType::READY:
-      return holoscan::SchedulingStatusType::kReady;
-    case nvidia::gxf::SchedulingConditionType::WAIT:
-      return holoscan::SchedulingStatusType::kWait;
-    case nvidia::gxf::SchedulingConditionType::WAIT_TIME:
-      return holoscan::SchedulingStatusType::kWaitTime;
-    case nvidia::gxf::SchedulingConditionType::WAIT_EVENT:
-      return holoscan::SchedulingStatusType::kWaitEvent;
-    default:
-      throw std::runtime_error(
-          fmt::format("Unknown SchedulingConditionType: {}", static_cast<int>(status_type)));
-  }
-}
 }  // namespace
 
 gxf_result_t GXFSchedulingTermWrapper::check_abi(int64_t timestamp,
@@ -89,10 +70,18 @@ gxf_result_t GXFSchedulingTermWrapper::check_abi(int64_t timestamp,
     HOLOSCAN_LOG_ERROR("GXFSchedulingTermWrapper::start() - Operator is not set");
     return GXF_FAILURE;
   }
+  if (status_type == nullptr) {
+    HOLOSCAN_LOG_ERROR("GXFSchedulingTermWrapper::check_abi() - status_type is nullptr");
+    return GXF_FAILURE;
+  }
+  if (target_timestamp == nullptr) {
+    HOLOSCAN_LOG_ERROR("GXFSchedulingTermWrapper::check_abi() - target_timestamp is nullptr");
+    return GXF_FAILURE;
+  }
 
   HOLOSCAN_LOG_TRACE("Starting check of condition: {}", condition_->name());
   try {
-    holoscan::SchedulingStatusType holoscan_type = to_holoscan_scheduling_type(*status_type);
+    holoscan::SchedulingStatusType holoscan_type{};
     condition_->check(timestamp, &holoscan_type, target_timestamp);
     *status_type = to_gxf_scheduling_type(holoscan_type);
   } catch (const std::exception& e) {

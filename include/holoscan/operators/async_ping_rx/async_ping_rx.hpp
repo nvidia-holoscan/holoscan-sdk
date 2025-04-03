@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +48,6 @@ class AsyncPingRxOp : public Operator {
   AsyncPingRxOp() = default;
 
   void setup(OperatorSpec& spec) override;
-  void initialize() override;
   void start() override;
   void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override;
@@ -58,7 +57,6 @@ class AsyncPingRxOp : public Operator {
 
  private:
   Parameter<int64_t> delay_;
-  Parameter<std::shared_ptr<AsynchronousCondition>> async_condition_;
 
   // internal state
   std::atomic<bool> should_stop_{false};

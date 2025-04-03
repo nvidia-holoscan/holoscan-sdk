@@ -167,10 +167,11 @@ gxf_result_t GXFWrapper::tick() {
             // Store the entity in the map
             output_entity_map[flow_info->output_port_name] = entity;
           } else {
-            HOLOSCAN_LOG_ERROR("Unable to cast the output connector to DoubleBufferTransmitter for "
-                                "the output port '{}' of {}",
-                                flow_info->output_port_name,
-                                op_->name());
+            HOLOSCAN_LOG_ERROR(
+                "Unable to cast the output connector to DoubleBufferTransmitter for "
+                "the output port '{}' of {}",
+                flow_info->output_port_name,
+                op_->name());
             return GXF_FAILURE;
           }
         } else {
@@ -257,6 +258,26 @@ gxf_result_t GXFWrapper::stop() {
   return GXF_SUCCESS;
 }
 
+void GXFWrapper::set_operator(Operator* op) {
+  op_ = op;
+}
+
+Operator* GXFWrapper::op() const {
+  return op_;
+}
+
+GXFExecutionContext* GXFWrapper::execution_context() const {
+  return static_cast<GXFExecutionContext*>(exec_context_);
+}
+
+InputContext* GXFWrapper::input_context() const {
+  return op_input_;
+}
+
+OutputContext* GXFWrapper::output_context() const {
+  return op_output_;
+}
+
 void GXFWrapper::store_exception() {
   auto stored_exception = std::current_exception();
   if (stored_exception != nullptr) { op_->fragment()->executor().exception(stored_exception); }
@@ -264,16 +285,14 @@ void GXFWrapper::store_exception() {
 
 void GXFWrapper::initialize_contexts() {
   if (!exec_context_) {
+    // Ensure the contexts for the operator
+    op_->ensure_contexts();
+
     // Initialize the execution context
-    exec_context_ = std::make_unique<GXFExecutionContext>(context(), op_);
-    exec_context_->init_cuda_object_handler(op_);
-    HOLOSCAN_LOG_TRACE("GXFWrapper: exec_context_->cuda_object_handler() for op '{}' is {}null",
-                       op_->name(),
-                       exec_context_->cuda_object_handler() == nullptr ? "" : "not ");
-    op_input_ = exec_context_->input();
-    op_input_->cuda_object_handler(exec_context_->cuda_object_handler());
-    op_output_ = exec_context_->output();
-    op_output_->cuda_object_handler(exec_context_->cuda_object_handler());
+    exec_context_ = static_cast<GXFExecutionContext*>(op_->execution_context().get());
+    op_input_ = exec_context_->input().get();
+    op_output_ = exec_context_->output().get();
   }
 }
+
 }  // namespace holoscan::gxf

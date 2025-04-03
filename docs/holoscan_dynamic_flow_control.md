@@ -578,6 +578,8 @@ Here's when to choose different flow control patterns:
 
 [Please see full examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flow_control) under the `examples/flow_control` folder in the Holoscan SDK repository for more detailed implementations and use cases.
 
+Note that the execution control examples are also related to the dynamic behavior of operators, and are available in the [execution_control](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/execution_control) directory.
+
 ## Best Practices
 
 1. **Clear Flow Logic**: Keep dynamic flow logic clear and well-documented. Use meaningful names for operators and document the conditions that trigger different flow paths.

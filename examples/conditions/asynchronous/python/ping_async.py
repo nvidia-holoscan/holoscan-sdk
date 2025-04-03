@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,7 @@ import time
 from argparse import ArgumentParser
 from concurrent.futures import Future, ThreadPoolExecutor
 
-from holoscan.conditions import AsynchronousCondition, AsynchronousEventState, CountCondition
+from holoscan.conditions import AsynchronousEventState, CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import PingRxOp, PingTxOp
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
@@ -39,17 +39,12 @@ class AsyncPingTxOp(Operator):
         self.count = count
         self.delay = delay
 
-        # add an asynchronous condition
-        self.async_cond_ = AsynchronousCondition(fragment, name="async_cond")
-
         # thread pool with 1 worker to run async_send
         self.executor_ = ThreadPoolExecutor(max_workers=1)
         self.future_ = None  # will be set during start()
 
         # Need to call the base class constructor last
-        # Note: It is essential that we pass self.async_cond_ to the parent
-        # class constructor here.
-        super().__init__(fragment, self.async_cond_, *args, **kwargs)
+        super().__init__(fragment, *args, **kwargs)
 
     def aysnc_send(self):
         """Function to be submitted to self.executor by start()
@@ -62,12 +57,12 @@ class AsyncPingTxOp(Operator):
             try:
                 print(f"waiting for {self.delay} s in AsyncPingTxOp.async_send")
                 time.sleep(self.delay)
-                if self.async_cond_.event_state == AsynchronousEventState.EVENT_WAITING:
-                    self.async_cond_.event_state = AsynchronousEventState.EVENT_DONE
-                elif self.async_cond_.event_state == AsynchronousEventState.EVENT_NEVER:
+                if self.async_condition.event_state == AsynchronousEventState.EVENT_WAITING:
+                    self.async_condition.event_state = AsynchronousEventState.EVENT_DONE
+                elif self.async_condition.event_state == AsynchronousEventState.EVENT_NEVER:
                     break
             except Exception as e:
-                self.async_cond_.event_state = AsynchronousEventState.EVENT_NEVER
+                self.async_condition.event_state = AsynchronousEventState.EVENT_NEVER
                 raise (e)
         return
 
@@ -81,14 +76,14 @@ class AsyncPingTxOp(Operator):
     def compute(self, op_input, op_output, context):
         self.iter += 1
         if self.iter < self.count:
-            self.async_cond_.event_state = AsynchronousEventState.EVENT_WAITING
+            self.async_condition.event_state = AsynchronousEventState.EVENT_WAITING
         else:
-            self.async_cond_.event_state = AsynchronousEventState.EVENT_NEVER
+            self.async_condition.event_state = AsynchronousEventState.EVENT_NEVER
 
         op_output.emit(self.iter, "out")
 
     def stop(self):
-        self.async_cond_.event_state = AsynchronousEventState.EVENT_NEVER
+        self.async_condition.event_state = AsynchronousEventState.EVENT_NEVER
         self.future_.result()
 
 
@@ -105,17 +100,12 @@ class AsyncPingRxOp(Operator):
         # delay used by async_receive
         self.delay = delay
 
-        # add an asynchronous condition
-        self.async_cond_ = AsynchronousCondition(fragment, name="async_cond")
-
         # thread pool with 1 worker to run async_send
         self.executor_ = ThreadPoolExecutor(max_workers=1)
         self.future_ = None  # will be set during start()
 
         # Need to call the base class constructor last
-        # Note: It is essential that we pass self.async_cond_ to the parent
-        # class constructor here.
-        super().__init__(fragment, self.async_cond_, *args, **kwargs)
+        super().__init__(fragment, *args, **kwargs)
 
     def async_receive(self):
         """Function to be submitted to self.executor by start()
@@ -128,12 +118,12 @@ class AsyncPingRxOp(Operator):
             try:
                 print(f"waiting for {self.delay} s in AsyncPingRxOp.async_receive")
                 time.sleep(self.delay)
-                if self.async_cond_.event_state == AsynchronousEventState.EVENT_WAITING:
-                    self.async_cond_.event_state = AsynchronousEventState.EVENT_DONE
-                elif self.async_cond_.event_state == AsynchronousEventState.EVENT_NEVER:
+                if self.async_condition.event_state == AsynchronousEventState.EVENT_WAITING:
+                    self.async_condition.event_state = AsynchronousEventState.EVENT_DONE
+                elif self.async_condition.event_state == AsynchronousEventState.EVENT_NEVER:
                     break
             except Exception as e:
-                self.async_cond_.event_state = AsynchronousEventState.EVENT_NEVER
+                self.async_condition.event_state = AsynchronousEventState.EVENT_NEVER
                 raise (e)
         return
 
@@ -147,10 +137,10 @@ class AsyncPingRxOp(Operator):
     def compute(self, op_input, op_output, context):
         value = op_input.receive("in")
         print(f"Rx message value: {value}")
-        self.async_cond_.event_state = AsynchronousEventState.EVENT_WAITING
+        self.async_condition.event_state = AsynchronousEventState.EVENT_WAITING
 
     def stop(self):
-        self.async_cond_.event_state = AsynchronousEventState.EVENT_NEVER
+        self.async_condition.event_state = AsynchronousEventState.EVENT_NEVER
         self.future_.result()
 
 

@@ -181,6 +181,10 @@ void init_fragment(py::module_& m) {
           "dynamic_flow_func"_a,
           doc::Fragment::doc_set_dynamic_flows,
           py::keep_alive<1, 2>())  // keep op alive as long as the Fragment exists
+      .def("stop_execution",
+           &Fragment::stop_execution,
+           "op_name"_a = "",
+           doc::Fragment::doc_stop_execution)
       .def(
           "__repr__",
           [](const py::object& obj) {

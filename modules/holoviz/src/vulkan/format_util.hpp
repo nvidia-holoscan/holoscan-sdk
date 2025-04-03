@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define MODULES_HOLOVIZ_SRC_VULKAN_FORMAT_UTIL_HPP
 
 #include <optional>
+#include <vector>
 
 #include <vulkan/vulkan.hpp>
 
@@ -75,6 +76,15 @@ bool is_yuv_format(ImageFormat fmt);
 
 /// @return true if fmt is multi-planar
 bool is_multi_planar_format(ImageFormat fmt);
+
+/// @return true if fmt is supported by the hardware
+bool is_format_supported(vk::PhysicalDevice physical_device, ImageFormat fmt);
+
+/// @return list of all formats supported by the hardware
+std::vector<ImageFormat> get_supported_formats(vk::PhysicalDevice physical_device);
+
+/// @return list of all available formats
+const std::vector<ImageFormat>& get_formats();
 
 }  // namespace holoscan::viz
 

@@ -47,6 +47,7 @@ std::string ComponentBase::description() const {
 
 void ComponentBase::update_params_from_args(
     std::unordered_map<std::string, ParameterWrapper>& params) {
+  HOLOSCAN_LOG_TRACE("ComponentBase::update_params_from_args() for '{}':", name_);
   // Set arguments
   for (auto& arg : args_) {
     // Find if arg.name() is in spec_->params()
@@ -72,8 +73,9 @@ void ComponentBase::update_params_from_args(
     // Set arg.value() to spec_->params()[arg.name()]
     auto& param_wrap = params[arg.name()];
 
-    HOLOSCAN_LOG_TRACE("GXFOperator '{}':: setting argument '{}'", name_, arg.name());
+    HOLOSCAN_LOG_TRACE("\tComponent '{}':: setting argument '{}'", name_, arg.name());
 
+    HOLOSCAN_LOG_TRACE("\tArgumentSetter::set_param() for argument  '{}':", arg.name());
     ArgumentSetter::set_param(param_wrap, arg);
   }
 }

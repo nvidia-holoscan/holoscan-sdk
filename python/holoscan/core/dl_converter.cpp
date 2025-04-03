@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include "gxf/std/dlpack_utils.hpp"  // nvidia::gxf::numpyTypestr
@@ -159,26 +160,104 @@ void process_dlpack_stream(py::object stream_obj) {
   }
 }
 
-py::capsule py_dlpack(Tensor* tensor, py::object stream) {
+py::capsule py_dlpack(Tensor* tensor, py::object stream,
+                      std::optional<std::tuple<int, int>> max_version,
+                      std::optional<std::tuple<DLDeviceType, int>> dl_device,
+                      std::optional<bool> copy) {
   // determine stream and synchronize it with the default stream if necessary
   process_dlpack_stream(std::move(stream));
 
-  DLManagedTensor* dl_managed_tensor = tensor->to_dlpack();
+  // Check if we should use versioned DLPack based on max_version
+  bool use_versioned = false;  // Default to unversioned for backward compatibility
+  if (max_version.has_value()) {
+    auto [major, minor] = max_version.value();
+    if (major >= 1) { use_versioned = true; }
+  }
+  // Note: Follow the array API standard for exception type that must be returned (BufferError)
+  // https://data-apis.org/array-api/latest/API_specification/generated/array_api.array.__dlpack__.html#array_api.array.__dlpack__
+  int device_type = -1;
+  int device_id = -1;
+  if (dl_device.has_value()) {
+    auto [dt, did] = dl_device.value();
+    device_type = dt;
+    device_id = did;
 
-  // Create a new capsule to hold the DLPack tensor. The destructor of the capsule will call
-  // `DLManagedTensor::deleter` to free the memory. The destructor will be called when the capsule
-  // goes out of scope or when the capsule is destroyed.
-  py::capsule dlpack_capsule(dl_managed_tensor, "dltensor", [](PyObject* ptr) {
-    // Should call `PyCapsule_IsValid` to check if the capsule is valid before calling
-    // `PyCapsule_GetPointer`. Otherwise, it will raise a hard-to-debug exception.
-    // (such as `SystemError: <class 'xxx'> returned a result with an error set`)
-    if (PyCapsule_IsValid(ptr, "dltensor") != 0) {
-      // The destructor will be called when the capsule is deleted.
-      // We need to call the deleter function to free the memory.
-      auto* dl_managed_tensor =
-          static_cast<DLManagedTensor*>(PyCapsule_GetPointer(ptr, "dltensor"));
-      // Call deleter function to free the memory only if the capsule name is "dltensor".
-      if (dl_managed_tensor != nullptr) { dl_managed_tensor->deleter(dl_managed_tensor); }
+    // Check if the requested device is the same as the tensor's device
+    py::tuple tensor_dl_device = py_dlpack_device(tensor);
+    int tensor_device_type = tensor_dl_device[0].cast<int>();
+    int tensor_device_id = tensor_dl_device[1].cast<int>();
+    if (!(device_type == tensor_device_type && device_id == tensor_device_id)) {
+      // raise BufferError to follow the array API standard
+      throw pybind11::buffer_error(
+          "use of dl_device to copy to a different device is not currently supported");
+    }
+  }
+
+  // Handle copy parameter (if provided)
+  bool make_copy = false;
+  uint64_t flags = 0;
+  if (copy.has_value() && copy.value()) {
+    // TODO (grelee): implement handling for the user-provided `copy` keyword argument.
+    // flags |= DLPACK_FLAG_BITMASK_IS_COPIED;
+    throw pybind11::buffer_error("copy=True is not implemented");
+  }
+
+  // There is also a read-only flag, but we don't use it for Holoscan tensors.
+  // flags |= DLPACK_FLAG_BITMASK_READ_ONLY;
+
+  // Get the DLPack tensor (either versioned or unversioned)
+  void* dl_managed_tensor_ptr;
+  const char* capsule_name;
+
+  if (use_versioned) {
+    auto* dl_managed_tensor_ver = tensor->to_dlpack_versioned();
+    dl_managed_tensor_ptr = dl_managed_tensor_ver;
+    capsule_name = dlpack_versioned_capsule_name;
+
+    // Handle dl_device parameter for versioned DLPack
+    if (device_type != -1) {
+      // Update the device information in the DLTensor if a copy was made
+      dl_managed_tensor_ver->dl_tensor.device.device_type = static_cast<DLDeviceType>(device_type);
+      dl_managed_tensor_ver->dl_tensor.device.device_id = device_id;
+    }
+
+    // set any flags based on copy parameter, etc.
+    dl_managed_tensor_ver->flags = flags;
+  } else {
+    auto* dl_managed_tensor = tensor->to_dlpack();
+    dl_managed_tensor_ptr = dl_managed_tensor;
+    capsule_name = dlpack_capsule_name;
+
+    // Handle dl_device parameter for unversioned DLPack
+    if (device_type != -1) {
+      // Update the device information in the DLTensor if a copy was made
+      dl_managed_tensor->dl_tensor.device.device_type = static_cast<DLDeviceType>(device_type);
+      dl_managed_tensor->dl_tensor.device.device_id = device_id;
+    }
+  }
+
+  // Create capsule with appropriate name and deleter
+  py::capsule dlpack_capsule(dl_managed_tensor_ptr, capsule_name, [](PyObject* ptr) {
+    const char* name = PyCapsule_GetName(ptr);
+    if (name == nullptr) return;
+
+    bool is_versioned = (strcmp(name, dlpack_versioned_capsule_name) == 0);
+    const char* valid_name = is_versioned ? dlpack_versioned_capsule_name : dlpack_capsule_name;
+    const char* used_name =
+        is_versioned ? used_dlpack_versioned_capsule_name : used_dlpack_capsule_name;
+
+    if (PyCapsule_IsValid(ptr, valid_name) != 0) {
+      if (is_versioned) {
+        auto* dl_managed_tensor_ver =
+            static_cast<DLManagedTensorVersioned*>(PyCapsule_GetPointer(ptr, valid_name));
+        if (dl_managed_tensor_ver != nullptr) {
+          dl_managed_tensor_ver->deleter(dl_managed_tensor_ver);
+        }
+      } else {
+        auto* dl_managed_tensor =
+            static_cast<DLManagedTensor*>(PyCapsule_GetPointer(ptr, valid_name));
+        if (dl_managed_tensor != nullptr) { dl_managed_tensor->deleter(dl_managed_tensor); }
+      }
     }
   });
 

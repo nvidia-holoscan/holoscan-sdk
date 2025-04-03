@@ -18,16 +18,24 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_WRAPPER_HPP
 #define HOLOSCAN_CORE_GXF_GXF_WRAPPER_HPP
 
-#include "holoscan/core/gxf/gxf_operator.hpp"
-
 #include <memory>
 
-#include "../io_context.hpp"
-#include "./gxf_execution_context.hpp"
 #include "gxf/core/parameter_parser_std.hpp"
 #include "gxf/core/registrar.hpp"
 #include "gxf/std/codelet.hpp"
 #include "holoscan/profiler/profiler.hpp"
+
+// Forward declarations
+namespace holoscan {
+
+class Operator;
+class InputContext;
+class OutputContext;
+
+namespace gxf {
+class GXFExecutionContext;
+}  // namespace gxf
+}  // namespace holoscan
 
 namespace holoscan::gxf {
 
@@ -56,43 +64,47 @@ class GXFWrapper : public nvidia::gxf::Codelet {
    *
    * @param op The pointer to the Operator object.
    */
-  void set_operator(Operator* op) { op_ = op; }
+  void set_operator(Operator* op);
 
   /**
    * @brief Get the Operator object.
    *
    * @return The pointer to the Operator object.
    */
-  Operator* op() const { return op_; }
+  Operator* op() const;
 
   /**
    * @brief Get the ExecutionContext object.
    *
    * @return The pointer to the ExecutionContext object.
    */
-  ExecutionContext* exec_context() const { return exec_context_.get(); }
+  GXFExecutionContext* execution_context() const;
 
   /**
    * @brief Get the InputContext object.
    *
    * @return The pointer to the InputContext object.
    */
-  InputContext* input_context() const { return op_input_; }
+  InputContext* input_context() const;
 
   /**
    * @brief Get the OutputContext object.
    *
    * @return The pointer to the OutputContext object.
    */
-  OutputContext* output_context() const { return op_output_; }
+  OutputContext* output_context() const;
 
  private:
   void store_exception();
+  /// Initialize the local contexts (input/output/execution) for the operator.
   void initialize_contexts();
 
   Operator* op_{};
-  std::unique_ptr<GXFExecutionContext> exec_context_{};
+  /// The execution context of the operator. Copied from the operator.
+  GXFExecutionContext* exec_context_{};
+  /// The input context of the operator. Copied from the operator.
   InputContext* op_input_{};
+  /// The output context of the operator. Copied from the operator.
   OutputContext* op_output_{};
 };
 

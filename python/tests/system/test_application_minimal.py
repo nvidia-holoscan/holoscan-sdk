@@ -19,7 +19,7 @@ import pytest
 from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.core import Application, Executor, Operator, OperatorSpec
 from holoscan.operators import PingRxOp, PingTxOp
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
@@ -162,3 +162,49 @@ def test_app_log_function(capfd):
 
     addresses = re.findall(r"log_func_ptr=0x[0-9a-fA-F]+", captured.err)
     assert len(set(addresses)) == 1
+
+
+class InterruptedOp(Operator):
+    def __init__(self, *args, **kwargs):
+        self.count = 1
+        self.param_value = None
+        # Need to call the base class constructor last
+        super().__init__(*args, **kwargs)
+
+    def initialize(self):
+        print("** initialize method called **")
+        print(f"initialize(): param_value = {self.param_value}")
+
+    def start(self):
+        print("** start method called **")
+
+    def setup(self, spec: OperatorSpec):
+        spec.param("param_value", 500)
+
+    def stop(self):
+        print("** stop method called **")
+
+    def compute(self, op_input, op_output, context):
+        executor = self.fragment.executor
+        assert isinstance(executor, Executor)
+
+        print("calling executor.interrupt()")
+        executor.interrupt()
+
+
+class InterruptApp(Application):
+    def compose(self):
+        mx = InterruptedOp(self, name="mx")
+        self.add_operator(mx)
+
+
+def test_interrupt_app(capfd):
+    app = InterruptApp()
+    app.run()
+
+    # assert that no errors were logged
+    captured = capfd.readouterr()
+
+    # assert that the compute method was only called once
+    assert "error" not in captured.err
+    assert captured.out.count("calling executor.interrupt()") == 1

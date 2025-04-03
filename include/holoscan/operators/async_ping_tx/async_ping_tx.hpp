@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,8 +40,6 @@ namespace holoscan::ops {
  *
  * - **delay**: Ping delay in ms. Optional (default: `10L`)
  * - **count**: Ping count. Optional (default: `0UL`)
- * - **async_condition**: AsynchronousCondition adding async support to the operator.
- *   Optional (default: `nullptr`)
  */
 class AsyncPingTxOp : public Operator {
  public:
@@ -50,7 +48,6 @@ class AsyncPingTxOp : public Operator {
   AsyncPingTxOp() = default;
 
   void setup(OperatorSpec& spec) override;
-  void initialize() override;
   void start() override;
   void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override;
@@ -61,7 +58,6 @@ class AsyncPingTxOp : public Operator {
  private:
   Parameter<int64_t> delay_;
   Parameter<uint64_t> count_;
-  Parameter<std::shared_ptr<AsynchronousCondition>> async_condition_;
 
   // internal state
   std::atomic<uint64_t> index_{0};

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -43,7 +44,7 @@ nvidia::gxf::StdEntitySerializer* StdEntitySerializer::get() const {
 }
 
 void StdEntitySerializer::initialize() {
-  // Set up prerequisite parameters before calling GXFOperator::initialize()
+  // Set up prerequisite parameters before calling GXFResource::initialize()
   auto frag = fragment();
 
   auto has_component_serializers = std::find_if(args().begin(), args().end(), [](const auto& arg) {
@@ -59,7 +60,21 @@ void StdEntitySerializer::initialize() {
     add_arg(Arg("component_serializers") =
                 std::vector<std::shared_ptr<Resource>>{component_serializer});
   } else {
-    HOLOSCAN_LOG_TRACE("StdEntitySerializer: component_serializers argument found");
+    // must set the gxf_eid for the provided buffer or GXF parameter registration will fail
+    auto component_serializers_arg = *has_component_serializers;
+    auto component_serializers =
+        std::any_cast<std::vector<std::shared_ptr<Resource>>>(component_serializers_arg.value());
+    for (const auto& component_serializer : component_serializers) {
+      auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(component_serializer);
+      if (gxf_eid_ != 0 && gxf_resource->gxf_eid() == 0) {
+        HOLOSCAN_LOG_TRACE(
+            "component_serializer '{}': setting gxf_eid({}) from StdEntitySerializer '{}'",
+            component_serializer->name(),
+            gxf_eid_,
+            name());
+        gxf_resource->gxf_eid(gxf_eid_);
+      }
+    }
   }
 
   GXFResource::initialize();

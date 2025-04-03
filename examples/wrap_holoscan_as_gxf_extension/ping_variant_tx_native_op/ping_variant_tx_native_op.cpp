@@ -50,7 +50,8 @@ class IntegerGeneratorOp : public holoscan::Operator {
 
   void setup(holoscan::OperatorSpec& spec) override { spec.output<int>("out"); }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("{} - compute() called.", name());
     value_++;
@@ -67,8 +68,7 @@ class ProcessingOp : public holoscan::Operator {
 
   ProcessingOp() = default;
 
-  explicit ProcessingOp(std::function<int(int)> op_func)
-      : Operator(), op_func_(std::move(op_func)) {}
+  explicit ProcessingOp(std::function<int(int)> op_func) : op_func_(std::move(op_func)) {}
 
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input<int>("in");
@@ -176,20 +176,20 @@ void PingVarTxNativeOp::compute([[maybe_unused]] InputContext& op_input, OutputC
   if (!output_int_generator) {
     HOLOSCAN_LOG_ERROR("PingVarTxNativeOp::compute() - int_generator operator failed to run.");
     auto error = output_int_generator.error();
-    throw error;
+    throw std::move(error);
   }
   auto input_processing = op_processing_->push_input("in", output_int_generator.value());
   if (!input_processing) {
     HOLOSCAN_LOG_ERROR("PingVarTxNativeOp::compute() - processing operator failed to run.");
     auto error = input_processing.error();
-    throw error;
+    throw std::move(error);
   }
   op_processing_->run();
   auto output_processing = op_processing_->pop_output("out");
   if (!output_processing) {
     HOLOSCAN_LOG_ERROR("PingVarTxNativeOp::compute() - processing operator failed to run.");
     auto error = output_processing.error();
-    throw error;
+    throw std::move(error);
   }
   op_output.emit(output_processing.value(), "out");
 }

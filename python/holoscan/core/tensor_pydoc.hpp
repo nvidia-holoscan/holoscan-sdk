@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,10 +92,21 @@ Parameters
 object : array-like
     An object such as a NumPy array, CuPy array, PyTorch tensor, etc. supporting one of the
     supported protocols.
+device : tuple[holoscan.core.DLDeviceType, int] or None, optional
+    The dlpack device as a ``(device_type, device_id)`` tuple. The default is ``None`` which will
+    use the device of the source object.
+copy : bool or None, optional
+    Request the export to never or always make a copy. If unspecified a copy may or may not be
+    made.
 
 Returns
 -------
 holocan.Tensor
+
+Raises
+------
+BufferError
+    If an invalid device and/or copy request is made.
 
 References
 ----------
@@ -170,7 +181,7 @@ Please refer to the DLPack and Python array API standard documentation for more 
 
 Parameters
 ----------
-stream : Optional[Union[int, Any]]
+stream : Union[int, Any], optional
     For CUDA, a Python integer representing a pointer to a stream, on devices that support streams.
     ``stream`` is provided by the consumer to the producer to instruct the producer to ensure that
     operations can safely be performed on the array
@@ -185,6 +196,13 @@ stream : Optional[Union[int, Any]]
     - 2: the per-thread default stream.
     - > 2: stream number represented as a Python integer.
     - 0 is disallowed due to its ambiguity: 0 could mean either None, 1, or 2.
+device : tuple[holoscan.core.DLDeviceType, int] or None, optional
+    The dlpack device as a ``(device_type, device_id)`` tuple. The default is ``None`` which will
+    use the device of the source object. Device conversion via this argument is currently not
+    supported by Holoscan.
+copy : bool or None, optional
+    Request the export to never or always make a copy. If unspecified a copy may or may not be
+    made. Making a tensor copy via this argument is currently not supported by Holoscan.
 
 Returns
 -------

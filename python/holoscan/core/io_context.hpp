@@ -45,7 +45,7 @@ class EmitterReceiverRegistry;  // Forward declaration
 
 void init_io_context(py::module_&);
 
-class PyInputContext : public gxf::GXFInputContext {
+class PYBIND11_EXPORT PyInputContext : public gxf::GXFInputContext {
  public:
   /* Inherit the constructors */
   using gxf::GXFInputContext::GXFInputContext;
@@ -65,7 +65,7 @@ class PyInputContext : public gxf::GXFInputContext {
   py::object receive_as_tuple(const std::string& name);
 };
 
-class PyOutputContext : public gxf::GXFOutputContext {
+class PYBIND11_EXPORT PyOutputContext : public gxf::GXFOutputContext {
  public:
   /* Inherit the constructors */
   using gxf::GXFOutputContext::GXFOutputContext;

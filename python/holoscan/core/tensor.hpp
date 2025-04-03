@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +23,12 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
+#include <variant>
 
 #include "holoscan/core/domain/tensor.hpp"
 
@@ -70,6 +73,30 @@ class PyDLManagedMemoryBuffer {
 };
 
 /**
+ * @brief Class to wrap the deleter of a DLManagedTensorVersioned in Python.
+ *
+ * This class is used with DLManagedTensorContext class to wrap the DLManagedTensorVersioned.
+ *
+ * A shared pointer to this class in DLManagedTensorContext class is used as the deleter of the
+ * DLManagedTensorContext::memory_ref
+ *
+ * When the last reference to the DLManagedTensorContext object is released,
+ * DLManagedTensorContext::memory_ref will also be destroyed, which will call the deleter function
+ * of the DLManagedTensorVersioned object.
+ *
+ * Compared to the C++ version (DLManagedMemoryBufferVersioned), this class is used to acquire the
+ * GIL before calling the deleter function.
+ */
+class PyDLManagedMemoryBufferVersioned {
+ public:
+  explicit PyDLManagedMemoryBufferVersioned(DLManagedTensorVersioned* self);
+  ~PyDLManagedMemoryBufferVersioned();
+
+ private:
+  DLManagedTensorVersioned* self_ = nullptr;
+};
+
+/**
  * @brief A class facilitating lazy, asynchronous deletion of DLManagedTensor objects.
  *
  * This class allows DLManagedTensor objects to be enqueued for deferred deletion, which is carried
@@ -103,6 +130,12 @@ class LazyDLManagedTensorDeleter {
    */
   static void add(DLManagedTensor* dl_managed_tensor_ptr);
 
+  /**
+   * @brief Adds a DLManagedTensorVersioned pointer to the queue for deletion.
+   * @param dl_managed_tensor_ver_ptr The pointer to the DLManagedTensorVersioned to be deleted.
+   */
+  static void add(DLManagedTensorVersioned* dl_managed_tensor_ver_ptr);
+
  private:
   /**
    * @brief The main function for the deletion thread, which waits for tensors to be available in
@@ -124,8 +157,11 @@ class LazyDLManagedTensorDeleter {
   /// Callback function for the pthread_atfork() function's child handler.
   static void on_fork_child();
 
-  ///< The queue of DLManagedTensor pointers to be deleted.
-  static inline std::queue<DLManagedTensor*> s_dlmanaged_tensors_queue;
+  /// Type alias for the variant that can hold either DLManagedTensor* or DLManagedTensorVersioned*
+  using TensorPtr = std::variant<DLManagedTensor*, DLManagedTensorVersioned*>;
+
+  /// The queue of tensors to be deleted.
+  static inline std::queue<TensorPtr> s_dlmanaged_tensors_queue;
   ///< Mutex to protect the shared resources (queue, condition variable, etc.)
   static inline std::mutex s_mutex;
   ///< Condition variable to synchronize the deletion thread.
@@ -161,6 +197,14 @@ class PyTensor : public Tensor {
    */
   explicit PyTensor(DLManagedTensor* dl_managed_tensor_ptr);
 
+  /**
+   * @brief Construct a new Tensor from an existing DLManagedTensorVersioned pointer.
+   *
+   * @param dl_managed_tensor_ver_ptr A pointer to the DLManagedTensorVersioned to be used in Tensor
+   * construction.
+   */
+  explicit PyTensor(DLManagedTensorVersioned* dl_managed_tensor_ver_ptr);
+
   PyTensor() = default;
 
   /**
@@ -176,9 +220,15 @@ class PyTensor : public Tensor {
   static std::shared_ptr<PyTensor> from_cuda_array_interface(const py::object& obj) {
     return from_array_interface(obj, true);
   }
-  static std::shared_ptr<PyTensor> from_dlpack(const py::object& obj);
-  static py::object from_dlpack_pyobj(const py::object& obj);
-  static py::capsule dlpack(const py::object& obj, py::object stream);
+  static std::shared_ptr<PyTensor> from_dlpack(const py::object& obj,
+                                               py::object device = py::none(),
+                                               py::object copy = py::none());
+  static py::object from_dlpack_pyobj(const py::object& obj, py::object device = py::none(),
+                                      py::object copy = py::none());
+  static py::capsule dlpack(const py::object& obj, py::object stream = py::none(),
+                            std::optional<std::tuple<int, int>> max_version = std::nullopt,
+                            std::optional<std::tuple<DLDeviceType, int>> dl_device = std::nullopt,
+                            std::optional<bool> copy = std::nullopt);
   static py::tuple dlpack_device(const py::object& obj);
 };
 

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,9 +17,19 @@ limitations under the License.
 
 import pytest
 
-from holoscan.core import Graph, OperatorGraph
+from holoscan.core import Graph, Operator, OperatorGraph
 from holoscan.graphs import FlowGraph, OperatorFlowGraph
 from holoscan.operators import PingRxOp, PingTxOp
+
+
+class ForwardOp(Operator):
+    def setup(self, spec):
+        spec.input("in")
+        spec.output("out")
+
+    def compute(self, op_input, op_output, context):
+        msg = op_input.receive("in")
+        op_output.emit(msg, "out")
 
 
 class TestOperatorGraph:
@@ -148,6 +158,58 @@ class TestOperatorGraph:
         assert len(prev_ops) == 1
         prev_op = prev_ops[0]
         assert prev_op is op_tx
+
+    def test_remove_node(self, fragment):
+        op_tx, op_rx = self._get_tx_rx_ops(fragment)
+
+        op_mx = ForwardOp(fragment, name="mx")
+
+        # add_flow will automatically add the operators to the graph
+        fragment.add_flow(op_tx, op_mx)
+        fragment.add_flow(op_mx, op_rx)
+
+        # generate the graph
+        graph = fragment.graph
+        assert len(graph.get_nodes()) == 3
+
+        # test that mx is the only previous node of rx
+        prev_ops = graph.get_previous_nodes(op_rx)
+        assert len(prev_ops) == 1
+        prev_op = prev_ops[0]
+        assert prev_op is op_mx
+
+        # test that mx is the only next node of tx
+        next_ops = graph.get_next_nodes(op_tx)
+        assert len(next_ops) == 1
+        next_op = next_ops[0]
+        assert next_op is op_mx
+
+        # rx is a not a root node
+        assert not graph.is_root(op_rx)
+
+        graph.remove_node(op_mx)
+
+        # the node was removed
+        all_nodes = graph.get_nodes()
+        assert op_mx not in all_nodes
+        assert len(all_nodes) == 2
+
+        # the node's edges were also removed
+        assert len(graph.get_next_nodes(op_rx)) == 0
+        assert len(graph.get_previous_nodes(op_tx)) == 0
+
+        # rx is now a root node
+        assert graph.is_root(op_rx)
+
+        # connect tx directly to rx
+        fragment.add_flow(op_tx, op_rx)
+
+        # after the new add-flow call there is a new edge
+        assert len(graph.get_next_nodes(op_tx)) == 1
+        assert len(graph.get_previous_nodes(op_rx)) == 1
+
+        # rx is once again not a root node
+        assert not graph.is_root(op_rx)
 
     def test_dynamic_attribute_not_allowed(self):
         obj = OperatorFlowGraph()

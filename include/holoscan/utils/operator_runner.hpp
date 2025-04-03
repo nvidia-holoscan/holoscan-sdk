@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "holoscan/core/conditions/gxf/asynchronous.hpp"
+#include "holoscan/core/domain/tensor_map.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/operator.hpp"
 

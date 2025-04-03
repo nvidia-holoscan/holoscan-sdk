@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,10 +19,13 @@ import datetime
 import sys
 import time
 
+import cupy as cp
+import numpy as np
 import pytest
 
 from holoscan.conditions import CountCondition, PeriodicCondition
 from holoscan.core import Application, IOSpec, Operator, OperatorSpec, Tracker
+from holoscan.operators import PingTensorRxOp
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import GreedyScheduler
 
@@ -377,7 +380,7 @@ def test_my_tracker_logging_app(ping_config_file, use_new_receivers, capfd):
 
 @pytest.mark.parametrize("use_new_receivers", [True, False])
 def test_my_tracker_context_manager_app(ping_config_file, use_new_receivers, capfd):
-    for _ in range(1000):
+    for _ in range(100):
         app = MyPingApp(use_new_receivers=use_new_receivers)
         app.config(ping_config_file)
 
@@ -385,10 +388,27 @@ def test_my_tracker_context_manager_app(ping_config_file, use_new_receivers, cap
             app.run()
             tracker.print()
 
-            # Capturing stdout/stderr to suppress extremely verbose output if the test suite is
-            # run with the `-s` flag. Calling readouterr() here to flush the captured messages
-            # after each run.
-            capfd.readouterr()
+        # Capturing stdout/stderr to suppress extremely verbose output if the test suite is
+        # run with the `-s` flag. Calling readouterr() here to flush the captured messages
+        # after each run.
+        captured = capfd.readouterr()
+        assert "Path 1: tx,mx,rx" in captured.out
+
+
+@pytest.mark.parametrize("is_limited_tracking", [True, False])
+def test_tracker_with_limited_tracking(ping_config_file, is_limited_tracking, capfd):
+    app = MyPingApp(use_new_receivers=True)
+    app.config(ping_config_file)
+
+    with Tracker(app, is_limited_tracking=is_limited_tracking) as tracker:
+        app.run()
+        tracker.print()
+
+        captured = capfd.readouterr()
+        if is_limited_tracking:
+            assert "Path 1: tx,rx" in captured.out
+        else:
+            assert "Path 1: tx,mx,rx" in captured.out
 
 
 @pytest.mark.parametrize("use_new_receivers", [True, False])
@@ -477,3 +497,106 @@ def test_my_ping_app2(muliple_add_flow_calls, use_add_arg, capfd):
     captured = capfd.readouterr()
     assert captured.out.count("received: 10") == 1
     assert captured.out.count("received: 11") == 0
+
+
+class PyTensorSourceOp(Operator):
+    """Simple transmitter operator that emits a CuPy array via the holoscan::Tensor emitter.
+
+    It is expected that a wrapped C++ Operator like PingTensorRxOp can receive this tensor.
+    """
+
+    def __init__(self, fragment, *args, on_device=True, **kwargs):
+        self.on_device = on_device
+        super().__init__(fragment, *args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        spec.output("out")
+
+    def compute(self, op_input, op_output, context):
+        if self.on_device:
+            data = cp.arange(10000, dtype=cp.int16)
+        else:
+            data = np.arange(10000, dtype=cp.int16)
+
+        # Note: This emitter actually emits a TensorMap with a single tensor, not a plain
+        # std::shared_ptr<holoscan::Tensor>. However, for a TensorMap with a single tensor
+        # both of the following ways of receiving the tensor will work from a C++ operator's
+        # compute method:
+        #   - auto maybe_tensormap = receive<TensorMap>(port_name);
+        #   - auto maybe_tensor = receive<std::shared_ptr<holoscan::Tensor>>(port_name);
+        op_output.emit(data, "out", emitter_name="holoscan::Tensor")
+
+
+class MyPingPythonTensorCppInteropApp(Application):
+    """Ping app that sends Python tensors emitted with emitter_name="holoscan::Tensor" to a wrapped
+    C++ operator.
+    """
+
+    count = 10
+
+    def compose(self):
+        tx = PyTensorSourceOp(self, CountCondition(self, self.count, name="tx_count"), name="tx")
+        rx = PingTensorRxOp(self, name="rx")
+        self.add_flow(tx, rx)
+
+
+def test_my_ping_python_tensor_cpp_interop_app(capfd):
+    """Verify that Python array object emitted as holoscan::Tensor can be received by a C++
+    operator.
+    """
+    count = 10
+    app = MyPingPythonTensorCppInteropApp()
+    app.count = count
+    app.run()
+
+    captured = capfd.readouterr()
+    assert captured.err.count(f"rx received message {count}") == 1
+    assert captured.err.count(f"rx received message {count + 1}") == 0
+
+
+class CustomRxOp(Operator):
+    """Simple receiver that prints the type of the received data."""
+
+    def setup(self, spec: OperatorSpec):
+        spec.input("in")
+
+    def compute(self, op_input, op_output, context):
+        data = op_input.receive("in")
+        print(f"type(data) received = {type(data)}")
+
+
+class MyPingPythonCppEmitPythonReceive(Application):
+    """Ping app that sends Python tensors emitted with emitter_name="holoscan::Tensor" to a native
+    Python operator.
+    """
+
+    count = 10
+    on_device = True
+
+    def compose(self):
+        tx = PyTensorSourceOp(
+            self,
+            CountCondition(self, self.count, name="tx_count"),
+            on_device=self.on_device,
+            name="tx",
+        )
+        rx = CustomRxOp(self, name="rx")
+        self.add_flow(tx, rx)
+
+
+@pytest.mark.parametrize("on_device", [True, False])
+def test_my_ping_python_cpp_emit_python_receive(on_device, capfd):
+    """Verify that a Python array object emitted with emitter_name="holoscan::Tensor" is received
+    as a CuPy array if it was a device array or a NumPy array if it was a host array.
+    """
+    count = 10
+    app = MyPingPythonCppEmitPythonReceive()
+    app.count = count
+    app.on_device = on_device
+    app.run()
+
+    captured = capfd.readouterr()
+    if on_device:
+        assert captured.out.count("type(data) received = <class 'cupy.ndarray'>") == count
+    else:
+        assert captured.out.count("type(data) received = <class 'numpy.ndarray'>") == count

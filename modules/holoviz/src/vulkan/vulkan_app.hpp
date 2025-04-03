@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -112,6 +112,13 @@ class Vulkan {
   void set_present_mode(PresentMode present_mode);
 
   /**
+   * Get the supported image formats.
+   *
+   * @returns supported image formats
+   */
+  std::vector<ImageFormat> get_image_formats() const;
+
+  /**
    * Begin the transfer pass. This creates a transfer job and a command buffer.
    */
   void begin_transfer_pass();
@@ -144,8 +151,8 @@ class Vulkan {
   /**
    * Set the viewport for subsequent draw commands.
    *
-   * @param x, y              the viewport’s upper left corner [0 ... 1]
-   * @param width, height     the viewport’s size [0 ... 1]
+   * @param x, y              the viewport's upper left corner [0 ... 1]
+   * @param width, height     the viewport's size [0 ... 1]
    */
   void set_viewport(float x, float y, float width, float height);
 

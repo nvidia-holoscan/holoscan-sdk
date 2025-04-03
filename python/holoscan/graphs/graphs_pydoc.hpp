@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +47,15 @@ Parameters
 ----------
 node : holoscan.core.Operator | holoscan.core.Fragment
     The node to add.
+)doc")
+
+PYDOC(remove_node, R"doc(
+Remove the node to the graph.
+
+Parameters
+----------
+node : holoscan.core.Operator | holoscan.core.Fragment
+    The node to remove. This will also remove all edges connected to the node.
 )doc")
 
 PYDOC(get_port_map, R"doc(

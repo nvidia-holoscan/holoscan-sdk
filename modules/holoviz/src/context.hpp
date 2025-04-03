@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -211,6 +211,13 @@ class Context : public NonCopyable {
    * @param present_mode present mode
    */
   void set_present_mode(PresentMode present_mode);
+
+  /**
+   * Get the image formats supported by the current device. Throws if no window is open.
+   *
+   * @returns supported image formats
+   */
+  std::vector<ImageFormat> get_image_formats() const;
 
   /**
    * Set the Cuda stream used by Holoviz for Cuda operations.

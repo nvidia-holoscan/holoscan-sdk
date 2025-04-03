@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,8 +52,8 @@ TEST_F(CameraPose, Set) {
 }
 
 TEST_F(CameraPose, GetDefault) {
-  float rotation[9];
-  float translation[3];
+  float rotation[9] = {0.F};
+  float translation[3] = {0.F, 0.F, 0.F};
 
   EXPECT_NO_THROW(viz::GetCameraPose(rotation, translation));
   for (uint32_t row = 0; row < 3; ++row) {
@@ -101,8 +101,8 @@ TEST_F(CameraPose, Anim) {
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   EXPECT_NO_THROW(viz::End());
 
-  float rotation[9];
-  float translation[3];
+  float rotation[9] = {0.F};
+  float translation[3] = {0.F, 0.F, 0.F};
 
   EXPECT_NO_THROW(viz::GetCameraPose(rotation, translation));
   // translation has changed

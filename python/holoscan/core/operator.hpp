@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,7 +53,7 @@ void init_operator(py::module_&);
  *
  */
 
-class PyOperatorSpec : public OperatorSpec {
+class PYBIND11_EXPORT PyOperatorSpec : public OperatorSpec {
  public:
   /* Inherit the constructors */
   using OperatorSpec::OperatorSpec;
@@ -80,7 +80,7 @@ class PyOperatorSpec : public OperatorSpec {
   std::list<Parameter<py::object>> py_params_;
 };
 
-class PyOperator : public Operator {
+class PYBIND11_EXPORT PyOperator : public Operator {
  public:
   /* Inherit the constructors */
   using Operator::Operator;
@@ -149,6 +149,8 @@ class PyOperator : public Operator {
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override;
+
+  std::shared_ptr<holoscan::ExecutionContext> execution_context() const override;
 
  private:
   py::object py_op_ = py::none();                               ///> cache the Python operator

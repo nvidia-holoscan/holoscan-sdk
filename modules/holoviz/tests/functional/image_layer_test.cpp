@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -156,6 +156,18 @@ TEST_P(ImageLayer, Image) {
   const viz::ImageFormat image_format = std::get<3>(GetParam());
   const viz::YuvModelConversion yuv_model_conversion = std::get<4>(GetParam());
   const viz::YuvRange yuv_range = std::get<5>(GetParam());
+
+  // Check if the format is supported
+  uint32_t format_count = 0;
+  viz::GetImageFormats(&format_count, nullptr);
+  std::vector<viz::ImageFormat> supported_formats(format_count);
+  viz::GetImageFormats(&format_count, supported_formats.data());
+
+  if (std::find(supported_formats.begin(), supported_formats.end(), image_format) ==
+      supported_formats.end()) {
+    GTEST_SKIP() << "Image format " << image_format << " is not supported on this system";
+    return;
+  }
 
   if (use_lut == UseLut::ENABLE_WITH_NORMALIZE) {
     GTEST_SKIP() << "LUT with normalize tests not working yet, reference image generation needs to "

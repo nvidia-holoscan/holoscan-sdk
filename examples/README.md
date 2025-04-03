@@ -76,6 +76,7 @@ The following examples illustrate the use of specific **conditions** to modify t
 * [**ExpiringMessageAvailableCondition**](conditions/expiring_message): allow operators to run when a certain number of messages have arrived or after a specified time interval has elapsed.
 * [**MultiMessageAvailableCondition**, **MultiMessageAvailableTimeoutCondition**](conditions/multi_message): allow operators to run only once a certain number of messages have arrived across multiple associated input ports (optionally with a timeout on the interval to wait for messages).
 * [**native Conditions**](conditions/native): demonstrates how a Holoscan native Condition (not wrapping an underlying GXF SchedulingTerm) can be created and used.
+* [**OrConditionCombiner**](conditions/or_combiner): This example shows the use of the `or_combine_port_conditions` method to add a `OrConditionCombiner` resource that notifies the scheduler to use an OR combination instead of AND combination for the conditions present on the specified input ports.
 
 The following examples illustrate the use of specific resource classes that can be passed to operators or schedulers:
 

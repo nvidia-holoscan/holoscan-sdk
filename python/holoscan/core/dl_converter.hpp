@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,14 +24,21 @@
 
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
+#include <optional>
 
 #include "holoscan/core/domain/tensor.hpp"
 
 namespace py = pybind11;
 
 namespace holoscan {
+
+constexpr const char* dlpack_capsule_name{"dltensor"};
+constexpr const char* used_dlpack_capsule_name{"used_dltensor"};
+constexpr const char* dlpack_versioned_capsule_name{"dltensor_versioned"};
+constexpr const char* used_dlpack_versioned_capsule_name{"used_dltensor_versioned"};
 
 /**
  * @brief Structure to hold the context of a DLManagedTensor.
@@ -56,13 +63,19 @@ struct ArrayInterfaceMemoryBuffer {
 void set_array_interface(const py::object& obj, const std::shared_ptr<DLManagedTensorContext>& ctx);
 
 /**
- * @brief Provide `__dlpack__` method
+ * @brief Provide `__dlpack__` method with separate parameters
  *
  * @param tensor The tensor to provide the `__dlpack__` method.
  * @param stream The client stream to use for the `__dlpack__` method.
+ * @param max_version Optional tuple of (major, minor) version to use for DLPack.
+ * @param dl_device Optional tuple of (device_type, device_id) to use for DLPack.
+ * @param copy Optional boolean indicating whether to make a copy.
  * @return The PyCapsule object.
  */
-py::capsule py_dlpack(Tensor* tensor, py::object stream);
+py::capsule py_dlpack(Tensor* tensor, py::object stream,
+                      std::optional<std::tuple<int, int>> max_version,
+                      std::optional<std::tuple<DLDeviceType, int>> dl_device,
+                      std::optional<bool> copy);
 
 /**
  * @brief Provide `__dlpack_device__` method

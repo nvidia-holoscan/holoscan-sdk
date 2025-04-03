@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,37 +116,8 @@ class PyGraph : public Graph<NodeT, EdgeDataElementT> {
   /* Inherit the constructors */
   using Graph<NodeT, EdgeDataElementT>::Graph;
 
-  /* Trampolines (need one for each virtual function) */
-  void add_node(const NodeType& node) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, GraphT, add_node, node);
-  }
-  void add_flow(const NodeType& node_u, const NodeType& node_v,
-                const EdgeDataType& port_map) override {
-    PYBIND11_OVERRIDE(void, GraphT, add_flow, node_u, node_v, port_map);
-  }
-  bool is_root(const NodeType& node) override { PYBIND11_OVERRIDE(bool, GraphT, is_root, node); }
-  bool is_user_defined_root(const NodeType& node) override {
-    PYBIND11_OVERRIDE(bool, GraphT, is_user_defined_root, node);
-  }
-  bool is_leaf(const NodeType& node) override { PYBIND11_OVERRIDE(bool, GraphT, is_leaf, node); }
-  std::vector<NodeType> has_cycle() override {
-    PYBIND11_OVERRIDE(std::vector<NodeType>, GraphT, has_cycle);
-  }
-  std::vector<NodeType> get_root_nodes() override {
-    PYBIND11_OVERRIDE(std::vector<NodeType>, GraphT, get_root_nodes);
-  }
-  std::vector<NodeType> get_nodes() override {
-    PYBIND11_OVERRIDE(std::vector<NodeType>, GraphT, get_nodes);
-  }
-  std::vector<NodeType> get_next_nodes(const NodeType& node) override {
-    PYBIND11_OVERRIDE(std::vector<NodeType>, GraphT, get_next_nodes, node);
-  }
-  std::vector<NodeType> get_previous_nodes(const NodeType& node) override {
-    PYBIND11_OVERRIDE(std::vector<NodeType>, GraphT, get_previous_nodes, node);
-  }
-  void context(void* context) override { PYBIND11_OVERRIDE(void, GraphT, context, context); }
-  void* context() override { PYBIND11_OVERRIDE(void*, GraphT, context); }
+  // not implementing trampolines for virtual functions
+  // (do not intend to override any of these from Python)
 };
 
 using PyOperatorGraph =
@@ -183,74 +154,144 @@ PYBIND11_MODULE(_graphs, m) {
       m, "OperatorFlowGraph", doc::FlowGraph::doc_FlowGraph)
       .def(py::init<>(), doc::FlowGraph::doc_FlowGraph)
       .def("add_node", &OperatorFlowGraph::add_node, "node"_a, doc::FlowGraph::doc_add_node)
-      // get_port_map lambda expression to handle proper conversion to Dict[str, Set[str]]
-      .def("get_port_map",
-           [](OperatorFlowGraph& graph,
-              const ::holoscan::OperatorGraph::NodeType& node_u,
-              const ::holoscan::OperatorGraph::NodeType& node_v) -> py::dict {
-             py::dict port_dict;
-             auto port_map_opt = graph.get_port_map(node_u, node_v);
-             if (!port_map_opt.has_value()) { return port_dict; }
-             const auto& port_map = port_map_opt.value();
-             for (const auto& [key, cpp_set] : *port_map) {
-               // convert cpp_set of type std::set<std::string, std::less<>> to a Python set
-               py::set py_port_set;
-               for (const std::string& port_name : cpp_set) {
-                 py_port_set.add(py::cast(port_name));
-               }
-               port_dict[py::str(key)] = py_port_set;
-             }
-             return port_dict;
-           })
-      .def("is_root", &OperatorFlowGraph::is_root, "node"_a, doc::FlowGraph::doc_is_root)
-      .def("is_leaf", &OperatorFlowGraph::is_leaf, "node"_a, doc::FlowGraph::doc_is_leaf)
-      .def("get_root_nodes", &OperatorFlowGraph::get_root_nodes, doc::FlowGraph::doc_get_root_nodes)
-      .def("get_nodes", &OperatorFlowGraph::get_nodes, doc::FlowGraph::doc_get_nodes)
-      .def("get_next_nodes", &OperatorFlowGraph::get_next_nodes, doc::FlowGraph::doc_get_next_nodes)
-      .def("get_previous_nodes",
-           &OperatorFlowGraph::get_previous_nodes,
-           doc::FlowGraph::doc_get_previous_nodes)
-      .def_property("context",
-                    py::overload_cast<>(&OperatorFlowGraph::context),
-                    py::overload_cast<void*>(&OperatorFlowGraph::context),
-                    doc::FlowGraph::doc_context);
-  // omitted add_flow. Python API users should use Fragment.add_flow() instead
+      .def(
+          "get_port_map",
+          [](const OperatorFlowGraph& graph,
+             const ::holoscan::OperatorGraph::NodeType& node_u,
+             const ::holoscan::OperatorGraph::NodeType& node_v) -> py::dict {
+            py::dict port_dict;
+            auto port_map_opt = graph.get_port_map(node_u, node_v);
+            if (!port_map_opt.has_value()) { return port_dict; }
+            const auto& port_map = port_map_opt.value();
+            for (const auto& [key, cpp_set] : *port_map) {
+              py::set py_port_set;
+              for (const std::string& port_name : cpp_set) { py_port_set.add(py::cast(port_name)); }
+              port_dict[py::str(key)] = py_port_set;
+            }
+            return port_dict;
+          },
+          "node_u"_a,
+          "node_v"_a,
+          doc::FlowGraph::doc_get_port_map)
+      .def(
+          "is_root",
+          [](const OperatorFlowGraph& graph, const ::holoscan::OperatorGraph::NodeType& node) {
+            return graph.is_root(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_is_root)
+      .def(
+          "is_leaf",
+          [](const OperatorFlowGraph& graph, const ::holoscan::OperatorGraph::NodeType& node) {
+            return graph.is_leaf(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_is_leaf)
+      .def(
+          "get_root_nodes",
+          [](const OperatorFlowGraph& graph) { return graph.get_root_nodes(); },
+          doc::FlowGraph::doc_get_root_nodes)
+      .def(
+          "get_nodes",
+          [](const OperatorFlowGraph& graph) { return graph.get_nodes(); },
+          doc::FlowGraph::doc_get_nodes)
+      .def(
+          "get_next_nodes",
+          [](const OperatorFlowGraph& graph, const ::holoscan::OperatorGraph::NodeType& node) {
+            return graph.get_next_nodes(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_get_next_nodes)
+      .def(
+          "get_previous_nodes",
+          [](const OperatorFlowGraph& graph, const ::holoscan::OperatorGraph::NodeType& node) {
+            return graph.get_previous_nodes(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_get_previous_nodes)
+      .def(
+          "remove_node",
+          [](OperatorFlowGraph& graph, const ::holoscan::OperatorGraph::NodeType& node) {
+            graph.remove_node(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_remove_node)
+      .def_property(
+          "context",
+          [](const OperatorFlowGraph& graph) { return graph.context(); },
+          [](OperatorFlowGraph& graph, void* ctx) { graph.context(ctx); },
+          doc::FlowGraph::doc_context);
 
   py::class_<FragmentFlowGraph, FragmentGraph, std::shared_ptr<FragmentFlowGraph>>(
       m, "FragmentFlowGraph", doc::FlowGraph::doc_FlowGraph)
       .def(py::init<>(), doc::FlowGraph::doc_FlowGraph)
       .def("add_node", &FragmentFlowGraph::add_node, "node"_a, doc::FlowGraph::doc_add_node)
-      // get_port_map lambda expression to handle proper conversion to Dict[str, Set[str]]
-      .def("get_port_map",
-           [](FragmentFlowGraph& graph,
-              const ::holoscan::FragmentGraph::NodeType& node_u,
-              const ::holoscan::FragmentGraph::NodeType& node_v) -> py::dict {
-             py::dict port_dict;
-             auto port_map_opt = graph.get_port_map(node_u, node_v);
-             if (!port_map_opt.has_value()) { return port_dict; }
-             const auto& port_map = port_map_opt.value();
-             for (const auto& [key, cpp_set] : *port_map) {
-               // convert cpp_set of type std::set<std::string, std::less<>> to a Python set
-               py::set py_port_set;
-               for (const std::string& port_name : cpp_set) {
-                 py_port_set.add(py::cast(port_name));
-               }
-               port_dict[py::str(key)] = py_port_set;
-             }
-             return port_dict;
-           })
-      .def("is_root", &FragmentFlowGraph::is_root, "node"_a, doc::FlowGraph::doc_is_root)
-      .def("is_leaf", &FragmentFlowGraph::is_leaf, "node"_a, doc::FlowGraph::doc_is_leaf)
-      .def("get_root_nodes", &FragmentFlowGraph::get_root_nodes, doc::FlowGraph::doc_get_root_nodes)
-      .def("get_nodes", &FragmentFlowGraph::get_nodes, doc::FlowGraph::doc_get_nodes)
-      .def("get_next_nodes", &FragmentFlowGraph::get_next_nodes, doc::FlowGraph::doc_get_next_nodes)
-      .def("get_previous_nodes",
-           &FragmentFlowGraph::get_previous_nodes,
-           doc::FlowGraph::doc_get_previous_nodes)
-      .def_property("context",
-                    py::overload_cast<>(&FragmentFlowGraph::context),
-                    py::overload_cast<void*>(&FragmentFlowGraph::context),
-                    doc::FlowGraph::doc_context);
-  // omitted add_flow. Python API users should use Fragment.add_flow() instead
+      .def(
+          "get_port_map",
+          [](const FragmentFlowGraph& graph,
+             const ::holoscan::FragmentGraph::NodeType& node_u,
+             const ::holoscan::FragmentGraph::NodeType& node_v) -> py::dict {
+            py::dict port_dict;
+            auto port_map_opt = graph.get_port_map(node_u, node_v);
+            if (!port_map_opt.has_value()) { return port_dict; }
+            const auto& port_map = port_map_opt.value();
+            for (const auto& [key, cpp_set] : *port_map) {
+              py::set py_port_set;
+              for (const std::string& port_name : cpp_set) { py_port_set.add(py::cast(port_name)); }
+              port_dict[py::str(key)] = py_port_set;
+            }
+            return port_dict;
+          },
+          "node_u"_a,
+          "node_v"_a,
+          doc::FlowGraph::doc_get_port_map)
+      .def(
+          "is_root",
+          [](const FragmentFlowGraph& graph, const ::holoscan::FragmentGraph::NodeType& node) {
+            return graph.is_root(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_is_root)
+      .def(
+          "is_leaf",
+          [](const FragmentFlowGraph& graph, const ::holoscan::FragmentGraph::NodeType& node) {
+            return graph.is_leaf(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_is_leaf)
+      .def(
+          "get_root_nodes",
+          [](const FragmentFlowGraph& graph) { return graph.get_root_nodes(); },
+          doc::FlowGraph::doc_get_root_nodes)
+      .def(
+          "get_nodes",
+          [](const FragmentFlowGraph& graph) { return graph.get_nodes(); },
+          doc::FlowGraph::doc_get_nodes)
+      .def(
+          "get_next_nodes",
+          [](const FragmentFlowGraph& graph, const ::holoscan::FragmentGraph::NodeType& node) {
+            return graph.get_next_nodes(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_get_next_nodes)
+      .def(
+          "get_previous_nodes",
+          [](const FragmentFlowGraph& graph, const ::holoscan::FragmentGraph::NodeType& node) {
+            return graph.get_previous_nodes(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_get_previous_nodes)
+      .def(
+          "remove_node",
+          [](FragmentFlowGraph& graph, const ::holoscan::FragmentGraph::NodeType& node) {
+            graph.remove_node(node);
+          },
+          "node"_a,
+          doc::FlowGraph::doc_remove_node)
+      .def_property(
+          "context",
+          [](const FragmentFlowGraph& graph) { return graph.context(); },
+          [](FragmentFlowGraph& graph, void* ctx) { graph.context(ctx); },
+          doc::FlowGraph::doc_context);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

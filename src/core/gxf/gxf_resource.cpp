@@ -89,6 +89,8 @@ void GXFResource::initialize() {
   std::string gxf_component_name = fmt::format("{}", name());
   gxf_cname(gxf_component_name);
 
+  HOLOSCAN_LOG_TRACE("initialize for GXFResource '{}', Ready to call GXFComponent::gxf_initialize",
+                     name());
   GXFComponent::gxf_initialize();
 
   // Set GXF component ID as the component ID
@@ -101,6 +103,7 @@ void GXFResource::initialize() {
 
   // Resource::initialize() is called after GXFComponent::gxf_initialize() to ensure that the
   // component is initialized before setting parameters.
+  HOLOSCAN_LOG_TRACE("initialize for GXFResource '{}', Ready to call Resource::initialize", name());
   Resource::initialize();
 }
 

@@ -48,6 +48,7 @@ install(TARGETS "custom_cuda_kernel_multi_sample"
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_multi_sample.yaml"
     "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/edge_detection.cu"
     DESTINATION ${app_relative_dest_path}
     COMPONENT holoscan-examples
 )

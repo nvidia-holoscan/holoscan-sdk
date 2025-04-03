@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,15 @@ void init_execution_context(py::module_& m) {
   // NOLINTNEXTLINE(bugprone-unused-raii)
   py::class_<ExecutionContext, std::shared_ptr<ExecutionContext>>(
       m, "ExecutionContext", doc::ExecutionContext::doc_ExecutionContext);
+
+  py::enum_<OperatorStatus>(m, "OperatorStatus", "Operator status values")
+      .value("NOT_STARTED", OperatorStatus::kNotStarted)
+      .value("START_PENDING", OperatorStatus::kStartPending)
+      .value("STARTED", OperatorStatus::kStarted)
+      .value("TICK_PENDING", OperatorStatus::kTickPending)
+      .value("TICKING", OperatorStatus::kTicking)
+      .value("IDLE", OperatorStatus::kIdle)
+      .value("STOP_PENDING", OperatorStatus::kStopPending);
 
   py::class_<PyExecutionContext, ExecutionContext, std::shared_ptr<PyExecutionContext>>(
       m, "PyExecutionContext", R"doc(Execution context class.)doc")
@@ -94,17 +103,43 @@ void init_execution_context(py::module_& m) {
             }
           },
           "cuda_stream_ptr"_a,
-          doc::ExecutionContext::doc_device_from_stream);
+          doc::ExecutionContext::doc_device_from_stream)
+      .def("find_operator",
+           [](PyExecutionContext& context, const std::string& op_name = "") -> py::object {
+            auto op = context.find_operator(op_name);
+            return py::cast(op);
+          },
+          "op_name"_a = "", doc::ExecutionContext::doc_find_operator)
+      .def(
+          "get_operator_status",
+          [](ExecutionContext& context, const std::string& op_name = "") -> py::object {
+            auto maybe_status = context.get_operator_status(op_name);
+            if (maybe_status) {
+              return py::cast(maybe_status.value());
+            } else {
+              throw std::runtime_error(maybe_status.error().what());
+            }
+          },
+          "op_name"_a = "",
+          doc::ExecutionContext::doc_get_operator_status);
 }
 
-PyExecutionContext::PyExecutionContext(gxf_context_t context,
-                                       std::shared_ptr<PyInputContext>& py_input_context,
-                                       std::shared_ptr<PyOutputContext>& py_output_context,
-                                       py::object op)
-    : gxf::GXFExecutionContext(context, py_input_context, py_output_context),
-      py_op_(std::move(op)),
-      py_input_context_(py_input_context),
-      py_output_context_(py_output_context) {}
+PyExecutionContext::PyExecutionContext(gxf_context_t context, py::object py_op)
+    : gxf::GXFExecutionContext() {
+  op_ = py_op.cast<Operator*>();
+  if (op_->graph_entity()) { eid_ = op_->graph_entity()->eid(); }
+  py_input_context_ =
+      std::make_shared<PyInputContext>(this, op_, op_->spec()->inputs(), py_op);
+  py_output_context_ =
+      std::make_shared<PyOutputContext>(this, op_, op_->spec()->outputs(), py_op);
+
+  gxf_input_context_ = py_input_context_;
+  gxf_output_context_ = py_output_context_;
+
+  context_ = context;
+  input_context_ = gxf_input_context_;
+  output_context_ = gxf_output_context_;
+}
 
 std::shared_ptr<PyInputContext> PyExecutionContext::py_input() const {
   return py_input_context_;

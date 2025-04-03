@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -334,6 +334,17 @@ class GXFParameterAdaptor {
                   gxf_condition->initialize();
                 }
                 return GxfParameterSetHandle(context, uid, key, gxf_condition->gxf_cid());
+              } else {
+                auto native_condition_cid = value->wrapper_cid();
+                if (native_condition_cid != 0) {
+                  return GxfParameterSetHandle(context, uid, key, native_condition_cid);
+                } else {
+                  HOLOSCAN_LOG_ERROR(
+                      "GXF component ID is null for native condition '{}' corresponding to key "
+                      "'{}'. Not setting parameter.",
+                      value->name(),
+                      key);
+                }
               }
               HOLOSCAN_LOG_ERROR("Unable to handle ArgElementType::kCondition for key '{}'", key);
             }
@@ -440,12 +451,14 @@ class GXFParameterAdaptor {
                 if (gxf_resource) {
                   // Initialize GXF component if it is not already initialized.
                   if (gxf_resource->gxf_context() == nullptr) {
+                    HOLOSCAN_LOG_TRACE("Initializing resource: {}", gxf_resource->gxf_cname());
                     gxf_resource->gxf_eid(
                         gxf::get_component_eid(context, uid));  // set Entity ID of the component
 
                     gxf_resource->initialize();
                   }
                   gxf_uid_t resource_cid = gxf_resource->gxf_cid();
+                  HOLOSCAN_LOG_TRACE("\tresource_cid: {}", resource_cid);
                   std::string full_resource_name =
                       gxf::get_full_component_name(context, resource_cid);
                   yaml_node.push_back(full_resource_name);
@@ -482,8 +495,18 @@ class GXFParameterAdaptor {
                       gxf::get_full_component_name(context, condition_cid);
                   yaml_node.push_back(full_condition_name);
                 } else {
-                  HOLOSCAN_LOG_TRACE(
-                      "Condition item in the vector is null. Skipping it for key '{}'", key);
+                  auto native_condition_cid = condition->wrapper_cid();
+                  if (native_condition_cid != 0) {
+                    std::string full_condition_name =
+                        gxf::get_full_component_name(context, native_condition_cid);
+                    yaml_node.push_back(full_condition_name);
+                  } else {
+                    HOLOSCAN_LOG_ERROR(
+                        "GXF component ID is null for native condition '{}' corresponding to key "
+                        "'{}'. Not setting parameter.",
+                        condition->name(),
+                        key);
+                  }
                 }
               }
               return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");

@@ -19,6 +19,7 @@
 
 #include <string>
 #include <tuple>
+#include <vector>
 
 #include "holoscan/logger/logger.hpp"
 
@@ -193,8 +194,17 @@ static constexpr TensorFormat supported_tensor_formats[] = {
     {nvidia::gxf::PrimitiveType::kInt16, 4, HolovizOp::ImageFormat::R16G16B16A16_SNORM},
     {nvidia::gxf::PrimitiveType::kFloat32, 4, HolovizOp::ImageFormat::R32G32B32A32_SFLOAT}};
 
-/*static*/ std::string BufferInfo::get_supported_tensor_formats_str() {
-  return fmt::format("({})", fmt::join(supported_tensor_formats, "), ("));
+/*static*/ std::string BufferInfo::get_supported_tensor_formats_str(
+    const std::vector<HolovizOp::ImageFormat>& device_image_formats) {
+  std::vector<TensorFormat> device_tensor_formats;
+  for (auto&& supported_format : supported_tensor_formats) {
+    if (std::find(device_image_formats.begin(),
+                  device_image_formats.end(),
+                  supported_format.format_) != device_image_formats.end()) {
+      device_tensor_formats.push_back(supported_format);
+    }
+  }
+  return fmt::format("({})", fmt::join(device_tensor_formats, "), ("));
 }
 
 static constexpr VideoBufferFormat supported_video_buffer_formats[] = {
@@ -347,10 +357,27 @@ static constexpr VideoBufferYuvFormat supported_yuv_video_buffer_formats[] = {
      HolovizOp::YuvRange::ITU_FULL},
 };
 
-/*static*/ std::string BufferInfo::get_supported_video_buffer_formats_str() {
+/*static*/ std::string BufferInfo::get_supported_video_buffer_formats_str(
+    const std::vector<HolovizOp::ImageFormat>& device_image_formats) {
+  std::vector<VideoBufferFormat> device_video_buffer_formats;
+  for (auto&& supported_format : supported_video_buffer_formats) {
+    if (std::find(device_image_formats.begin(),
+                  device_image_formats.end(),
+                  supported_format.format_) != device_image_formats.end()) {
+      device_video_buffer_formats.push_back(supported_format);
+    }
+  }
+  std::vector<VideoBufferYuvFormat> device_yuv_video_buffer_formats;
+  for (auto&& supported_format : supported_yuv_video_buffer_formats) {
+    if (std::find(device_image_formats.begin(),
+                  device_image_formats.end(),
+                  supported_format.format_) != device_image_formats.end()) {
+      device_yuv_video_buffer_formats.push_back(supported_format);
+    }
+  }
   return fmt::format("{}, {}",
-                     fmt::join(supported_video_buffer_formats, ", "),
-                     fmt::join(supported_yuv_video_buffer_formats, ", "));
+                     fmt::join(device_video_buffer_formats, ", "),
+                     fmt::join(device_yuv_video_buffer_formats, ", "));
 }
 
 gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& tensor,
@@ -411,8 +438,8 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::Tensor>& te
   auto result = component_and_swizzle(image_format);
   if (components != std::get<0>(result)) {
     HOLOSCAN_LOG_WARN(
-        "Image format '{}' with component count '{}' mismatches tensor '{}' with component count "
-        "'{}'",
+        "Image format '{}' with component count '{}' mismatches tensor '{}' with component "
+        "count '{}'",
         int(image_format),
         std::get<0>(result),
         tensor.name(),

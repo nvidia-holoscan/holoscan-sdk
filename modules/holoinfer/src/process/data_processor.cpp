@@ -114,9 +114,29 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
                              "Data processor, cuda kernel length cannot be 0.");
         }
 
-        custom_cuda_src_ += custom_kernels.at(current_kernel);
-        const char* cuda_src = custom_kernels.at(current_kernel).c_str();
-        HOLOSCAN_LOG_DEBUG("Cuda kernel source: {}", cuda_src);
+        // import from file if the input is a file path
+        const std::string cuda_suffix{".cu"};
+        std::string kernel_path = custom_kernels.at(current_kernel);
+        bool has_cuda_suffix =
+            kernel_path.compare(
+                kernel_path.size() - cuda_suffix.size(), cuda_suffix.size(), cuda_suffix) == 0;
+
+        if (has_cuda_suffix) {
+          if (!std::filesystem::exists(kernel_path)) {
+            HOLOSCAN_LOG_ERROR("Custom cuda kernel file not found: {}", kernel_path);
+            return InferStatus(holoinfer_code::H_ERROR,
+                               "Data processor, custom cuda kernel file not found.");
+          }
+          std::ifstream file(kernel_path);
+          std::stringstream buffer;
+          buffer << file.rdbuf();
+          custom_cuda_src_ += buffer.str();
+          HOLOSCAN_LOG_DEBUG("Cuda kernel source: {}", buffer.str());
+        } else {
+          custom_cuda_src_ += custom_kernels.at(current_kernel);
+          const char* cuda_src = custom_kernels.at(current_kernel).c_str();
+          HOLOSCAN_LOG_DEBUG("Cuda kernel source: {}", cuda_src);
+        }
 
         // extract output datatype
         std::string current_out_dtype = "out_dtype-" + kernel_identifier;

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -436,7 +436,8 @@ args:
 def test_arg_to_py_object_unsupported(fragment):
     op = HolovizOp(fragment)
     # initialize explicitly as this is a test
-    op.initialize()
+    with pytest.raises(RuntimeError):
+        op.initialize()
     # retrieve an Arg containing unsupported type IOSpec* from HolovizOp
     iospec_arg = [arg for arg in op.args if arg.name == "render_buffer_input"][0]
     # no converter defined for this type so RuntimeError will be raised

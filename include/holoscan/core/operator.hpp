@@ -44,6 +44,7 @@
 #include "./messagelabel.hpp"
 #include "./metadata.hpp"
 #include "./operator_spec.hpp"
+#include "./operator_status.hpp"
 #include "./resource.hpp"
 
 #include "gxf/app/graph_entity.hpp"
@@ -126,6 +127,11 @@
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
+
+// Forward declarations
+class ExecutionContext;
+class InputContext;
+class OutputContext;
 
 namespace gxf {
 class GXFExecutor;
@@ -750,6 +756,40 @@ class Operator : public ComponentBase {
   std::vector<std::shared_ptr<Operator::FlowInfo>> find_all_flow_info(
       const std::function<bool(const std::shared_ptr<Operator::FlowInfo>&)>& predicate);
 
+  /**
+   * @brief Get the internal asynchronous condition for the operator.
+   *
+   * @return A shared pointer to the internal asynchronous condition.
+   */
+  std::shared_ptr<holoscan::AsynchronousCondition> async_condition();
+
+  /**
+   * @brief Stop the execution of the operator.
+   *
+   * This method is used to stop the execution of the operator by setting the internal async
+   * condition to EVENT_NEVER state, which sets the scheduling condition to NEVER.
+   * Once stopped, the operator will not be scheduled for execution
+   * (the `compute()` method will not be called).
+   *
+   * Note that executing this method does not trigger the operator's `stop()` method.
+   * The `stop()` method is called only when the scheduler deactivates all operators together.
+   */
+  void stop_execution();
+
+  /**
+   * @brief Get the ExecutionContext object.
+   *
+   * @return The shared pointer to the ExecutionContext object.
+   */
+  virtual std::shared_ptr<holoscan::ExecutionContext> execution_context() const;
+
+  /**
+   * @brief Ensure the contexts (input/output/execution) for the operator.
+   *
+   * This method is called by the GXFExecutor when the operator is initialized.
+   */
+  void ensure_contexts();
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -778,6 +818,13 @@ class Operator : public ComponentBase {
    * @return The GXF entity eid corresponding to the graph entity.
    */
   gxf_uid_t initialize_graph_entity(void* context, const std::string& entity_prefix = "");
+
+  /**
+   * @brief Initialize the internal asynchronous condition to control the operator execution.
+   *
+   * This method is called by the GXFExecutor when the operator is initialized.
+   */
+  void initialize_async_condition();
 
   /**
    * @brief Add this operator as the codelet in the GXF GraphEntity
@@ -875,17 +922,6 @@ class Operator : public ComponentBase {
   /// Initialize the next flows for the operator.
   void initialize_next_flows();
 
-  OperatorType operator_type_ = OperatorType::kNative;  ///< The type of the operator.
-  std::shared_ptr<OperatorSpec> spec_;                  ///< The operator spec of the operator.
-  std::unordered_map<std::string, std::shared_ptr<Condition>>
-      conditions_;  ///< The conditions of the operator.
-  std::unordered_map<std::string, std::shared_ptr<Resource>>
-      resources_;                                           ///< The resources used by the operator.
-  std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity_;  ///< GXF graph entity corresponding to
-                                                            ///< the Operator
-
-  bool is_initialized_ = false;  ///< Whether the operator is initialized.
-
   std::vector<std::string>& non_default_input_ports() { return non_default_input_ports_; }
   std::vector<std::string>& non_default_output_ports() { return non_default_output_ports_; }
 
@@ -894,6 +930,20 @@ class Operator : public ComponentBase {
   void set_dynamic_flows(
       const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func);
   void set_self_shared(const std::shared_ptr<Operator>& this_op);
+
+  bool is_initialized_ = false;                         ///< Whether the operator is initialized.
+  OperatorType operator_type_ = OperatorType::kNative;  ///< The type of the operator.
+  std::shared_ptr<OperatorSpec> spec_;                  ///< The operator spec of the operator.
+  std::unordered_map<std::string, std::shared_ptr<Condition>>
+      conditions_;  ///< The conditions of the operator.
+  std::unordered_map<std::string, std::shared_ptr<Resource>>
+      resources_;                                           ///< The resources used by the operator.
+  std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity_;  ///< GXF graph entity corresponding to
+                                                            ///< the Operator
+  /// The asynchronous condition to control the operator execution.
+  std::shared_ptr<holoscan::AsynchronousCondition> internal_async_condition_;
+  /// The execution context for the operator.
+  std::shared_ptr<ExecutionContext> execution_context_{};
 
  private:
   /// An empty shared pointer to FlowInfo.

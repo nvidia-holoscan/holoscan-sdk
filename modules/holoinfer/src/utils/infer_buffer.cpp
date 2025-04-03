@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +45,9 @@ uint32_t get_element_size(holoinfer_datatype element_type) noexcept {
       return 1;
     case holoinfer_datatype::h_Float16:
       return 2;
+    case holoinfer_datatype::h_Unsupported:
+      HOLOSCAN_LOG_ERROR("Unsupported data type");
+      return 0;
   }
   return 0;
 }
@@ -98,7 +101,8 @@ DeviceBuffer::DeviceBuffer(holoinfer_datatype type, int device_id)
 
 DeviceBuffer::DeviceBuffer(size_t size, holoinfer_datatype type)
     : Buffer(type), size_(size), capacity_(size) {
-  if (!allocator_(&buffer_, this->get_bytes())) { throw std::bad_alloc(); }
+  size_t bytes = size_ * get_element_size(type);
+  if (!allocator_(&buffer_, bytes)) { throw std::bad_alloc(); }
 }
 
 void* DeviceBuffer::data() {

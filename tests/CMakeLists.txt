@@ -134,9 +134,10 @@ add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 # * system tests ----------------------------------------------------------------------------------
 ConfigureTest(
   SYSTEM_TEST
-  system/cycle.cpp
+  system/condition_combiner.cpp
   system/cuda_allocators.cpp
   system/cuda_stream.cpp
+  system/cycle.cpp
   system/emit_receive_port_name_test.cpp
   system/env_wrapper.cpp
   system/exception_handling.cpp
@@ -153,6 +154,7 @@ ConfigureTest(
   system/native_operator_multibroadcasts_app.cpp
   system/native_operator_ping_app.cpp
   system/operator_metadata_apps.cpp
+  system/operator_status_test.cpp
   system/ping_rx_op.cpp
   system/ping_tx_op.cpp
   system/receive_as_entity_test.cpp
@@ -192,11 +194,12 @@ ConfigureTest(
 ConfigureTest(
   SYSTEM_DISTRIBUTED_TEST
   system/distributed/distributed_app.cpp
-  system/distributed/distributed_gxf_operator_app.cpp
   system/distributed/distributed_demosaic_op_app.cpp
+  system/distributed/distributed_gxf_operator_app.cpp
   system/distributed/holoscan_ucx_ports_env.cpp
   system/distributed/ping_message_rx_op.cpp
   system/distributed/ping_message_tx_op.cpp
+  system/distributed/single_tensor_transmit.cpp
   system/distributed/standalone_fragments.cpp
   system/distributed/ucx_message_serialization_ping_app.cpp
   system/env_wrapper.cpp
@@ -250,6 +253,7 @@ ConfigureTest(
   system/distributed/distributed_demosaic_op_app.cpp
   system/distributed/distributed_gxf_operator_app.cpp
   system/distributed/holoscan_ucx_ports_env.cpp
+  system/distributed/single_tensor_transmit.cpp
   system/distributed/standalone_fragments.cpp
   system/env_wrapper.cpp
 )

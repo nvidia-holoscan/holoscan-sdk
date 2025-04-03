@@ -62,6 +62,7 @@
 // Resources
 #include "./core/resources/gxf/block_memory_pool.hpp"
 #include "./core/resources/gxf/clock.hpp"
+#include "./core/resources/gxf/condition_combiner.hpp"
 #include "./core/resources/gxf/cuda_stream_pool.hpp"
 #include "./core/resources/gxf/double_buffer_receiver.hpp"
 #include "./core/resources/gxf/double_buffer_transmitter.hpp"

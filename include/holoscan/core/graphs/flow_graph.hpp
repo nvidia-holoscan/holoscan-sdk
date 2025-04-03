@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,19 +56,20 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
   void add_flow(const NodeType& node_u, const NodeType& node_v,
                 const EdgeDataType& port_map) override;
 
-  std::optional<EdgeDataType> get_port_map(const NodeType& node_u, const NodeType& node_v) override;
+  std::optional<EdgeDataType> get_port_map(const NodeType& node_u,
+                                           const NodeType& node_v) const override;
 
-  bool is_root(const NodeType& node) override;
+  bool is_root(const NodeType& node) const override;
 
-  bool is_user_defined_root(const NodeType& node) override {
+  bool is_user_defined_root(const NodeType& node) const override {
     return get_nodes().empty() ? false : get_nodes()[0] == node;
   }
 
-  bool is_leaf(const NodeType& node) override;
+  bool is_leaf(const NodeType& node) const override;
 
-  std::vector<NodeType> has_cycle() override;
+  std::vector<NodeType> has_cycle() const override;
 
-  std::vector<NodeType> get_root_nodes() override;
+  std::vector<NodeType> get_root_nodes() const override;
 
   /**
    * @brief Get all nodes.
@@ -77,17 +78,19 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
    *
    * @return A vector of all nodes.
    */
-  std::vector<NodeType> get_nodes() override;
+  std::vector<NodeType> get_nodes() const override;
 
-  std::vector<NodeType> get_next_nodes(const NodeType& node) override;
+  std::vector<NodeType> get_next_nodes(const NodeType& node) const override;
 
-  std::vector<NodeType> get_previous_nodes(const NodeType& node) override;
+  std::vector<NodeType> get_previous_nodes(const NodeType& node) const override;
 
-  NodeType find_node(const NodePredicate& pred) override;
+  NodeType find_node(const NodePredicate& pred) const override;
 
-  NodeType find_node(const NodeType& node) override;
+  NodeType find_node(const NodeType& node) const override;
 
-  NodeType find_node(std::string name) override;
+  NodeType find_node(const std::string& name) const override;
+
+  void remove_node(const NodeType& node) override;
 
  private:
   std::unordered_map<NodeType, std::unordered_map<NodeType, EdgeDataType>> succ_;

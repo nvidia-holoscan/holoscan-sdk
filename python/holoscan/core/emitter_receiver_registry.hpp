@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,7 +85,7 @@ struct emitter_receiver<std::shared_ptr<T>> {
  *
  * This class is used to set emitter/receivers (emitter + receiver) for data types.
  */
-class EmitterReceiverRegistry {
+class PYBIND11_EXPORT EmitterReceiverRegistry {
  public:
   /**
    * @brief Function type for emitting a data type

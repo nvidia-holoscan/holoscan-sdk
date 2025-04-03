@@ -18,7 +18,7 @@
 #include "operator.hpp"
 
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>  // for unordered_map -> dict, etc.
+#include <pybind11/stl.h>         // for unordered_map -> dict, etc.
 #include <pybind11/functional.h>  // for lambda functions
 
 #include <list>
@@ -188,6 +188,10 @@ void init_operator(py::module_& m) {
       .def("multi_port_conditions",
            &OperatorSpec::multi_port_conditions,
            doc::OperatorSpec::doc_multi_port_conditions)
+      .def("or_combine_port_conditions",
+           &OperatorSpec::or_combine_port_conditions,
+           "port_names"_a,
+           doc::OperatorSpec::doc_or_combine_port_conditions)
       .def_property_readonly("outputs",
                              &OperatorSpec::outputs,
                              doc::OperatorSpec::doc_outputs,
@@ -370,6 +374,17 @@ void init_operator(py::module_& m) {
           "OUTPUT_EXEC_PORT_NAME",
           [](py::object /* self */) { return Operator::kOutputExecPortName; },
           "Default output execution port name.")
+      .def_property_readonly("async_condition",
+           &Operator::async_condition,
+           doc::Operator::doc_async_condition,
+           py::return_value_policy::reference_internal)
+      .def("stop_execution",
+           &Operator::stop_execution,
+           doc::Operator::doc_stop_execution)
+      .def_property_readonly("execution_context",
+           &Operator::execution_context,
+           doc::Operator::doc_execution_context,
+           py::return_value_policy::reference_internal)
       .def(
           "__repr__",
           [](const py::object& obj) {
@@ -758,6 +773,21 @@ void PyOperator::initialize() {
 
   set_py_tracing();
 
+  auto* context = fragment_->executor().context();
+
+  // Create PyExecutionContext, PyInputContext, PyOutputContext objects and store them
+  py_context_ = std::make_shared<PyExecutionContext>(context, py_op_);
+  py_op_input_ = py_context_->py_input();
+  py_op_output_ = py_context_->py_output();
+
+  // Make sure CudaObjectHandler has been initialized for use by py_emit and py_receive
+  py_context_->init_cuda_object_handler(this);
+  py_op_input_->cuda_object_handler(py_context_->cuda_object_handler());
+  py_op_output_->cuda_object_handler(py_context_->cuda_object_handler());
+  HOLOSCAN_LOG_TRACE("PyOperator: py_context_->cuda_object_handler() for op '{}' is {}null",
+                      name(),
+                      py_context_->cuda_object_handler() == nullptr ? "" : "not ");
+
   py_initialize_.operator()();
 }
 
@@ -781,34 +811,18 @@ void PyOperator::stop() {
 
 void PyOperator::compute(InputContext& op_input, OutputContext& op_output,
                          ExecutionContext& context) {
-  auto* gxf_context = context.context();
-
   // Get the compute method of the Python Operator class and call it
   py::gil_scoped_acquire scope_guard;
-
-  if (py_context_ == nullptr) {
-    // create PyInputContext, PyOutputContext, PyExecutionContext objects and store them
-    py_op_input_ =
-        std::make_shared<PyInputContext>(&context, op_input.op(), op_input.inputs(), this->py_op_);
-    py_op_output_ = std::make_shared<PyOutputContext>(
-        &context, op_output.op(), op_output.outputs(), this->py_op_);
-    py_context_ = std::make_shared<PyExecutionContext>(
-        gxf_context, py_op_input_, py_op_output_, this->py_op_);
-
-    // Make sure CudaObjectHandler has been initialized for use by py_emit and py_receive
-    py_context_->init_cuda_object_handler(op_output.op());
-    py_op_input_->cuda_object_handler(py_context_->cuda_object_handler());
-    py_op_output_->cuda_object_handler(py_context_->cuda_object_handler());
-    HOLOSCAN_LOG_TRACE("PyOperator: py_context_->cuda_object_handler() for op '{}' is {}null",
-                       op_input.op()->name(),
-                       py_context_->cuda_object_handler() == nullptr ? "" : "not ");
-  }
 
   py_context_->clear_received_streams();
 
   set_py_tracing();
 
   py_compute_.operator()(py::cast(py_op_input_), py::cast(py_op_output_), py::cast(py_context_));
+}
+
+std::shared_ptr<holoscan::ExecutionContext> PyOperator::execution_context() const {
+  return py_context_;
 }
 
 }  // namespace holoscan

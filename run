@@ -818,6 +818,7 @@ lint() {
             --exclude install-\* \
             --exclude src/core/services/generated \
             --exclude modules/holoviz/thirdparty/nvpro_core \
+            --exclude examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu \
             --recursive $DIR_TO_RUN \
         | { grep -v "Ignoring\|Done processing" || true; } || exit_code=1
 

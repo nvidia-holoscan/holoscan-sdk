@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@ void Resource::initialize() {
     return;
   }
 
+  HOLOSCAN_LOG_TRACE("Resource {}: calling Component::initialize()", name());
   Component::initialize();
 
   if (!spec_) {
@@ -34,6 +35,7 @@ void Resource::initialize() {
     return;
   }
 
+  HOLOSCAN_LOG_TRACE("Resource {}: calling set_parameters()", name());
   set_parameters();
 
   is_initialized_ = true;
@@ -55,6 +57,8 @@ void Resource::update_params_from_args() {
 }
 
 void Resource::set_parameters() {
+  HOLOSCAN_LOG_TRACE("Resource::set_parameters() for '{}': calling update_params_from_args()",
+                     name());
   update_params_from_args();
 
   // Set default values for unspecified arguments if the resource is native

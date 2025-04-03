@@ -59,12 +59,14 @@ struct BufferInfo {
   /**
    * @returns a string describing the supported tensor formats
    */
-  static std::string get_supported_tensor_formats_str();
+  static std::string get_supported_tensor_formats_str(
+      const std::vector<HolovizOp::ImageFormat>& device_image_formats);
 
   /**
    * @returns a string describing the supported video buffer formats
    */
-  static std::string get_supported_video_buffer_formats_str();
+  static std::string get_supported_video_buffer_formats_str(
+      const std::vector<HolovizOp::ImageFormat>& device_image_formats);
 
   uint32_t rank = 0;
   uint32_t components = 0;

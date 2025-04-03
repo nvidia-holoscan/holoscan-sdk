@@ -118,7 +118,7 @@ InferStatus DataProcessor::launchCustomKernel(const std::string& id,
                                               bool process_with_cuda, cudaStream_t cuda_stream) {
   if (output_tensors.size() == 0) {
     return InferStatus(holoinfer_code::H_ERROR,
-                       "Data processor, Output tensor size 0 in compute_max_per_channel_scaled.");
+                       "Data processor, Output tensor size 0 in launchCustomKernel.");
   }
 
   if (!process_with_cuda) {

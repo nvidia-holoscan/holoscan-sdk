@@ -484,6 +484,7 @@ void init_io_context(py::module_& m) {
     // emitter-only cases (each of these is received as holoscan::gxf::Entity)
     registry.add_emitter_receiver<holoscan::PyEntity>("holoscan::PyEntity"s, true);
     registry.add_emitter_receiver<pybind11::dict>("pybind11::dict"s, true);
+    // Note: The holoscan::Tensor emitter actually emits a TensorMap containing a single tensor
     registry.add_emitter_receiver<holoscan::Tensor>("holoscan::Tensor"s, true);
   });
 

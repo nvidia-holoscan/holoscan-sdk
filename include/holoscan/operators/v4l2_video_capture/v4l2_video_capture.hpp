@@ -123,6 +123,7 @@ class V4L2VideoCaptureOp : public Operator {
 
   using FormatListItem = std::pair<uint32_t, std::shared_ptr<GxfFormat>>;
   using FormatList = std::list<FormatListItem>;
+  typedef void (*ConverterFunc)(const void* in, void* rgba, size_t width, size_t height);
 
  private:
   Parameter<std::shared_ptr<Allocator>> allocator_;
@@ -183,7 +184,6 @@ class V4L2VideoCaptureOp : public Operator {
   FormatList::const_iterator v4l2_to_gxf_format_;
 
   /// function doing the conversion to RGBA, deprecated.
-  typedef void (*ConverterFunc)(const void* in, void* rgba, size_t width, size_t height);
   ConverterFunc converter_{nullptr};
 };
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,13 +17,13 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(dlpack 0.7
+rapids_cpm_find(dlpack 1.0
     GLOBAL_TARGETS dlpack
 
     CPM_ARGS
 
     GITHUB_REPOSITORY dmlc/dlpack
-    GIT_TAG v0.7
+    GIT_TAG v1.0
     GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
 )

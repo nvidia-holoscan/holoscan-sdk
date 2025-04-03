@@ -64,6 +64,7 @@ endif()
 
 # Python Only examples
 if(HOLOSCAN_PYTHON_EXAMPLES)
+  add_subdirectory(bring_your_own_model)
   add_subdirectory(cupy_native)
   add_subdirectory(numpy_native)
   add_subdirectory(python_decorator)
@@ -71,9 +72,9 @@ endif()
 
 # C++ and Python examples
 add_subdirectory(activation_map)
-add_subdirectory(bring_your_own_model)
 add_subdirectory(cli_packager)
 add_subdirectory(conditions)
+add_subdirectory(execution_control)
 add_subdirectory(flow_control)
 add_subdirectory(flow_tracker)
 add_subdirectory(hello_world)

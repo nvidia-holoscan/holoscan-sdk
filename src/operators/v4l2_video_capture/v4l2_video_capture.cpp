@@ -28,6 +28,7 @@
 #include <cstring>
 #include <filesystem>
 #include <list>
+#include <map>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -283,6 +284,15 @@ static void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t heigh
   jpeg_destroy_decompress(&cinfo);
 }
 
+/**
+ * List of formats which can be converted to RGBA
+ */
+static const std::map<uint32_t, V4L2VideoCaptureOp::ConverterFunc> v4l2_to_converter{
+    {V4L2_PIX_FMT_YUYV, &YUYVToRGBA},
+    {V4L2_PIX_FMT_RGB24, &RGB24ToRGBA},
+    {V4L2_PIX_FMT_MJPEG, &MJPEGToRGBA},
+    {V4L2_PIX_FMT_RGBA32, nullptr}};
+
 void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
   spec.output<std::shared_ptr<holoscan::gxf::Entity>>("signal");
 
@@ -444,8 +454,8 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
     }
   }
 
-  // add metadata if enabled
-  if (is_metadata_enabled()) {
+  // add metadata if enabled and pass_through_ is used
+  if (is_metadata_enabled() && pass_through_) {
     auto meta = metadata();
     meta->set("V4L2_pixel_format", FOURCC2STRING(format_desc_.pixelformat));
     meta->set(
@@ -544,7 +554,7 @@ void V4L2VideoCaptureOp::v4l2_request_buffers() {
       int integrated = 0;
       HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&integrated, cudaDevAttrIntegrated, device));
       if (managed_memory && integrated) {
-          memory_storage_type_ = nvidia::gxf::MemoryStorageType::kDevice;
+        memory_storage_type_ = nvidia::gxf::MemoryStorageType::kDevice;
       }
     }
   }
@@ -639,36 +649,48 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
   }
 
   if (pixel_format_.get() == "auto") {
+    bool cant_convert_to_rgba = false;
     FormatList::const_iterator it = v4l2_to_gxf_format.begin();
     while (it != v4l2_to_gxf_format.end()) {
-      auto v4l_format = std::find_if(v4l2_formats.cbegin(),
-                                     v4l2_formats.cend(),
-                                     [pixel_format = it->first](const v4l2_fmtdesc& format_desc) {
-                                       return pixel_format == format_desc.pixelformat;
-                                     });
+      auto v4l_format =
+          std::find_if(v4l2_formats.cbegin(),
+                       v4l2_formats.cend(),
+                       [pixel_format = it->first](const v4l2_fmtdesc& format_desc) {
+                         return pixel_format == format_desc.pixelformat;
+                       });
       if (v4l_format != v4l2_formats.end()) {
-        format_desc_ = *v4l_format;
-        format_.fmt.pix.pixelformat = format_desc_.pixelformat;
-
-        if (v4l_format == patched_format) {
-          // if we patched this format use the original reported format to be passed to IOCTLs
-          format_.fmt.pix.pixelformat = V4L2_PIX_FMT_ABGR32;
+        // if pass through is disabled we also have to be able to convert that format to RGBA
+        if (!pass_through_) {
+          cant_convert_to_rgba =
+              (v4l2_to_converter.find(v4l_format->pixelformat) == v4l2_to_converter.end());
         }
-        break;
+
+        if (!cant_convert_to_rgba) {
+          format_desc_ = *v4l_format;
+          format_.fmt.pix.pixelformat = format_desc_.pixelformat;
+
+          if (v4l_format == patched_format) {
+            // if we patched this format use the original reported format to be passed to IOCTLs
+            format_.fmt.pix.pixelformat = V4L2_PIX_FMT_ABGR32;
+          }
+          break;
+        }
       }
       ++it;
     }
 
-    if (it == v4l2_to_gxf_format.end()) {
-      std::vector<std::string> supported_formats;
-      for (auto&& format : v4l2_to_gxf_format) {
-        supported_formats.push_back(FOURCC2STRING(format.first));
+    if (pass_through_ && !cant_convert_to_rgba) {
+      if ((it == v4l2_to_gxf_format.end())) {
+        std::vector<std::string> supported_formats;
+        for (auto&& format : v4l2_to_gxf_format) {
+          supported_formats.push_back(FOURCC2STRING(format.first));
+        }
+        throw std::runtime_error(fmt::format(
+            "Automatic setting of pixel format failed: device does not support any of {}",
+            fmt::join(supported_formats, ", ")));
       }
-      throw std::runtime_error(
-          fmt::format("Automatic setting of pixel format failed: device does not support any of {}",
-                      fmt::join(supported_formats, ", ")));
+      v4l2_to_gxf_format_ = it;
     }
-    v4l2_to_gxf_format_ = it;
   } else {
     // Convert user given format to FourCC
     const uint32_t pixel_format = v4l2_fourcc(pixel_format_.get()[0],
@@ -705,16 +727,18 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
   }
 
   if (!pass_through_) {
-    if (format_desc_.pixelformat == V4L2_PIX_FMT_YUYV) {
-      converter_ = &YUYVToRGBA;
-    } else if (format_desc_.pixelformat == V4L2_PIX_FMT_RGB24) {
-      converter_ = &RGB24ToRGBA;
-    } else if (format_desc_.pixelformat == V4L2_PIX_FMT_MJPEG) {
-      converter_ = &MJPEGToRGBA;
-    } else if (format_desc_.pixelformat != V4L2_PIX_FMT_RGBA32) {
+    auto it = v4l2_to_converter.find(format_desc_.pixelformat);
+    if (it == v4l2_to_converter.end()) {
+      std::vector<std::string> supported_formats;
+      for (auto&& format : v4l2_to_converter) {
+        supported_formats.push_back(FOURCC2STRING(format.first));
+      }
       throw std::runtime_error(
-          fmt::format("Unsupported pixel format {}", FOURCC2STRING(format_desc_.pixelformat)));
+          fmt::format("Can't convert to RGBA. The pixel formats '{}', which can be converted, are "
+                      "not supported by the device",
+                      fmt::join(supported_formats, ", ")));
     }
+    converter_ = it->second;
   }
 
   if ((width_.get() > 0) || (height_.get() > 0)) {

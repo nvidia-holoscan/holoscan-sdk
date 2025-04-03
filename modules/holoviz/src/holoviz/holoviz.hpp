@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -303,6 +303,23 @@ void GetSurfaceFormats(uint32_t* surface_format_count, SurfaceFormat* surface_fo
  * @param surface_format framebuffer surface format
  */
 void SetSurfaceFormat(SurfaceFormat surface_format);
+
+/**
+ * Get the supported image formats.
+ *
+ * `viz::Init()` has to be called before since the image formats depend on the physical device.
+ *
+ * If `image_formats` is nullptr, then the number of image formats supported for the current device
+ * is returned in `image_format_count`. Otherwise, `image_format_count` must point to a variable set
+ * by the application to the number of elements in the `image_formats` array, and on return the
+ * variable is overwritten with the number of values actually written to `image_formats`. If the
+ * value of `image_format_count` is less than the number of image formats supported, at most
+ * `image_format_count` values will be written,
+ *
+ * @param image_format_count number of image formats available or queried
+ * @param image_formats either nullptr or a pointer to an array of ImageFormat values
+ */
+void GetImageFormats(uint32_t* image_format_count, ImageFormat* image_formats);
 
 /**
  * Set the font used to render text, do this before calling viz::Init().

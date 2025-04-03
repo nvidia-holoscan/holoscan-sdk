@@ -676,7 +676,7 @@ The code snippet belows shows how to set and configure a non-default scheduler:
 auto app = holoscan::make_application<App>();
 auto scheduler = app->make_scheduler<holoscan::EventBasedScheduler>(
   "myscheduler",
-  Arg("worker_thread_number", 4),
+  Arg("worker_thread_number", static_cast<int64_t>(4)),
   Arg("stop_on_deadlock", true)
 );
 app->scheduler(scheduler);
@@ -1038,6 +1038,76 @@ Key features include:
   - Flow information management via the `FlowInfo` ({cpp:class}`C++ <holoscan::Operator::FlowInfo>`/{py:class}`Python <holoscan.core.FlowInfo>`) class
 
 For details, please refer to the {ref}`Dynamic Flow Control <holoscan-dynamic-flow-control>` section of the user guide.
+
+### Application Execution Control APIs
+
+Holoscan provides APIs for controlling the execution of operators at the application or fragment level.
+
+#### stop_execution
+
+The `stop_execution()` ({cpp:func}`C++ <holoscan::Fragment::stop_execution>`/{py:func}`Python <holoscan.core.Fragment.stop_execution>`) method allows an application to stop the execution of a specific operator or the entire application:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+virtual void stop_execution(const std::string& op_name = "");
+```
+
+When called with an operator name, this method stops the execution of the specified operator.
+When called with an empty string (the default), it stops all operators in the fragment, effectively shutting down the application.
+
+Example usage to stop a specific operator:
+```cpp
+// From within a Fragment/Application method
+stop_execution("source_operator");
+```
+
+Example usage to stop the entire application:
+```cpp
+// From within a Fragment/Application method
+stop_execution();
+```
+
+Example usage to access `stop_execution()` method from within an operator:
+```cpp
+// From within an operator's compute method
+fragment()->stop_execution(); // `fragment()` returns a pointer to the fragment object
+```
+````
+
+````{tab-item} Python
+```python
+def stop_execution(self, op_name="")
+```
+
+When called with an operator name, this method stops the execution of the specified operator.
+When called with an empty string (the default), it stops all operators in the fragment, effectively shutting down the application.
+
+Example usage to stop a specific operator:
+```python
+# From within a Fragment/Application method
+self.stop_execution("source_operator")
+```
+
+Example usage to stop the entire application:
+```python
+# From within a Fragment/Application method
+self.stop_execution()
+```
+
+Example usage to access `stop_execution()` method from within an operator:
+```python
+# From within an operator's compute method
+self.fragment.stop_execution() # `self.fragment` is the fragment object
+```
+````
+`````
+
+For a complete example of how to use these methods to implement advanced monitoring behavior, see the [operator_status_tracking](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/execution_control/operator_status_tracking) example, which demonstrates:
+
+1. A source operator that runs for a limited number of iterations
+2. A monitor operator that independently tracks the status of other operators
+3. Automatic application shutdown when all processing operators have completed
 
 ## Building and running your Application
 

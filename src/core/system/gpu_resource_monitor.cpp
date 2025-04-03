@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -169,7 +169,11 @@ void GPUResourceMonitor::init() {
 void GPUResourceMonitor::close() {
   shutdown_nvml();
   shutdown_cuda_runtime();
+
+  // Clear data structures to free any memory
+  gpu_info_.clear();
   gpu_count_ = 0;
+  is_cached_ = false;
 }
 
 uint64_t GPUResourceMonitor::metric_flags() const {
@@ -622,6 +626,9 @@ bool GPUResourceMonitor::init_cuda_runtime() {
 void GPUResourceMonitor::shutdown_nvml() noexcept {
   if (handle_) {
     if (nvmlShutdown) {
+      // Clear the NVML devices vector to release device handles BEFORE shutting down NVML
+      nvml_devices_.clear();
+
       nvml::nvmlReturn_t result = nvmlShutdown();
       if (result != 0) {
         // ignore potential exception from logging
@@ -631,6 +638,7 @@ void GPUResourceMonitor::shutdown_nvml() noexcept {
         } catch (const std::exception& e) {}
       }
     }
+
     dlclose(handle_);
     handle_ = nullptr;
     is_cached_ = false;

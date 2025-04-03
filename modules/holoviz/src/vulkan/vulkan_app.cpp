@@ -93,6 +93,7 @@ class Vulkan::Impl {
   vk::Device get_device() const;
   std::vector<SurfaceFormat> get_surface_formats() const;
   std::vector<PresentMode> get_present_modes() const;
+  const std::vector<ImageFormat>& get_image_formats() const;
 
   void set_surface_format(SurfaceFormat surface_format);
   void set_present_mode(PresentMode present_mode);
@@ -320,6 +321,8 @@ class Vulkan::Impl {
   vk::UniquePipeline geometry_triangle_color_pipeline_;
 
   vk::UniquePipeline imgui_pipeline_;
+
+  std::vector<ImageFormat> image_formats_;  ///< list of formats supported by the hardware
 };
 
 Vulkan::Impl::~Impl() {
@@ -406,6 +409,9 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   nvvk_.vk_ctx_.initDevice(device_index, context_info);
   device_ = nvvk_.vk_ctx_.m_device;
   physical_device_ = nvvk_.vk_ctx_.m_physicalDevice;
+
+  // Get the list of supported formats for this physical device
+  image_formats_ = get_supported_formats(physical_device_);
 
   {
     auto properties =
@@ -622,6 +628,10 @@ void Vulkan::Impl::set_surface_format(SurfaceFormat surface_format) {
 
 std::vector<PresentMode> Vulkan::Impl::get_present_modes() const {
   return fb_sequence_->get_present_modes();
+}
+
+const std::vector<ImageFormat>& Vulkan::Impl::get_image_formats() const {
+  return image_formats_;
 }
 
 void Vulkan::Impl::set_present_mode(PresentMode present_mode) {
@@ -2312,6 +2322,10 @@ std::vector<PresentMode> Vulkan::get_present_modes() const {
 
 void Vulkan::set_present_mode(PresentMode present_mode) {
   impl_->set_present_mode(present_mode);
+}
+
+std::vector<ImageFormat> Vulkan::get_image_formats() const {
+  return impl_->get_image_formats();
 }
 
 void Vulkan::begin_transfer_pass() {

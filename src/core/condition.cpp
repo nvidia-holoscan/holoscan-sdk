@@ -116,4 +116,17 @@ std::optional<std::shared_ptr<Transmitter>> Condition::transmitter(const std::st
   return op_->transmitter(port_name);
 }
 
+void Condition::wrapper_cid(gxf_uid_t cid) {
+  wrapper_cid_ = cid;
+}
+
+gxf_uid_t Condition::wrapper_cid() const {
+  if (condition_type_ != ConditionComponentType::kNative) {
+    HOLOSCAN_LOG_ERROR(
+        "The wrapper_cid() method only applies to native Conditions. Use gxf_cid() "
+        "instead for GXFConditions.");
+  }
+  return wrapper_cid_;
+}
+
 }  // namespace holoscan

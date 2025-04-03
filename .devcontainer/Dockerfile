@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,7 @@ FROM ${HOLOSCAN_BUILD_IMAGE} AS holoscan-vscode
 ARG INSTALL_ZSH="true"
 # don't upgrade packages, some packages are pinned by the base image
 ARG UPGRADE_PACKAGES="false"
-ARG USERNAME=holoscan-sdk
+ARG USERNAME=holoscan
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 # Install needed packages and setup non-root user. Use a separate RUN statement to add your own dependencies.

@@ -37,11 +37,218 @@ These conditions fall under various types as detailed below. Often, conditions a
 Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{py:mod}`Python <holoscan.conditions>`.
 :::
 
-**Conditions are AND-combined**
 
-An Operator can be associated with multiple conditions which define its execution behavior. Conditions are AND combined to describe
-the current state of an operator. For an operator to be executed by the scheduler, all the conditions must be in `READY` state and
-conversely, the operator is unscheduled from execution whenever any one of the scheduling terms reaches `NEVER` state. The priority of various states during AND combine follows the order `NEVER`, `WAIT_EVENT`, `WAIT`, `WAIT_TIME`, and `READY`.
+## Condition combination logic
+
+**By Default conditions are AND-combined**
+
+An Operator can be associated with multiple conditions that define its execution behavior. By default, conditions are AND combined to describe the operator's current state.
+For an operator to be executed by the scheduler, all conditions must be in the `READY` state. Conversely, the operator is unscheduled whenever any of the scheduling terms reaches the `NEVER` state.
+The priority of various states during AND combine follows the order `NEVER`, `WAIT_EVENT`, `WAIT`, `WAIT_TIME`, and `READY`.
+
+
+**OR combination of conditions**
+
+An `OrConditionCombiner` class is also provided which can be used to allow OR combination of the set of conditions associated with it. For concrete code on how to configure an operator to use OR combination see the section on OR combination of conditions({ref}`C++ <or-combiner-cpp>`, {ref}`Python <or-combiner-python>`) or port conditions({ref}`C++ <or-port-combine-cpp>`, {ref}`Python <or-port-combine-python>`). The general logic when combining conditions is described in the following section and example.
+
+Note that when OR combining conditions if any of the conditions has state NEVER the combination will also return NEVER.
+
+### General Condition Combination Logic Used by GXF
+
+- **Initial Setup**
+  - Start with a default combined condition of `READY`
+
+- **Process Any Combiners (e.g. OrConditionCombiner) First**
+  - For each `ConditionCombiner` associated with the `Operator`:
+    - Get all conditions managed by this combiner
+    - Check the first condition and use its result as the initial combiner result
+    - For each additional condition in the combiner:
+      - Check the status of the condition
+      - Combine with previous result using the combiner's logic (OR for `OrConditionCombiner`)
+    - AND-combine this combiner's final result with results from other combiners
+
+- **Process Standalone Conditions**
+  - For each standalone condition (not in any combiner):
+    - Check the status of the condition
+    - AND-combine this condition with the current combined result
+
+- **Return Final Result**
+  - The final combined condition determines if and when the entity should execute
+
+A concrete diagram illustrating the logic bulleted above is shown in the diagram below:
+
+```{digraph} condition_combination_example
+:align: center
+:caption: condition-combination-example
+
+    // Graph settings
+    rankdir=TD;
+    compound=true;
+    node [shape=box, style=filled, fillcolor=white];
+
+    // Entity Scheduling Conditions subgraph
+    subgraph cluster_entity {
+        label="Operator Conditions";
+
+        // OrCombiner1 subgraph
+        subgraph cluster_combiner1 {
+            label="OrCombiner1";
+            style=filled;
+            fillcolor="#ffccff";
+            color="#333333";
+
+            ST1 [label="Condition 1: READY at t=100"];
+            ST2 [label="Condition 2: WAIT_TIME at t=150"];
+            ST3 [label="Condition 3: WAIT at t=0"];
+        }
+
+        // OrCombiner2 subgraph
+        subgraph cluster_combiner2 {
+            label="OrCombiner2";
+            style=filled;
+            fillcolor="#ffccff";
+            color="#333333";
+
+            ST4 [label="Condition 4: READY at t=120"];
+            ST5 [label="Condition 5: NEVER at t=0"];
+        }
+
+        ST6 [label="Condition 6: READY at t=80"];
+    }
+
+    // Combination Process subgraph
+    subgraph cluster_process {
+        label="Combination Process";
+
+        C1 [label="OR Combine in OrCombiner1"];
+        C2 [label="OR Combine in OrCombiner2"];
+        C3 [label="AND Combine all results"];
+    }
+
+    // Result node
+    Result [label="Final Result: NEVER at t=0", style=filled, fillcolor="#aaffaa", color="#333333", penwidth=2];
+
+    // Connections
+    ST1 -> C1;
+    ST2 -> C1;
+    ST3 -> C1;
+
+    ST4 -> C2;
+    ST5 -> C2;
+
+    C1 -> C3 [label="READY at t=100"];
+    C2 -> C3 [label="NEVER at t=0"];
+    ST6 -> C3 [label="READY at t=80"];
+
+    C3 -> Result;
+```
+
+### Detailed Condition Status Combination Logic Used by AND combination
+
+```{digraph} and_combination_diagram
+:align: center
+:caption: AND combination logic
+
+    // Graph settings
+    rankdir=TD;
+    compound=true;
+    node [shape=box, style=filled, fillcolor=white];
+
+    // Decision nodes with diamond shape
+    D [label="Any NEVER?", shape=diamond];
+    E [label="Any WAIT_EVENT?", shape=diamond];
+    F [label="Any WAIT?", shape=diamond];
+    G [label="Any WAIT_TIME?", shape=diamond];
+
+    // Input and result nodes
+    A [label="Condition A"];
+    B [label="Condition B"];
+    NEVER [label="NEVER"];
+    WAIT_EVENT [label="WAIT_EVENT"];
+    WAIT [label="WAIT"];
+    WAIT_TIME [label="WAIT_TIME with max timestamp"];
+    READY [label="READY with max timestamp"];
+
+    // Wrap everything in a subgraph
+    subgraph cluster_and_logic {
+        label="AND Combination Logic";
+        style=filled;
+        fillcolor=lightgrey;
+        color=black;
+
+        // Connections
+        A -> D;
+        B -> D;
+
+        D -> NEVER [label="Yes"];
+        D -> E [label="No"];
+
+        E -> WAIT_EVENT [label="Yes"];
+        E -> F [label="No"];
+
+        F -> WAIT [label="Yes"];
+        F -> G [label="No"];
+
+        G -> WAIT_TIME [label="Yes"];
+        G -> READY [label="No"];
+    }
+```
+
+### Detailed Condition Status Combination Logic Used by OR combination
+
+```{digraph} or_combination_diagram
+:align: center
+:caption: OR Combination Logic
+
+    // Graph settings
+    rankdir=TD;
+    compound=true;
+    node [shape=box, style=filled, fillcolor=white];
+
+    // Decision nodes with diamond shape
+    D [label="Any NEVER?", shape=diamond];
+    E [label="Any READY?", shape=diamond];
+    F [label="Any WAIT_EVENT?", shape=diamond];
+    G [label="Both WAIT_TIME?", shape=diamond];
+    H [label="Any WAIT_TIME?", shape=diamond];
+
+    // Input and result nodes
+    A [label="Condition A"];
+    B [label="Condition B"];
+    NEVER [label="NEVER"];
+    READY [label="READY with max timestamp"];
+    WAIT_EVENT [label="WAIT_EVENT"];
+    WAIT_TIME_MAX [label="WAIT_TIME with max timestamp"];
+    WAIT_TIME [label="WAIT_TIME"];
+    WAIT [label="WAIT"];
+
+    // Wrap everything in a subgraph
+    subgraph cluster_or_logic {
+        label="OR Combination Logic";
+        style=filled;
+        fillcolor=lightgrey;
+        color=black;
+
+        // Connections
+        A -> D;
+        B -> D;
+
+        D -> NEVER [label="Yes"];
+        D -> E [label="No"];
+
+        E -> READY [label="Yes"];
+        E -> F [label="No"];
+
+        F -> WAIT_EVENT [label="Yes"];
+        F -> G [label="No"];
+
+        G -> WAIT_TIME_MAX [label="Yes"];
+        G -> H [label="No"];
+
+        H -> WAIT_TIME [label="Yes"];
+        H -> WAIT [label="No"];
+    }
+```
 
 ## Condition Types
 
@@ -305,6 +512,7 @@ Example code for how the condition would be configured from an application's `co
 ```
 ````
 
+(holoscan-conditions-asynchronous)=
 ## AsynchronousCondition
 
 `AsynchronousCondition` ({cpp:class}`C++ <holoscan::gxf::AsynchronousCondition>`/{py:class}`Python <holoscan.conditions.AsynchronousCondition>`) is primarily associated with operators which are working with asynchronous events happening outside of their regular execution performed by the scheduler. Since these events are non-periodic in nature, `AsynchronousCondition` prevents the scheduler from polling the operator for its status regularly and reduces CPU utilization. The scheduling status of the operator associated with this condition can either be in `READY`, `WAIT`, `WAIT_EVENT`, or `NEVER` states based on the asynchronous event it's waiting on.
@@ -320,6 +528,8 @@ The state of an asynchronous event is described using `AsynchronousEventState` a
 | EVENT\_NEVER                 | Operator does not want to be executed again, end of execution       |
 
 Operators associated with this scheduling term most likely have an asynchronous thread which can update the state of the condition outside of its regular execution cycle performed by the scheduler. When the asynchronous event state is in `WAIT` state, the scheduler regularly polls for the scheduling state of the operator. When the asynchronous event state is in `EVENT_WAITING` state, schedulers will not check the scheduling status of the operator again until they receive an event notification. Setting the state of the asynchronous event to `EVENT_DONE` automatically sends the event notification to the scheduler. Operators can use the `EVENT_NEVER` state to indicate the end of its execution cycle. As for all of the condition types, the condition type can be used with any of the schedulers.
+
+Please refer to the [Asynchronous Operator Execution Control Example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/execution_control/async_operator_execution_control/README.md) and [Ping Async Example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/asynchronous/README.md) for more details on how to use this condition.
 
 ## CudaStreamCondition
 

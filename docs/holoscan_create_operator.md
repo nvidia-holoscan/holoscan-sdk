@@ -1,4 +1,3 @@
-
 (holoscan-create-operators)=
 # Creating Operators
 
@@ -790,6 +789,97 @@ If the order of the input data is important, it is recommended to use `IOSpec::k
 
 Please see the [C++ system test cases](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/tests/system/multi_receiver_operator_ping_app.cpp) for more examples of receiving multiple inputs in C++ operators.
 
+(or-port-combine-cpp)=
+
+##### Configuring OR-combination of port conditions (C++)
+
+When the operator has multiple input or output ports, each of which has its own condition, the default behavior of Holoscan SDK is an AND combination of all conditions. In some scenarios, it may be desirable to set some subset of ports to have instead OR combination of their conditions (e.g., an OR condition across two input ports can be used to allow an operator to execute if a message arrives on either port). Additional details of condition combination logic and the set of conditions provided by Holoscan are provided in the [condition components section](components/conditions.md).
+
+The {cpp:func}`OperatorSpec::or_combine_port_conditions<holoscan::OperatorSpec::or_combine_port_conditions>` method can be called from within `Operator::setup` to specify that a subset of ports should have OR combination of their conditions. The only argument that must be provided is a vector containing the names of the ports whose conditions should be OR combined.
+
+For a concrete example of OR combination, see the [multi_port_or_combiner](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/or_combiner/cpp/multi_port_or_combiner.cpp) example. The relevant `setup` method from that example for the configuration of OR combination of the input ports is:
+
+```cpp
+void setup(OperatorSpec& spec) override {
+  // Using size argument to explicitly set the receiver message queue size for each input.
+  spec.input<int>("in1");
+  spec.input<int>("in2");
+
+  // configure Operator to execute if an input is on "in1" OR "in2"
+  // (without this, the default is "in1" AND "in2")
+  spec.or_combine_port_conditions({"in1", "in2"});
+}
+```
+
+(or-combiner-cpp)=
+
+#### General combination of conditions (C++)
+
+For condition types which are not associated with an input or output port, the user creates them via {cpp:func}`Fragment::make_condition <holoscan::Fragment::make_condition>` which returns a `std::shared_ptr<Condition>`. Any number of such conditions can be passed as positional arguments to {cpp:func}`Fragment::make_operator <holoscan::Fragment::make_operator>` and the resulting status of the operator is the AND combination of these conditions. For example, the following would cause an operator to only execute of (condition1 AND condition2 AND condition3) are all ready.
+
+```cpp
+// passing multiple conditions to make_operator AND combines the conditions
+auto my_cond1 = make_condition<MyCondition1>("condition1");
+auto my_cond2 = make_condition<MyCondition2>("condition2");
+auto my_cond3 = make_condition<MyCondition3>("condition3");
+auto my_op = make_operator<MyOperator>("my_op", my_cond1, my_cond2, my_cond3);
+```
+
+If we instead want to allow OR combination of some subset of these conditions, then instead of passing all of these conditions directly to `make_operator`, we first create an {cpp:class}`OrConditionCombiner<holoscan::OrConditionCombiner>` for the terms we want OR logic to apply to and then pass that OR combiner object to `make_operator`. The following shows how one would configure ((condition1 OR condition2) AND condition3).
+
+```cpp
+// using generic MyCondition1, MyOperator, etc. class names for this example
+auto my_cond1 = make_condition<MyCondition1>("condition1");
+auto my_cond2 = make_condition<MyCondition2>("condition2");
+
+// define an OR combination of the above two conditions
+std::vector<std::shared_ptr<Condition>> terms({my_cond1, my_cond2});
+auto or_combiner = make_resource<OrConditionCombiner>("or_combiner",  Arg{"terms", terms});
+
+// create a third condition that will be AND combined
+auto my_cond3 = make_condition<MyCondition3>("condition3");
+
+// pass both the OR combiner and the conditions to be AND combined to MyOperator
+auto my_op = make_operator<MyOperator>("my_op", or_combiner, my_cond3);
+```
+
+Note that for the above `MyOperator` example, if the operator also had input and/or output ports, then any port conditions (e.g. the default `MessageAvailableCondition` for input ports) would also be AND combined in addition to `condition3`.
+
+Additional details of condition combination logic and the set of conditions provided by Holoscan is provided in the [condition components section](components/conditions.md).
+
+:::{note}
+Only conditions which the user has explicitly created via `make_condition` can be passed to `OrConditionCombiner`. To instead use OR combination across **implicitly** created conditions on input or output ports, see the section above regarding {cpp:func}`OperatorSpec::or_combine_port_conditions<holoscan::OperatorSpec::or_combine_port_conditions>`. A current limitation of the API is that there is not currently a way to use the input/output port conditions with the same `OrConditionCombiner` combiner as conditions explicitly created via `make_condition`.
+:::
+
+##### Configuring multi-port conditions (C++)
+
+A subset of `Condition` types apply to multiple input ports of an operator (e.g. `MultiMessageAvailableCondition` and `MultiMessageAvailableTimeoutCondition`). In this case, rather than using the {cpp:func}`IOSpec::condition <holoscan::IOSpec::condition>` method as demonstrated above for setting a condition on a single port, the {cpp:func}`OperatorSpec::multi_port_condition <holoscan::OperatorSpec::multi_port_condition>` method should be used to configure a condition across multiple input ports. If an input port's name was included in a `multi_port_condition` call, this will automatically disable the default `MessageAvailableCondition` that would otherwise have been assigned to that port (This means it is not required to explicitly set a `ConditionType::kNone` condition on the input port via `IOSpec::condition` in order to be able to use the port with `multi_port_condition`).
+
+Examples of use of multi-port conditions are given in the [examples/conditions/multi_message/](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message) folder of the repository. An example of `Operator::setup` for a multi-message condition from `multi_message_sum_of_all.cpp` is shown below:
+
+```cpp
+  void setup(OperatorSpec& spec) override {
+    // Using size argument to explicitly set the receiver message queue size for each input.
+    spec.input<std::shared_ptr<std::string>>("in1", IOSpec::IOSize(10));
+    spec.input<std::shared_ptr<std::string>>("in2", IOSpec::IOSize(10));
+    spec.input<std::shared_ptr<std::string>>("in3", IOSpec::IOSize(10));
+
+    // Use kMultiMessageAvailableTimeout to consider all three ports together. In this
+    // "SumOfAll" mode, it only matters that `min_sum` messages have arrived across all the ports
+    // {"in1", "in2", "in3"}, but it does not matter which ports the messages arrived on. The
+    // "execution_frequency" is set to 30ms, so the operator can run once 30 ms has elapsed even
+    // if 20 messages have not arrived. Use ConditionType::kMultiMessageAvailable instead if the
+    // timeout interval is not desired.
+    ArgList multi_message_args{
+        holoscan::Arg("execution_frequency", std::string{"30ms"}),
+        holoscan::Arg("min_sum", static_cast<size_t>(20)),
+        holoscan::Arg("sampling_mode", MultiMessageAvailableTimeoutCondition::SamplingMode::kSumOfAll)};
+    spec.multi_port_condition(
+        ConditionType::kMultiMessageAvailableTimeout, {"in1", "in2", "in3"}, multi_message_args);
+  }
+```
+Here, three input ports are defined, each of which has a queue size of 10. A `MultiMessageAvailableTimeoutCondition` is applied across all three of these ports via the `multi_port_condition` method. The condition is configured to allow the operator to execute when either a total of 20 messages have arrived across the three ports OR a time-out interval of 30 ms has elapsed.
+
 #### Building your C++ operator
 
 You can build your C++ operator using CMake, by calling `find_package(holoscan)` in your `CMakeLists.txt` to load the SDK libraries. Your operator will need to link against `holoscan::core`:
@@ -825,7 +915,7 @@ cmake --build <build_dir> -j
 
 * **If the application is configured in the same CMake project as the operator**, you can simply add the operator CMake target library name under the application executable `target_link_libraries` call, as the operator CMake target is already defined.
 
-  ```cmake
+```cmake
   # operator
   add_library(my_op my_op.cpp)
   target_link_libraries(my_operator PUBLIC holoscan::core)
@@ -837,7 +927,7 @@ cmake --build <build_dir> -j
     holoscan::core
     my_op
   )
-  ```
+```
 
 * **If the application is configured in a separate project as the operator**, you need to [export the operator](https://cmake.org/cmake/help/latest/guide/importing-exporting/index.html) in its own CMake project, and import it in the application CMake project, before being able to list it under `target_link_libraries` also. This is the same as what is done for the SDK  [built-in operators](./holoscan_operators_extensions.md#operators), available under the `holoscan::ops` namespace.
 
@@ -1828,6 +1918,121 @@ If the order of the input data is important, it is recommended to use `IOSpec.AN
 
 Please see the [Python system test cases](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_application_multi_receiver_ping.py) for more examples of receiving multiple inputs in Python operators.
 
+(or-port-combine-python)=
+
+##### Configuring OR-combination of port conditions (Python)
+
+When an operator has multiple input or output ports, each of which has its own condition, the default behavior of Holoscan SDK is AND combination of all conditions. In some scenarios, it may be desirable to set some subset of ports to instead have OR combination of their conditions (e.g. an OR condition across two input ports can be used to allow an operator to execute if a message arrives on either port).
+
+The {py:func}`OperatorSpec.or_combine_port_conditions<holoscan.core.OperatorSpec.or_combine_port_conditions>` method can be called from within `Operator.setup` to specify that a subset of ports should have OR combination of their conditions. The only argument that must be provided is a vector containing the names of the ports whose conditions should be OR combined.
+
+For a concrete example of OR combination, see the [multi_port_or_combiner](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/or_combiner/python/multi_port_or_combiner.py) example. The relevant `setup` method from that example for the configuration of OR combination of the input ports is:
+
+```python
+def setup(self, spec: OperatorSpec):
+  # Using size argument to explicitly set the receiver message queue size for each input.
+  spec.input("in1")
+  spec.input("in2")
+
+  # configure Operator to execute if an input is on "in1" OR "in2"
+  # (without this, the default is "in1" AND "in2")
+  spec.or_combine_port_conditions(("in1", "in2"))
+```
+
+(or-combiner-python)=
+##### General combination of conditions (Python)
+
+For condition types which are not associated with an input or output port, the user creates them via construction of `Condition` objects provided via `holoscan.conditions` (or via a custom native Python `Condition` class). Any number of such conditions can be passed as positional arguments to an operator's constructor and the resulting status of the operator is the AND combination of these conditions. For example, the following would cause an operator to only execute of (condition1 AND condition2 AND condition3) are all ready.
+
+```python
+# passing multiple conditions as positional arguments to an operator AND combines them
+my_cond1 = MyCondition1(fragment=self, name="condition1")
+my_cond2 = MyCondition2(fragment=self, name="condition2")
+my_cond3 = MyCondition3(fragment=self, name="condition3")
+my_op = MyOperator(fragment=self, my_cond1, my_cond2, my_cond3, name="my_op")
+```
+
+If we instead want to allow OR combination of some subset of these conditions, then instead of passing all of these conditions directly to the `MyOperator` constructor, we would first create an {py:class}`OrConditionCombiner<holoscan.resources.OrConditionCombiner>` for the terms we want OR logic to apply to and then pass that OR combiner object to the `MyOperator` constructor. The following shows how one would configure ((condition1 OR condition2) AND condition3).
+
+```python
+from holoscan.resources import OrConditionCombiner
+
+# ...
+
+# using generic MyCondition1, MyOperator, etc. class names for this example
+my_cond1 = MyCondition1(fragment=self, name="condition1")
+my_cond2 = MyCondition2(fragment=self, name="condition2")
+
+# define an OR combination of the above two conditions
+or_combiner = OrConditionCombiner(
+    fragment=self,
+    name="or_combiner",
+    terms=[my_cond1, my_cond2]
+)
+
+# create a third condition that will be AND combined
+my_cond3 = MyCondition3(fragment=self, name="condition3")
+
+# pass both the OR combiner and the conditions to be AND combined to MyOperator
+my_op = MyOperator(fragment=self, or_combiner, my_cond3, name="my_op")
+```
+
+Note that for the above `MyOperator` example, if the operator also had input and/or output ports, then any port conditions (e.g. the default `MessageAvailableCondition` for input ports) would also be AND combined in addition to `condition3`.
+
+Additional details of condition combination logic and the set of conditions provided by Holoscan is provided in the [condition components section](components/conditions.md).
+
+:::{note}
+Only conditions which the user has explicitly constructed with `Fragment.compose` can be passed to `OrConditionCombiner`. To instead use OR combination across **implicitly** created conditions on input or output ports, see the section above regarding {py:func}`OperatorSpec.or_combine_port_conditions<holoscan.core.OperatorSpec.or_combine_port_conditions>`. A current limitation of the API is that there is not currently a way to use the input/output port conditions with the same `OrConditionCombiner` combiner as conditions explicitly created via `make_condition`.
+:::
+
+##### Configuring multi-port conditions (Python)
+
+A subset of `Condition` types apply to multiple input ports of an operator (e.g. `MultiMessageAvailableCondition` and `MultiMessageAvailableTimeoutCondition`). In this case, rather than using the {py:func}`IOSpec.condition <holoscan.core.IOSpec.condition>` method as demonstrated above for setting a condition on a single port, the {py:func}`OperatorSpec.multi_port_condition <holoscan.core.OperatorSpec.multi_port_condition>` method should be used to configure a condition across multiple input ports. If an input port's name was included in a `multi_port_condition` call, this will automatically disable the default `MessageAvailableCondition` that would otherwise have been assigned to that port (This means it is not required to explicitly set a `ConditionType.NONE` condition on the input port via `IOSpec.condition` in order to be able to use the port with `multi_port_condition`).
+
+Examples of use of multi-port conditions are given in the [examples/conditions/multi_message/](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message) folder of the repository. An example of `Operator.setup` for a multi-message condition from `multi_message_sum_of_all.py` is shown below:
+
+```python
+    def setup(self, spec):
+        # Using size argument to explicitly set the receiver message queue size for each input.
+        spec.input("in1", size=IOSpec.IOSize(20))
+        spec.input("in2", size=IOSpec.IOSize(20))
+        spec.input("in3", size=IOSpec.IOSize(20))
+
+        # Use kMultiMessageAvailableTimeout to consider all three ports together. In this
+        # "SumOfAll" mode, it only matters that `min_sum` messages have arrived across all the
+        # ports that are listed in `input_port_names` below, but it does not matter which ports the
+        # messages arrived on. The "execution_frequency" is set to 30ms, so the operator can run
+        # once 30 ms has elapsed even if 20 messages have not arrived. Use
+        # ConditionType.MULTI_MESSAGE_AVAILABLE instead if the timeout interval is not desired.
+        spec.multi_port_condition(
+            kind=ConditionType.MULTI_MESSAGE_AVAILABLE_TIMEOUT,
+            execution_frequency="30ms",
+            port_names=["in1", "in2", "in3"],
+            sampling_mode="SumOfAll",
+            min_sum=20,
+        )
+```
+Here, three input ports are defined, each of which has a queue size of 20. A `MultiMessageAvailableTimeoutCondition` is applied across all three of these ports via the `multi_port_condition` method. The condition is configured to allow the operator to execute when either a total of 20 messages have arrived across the three ports OR a time-out interval of 30 ms has elapsed.
+
+(cpp-python-tensor-interop)=
+
+### Important note on sending tensor objects between Python and C++ operators
+
+Holoscan's C++ API does not have any Python dependency and thus operators implemented in C++ will not be capable of directly receiving any Python objects. For a case such as a native Python operator that emits a CuPy or NumPy tensor, the default behavior is to emit that Python object type directly as that is preferable for a pure Python operator workflow. However, emitting the Python object is problematic if the downstream operator is a C++-based one like `PingTensorRxOp` as it will not be able to handle this Python object. For interoperability of tensors with C++ operators, the `emitter_name="holoscan::Tensor"` kwarg should be provided to the `op_output.emit` call in the Python operator's `compute` method so that any tensors emitted are compatible with downstream C++-based operators. In practice this "holoscan::Tensor" emitter is configured to emit a C++ `holoscan::TensorMap` containing the tensor (no data copy is required for this). This means that any downstream C++ operator can receive this tensor either as a `TensorMap`
+```cpp
+    auto maybe_tensormap = op_input.receive<TensorMap>(port_name);
+```
+or (since Holoscan v3.1) directly as a `std::shared_ptr<holsocan::Tensor>`
+```cpp
+    auto maybe_tensor = op_input.receive<Tensor>(port_name);
+```
+
+One exception to the above behavior is for the transmit of tensors between fragments of a distributed application. In this distributed case even for Python tensors like CuPy or NumPy arrays, the `emitter_name="holoscan::Tensor"` option will always automatically be used because the components used to serialize tensors over the network require a C++ tensor type.
+
+One other important detail when `emitter_name="holoscan::Tensor"` is used is that the name of the key in the `TensorMap` that is transmitted will depend on whether the Python tensor-like object transmitted was a host tensor (any tensor-like object having `__array_interface__`) or device tensor (any tensor-like object having `__cuda_array_interface__`). This key name information is used by any downstream Python operator to automatically convert the received tensor to a NumPy or CuPy array for the host or device case, respectively. This behavior was originally introduced to make the behavior of sending tensors between fragments of a distributed application comparable to sending those same tensors within-fragment (i.e. if a CuPy array was sent a CuPy array is also received at the other end despite the intermediate representation as a C++ `holoscan::Tensor`). The one downside to the approach currently used for `emitter_name="holoscan::Tensor` is that a host or device array from some other third-party library like PyTorch will not preserve its original type. It will instead be received as a NumPy (for host data) or CuPy (for device data) array on receive.
+
+For more information on compatibility with general C++ types for Python operators there is a dedicated section on {ref}`how to register emit/receive custom C++ types from Python <customizing-python-emit-receive-of-cpp-types>`.
+
 (python-wrapped-operators)=
 ### Python wrapping of a C++ operator
 
@@ -2051,3 +2256,329 @@ To learn more about overriding connectors and/or conditions there is a [multi_br
 The Holoscan SDK enables seamless integration with various powerful, GPU-accelerated libraries to build efficient, high-performance pipelines.
 
 Please refer to the [Best Practices to Integrate External Libraries into Holoscan Pipelines](https://github.com/nvidia-holoscan/holohub/blob/main/tutorials/integrate_external_libs_into_pipeline/README.md) tutorial in the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository for detailed examples and more information on Holoscan's tensor interoperability and handling CUDA libraries in the pipeline. This includes [CUDA Python](https://github.com/NVIDIA/cuda-python), [CuPy](https://cupy.dev/), [MatX](https://github.com/NVIDIA/MatX) for C++, [cuCIM](https://github.com/rapidsai/cucim), [CV-CUDA](https://github.com/CVCUDA/CV-CUDA), and [OpenCV](https://opencv.org/) for integration into Holoscan applications.
+
+(holoscan-operator-execution-control)=
+### Operator Execution Control and Monitoring
+
+Holoscan provides several APIs for controlling and monitoring operator execution at runtime. These APIs are particularly useful for implementing advanced control flow and dynamic behavior in your application.
+
+#### Operator Execution Control
+
+Operators can control their own execution using the following methods:
+
+##### async_condition
+
+The `async_condition()` ({cpp:func}`C++ <holoscan::Operator::async_condition>`/{py:func}`Python <holoscan.core.Operator.async_condition>`) method allows an operator to get the internal asynchronous condition:
+
+(Please refer to {ref}`AsynchronousCondition <holoscan-conditions-asynchronous>` for more information on the asynchronous condition.)
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+std::shared_ptr<holoscan::AsynchronousCondition> async_condition()
+```
+
+This method returns the internal asynchronous condition that controls when the operator executes.
+This can be useful for custom scheduling logic or coordinating execution with other components.
+
+Example usage:
+```cpp
+// Example of using async_condition to control operator execution
+
+class MyOperator : public holoscan::Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(MyOperator)
+
+  MyOperator() = default;
+
+  void initialize() override {
+    Operator::initialize();  // Always call the parent class initialize
+
+    // Get the asynchronous condition for this operator
+    auto condition = async_condition();
+
+    // Set the initial state if needed
+    if (condition) {
+      // Set the AsynchronousCondition to 'WAIT' to block the operator from running.
+      condition->event_state(holoscan::AsynchronousEventState::WAIT);
+    }
+
+    // You could also share it with external components that need to control this operator.
+    // For example, you could set the condition to 'READY' to allow the operator to run:
+    //
+    //   condition->event_state(holoscan::AsynchronousEventState::READY);
+  }
+  ...
+};
+
+```
+````
+
+````{tab-item} Python
+```python
+Operator.async_condition  # property
+```
+
+This property returns the internal asynchronous condition that controls when the operator executes.
+This can be useful for custom scheduling logic or coordinating execution with other components.
+
+Example usage:
+```python
+class MyOperator(Operator):
+    def __init__(self, *args, **kwargs):
+        ...
+        super().__init__(*args, **kwargs)
+
+        # Note that `self.async_condition` is not set until the operator is initialized
+        # so we need to check for it in the `initialize()` method
+
+    def initialize(self):
+        # `self.async_condition` is available inside `initialize()` method
+
+        # Set the initial state if needed
+        if self.async_condition:
+            # Set the AsynchronousCondition to 'WAIT' to block the operator from running.
+            self.async_condition.event_state = AsynchronousEventState.WAIT
+
+        # You could also share it with external components that need to control this operator
+        # For example, you could set the condition to 'READY' to allow the operator to run:
+        #
+        #   self.async_condition.event_state = AsynchronousEventState.READY
+    ...
+```
+````
+`````
+
+For a complete example of how to use these methods to implement advanced control over operator execution, see the [async_operator_execution_control](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/execution_control/async_operator_execution_control) example.
+
+##### stop_execution
+
+The `stop_execution()` ({cpp:func}`C++ <holoscan::Operator::stop_execution>`/{py:func}`Python <holoscan.core.Operator.stop_execution>`) method allows an operator to stop its own execution:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+void Operator::stop_execution();
+```
+
+This method can be called from within the `compute()` method to signal that the operator should stop executing. It works by modifying the internal asynchronous condition of the operator to prevent the operator from being scheduled again.
+
+Example usage:
+```cpp
+void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
+             holoscan::ExecutionContext& context) override {
+  // Logic to determine if operator should stop
+  if (should_stop_condition) {
+    // Stop this operator from executing further
+    stop_execution();
+  }
+  // ... rest of compute logic ...
+}
+```
+
+::::{note}
+What it actually does is set the internal asynchronous condition of the operator to `EVENT_NEVER`, which is a special state that prevents the operator from being scheduled again.
+
+```cpp
+async_condition()->event_state(holoscan::AsynchronousEventState::EVENT_NEVER);
+```
+::::
+
+````
+
+````{tab-item} Python
+```python
+def stop_execution(self)
+```
+
+This method can be called from within the `compute()` method to signal that the operator should stop executing. It works by modifying the internal asynchronous condition of the operator to prevent the operator from being scheduled again.
+
+Example usage:
+```python
+def compute(self, op_input, op_output, context):
+    # Logic to determine if operator should stop
+    if should_stop_condition:
+        # Stop this operator from executing further
+        self.stop_execution()
+    # ... rest of compute logic ...
+```
+````
+`````
+
+##### execution_context
+
+The `execution_context()` ({cpp:func}`C++ <holoscan::Operator::execution_context>`/{py:attr}`Python <holoscan.core.Operator.execution_context>`) property allows an operator to access its execution context:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+std::shared_ptr<holoscan::ExecutionContext> execution_context();
+```
+
+This method returns the execution context that the operator is running in. The execution context provides access to information about the execution environment and other operators in the application.
+
+Example usage:
+```cpp
+void initialize() override {
+  Operator::initialize();
+
+  auto context = execution_context();
+  if (context) {
+    // Use the execution context to find other operators
+    auto other_op = context->find_operator("mx");
+    if (other_op) {
+      // Store a reference to the other operator for later use
+      other_operator_ = other_op;
+      HOLOSCAN_LOG_INFO("Found other operator: {}", other_op->name());
+    }
+  }
+}
+
+private:
+  std::shared_ptr<holoscan::Operator> other_operator_;
+```
+````
+
+````{tab-item} Python
+```python
+execution_context  # property
+```
+
+This property returns the execution context that the operator is running in. The execution context provides access to information about the execution environment and other operators in the application.
+
+Example usage:
+```python
+def initialize(self):
+    # Note that unlike C++, you don't need to call super().initialize() in the initialize() method
+    # because it is called automatically by the Operator class constructor before calling
+    # the initialize() method
+    context = self.execution_context
+
+    # Use the execution context to find other operators
+    other_op = context.find_operator("other_operator")
+    if other_op:
+        # Store a reference to the other operator for later use
+        self.other_operator = other_op
+```
+````
+`````
+
+#### ExecutionContext Methods for Operator Monitoring
+
+The `ExecutionContext` ({cpp:class}`C++ <holoscan::ExecutionContext>`/{py:class}`Python <holoscan.core.ExecutionContext>`) provides an interface for operators to interact with the execution environment, including other operators in the application. The ExecutionContext object can be accessed by calling the `execution_context()` ({cpp:func}`C++ <holoscan::Operator::execution_context>`/{py:func}`Python <holoscan.core.Operator.execution_context>`) method on the operator. Once the operator is initialized, the execution context object is available in various lifecycle methods such as `initialize()`, `start()`, and `stop()`. Additionally, the ExecutionContext object is directly passed as a parameter to the `compute()` method for convenience.
+
+Using the ExecutionContext, operators can find other operators in the application, check their status, and interact with them, enabling complex coordination patterns between operators. This is particularly useful for implementing dynamic behaviors such as conditional processing branches, adaptive execution rates, or coordinated shutdowns.
+
+The `ExecutionContext` object passed to the `compute()` method provides several methods for monitoring and manipulating other operators in the application:
+
+##### find_operator
+
+The `find_operator()` ({cpp:func}`C++ <holoscan::ExecutionContext::find_operator>`/{py:func}`Python <holoscan.core.ExecutionContext.find_operator>`) method allows an operator to find another operator in the application by its name:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+virtual std::shared_ptr<Operator> find_operator(const std::string& op_name = "") = 0;
+```
+
+Returns a shared pointer to the operator with the given name, or `nullptr` if no such operator exists.
+
+Example usage:
+```cpp
+void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
+             holoscan::ExecutionContext& context) override {
+  auto other_op = context.find_operator("other_operator");
+  if (other_op) {
+    // Interact with the other operator
+  }
+}
+```
+````
+
+````{tab-item} Python
+```python
+def find_operator(self, op_name="")
+```
+
+Returns the operator with the given name, or `None` if no such operator exists.
+
+Example usage:
+```python
+def compute(self, op_input, op_output, context):
+    other_op = context.find_operator("other_operator")
+    if other_op:
+        # Interact with the other operator
+```
+````
+`````
+
+##### get_operator_status
+
+The `get_operator_status()` ({cpp:func}`C++ <holoscan::ExecutionContext::get_operator_status>`/{py:func}`Python <holoscan.core.ExecutionContext.get_operator_status>`) method allows an operator to check the current execution status of another operator:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+virtual expected<holoscan::OperatorStatus, RuntimeError> get_operator_status(const std::string& op_name) = 0;
+```
+
+Returns an `expected` containing the `OperatorStatus` of the operator with the given name, or an error if no such operator exists.
+
+The `OperatorStatus` enum includes the following values:
+- `kNotStarted`: Operator is created but not started
+- `kStartPending`: Operator is pending to start
+- `kStarted`: Operator is started
+- `kTickPending`: Operator is pending to tick
+- `kTicking`: Operator is currently ticking
+- `kIdle`: Operator is idle
+- `kStopPending`: Operator is pending to stop
+
+Example usage:
+```cpp
+void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
+             holoscan::ExecutionContext& context) override {
+  auto status = context.get_operator_status("other_operator");
+  if (status && status.value() == holoscan::OperatorStatus::kIdle) {
+    // React to the other operator being idle
+  }
+}
+```
+````
+
+````{tab-item} Python
+```python
+def get_operator_status(self, op_name)
+```
+
+Returns the `OperatorStatus` of the operator with the given name, or raises an exception if no such operator exists.
+
+The `OperatorStatus` enum includes the following values:
+- `OperatorStatus.NOT_STARTED`: Operator is created but not started
+- `OperatorStatus.START_PENDING`: Operator is pending to start
+- `OperatorStatus.STARTED`: Operator is started
+- `OperatorStatus.TICK_PENDING`: Operator is pending to tick (call Operator.compute)
+- `OperatorStatus.TICKING`: Operator is currently ticking (running Operator.compute)
+- `OperatorStatus.IDLE`: Operator is idle
+- `OperatorStatus.STOP_PENDING`: Operator is pending to stop
+
+Example usage:
+```python
+def compute(self, op_input, op_output, context):
+    status = context.get_operator_status("other_operator")
+    if status == OperatorStatus.IDLE:
+        # React to the other operator being idle
+```
+````
+`````
+
+:::{attention}
+
+Currently, there's no way to retrieve the computed SchedulingCondition status from the
+operator (i.e., whether the computed scheduling condition status is NEVER, which means the operator is terminated).
+
+
+A better approach for checking an operator's computed scheduling condition will be
+available in a future release.
+:::
+
+For a complete example of how to use these methods to implement advanced monitoring behavior, see the [operator_status_tracking](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/execution_control/operator_status_tracking) example.

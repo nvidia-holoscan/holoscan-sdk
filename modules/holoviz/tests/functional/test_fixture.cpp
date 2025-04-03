@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -409,6 +409,7 @@ bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
       std::cout << "Test passed and HOLOVIZ_TEST_GEN_IMAGES is set, writing image to "
                 << image_file_name << ". " << std::endl;
     }
+    passed = true;
   }
 
   if (!image_file_name.empty()) {
@@ -421,5 +422,5 @@ bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
     stbi_write_png(image_file_name.c_str(), width_, height_, 1, image_data.data(), 0);
   }
 
-  return true;
+  return passed;
 }

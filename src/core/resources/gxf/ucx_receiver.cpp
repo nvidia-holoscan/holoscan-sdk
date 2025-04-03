@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include "holoscan/core/resources/gxf/ucx_receiver.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -76,7 +77,7 @@ nvidia::gxf::UcxReceiver* UcxReceiver::get() const {
 
 void UcxReceiver::initialize() {
   HOLOSCAN_LOG_DEBUG("UcxReceiver::initialize");
-  // Set up prerequisite parameters before calling GXFOperator::initialize()
+  // Set up prerequisite parameters before calling GXFResource::initialize()
   auto frag = fragment();
 
   // Find if there is an argument for 'buffer'
@@ -89,6 +90,18 @@ void UcxReceiver::initialize() {
     add_arg(Arg("buffer") = buffer);
     buffer->gxf_cname(buffer->name().c_str());
     if (gxf_eid_ != 0) { buffer->gxf_eid(gxf_eid_); }
+  } else {
+    // must set the gxf_eid for the provided buffer or GXF parameter registration will fail
+    auto buffer_arg = *has_buffer;
+    auto buffer = std::any_cast<std::shared_ptr<Resource>>(buffer_arg.value());
+    auto gxf_buffer_resource = std::dynamic_pointer_cast<gxf::GXFResource>(buffer);
+    if (gxf_eid_ != 0 && gxf_buffer_resource->gxf_eid() == 0) {
+      HOLOSCAN_LOG_TRACE("buffer '{}': setting gxf_eid({}) from UcxReceiver '{}'",
+                         buffer->name(),
+                         gxf_eid_,
+                         name());
+      gxf_buffer_resource->gxf_eid(gxf_eid_);
+    }
   }
   GXFResource::initialize();
 }

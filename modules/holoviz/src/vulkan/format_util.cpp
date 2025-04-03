@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,8 @@
  */
 
 #include "format_util.hpp"
+
+#include <vector>
 
 namespace holoscan::viz {
 
@@ -493,6 +495,99 @@ bool is_multi_planar_format(ImageFormat fmt) {
     default:
       return false;
   }
+}
+
+bool is_format_supported(vk::PhysicalDevice physical_device, ImageFormat fmt) {
+  // First try to convert to Vulkan format
+  const vk::Format vk_format = to_vulkan_format(fmt);
+
+  // Get format properties from physical device
+  const vk::FormatProperties format_properties = physical_device.getFormatProperties(vk_format);
+
+  // Check if the format supports sampling
+  // We check for sampling since that's what we typically use for texture sampling
+  if (!(format_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage)) {
+    return false;
+  }
+
+  // For depth formats, check if they support depth attachment
+  if (is_depth_format(fmt)) {
+    if (!(format_properties.optimalTilingFeatures &
+          vk::FormatFeatureFlagBits::eDepthStencilAttachment)) {
+      return false;
+    }
+  }
+
+  // For YUV formats, check if they support YUV sampling
+  if (is_yuv_format(fmt)) {
+    if (!(format_properties.optimalTilingFeatures &
+          vk::FormatFeatureFlagBits::eSampledImageYcbcrConversionLinearFilter)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+const std::vector<ImageFormat>& get_formats() {
+  // Add all formats from the ImageFormat enum
+  static const std::vector<ImageFormat> all_formats = {ImageFormat::R8_UINT,
+                                                       ImageFormat::R8_SINT,
+                                                       ImageFormat::R8_UNORM,
+                                                       ImageFormat::R8_SNORM,
+                                                       ImageFormat::R8_SRGB,
+                                                       ImageFormat::R16_UINT,
+                                                       ImageFormat::R16_SINT,
+                                                       ImageFormat::R16_UNORM,
+                                                       ImageFormat::R16_SNORM,
+                                                       ImageFormat::R16_SFLOAT,
+                                                       ImageFormat::R32_UINT,
+                                                       ImageFormat::R32_SINT,
+                                                       ImageFormat::R32_SFLOAT,
+                                                       ImageFormat::R8G8B8_UNORM,
+                                                       ImageFormat::R8G8B8_SNORM,
+                                                       ImageFormat::R8G8B8_SRGB,
+                                                       ImageFormat::R8G8B8A8_UNORM,
+                                                       ImageFormat::R8G8B8A8_SNORM,
+                                                       ImageFormat::R8G8B8A8_SRGB,
+                                                       ImageFormat::R16G16B16A16_UNORM,
+                                                       ImageFormat::R16G16B16A16_SNORM,
+                                                       ImageFormat::R16G16B16A16_SFLOAT,
+                                                       ImageFormat::R32G32B32A32_SFLOAT,
+                                                       ImageFormat::D16_UNORM,
+                                                       ImageFormat::X8_D24_UNORM,
+                                                       ImageFormat::D32_SFLOAT,
+                                                       ImageFormat::A2B10G10R10_UNORM_PACK32,
+                                                       ImageFormat::A2R10G10B10_UNORM_PACK32,
+                                                       ImageFormat::B8G8R8A8_UNORM,
+                                                       ImageFormat::B8G8R8A8_SRGB,
+                                                       ImageFormat::A8B8G8R8_UNORM_PACK32,
+                                                       ImageFormat::A8B8G8R8_SRGB_PACK32,
+                                                       ImageFormat::Y8U8Y8V8_422_UNORM,
+                                                       ImageFormat::U8Y8V8Y8_422_UNORM,
+                                                       ImageFormat::Y8_U8V8_2PLANE_420_UNORM,
+                                                       ImageFormat::Y8_U8V8_2PLANE_422_UNORM,
+                                                       ImageFormat::Y8_U8_V8_3PLANE_420_UNORM,
+                                                       ImageFormat::Y8_U8_V8_3PLANE_422_UNORM,
+                                                       ImageFormat::Y16_U16V16_2PLANE_420_UNORM,
+                                                       ImageFormat::Y16_U16V16_2PLANE_422_UNORM,
+                                                       ImageFormat::Y16_U16_V16_3PLANE_420_UNORM,
+                                                       ImageFormat::Y16_U16_V16_3PLANE_422_UNORM};
+
+  return all_formats;
+}
+
+std::vector<ImageFormat> get_supported_formats(vk::PhysicalDevice physical_device) {
+  std::vector<ImageFormat> supported_formats;
+
+  const std::vector<ImageFormat> all_formats = get_formats();
+
+  // Filter only formats supported by the hardware
+  for (const auto& fmt : all_formats) {
+    if (is_format_supported(physical_device, fmt)) { supported_formats.push_back(fmt); }
+  }
+
+  return supported_formats;
 }
 
 }  // namespace holoscan::viz

@@ -223,6 +223,27 @@ class InputContext {
    */
   template <typename DataT>
   holoscan::expected<DataT, holoscan::RuntimeError> receive(const char* name = nullptr) {
+    // Special case handling for std::shared_ptr<holoscan::Tensor>
+    if constexpr (std::is_same_v<DataT, std::shared_ptr<holoscan::Tensor>>) {
+      auto maybe_tensormap = receive<holoscan::TensorMap>(name);
+      if (maybe_tensormap.has_value()) {
+        auto& tensor_map = maybe_tensormap.value();
+        if (tensor_map.size() == 1) {
+          // Return the shared_ptr directly from the map
+          return tensor_map.begin()->second;
+        }
+        return make_unexpected<holoscan::RuntimeError>(create_receive_error(
+            name,
+            "Data received was a TensorMap containing more than one tensor. Please use "
+            "receive<holoscan::TensorMap>(name) instead."));
+      } else {
+        std::string input_name = holoscan::get_well_formed_name(name, inputs_);
+        return receive_single_value<std::shared_ptr<holoscan::Tensor>>(input_name.c_str(),
+                                                                       InputType::kAny);
+      }
+    }
+
+    // Original implementation for other types
     auto& params = op_->spec()->params();
     std::string input_name = holoscan::get_well_formed_name(name, inputs_);
     auto param_it = params.find(input_name);
@@ -805,6 +826,28 @@ class OutputContext {
             const int64_t acq_timestamp = -1) {
     auto out_message = holoscan::gxf::Entity::New(execution_context_);
     for (auto& [key, tensor] : data) { out_message.add(tensor, key.c_str()); }
+    emit(out_message, name, acq_timestamp);
+  }
+
+  /**
+   * @brief Send the message data (std::shared_ptr<holoscan::Tensor>) to the output port with the
+   * given name.
+   *
+   * This method does a conversion to std::shared_ptr<nvidia::gxf::Tensor> (without copying the
+   * tensor's data). Using nvidia::gxf::Tensor is necessary for serialization of tensors when
+   * sending a tensor between fragments of a distributed application.
+   *
+   * The output port with the given name must exist.
+   *
+   * @param data shared pointer to holoscan::Tensor
+   * @param name The name of the output port.
+   * @param acq_timestamp The time when the message is acquired. For instance, this would generally
+   *                      be the timestamp of the camera when it captures an image.
+   */
+  void emit(std::shared_ptr<holoscan::Tensor> data, const char* name = nullptr,
+            const int64_t acq_timestamp = -1) {
+    auto out_message = holoscan::gxf::Entity::New(execution_context_);
+    out_message.add(data, "");
     emit(out_message, name, acq_timestamp);
   }
 

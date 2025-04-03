@@ -66,6 +66,7 @@
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/annotated_double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp"
+#include "holoscan/core/resources/gxf/condition_combiner.hpp"
 #include "holoscan/core/resources/gxf/dfft_collector.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
@@ -1892,13 +1893,23 @@ bool GXFExecutor::initialize_operator(Operator* op) {
   // entity/component ID instead of creating a GraphEntity.
   // Note that op_eid_ and op_cid_ are set by the OperatorWrapper::initialize() and
   // ResourceWrapper::initialize() methods via the initialize_holoscan_object() method.
-  gxf_uid_t eid = (op_eid_ == 0) ? op->initialize_graph_entity(context_, entity_prefix_) : op_eid_;
+  bool need_to_create_graph_entity = (op_eid_ == 0);
+  gxf_uid_t eid =
+      need_to_create_graph_entity ? op->initialize_graph_entity(context_, entity_prefix_) : op_eid_;
 
   // Create Codelet component if `op_cid_` is 0
   gxf_uid_t codelet_cid = (op_cid_ == 0) ? op->add_codelet_to_graph_entity() : op_cid_;
 
   // Set GXF Codelet ID as the ID of the operator
   op->id(codelet_cid);
+
+  // We can initialize the internal asynchronous condition only if we are creating the graph entity
+  // for the operator. (When OperatorWrapper is used, the graph entity is already created by GXF,
+  // so we cannot add the scheduling term to the entity.)
+  if (need_to_create_graph_entity) {
+    // Create an internal asynchronous condition to control the operator execution
+    op->initialize_async_condition();
+  }
 
   if (op->metadata_policy() == MetadataPolicy::kDefault) {
     // use the default metadata policy associated with the fragment.
@@ -1994,6 +2005,33 @@ bool GXFExecutor::initialize_operator(Operator* op) {
 
   // add Component(s) and/or Resource(s) added as Arg/ArgList to the graph entity
   add_component_args_to_graph_entity(op->args(), op->graph_entity());
+
+  // Add any needed OrConditionCombiner components
+  size_t or_combiners_count = 0;
+  for (const auto& port_names : op->spec()->or_combiner_port_names()) {
+    or_combiners_count++;
+    std::vector<std::shared_ptr<holoscan::Condition>> or_conditions;
+    or_conditions.reserve(port_names.size());
+    for (const auto& port_name : port_names) {
+      auto it = inputs.find(port_name);
+      if (it == inputs.end()) {
+        auto err_msg = fmt::format(
+            "Input port '{}' requested by an OrConditionCombiner was not found", port_name);
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+      }
+      auto& port_conditions = it->second->conditions();
+      HOLOSCAN_LOG_TRACE("Configuring OR scheduling for {} conditions on port '{}'",
+                         port_conditions.size(),
+                         port_name);
+      for (auto& [condition_type, condition] : port_conditions) {
+        or_conditions.push_back(condition);
+      }
+    }
+    op->add_arg(fragment()->make_resource<OrConditionCombiner>(
+        fmt::format("or_condition_combiner{}", or_combiners_count),
+        holoscan::Arg{"terms", or_conditions}));
+  }
 
   // Initialize components and resources (and add any GXF components to the Operator's graph_entity)
   op->initialize_conditions();

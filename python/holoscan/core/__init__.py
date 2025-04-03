@@ -49,6 +49,7 @@ create a custom application.
     holoscan.core.NetworkContext
     holoscan.core.Operator
     holoscan.core.OperatorSpec
+    holoscan.core.OperatorStatus
     holoscan.core.OutputContext
     holoscan.core.ParameterFlag
     holoscan.core.Resource
@@ -106,6 +107,7 @@ try:
         MetadataPolicy,
         MultiMessageConditionInfo,
         NetworkContext,
+        OperatorStatus,
         ParameterFlag,
         Scheduler,
         SchedulingStatusType,
@@ -170,6 +172,7 @@ __all__ = [
     "NetworkContext",
     "Operator",
     "OperatorSpec",
+    "OperatorStatus",
     "OperatorGraph",
     "OutputContext",
     "ParameterFlag",
@@ -546,7 +549,7 @@ class Tracker:
             num_start_messages_to_skip=num_start_messages_to_skip,
             num_last_messages_to_discard=num_last_messages_to_discard,
             latency_threshold=latency_threshold,
-            is_limited_tracking=False,
+            is_limited_tracking=is_limited_tracking,
         )
 
     def __enter__(self):

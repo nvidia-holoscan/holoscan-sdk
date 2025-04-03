@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -113,7 +113,8 @@ TEST(UniqueValue, All) {
     EXPECT_FALSE(g_has_been_destroyed)
         << "action should not be set after UniqueValue had been move constructed";
 
-    EXPECT_EQ(ValueType(), unique_value.get()) << "old unique_value is released";
+    EXPECT_FALSE(static_cast<bool>(unique_value))
+        << "old unique_value should be in a valid but empty state";
     EXPECT_EQ(test_value, other_unique_value.get())
         << "new unique_value has the test_value after move construction";
   }
@@ -132,7 +133,8 @@ TEST(UniqueValue, All) {
     EXPECT_FALSE(g_has_been_destroyed)
         << "action should not be set after UniqueValue had been move assigned";
 
-    EXPECT_EQ(ValueType(), unique_value.get()) << "old unique_value is released";
+    EXPECT_FALSE(static_cast<bool>(unique_value))
+        << "old unique_value should be in a valid but empty state";
     EXPECT_EQ(test_value, other_unique_value.get())
         << "new unique_value has the test_value after move assignment";
   }

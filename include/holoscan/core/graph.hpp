@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,14 +91,14 @@ class Graph {
    * @return A map from the source node's port name to the destination node's port name(s).
    */
   virtual std::optional<EdgeDataType> get_port_map(const NodeType& node_u,
-                                                   const NodeType& node_v) = 0;
+                                                   const NodeType& node_v) const = 0;
 
   /**
    * @brief Check if the graph is empty.
    *
    * @return true if the graph is empty. Otherwise, false.
    */
-  virtual bool is_empty() {
+  virtual bool is_empty() const {
     return !find_node([](const NodeType&) { return true; });
   }
 
@@ -108,7 +108,7 @@ class Graph {
    * @param node A node in the graph.
    * @return true if the node is a root node.
    */
-  virtual bool is_root(const NodeType& node) = 0;
+  virtual bool is_root(const NodeType& node) const = 0;
 
   /**
    * @brief Check if the node is a user-defined root node. A user-defined root is the first node
@@ -117,7 +117,7 @@ class Graph {
    * @param node A node in the graph.
    * @return true if the node is a user-defined root node.
    */
-  virtual bool is_user_defined_root(const NodeType& node) = 0;
+  virtual bool is_user_defined_root(const NodeType& node) const = 0;
 
   /**
    * @brief Check if the node is a leaf node.
@@ -125,7 +125,7 @@ class Graph {
    * @param node A node in the graph.
    * @return true if the node is a leaf node.
    */
-  virtual bool is_leaf(const NodeType& node) = 0;
+  virtual bool is_leaf(const NodeType& node) const = 0;
 
   /**
    * @brief Returns a vector of root nodes of the cycles if the graph has cycle(s). Otherwise, an
@@ -133,14 +133,14 @@ class Graph {
    *
    * @return Returns a vector of root nodes of cycles.
    */
-  virtual std::vector<NodeType> has_cycle() = 0;
+  virtual std::vector<NodeType> has_cycle() const = 0;
 
   /**
    * @brief Get all root nodes.
    *
    * @return A vector of root nodes.
    */
-  virtual std::vector<NodeType> get_root_nodes() = 0;
+  virtual std::vector<NodeType> get_root_nodes() const = 0;
 
   /**
    * @brief Get all nodes.
@@ -149,7 +149,7 @@ class Graph {
    *
    * @return A vector of all nodes.
    */
-  virtual std::vector<NodeType> get_nodes() = 0;
+  virtual std::vector<NodeType> get_nodes() const = 0;
 
   /**
    * @brief Get the next nodes of the given node.
@@ -157,14 +157,14 @@ class Graph {
    * @param node A node in the graph.
    * @return A vector of next nodes.
    */
-  virtual std::vector<NodeType> get_next_nodes(const NodeType& node) = 0;
+  virtual std::vector<NodeType> get_next_nodes(const NodeType& node) const = 0;
 
   /**
    * @brief Find a node in the graph that satisfies the given predicate.
    * @param pred A predicate.
    * @return The node if found, otherwise nullptr.
    */
-  virtual NodeType find_node(const NodePredicate& pred) = 0;
+  virtual NodeType find_node(const NodePredicate& pred) const = 0;
 
   /**
    * @brief Find a node in the graph that is equal to the given node.
@@ -172,7 +172,7 @@ class Graph {
    * @param node The node to find.
    * @return The node in the graph if found, otherwise nullptr.
    */
-  virtual NodeType find_node(const NodeType& node) = 0;
+  virtual NodeType find_node(const NodeType& node) const = 0;
 
   /**
    * @brief Find a node in the graph whose name is equal to the given name.
@@ -180,7 +180,7 @@ class Graph {
    * @param name The name to find.
    * @return The node in the graph if found, otherwise nullptr.
    */
-  virtual NodeType find_node(std::string name) = 0;
+  virtual NodeType find_node(const std::string& name) const = 0;
 
   /**
    * @brief Get the previous nodes of the given node.
@@ -188,7 +188,7 @@ class Graph {
    * @param op A node in the graph.
    * @return A vector of next nodes.
    */
-  virtual std::vector<NodeType> get_previous_nodes(const NodeType& node) = 0;
+  virtual std::vector<NodeType> get_previous_nodes(const NodeType& node) const = 0;
 
   /**
    * @brief Set the context.
@@ -201,7 +201,14 @@ class Graph {
    *
    * @return The context.
    */
-  virtual void* context() { return context_; }
+  virtual void* context() const { return context_; }
+
+  /**
+   * @brief Remove a node (and all its edges) from the graph.
+   *
+   * @param node The node to remove.
+   */
+  virtual void remove_node(const NodeType& node) = 0;
 
  protected:
   void* context_ = nullptr;  ///< The context.

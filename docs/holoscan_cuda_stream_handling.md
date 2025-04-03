@@ -179,7 +179,7 @@ There is also an optional third argument to `receive_cuda_stream` which is a boo
 
 The above description of `receive_cuda_stream` is accurate when a `CudaStreamPool` has been passed to the operator in one of the ways {ref}`described above<configuring-a-cuda-stream-pool>`. See the note below for additional detail on how this method operates if the operator is unable to allocate an internal stream because a `CudaStreamPool` was unavailable.
 
-#### Avoiding additional synchronization from Python's CUDA Array Interface
+### Avoiding additional synchronization from Python's CUDA Array Interface
 
 Python applications converting between Holoscan's Tensor and 3rd party tensor objects often use the {ref}`CUDA Array Interface<https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html>`. This interface by default performs its own explicit synchronization (described {ref}`here<https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html#synchronization-in-numba>`). This may be unnecessary when using `receive_cuda_stream` which already synchronizes streams found on the input with the operator's internal stream. The environment variable `CUPY_CUDA_ARARAY_INTERFACE_SYNC` can be set to 0 to disable an additional synchronization by CuPy when creating a CUDA array from a holoscan Tensor via the array interface. Similarly, `HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC` can be set to 0 to disable synchronization by the array interface on the Holoscan side when creating a Holoscan tensor from a 3rd party tensor.
 

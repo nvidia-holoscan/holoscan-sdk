@@ -141,6 +141,16 @@ kwargs : dict or holoscan::ArgList
     Additional arguments to pass to the multi-message condition.
 )doc")
 
+PYDOC(or_combine_port_conditions, R"doc(
+Indicate that the conditions of the specified ports should be OR combined.
+
+This will override the default AND combine of conditions for the specified ports.
+
+Parameters
+----------
+port_names : The names of the input ports whose conditions will be OR combined.
+)doc")
+
 PYDOC(multi_port_conditions, R"doc(
 Returns a list of multi-message conditions associated with the operator.
 
@@ -511,6 +521,43 @@ Returns
 -------
 list[holoscan.core.FlowInfo]
     List of matching FlowInfo objects.
+)doc")
+
+PYDOC(async_condition, R"doc(
+The internal asynchronous condition for the operator.
+
+This property provides access to the internal asynchronous condition for the operator, which
+controls the scheduling of the operator's compute method.
+
+Returns
+-------
+condition : holoscan.conditions.AsynchronousCondition
+    An instance of `holoscan.conditions.AsynchronousCondition` that is the internal
+    asynchronous condition for the operator.
+)doc")
+
+PYDOC(stop_execution, R"doc(
+Stop the execution of the operator.
+
+This method is used to stop the execution of the operator by setting the internal async
+condition to EVENT_NEVER state, which sets the scheduling condition to NEVER.
+Once stopped, the operator will not be scheduled for execution
+(the `compute()` method will not be called).
+
+Note that executing this method does not trigger the operator's `stop()` method.
+The `stop()` method is called only when the scheduler deactivates all operators together.
+)doc")
+
+PYDOC(execution_context, R"doc(
+The execution context for the operator.
+
+This property provides access to the execution context of the operator, which contains
+information about the current execution environment including scheduling details.
+
+Returns
+-------
+holoscan.core.ExecutionContext
+    The execution context object for this operator.
 )doc")
 
 }  // namespace Operator
