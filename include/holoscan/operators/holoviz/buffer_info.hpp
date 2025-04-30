@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_BUFFER_INFO_HPP
-#define INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_BUFFER_INFO_HPP
+#ifndef HOLOSCAN_OPERATORS_HOLOVIZ_BUFFER_INFO_HPP
+#define HOLOSCAN_OPERATORS_HOLOVIZ_BUFFER_INFO_HPP
 
 #include <string>
 #include <vector>
@@ -94,4 +94,4 @@ struct BufferInfo {
 
 }  // namespace holoscan::ops
 
-#endif /* INCLUDE_HOLOSCAN_OPERATORS_HOLOVIZ_BUFFER_INFO_HPP */
+#endif /* HOLOSCAN_OPERATORS_HOLOVIZ_BUFFER_INFO_HPP */

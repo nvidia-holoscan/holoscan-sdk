@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,8 +37,7 @@ def iter_input_frames(f, width, height, channels):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Command line utility for writing raw video frames in GXF Tensors for "
-            "stream playback."
+            "Command line utility for writing raw video frames in GXF Tensors for stream playback."
         )
     )
     parser.add_argument("--width", required=True, type=int, help="Input width in pixels")

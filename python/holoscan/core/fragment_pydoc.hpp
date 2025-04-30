@@ -286,15 +286,6 @@ This method runs the computation. It must have first been initialized via
 `config` and `compose`.
 )doc")
 
-PYDOC(start_op, R"doc(
-Get or create the start operator for this fragment.
-
-Returns
--------
-Operator
-    The start operator instance. If it doesn't exist, it will be created with a CountCondition(1).
-)doc")
-
 PYDOC(set_dynamic_flows, R"doc(
 Set a callback function to define dynamic flows for an operator at runtime.
 

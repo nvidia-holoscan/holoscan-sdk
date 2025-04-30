@@ -290,4 +290,45 @@ void AppDriverServiceImpl::set_health_check_service(
   health_check_service_ = health_check_service;
 }
 
+grpc::Status AppDriverServiceImpl::InitiateShutdown(
+    grpc::ServerContext* context, const holoscan::service::InitiateShutdownRequest* request,
+    holoscan::service::InitiateShutdownResponse* response) {
+  (void)context;
+  std::string client_address = context->peer();
+  auto& fragment_name = request->fragment_name();
+
+  // Look up the worker ID from the schedule
+  std::string worker_id = "unknown";
+  for (const auto& [frag_name, worker] : app_driver_->schedule()) {
+    if (frag_name == fragment_name) {
+      worker_id = worker;
+      break;
+    }
+  }
+
+  HOLOSCAN_LOG_INFO(
+      "Received shutdown request from fragment '{}' on worker '{}'", fragment_name, worker_id);
+
+  // Construct a response
+  holoscan::service::Result* result = new holoscan::service::Result();
+  result->set_code(holoscan::service::SUCCESS);
+  result->set_message("Initiating clean shutdown");
+  response->set_allocated_result(result);
+
+  // Initiate clean shutdown sequence
+  // 1. Terminate all workers in an orderly fashion
+  app_driver_->terminate_all_workers(AppWorkerTerminationCode::kCancelled);
+
+  // 2. Mark the application as finished
+  app_driver_->set_status(AppDriver::AppStatus::kFinished);
+
+  // 3. Request server termination
+  HOLOSCAN_LOG_DEBUG(
+      "AppDriverServiceImpl::InitiateShutdown: Submitting driver message to terminate server");
+  app_driver_->submit_message(holoscan::AppDriver::DriverMessage{
+      holoscan::AppDriver::DriverMessageCode::kTerminateServer, {}});
+
+  return grpc::Status::OK;
+}
+
 }  // namespace holoscan::service

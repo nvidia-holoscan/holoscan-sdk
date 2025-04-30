@@ -64,7 +64,7 @@ args:
         assert "error" not in captured.err
         assert "warning" not in captured.err
 
-    def test_enable_tick(self, app, capfd):
+    def test_enable_tick(self, app):
         cond = BooleanCondition(fragment=app, name="boolean", enable_tick=True)
         cond.disable_tick()
         assert not cond.check_tick_enabled()
@@ -113,7 +113,7 @@ args:
         assert "error" not in captured.err
         assert "warning" not in captured.err
 
-    def test_event_state(self, app, capfd):
+    def test_event_state(self, app):
         cond = AsynchronousCondition(fragment=app, name="async")
         assert cond.event_state == AsynchronousEventState.READY
         cond.event_state = AsynchronousEventState.EVENT_NEVER
@@ -144,7 +144,7 @@ args:
         assert "error" not in captured.err
         assert "warning" not in captured.err
 
-    def test_count(self, app, capfd):
+    def test_count(self, app):
         cond = CountCondition(fragment=app, name="count", count=100)
         cond.count = 10
         assert cond.count == 10
@@ -382,7 +382,7 @@ args:
             datetime.timedelta(microseconds=1),
         ],
     )
-    def test_periodic_constructors(self, app, capfd, period):
+    def test_periodic_constructors(self, app, period):
         cond = PeriodicCondition(fragment=app, name="periodic", recess_period=period)
         expected_ns = (
             period if isinstance(period, int) else int(period.total_seconds() * 1_000_000_000)
@@ -399,7 +399,7 @@ args:
             datetime.timedelta(microseconds=1),
         ],
     )
-    def test_recess_period_method(self, app, capfd, period):
+    def test_recess_period_method(self, app, period):
         cond = PeriodicCondition(fragment=app, name="periodic", recess_period=1)
         cond.recess_period(period)
         expected_ns = (

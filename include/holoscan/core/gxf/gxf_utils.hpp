@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef INCLUDE_HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
-#define INCLUDE_HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
+#ifndef HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
+#define HOLOSCAN_CORE_GXF_GXF_UTILS_HPP
 
 #include <gxf/core/gxf.h>
 #include <cstdint>
@@ -302,4 +302,4 @@ gxf_uid_t gxf_entity_group_id(gxf_context_t context, gxf_uid_t eid);
 
 }  // namespace holoscan::gxf
 
-#endif /* INCLUDE_HOLOSCAN_CORE_GXF_GXF_UTILS_HPP */
+#endif /* HOLOSCAN_CORE_GXF_GXF_UTILS_HPP */

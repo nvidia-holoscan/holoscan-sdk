@@ -18,6 +18,7 @@
 #include "holoscan/core/app_driver.hpp"
 
 #include <stdlib.h>  // POSIX setenv
+#include <csignal>   // Add this line for signal handling functions
 
 #include <algorithm>
 #include <cstdlib>
@@ -55,6 +56,10 @@
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
+
+// Grace period for worker termination. Needs to be less than kWorkerTerminationGracePeriodMs that
+// is defined in app_driver.cpp.
+constexpr int kWorkerTerminationGracePeriodMs = 400;
 
 bool AppDriver::get_bool_env_var(const char* name, bool default_value) {
   const char* env_value = std::getenv(name);
@@ -205,21 +210,7 @@ void AppDriver::run() {
     bool connection_result =
         worker_server->connect_to_driver(max_connection_retry_count, connection_retry_interval_ms);
     if (connection_result) {
-      HOLOSCAN_LOG_INFO("Connected to driver");
-      // Install signal handler for app worker
-      auto sig_handler = [this]([[maybe_unused]] void* context, [[maybe_unused]] int signum) {
-        HOLOSCAN_LOG_ERROR("Interrupted by user for app worker");
-
-        auto worker_server = app_->worker().server();
-        // Notify the driver that the worker is cancelled
-        worker_server->notify_worker_execution_finished(AppWorkerTerminationCode::kCancelled);
-        // Stop the worker server
-        worker_server->stop();
-        // Do not wait for the worker server to stop because it will block the main thread
-      };
-      SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
-      SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
-
+      app_->worker().setup_signal_handlers();
       worker_server->wait();
     } else {
       HOLOSCAN_LOG_ERROR("Failed to connect to driver");
@@ -227,38 +218,14 @@ void AppDriver::run() {
       worker_server->wait();
       // Stop the driver server if it is running because the worker cannot connect to the driver
       // and the driver server will block the main thread.
-      if (driver_server_) { driver_server_->stop(); }
+      if (driver_server_) {
+        driver_server_->stop();
+      } else {
+        HOLOSCAN_LOG_DEBUG("No driver server available to stop.");
+      }
     }
   } else {  // if only the app driver is launched
-    // Install signal handler for app driver
-    auto sig_handler = [this]([[maybe_unused]] void* context, [[maybe_unused]] int signum) {
-      HOLOSCAN_LOG_ERROR("Interrupted by user for app driver");
-
-      // If the app is already in error state, we set global signal handler.
-      if (app_status_ == AppStatus::kError) {
-        HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
-        SignalHandler::unregister_signal_handler(context, signum);
-        // Register the global signal handler.
-        SignalHandler::register_global_signal_handler(signum, []([[maybe_unused]] int sig) {
-          HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
-          exit(1);
-        });
-
-        return;
-      }
-
-      // Terminate all worker and close all worker connections
-      terminate_all_workers(AppWorkerTerminationCode::kCancelled);
-
-      // Set app status to error
-      app_status_ = AppStatus::kError;
-
-      // Stop the driver server
-      if (driver_server_) { driver_server_->stop(); }
-      // Do not wait for the driver server to stop because it will block the main thread
-    };
-    SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
-    SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
+    app_->driver().setup_signal_handlers();
   }
 
   if (driver_server_) { driver_server_->wait(); }
@@ -313,12 +280,20 @@ MultipleFragmentsPortMap* AppDriver::all_fragment_port_map() {
   return nullptr;
 }
 
-void AppDriver::submit_message(DriverMessage&& message) {
+void AppDriver::submit_message(DriverMessage&& message, bool log_error_on_failure) {
   std::lock_guard<std::mutex> lock(message_mutex_);
   message_queue_.push(std::move(message));
 
-  // Notify the driver server to process the message queue
-  driver_server_->notify();
+  if (driver_server_) {
+    // Notify the driver server to process the message queue
+    driver_server_->notify();
+  } else {
+    if (log_error_on_failure) {
+      HOLOSCAN_LOG_ERROR("No driver server available, could not submit message.");
+    } else {
+      HOLOSCAN_LOG_DEBUG("No driver server available, could not submit message.");
+    }
+  }
 }
 
 void AppDriver::process_message_queue() {
@@ -350,8 +325,10 @@ void AppDriver::process_message_queue() {
       case DriverMessageCode::kTerminateServer:
         HOLOSCAN_LOG_DEBUG(
             "Terminating the driver server (DriverMessageCode::kTerminateServer received)");
-        driver_server_->stop();
-        // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+        if (driver_server_) {
+          driver_server_->stop();
+          // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+        }
         break;
       default:
         HOLOSCAN_LOG_WARN("Unknown message code: {}", static_cast<int>(message_code));
@@ -921,18 +898,31 @@ SystemResourceRequirement AppDriver::parse_resource_requirement(
   return req;
 }
 
+std::unordered_map<std::string, std::string> AppDriver::schedule() const {
+  if (schedule_.empty()) {
+    HOLOSCAN_LOG_WARN("schedule has not yet been determined, returning an empty schedule.");
+  }
+  return schedule_;
+}
+
 void AppDriver::check_fragment_schedule(const std::string& worker_address) {
   // Create a client to communicate with the worker
   if (!worker_address.empty() && worker_address != "") {
     driver_server_->connect_to_worker(worker_address);
   }
 
+  // TODO (grelee): can we avoid overhead of repeated fragment_scheduler_->schedule() calls by
+  // reusing schedule_ from a previous call?
   auto schedule_result = fragment_scheduler_->schedule();
   if (schedule_result) {
     // Keep the used ports for the IP address to avoid port conflicts
     std::unordered_map<std::string, std::vector<uint32_t>> used_ports_map;
 
     auto& schedule = schedule_result.value();
+
+    // store the schedule for later reuse during ordered shutdown
+    schedule_ = schedule;
+
     HOLOSCAN_LOG_INFO("Fragment schedule is available:");
     for (auto& [fragment_name, worker_id] : schedule) {
       HOLOSCAN_LOG_INFO("  Fragment '{}' => Worker '{}'", fragment_name, worker_id);
@@ -940,11 +930,15 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
 
     // Collect any workers not participating and notify them to stop
     auto worker_addresses = driver_server_->get_worker_addresses();
+    for (const auto& worker_addr : worker_addresses) {
+      HOLOSCAN_LOG_DEBUG("Worker '{}' in worker_addresses", worker_addr);
+    }
+
     std::unordered_set<std::string> not_participated_workers(worker_addresses.begin(),
                                                              worker_addresses.end());
     for (auto& [fragment_name, worker_id] : schedule) { not_participated_workers.erase(worker_id); }
     for (const auto& worker_addr : not_participated_workers) {
-      HOLOSCAN_LOG_INFO("{}' does not participate in the schedule", worker_addr);
+      HOLOSCAN_LOG_INFO("Worker '{}' does not participate in the schedule", worker_addr);
       auto& worker_client = driver_server_->connect_to_worker(worker_addr);
       worker_client->terminate_worker(AppWorkerTerminationCode::kCancelled);
       driver_server_->close_worker_connection(worker_addr);
@@ -967,6 +961,19 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
     bool is_port_info_collected = true;
     for (const auto& [worker_id, fragment_names] : id_to_fragment_names_vector) {
       auto& worker_client = driver_server_->connect_to_worker(worker_id);
+
+      // Determine if this worker is running a fragment that is a root node
+      // This information will be used later in terminate_all_fragments to shut down
+      // root node workers first.
+      bool is_root_fragment = false;
+      for (const auto& fragment_name : fragment_names) {
+        auto node = fragment_graph.find_node(fragment_name);
+        if (fragment_graph.is_root(node)) {
+          is_root_fragment = true;
+          break;
+        }
+      }
+      if (is_root_fragment) { current_root_workers_.insert(worker_id); }
 
       // Retrieve information for all operator ports in the scheduled fragments from the workers
       // so we don't have to compose the target fragments on the driver to get this information.
@@ -992,7 +999,11 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
       app_status_ = AppStatus::kError;
 
       // Stop the driver server
-      driver_server_->stop();
+      if (driver_server_) {
+        driver_server_->stop();
+      } else {
+        HOLOSCAN_LOG_DEBUG("No driver server available to stop.");
+      }
       return;
     }
 
@@ -1090,8 +1101,12 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
         app_status_ = AppStatus::kError;
 
         // Stop the driver server
-        driver_server_->stop();
-        // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+        if (driver_server_) {
+          driver_server_->stop();
+          // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+        } else {
+          HOLOSCAN_LOG_DEBUG("No driver server available to stop.");
+        }
         return;
       }
     }
@@ -1104,8 +1119,17 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
   }
 }
 
+void AppDriver::set_status(AppStatus status) {
+  app_status_ = status;
+}
+
 void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termination_status) {
   auto& [worker_id, error_code] = termination_status;
+
+  HOLOSCAN_LOG_DEBUG("Driver received worker execution termination notification from {}: code={}",
+                     worker_id,
+                     static_cast<int>(error_code));
+
   bool is_removed = driver_server_->close_worker_connection(worker_id);
   if (is_removed) {
     switch (error_code) {
@@ -1118,8 +1142,12 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
           // Set app status to finished
           if (app_status_ != AppStatus::kError) { app_status_ = AppStatus::kFinished; }
           // Stop the driver server
-          driver_server_->stop();
-          // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+          if (driver_server_) {
+            driver_server_->stop();
+            // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+          } else {
+            HOLOSCAN_LOG_DEBUG("No driver server available to stop.");
+          }
         }
       } break;
       case AppWorkerTerminationCode::kCancelled:
@@ -1134,21 +1162,81 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
         app_status_ = AppStatus::kError;
 
         // Stop the driver server
-        driver_server_->stop();
-        // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+        if (driver_server_) {
+          driver_server_->stop();
+          // Do not call 'driver_server_->wait()' as current thread is the driver server thread
+        } else {
+          HOLOSCAN_LOG_DEBUG("No driver server available to stop.");
+        }
       } break;
     }
   }
 }
 
+void AppDriver::update_root_fragments(const FragmentGraph& graph,
+                                      const std::unordered_set<std::string>& terminated_fragments) {
+  // Remove terminated fragments from tracking
+  for (const auto& terminated : terminated_fragments) { current_root_workers_.erase(terminated); }
+
+  // Update root fragment workers based on current graph state
+  for (const auto& [fragment_name, worker_id] : schedule_) {
+    const auto node = graph.find_node(fragment_name);
+    if (node && graph.is_root(node)) { current_root_workers_.insert(worker_id); }
+  }
+}
+
 void AppDriver::terminate_all_workers(AppWorkerTerminationCode error_code) {
   auto worker_addresses = driver_server_->get_worker_addresses();
-  HOLOSCAN_LOG_DEBUG("Number of total workers: {}", worker_addresses.size());
-  for (const auto& worker_address : worker_addresses) {
-    auto& worker_client = driver_server_->connect_to_worker(worker_address);
-    HOLOSCAN_LOG_DEBUG("Requesting worker {} to terminate", worker_address);
-    worker_client->terminate_worker(error_code);
-    driver_server_->close_worker_connection(worker_address);
+  HOLOSCAN_LOG_WARN("AppDriver::terminate_all_workers started");
+  HOLOSCAN_LOG_WARN("Number of total workers: {}", worker_addresses.size());
+
+  std::unordered_set<std::string> terminated_workers;
+
+  // Should be okay to iteratively remove nodes from the fragment graph during termination
+  auto& fragment_graph = app_->fragment_graph();
+
+  while (!worker_addresses.empty()) {
+    // Terminate workers running current root fragments
+    std::vector<std::string> current_batch_workers;
+    for (const auto& worker_address : worker_addresses) {
+      if (current_root_workers_.find(worker_address) != current_root_workers_.end()) {
+        auto& worker_client = driver_server_->connect_to_worker(worker_address);
+        HOLOSCAN_LOG_WARN("Requesting root node worker {} to terminate", worker_address);
+        worker_client->terminate_worker(error_code);
+
+        // Wait longer for the root worker to properly terminate.
+        // This helps prevent "Connection reset by remote peer" errors from the UCX extension by
+        // allowing a bit of time for any in-flight messages to be received before the connection
+        // is closed.
+        std::this_thread::sleep_for(std::chrono::milliseconds(kWorkerTerminationGracePeriodMs));
+
+        driver_server_->close_worker_connection(worker_address);
+
+        // Track terminated fragments for this worker
+        std::unordered_set<std::string> terminated_fragments;
+        for (const auto& [fragment_name, worker_id] : schedule_) {
+          if (worker_id == worker_address) {
+            terminated_fragments.insert(fragment_name);
+            // Remove node from graph
+            auto node = fragment_graph.find_node(fragment_name);
+            if (node) { fragment_graph.remove_node(node); }
+          }
+        }
+
+        // Update root fragments based on new graph state
+        update_root_fragments(fragment_graph, terminated_fragments);
+        terminated_workers.insert(worker_address);
+      }
+    }
+
+    // Remove terminated workers from the list
+    worker_addresses.erase(std::remove_if(worker_addresses.begin(),
+                                          worker_addresses.end(),
+                                          [&terminated_workers](const std::string& addr) {
+                                            return terminated_workers.find(addr) !=
+                                                   terminated_workers.end();
+                                          }),
+                           worker_addresses.end());
   }
 }
 
@@ -1295,6 +1383,40 @@ std::future<void> AppDriver::launch_fragments_async(
                    if (stored_exception) { std::rethrow_exception(stored_exception); }
                  });
   return future;
+}
+
+void AppDriver::setup_signal_handlers() {
+  auto sig_handler = [this]([[maybe_unused]] void* context, int signum) {
+    HOLOSCAN_LOG_WARN("Received interrupt signal (Ctrl+C). Initiating clean shutdown...");
+
+    // Start termination process
+    if (app_status_ != AppStatus::kError) {
+      // Terminate all workers with cancelled status
+      terminate_all_workers(AppWorkerTerminationCode::kCancelled);
+
+      // Set app status to finished
+      app_status_ = AppStatus::kFinished;
+
+      // Stop the driver server
+      if (driver_server_) {
+        driver_server_->stop();
+      }
+    }
+
+    // Create a watchdog thread to ensure we exit even if clean shutdown hangs
+    std::thread([signum]() {
+      // Wait for a reasonable time for clean shutdown
+      std::this_thread::sleep_for(std::chrono::seconds(10));
+
+      HOLOSCAN_LOG_ERROR("Clean shutdown timed out after 10 seconds. Forcing exit...");
+      // Use the original signal to terminate
+      std::signal(signum, SIG_DFL);
+      std::raise(signum);
+    }).detach();
+  };
+
+  SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
+  SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
 }
 
 }  // namespace holoscan

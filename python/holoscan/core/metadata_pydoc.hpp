@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_METADATA_PYDOC_HPP
-#define HOLOSCAN_CORE_METADATA_PYDOC_HPP
+#ifndef PYHOLOSCAN_CORE_METADATA_PYDOC_HPP
+#define PYHOLOSCAN_CORE_METADATA_PYDOC_HPP
 
 #include <string>
 
@@ -222,4 +222,4 @@ The supported policies are:
 
 }  // namespace holoscan::doc
 
-#endif /* HOLOSCAN_CORE_METADATA_PYDOC_HPP */
+#endif /* PYHOLOSCAN_CORE_METADATA_PYDOC_HPP */

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <atomic>
 
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/graph.hpp"
@@ -33,6 +34,10 @@ namespace holoscan {
 
 // Forward declarations
 struct ConnectionItem;
+
+namespace service {
+class AppDriverClient;
+}
 
 enum class AppWorkerTerminationCode {
   kSuccess,
@@ -80,6 +85,10 @@ class AppWorker {
   void submit_message(WorkerMessage&& message);
 
   void process_message_queue();
+
+  std::shared_ptr<service::AppDriverClient> app_driver_client() const;
+
+  void setup_signal_handlers();
 
  private:
   friend class service::AppWorkerServer;  ///< Allow AppWorkerServer to access private members.

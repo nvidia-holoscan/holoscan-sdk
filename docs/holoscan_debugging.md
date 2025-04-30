@@ -76,6 +76,14 @@ Following this, the Python application initiates, and the C++ debugger attaches 
 
 By leveraging this integrated debugging approach, developers can efficiently troubleshoot and enhance applications that utilize both Python and C++ components within the Holoscan SDK.
 
+:::{note}
+On interactive debugging, it may be desirable to set the VSCode "RUN AND DEBUG" menu's "BREAKPOINTS" settings to uncheck the "Raised Exceptions" box. Otherwise, the debugger may break at an expected `PackageNotFoundException` handled by a `try`/`except` statement from the top-level holoscan `__init__.py`. If the debugger stops here, hitting "continue" will proceed to the application script of interest. By deselecting "Raise Exceptions" from the options, the debugger should not stop in the top-level `__init__.py`.
+:::
+
+:::{warning}
+When performing interactive debugging within the `__init__` method of a Python operator (inheriting from `holoscan.core.Operator`), the `self` variable cannot be inspected from a breakpoint in the debugger until **after** the parent class's `super().__init__` (`Operator.__init__`) method has been called. The [class will be an in incomplete state until that time](https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python) and inspecting it in the debugger (or trying to print via `print(self)`) will fail. The same restriction will also apply to the `__init__` method of Python condition classes inheriting from `holoscan.core.Condition` or Python resource classes inheriting from `holoscan.core.Resource`.
+:::
+
 ## Debugging an Application Crash
 
 This section outlines the procedures for debugging an application crash.

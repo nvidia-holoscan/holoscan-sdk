@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,6 +129,31 @@ bool AppDriverClient::worker_execution_finished(const std::string& worker_ip,
   } else {
     HOLOSCAN_LOG_INFO(
         "WorkerExecutionFinished rpc failed ({}): {}", driver_address_, status.error_message());
+    return false;
+  }
+}
+
+bool AppDriverClient::initiate_shutdown(const std::string& fragment_name) {
+  HOLOSCAN_LOG_WARN("AppDriverClient::initiate_shutdown for fragment '{}'", fragment_name);
+  holoscan::service::InitiateShutdownRequest request;
+  request.set_fragment_name(fragment_name);
+
+  holoscan::service::InitiateShutdownResponse response;
+  grpc::ClientContext context;
+  grpc::Status status = stub_->InitiateShutdown(&context, request, &response);
+
+  if (status.ok()) {
+    HOLOSCAN_LOG_INFO(
+        "InitiateShutdown response ({}): {}", driver_address_, response.result().message());
+    if (response.result().code() != holoscan::service::ErrorCode::SUCCESS) {
+      HOLOSCAN_LOG_ERROR(
+          "InitiateShutdown failed ({}): {}", driver_address_, response.result().message());
+      return false;
+    }
+    return true;
+  } else {
+    HOLOSCAN_LOG_INFO(
+        "InitiateShutdown rpc failed ({}): {}", driver_address_, status.error_message());
     return false;
   }
 }

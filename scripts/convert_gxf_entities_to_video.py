@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,8 +34,7 @@ def iter_output_frames(entity_iter):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Command line utility for reading raw video frames in GXF Tensors for "
-            "stream recording."
+            "Command line utility for reading raw video frames in GXF Tensors for stream recording."
         )
     )
     parser.add_argument("--basename", default="tensor", help="Basename for gxf entities to read")

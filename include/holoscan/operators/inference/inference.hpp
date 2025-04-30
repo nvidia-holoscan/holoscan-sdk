@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef INCLUDE_HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
-#define INCLUDE_HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
+#ifndef HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
+#define HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
 
 #include <map>
 #include <memory>
@@ -247,4 +247,4 @@ class InferenceOp : public holoscan::Operator {
 
 }  // namespace holoscan::ops
 
-#endif /* INCLUDE_HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP */
+#endif /* HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP */

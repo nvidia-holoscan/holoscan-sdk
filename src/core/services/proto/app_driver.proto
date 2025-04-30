@@ -43,7 +43,16 @@ message WorkerExecutionFinishedResponse {
   Result result = 1;
 }
 
+message InitiateShutdownRequest {
+  string fragment_name = 1;  // Name of fragment requesting shutdown
+}
+
+message InitiateShutdownResponse {
+  Result result = 1;
+}
+
 service AppDriverService {
   rpc AllocateFragments(FragmentAllocationRequest) returns (FragmentAllocationResponse) {}
   rpc ReportWorkerExecutionFinished(WorkerExecutionFinishedRequest) returns (WorkerExecutionFinishedResponse) {}
+  rpc InitiateShutdown(InitiateShutdownRequest) returns (InitiateShutdownResponse) {}
 }

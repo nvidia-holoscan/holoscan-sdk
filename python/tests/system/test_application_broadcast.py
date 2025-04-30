@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,9 +78,7 @@ class RxOp2(Operator):
 
 # Define a simple application broadcasting from one transmitter to multiple receivers.
 class BasicBroadcastApp(Application):
-    def __init__(
-        self, *args, count=10, optional_output=False, additional_receivers=False, **kwargs
-    ):
+    def __init__(self, *args, optional_output=False, additional_receivers=False, **kwargs):
         self.optional_output = optional_output
         self.additional_receivers = additional_receivers
         super().__init__(*args, **kwargs)
@@ -135,7 +133,7 @@ class MxOp(Operator):
 
 # Define a simple application broadcasting from one transmitter to multiple receivers.
 class ForkJoinApp(Application):
-    def __init__(self, *args, count=10, optional_output=False, **kwargs):
+    def __init__(self, *args, optional_output=False, **kwargs):
         self.optional_output = optional_output
         super().__init__(*args, **kwargs)
 

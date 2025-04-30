@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,7 @@ def invert(tensor):
 
 @create_op(inputs=Input("in", arg_map="tensor"), outputs=Output("out", tensor_names=("frame",)))
 def tensor_info(tensor):
-    print(f"tensor from 'in' port: shape = {tensor.shape}, " f"dtype = {tensor.dtype.name}")
+    print(f"tensor from 'in' port: shape = {tensor.shape}, dtype = {tensor.dtype.name}")
     return tensor
 
 

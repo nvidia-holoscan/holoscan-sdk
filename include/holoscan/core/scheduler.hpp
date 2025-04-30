@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -169,7 +169,14 @@ class Scheduler : public Component {
    *
    * @return The pointer to the component specification.
    */
-  ComponentSpec* spec() { return spec_.get(); }
+  ComponentSpec* spec() {
+    if (!spec_) {
+      HOLOSCAN_LOG_WARN("ComponentSpec of Scheduler '{}' is not initialized, returning nullptr",
+                        name_);
+      return nullptr;
+    }
+    return spec_.get();
+  }
 
   /**
    * @brief Get the shared pointer to the component spec.

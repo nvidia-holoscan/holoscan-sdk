@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,7 @@ from holoscan.core import Application, Fragment
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 
 
-class Fragment1(Fragment):
+class ReplayerFragment(Fragment):
     def __init__(self, app, name):
         super().__init__(app, name)
 
@@ -45,7 +45,7 @@ class Fragment1(Fragment):
         return os.path.join(path, "racerx")
 
 
-class Fragment2(Fragment):
+class VisualizerFragment(Fragment):
     def compose(self):
         visualizer = HolovizOp(self, name="holoviz", **self.kwargs("holoviz"))
 
@@ -56,9 +56,9 @@ class DistributedVideoReplayerApp(Application):
     """Example of a distributed application that uses the fragments and operators defined above.
 
     This application has the following fragments:
-    - Fragment1
+    - ReplayerFragment
       - holding VideoStreamReplayerOp
-    - Fragment2
+    - VisualizerFragment
       - holding HolovizOp
 
     The VideoStreamReplayerOp reads a video file and sends the frames to the HolovizOp.
@@ -72,11 +72,18 @@ class DistributedVideoReplayerApp(Application):
 
     def compose(self):
         # Define the fragments
-        fragment1 = Fragment1(self, name="fragment1")
-        fragment2 = Fragment2(self, name="fragment2")
+        fragment1 = ReplayerFragment(self, name="fragment1")
+        fragment2 = VisualizerFragment(self, name="fragment2")
 
         # Define the workflow
         self.add_flow(fragment1, fragment2, {("replayer.output", "holoviz.receivers")})
+
+        # Check if the YAML dual_window parameter is set and add a third fragment with a second
+        # visualizer in that case.
+        dual_window = self.kwargs("dual_window").get("dual_window", False)
+        if dual_window:
+            fragment3 = VisualizerFragment(self, name="fragment3")
+            self.add_flow(fragment1, fragment3, {("replayer.output", "holoviz.receivers")})
 
 
 def main():

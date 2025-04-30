@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -185,8 +185,7 @@ class HolovizOp(_HolovizOp):
                 # )
             elif not isinstance(receiver, IOSpec):
                 raise ValueError(
-                    "receivers must be a string containing the receiver name or an "
-                    "IOSpec object."
+                    "receivers must be a string containing the receiver name or an IOSpec object."
                 )
             if not receiver.io_type == IOSpec.IOType.kInput:
                 raise ValueError("IOType of receiver IOSpec objects must be 'kInput'")
@@ -202,11 +201,11 @@ class HolovizOp(_HolovizOp):
             # if this is a dict then create an InputSpec by processing the dict entries
             if not isinstance(tensor, MutableMapping):
                 raise ValueError(
-                    "Tensors must be a sequence of MutableMappings " "(e.g. list of dict)."
+                    "Tensors must be a sequence of MutableMappings (e.g. list of dict)."
                 )
             if "name" not in tensor or not isinstance(tensor["name"], str):
                 raise ValueError(
-                    "Tensor dictionaries must contain key 'name' with a value " "that is a str."
+                    "Tensor dictionaries must contain key 'name' with a value that is a str."
                 )
             if "type" not in tensor:
                 raise ValueError("tensor dictionaries must contain key 'type'")
@@ -254,7 +253,7 @@ class HolovizOp(_HolovizOp):
                 color = tensor["color"]
                 if not isinstance(color, Sequence) or len(color) != 4:
                     raise ValueError(
-                        "Colors must be specified as a sequence of 4 values: " "(R, G, B, A)."
+                        "Colors must be specified as a sequence of 4 values: (R, G, B, A)."
                     )
                 color = list(map(float, color))
                 for val in color:

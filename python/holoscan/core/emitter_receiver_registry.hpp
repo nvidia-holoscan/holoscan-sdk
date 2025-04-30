@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_EMITTER_RECEIVER_REGISTRY_HPP
-#define HOLOSCAN_CORE_EMITTER_RECEIVER_REGISTRY_HPP
+#ifndef PYHOLOSCAN_CORE_EMITTER_RECEIVER_REGISTRY_HPP
+#define PYHOLOSCAN_CORE_EMITTER_RECEIVER_REGISTRY_HPP
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>  // needed for py::cast to work with STL container types
@@ -295,4 +295,4 @@ class PYBIND11_EXPORT EmitterReceiverRegistry {
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_EMITTER_RECEIVER_REGISTRY_HPP */
+#endif /* PYHOLOSCAN_CORE_EMITTER_RECEIVER_REGISTRY_HPP */

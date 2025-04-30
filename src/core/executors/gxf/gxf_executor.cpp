@@ -1565,7 +1565,7 @@ bool GXFExecutor::initialize_fragment() {
     // We will set the DoubleBufferReceiver's capacity to kSizeOne instead of kPrecedingCount to
     // avoid deadlock.
     auto prev_operators = graph.get_previous_nodes(op);
-    if (op->input_exec_spec()) {
+    if (auto& input_exec_spec = op->input_exec_spec()) {
       bool cycle_detected = false;
       bool self_cycle = false;
       for (auto& prev_op : prev_operators) {
@@ -1583,7 +1583,6 @@ bool GXFExecutor::initialize_fragment() {
             self_cycle);
         HOLOSCAN_LOG_DEBUG(
             "\tSetting input execution port's queue size to kSizeOne for operator: {}", op_name);
-        auto& input_exec_spec = op->input_exec_spec();
         input_exec_spec->queue_size(IOSpec::kSizeOne);
         HOLOSCAN_LOG_DEBUG("\tSetting metadata policy to kUpdate for operator: {}", op_name);
         op->metadata_policy(MetadataPolicy::kUpdate);

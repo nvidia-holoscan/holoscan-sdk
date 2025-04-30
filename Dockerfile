@@ -351,6 +351,9 @@ COPY python/requirements.dev.txt /tmp/requirements.dev.txt
 COPY python/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.dev.txt -r /tmp/requirements.txt
 
+# A pre-existing NumPy 1.x may have been kept by the above requirements.txt. Explicitly install 2.x
+RUN python3 -m pip install "numpy>2.0"
+
 # Creates a home directory for docker-in-docker to store files temporarily in the container,
 # necessary when running the holoscan CLI packager
 ENV HOME=/home/holoscan

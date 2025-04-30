@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,9 @@ namespace holoscan::gxf {
 void GXFNetworkContext::set_parameters() {
   update_params_from_args();
 
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No component spec for GXFNetworkContext '{}'", name_));
+  }
   // Set Handler parameters
   for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
 }

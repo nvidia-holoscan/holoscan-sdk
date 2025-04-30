@@ -94,7 +94,7 @@ class AsyncPingRxOp(Operator):
     will be set to EVENT_DONE is specified by `delay`.
     """
 
-    def __init__(self, fragment, *args, delay=0.2, count=10, **kwargs):
+    def __init__(self, fragment, *args, delay=0.2, **kwargs):
         self.index = 0
 
         # delay used by async_receive

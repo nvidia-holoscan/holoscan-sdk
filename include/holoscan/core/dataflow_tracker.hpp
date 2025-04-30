@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef CORE_DATAFLOW_TRACKER_HPP
-#define CORE_DATAFLOW_TRACKER_HPP
+#ifndef HOLOSCAN_CORE_DATAFLOW_TRACKER_HPP
+#define HOLOSCAN_CORE_DATAFLOW_TRACKER_HPP
 
 #include <limits.h>
 #include <algorithm>
@@ -296,4 +296,4 @@ class DataFlowTracker {
 };
 }  // namespace holoscan
 
-#endif /* CORE_DATAFLOW_TRACKER_HPP */
+#endif /* HOLOSCAN_CORE_DATAFLOW_TRACKER_HPP */

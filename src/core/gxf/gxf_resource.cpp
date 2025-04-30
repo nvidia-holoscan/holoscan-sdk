@@ -130,6 +130,10 @@ void GXFResource::add_to_graph_entity(Fragment* fragment,
 void GXFResource::set_parameters() {
   update_params_from_args();
 
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No component spec for GXFResource '{}'", name_));
+  }
+
   // Set Handler parameters
   for (auto& [key, param_wrap] : spec_->params()) {
     // Issue 4336947: dev_id parameter for allocator needs to be handled manually

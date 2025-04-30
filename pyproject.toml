@@ -53,13 +53,24 @@ select = [
   "T10",   # flake8-debugger (ensure no leftover trace/breakpoint commands)
   "PT",    # flake8-pytest-style
   "FIX",   # flake8-fixme (warn on leftover TODO statements)
+  "ARG",   # flake8-unused-arguments
   "NPY",   # numpy-specific rules
   "PERF",  # performance related rules
+  "PLC",   # pylint conventions
+  "PLE",   # pylint error
 ]
 fixable = ["ALL"]  # list of rule codes or prefixes to consider fixable
 ignore = [
   "PT006"  # don't enforce csv vs. list vs. tuple for first argument of parametrize
 ]
+# Customize ARG check (see: https://docs.astral.sh/ruff/settings/#lint_dummy-variable-rgx)
+# - augment default setting of variables starting with _ to also ignore:
+#   - `op_input`, `op_output` and `context` arguments of `Operator.compute`
+#   - `spec` argument of `Operator.setup`
+#   - `timestamp` argument of `Condition.check` and `Condition.update_state`
+# (If we want to remove these ignores, we will have to prepand an underscore to the names of the
+#  unused variables in all existing examples and tests.)
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?)|op_input|op_output|context|spec|timestamp)$"
 
 [tool.ruff.lint.per-file-ignores]
 # ignore line length for __init__.py files (due to copyright header not in triple quotes)

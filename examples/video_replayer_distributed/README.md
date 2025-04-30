@@ -4,6 +4,22 @@ Minimal example to demonstrate the use of the video stream replayer operator to 
 
 The video frames need to have been converted to a gxf entity format to use as input. You can use the `convert_video_to_gxf_entities.py` script installed in `/opt/nvidia/holoscan/bin` or available [on GitHub](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/scripts#convert_video_to_gxf_entitiespy) (tensors will be loaded on the GPU).
 
+By default there are two fragments, each of which has only a single operator:
+
+- ReplayerFragment : uses VideoReplayerOp to read video frames
+- VisualizerFragment : receives video frames and displays them
+
+Playback continues (looping the short video) until the user closes the display window (or presses Esc to close it). Alternatively, a finite frame `count` can be set in the `replayer` section of `video_replayer_distributed.yaml`.
+
+If the user sets `dual_window: true` in `video_replayer_distributed.yaml`, a three-fragment version of the app will be launched. In this version there are two visualizer fragments. In the C++ version, the second visualizer fragment uses a modified version of `HolovizOp`:
+
+- ReplayerFragment : uses VideoReplayerOp to read video frames
+- VisualizerFragment : receives video frames and displays them
+- VisualizerFragment2 : receives video frames and displays them (In the C++ version, this uses a modified `HolovizOp` with its compute method overridden so that the window is automatically closed after 30 frames are displayed)
+
+This dual window C++ variant is used to test the shutdown behavior of distributed applications (there
+should be no errors logged on shutdown). Clean shutdown via a leaf node (`VisualizerFragment2` in this case) is achieved by calling `Application::initiate_distributed_app_shutdown()` from within the [HolovizOp::compute](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.2.0/src/operators/holoviz/holoviz.cpp) method. This will tell the application driver to initiate an orderly shutdown from root to leaf nodes, preventing error messages from being logged during the shutdown process. Prior to the introduction of this method in Holoscan v3.2, the leaf fragment would begin shutdown without informing the root node first, resulting in some residual errors being logged (e.g. the `ReplayerFragment` would try to send a video frame which could not be delivered since the leaf fragment had already shut down).
+
 > Note: Support for H264 stream support is in progress and can be found on [HoloHub](https://github.com/nvidia-holoscan/holohub)
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_distributed_app.html) to learn more about distributed applications.*

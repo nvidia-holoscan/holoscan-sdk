@@ -505,7 +505,7 @@ class Fragment {
   std::shared_ptr<ThreadPool> make_thread_pool(const std::string& name, int64_t initial_size = 1);
 
   /**
-   * @brief Get the start operator of the fragment.
+   * @brief Get or create the start operator for this fragment.
    *
    * This operator is nothing but the first operator that was added to the fragment.
    * It has the name of `<|start|>` and has a condition of `CountCondition(1)`.
@@ -519,7 +519,7 @@ class Fragment {
    *
    * @return The shared pointer to the start operator.
    */
-  const std::shared_ptr<Operator>& start_op();
+  virtual const std::shared_ptr<Operator>& start_op();
 
   /**
    * @brief Add an operator to the graph.

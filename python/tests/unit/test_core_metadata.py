@@ -29,7 +29,7 @@ def test_policy_type(name):
 
 
 class TestMetadataDictionary:
-    def test_init(self, capfd):
+    def test_init(self):
         d = MetadataDictionary()
         assert len(d) == 0
         assert d.size() == 0

@@ -244,7 +244,14 @@ class Operator : public ComponentBase {
    *
    * @return The operator spec.
    */
-  OperatorSpec* spec() { return spec_.get(); }
+  OperatorSpec* spec() {
+    if (!spec_) {
+      HOLOSCAN_LOG_WARN("OperatorSpec of Operator '{}' is not initialized, returning nullptr",
+                        name_);
+      return nullptr;
+    }
+    return spec_.get();
+  }
 
   /**
    * @brief Get the shared pointer to the operator spec.
@@ -790,6 +797,19 @@ class Operator : public ComponentBase {
    */
   void ensure_contexts();
 
+  /**
+   * @brief Internal method to clean up operator resources and prevent circular references.
+   *
+   * This is an internal method called automatically by the GXFWrapper during operator shutdown.
+   * It resets std::shared_ptr fields and std::function objects such as `input_exec_spec_`,
+   * `output_exec_spec_`, `next_flows_`, `dynamic_flows_`, and `dynamic_flow_func_` to break
+   * potential circular references between connected Operator objects.
+   *
+   * @warning This is an internal method that should never be called directly by user code.
+   *          Improper use can lead to undefined behavior.
+   */
+  virtual void release_internal_resources();
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -945,6 +965,19 @@ class Operator : public ComponentBase {
   /// The execution context for the operator.
   std::shared_ptr<ExecutionContext> execution_context_{};
 
+  std::shared_ptr<MetadataDictionary> dynamic_metadata_ =
+      std::make_shared<MetadataDictionary>();  ///< The metadata dictionary for the operator.
+  std::optional<bool> is_metadata_enabled_ =
+      std::nullopt;  ///< Flag to enable or disable metadata for the operator.
+                     ///< If not set, the value from the Fragment is used.
+
+  std::shared_ptr<IOSpec> input_exec_spec_;   ///< The input execution port specification.
+  std::shared_ptr<IOSpec> output_exec_spec_;  ///< The output execution port specification.
+  std::function<void(const std::shared_ptr<Operator>&)> dynamic_flow_func_ = nullptr;
+  std::weak_ptr<Operator> self_shared_;
+  std::shared_ptr<std::vector<std::shared_ptr<FlowInfo>>> next_flows_;
+  std::shared_ptr<std::vector<std::shared_ptr<FlowInfo>>> dynamic_flows_;
+
  private:
   /// An empty shared pointer to FlowInfo.
   static inline const std::shared_ptr<FlowInfo> kEmptyFlowInfo{nullptr};
@@ -967,19 +1000,6 @@ class Operator : public ComponentBase {
 
   /// The backend Codelet or other codebase pointer. It is used for DFFT.
   void* op_backend_ptr = nullptr;
-
-  std::shared_ptr<MetadataDictionary> dynamic_metadata_ =
-      std::make_shared<MetadataDictionary>();  ///< The metadata dictionary for the operator.
-  std::optional<bool> is_metadata_enabled_ =
-      std::nullopt;  ///< Flag to enable or disable metadata for the operator.
-                     ///< If not set, the value from the Fragment is used.
-
-  std::shared_ptr<IOSpec> input_exec_spec_;   ///< The input execution port specification.
-  std::shared_ptr<IOSpec> output_exec_spec_;  ///< The output execution port specification.
-  std::function<void(const std::shared_ptr<Operator>&)> dynamic_flow_func_ = nullptr;
-  std::weak_ptr<Operator> self_shared_;
-  std::shared_ptr<std::vector<std::shared_ptr<FlowInfo>>> next_flows_;
-  std::shared_ptr<std::vector<std::shared_ptr<FlowInfo>>> dynamic_flows_;
 };
 
 }  // namespace holoscan

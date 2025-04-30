@@ -192,7 +192,7 @@ class PingMessageRxOp(Operator):
 
 
 class TxFragment(Fragment):
-    def __init__(self, *args, value=1, period=None, **kwargs):
+    def __init__(self, *args, value=1, **kwargs):
         self.value = value
         super().__init__(*args, **kwargs)
 
@@ -202,7 +202,7 @@ class TxFragment(Fragment):
 
 
 class RxFragment(Fragment):
-    def __init__(self, *args, expected_value=1, period=None, **kwargs):
+    def __init__(self, *args, expected_value=1, **kwargs):
         self.expected_value = expected_value
         super().__init__(*args, **kwargs)
 
@@ -214,7 +214,7 @@ class RxFragment(Fragment):
 
 
 class MultiFragmentPyObjectPingApp(Application):
-    def __init__(self, *args, value=1, period=None, **kwargs):
+    def __init__(self, *args, value=1, **kwargs):
         self.value = value
         super().__init__(*args, **kwargs)
 
@@ -255,7 +255,7 @@ class SingleFragmentDataPingApp(Application):
         "input_specs",  # list of HolovizOp.InputSpec
     ],
 )
-def test_single_fragment_data_ping_app(ping_config_file, value, capfd):
+def test_single_fragment_data_ping_app(value, capfd):
     """Testing UCX-based serialization of PyObject, tensors, etc."""
     if value in ["numpy", "numpy-tensormap"]:
         pytest.importorskip("numpy")
@@ -288,7 +288,7 @@ def test_single_fragment_data_ping_app(ping_config_file, value, capfd):
         "input_specs",  # list of HolovizOp.InputSpec
     ],
 )
-def test_ucx_object_serialization_app(ping_config_file, value, capfd):
+def test_ucx_object_serialization_app(value, capfd):
     """Testing UCX-based serialization of PyObject, tensors, etc."""
     if value in ["numpy", "numpy-tensormap"]:
         pytest.importorskip("numpy")
@@ -337,7 +337,7 @@ class PingMessageReceiversRxOp(Operator):
 
 
 class RxReceiversFragment(Fragment):
-    def __init__(self, *args, expected_value=1, period=None, **kwargs):
+    def __init__(self, *args, expected_value=1, **kwargs):
         self.expected_value = expected_value
         super().__init__(*args, **kwargs)
 
@@ -349,7 +349,7 @@ class RxReceiversFragment(Fragment):
 
 
 class MultiFragmentPyObjectReceiversPingApp(Application):
-    def __init__(self, *args, value=1, period=None, **kwargs):
+    def __init__(self, *args, value=1, **kwargs):
         self.value = value
         super().__init__(*args, **kwargs)
 
@@ -374,7 +374,7 @@ class MultiFragmentPyObjectReceiversPingApp(Application):
         "input_specs",  # list of HolovizOp.InputSpec
     ],
 )
-def test_ucx_object_receivers_serialization_app(ping_config_file, value, capfd):
+def test_ucx_object_receivers_serialization_app(value, capfd):
     """Testing UCX-based serialization of PyObject, tensors, etc."""
     if value in ["numpy", "numpy-tensormap"]:
         pytest.importorskip("numpy")

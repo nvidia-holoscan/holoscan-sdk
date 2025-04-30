@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -263,7 +263,7 @@ class TestCreateOp:
 
     def test_create_op_inputs_keyword_only_arg(self):
         @create_op(inputs="image", outputs="image")
-        def func_one_positional_arg(image, x=5, *, y=7):
+        def func_one_positional_arg(image, x=5, *, y=7):  # noqa: ARG001
             return image
 
         # pass fragment positionally
@@ -277,7 +277,7 @@ class TestCreateOp:
 
     def test_create_op_generator_func(self):
         @create_op(inputs="image", outputs="image")
-        def int_generator(image, *, count=10):
+        def int_generator(image, *, count=10):  # noqa: ARG001
             yield from range(count)
 
         # pass fragment positionally

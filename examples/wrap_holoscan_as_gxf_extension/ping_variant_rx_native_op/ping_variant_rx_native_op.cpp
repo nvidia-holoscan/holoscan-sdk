@@ -37,7 +37,7 @@ void PingVarRxNativeOp::setup(OperatorSpec& spec) {
 }
 
 void PingVarRxNativeOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
-                             [[maybe_unused]] ExecutionContext& context) {
+                                [[maybe_unused]] ExecutionContext& context) {
   HOLOSCAN_LOG_INFO("PingVarRxNativeOp::compute() called.");
 
   // The type of `in_message` is 'holoscan::gxf::Entity'.

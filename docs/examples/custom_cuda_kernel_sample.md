@@ -98,6 +98,13 @@ Inference Processor operator (`InferenceProcessorOp`) is designed using APIs fro
     ```
     - In the example above, two custom CUDA kernels are defined. *cuda_kernel-1* is 1D and *custom_kernel-2* is a 2D kernel, they both are used in the same parameter set. 
 - Templated kernels are not supported in this release. 
+- Custom CUDA kernel can be ingested via a filepath or a string. If the custom CUDA kernel is ingested via a filepath, the operator will read the kernel from the file. If the custom CUDA kernel is ingested via a string in the parameter set, the operator will use the kernel from the string. Filepath must end with **.cu** extension. All specifications for the kernel must be present in the file.
+- Multiple custom CUDA kernels chaining is supported. For a particular input tensor, multiple custom CUDA kernels can be defined in the parameter set. Custom CUDA kernels are executed in the order of their definition in the parameter set. For e.g. custom_cuda_kernel-1 and custom_cuda_kernel-2 are two custom CUDA kernels defined in the parameter set. The output of custom_cuda_kernel-1 is used as input for custom_cuda_kernel-2. Custom CUDA kernels are separated by a colon (:) as shown below.
+    ```yaml
+    processor_op:
+        process_operations:
+            "input_tensor": ["custom_cuda_kernel-1:custom_cuda_kernel-2"]
+    ```
     
 ## Holoviz Operator
 

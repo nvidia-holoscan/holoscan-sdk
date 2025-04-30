@@ -37,6 +37,7 @@ namespace holoscan {
 
 // forward declaration
 class AppDriver;
+class AppDriverClient;
 
 /**
  * @brief Utility function to create an application.
@@ -364,6 +365,23 @@ class Application : public Fragment {
    * @returns The default metadata update policy used by operators in this fragment.
    */
   MetadataPolicy metadata_policy() const override;
+
+  /**
+   * @brief Get the AppDriverClient for the application.
+   *
+   * @return The shared pointer to the AppDriverClient.
+   */
+  std::shared_ptr<service::AppDriverClient> app_driver_client() const;
+
+  /**
+   * @brief Initiate shutdown of the distributed application.
+   *
+   * This method initiates a shutdown of the distributed application by calling the
+   * `initiate_shutdown` method on the AppDriverClient.
+   *
+   * @param fragment_name The name of the fragment initiating the shutdown.
+   */
+  void initiate_distributed_app_shutdown(const std::string& fragment_name);
 
  protected:
   friend class AppDriver;

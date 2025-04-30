@@ -315,13 +315,12 @@ def test_queue_policy_settings(policy_set_mode, threads, capfd):
         assert "The queue policy set for input port 'in' of operator 'increment2'" in captured.err
         msg_common = "will be ignored because a connector (receiver) was explicitly set"
         assert captured.err.count(msg_common) == 2
+    elif threads == 0:
+        assert "warning" not in captured.err
     else:
-        if threads == 0:
-            assert "warning" not in captured.err
-        else:
-            # event-based scheduler may print warning about deadlock if
-            # stop_on_deadlock_timeout value is too small
-            assert captured.err.count("warning") <= 1
+        # event-based scheduler may print warning about deadlock if
+        # stop_on_deadlock_timeout value is too small
+        assert captured.err.count("warning") <= 1
     assert "exception occurred" not in captured.err.lower()
 
     # confirm expected number of messages were received on each branch

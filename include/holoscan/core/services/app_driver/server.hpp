@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "holoscan/core/app_driver.hpp"
+#include "holoscan/core/app_worker.hpp"
 
 // Forward declaration of gRPC server
 namespace grpc {

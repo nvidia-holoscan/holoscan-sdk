@@ -51,136 +51,150 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
 
     for (const auto& _op : _operations) {
       std::vector<std::string> operation_strings;
-      string_split(_op, operation_strings, ',');
-      std::string operation = operation_strings[0];
-      if (supported_transforms_.find(operation) != supported_transforms_.end()) {
-        // In future releases, this will be generalized with addition of more transforms.
-        if (operation == "generate_boxes") {
-          // unique key is created as a combination of input tensors and operation
-          auto key = fmt::format("{}-{}", p_op.first, operation);
-          HOLOSCAN_LOG_INFO("Transform map updated with key: {}", key);
-          transforms_.insert({key, std::make_unique<GenerateBoxes>(config_path_)});
+      string_split(_op, operation_strings, ':');
+      for (auto operation : operation_strings) {
+        std::vector<std::string> operation_split;
+        string_split(operation, operation_split, ',');
+        operation = operation_split[0];
+        if (supported_transforms_.find(operation) != supported_transforms_.end()) {
+          // In future releases, this will be generalized with addition of more transforms.
+          if (operation == "generate_boxes") {
+            // unique key is created as a combination of input tensors and operation
+            auto key = fmt::format("{}-{}", p_op.first, operation);
+            HOLOSCAN_LOG_INFO("Transform map updated with key: {}", key);
+            transforms_.insert({key, std::make_unique<GenerateBoxes>(config_path_)});
 
-          std::vector<std::string> tensor_tokens;
-          string_split(p_op.first, tensor_tokens, ':');
+            std::vector<std::string> tensor_tokens;
+            string_split(p_op.first, tensor_tokens, ':');
 
-          auto status = transforms_.at(key)->initialize(tensor_tokens);
-          if (status.get_code() != holoinfer_code::H_SUCCESS) {
-            status.display_message();
-            return status;
+            auto status = transforms_.at(key)->initialize(tensor_tokens);
+            if (status.get_code() != holoinfer_code::H_SUCCESS) {
+              status.display_message();
+              return status;
+            }
+            continue;
           }
-          continue;
-        }
-      }
-
-      if (operation.find("custom_cuda_kernel") != std::string::npos) {
-        //  Get the custom cuda kernel ID
-        std::vector<std::string> oper_name_split;
-        string_split(operation, oper_name_split, '-');
-        operation = "custom_cuda_kernel";
-
-        if (oper_name_split.size() != 2) {
-          HOLOSCAN_LOG_ERROR("Operation name not as per specifications. {}", operation);
-          HOLOSCAN_LOG_ERROR(
-              "Custom cuda operation name must follow the following format: "
-              "custom_cuda_kernel-<identifier>. A dash (-) must separate the operation "
-              "(custom_cuda_kernel) and kernel identifier.");
-          return InferStatus(
-              holoinfer_code::H_ERROR,
-              "Data processor, custom cuda kernel not defined as per specifications.");
-        }
-        auto kernel_identifier = oper_name_split[1];
-        HOLOSCAN_LOG_INFO("Custom kernel Identifier: {}", kernel_identifier);
-
-        // From all entries in custom_kernels, find multiple custom cuda kernels and store them in
-        // a map
-        if (custom_kernels.size() == 0) {
-          HOLOSCAN_LOG_ERROR("Custom kernels not defined in the parameter set");
-          return InferStatus(holoinfer_code::H_ERROR,
-                             "Data processor, custom cuda kernel map does not exist.");
         }
 
-        std::string current_kernel = "cuda_kernel-" + kernel_identifier;
-        if (custom_kernels.find(current_kernel) == custom_kernels.end()) {
-          HOLOSCAN_LOG_ERROR("Custom cuda kernel {} not defined in custom_kernels map.",
-                             current_kernel);
-          return InferStatus(holoinfer_code::H_ERROR,
-                             "Data processor, cuda kernel not defined in custom cuda kernel map.");
-        }
+        if (operation.find("custom_cuda_kernel") != std::string::npos) {
+          if (custom_cuda_kernel_processed_.find(operation) ==
+              custom_cuda_kernel_processed_.end()) {
+            custom_cuda_kernel_processed_[operation] = true;
+            //  Get the custom cuda kernel ID
+            std::vector<std::string> oper_name_split;
+            string_split(operation, oper_name_split, '-');
+            operation = "custom_cuda_kernel";
 
-        if (custom_kernels.at(current_kernel).length() == 0) {
-          HOLOSCAN_LOG_ERROR("Custom cuda kernel {} empty in custom_kernels map.", current_kernel);
-          return InferStatus(holoinfer_code::H_ERROR,
-                             "Data processor, cuda kernel length cannot be 0.");
-        }
+            if (oper_name_split.size() != 2) {
+              HOLOSCAN_LOG_ERROR("Operation name not as per specifications. {}", operation);
+              HOLOSCAN_LOG_ERROR(
+                  "Custom cuda operation name must follow the following format: "
+                  "custom_cuda_kernel-<identifier>. A dash (-) must separate the operation "
+                  "(custom_cuda_kernel) and kernel identifier.");
+              return InferStatus(
+                  holoinfer_code::H_ERROR,
+                  "Data processor, custom cuda kernel not defined as per specifications.");
+            }
+            auto kernel_identifier = oper_name_split[1];
+            HOLOSCAN_LOG_INFO("Custom kernel Identifier: {}", kernel_identifier);
 
-        // import from file if the input is a file path
-        const std::string cuda_suffix{".cu"};
-        std::string kernel_path = custom_kernels.at(current_kernel);
-        bool has_cuda_suffix =
-            kernel_path.compare(
-                kernel_path.size() - cuda_suffix.size(), cuda_suffix.size(), cuda_suffix) == 0;
+            // From all entries in custom_kernels, find multiple custom cuda kernels and store them
+            // in a map
+            if (custom_kernels.size() == 0) {
+              HOLOSCAN_LOG_ERROR("Custom kernels not defined in the parameter set");
+              return InferStatus(holoinfer_code::H_ERROR,
+                                 "Data processor, custom cuda kernel map does not exist.");
+            }
 
-        if (has_cuda_suffix) {
-          if (!std::filesystem::exists(kernel_path)) {
-            HOLOSCAN_LOG_ERROR("Custom cuda kernel file not found: {}", kernel_path);
-            return InferStatus(holoinfer_code::H_ERROR,
-                               "Data processor, custom cuda kernel file not found.");
+            std::string current_kernel = "cuda_kernel-" + kernel_identifier;
+            if (custom_kernels.find(current_kernel) == custom_kernels.end()) {
+              HOLOSCAN_LOG_ERROR("Custom cuda kernel {} not defined in custom_kernels map.",
+                                 current_kernel);
+              return InferStatus(
+                  holoinfer_code::H_ERROR,
+                  "Data processor, cuda kernel not defined in custom cuda kernel map.");
+            }
+
+            if (custom_kernels.at(current_kernel).length() == 0) {
+              HOLOSCAN_LOG_ERROR("Custom cuda kernel {} empty in custom_kernels map.",
+                                 current_kernel);
+              return InferStatus(holoinfer_code::H_ERROR,
+                                 "Data processor, cuda kernel length cannot be 0.");
+            }
+
+            // import from file if the input is a file path
+            const std::string cuda_suffix{".cu"};
+            std::string kernel_path = custom_kernels.at(current_kernel);
+            bool has_cuda_suffix =
+                kernel_path.compare(
+                    kernel_path.size() - cuda_suffix.size(), cuda_suffix.size(), cuda_suffix) == 0;
+
+            if (has_cuda_suffix) {
+              if (!std::filesystem::exists(kernel_path)) {
+                HOLOSCAN_LOG_ERROR("Custom cuda kernel file not found: {}", kernel_path);
+                return InferStatus(holoinfer_code::H_ERROR,
+                                   "Data processor, custom cuda kernel file not found.");
+              }
+              std::ifstream file(kernel_path);
+              std::stringstream buffer;
+              buffer << file.rdbuf();
+              custom_cuda_src_ += buffer.str();
+              HOLOSCAN_LOG_DEBUG("Cuda kernel source: {}", buffer.str());
+            } else {
+              custom_cuda_src_ += custom_kernels.at(current_kernel);
+              const char* cuda_src = custom_kernels.at(current_kernel).c_str();
+              HOLOSCAN_LOG_DEBUG("Cuda kernel source: {}", cuda_src);
+            }
+
+            // extract output datatype
+            std::string current_out_dtype = "out_dtype-" + kernel_identifier;
+            if (custom_kernels.find(current_out_dtype) != custom_kernels.end()) {
+              auto output_dtype_string = custom_kernels.at(current_out_dtype);
+
+              if (kHoloInferDataTypeMap.find(output_dtype_string) == kHoloInferDataTypeMap.end()) {
+                HOLOSCAN_LOG_ERROR(
+                    "Data processor, Incorrect output data type {} in custom CUDA kernel.",
+                    output_dtype_string);
+                HOLOSCAN_LOG_INFO(
+                    "Supported data type values are: kFloat32, kInt32, kInt8, kUInt8, KInt64, "
+                    "kFloat16");
+                return InferStatus(
+                    holoinfer_code::H_ERROR,
+                    "Data processor, Incorrect output data type in custom CUDA kernel.");
+              }
+
+              output_dtype_[kernel_identifier] = kHoloInferDataTypeMap.at(output_dtype_string);
+            } else {
+              output_dtype_[kernel_identifier] = holoinfer_datatype::h_Float32;
+              HOLOSCAN_LOG_WARN(
+                  "Output datatype not specified in custom cuda map. Going with default datatype: "
+                  "float32");
+            }
+
+            // extract threads per block
+            std::string current_threads_per_block = "thread_per_block-" + kernel_identifier;
+            if (custom_kernels.find(current_threads_per_block) != custom_kernels.end()) {
+              auto tpb_string = custom_kernels.at(current_threads_per_block);
+              custom_kernel_thread_per_block_[kernel_identifier] = std::move(tpb_string);
+            } else {
+              custom_kernel_thread_per_block_[kernel_identifier] = "256";
+              HOLOSCAN_LOG_WARN(
+                  "Threads per block not specific in custom kernels map with {}. Assuming it to be "
+                  "a "
+                  "1D kernel and setting thread_per_block as 256",
+                  current_threads_per_block);
+            }
+          } else {
+            operation = "custom_cuda_kernel";
           }
-          std::ifstream file(kernel_path);
-          std::stringstream buffer;
-          buffer << file.rdbuf();
-          custom_cuda_src_ += buffer.str();
-          HOLOSCAN_LOG_DEBUG("Cuda kernel source: {}", buffer.str());
-        } else {
-          custom_cuda_src_ += custom_kernels.at(current_kernel);
-          const char* cuda_src = custom_kernels.at(current_kernel).c_str();
-          HOLOSCAN_LOG_DEBUG("Cuda kernel source: {}", cuda_src);
         }
 
-        // extract output datatype
-        std::string current_out_dtype = "out_dtype-" + kernel_identifier;
-        if (custom_kernels.find(current_out_dtype) != custom_kernels.end()) {
-          auto output_dtype_string = custom_kernels.at(current_out_dtype);
-
-          if (kHoloInferDataTypeMap.find(output_dtype_string) == kHoloInferDataTypeMap.end()) {
-            HOLOSCAN_LOG_ERROR(
-                "Data processor, Incorrect output data type {} in custom CUDA kernel.",
-                output_dtype_string);
-            HOLOSCAN_LOG_INFO(
-                "Supported data type values are: kFloat32, kInt32, kInt8, kUInt8, KInt64, "
-                "kFloat16");
-            return InferStatus(holoinfer_code::H_ERROR,
-                               "Data processor, Incorrect output data type in custom CUDA kernel.");
-          }
-
-          output_dtype_[kernel_identifier] = kHoloInferDataTypeMap.at(output_dtype_string);
-        } else {
-          output_dtype_[kernel_identifier] = holoinfer_datatype::h_Float32;
-          HOLOSCAN_LOG_WARN(
-              "Output datatype not specified in custom cuda map. Going with default datatype: "
-              "float32");
+        if (supported_compute_operations_.find(operation) == supported_compute_operations_.end() &&
+            supported_print_operations_.find(operation) == supported_print_operations_.end() &&
+            supported_export_operations_.find(operation) == supported_export_operations_.end()) {
+          return InferStatus(holoinfer_code::H_ERROR,
+                             "Data processor: Initializer, Operation " + _op + " not supported.");
         }
-
-        // extract threads per block
-        std::string current_threads_per_block = "thread_per_block-" + kernel_identifier;
-        if (custom_kernels.find(current_threads_per_block) != custom_kernels.end()) {
-          auto tpb_string = custom_kernels.at(current_threads_per_block);
-          custom_kernel_thread_per_block_[kernel_identifier] = std::move(tpb_string);
-        } else {
-          custom_kernel_thread_per_block_[kernel_identifier] = "256";
-          HOLOSCAN_LOG_WARN(
-              "Threads per block not specific in custom kernels map with {}. Assuming it to be a "
-              "1D kernel and setting thread_per_block as 256",
-              current_threads_per_block);
-        }
-      }
-
-      if (supported_compute_operations_.find(operation) == supported_compute_operations_.end() &&
-          supported_print_operations_.find(operation) == supported_print_operations_.end() &&
-          supported_export_operations_.find(operation) == supported_export_operations_.end()) {
-        return InferStatus(holoinfer_code::H_ERROR,
-                           "Data processor: Initializer, Operation " + _op + " not supported.");
       }
     }
   }
@@ -510,24 +524,34 @@ InferStatus DataProcessor::process_operation(const std::string& operation,
 
   if (oper_to_fp_.find(operation) == oper_to_fp_.end()) {
     if (operation.find("custom_cuda_kernel") != std::string::npos) {
-      //  Get the custom cuda kernel ID
-      std::vector<std::string> oper_name_split;
-      string_split(operation, oper_name_split, '-');
-      if (oper_name_split.size() != 2) {
-        HOLOSCAN_LOG_ERROR("Custom cuda kernel naming not as per specifications. {}", operation);
-        HOLOSCAN_LOG_INFO(
-            "Custom cuda kernel naming must be in following format: custom_cuda_kernel-<unique "
-            "identifier>. There must be a single dash '-' in the name, used as a separator.");
-        return InferStatus(holoinfer_code::H_ERROR,
-                           "Data processor, Operation " + operation + " not as per specifications");
+      std::vector<std::string> kernel_identifiers;
+      std::vector<std::string> custom_cuda_operations;
+      string_split(operation, custom_cuda_operations, ':');
+      //  Get the custom cuda kernel IDs
+      for (auto it = custom_cuda_operations.begin(); it != custom_cuda_operations.end(); it++) {
+        //  Get the custom cuda kernel ID
+        auto current_operation = *it;
+        std::vector<std::string> oper_name_split;
+        string_split(current_operation, oper_name_split, '-');
+        if (oper_name_split.size() != 2) {
+          HOLOSCAN_LOG_ERROR("Custom cuda kernel naming not as per specifications. {}",
+                             current_operation);
+          HOLOSCAN_LOG_INFO(
+              "Custom cuda kernel naming must be in following format: custom_cuda_kernel-<unique "
+              "identifier>. There must be a single dash '-' in the name, used as a separator.");
+          return InferStatus(
+              holoinfer_code::H_ERROR,
+              "Data processor, Operation " + current_operation + " not as per specifications");
+        }
+        auto kernel_identifier = oper_name_split[1];
+        kernel_identifiers.push_back(kernel_identifier);
       }
-      auto kernel_identifier = oper_name_split[1];
       auto cuda_operation = "custom_cuda_kernel";
 
       if (cuda_to_fp_.find(cuda_operation) != cuda_to_fp_.end()) {
         // custom_cuda_kernel is the generic function pointer and ID will define which custom cuda
         // kernel to call
-        return cuda_to_fp_.at(cuda_operation)(kernel_identifier,
+        return cuda_to_fp_.at(cuda_operation)(kernel_identifiers,
                                               indims,
                                               indata,
                                               processed_dims,

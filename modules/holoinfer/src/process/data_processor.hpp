@@ -19,6 +19,7 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 #include <nvrtc.h>
 
 #include <bits/stdc++.h>
@@ -49,8 +50,8 @@ using processor_FP = std::function<InferStatus(
     bool process_with_cuda, cudaStream_t cuda_stream)>;
 
 /// Declaration of function callback for custom cuda kernels used by DataProcessor.
-using cuda_FP = std::function<InferStatus(const std::string&, const std::vector<int>&, const void*,
-                                          std::vector<int64_t>&, DataMap&,
+using cuda_FP = std::function<InferStatus(const std::vector<std::string>&, const std::vector<int>&,
+                                          const void*, std::vector<int64_t>&, DataMap&,
                                           const std::vector<std::string>& output_tensors,
                                           bool process_with_cuda, cudaStream_t cuda_stream)>;
 
@@ -211,9 +212,9 @@ class DataProcessor {
    * @param process_with_cuda Flag defining if processing should be done with CUDA
    * @param cuda_stream CUDA stream to use when procseeing is done with CUDA
    */
-  InferStatus launchCustomKernel(const std::string& id, const std::vector<int>& dimensions,
-                                 const void* input, std::vector<int64_t>& processed_dims,
-                                 DataMap& processed_data_map,
+  InferStatus launchCustomKernel(const std::vector<std::string>& ids,
+                                 const std::vector<int>& dimensions, const void* input,
+                                 std::vector<int64_t>& processed_dims, DataMap& processed_data_map,
                                  const std::vector<std::string>& output_tensors,
                                  bool process_with_cuda, cudaStream_t cuda_stream);
 
@@ -302,12 +303,12 @@ class DataProcessor {
              cudaStream_t cuda_stream) { return print_results_int32(in_dims, in_data); };
 
   /// Mapped function call for the function pointer of custom_cuda_kernel
-  cuda_FP custom_cuda_kernel_fp_ = [this](const std::string& id, auto& in_dims, const void* in_data,
-                                          std::vector<int64_t>& out_dims, DataMap& out_data,
-                                          auto& output_tensors, bool process_with_cuda,
-                                          cudaStream_t cuda_stream) {
+  cuda_FP custom_cuda_kernel_fp_ = [this](const std::vector<std::string>& ids, auto& in_dims,
+                                          const void* in_data, std::vector<int64_t>& out_dims,
+                                          DataMap& out_data, auto& output_tensors,
+                                          bool process_with_cuda, cudaStream_t cuda_stream) {
     return launchCustomKernel(
-        id, in_dims, in_data, out_dims, out_data, output_tensors, process_with_cuda, cuda_stream);
+        ids, in_dims, in_data, out_dims, out_data, output_tensors, process_with_cuda, cuda_stream);
   };
 
   /// Map with supported operation as the key and related function pointer as value
@@ -362,6 +363,11 @@ class DataProcessor {
   std::map<std::string, CUfunction> kernel_;
   std::map<std::string, holoinfer_datatype> output_dtype_;
   std::map<std::string, std::string> custom_kernel_thread_per_block_;
+  std::map<std::string, bool> custom_cuda_kernel_processed_;
+
+  std::map<std::string, bool> first_time_kernel_launch_map_;
+  std::map<std::string, std::vector<std::shared_ptr<DataBuffer>>> intermediate_buffers_;
+  std::map<std::string, std::vector<void*>> intermediate_inputs_;
 };
 
 }  // namespace inference

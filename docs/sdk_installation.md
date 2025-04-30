@@ -82,11 +82,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.1.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.2.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.1.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.2.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -165,11 +165,7 @@ sudo apt update && sudo apt install -y libnvinfer-bin="8.6.*"
 ModuleNotFoundError: No module named 'holoscan'
 ```
 
-To leverage the python module included in the debian package (instead of installing the python wheel), include the path below to your python path:
-
-```sh
-export PYTHONPATH="/opt/nvidia/holoscan/python/lib"
-```
+Python support is removed from the Holoscan SDK Debian package as of v3.0.0. Please install the Holoscan Python wheel.
 
 ````
 ````{tab-item} Python wheel

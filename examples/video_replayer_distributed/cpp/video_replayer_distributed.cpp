@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@
 #include <holoscan/operators/holoviz/holoviz.hpp>
 #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
 
-class Fragment1 : public holoscan::Fragment {
+class ReplayerFragment : public holoscan::Fragment {
  public:
   void compose() override {
     using namespace holoscan;
@@ -44,7 +44,7 @@ class Fragment1 : public holoscan::Fragment {
   }
 };
 
-class Fragment2 : public holoscan::Fragment {
+class VisualizerFragment : public holoscan::Fragment {
  public:
   void compose() override {
     using namespace holoscan;
@@ -54,16 +54,62 @@ class Fragment2 : public holoscan::Fragment {
   }
 };
 
+class HolovizOpAutoClose : public holoscan::ops::HolovizOp {
+  // A version of HolovizOp that simulates the behavior of the user closing the window
+  // (or pressing Esc) after a fixed number of fromes.
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(HolovizOpAutoClose, HolovizOp)
+
+  HolovizOpAutoClose() = default;
+
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
+               holoscan::ExecutionContext& context) override {
+    holoscan::ops::HolovizOp::compute(op_input, op_output, context);
+    HOLOSCAN_LOG_INFO("HolovizOpAutoClose: compute called {} times", compute_count_ + 1);
+    compute_count_++;
+    if (compute_count_ >= 30) {
+      // In HolovizOp this code runs only if the display window was closed
+      //   if (viz::WindowShouldClose()) { disable_via_window_close(); }
+      // Here we instead trigger the behavior after a fixed number of frames
+      disable_via_window_close();
+    }
+  }
+
+  void set_compute_count(uint64_t compute_count) { compute_count_ = compute_count; }
+
+ private:
+  uint64_t compute_count_ = 0;
+};
+
+class VisualizerFragment2 : public holoscan::Fragment {
+ public:
+  void compose() override {
+    using namespace holoscan;
+
+    auto visualizer =
+        make_operator<HolovizOpAutoClose>("holoviz_auto_close", from_config("holoviz"));
+    add_operator(visualizer);
+  }
+};
+
 class DistributedVideoReplayerApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
 
-    auto fragment1 = make_fragment<Fragment1>("fragment1");
-    auto fragment2 = make_fragment<Fragment2>("fragment2");
+    auto fragment1 = make_fragment<ReplayerFragment>("fragment1");
+    auto fragment2 = make_fragment<VisualizerFragment>("fragment2");
 
     // Define the workflow: replayer -> holoviz
     add_flow(fragment1, fragment2, {{"replayer.output", "holoviz.receivers"}});
+
+    // Check if the YAML dual_window parameter is set and add a third fragment with
+    // a second visualizer in that case
+    auto dual_window = from_config("dual_window").as<bool>();
+    if (dual_window) {
+      auto fragment3 = make_fragment<VisualizerFragment2>("fragment3");
+      add_flow(fragment1, fragment3, {{"replayer.output", "holoviz_auto_close.receivers"}});
+    }
   }
 };
 
@@ -75,6 +121,5 @@ int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<DistributedVideoReplayerApp>();
   app->config(config_path);
   app->run();
-
   return 0;
 }

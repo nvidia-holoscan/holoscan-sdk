@@ -744,7 +744,7 @@ class TestFragment:
         assert "error" in captured.err
         assert msg in captured.err
 
-    def test_uninitialized_config(self, fragment, config_file, capfd):
+    def test_uninitialized_config(self, fragment):
         assert fragment.config().config_file == ""
 
     def test_add_operator(self, fragment, config_file):
@@ -959,7 +959,7 @@ class TestApplication:
         assert "error" in captured.err
         assert msg in captured.err
 
-    def test_uninitialized_config(self, app, config_file, capfd):
+    def test_uninitialized_config(self, app):
         assert app.config().config_file == ""
 
     def test_add_operator(self, app, config_file):
@@ -1121,7 +1121,7 @@ class TestExecutor:
 
 
 class TestScheduler:
-    def test_base_class_init(self, fragment):
+    def test_base_class_init(self):
         s = Scheduler(name="greedy")
         assert s.name == "greedy"
         assert len(s.args) == 0
@@ -1131,7 +1131,7 @@ class TestScheduler:
 
 
 class TestNetworkContext:
-    def test_base_class_init(self, fragment):
+    def test_base_class_init(self):
         s = NetworkContext(name="network")
         assert s.name == "network"
         assert len(s.args) == 0

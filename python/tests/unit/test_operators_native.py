@@ -116,12 +116,11 @@ class TestOperator:
         if operator_metadata_enable is not None:
             op.enable_metadata(operator_metadata_enable)
             assert op.is_metadata_enabled == operator_metadata_enable
+        elif fragment_metadata_enable is not None:
+            assert op.is_metadata_enabled == fragment_metadata_enable
         else:
-            if fragment_metadata_enable is not None:
-                assert op.is_metadata_enabled == fragment_metadata_enable
-            else:
-                # default for fragment is true
-                assert op.is_metadata_enabled
+            # default for fragment is true
+            assert op.is_metadata_enabled
 
     def test_basic_kwarg_init(self, fragment, capfd):
         op = Operator(fragment=fragment)
@@ -344,7 +343,7 @@ class TestTensor:
             if reference_interface["strides"] is not None:
                 assert interface["strides"] == reference_interface["strides"]
 
-    def _check_tensor_property_values(self, t, arr, cuda=False):
+    def _check_tensor_property_values(self, t, arr):
         assert t.size == arr.size
         assert t.nbytes == arr.nbytes
         assert t.ndim == arr.ndim

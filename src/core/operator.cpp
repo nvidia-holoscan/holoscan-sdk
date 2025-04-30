@@ -74,6 +74,10 @@ bool Operator::is_metadata_enabled() const {
 void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32_t stream_priority,
                                     uint32_t reserved_size, uint32_t max_size) {
   // If a "cuda_stream_pool" parameter exists, do nothing
+  if (!spec_) {
+    throw std::runtime_error(
+        fmt::format("OperatorSpec has not been set for Operator '{}'.", name_));
+  }
   auto params = spec()->params();
   auto param_iter = params.find("cuda_stream_pool");
   if (param_iter != params.end()) { return; }
@@ -97,7 +101,6 @@ void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32
 
 bool Operator::is_root() {
   std::shared_ptr<holoscan::Operator> op_shared_ptr(this, [](Operator*) {});
-
   return fragment()->graph().is_root(op_shared_ptr);
 }
 
@@ -418,6 +421,9 @@ void Operator::find_ports_used_by_condition_args() {
 }
 
 void Operator::update_connector_arguments() {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
   for (auto& condition : conditions_) {
     auto& cond_args = condition.second->args();
 
@@ -485,11 +491,17 @@ void Operator::update_connector_arguments() {
 }
 
 void Operator::update_params_from_args() {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
   update_params_from_args(spec_->params());
 }
 
 void Operator::set_parameters() {
   update_params_from_args();
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
 
   // Set only default parameter values
   for (auto& [key, param_wrap] : spec_->params()) {
@@ -500,6 +512,9 @@ void Operator::set_parameters() {
 }
 
 bool Operator::has_ucx_connector() {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
   for (const auto& [_, io_spec] : spec_->inputs()) {
     if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) { return true; }
   }
@@ -510,6 +525,10 @@ bool Operator::has_ucx_connector() {
 }
 
 void Operator::reset_graph_entities() {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
+
   HOLOSCAN_LOG_TRACE("Operator '{}'::reset_graph_entities", name_);
   auto reset_resource = [](std::shared_ptr<holoscan::Resource> resource) {
     if (resource) {
@@ -542,6 +561,9 @@ void Operator::reset_graph_entities() {
 }
 
 std::optional<std::shared_ptr<Receiver>> Operator::receiver(const std::string& port_name) {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
   auto inputs = spec_->inputs();
   auto input_iter = inputs.find(port_name);
   if (input_iter == inputs.end()) { return std::nullopt; }
@@ -553,6 +575,9 @@ std::optional<std::shared_ptr<Receiver>> Operator::receiver(const std::string& p
 
 void Operator::queue_policy(const std::string& port_name, IOSpec::IOType port_type,
                             IOSpec::QueuePolicy policy) {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
   const auto& iospecs = port_type == IOSpec::IOType::kInput ? spec_->inputs() : spec_->outputs();
   auto iospec_iter = iospecs.find(port_name);
   if (iospec_iter == iospecs.end()) {
@@ -567,6 +592,9 @@ void Operator::queue_policy(const std::string& port_name, IOSpec::IOType port_ty
 }
 
 std::optional<std::shared_ptr<Transmitter>> Operator::transmitter(const std::string& port_name) {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
   auto outputs = spec_->outputs();
   auto output_iter = outputs.find(port_name);
   if (output_iter == outputs.end()) { return std::nullopt; }
@@ -610,10 +638,16 @@ void Operator::initialize_next_flows() {
 
     auto& graph = fragment()->graph();
     auto curr_op = graph.find_node(name());
+    if (!curr_op) {
+      HOLOSCAN_LOG_ERROR("find_node for operator '{}' was nullptr, cannot get next nodes.", name());
+      return;
+    }
     auto next_ops = graph.get_next_nodes(curr_op);
-    // Reserve enough space for the next flows (assuming each output port has a flow to each next
-    // operator)
-    next_flows_->reserve(curr_op->spec()->outputs().size() * next_ops.size());
+    if (curr_op->spec() != nullptr) {
+      // Reserve enough space for the next flows (assuming each output port has a flow to each next
+      // operator)
+      next_flows_->reserve(curr_op->spec()->outputs().size() * next_ops.size());
+    }
     for (auto& next_op : next_ops) {
       auto port_map = graph.get_port_map(curr_op, next_op).value_or(nullptr);
       if (port_map) {
@@ -652,6 +686,10 @@ void Operator::add_dynamic_flow(const std::vector<std::shared_ptr<FlowInfo>>& fl
 void Operator::add_dynamic_flow(const std::string& curr_output_port_name,
                                 const std::shared_ptr<Operator>& next_op,
                                 const std::string& next_input_port_name) {
+  if (!spec_) {
+    throw std::runtime_error(
+        fmt::format("OperatorSpec has not been set for Operator '{}'.", name_));
+  }
   if (!dynamic_flows_) {
     dynamic_flows_ = std::make_shared<std::vector<std::shared_ptr<FlowInfo>>>();
     dynamic_flows_->reserve(next_flows().size());
@@ -734,8 +772,8 @@ std::shared_ptr<holoscan::ExecutionContext> Operator::execution_context() const 
 
 void Operator::ensure_contexts() {
   if (!is_initialized_) {
-    auto message = fmt::format("Operator::ensure_contexts(): Operator '{}' is not initialized yet",
-                                name());
+    auto message =
+        fmt::format("Operator::ensure_contexts(): Operator '{}' is not initialized yet", name());
     HOLOSCAN_LOG_ERROR(message);
     throw std::runtime_error(message);
   }
@@ -757,6 +795,17 @@ void Operator::ensure_contexts() {
     input_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
     output_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
   }
+}
+
+void Operator::release_internal_resources() {
+  // Note that the similar logic is implemented in the Python operator with the GIL guard
+  internal_async_condition_.reset();
+  dynamic_metadata_.reset();
+  input_exec_spec_.reset();
+  output_exec_spec_.reset();
+  dynamic_flow_func_ = nullptr;
+  next_flows_.reset();
+  dynamic_flows_.reset();
 }
 
 }  // namespace holoscan

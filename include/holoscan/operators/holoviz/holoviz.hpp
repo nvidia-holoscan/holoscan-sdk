@@ -1035,6 +1035,9 @@ class HolovizOp : public Operator {
    */
   static std::string colorSpaceToString(holoscan::ops::HolovizOp::ColorSpace color_space);
 
+ protected:
+  void disable_via_window_close();
+
  private:
   bool enable_conditional_port(const std::string& name,
                                bool set_none_condition_on_disabled = false);
@@ -1068,8 +1071,8 @@ class HolovizOp : public Operator {
   Parameter<bool> framebuffer_srgb_;
   Parameter<bool> vsync_;
   Parameter<ColorSpace> display_color_space_;
-  Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
   Parameter<std::shared_ptr<BooleanCondition>> window_close_condition_;
+  Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
   Parameter<std::shared_ptr<Allocator>> allocator_;
   Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_;
   Parameter<std::string> font_path_;

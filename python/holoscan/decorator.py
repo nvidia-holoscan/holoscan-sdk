@@ -232,13 +232,13 @@ def _has_function_returns_value(func):
 
             self.generic_visit(node)
 
-        def visit_ClassDef(self, node):  # noqa: N802
+        def visit_ClassDef(self, node):  # noqa: N802, ARG002
             return
 
-        def visit_FunctionDef(self, node):  # noqa: N802
+        def visit_FunctionDef(self, node):  # noqa: N802, ARG002
             return
 
-        def visit_AsyncFunctionDef(self, node):  # noqa: N802
+        def visit_AsyncFunctionDef(self, node):  # noqa: N802, ARG002
             return
 
         def visit(self, node):
@@ -332,7 +332,7 @@ def create_op(
         def make_class(*args, **kwargs):
             if "fragment" in kwargs:
                 fragment = kwargs.pop("fragment")
-            elif len(args) and isinstance(args[0], FragmentBase):
+            elif args and isinstance(args[0], FragmentBase):
                 fragment, args = args[0], args[1:]
             else:
                 raise ValueError(
@@ -482,7 +482,6 @@ def create_op(
                                 f" and keyword-only args: {argspec.kwonlyargs}"
                             )
                             raise KeyError(msg) from e
-                    return
 
                 # # not used by the Application, but can be useful to test the call
                 # def __call__(self, *args, **kwargs):

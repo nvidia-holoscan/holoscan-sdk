@@ -40,6 +40,8 @@ enum class AppWorkerTerminationCode;
 
 namespace service {
 
+class AppDriverClient;  // forward declaration
+
 constexpr int32_t kDefaultMaxConnectionRetryCount = 10;
 constexpr int32_t kDefaultConnectionRetryIntervalMs = 1000;
 
@@ -63,6 +65,8 @@ class AppWorkerServer {
 
   void notify_worker_execution_finished(holoscan::AppWorkerTerminationCode code);
 
+  std::shared_ptr<service::AppDriverClient> app_driver_client() const;
+
  private:
   /// The thread function for the server thread.
   void run();
@@ -75,7 +79,7 @@ class AppWorkerServer {
   bool should_stop_ = false;                    ///< Whether the server should stop.
 
   holoscan::AppWorker* app_worker_ = nullptr;  ///< Pointer to the application worker.
-  std::unique_ptr<AppDriverClient> driver_client_;
+  std::shared_ptr<AppDriverClient> driver_client_;
   bool need_health_check_ = false;  ///< Whether to check the health of the application.
 
   std::shared_future<void> fragment_executors_future_;  ///< Future for the fragment executors.

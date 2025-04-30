@@ -92,11 +92,22 @@ class TestOperatorGraph:
 
         # add a second transmitter
         op_tx2 = PingTxOp(fragment, name="op_tx2")
+
+        # add a third transmitter
+        op_tx3 = PingTxOp(fragment, name="op_tx3")
+
+        # call add_node in non-alphabetical order
+        graph.add_node(op_tx3)
         graph.add_node(op_tx2)
 
         root_ops = graph.get_root_nodes()
-        assert len(root_ops) == 2
-        assert set(root_ops) == {op_tx, op_tx2}
+        assert len(root_ops) == 3
+        assert set(root_ops) == {op_tx, op_tx2, op_tx3}
+
+        # assert that for get_root_nodes(), the order matches the order the nodes were added
+        assert root_ops[0] == op_tx
+        assert root_ops[1] == op_tx3
+        assert root_ops[2] == op_tx2
 
     def test_get_nodes(self, fragment):
         op_tx, op_rx = self._get_tx_rx_ops(fragment)
@@ -138,11 +149,22 @@ class TestOperatorGraph:
 
         # now add a second downstream operator to op_tx
         op_rx2 = PingRxOp(fragment, name="op_rx2")
+
+        # now add a third downstream operator to op_tx
+        op_rx3 = PingRxOp(fragment, name="op_rx3")
+
+        # call add_flow in non-alphabetical order
+        fragment.add_flow(op_tx, op_rx3)
         fragment.add_flow(op_tx, op_rx2)
 
         next_ops = graph.get_next_nodes(op_tx)
-        assert len(next_ops) == 2
-        assert set(next_ops) == {op_rx, op_rx2}
+        assert len(next_ops) == 3
+        assert set(next_ops) == {op_rx, op_rx2, op_rx3}
+
+        # check that order matches the order in which the nodes were added
+        assert next_ops[0] == op_rx
+        assert next_ops[1] == op_rx3
+        assert next_ops[2] == op_rx2
 
     def test_get_previous_nodes(self, fragment):
         op_tx, op_rx = self._get_tx_rx_ops(fragment)
@@ -158,6 +180,25 @@ class TestOperatorGraph:
         assert len(prev_ops) == 1
         prev_op = prev_ops[0]
         assert prev_op is op_tx
+
+        # add a second transmitter
+        op_tx2 = PingTxOp(fragment, name="op_tx2")
+
+        # add a third transmitter
+        op_tx3 = PingTxOp(fragment, name="op_tx3")
+
+        # call add_node in non-alphabetical order
+        fragment.add_flow(op_tx3, op_rx)
+        fragment.add_flow(op_tx2, op_rx)
+
+        prev_ops = graph.get_previous_nodes(op_rx)
+        assert len(prev_ops) == 3
+        assert set(prev_ops) == {op_tx, op_tx2, op_tx3}
+
+        # check that order matches the order in which the nodes were added
+        assert prev_ops[0] == op_tx
+        assert prev_ops[1] == op_tx3
+        assert prev_ops[2] == op_tx2
 
     def test_remove_node(self, fragment):
         op_tx, op_rx = self._get_tx_rx_ops(fragment)

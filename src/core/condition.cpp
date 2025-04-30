@@ -79,11 +79,19 @@ void Condition::add_arg(std::shared_ptr<Resource>&& arg) {
 }
 
 void Condition::update_params_from_args() {
+  if (!spec_) {
+    throw std::runtime_error(
+        fmt::format("ComponentSpec of Condition '{}' has not been set", name_));
+  }
   update_params_from_args(spec_->params());
 }
 
 void Condition::set_parameters() {
   update_params_from_args();
+
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No component spec for Condition '{}'", name_));
+  }
 
   // Set default values for unspecified arguments if the condition is native
   if (condition_type_ == ConditionComponentType::kNative) {

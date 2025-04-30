@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +45,7 @@ set(YAML_CPP_CPM_ARGS
     "YAML_CPP_BUILD_TESTS Off"
     "YAML_CPP_BUILD_CONTRIB Off"
     "YAML_CPP_BUILD_TOOLS Off"
-    "YAML_BUILD_SHARED_LIBS On"  # Build the shared library instead of the default static library
+    "YAML_BUILD_SHARED_LIBS Off"
 )
 rapids_cpm_find(yaml-cpp 0.7.0
     GLOBAL_TARGETS yaml-cpp
@@ -56,6 +56,7 @@ rapids_cpm_find(yaml-cpp 0.7.0
 )
 
 if(yaml-cpp_ADDED)
+    set_target_properties(yaml-cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     # Install the headers needed for development with the SDK
     install(DIRECTORY ${yaml-cpp_SOURCE_DIR}/include/yaml-cpp

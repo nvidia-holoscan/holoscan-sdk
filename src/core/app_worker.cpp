@@ -18,12 +18,15 @@
 #include "holoscan/core/app_worker.hpp"
 
 #include <stdlib.h>  // POSIX setenv
+#include <csignal>   // Add this line for signal handling functions
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -34,11 +37,15 @@
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 #include "holoscan/core/services/app_worker/server.hpp"
+#include "holoscan/core/signal_handler.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
+
+constexpr int kWorkerTerminationGracePeriodMs = 500;
+constexpr int kFragmentShutdownGracePeriodMs = 250;
 
 AppWorker::AppWorker(Application* app) : app_(app) {
   if (app_) {
@@ -181,6 +188,10 @@ bool AppWorker::execute_fragments(
   return true;
 }
 
+std::shared_ptr<service::AppDriverClient> AppWorker::app_driver_client() const {
+  return worker_server_->app_driver_client();
+}
+
 void AppWorker::submit_message(WorkerMessage&& message) {
   std::lock_guard<std::mutex> lock(message_mutex_);
   message_queue_.push(std::move(message));
@@ -195,7 +206,6 @@ void AppWorker::submit_message(WorkerMessage&& message) {
 
 void AppWorker::process_message_queue() {
   std::lock_guard<std::mutex> lock(message_mutex_);
-
   while (!message_queue_.empty()) {
     auto message = std::move(message_queue_.front());
     message_queue_.pop();
@@ -231,18 +241,10 @@ void AppWorker::process_message_queue() {
         } catch (const std::bad_any_cast& e) {
           HOLOSCAN_LOG_ERROR("Failed to cast message data to termination code: {}", e.what());
         }
+        terminate_scheduled_fragments();
         // Set the flag to false because the app driver already knows the worker has been
         // terminated.
         need_notify_execution_finished_ = false;
-        if (app_ && app_->app_driver_) {
-          auto& app_driver = app_->app_driver_;
-          // Submit driver message and process the message queue to terminate the app driver server.
-          app_driver->submit_message(
-              AppDriver::DriverMessage{AppDriver::DriverMessageCode::kTerminateServer, {}});
-          app_driver->process_message_queue();
-        }
-        terminate_scheduled_fragments();
-
         if (worker_server_) {
           worker_server_->stop();
           // Do not call 'worker_server_->wait()' as current thread is the worker server thread
@@ -256,10 +258,93 @@ void AppWorker::process_message_queue() {
 }
 
 bool AppWorker::terminate_scheduled_fragments() {
-  // Terminate all fragments
-  for (auto& fragment : scheduled_fragments_) {
-    HOLOSCAN_LOG_INFO("Terminating fragment: {}", fragment->name());
-    fragment->executor().interrupt();
+  std::unordered_set<std::string> terminated_fragments;
+  if (!fragment_graph_) {
+    HOLOSCAN_LOG_ERROR("Fragment graph is not initialized");
+    return false;
+  }
+  auto& fragment_graph = *fragment_graph_;
+  while (!scheduled_fragments_.empty()) {
+    // Find current root fragments scheduled on this worker
+    std::vector<FragmentNodeType> current_roots;
+
+    HOLOSCAN_LOG_DEBUG("Remaining scheduled fragments to shut down:");
+    for (auto& fragment : scheduled_fragments_) { HOLOSCAN_LOG_DEBUG("\t{}", fragment->name()); }
+
+    for (auto& fragment : scheduled_fragments_) {
+      auto node = fragment_graph.find_node(fragment->name());
+      if (!node) {
+        // unexpected case: schedule fragment for shutdown if it is not in the graph
+        HOLOSCAN_LOG_WARN("Fragment with name '{}' not found in graph.", fragment->name());
+        current_roots.push_back(fragment);
+      } else if (fragment_graph.is_root(node)) {
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment with name '{}' is currently a root fragment (for this worker).",
+            fragment->name());
+        current_roots.push_back(fragment);
+      }
+    }
+
+    // If there were no root fragments, then just shutdown any remaining fragments
+    // to avoid deadlock.
+    if (current_roots.size() == 0) {
+      for (auto& fragment : scheduled_fragments_) {
+        HOLOSCAN_LOG_DEBUG("Scheduling non-root fragment '{}' for shutdown", fragment->name());
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment with name '{}' is currently a root fragment (for this worker).",
+            fragment->name());
+        current_roots.push_back(fragment);
+      }
+      // wait some time for other workers that may have root fragments to terminate
+      std::this_thread::sleep_for(std::chrono::milliseconds(kWorkerTerminationGracePeriodMs));
+    }
+
+    // Terminate current root fragments
+    for (auto& root_fragment : current_roots) {
+      HOLOSCAN_LOG_INFO("Terminating fragment '{}' via stop_execution()", root_fragment->name());
+
+      // Important: use `root_fragment->stop_execution()` instead of
+      // `root_fragment->executor().interrupt()`. With interrupt, any already queued UCX messages
+      // will not have a chance to be sent, resulting in several errors being logged.
+      // TODO (grelee): May need to check if stop_on_deadlock() is set to false and fallback to
+      // interrupt in that case.
+      root_fragment->stop_execution();
+
+      // clang-format off
+      // Wait for 250 ms to give the fragment time to properly shut down.
+      // The exact wait time needed is likely hardware/network dependent. 30 ms was sufficient on
+      // an x86_64 test system where both nodes were on the same machine.
+      // Without any wait, for example, any UCX messages that had not yet been sent will be lost,
+      // resulting in some errors logged at the GXF level:
+      //   [error] [ucx_transmitter.cpp:275] unable to send UCX message (Connection reset by remote peer)  // NOLINT
+      //   [error] [ucx_transmitter.cpp:306] Failed to send entity [error]
+      //   [entity_executor.cpp:624] Failed to sync outbox for entity: fragment1__replayer code: GXF_FAILURE  // NOLINT
+      //
+      // The UCX transmit errors propagate up to multiple additional errors logged later during shutdown  // NOLINT
+      //   [error] [program.cpp:580] wait failed. Deactivating...
+      //   [warning] [entity_warden.cpp:575] Component of type nvidia::gxf::EventBasedScheduler, cid 5 failed to deinitialize with code GXF_FAILURE  // NOLINT
+      //   [error] [runtime.cpp:791] Could not deinitialize entity 'fragment1__event-based-scheduler' (E4): GXF_FAILURE  // NOLINT
+      //   [error] [program.cpp:582] Deactivation failed.
+      //   [error] [runtime.cpp:1649] Graph wait failed with error: GXF_FAILURE
+      //   [warning] [gxf_executor.cpp:2429] GXF call GxfGraphWait(context) in line 2429 of file /workspace/holoscan-sdk/src/core/executors/gxf/gxf_executor.cpp failed with 'GXF_FAILURE'  // NOLINT
+      //   [info] [gxf_executor.cpp:2439] [fragment1] Graph execution finished.
+      //   [error] [gxf_executor.cpp:2447] [fragment1] Graph execution error: GXF_FAILURE
+      // clang-format on
+      std::this_thread::sleep_for(std::chrono::milliseconds(kFragmentShutdownGracePeriodMs));
+
+      terminated_fragments.insert(root_fragment->name());
+
+      // Remove from scheduled fragments
+      scheduled_fragments_.erase(
+          std::remove(scheduled_fragments_.begin(), scheduled_fragments_.end(), root_fragment),
+          scheduled_fragments_.end());
+    }
+
+    // Update graph by removing terminated fragments
+    for (const auto& terminated : terminated_fragments) {
+      auto node = fragment_graph.find_node(terminated);
+      if (node) { fragment_graph.remove_node(node); }
+    }
   }
   return true;
 }
@@ -287,6 +372,36 @@ std::vector<FragmentNodeType> AppWorker::get_target_fragments(FragmentGraph& fra
     }
   }
   return target_fragments;
+}
+
+void AppWorker::setup_signal_handlers() {
+  auto sig_handler = [this]([[maybe_unused]] void* context, int signum) {
+    HOLOSCAN_LOG_WARN("Received interrupt signal (Ctrl+C). Initiating worker shutdown...");
+    if (worker_server_) {
+      // Terminate fragments
+      terminate_scheduled_fragments();
+
+      // Set the flag to false to avoid notification race
+      need_notify_execution_finished_ = false;
+
+      // Notify the driver that the worker is cancelled
+      worker_server_->notify_worker_execution_finished(AppWorkerTerminationCode::kCancelled);
+      // Stop the worker server
+      worker_server_->stop();
+    }
+
+    // Create a watchdog thread to ensure we exit even if clean shutdown hangs
+    std::thread([signum]() {
+      // Wait for a reasonable time for clean shutdown
+      std::this_thread::sleep_for(std::chrono::seconds(10));
+
+      HOLOSCAN_LOG_ERROR("Worker clean shutdown timed out after 10 seconds. Forcing exit...");
+      std::signal(signum, SIG_DFL);
+      std::raise(signum);
+    }).detach();
+  };
+  SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
+  SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
 }
 
 }  // namespace holoscan

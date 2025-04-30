@@ -262,7 +262,7 @@ numfig = True
 # Configure Python API docs to include the __init__ methods
 
 
-def skip(app, what, name, obj, would_skip, options):
+def skip(app, what, name, obj, would_skip, options):  # noqa: ARG001
     if name == "__init__":
         return False
     return would_skip

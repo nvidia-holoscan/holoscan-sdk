@@ -110,7 +110,7 @@ void DataProcessor::max_per_channel_scaled_cuda(size_t rows, size_t cols, size_t
   check_cuda(cudaFreeAsync(d_argmax, cuda_stream));
 }
 
-InferStatus DataProcessor::launchCustomKernel(const std::string& id,
+InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& ids,
                                               const std::vector<int>& dimensions, const void* input,
                                               std::vector<int64_t>& processed_dims,
                                               DataMap& processed_data_map,
@@ -135,55 +135,11 @@ InferStatus DataProcessor::launchCustomKernel(const std::string& id,
   if (processed_data_map.find(out_tensor_name) == processed_data_map.end()) {
     HOLOSCAN_LOG_INFO("Allocating memory for {} in launchGenericKernel", out_tensor_name);
     const auto [db, success] = processed_data_map.insert(
-        {out_tensor_name, std::make_shared<DataBuffer>(output_dtype_.at(id))});
+        {out_tensor_name, std::make_shared<DataBuffer>(output_dtype_.at(ids[0]))});
 
     db->second->device_buffer_->resize(dsize);
     db->second->host_buffer_->resize(dsize);
     processed_dims.insert(processed_dims.begin(), dimensions.begin(), dimensions.end());
-  }
-
-  void* in = const_cast<void*>(input);
-  void* output = processed_data_map.at(out_tensor_name)->device_buffer_->data();
-  std::vector<void*> args = {&in, &output, &dsize};
-
-  // Find the dimensionality
-  std::vector<std::string> threads_per_block;
-  string_split(custom_kernel_thread_per_block_.at(id), threads_per_block, ',');
-
-  int threadsPerBlockx = 1, threadsPerBlocky = 1, threadsPerBlockz = 1;
-  int blocksPerGridx = 1, blocksPerGridy = 1, blocksPerGridz = 1;
-
-  // compute appropriate grid and block size
-  switch (threads_per_block.size()) {
-    case 1:
-    default: {
-      threadsPerBlockx = std::atoi(threads_per_block[0].c_str());
-      blocksPerGridx = (dsize + threadsPerBlockx - 1) / threadsPerBlockx;
-      break;
-    }
-
-    case 2: {
-      threadsPerBlockx = std::atoi(threads_per_block[0].c_str());
-      threadsPerBlocky = std::atoi(threads_per_block[1].c_str());
-      blocksPerGridx = (dimensions[0] + threadsPerBlockx - 1) / threadsPerBlockx;
-      blocksPerGridy = (dimensions[1] + threadsPerBlocky - 1) / threadsPerBlocky;
-
-      std::vector<void*> newargs = {&in, &output, &dimensionX, &dimensionY};
-      args = std::move(newargs);
-      break;
-    }
-
-    case 3: {
-      threadsPerBlockx = std::atoi(threads_per_block[0].c_str());
-      threadsPerBlocky = std::atoi(threads_per_block[1].c_str());
-      threadsPerBlockz = std::atoi(threads_per_block[2].c_str());
-      blocksPerGridx = (dimensions[0] + threadsPerBlockx - 1) / threadsPerBlockx;
-      blocksPerGridy = (dimensions[1] + threadsPerBlocky - 1) / threadsPerBlocky;
-      blocksPerGridz = (dimensions[2] + threadsPerBlockz - 1) / threadsPerBlockz;
-      std::vector<void*> newargs = {&in, &output, &dimensionX, &dimensionY, &dimensionZ};
-      args = std::move(newargs);
-      break;
-    }
   }
 
   CUresult result = cuCtxPushCurrent(context_);
@@ -192,24 +148,103 @@ InferStatus DataProcessor::launchCustomKernel(const std::string& id,
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context push failed.");
   }
 
-  result = cuLaunchKernel(kernel_.at(id),
-                          blocksPerGridx,
-                          blocksPerGridy,
-                          blocksPerGridz,
-                          threadsPerBlockx,
-                          threadsPerBlocky,
-                          threadsPerBlockz,
-                          0,
-                          cuda_stream,
-                          args.data(),
-                          0);
+  int kernel_count = ids.size();
 
-  if (result != CUDA_SUCCESS) {
-    const char* error_string;
-    cuGetErrorString(result, &error_string);
-    HOLOSCAN_LOG_ERROR("CUDA error in launching custom kernel: {}", error_string);
-    return InferStatus(holoinfer_code::H_ERROR,
-                       "Data processor, error in launching custom kernel.");
+  int buffer_count = 0;
+  for (auto id : ids) {
+    if (first_time_kernel_launch_map_.find(out_tensor_name) ==
+        first_time_kernel_launch_map_.end()) {
+      first_time_kernel_launch_map_[out_tensor_name] = true;
+      intermediate_inputs_[out_tensor_name].push_back(const_cast<void*>(input));
+
+      for (int i = 1; i < kernel_count; i++) {
+        auto intermediate_buffer = std::make_shared<DataBuffer>(output_dtype_.at(ids[i - 1]));
+        intermediate_buffer->device_buffer_->resize(dsize);
+        intermediate_buffers_[out_tensor_name].push_back(std::move(intermediate_buffer));
+        intermediate_inputs_[out_tensor_name].push_back(
+            intermediate_buffers_[out_tensor_name].back()->device_buffer_->data());
+      }
+      intermediate_inputs_[out_tensor_name].push_back(
+          processed_data_map.at(out_tensor_name)->device_buffer_->data());
+    } else {
+      intermediate_inputs_[out_tensor_name][0] = const_cast<void*>(input);
+    }
+
+    std::vector<void*> args = {&intermediate_inputs_[out_tensor_name][buffer_count],
+                               &intermediate_inputs_[out_tensor_name][buffer_count + 1],
+                               &dsize};
+
+    // Find the dimensionality
+    std::vector<std::string> threads_per_block;
+    string_split(custom_kernel_thread_per_block_.at(id), threads_per_block, ',');
+
+    int threadsPerBlockx = 1, threadsPerBlocky = 1, threadsPerBlockz = 1;
+    int blocksPerGridx = 1, blocksPerGridy = 1, blocksPerGridz = 1;
+
+    // compute appropriate grid and block size
+    switch (threads_per_block.size()) {
+      case 1:
+      default: {
+        threadsPerBlockx = std::atoi(threads_per_block[0].c_str());
+        blocksPerGridx = (dsize + threadsPerBlockx - 1) / threadsPerBlockx;
+        break;
+      }
+
+      case 2: {
+        threadsPerBlockx = std::atoi(threads_per_block[0].c_str());
+        threadsPerBlocky = std::atoi(threads_per_block[1].c_str());
+        blocksPerGridx = (dimensions[0] + threadsPerBlockx - 1) / threadsPerBlockx;
+        blocksPerGridy = (dimensions[1] + threadsPerBlocky - 1) / threadsPerBlocky;
+
+        std::vector<void*> newargs = {&intermediate_inputs_[out_tensor_name][buffer_count],
+                                      &intermediate_inputs_[out_tensor_name][buffer_count + 1],
+                                      &dimensionX,
+                                      &dimensionY};
+        args = std::move(newargs);
+        break;
+      }
+
+      case 3: {
+        threadsPerBlockx = std::atoi(threads_per_block[0].c_str());
+        threadsPerBlocky = std::atoi(threads_per_block[1].c_str());
+        threadsPerBlockz = std::atoi(threads_per_block[2].c_str());
+        blocksPerGridx = (dimensions[0] + threadsPerBlockx - 1) / threadsPerBlockx;
+        blocksPerGridy = (dimensions[1] + threadsPerBlocky - 1) / threadsPerBlocky;
+        blocksPerGridz = (dimensions[2] + threadsPerBlockz - 1) / threadsPerBlockz;
+        std::vector<void*> newargs = {&intermediate_inputs_[out_tensor_name][buffer_count],
+                                      &intermediate_inputs_[out_tensor_name][buffer_count + 1],
+                                      &dimensionX,
+                                      &dimensionY,
+                                      &dimensionZ};
+        args = std::move(newargs);
+        break;
+      }
+    }
+
+    dim3 gridDim(blocksPerGridx, blocksPerGridy, blocksPerGridz);
+    dim3 blockDim(threadsPerBlockx, threadsPerBlocky, threadsPerBlockz);
+
+    result = cuLaunchKernel(kernel_.at(id),
+                            blocksPerGridx,
+                            blocksPerGridy,
+                            blocksPerGridz,
+                            threadsPerBlockx,
+                            threadsPerBlocky,
+                            threadsPerBlockz,
+                            0,
+                            cuda_stream,
+                            args.data(),
+                            0);
+
+    if (result != CUDA_SUCCESS) {
+      const char* error_string;
+      cuGetErrorString(result, &error_string);
+      HOLOSCAN_LOG_ERROR("CUDA error in launching custom kernel: {}", error_string);
+      return InferStatus(holoinfer_code::H_ERROR,
+                         "Data processor, error in launching custom kernel.");
+    }
+
+    buffer_count++;
   }
 
   result = cuCtxPopCurrent(&context_);

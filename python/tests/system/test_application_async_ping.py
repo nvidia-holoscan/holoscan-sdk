@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +73,6 @@ class AsyncPingTxOp(Operator):
                 self.async_cond_.event_state = AsynchronousEventState.EVENT_DONE
             elif self.async_cond_.event_state == AsynchronousEventState.EVENT_NEVER:
                 break
-        return
 
     def setup(self, spec: OperatorSpec):
         spec.output("out")

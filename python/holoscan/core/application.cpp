@@ -33,6 +33,7 @@
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
+#include "operator.hpp"
 #include "tensor.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)

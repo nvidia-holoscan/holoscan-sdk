@@ -233,6 +233,9 @@ FROM runtime_cpp_pip_mkl AS runtime_cpp_py
 #    cloudpickle - dependency for distributed apps
 COPY python/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
+# Ensure NumPy 2.x was selected over any previously existing NumPy 1.x
+RUN python3 -m pip install "numpy>2.0"
+
 
 # Install apt run dependencies
 #   cuda-cudart-dev-12-6 - CuPy dependency (https://docs.cupy.dev/en/latest/install.html#cupy-always-raises-nvrtc-error-compilation-6)

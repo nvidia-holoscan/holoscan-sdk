@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,10 @@ nvidia::gxf::Clock* GXFScheduler::gxf_clock() {
 
 void GXFScheduler::set_parameters() {
   update_params_from_args();
+
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No component spec for GXFScheduler '{}'", name_));
+  }
 
   // Set Handler parameters
   for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }

@@ -50,6 +50,10 @@ class AppDriverServiceImpl final : public AppDriverService::Service {
       const holoscan::service::WorkerExecutionFinishedRequest* request,
       holoscan::service::WorkerExecutionFinishedResponse* response) override;
 
+  grpc::Status InitiateShutdown(grpc::ServerContext* context,
+                                const holoscan::service::InitiateShutdownRequest* request,
+                                holoscan::service::InitiateShutdownResponse* response) override;
+
   void set_health_check_service(grpc::HealthCheckServiceInterface* health_check_service);
 
  private:

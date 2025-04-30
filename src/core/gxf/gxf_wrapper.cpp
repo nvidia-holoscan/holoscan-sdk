@@ -85,9 +85,9 @@ gxf_result_t GXFWrapper::tick() {
   exec_context_->clear_received_streams();
 
   // Handle the signal if the operator has input execution port
-  if (op_->input_exec_spec()) {
+  if (auto& input_exec_spec = op_->input_exec_spec()) {
     HOLOSCAN_LOG_TRACE("Handling input execution port for operator: '{}'", op_->name());
-    auto connector = op_->input_exec_spec()->connector();
+    auto connector = input_exec_spec->connector();
     if (connector) {
       auto gxf_receiver =
           std::dynamic_pointer_cast<holoscan::DoubleBufferReceiver>(connector)->get();
@@ -254,6 +254,7 @@ gxf_result_t GXFWrapper::stop() {
   }
 
   exec_context_->release_internal_cuda_streams();
+  op_->release_internal_resources();
 
   return GXF_SUCCESS;
 }

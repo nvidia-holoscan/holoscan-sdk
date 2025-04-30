@@ -152,6 +152,8 @@ class PYBIND11_EXPORT PyOperator : public Operator {
 
   std::shared_ptr<holoscan::ExecutionContext> execution_context() const override;
 
+  void release_internal_resources() override;
+
  private:
   py::object py_op_ = py::none();                               ///> cache the Python operator
   py::object py_initialize_ = py::none();                       ///> cache the initialize method

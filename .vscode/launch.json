@@ -2331,7 +2331,7 @@
             ]
         },
         {
-            "name": "(gdb) examples/video_replayer_distributed/cpp",
+            "name": "(gdb) examples/video_replayer_distributed/cpp (all fragments)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${command:cmake.buildDirectory}/examples/video_replayer_distributed/cpp/video_replayer_distributed",
@@ -2358,7 +2358,78 @@
             ]
         },
         {
-            "name": "(gdb) examples/video_replayer_distributed/python",
+            "name": "(gdb) examples/video_replayer_distributed/cpp - replayer fragment",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/video_replayer_distributed/cpp/video_replayer_distributed",
+            "args": [
+                "--driver",
+                "--worker",
+                "--fragments",
+                "fragment1",
+                "--address",
+                ":10000",
+                "--worker-address",
+                ":10001",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/video_replayer_distributed/cpp - viz fragment",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/video_replayer_distributed/cpp/video_replayer_distributed",
+            "args": [
+                "--worker",
+                "--fragments",
+                "fragment2",
+                "--address",
+                ":10000",
+                "--worker-address",
+                ":10002",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/video_replayer_distributed/python (all fragments)",
             "type": "cppdbg",
             "request": "launch",
             "program": "/usr/bin/bash",

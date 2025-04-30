@@ -258,8 +258,8 @@ def verify_covered_funcs(covered_lines, should_exists):
     for func in should_exists:
         func_code, func_start_line = inspect.getsourcelines(func)
         print(
-            f"Checking if one of the first two lines ({func_start_line+1}-{func_start_line+2}) of"
-            f" '{func.__qualname__}' is covered."
+            f"Checking if one of the first two lines ({func_start_line + 1}-{func_start_line + 2})"
+            f" of '{func.__qualname__}' is covered."
         )
         # Check if the first two lines of the function are covered
         assert (func_start_line + 1 in covered_lines) or (func_start_line + 2 in covered_lines)

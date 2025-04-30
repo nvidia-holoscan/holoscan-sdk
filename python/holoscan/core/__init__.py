@@ -179,6 +179,7 @@ __all__ = [
     "Resource",
     "Scheduler",
     "SchedulingStatusType",
+    "START_OPERATOR_NAME",
     "Tensor",
     "Tracker",
     "arg_to_py_object",
@@ -196,6 +197,13 @@ def metadata_repr(self):
 
 
 MetadataDictionary.__repr__ = metadata_repr
+
+# Defines the special operator name used to initiate application execution.
+# The GXF framework requires entity names to not begin with double underscores,
+# so this distinctive name pattern is chosen to prevent naming collisions.
+# This constant mirrors the C++ definition of `holoscan::kStartOperatorName`
+# found in holoscan/core/fragment.hpp
+START_OPERATOR_NAME = "<|start|>"
 
 
 class Application(_Application):
@@ -229,6 +237,7 @@ class Application(_Application):
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
         _Application.__init__(self, argv, *args, **kwargs)
+        self._start_op = None
 
     def run_async(self):
         """Run the application asynchronously.
@@ -245,6 +254,32 @@ class Application(_Application):
 
         executor = ThreadPoolExecutor(max_workers=1)
         return executor.submit(self.run)
+
+    def start_op(self):
+        """Get or create the start operator for this application.
+
+        This operator is nothing but the first operator that was added to the application.
+        It has the name of `<|start|>` and has a condition of `CountCondition(1)`.
+        This Operator is used to start the execution of the application.
+        Entry operators who want to start the execution of the application should connect to this
+        operator.
+
+        If this method is not called, no start operator is created.
+        Otherwise, the start operator is created if it does not exist, and the start operator is
+        returned.
+
+        Returns
+        -------
+        Operator
+            The start operator instance. If it doesn't exist, it will be created with
+            a CountCondition(1).
+        """
+        from ..conditions import CountCondition
+
+        if not self._start_op:
+            self._start_op = Operator(self, CountCondition(self, 1), name=START_OPERATOR_NAME)
+            self.add_operator(self._start_op)
+        return self._start_op
 
     # If we created a context via `gxf.context_create` then we would need to
     # call `gxf.context_destroy` in a destructor. However, in the __init__
@@ -276,6 +311,7 @@ class Fragment(_Fragment):
         # Set the fragment config to the application config.
         if app:
             self.config(app.config())
+        self._start_op = None
 
     def compose(self):
         pass
@@ -295,6 +331,32 @@ class Fragment(_Fragment):
 
         executor = ThreadPoolExecutor(max_workers=1)
         return executor.submit(self.run)
+
+    def start_op(self):
+        """Get or create the start operator for this fragment.
+
+        This operator is nothing but the first operator that was added to the fragment.
+        It has the name of `<|start|>` and has a condition of `CountCondition(1)`.
+        This Operator is used to start the execution of the fragment.
+        Entry operators who want to start the execution of the fragment should connect to this
+        operator.
+
+        If this method is not called, no start operator is created.
+        Otherwise, the start operator is created if it does not exist, and the start operator is
+        returned.
+
+        Returns
+        -------
+        Operator
+            The start operator instance. If it doesn't exist, it will be created with
+            a CountCondition(1).
+        """
+        from ..conditions import CountCondition
+
+        if not self._start_op:
+            self._start_op = Operator(self, CountCondition(self, 1), name=START_OPERATOR_NAME)
+            self.add_operator(self._start_op)
+        return self._start_op
 
 
 # copy docstrings defined in core_pydoc.hpp

@@ -28,6 +28,7 @@
 
 #include <magic_enum.hpp>
 
+#include "holoscan/core/application.hpp"
 #include "holoscan/core/codecs.hpp"
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
@@ -1545,6 +1546,20 @@ void HolovizOp::stop() {
   if (instance_) { viz::Shutdown(instance_); }
 }
 
+void HolovizOp::disable_via_window_close() {
+  const auto& fragment_graph = fragment()->application()->fragment_graph();
+
+  bool is_distributed = !fragment_graph.is_empty();
+  if (is_distributed) {
+    HOLOSCAN_LOG_WARN("Initiating distributed app shutdown from HolovizOp");
+    // Initiate shutdown via RPC
+    auto app = fragment()->application();
+    app->initiate_distributed_app_shutdown(fragment()->name());
+  }
+  window_close_condition_->disable_tick();
+  return;
+}
+
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                         ExecutionContext& context) {
   // receive input messages
@@ -1571,10 +1586,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   ScopedPushInstance scoped_instance(instance_);
 
   // cast Condition to BooleanCondition
-  if (viz::WindowShouldClose()) {
-    window_close_condition_->disable_tick();
-    return;
-  }
+  if (viz::WindowShouldClose()) { disable_via_window_close(); }
 
   // nothing to do if minimized
   if (viz::WindowIsMinimized()) { return; }

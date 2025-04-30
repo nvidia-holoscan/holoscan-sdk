@@ -127,7 +127,8 @@
         "stream_ref": "cpp",
         "expected": "cpp",
         "simd": "cpp",
-        "stacktrace": "cpp"
+        "stacktrace": "cpp",
+        "__sso_allocator": "cpp"
     },
     "git.alwaysSignOff": true,
     "git.untrackedChanges": "separate",

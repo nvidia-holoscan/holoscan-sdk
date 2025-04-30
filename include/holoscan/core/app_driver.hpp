@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,8 +23,10 @@
 #include <future>
 #include <memory>
 #include <queue>
+#include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>  // for std::pair
 #include <vector>
 
@@ -173,12 +175,31 @@ class AppDriver {
 
   MultipleFragmentsPortMap* all_fragment_port_map();
 
-  void submit_message(DriverMessage&& message);
+  void submit_message(DriverMessage&& message, bool log_error_on_failure = true);
 
   void process_message_queue();
 
+  /**
+   * @brief Get the schedule of the application.
+   *
+   * The schedule is a map of fragment names to worker IDs.
+   *
+   * This will be empty until after `check_fragment_schedule` has been called.
+   *
+   * @return The schedule of the application.
+   */
+  std::unordered_map<std::string, std::string> schedule() const;
+
+  /// Terminate all workers and close all worker connections.
+  void terminate_all_workers(AppWorkerTerminationCode error_code);
+
+  /// Allow AppDriverServiceImpl to set the app status
+  void set_status(AppStatus status);
+
  private:
   friend class service::AppDriverServer;  ///< Allow AppDriverServer to access private members.
+
+  void setup_signal_handlers();
 
   /// Check if update_port_names needs to be called
   bool need_to_update_port_names(std::shared_ptr<holoscan::FragmentEdgeDataElementType>& port_map);
@@ -236,9 +257,6 @@ class AppDriver {
   /// Check if the all workers have finished execution.
   void check_worker_execution(const AppWorkerTerminationStatus& termination_status);
 
-  /// Terminate all worker and close all worker connections.
-  void terminate_all_workers(AppWorkerTerminationCode error_code);
-
   /// Run the application in driver mode.
   /// Even if the application is running locally, we launch the driver to provide the health check
   /// service if `need_health_check_` is true.
@@ -275,6 +293,10 @@ class AppDriver {
   std::unique_ptr<service::AppDriverServer> driver_server_;
 
   std::unique_ptr<FragmentScheduler> fragment_scheduler_;
+
+  // store the output of fragment_scheduler_->schedule() for reuse during ordered shutdown
+  std::unordered_map<std::string, std::string> schedule_ = {};
+
   std::mutex message_mutex_;                 ///< Mutex for the message queue.
   std::queue<DriverMessage> message_queue_;  ///< Queue of messages to be processed.
 
@@ -282,6 +304,13 @@ class AppDriver {
   /// application. Unused when running an application locally.
   std::unique_ptr<MultipleFragmentsPortMap> all_fragment_port_map_ =
       std::make_unique<MultipleFragmentsPortMap>();
+
+  /// ids of workers that are currently running root fragments
+  std::set<std::string> current_root_workers_;
+
+  /// Helper method to update root fragments after a fragment is terminated
+  void update_root_fragments(const FragmentGraph& graph,
+                             const std::unordered_set<std::string>& terminated_fragments);
 };
 
 }  // namespace holoscan

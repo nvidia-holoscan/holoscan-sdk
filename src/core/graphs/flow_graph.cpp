@@ -17,9 +17,9 @@
 
 #include "holoscan/core/graphs/flow_graph.hpp"
 
+#include <map>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -49,8 +49,10 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_node(const NodeT& node) {
       throw RuntimeError(ErrorCode::kDuplicateName);
     }
 
-    succ_[node] = std::unordered_map<NodeType, EdgeDataType>();
-    pred_[node] = std::unordered_map<NodeType, EdgeDataType>();
+    succ_[node] =
+        std::map<NodeType, EdgeDataType, NodeTypeCompare>(NodeTypeCompare(&ordered_nodes_));
+    pred_[node] =
+        std::map<NodeType, EdgeDataType, NodeTypeCompare>(NodeTypeCompare(&ordered_nodes_));
     ordered_nodes_.push_back(node);
     name_map_[node->name()] = node;
   }
@@ -130,7 +132,16 @@ FlowGraph<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u,
 
 template <typename NodeT, typename EdgeDataElementT>
 bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) const {
+  if (!node) {
+    HOLOSCAN_LOG_WARN("Calling is_root() with nullptr");
+    return false;
+  }
   auto it_pred = pred_.find(node);
+  if (it_pred == pred_.end()) {
+    HOLOSCAN_LOG_WARN("Node with name '{}' not found in graph: cannot determine if it is a root",
+                      node->name());
+    return false;
+  }
   if (it_pred->second.empty()) { return true; }
 
   return false;
@@ -138,7 +149,16 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) const {
 
 template <typename NodeT, typename EdgeDataElementT>
 bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) const {
+  if (!node) {
+    HOLOSCAN_LOG_WARN("Calling is_leaf() with nullptr");
+    return false;
+  }
   auto it_succ = succ_.find(node);
+  if (it_succ == succ_.end()) {
+    HOLOSCAN_LOG_WARN("Node with name '{}' not found in graph: cannot determine if it is a leaf",
+                      node->name());
+    return false;
+  }
   if (it_succ->second.empty()) { return true; }
   return false;
 }
@@ -198,7 +218,7 @@ template <typename NodeT, typename EdgeDataElementT>
 std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
 FlowGraph<NodeT, EdgeDataElementT>::get_root_nodes() const {
   std::vector<NodeType> roots;
-  for (const auto& [node, _] : pred_) {
+  for (const auto& node : ordered_nodes_) {
     if (is_root(node)) { roots.push_back(node); }
   }
   return roots;

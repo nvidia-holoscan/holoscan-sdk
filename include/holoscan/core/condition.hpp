@@ -260,7 +260,14 @@ class Condition : public Component {
    *
    * @return The pointer to the component specification.
    */
-  ComponentSpec* spec() { return spec_.get(); }
+  ComponentSpec* spec() {
+    if (!spec_) {
+      HOLOSCAN_LOG_WARN("ComponentSpec of Condition '{}' is not initialized, returning nullptr",
+                        name_);
+      return nullptr;
+    }
+    return spec_.get();
+  }
 
   /**
    * @brief Get the shared pointer to the component spec.

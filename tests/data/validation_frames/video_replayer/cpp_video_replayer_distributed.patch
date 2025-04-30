@@ -10,7 +10,7 @@
 +  #include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
 +#endif
 +
- class Fragment1 : public holoscan::Fragment {
+ class ReplayerFragment : public holoscan::Fragment {
   public:
    void compose() override {
 @@ -51,6 +57,9 @@

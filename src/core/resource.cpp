@@ -53,6 +53,9 @@ YAML::Node Resource::to_yaml_node() const {
 }
 
 void Resource::update_params_from_args() {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("ComponentSpec of Resource '{}' has not been set", name_));
+  }
   update_params_from_args(spec_->params());
 }
 
@@ -60,6 +63,10 @@ void Resource::set_parameters() {
   HOLOSCAN_LOG_TRACE("Resource::set_parameters() for '{}': calling update_params_from_args()",
                      name());
   update_params_from_args();
+
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No component spec for Resource '{}'", name_));
+  }
 
   // Set default values for unspecified arguments if the resource is native
   if (resource_type_ == ResourceType::kNative) {

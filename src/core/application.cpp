@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "holoscan/core/app_driver.hpp"
+#include "holoscan/core/app_worker.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/dataflow_tracker.hpp"
 #include "holoscan/core/executor.hpp"
@@ -37,6 +38,7 @@
 #include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
+#include "./services/app_driver/client.hpp"
 
 namespace CLI {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -442,7 +444,6 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
       // If it is, then we should use the default scheduler.
       // Otherwise, we should set new multi-thread scheduler.
 
-      // TODO(unknown): consider use of event-based scheduler?
       auto multi_thread_scheduler =
           std::dynamic_pointer_cast<holoscan::MultiThreadScheduler>(scheduler);
       if (!multi_thread_scheduler) { scheduler_setting = SchedulerType::kMultiThread; }
@@ -514,6 +515,28 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
     }
     fragment->scheduler(scheduler);
   }
+}
+
+std::shared_ptr<service::AppDriverClient> Application::app_driver_client() const {
+  if (!app_worker_) {
+    HOLOSCAN_LOG_ERROR("Cannot get AppDriverClient for this fragment: app_worker_ is null");
+    return nullptr;
+  }
+  return app_worker_->app_driver_client();
+}
+
+void Application::initiate_distributed_app_shutdown(const std::string& fragment_name) {
+  // Get access to the AppDriverClient
+  auto driver_client = app_driver_client();
+
+  if (driver_client) {
+    HOLOSCAN_LOG_WARN("Application::initiate_distributed_app_shutdown started");
+    // Initiate shutdown via RPC
+    driver_client->initiate_shutdown(fragment_name);
+  } else {
+    HOLOSCAN_LOG_ERROR("Cannot initiate shutdown: AppDriverClient is null");
+  }
+  return;
 }
 
 }  // namespace holoscan

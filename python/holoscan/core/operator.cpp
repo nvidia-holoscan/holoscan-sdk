@@ -375,16 +375,14 @@ void init_operator(py::module_& m) {
           [](py::object /* self */) { return Operator::kOutputExecPortName; },
           "Default output execution port name.")
       .def_property_readonly("async_condition",
-           &Operator::async_condition,
-           doc::Operator::doc_async_condition,
-           py::return_value_policy::reference_internal)
-      .def("stop_execution",
-           &Operator::stop_execution,
-           doc::Operator::doc_stop_execution)
+                             &Operator::async_condition,
+                             doc::Operator::doc_async_condition,
+                             py::return_value_policy::reference_internal)
+      .def("stop_execution", &Operator::stop_execution, doc::Operator::doc_stop_execution)
       .def_property_readonly("execution_context",
-           &Operator::execution_context,
-           doc::Operator::doc_execution_context,
-           py::return_value_policy::reference_internal)
+                             &Operator::execution_context,
+                             doc::Operator::doc_execution_context,
+                             py::return_value_policy::reference_internal)
       .def(
           "__repr__",
           [](const py::object& obj) {
@@ -785,8 +783,8 @@ void PyOperator::initialize() {
   py_op_input_->cuda_object_handler(py_context_->cuda_object_handler());
   py_op_output_->cuda_object_handler(py_context_->cuda_object_handler());
   HOLOSCAN_LOG_TRACE("PyOperator: py_context_->cuda_object_handler() for op '{}' is {}null",
-                      name(),
-                      py_context_->cuda_object_handler() == nullptr ? "" : "not ");
+                     name(),
+                     py_context_->cuda_object_handler() == nullptr ? "" : "not ");
 
   py_initialize_.operator()();
 }
@@ -823,6 +821,25 @@ void PyOperator::compute(InputContext& op_input, OutputContext& op_output,
 
 std::shared_ptr<holoscan::ExecutionContext> PyOperator::execution_context() const {
   return py_context_;
+}
+
+void PyOperator::release_internal_resources() {
+  py::gil_scoped_acquire scope_guard;
+
+  Operator::release_internal_resources();
+
+  // Reset the Python objects
+  py_op_ = py::none();
+  py_initialize_ = py::none();
+  py_start_ = py::none();
+  py_stop_ = py::none();
+  py_compute_ = py::none();
+  py_op_input_.reset();
+  py_op_output_.reset();
+  py_context_.reset();
+
+  // Reset the Python application pointer
+  py_app_ = nullptr;
 }
 
 }  // namespace holoscan

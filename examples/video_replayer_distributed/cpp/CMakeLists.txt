@@ -76,6 +76,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   file(MAKE_DIRECTORY ${RECORDING_DIR})
 
+  # configure the app with a fixed count of 10 frames (to match previously saved reference data)
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer_distributed.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING ${CONFIG_STRING})
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_video_replayer_distributed_config.yaml)
@@ -151,6 +152,28 @@ if(HOLOSCAN_BUILD_TESTS)
   DEPENDS EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST
   PASS_REGULAR_EXPRESSION "Valid video output!"
   FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+  )
+
+  # Create dual window version that will auto-close one window after 30 frames
+  # Also set count=100 just to make sure the app will terminate even if window close did not work
+  # as expected
+  file(READ ${CMAKE_CURRENT_SOURCE_DIR}/video_replayer_distributed.yaml CONFIG_STRING)
+  string(REPLACE "count: 0" "count: 100" CONFIG_STRING ${CONFIG_STRING})
+  string(REPLACE "dual_window: false" "dual_window: true" CONFIG_STRING ${CONFIG_STRING})
+  set(DUAL_WINDOW_CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_video_replayer_distributed_dual_window_config.yaml)
+  file(WRITE ${DUAL_WINDOW_CONFIG_FILE} ${CONFIG_STRING})
+
+  add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_WINDOW_CLOSE_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed --config ${DUAL_WINDOW_CONFIG_FILE} --driver --worker --fragments=all
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
+  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_WINDOW_CLOSE_TEST PROPERTIES
+  DEPENDS EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST
+  PASS_REGULAR_EXPRESSION "HolovizOpAutoClose: compute called 30 times"
+  PASS_REGULAR_EXPRESSION "Terminating fragment 'fragment1' via stop_execution()"
+  FAIL_REGULAR_EXPRESSION "HolovizOpAutoClose: compute called 31 times"
+  # FAIL_REGULAR_EXPRESSION "\\[error\\]"
   )
 
 endif()

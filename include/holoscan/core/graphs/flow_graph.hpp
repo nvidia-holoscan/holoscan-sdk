@@ -23,6 +23,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -49,6 +50,27 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
   using EdgeDataElementType = EdgeDataElementT;
   using EdgeDataType = std::shared_ptr<EdgeDataElementType>;
 
+  // Custom comparator for NodeType that orders by insertion order
+  struct NodeTypeCompare {
+    const std::list<NodeType>* ordered_nodes;
+
+    // Default constructor required by std::map
+    NodeTypeCompare() : ordered_nodes(nullptr) {}
+
+    explicit NodeTypeCompare(const std::list<NodeType>* nodes) : ordered_nodes(nodes) {}
+
+    bool operator()(const NodeType& lhs, const NodeType& rhs) const {
+      // If ordered_nodes is null, fall back to name comparison
+      if (!ordered_nodes) { return lhs->name() < rhs->name(); }
+      // Find the positions in ordered_nodes_
+      auto lhs_it = std::find(ordered_nodes->begin(), ordered_nodes->end(), lhs);
+      auto rhs_it = std::find(ordered_nodes->begin(), ordered_nodes->end(), rhs);
+      // Compare positions
+      return std::distance(ordered_nodes->begin(), lhs_it) <
+             std::distance(ordered_nodes->begin(), rhs_it);
+    }
+  };
+
   using Graph<NodeT, EdgeDataElementT>::Graph;
   ~FlowGraph() override = default;
 
@@ -69,6 +91,13 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
 
   std::vector<NodeType> has_cycle() const override;
 
+  /**
+   * @brief Get all root nodes.
+   *
+   * The nodes are returned in the order they were added to the graph.
+   *
+   * @return A vector of all root nodes.
+   */
   std::vector<NodeType> get_root_nodes() const override;
 
   /**
@@ -80,8 +109,23 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
    */
   std::vector<NodeType> get_nodes() const override;
 
+  /**
+   * @brief Get all nodes immediately downstream of a given node.
+   *
+   * The nodes are returned in the order in which they were added to the graph.
+   *
+   * @return A vector of all next nodes.
+   */
   std::vector<NodeType> get_next_nodes(const NodeType& node) const override;
 
+  /**
+   * @brief Get all nodes immediately upstream of a given node.
+   *
+   * The nodes are returned in the order in which they were added to the graph.
+   *
+   * @param node The node to get the upstream nodes of.
+   * @return A vector of all previous nodes.
+   */
   std::vector<NodeType> get_previous_nodes(const NodeType& node) const override;
 
   NodeType find_node(const NodePredicate& pred) const override;
@@ -93,8 +137,10 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
   void remove_node(const NodeType& node) override;
 
  private:
-  std::unordered_map<NodeType, std::unordered_map<NodeType, EdgeDataType>> succ_;
-  std::unordered_map<NodeType, std::unordered_map<NodeType, EdgeDataType>> pred_;
+  // Use std::map values so that nodes returned by get_root_nodes() and get_next_nodes()
+  // are in a deterministic order (by insertion order).
+  std::unordered_map<NodeType, std::map<NodeType, EdgeDataType, NodeTypeCompare>> succ_;
+  std::unordered_map<NodeType, std::map<NodeType, EdgeDataType, NodeTypeCompare>> pred_;
 
   std::list<NodeType> ordered_nodes_;  ///< Nodes in the order they were added to the graph.
   std::unordered_map<std::string, NodeType> name_map_;  ///< Map from node name to node.

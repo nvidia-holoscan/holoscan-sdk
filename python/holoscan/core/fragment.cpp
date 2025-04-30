@@ -37,6 +37,7 @@
 #include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/scheduler.hpp"
 #include "kwarg_handling.hpp"
+#include "operator.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
@@ -163,10 +164,6 @@ void init_fragment(py::module_& m) {
            &Fragment::run,
            doc::Fragment::doc_run,
            py::call_guard<py::gil_scoped_release>())  // note: virtual function/should release GIL
-      .def("start_op",
-           &Fragment::start_op,
-           doc::Fragment::doc_start_op,
-           py::return_value_policy::reference_internal)
       .def(
           "set_dynamic_flows",
           [](Fragment& fragment, const std::shared_ptr<Operator>& op, py::function func) {

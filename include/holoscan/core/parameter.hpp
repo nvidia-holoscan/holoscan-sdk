@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -98,9 +98,9 @@ class MetaParameter {
    * @param value The value of the parameter.
    * @return The reference to the parameter.
    */
-  MetaParameter&& operator=(ValueT&& value) {
+  MetaParameter& operator=(ValueT&& value) {
     value_ = std::move(value);
-    return std::move(*this);
+    return *this;
   }
 
   /**
@@ -151,6 +151,14 @@ class MetaParameter {
     }
   }
 
+  const ValueT& get() const {
+    if (value_.has_value()) {
+      return value_.value();
+    } else {
+      throw std::runtime_error(fmt::format("MetaParameter: value for '{}' is not set", key_));
+    }
+  }
+
   /**
    * @brief Try to get the value of the parameter.
    *
@@ -159,6 +167,8 @@ class MetaParameter {
    * @return The reference to the optional value of the parameter.
    */
   std::optional<ValueT>& try_get() { return value_; }
+
+  const std::optional<ValueT>& try_get() const { return value_; }
 
   /**
    * @brief Provides a pointer to the object managed by the shared pointer pointed to by the
@@ -171,7 +181,7 @@ class MetaParameter {
   template <typename PointerT = ValueT,
             typename = std::enable_if_t<holoscan::is_shared_ptr_v<PointerT> ||
                                         std::is_pointer_v<PointerT>>>
-  holoscan::remove_pointer_t<PointerT>* operator->() {
+  holoscan::remove_pointer_t<PointerT>* operator->() const {
     if constexpr (holoscan::is_shared_ptr_v<PointerT>) {
       return get().get();
     } else {
@@ -190,7 +200,7 @@ class MetaParameter {
   template <typename PointerT = ValueT,
             typename = std::enable_if_t<holoscan::is_shared_ptr_v<PointerT> ||
                                         std::is_pointer_v<PointerT>>>
-  holoscan::remove_pointer_t<PointerT> operator*() {
+  holoscan::remove_pointer_t<PointerT>& operator*() const {
     return *get();
   }
 
@@ -214,6 +224,15 @@ class MetaParameter {
     }
   }
 
+  const ValueT& default_value() const {
+    if (default_value_.has_value()) {
+      return default_value_.value();
+    } else {
+      throw std::runtime_error(
+          fmt::format("MetaParameter: default value for '{}' is not set", key_));
+    }
+  }
+
   /**
    * @brief Check whether the parameter contains a default value.
    *
@@ -227,6 +246,8 @@ class MetaParameter {
    * @return The reference to the value of the parameter.
    */
   operator ValueT&() { return get(); }
+
+  operator const ValueT&() const { return get(); }
 
  private:
   friend class ComponentSpec;

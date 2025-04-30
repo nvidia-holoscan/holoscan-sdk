@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,7 +25,6 @@
 #include <vector>
 
 #include "../generated/app_driver.grpc.pb.h"
-
 #include "holoscan/core/graph.hpp"
 #include "holoscan/core/system/cpu_info.hpp"
 #include "holoscan/core/system/gpu_info.hpp"
@@ -46,6 +45,9 @@ class AppDriverClient {
 
   bool worker_execution_finished(const std::string& worker_ip, const std::string& worker_port,
                                  AppWorkerTerminationCode code);
+
+  // Request the AppDriver to initiate a clean shutdown
+  bool initiate_shutdown(const std::string& fragment_name);
 
  private:
   std::string driver_address_;

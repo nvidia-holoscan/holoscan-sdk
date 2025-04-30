@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "../app_driver/client.hpp"
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/app_worker.hpp"
 #include "holoscan/core/cli_options.hpp"
@@ -30,7 +31,6 @@
 #include "holoscan/core/system/system_resource_manager.hpp"
 #include "holoscan/logger/logger.hpp"
 
-#include "../app_driver/client.hpp"
 #include "service_impl.hpp"
 
 namespace holoscan::service {
@@ -39,6 +39,8 @@ AppWorkerServer::AppWorkerServer(holoscan::AppWorker* app_worker, bool need_heal
     : app_worker_(app_worker), need_health_check_(need_health_check) {}
 
 AppWorkerServer::~AppWorkerServer() = default;
+
+constexpr int kFragmentExecutorsShutdownTimeoutSeconds = 6;
 
 void AppWorkerServer::start() {
   // Update server address
@@ -96,7 +98,14 @@ void AppWorkerServer::stop() {
   should_stop_ = true;
   cv_.notify_all();
 
-  if (fragment_executors_future_.valid()) { fragment_executors_future_.wait(); }
+  if (fragment_executors_future_.valid()) {
+    // Add timeout to avoid potential deadlock
+    auto status = fragment_executors_future_.wait_for(
+        std::chrono::seconds(kFragmentExecutorsShutdownTimeoutSeconds));
+    if (status == std::future_status::timeout) {
+      HOLOSCAN_LOG_WARN("Timeout waiting for fragment executors to complete");
+    }
+  }
 }
 
 void AppWorkerServer::wait() {
@@ -112,7 +121,7 @@ bool AppWorkerServer::connect_to_driver(int32_t max_connection_retry_count,
                                         int32_t connection_attempt_interval_ms) {
   const auto& driver_address = app_worker_->options()->driver_address;
 
-  driver_client_ = std::make_unique<AppDriverClient>(
+  driver_client_ = std::make_shared<AppDriverClient>(
       driver_address, grpc::CreateChannel(driver_address, grpc::InsecureChannelCredentials()));
 
   // Get the target fragments from CLI Option
@@ -199,6 +208,10 @@ void AppWorkerServer::notify_worker_execution_finished(holoscan::AppWorkerTermin
   auto [worker_ip, worker_port] = CLIOptions::parse_address(worker_address, "0.0.0.0", "0", true);
 
   driver_client_->worker_execution_finished(worker_ip, worker_port, code);
+}
+
+std::shared_ptr<service::AppDriverClient> AppWorkerServer::app_driver_client() const {
+  return driver_client_;
 }
 
 }  // namespace holoscan::service
