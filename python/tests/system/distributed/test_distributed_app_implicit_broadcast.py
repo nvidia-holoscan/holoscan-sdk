@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,12 +17,13 @@ limitations under the License.
 
 import cupy as cp
 import pytest
-from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, Operator, OperatorSpec
 from holoscan.operators import PingRxOp, PingTxOp
-from utils import remove_ignored_errors
+
+from ..env_wrapper import env_var_context
+from .utils import remove_ignored_errors
 
 # Define versions for PingTxOp that send a tensor or dict of tensors.
 

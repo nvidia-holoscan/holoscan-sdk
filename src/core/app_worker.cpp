@@ -44,8 +44,10 @@
 
 namespace holoscan {
 
+// Constants
 constexpr int kWorkerTerminationGracePeriodMs = 500;
 constexpr int kFragmentShutdownGracePeriodMs = 250;
+constexpr int kWorkerShutdownTimeoutSeconds = 10;
 
 AppWorker::AppWorker(Application* app) : app_(app) {
   if (app_) {
@@ -376,30 +378,47 @@ std::vector<FragmentNodeType> AppWorker::get_target_fragments(FragmentGraph& fra
 
 void AppWorker::setup_signal_handlers() {
   auto sig_handler = [this]([[maybe_unused]] void* context, int signum) {
-    HOLOSCAN_LOG_WARN("Received interrupt signal (Ctrl+C). Initiating worker shutdown...");
-    if (worker_server_) {
-      // Terminate fragments
-      terminate_scheduled_fragments();
+    // Set a static flag instead of logging in the signal handler
+    static std::atomic<bool> shutdown_in_progress{false};
+    bool expected = false;
 
-      // Set the flag to false to avoid notification race
-      need_notify_execution_finished_ = false;
-
-      // Notify the driver that the worker is cancelled
-      worker_server_->notify_worker_execution_finished(AppWorkerTerminationCode::kCancelled);
-      // Stop the worker server
-      worker_server_->stop();
+    // Only one thread should handle the shutdown
+    if (!shutdown_in_progress.compare_exchange_strong(expected, true)) {
+      return;  // Another thread is already handling shutdown
     }
 
-    // Create a watchdog thread to ensure we exit even if clean shutdown hangs
-    std::thread([signum]() {
-      // Wait for a reasonable time for clean shutdown
-      std::this_thread::sleep_for(std::chrono::seconds(10));
+    // Now that we're outside the immediate signal handler context,
+    // it's safer to log (though still not ideal)
+    std::thread([this, signum]() {
+      // Run cleanup in a separate thread to avoid signal handler issues
+      HOLOSCAN_LOG_WARN("Received interrupt signal (Ctrl+C). Initiating worker shutdown...");
 
-      HOLOSCAN_LOG_ERROR("Worker clean shutdown timed out after 10 seconds. Forcing exit...");
-      std::signal(signum, SIG_DFL);
-      std::raise(signum);
+      if (worker_server_) {
+        // Terminate fragments
+        terminate_scheduled_fragments();
+
+        // Set the flag to false to avoid notification race
+        need_notify_execution_finished_ = false;
+
+        // Notify the driver that the worker is cancelled
+        worker_server_->notify_worker_execution_finished(AppWorkerTerminationCode::kCancelled);
+        // Stop the worker server
+        worker_server_->stop();
+      }
+
+      // Create a watchdog thread to ensure we exit even if clean shutdown hangs
+      std::thread([signum]() {
+        // Wait for a reasonable time for clean shutdown
+        std::this_thread::sleep_for(std::chrono::seconds(kWorkerShutdownTimeoutSeconds));
+
+        HOLOSCAN_LOG_ERROR("Worker clean shutdown timed out after {} seconds. Forcing exit...",
+                           kWorkerShutdownTimeoutSeconds);
+        std::signal(signum, SIG_DFL);
+        std::raise(signum);
+      }).detach();
     }).detach();
   };
+
   SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
   SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
 }

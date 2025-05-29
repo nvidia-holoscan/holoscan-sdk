@@ -221,10 +221,10 @@ class PyTensor : public Tensor {
     return from_array_interface(obj, true);
   }
   static std::shared_ptr<PyTensor> from_dlpack(const py::object& obj,
-                                               py::object device = py::none(),
-                                               py::object copy = py::none());
-  static py::object from_dlpack_pyobj(const py::object& obj, py::object device = py::none(),
-                                      py::object copy = py::none());
+                                               const py::object& device = py::none(),
+                                               const py::object& copy = py::none());
+  static py::object from_dlpack_pyobj(const py::object& obj, const py::object& device = py::none(),
+                                      const py::object& copy = py::none());
   static py::capsule dlpack(const py::object& obj, py::object stream = py::none(),
                             std::optional<std::tuple<int, int>> max_version = std::nullopt,
                             std::optional<std::tuple<DLDeviceType, int>> dl_device = std::nullopt,

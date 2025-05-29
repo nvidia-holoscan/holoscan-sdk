@@ -26,8 +26,6 @@
 #include <utility>
 
 #include "./component.hpp"
-#include "./gxf/gxf_component.hpp"
-#include "./gxf/gxf_utils.hpp"
 
 #define HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()                                                     \
   template <typename ArgT,                                                                       \

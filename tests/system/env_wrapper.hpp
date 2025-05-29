@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +63,8 @@ class EnvVarWrapper {
  private:
   std::vector<std::pair<std::string, std::string>> env_var_settings_;
   std::unordered_map<std::string, std::string> orig_env_vars_;
+  int orig_log_level_ = 2;           ///< holoscan::LogLevel::INFO
+  int orig_executor_log_level_ = 3;  ///< nvidia::Severity::INFO
 };
 
 #endif /* SYSTEM_ENV_WRAPPER_HPP */

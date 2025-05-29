@@ -38,7 +38,7 @@ format_converter2:
 processor:
   process_operations:
     "input_formatted": ["custom_cuda_kernel-1"]
-    "input_formatted2": ["custom_cuda_kernel-2:custom_cuda_kernel-1"]
+    "input_formatted2": ["custom_cuda_kernel-1:custom_cuda_kernel-2"]
   processed_map:
     "input_formatted": ["input_processed"]
     "input_formatted2": ["input_processed2"]
@@ -58,15 +58,15 @@ processor:
                         // Compute grayscale using luminance formula
                         unsigned char gray = static_cast<unsigned char>(0.299f * r + 0.587f * g + 0.114f * b);
 
-                        output[pixel_idx] = gray; // Store in grayscale output
-                        output[pixel_idx+1] = gray;
-                        output[pixel_idx+2] = gray;
+                        output[idx] = gray;
                       }
                     }
     out_dtype-1: "kUInt8"
+    output_dimensions-1: "320,320,1"
     thread_per_block-1: "256"
     cuda_kernel-2: "../examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu"
     out_dtype-2: "kUInt8"
+    output_dimensions-2: "320,320,1"
     thread_per_block-2: "16, 16"
   in_tensor_names: ["input_formatted", "input_formatted2"]
   out_tensor_names : ["input_processed", "input_processed2"]

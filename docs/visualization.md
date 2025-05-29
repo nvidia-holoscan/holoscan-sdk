@@ -651,6 +651,38 @@ viz::SetKeyCallback(user_pointer, &key_callback);
 ````
 `````
 
+## Multiprocess Synchronization
+
+The HoloViz operator supports multiprocess synchronization using a file-based
+FIFO mutex in the `/tmp/` directory. This enables better predictability with the
+maximum end-to-end latency of the Holoscan SDK applications.
+
+The support for this mutex is enabled by setting the environment variable
+`HOLOSCAN_HOLOVIZ_MUTEX` to `1`. 
+
+```bash
+export HOLOSCAN_HOLOVIZ_MUTEX=1
+```
+
+When the environmentvariable is not set, the HoloViz operator will not use the
+mutex, and there will be no attempt at explicit multiprocess synchronization.
+
+When using the mutex, developers can optionally enable dropping frames for
+an upper bound on the latency of the HoloViz operator. Setting HoloViz
+operator's `multiprocess_framedrop_waittime_ms` parameter to a non-zero value
+will drop frames when the mutex is not available for locking, even after waiting
+for the specified amount of time in ms. In this case, the number of dropped
+frames will be logged at the end of an application. Setting the parameter to 0,
+which is the default value, will not drop any frames.
+
+:::{note}
+Although we do support automatic cleanup of the Holoviz mutex lock and mutex
+queue files, an unexpected application crash or undefined application behavior
+may not properly clear those files before shutting down. In that case, manually remove
+those files (e.g., `rm -f /tmp/holoscan_holoviz_mutex*`).
+:::
+
+
 ## Holoviz operator
 
 ### Class Documentation

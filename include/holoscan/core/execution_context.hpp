@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 #define HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 
+#include <cuda_runtime.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,7 +27,6 @@
 #include "./common.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
-#include "./gxf/gxf_cuda.hpp"
 #include "./io_context.hpp"
 #include "./operator_status.hpp"
 

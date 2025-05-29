@@ -20,8 +20,10 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gxf/core/gxf.h"
@@ -88,10 +90,19 @@ class GXFExtensionManager : public ExtensionManager {
   ~GXFExtensionManager() override;
 
   /**
+   * @brief Reset the extension manager with the context.
+   *
+   * @param context The GXF context.
+   */
+  void reset_context(gxf_context_t context) override;
+
+  /**
    * @brief Refresh the extension list.
    *
    * Based on the current GXF context, it gets the list of extensions and stores the type IDs
    * of the extensions so that duplicate extensions can be ignored.
+   *
+   * Also loads extensions that were previously loaded & cached.
    */
   void refresh() override;
 
@@ -141,17 +152,6 @@ class GXFExtensionManager : public ExtensionManager {
                                  const std::string& key = "extensions") override;
 
   /**
-   * @brief Load an extension from a pointer.
-   *
-   * `GxfLoadExtensionFromPointer()` API is used to register the extension programmatically.
-   *
-   * @param extension The extension pointer to load.
-   * @param handle The handle of the extension library.
-   * @return true if the extension is loaded successfully.
-   */
-  bool load_extension(nvidia::gxf::Extension* extension, void* handle = nullptr);
-
-  /**
    * @brief Check if the extension is loaded.
    *
    * @param tid The type ID of the extension.
@@ -169,13 +169,45 @@ class GXFExtensionManager : public ExtensionManager {
   static std::vector<std::string> tokenize(const std::string& str, const std::string& delimiters);
 
  protected:
+  /**
+   * @brief Load an extension from a pointer.
+   *
+   * `GxfLoadExtensionFromPointer()` API is used to register the extension programmatically.
+   *
+   * @param extension The extension pointer to load.
+   * @return true if the extension is loaded successfully or already loaded.
+   */
+  bool load_extension(nvidia::gxf::Extension* extension);
+
+  /**
+   * @brief Loads a dynamic library containing a GXF extension.
+   *
+   * Uses `dlopen()` to load the specified extension library and returns its handle.
+   * If the extension has already been loaded, returns the existing handle from cache
+   * instead of loading it again.
+   *
+   * @param file_path Path to the extension library file (e.g., "libgxf_std.so").
+   * @return Handle to the loaded dynamic library.
+   */
+  void* open_extension_library(const std::string& file_path);
+
   /// Storage for the extension TIDs
   gxf_tid_t extension_tid_list_[kGXFExtensionsMaxSize] = {};
   /// request/response structure for the runtime info
   gxf_runtime_info runtime_info_{nullptr, kGXFExtensionsMaxSize, extension_tid_list_};
 
-  std::set<gxf_tid_t> extension_tids_;  ///< Set of extension TIDs
-  std::set<void*> extension_handles_;   ///< Set of extension handles
+  // Using ordered containers (std::set/std::map) rather than their unordered counterparts
+  // because gxf_tid_t lacks a std::hash specialization in the GXF API
+
+  /// Set of unique extension type IDs that have been registered
+  std::set<gxf_tid_t> extension_tids_;
+  /// Mapping from extension type IDs to their corresponding Extension pointers
+  std::map<gxf_tid_t, nvidia::gxf::Extension*> loaded_extension_tids_map_;
+  /// Sequential record of loaded extensions preserving the order they were loaded
+  std::vector<std::pair<gxf_tid_t, nvidia::gxf::Extension*>> loaded_extensions_;
+  /// Cache mapping extension file names to their dynamically loaded library handles
+  std::map<std::string, void*> extension_handles_map_;
+  // std::set<void*> extension_handles_;   ///< Set of extension handles
 };
 
 }  // namespace holoscan::gxf

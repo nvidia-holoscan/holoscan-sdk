@@ -179,23 +179,6 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Context::debugMessengerCallback(
 }
 
 //--------------------------------------------------------------------------------------------------
-// Create the Vulkan instance and then first compatible device based on \p info
-//
-bool Context::init(const ContextCreateInfo& info) {
-  if (!initInstance(info)) return false;
-
-  // Find all compatible devices
-  auto compatibleDevices = getCompatibleDevices(info);
-  if (compatibleDevices.empty()) {
-    assert(!"No compatible device found");
-    return false;
-  }
-
-  // Use a compatible device
-  return initDevice(compatibleDevices[info.compatibleDeviceIndex], info);
-}
-
-//--------------------------------------------------------------------------------------------------
 // Create the Vulkan instance
 //
 bool Context::initInstance(const ContextCreateInfo& info) {
@@ -353,20 +336,20 @@ nvvk::Context::QueueScore Context::removeQueueListItem(QueueScoreList& list, VkQ
 
 //--------------------------------------------------------------------------------------------------
 // Create Vulkan device
-// \p deviceIndex is the index from the list of getPhysicalDevices/getPhysicalDeviceGroups
-bool Context::initDevice(uint32_t deviceIndex, const ContextCreateInfo& info) {
+bool Context::initDevice(VkPhysicalDevice physical_device, const ContextCreateInfo& info) {
   assert(m_instance != nullptr);
+
+  m_physicalDevice = physical_device;
 
   VkPhysicalDeviceGroupProperties physicalGroup;
   if (info.useDeviceGroups) {
     auto groups = getPhysicalDeviceGroups();
-    assert(deviceIndex < static_cast<uint32_t>(groups.size()));
-    physicalGroup = groups[deviceIndex];
-    m_physicalDevice = physicalGroup.physicalDevices[0];
-  } else {
-    auto physicalDevices = getPhysicalDevices();
-    assert(deviceIndex < static_cast<uint32_t>(physicalDevices.size()));
-    m_physicalDevice = physicalDevices[deviceIndex];
+    for (auto&& group : groups) {
+      if (group.physicalDevices[0] == physical_device) {
+        physicalGroup = group;
+        break;
+      }
+    }
   }
 
   initPhysicalInfo(m_physicalInfo, m_physicalDevice, info.apiMajor, info.apiMinor);

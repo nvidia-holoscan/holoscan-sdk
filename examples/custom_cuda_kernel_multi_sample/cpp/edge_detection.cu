@@ -19,7 +19,6 @@ extern "C" __global__ void customKernel2(const unsigned char* input, unsigned ch
                                          int width, int height) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
-  int channels = 3;  // RGB
 
   if (x >= width || y >= height) return;
 
@@ -41,9 +40,8 @@ extern "C" __global__ void customKernel2(const unsigned char* input, unsigned ch
       int neighbor_x = min(max(x + i, 0), width - 1);
       int neighbor_y = min(max(y + j, 0), height - 1);
 
-      int idx = (neighbor_y * width + neighbor_x) * channels;
-      unsigned char gray =
-          (input[idx] + input[idx + 1] + input[idx + 2]) / 3;  // Convert to grayscale
+      int idx = (neighbor_y * width + neighbor_x);
+      unsigned char gray = input[idx];
 
       Gx += gray * sobel_x[j + 1][i + 1];
       Gy += gray * sobel_y[j + 1][i + 1];
@@ -53,6 +51,6 @@ extern "C" __global__ void customKernel2(const unsigned char* input, unsigned ch
   // Compute gradient magnitude
   int magnitude = min((int)sqrtf(Gx * Gx + Gy * Gy), 255);
 
-  int outIdx = (y * width + x) * channels;
-  output[outIdx] = output[outIdx + 1] = output[outIdx + 2] = magnitude;  // Set grayscale output
+  int outIdx = y * width + x;
+  output[outIdx] = magnitude;
 }

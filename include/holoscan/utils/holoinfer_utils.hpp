@@ -60,6 +60,9 @@ class GxfTensorBuffer : public HoloInfer::Buffer {
   nvidia::gxf::Handle<nvidia::gxf::Tensor> tensor_;
 };
 
+// shim around HoloInfer::report_error to return gxf_result_t enum instead of int
+gxf_result_t report_error(const std::string& module, const std::string& submodule);
+
 /**
  * Extracts data from GXF Receivers.
  *

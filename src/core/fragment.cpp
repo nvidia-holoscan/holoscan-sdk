@@ -47,6 +47,15 @@ using std::string_literals::operator""s;
 
 namespace holoscan {
 
+Fragment::~Fragment() {
+  // Set `is_run_called_` to true in case the fragment is being destroyed before
+  // run() or run_async() has completed execution, enabling proper cleanup in reset_state().
+  is_run_called_ = true;
+
+  // Explicitly clean up graph entities.
+  reset_graph_entities();
+}
+
 Fragment& Fragment::name(const std::string& name) & {
   if (name == "all") {
     HOLOSCAN_LOG_ERROR("Fragment name 'all' is reserved. Please use another name.");
@@ -587,11 +596,20 @@ void Fragment::set_dynamic_flows(
 void Fragment::compose() {}
 
 void Fragment::run() {
+  // Initialize clean state to ensure proper execution and support multiple consecutive runs
+  reset_state();
+
   executor().run(graph());
+  is_run_called_ = true;
 }
 
 std::future<void> Fragment::run_async() {
-  return executor().run_async(graph());
+  // Initialize clean state to ensure proper execution and support multiple consecutive runs
+  reset_state();
+
+  auto future = executor().run_async(graph());
+  is_run_called_ = true;
+  return future;
 }
 
 holoscan::DataFlowTracker& Fragment::track(uint64_t num_start_messages_to_skip,
@@ -694,11 +712,53 @@ void Fragment::reset_graph_entities() {
   // Explicitly clean up graph entities. This is necessary for Python apps, because the Python
   // object lifetime may outlive the Application runtime and these must be released prior to the
   // call to `GxfContextDestroy` to avoid a segfault in the `nvidia::gxf::GraphEntity` destructor.
+  // This method is invoked by the GXFExecutor::run_gxf_graph() function and during the Fragment
+  // destructor to ensure proper cleanup of graph entity resources.
   for (auto& op : graph().get_nodes()) { op->reset_graph_entities(); }
   auto gxf_sch = std::dynamic_pointer_cast<gxf::GXFScheduler>(scheduler());
   if (gxf_sch) { gxf_sch->reset_graph_entities(); }
   auto gxf_network_context = std::dynamic_pointer_cast<gxf::GXFNetworkContext>(network_context());
   if (gxf_network_context) { gxf_network_context->reset_graph_entities(); }
+}
+
+void Fragment::reset_state() {
+  if (!is_run_called_) {
+    HOLOSCAN_LOG_DEBUG(
+        "skipping fragment state reset since run() or run_async() was not called yet");
+    return;
+  }
+
+  // First clean up any graph entities
+  reset_graph_entities();
+
+  // If this has a GXFExecutor, we need to reset its flags
+  auto gxf_executor = std::dynamic_pointer_cast<gxf::GXFExecutor>(executor_);
+  if (gxf_executor) {
+    // Reset the execution state (flags for graph initialization and activation)
+    gxf_executor->reset_execution_state();
+  }
+
+  // Skip resetting the executor here as it needs to remain accessible before
+  // run()/run_async() calls. The executor object will be shared between run() method calls.
+  // executor_.reset();  // DO NOT RESET THIS.
+
+  // Reset the graph to recreate it on the next run
+  graph_.reset();
+
+  // Skip resetting the scheduler since it is shared between run() method calls.
+  // scheduler_.reset();  // DO NOT RESET THIS.
+
+  // Skip resetting the network context since it is shared between run() method calls.
+  // network_context_.reset();  // DO NOT RESET THIS.
+
+  // Skip resetting data_flow_tracker as its lifecycle is managed outside the run() method.
+  // data_flow_tracker_.reset();  // DO NOT RESET THIS.
+
+  // Clear thread pools to prevent memory leaks
+  thread_pools_.clear();
+
+  // Reset the is_composed_ flag to ensure graphs are recomposed
+  is_composed_ = false;
 }
 
 void Fragment::load_extensions_from_config() {

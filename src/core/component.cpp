@@ -81,6 +81,9 @@ void ComponentBase::update_params_from_args(
 }
 
 void Component::update_params_from_args() {
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No component spec for GXFNetworkContext '{}'", name_));
+  }
   update_params_from_args(spec_->params());
 }
 

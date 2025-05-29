@@ -2676,6 +2676,31 @@
                 }
             ]
         },
+        {
+            "name": "(gdb) SYSTEM_TEST",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/gtests/SYSTEM_TEST",
+            "args": [
+                "--gtest_filter=*"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
     ],
     "inputs": [
         // https://code.visualstudio.com/updates/v1_30#_improved-user-input-variables-for-task-and-debug-configurations

@@ -24,6 +24,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "application_pydoc.hpp"
@@ -58,6 +59,8 @@ class PyFragment : public Fragment {
   /* Inherit the constructors */
   using Fragment::Fragment;
 
+  ~PyFragment() override;
+
   explicit PyFragment(const py::object& op);
 
   /* Trampolines (need one for each virtual function) */
@@ -71,8 +74,13 @@ class PyFragment : public Fragment {
   void compose() override;
   void run() override;
 
+ protected:
+  void reset_state() override;
+
  private:
   py::object py_compose_ = py::none();
+  /// Map from Operator raw pointer to the Python wrapper object
+  std::unordered_map<Operator*, py::object> python_operator_registry_;
 };
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,6 @@
 #ifndef HOLOSCAN_CORE_ENDPOINT_HPP
 #define HOLOSCAN_CORE_ENDPOINT_HPP
 
-#include <gxf/core/gxf.h>
-
 #include <iostream>
 #include <memory>
 #include <string>
@@ -28,11 +26,13 @@
 #include "./errors.hpp"
 #include "./expected.hpp"
 #include "./resource.hpp"
-#include "./gxf/gxf_component.hpp"
-#include "./gxf/gxf_utils.hpp"
-#include "gxf/core/expected.hpp"
 #include "gxf/serialization/endpoint.hpp"
-#include "gxf/std/allocator.hpp"  // for nvidia::gxf::MemoryStorageType
+
+namespace nvidia {
+namespace gxf {
+enum struct MemoryStorageType;
+}
+}  // namespace nvidia
 
 namespace holoscan {
 

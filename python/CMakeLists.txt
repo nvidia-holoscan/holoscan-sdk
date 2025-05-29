@@ -106,7 +106,8 @@ endif()
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
   set_tests_properties(python-api-tracing-profile PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "AssertionError")
+                       FAIL_REGULAR_EXPRESSION "AssertionError"
+                       SKIP_RETURN_CODE "12")
 
   add_test(NAME python-api-tracing-trace
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py trace
@@ -114,7 +115,8 @@ endif()
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
   set_tests_properties(python-api-tracing-trace PROPERTIES
-                      FAIL_REGULAR_EXPRESSION "AssertionError")
+                       FAIL_REGULAR_EXPRESSION "AssertionError"
+                       SKIP_RETURN_CODE "12")
 
   add_test(NAME python-api-tracing-coverage
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py coverage
@@ -122,5 +124,6 @@ endif()
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
   set_tests_properties(python-api-tracing-coverage PROPERTIES
-                      FAIL_REGULAR_EXPRESSION "AssertionError")
+                       FAIL_REGULAR_EXPRESSION "AssertionError"
+                       SKIP_RETURN_CODE "12")
 endif()

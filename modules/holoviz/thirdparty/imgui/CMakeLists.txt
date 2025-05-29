@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,7 +83,16 @@ install(
     ${imgui_SOURCE_DIR}/imconfig.h
     ${imgui_SOURCE_DIR}/imgui_internal.h
     ${imgui_SOURCE_DIR}/imgui.h
-    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.h
+    ${imgui_SOURCE_DIR}/imstb_rectpack.h
+    ${imgui_SOURCE_DIR}/imstb_textedit.h
+    ${imgui_SOURCE_DIR}/imstb_truetype.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoviz/imgui
+  COMPONENT "holoscan-dependencies"
+  )
+
+install(
+  FILES
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/holoviz/imgui/misc/cpp
   COMPONENT "holoscan-dependencies"
   )

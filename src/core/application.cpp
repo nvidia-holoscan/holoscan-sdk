@@ -32,6 +32,7 @@
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/dataflow_tracker.hpp"
 #include "holoscan/core/executor.hpp"
+#include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/metadata.hpp"
 #include "holoscan/core/operator.hpp"
@@ -223,6 +224,48 @@ void Application::set_v4l2_env() {
   }
 }
 
+void Application::reset_state() {
+  if (!is_run_called_) {
+    HOLOSCAN_LOG_DEBUG(
+        "skipping application state reset since run() or run_async() was not called yet");
+    return;
+  }
+
+  HOLOSCAN_LOG_DEBUG("Resetting Application state to prepare for subsequent runs");
+  // Reset the fragment state
+  Fragment::reset_state();
+
+  if (is_run_called_) {
+    // Since the fragment_graph_ is used by the `Application::track_distributed()` method in
+    // distributed applications, when the fragment graph is already composed but the operator graph
+    // requires recomposition, we must preserve the data_flow_tracker_ pointers from the previous
+    // fragment graph.
+    if (is_fragment_graph_composed_ && !is_composed_) {
+      // Reset the fragment graph but keep the existing trackers
+      auto old_fragment_graph = std::move(fragment_graph_);
+
+      // Recompose the main graph and fragment graph
+      compose_graph();
+
+      // Move the tracker object to the new fragment graph
+      for (const auto& each_fragment : old_fragment_graph->get_nodes()) {
+        auto new_fragment = fragment_graph().find_node(each_fragment->name());
+        if (new_fragment) {
+          new_fragment->data_flow_tracker_ = std::move(each_fragment->data_flow_tracker_);
+        }
+      }
+      // Reset the old fragment graph to release the memory
+      old_fragment_graph.reset();
+    }
+
+    // Reset the application status
+    app_driver_.reset();
+
+    // Reset the application status
+    app_worker_.reset();
+  }
+}
+
 void Application::run() {
   // Debug log to show that the run() function is executed
   // (with the logging function pointer info to check if the logging function pointer address is
@@ -230,18 +273,40 @@ void Application::run() {
   // This message is checked by the test_app_log_function in test_application_minimal.py.
   HOLOSCAN_LOG_DEBUG("Executing Application::run()... (log_func_ptr=0x{:x})",
                      reinterpret_cast<uint64_t>(&nvidia::LoggingFunction));
-  if (cli_parser_.has_error()) { return; }
+  if (cli_parser_.has_error()) {
+    HOLOSCAN_LOG_ERROR(
+        "Application::run() failed to run because of CLI parser errors. "
+        "Please check the CLI arguments and try again.");
+    return;
+  }
 
   set_ucx_env();
   set_v4l2_env();
+
+  // Initialize clean state to ensure proper execution and support multiple consecutive runs
+  reset_state();
+
   driver().run();
+  is_run_called_ = true;
 }
 
 std::future<void> Application::run_async() {
-  if (cli_parser_.has_error()) { return {}; }
+  if (cli_parser_.has_error()) {
+    HOLOSCAN_LOG_ERROR(
+        "Application::run_async() failed to run because of CLI parser errors. "
+        "Please check the CLI arguments and try again.");
+    return {};
+  }
 
   set_ucx_env();
-  return driver().run_async();
+  set_v4l2_env();
+
+  // Initialize clean state to ensure proper execution and support multiple consecutive runs
+  reset_state();
+
+  auto future = driver().run_async();
+  is_run_called_ = true;
+  return future;
 }
 
 bool Application::is_metadata_enabled() const {
@@ -407,6 +472,7 @@ void Application::compose_graph() {
   load_extensions_from_config();
   compose();
   is_composed_ = true;
+  is_fragment_graph_composed_ = true;
 }
 
 void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& target_fragments) {

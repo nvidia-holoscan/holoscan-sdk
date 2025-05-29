@@ -36,23 +36,21 @@ set(CMAKE_FIND_USE_PACKAGE_REGISTRY FALSE)
 
 set(patch_command ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/patches/yaml-cpp.patch <SOURCE_DIR> && git apply <SOURCE_DIR>/yaml-cpp.patch)
 
+set(YAML_CPP_VERSION 0.8.0)
+
 # https://github.com/cpm-cmake/CPM.cmake/wiki/More-Snippets#yaml-cpp
-set(YAML_CPP_CPM_ARGS
+rapids_cpm_find(yaml-cpp ${YAML_CPP_VERSION}
+    GLOBAL_TARGETS yaml-cpp
+
+    CPM_ARGS
     GITHUB_REPOSITORY jbeder/yaml-cpp
-    GIT_TAG yaml-cpp-0.7.0
+    GIT_TAG ${YAML_CPP_VERSION}
     PATCH_COMMAND ${patch_command}
     OPTIONS
     "YAML_CPP_BUILD_TESTS Off"
     "YAML_CPP_BUILD_CONTRIB Off"
     "YAML_CPP_BUILD_TOOLS Off"
     "YAML_BUILD_SHARED_LIBS Off"
-)
-rapids_cpm_find(yaml-cpp 0.7.0
-    GLOBAL_TARGETS yaml-cpp
-    BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
-
-    CPM_ARGS
-    ${YAML_CPP_CPM_ARGS}
 )
 
 if(yaml-cpp_ADDED)
@@ -64,9 +62,4 @@ if(yaml-cpp_ADDED)
         COMPONENT "holoscan-dependencies"
         )
 
-    # Install the target
-    install(TARGETS yaml-cpp
-        DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-        COMPONENT "holoscan-dependencies"
-    )
 endif()

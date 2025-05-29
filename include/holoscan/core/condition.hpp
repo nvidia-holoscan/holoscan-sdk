@@ -18,7 +18,7 @@
 #ifndef HOLOSCAN_CORE_CONDITION_HPP
 #define HOLOSCAN_CORE_CONDITION_HPP
 
-#include <gxf/core/gxf.h>
+#include <gxf/core/gxf.h>  // for gxf_uid_t
 #include <yaml-cpp/yaml.h>
 
 #include <any>
@@ -33,10 +33,6 @@
 
 #include "./common.hpp"
 #include "./component.hpp"
-#include "./gxf/gxf_component.hpp"
-#include "./gxf/gxf_utils.hpp"
-#include "gxf/std/scheduling_condition.hpp"
-#include "gxf/std/scheduling_terms.hpp"  // for AsynchronousEventState
 
 #define HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                                     \
   template <typename ArgT,                                                                        \
@@ -96,6 +92,12 @@
   HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                     \
   explicit class_name(ArgT&& arg, ArgsT&&... args)                          \
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
+
+namespace nvidia {
+namespace gxf {
+enum class AsynchronousEventState;
+}  // namespace gxf
+}  // namespace nvidia
 
 namespace holoscan {
 

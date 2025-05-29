@@ -45,8 +45,6 @@
     holoscan.resources.UcxTransmitter
 """
 
-from holoscan.core import ComponentSpec, _Fragment
-
 from ._resources import (
     Allocator,
     BlockMemoryPool,
@@ -125,6 +123,8 @@ class GXFComponentResource(_GXFComponentResource):
         super().__setattr__(name, value)
 
     def __init__(self, fragment, *args, **kwargs):
+        from holoscan.core import ComponentSpec, _Fragment
+
         if not isinstance(fragment, _Fragment):
             raise ValueError(
                 "The first argument to an GXFComponentResource's constructor must be the Fragment "
@@ -139,8 +139,8 @@ class GXFComponentResource(_GXFComponentResource):
         # Call setup method in the derived class
         self.setup(spec)
 
-    def setup(self, spec: ComponentSpec):
-        # This method is invoked by the derived class to set up the operator.
+    def setup(self, spec):
+        # This method is invoked by the derived class to set up the resource.
         super().setup(spec)
 
     def initialize(self):

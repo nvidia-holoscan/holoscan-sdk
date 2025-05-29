@@ -32,14 +32,13 @@ class SimpleOp : public holoscan::Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(SimpleOp)
 
-  SimpleOp() = default;
+  SimpleOp() : SimpleOp([]() {}) {}
 
   // Constructor with notification callback
   template <typename... ArgsT>
   explicit SimpleOp(std::function<void()> notification_callback, ArgsT&&... args)
-      : SimpleOp(std::forward<ArgsT>(args)...) {
-    notification_callback_ = notification_callback;
-  }
+      : holoscan::Operator(std::forward<ArgsT>(args)...),
+        notification_callback_(std::move(notification_callback)) {}
 
   void initialize() override {
     // Call parent's initialize method
@@ -49,8 +48,9 @@ class SimpleOp : public holoscan::Operator {
     async_condition()->event_state(holoscan::AsynchronousEventState::WAIT);
   }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     std::cout << "[" << name() << "] Executing compute method" << std::endl;
 
     // Set async condition to WAIT state to wait for the controller to change the state to READY
@@ -109,8 +109,9 @@ class ControllerOp : public holoscan::Operator {
 
   void stop() override { std::cout << "[" << name() << "] Stopping controller" << std::endl; }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     // If the event state is set to EVENT_DONE, the compute method will be called.
     // Setting the event state to EVENT_DONE triggers the scheduler,
     // which updates the operator's scheduling condition type to READY, leading to the execution of
@@ -160,6 +161,7 @@ class ControllerOp : public holoscan::Operator {
     async_condition()->event_state(holoscan::AsynchronousEventState::EVENT_DONE);
   }
 
+ private:
   std::unordered_map<std::string, std::shared_ptr<holoscan::Operator>> op_map_;
   std::mutex mutex_;
   std::condition_variable operator_execution_cv_;

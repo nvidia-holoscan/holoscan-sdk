@@ -132,15 +132,7 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
   size_t dimensionY = dimensions[1];
   size_t dimensionZ = dimensions[2];
 
-  if (processed_data_map.find(out_tensor_name) == processed_data_map.end()) {
-    HOLOSCAN_LOG_INFO("Allocating memory for {} in launchGenericKernel", out_tensor_name);
-    const auto [db, success] = processed_data_map.insert(
-        {out_tensor_name, std::make_shared<DataBuffer>(output_dtype_.at(ids[0]))});
-
-    db->second->device_buffer_->resize(dsize);
-    db->second->host_buffer_->resize(dsize);
-    processed_dims.insert(processed_dims.begin(), dimensions.begin(), dimensions.end());
-  }
+  int kernel_count = ids.size();
 
   CUresult result = cuCtxPushCurrent(context_);
   if (result != CUDA_SUCCESS) {
@@ -148,26 +140,71 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context push failed.");
   }
 
-  int kernel_count = ids.size();
+  if (first_time_kernel_launch_map_.find(out_tensor_name) == first_time_kernel_launch_map_.end()) {
+    first_time_kernel_launch_map_[out_tensor_name] = true;
+    intermediate_inputs_[out_tensor_name].push_back(const_cast<void*>(input));
+
+    for (int i = 1; i < kernel_count; i++) {
+      auto intermediate_buffer = std::make_shared<DataBuffer>(output_dtype_.at(ids[i - 1]));
+      if (dynamic_output_dim_) {
+        auto dyn_dimensions = custom_kernel_output_dimensions_.at(ids[i - 1]);
+        dsize =
+            accumulate(dyn_dimensions.begin(), dyn_dimensions.end(), 1, std::multiplies<size_t>());
+      }
+      intermediate_buffer->device_buffer_->resize(dsize);
+
+      intermediate_buffers_[out_tensor_name].push_back(std::move(intermediate_buffer));
+      intermediate_inputs_[out_tensor_name].push_back(
+          intermediate_buffers_[out_tensor_name].back()->device_buffer_->data());
+    }
+
+    // create the output data
+
+    if (processed_data_map.find(out_tensor_name) == processed_data_map.end()) {
+      HOLOSCAN_LOG_INFO("Allocating memory for {} in launchGenericKernel", out_tensor_name);
+      const auto [db, success] = processed_data_map.insert(
+          {out_tensor_name, std::make_shared<DataBuffer>(output_dtype_.at(ids[kernel_count - 1]))});
+
+      if (dynamic_output_dim_) {
+        auto dyn_dimensions = custom_kernel_output_dimensions_.at(ids[kernel_count - 1]);
+        dsize =
+            accumulate(dyn_dimensions.begin(), dyn_dimensions.end(), 1, std::multiplies<size_t>());
+        processed_dims.insert(processed_dims.begin(), dyn_dimensions.begin(), dyn_dimensions.end());
+      } else {
+        processed_dims.insert(processed_dims.begin(), dimensions.begin(), dimensions.end());
+      }
+      db->second->device_buffer_->resize(dsize);
+      db->second->host_buffer_->resize(dsize);
+    }
+
+    intermediate_inputs_[out_tensor_name].push_back(
+        processed_data_map.at(out_tensor_name)->device_buffer_->data());
+  } else {
+    intermediate_inputs_[out_tensor_name][0] = const_cast<void*>(input);
+  }
 
   int buffer_count = 0;
   for (auto id : ids) {
-    if (first_time_kernel_launch_map_.find(out_tensor_name) ==
-        first_time_kernel_launch_map_.end()) {
-      first_time_kernel_launch_map_[out_tensor_name] = true;
-      intermediate_inputs_[out_tensor_name].push_back(const_cast<void*>(input));
-
-      for (int i = 1; i < kernel_count; i++) {
-        auto intermediate_buffer = std::make_shared<DataBuffer>(output_dtype_.at(ids[i - 1]));
-        intermediate_buffer->device_buffer_->resize(dsize);
-        intermediate_buffers_[out_tensor_name].push_back(std::move(intermediate_buffer));
-        intermediate_inputs_[out_tensor_name].push_back(
-            intermediate_buffers_[out_tensor_name].back()->device_buffer_->data());
+    if (dynamic_output_dim_ && buffer_count > 0) {
+      // output of the previous kernel is the input to the current kernel
+      auto dyn_output_dimensions = custom_kernel_output_dimensions_.at(ids[buffer_count - 1]);
+      if (dyn_output_dimensions.size() == 1) {
+        dimensionX = dyn_output_dimensions[0];
+        dimensionY = 1;
+        dimensionZ = 1;
+      } else if (dyn_output_dimensions.size() == 2) {
+        dimensionX = dyn_output_dimensions[0];
+        dimensionY = dyn_output_dimensions[1];
+        dimensionZ = 1;
+      } else if (dyn_output_dimensions.size() == 3) {
+        dimensionX = dyn_output_dimensions[0];
+        dimensionY = dyn_output_dimensions[1];
+        dimensionZ = dyn_output_dimensions[2];
       }
-      intermediate_inputs_[out_tensor_name].push_back(
-          processed_data_map.at(out_tensor_name)->device_buffer_->data());
+      dsize = accumulate(
+          dyn_output_dimensions.begin(), dyn_output_dimensions.end(), 1, std::multiplies<size_t>());
     } else {
-      intermediate_inputs_[out_tensor_name][0] = const_cast<void*>(input);
+      dsize = accumulate(dimensions.begin(), dimensions.end(), 1, std::multiplies<size_t>());
     }
 
     std::vector<void*> args = {&intermediate_inputs_[out_tensor_name][buffer_count],

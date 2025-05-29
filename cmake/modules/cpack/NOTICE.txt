@@ -1,5 +1,5 @@
 Holoscan SDK
-Copyright (c) 2021-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 This product includes software developed at NVIDIA CORPORATION (https://www.nvidia.com/).
 
@@ -167,4 +167,4 @@ Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.17.0/LICENSE
 
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.
-Licensed under MIT (https://github.com/jbeder/yaml-cpp/blob/yaml-cpp-0.7.0/LICENSE)
+Licensed under MIT (https://github.com/jbeder/yaml-cpp/blob/yaml-cpp-0.8.0/LICENSE)

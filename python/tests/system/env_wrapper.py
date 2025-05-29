@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +16,10 @@ limitations under the License.
 """  # noqa: E501
 
 import os
+import warnings
 from contextlib import contextmanager
+
+from holoscan.logger import log_level, set_log_level
 
 
 @contextmanager
@@ -39,9 +42,20 @@ def env_var_context(env_var_settings=None):
 
     # remember existing environment variables
     orig_env_vars = {env_var: os.environ.get(env_var) for env_var, _ in env_var_settings}
-
-    # set the environment variables
+    orig_log_level = log_level()
+    # Warning: The GXF logger level cannot be accessed or modified through Python APIs. If
+    # 'HOLOSCAN_EXECUTOR_LOG_LEVEL' is modified here, we won't be able to restore it to its
+    # original value when exiting this context.
     for env_var, value in env_var_settings:
+        if env_var == "HOLOSCAN_EXECUTOR_LOG_LEVEL":
+            # Skip setting GXF logger level as it's not accessible via Python APIs
+            warnings.warn(
+                "Cannot set HOLOSCAN_EXECUTOR_LOG_LEVEL through this context manager. "
+                "The GXF logger level is not accessible through Python APIs, making it "
+                "impossible to restore its original value when exiting this context.",
+                stacklevel=2,
+            )
+            continue
         os.environ[env_var] = value
     try:
         yield
@@ -53,3 +67,4 @@ def env_var_context(env_var_settings=None):
                 os.environ.pop(env_var, None)
             else:
                 os.environ[env_var] = orig_env
+        set_log_level(orig_log_level)

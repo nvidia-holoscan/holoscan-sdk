@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -52,7 +52,7 @@ that are expected for the creation of
 - VkInstance
 - VkDevice
 
-It is consumed by the `nvvk::Context::init` function.
+It is consumed by the `nvvk::Context::initDevice` function.
 
 Example on how to populate information in it :
 
@@ -95,9 +95,9 @@ struct ContextCreateInfo
   //
   // IMPORTANT: The 'pFeatureStruct' pointer will be stored and the object will
   // later be written to! Make sure the pointer is still valid when
-  // Context::Init() gets called with the ContextCreateInfo object. All
+  // Context::InitDevice() gets called with the ContextCreateInfo object. All
   // pFeatureStruct objects will be chained together and filled out with the
-  // actual device capabilities during Context::Init().
+  // actual device capabilities during Context::InitDevice().
   void addDeviceExtension(const char* name, bool optional = false, void* pFeatureStruct = nullptr, uint32_t version = 0);
 
   void removeInstanceExtension(const char* name);
@@ -114,10 +114,6 @@ struct ContextCreateInfo
   // use device groups
   bool useDeviceGroups = false;
 
-  // which compatible device or device group to pick
-  // only used by All-in-one Context::init(...)
-  uint32_t compatibleDeviceIndex = 0;
-
   // instance properties
   std::string appEngine = "nvpro-sample";
   std::string appTitle  = "nvpro-sample";
@@ -125,7 +121,7 @@ struct ContextCreateInfo
   // may impact performance hence disable by default
   bool disableRobustBufferAccess = true;
 
-  // Information printed at Context::init time
+  // Information printed at Context::getCompatibleDevices time
   bool verboseCompatibleDevices = true;
   bool verboseUsed              = true;  // Print what is used
   bool verboseAvailable         =        // Print what is available
@@ -389,14 +385,11 @@ public:
   operator VkDevice() const { return m_device; }
 
   // All-in-one instance and device creation
-  bool init(const ContextCreateInfo& info);
   void deinit();
 
   // Individual object creation
   bool initInstance(const ContextCreateInfo& info);
-  // deviceIndex is an index either into getPhysicalDevices or getPhysicalDeviceGroups
-  // depending on info.useDeviceGroups
-  bool initDevice(uint32_t deviceIndex, const ContextCreateInfo& info);
+  bool initDevice(VkPhysicalDevice physical_device, const ContextCreateInfo& info);
 
   // Helpers
   std::vector<uint32_t>                        getCompatibleDevices(const ContextCreateInfo& info);

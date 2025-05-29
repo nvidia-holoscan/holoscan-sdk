@@ -39,7 +39,6 @@
 #include "./conditions/gxf/message_available.hpp"
 #include "./conditions/gxf/multi_message_available_timeout.hpp"
 #include "./conditions/gxf/periodic.hpp"
-#include "./gxf/entity.hpp"
 #include "./resource.hpp"
 #include "./resources/gxf/double_buffer_receiver.hpp"
 #include "./resources/gxf/double_buffer_transmitter.hpp"
@@ -145,8 +144,7 @@ class IOSpec {
    * @param size The size of the input/output queue.
    */
   IOSpec(OperatorSpec* op_spec, const std::string& name, IOType io_type,
-         const std::type_info* typeinfo = &typeid(holoscan::gxf::Entity),
-         IOSpec::IOSize size = IOSpec::kSizeOne,
+         const std::type_info* typeinfo = &typeid(void*), IOSpec::IOSize size = IOSpec::kSizeOne,
          std::optional<IOSpec::QueuePolicy> policy = std::nullopt)
       : op_spec_(op_spec),
         io_type_(io_type),

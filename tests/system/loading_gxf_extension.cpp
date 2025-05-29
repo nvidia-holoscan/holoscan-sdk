@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,22 +77,26 @@ class DummyApp : public holoscan::Application {
 TEST(Extensions, LoadInsideComposeMethod) {
   auto app = make_application<LoadInsideComposeApp>();
 
-  // Capture stderr output to check for specific error messages
-  testing::internal::CaptureStderr();
+  for (int i = 0; i < 10; i++) {
+    // Capture stderr output to check for specific error messages
+    testing::internal::CaptureStderr();
 
-  app->run();
+    app->run();
 
-  std::string log_output = testing::internal::GetCapturedStderr();
-  // Check that log_output has 10 instances of "Hello world"
-  auto pos = log_output.find("Hello world");
-  int count = 0;
-  while (pos != std::string::npos) {
-    count++;
-    pos = log_output.find("Hello world", pos + 1);
+    std::string log_output = testing::internal::GetCapturedStderr();
+
+    // Check that log_output has 10 instances of "Hello world"
+    auto pos = log_output.find("Hello world");
+    int count = 0;
+    while (pos != std::string::npos) {
+      count++;
+      pos = log_output.find("Hello world", pos + 1);
+    }
+    EXPECT_EQ(count, 10)
+        << "Expected to find 10 instances of 'Hello world' in log output, but found " << count
+        << "\n=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
-  EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << "\n=== LOG ===\n"
-                       << log_output << "\n===========\n";
 }
 
 TEST(Extensions, LoadOutsideApp) {
@@ -104,22 +108,26 @@ TEST(Extensions, LoadOutsideApp) {
   extension_manager->load_extension("libgxf_cuda.so");
   extension_manager->load_extension("libgxf_sample.so");
 
-  // Capture stderr output to check for specific error messages
-  testing::internal::CaptureStderr();
+  for (int i = 0; i < 10; i++) {
+    // // Capture stderr output to check for specific error messages
+    testing::internal::CaptureStderr();
 
-  app->run();
+    app->run();
 
-  std::string log_output = testing::internal::GetCapturedStderr();
-  // Check that log_output has 10 instances of "Hello world"
-  auto pos = log_output.find("Hello world");
-  int count = 0;
-  while (pos != std::string::npos) {
-    count++;
-    pos = log_output.find("Hello world", pos + 1);
+    std::string log_output = testing::internal::GetCapturedStderr();
+
+    // Check that log_output has 10 instances of "Hello world"
+    auto pos = log_output.find("Hello world");
+    int count = 0;
+    while (pos != std::string::npos) {
+      count++;
+      pos = log_output.find("Hello world", pos + 1);
+    }
+    EXPECT_EQ(count, 10)
+        << "Expected to find 10 instances of 'Hello world' in log output, but found " << count
+        << "\n=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
-  EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << "\n=== LOG ===\n"
-                       << log_output << "\n===========\n";
 }
 
 TEST(Extensions, LoadFromConfigFile) {
@@ -128,22 +136,25 @@ TEST(Extensions, LoadFromConfigFile) {
   const std::string config_file = test_config.get_test_data_file("loading_gxf_extension.yaml");
   app->config(config_file);
 
-  // Capture stderr output to check for specific error messages
-  testing::internal::CaptureStderr();
+  for (int i = 0; i < 10; i++) {
+    // Capture stderr output to check for specific error messages
+    testing::internal::CaptureStderr();
 
-  app->run();
+    app->run();
 
-  std::string log_output = testing::internal::GetCapturedStderr();
-  // Check that log_output has 10 instances of "Hello world"
-  auto pos = log_output.find("Hello world");
-  int count = 0;
-  while (pos != std::string::npos) {
-    count++;
-    pos = log_output.find("Hello world", pos + 1);
+    std::string log_output = testing::internal::GetCapturedStderr();
+    // Check that log_output has 10 instances of "Hello world"
+    auto pos = log_output.find("Hello world");
+    int count = 0;
+    while (pos != std::string::npos) {
+      count++;
+      pos = log_output.find("Hello world", pos + 1);
+    }
+    EXPECT_EQ(count, 10)
+        << "Expected to find 10 instances of 'Hello world' in log output, but found " << count
+        << "\n=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
-  EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << "\n=== LOG ===\n"
-                       << log_output << "\n===========\n";
 }
 
 TEST(Extensions, LoadFromConfigFileAfterAccessingExecutor) {
@@ -154,22 +165,26 @@ TEST(Extensions, LoadFromConfigFileAfterAccessingExecutor) {
   const std::string config_file = test_config.get_test_data_file("loading_gxf_extension.yaml");
   app->config(config_file);
 
-  // Capture stderr output to check for specific error messages
-  testing::internal::CaptureStderr();
+  for (int i = 0; i < 10; i++) {
+    // Capture stderr output to check for specific error messages
+    testing::internal::CaptureStderr();
 
-  app->run();
+    app->run();
 
-  std::string log_output = testing::internal::GetCapturedStderr();
-  // Check that log_output has 10 instances of "Hello world"
-  auto pos = log_output.find("Hello world");
-  int count = 0;
-  while (pos != std::string::npos) {
-    count++;
-    pos = log_output.find("Hello world", pos + 1);
+    std::string log_output = testing::internal::GetCapturedStderr();
+
+    // Check that log_output has 10 instances of "Hello world"
+    auto pos = log_output.find("Hello world");
+    int count = 0;
+    while (pos != std::string::npos) {
+      count++;
+      pos = log_output.find("Hello world", pos + 1);
+    }
+    EXPECT_EQ(count, 10)
+        << "Expected to find 10 instances of 'Hello world' in log output, but found " << count
+        << "\n=== LOG ===\n"
+        << log_output << "\n===========\n";
   }
-  EXPECT_EQ(count, 10) << "Expected to find 10 instances of 'Hello world' in log output, but found "
-                       << count << "\n=== LOG ===\n"
-                       << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

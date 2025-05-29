@@ -6,7 +6,8 @@
 
 ## Synopsis
 
-`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-add) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-platform-config) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-includes) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-source) [](#cli-package-sdk-version) [](#cli-package-holoscan-sdk-file) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application) [](#cli-package-source)
+`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-add) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-add-host) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-holoscan-sdk-file) [](#cli-package-includes) [](#cli-package-input-data) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-sdk-version) [](#cli-package-source) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application)
+                     
 
 ## Examples
 
@@ -16,10 +17,10 @@ The code below package a python application for x86_64 systems:
 # Using a Python directory as input
 # Required: a `__main__.py` file in the application directory to execute
 # Optional: a `requirements.txt` file in the application directory to install dependencies
-holoscan package --platform x64-workstation --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
+holoscan package --platform x86_64 --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
 
 # Using a Python file as input
-holoscan package --platform x64-workstation --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/my-app.py
+holoscan package --platform x86_64 --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/my-app.py
 ```
 
 The code below package a C++ application for the IGX Orin DevKit (aarch64) with a discrete GPU:
@@ -27,10 +28,10 @@ The code below package a C++ application for the IGX Orin DevKit (aarch64) with 
 ```bash
 # Using a C++ source directory as input
 # Required: a `CMakeLists.txt` file in the application directory
-holoscan package --platform igx-orin-devkit --platform-config dgpu --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
+holoscan package --platform igx-dgpu --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
 
 # Using a C++ pre-compiled executable as input
-holoscan package --platform igx-orin-devkit --platform-config dgpu --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/bin/application-executable
+holoscan package --platform igx-dgpu --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/bin/application-executable
 ```
 
 :::{note}
@@ -43,7 +44,7 @@ If you need to package for a different platform or want to transfer the generate
 
 (#cli-package-application)=
 
-### `application`
+#### `application`
 
 Path to the application to be packaged. The following inputs are supported:
 
@@ -70,21 +71,11 @@ spec:
 
 ## Flags
 
-(#cli-package-config)=
-
-### `--config|-c CONFIG`
-
-Path to the application's [configuration file](./run_config.md). The configuration file must be in `YAML` format with a `.yaml` file extension.
-
-(#cli-package-docs)=
-
-### `[--docs|-d DOCS]`
-
-An optional directory path of documentation, README, licenses that shall be included in the package.
+### Options
 
 (#cli-package-add)=
 
-### `[--add DIR_PATH]`
+#### `[--add DIR_PATH]`
 
 `--add` enables additional files to be added to the application package. Use this option to include additional Python modules, files, or static objects (.so) on which the application depends.
 
@@ -123,10 +114,22 @@ The resulting package will contain the following:
     └── my-other-lib.so
 
 ```
+(#cli-package-config)=
+
+#### `--config|-c CONFIG`
+
+Path to the application's [configuration file](./run_config.md). The configuration file must be in `YAML` format with a `.yaml` file extension.
+
+(#cli-package-docs)=
+
+#### `[--docs|-d DOCS]`
+
+An optional directory path of documentation, README, licenses that shall be included in the package.
+
 
 (#cli-package-models)=
 
-### `[--models|-m MODELS]`
+#### `[--models|-m MODELS]`
 
 An optional directory path to a model file, a directory with a single model, or a directory with multiple models.
 
@@ -156,58 +159,81 @@ my-models/
 
 (#cli-package-platform)=
 
-### `--platform PLATFORM`
+#### `--platform PLATFORM`
 
 A comma-separated list of platform types to generate. Each platform value specified generates a standalone container image. If you are running the **Packager** on the same architecture, the generated image is automatically loaded onto Docker and is available with `docker images`. Otherwise, use `--output` flag to save the generated image onto the disk.
 
-`PLATFORM` must be one of: `clara-agx-devkit`, `igx-orin-devkit`, `jetson-agx-orin-devkit`, `x64-workstation`.
+`PLATFORM` must be one of: `jetson`, `igx-igpu`, `igx-dgpu`, `sbsa`, `x86_64`.
 
-- `igx-orin-devkit`: IGX Orin DevKit
-- `jetson-agx-orin-devkit`: Orin AGX DevKit
-- `x64-workstation`: systems with a [x86-64](https://en.wikipedia.org/wiki/X86-64) processor(s)
-
-(#cli-package-platform-config)=
-
-### `[--platform-config PLATFORM_CONFIG]`
-
-Specifies the platform configuration to generate. `PLATFORM_CONFIG` must be one of: `igpu`, `igpu-assist`, `dgpu`.
-
-- `igpu`: Supports integrated GPU
-- `igpu-assist`: Supports compute-only tasks on iGPU in presence of a dGPU
-- `dgpu`: Supports dedicated GPU
-
-:::{note}
-`--platform-config` is required when `--platform` is not `x64-workstation` (which uses `dgpu`).
-:::
+- `jetson`: Orin AGX DevKit
+- `igx-igpu`: IGX Orin DevKit with integrated GPU (iGPU)
+- `igx-dgpu`: IGX Orin DevKit with dedicated GPU (dGPU)
+- `sbsa`: Server Base System Architecture (64-bit ARM processors)
+- `x86_64`: systems with a [x86-64](https://en.wikipedia.org/wiki/X86-64) processor(s)
 
 (#cli-package-timeout)=
 
-### `[--timeout TIMEOUT]`
+#### `[--timeout TIMEOUT]`
 
 An optional timeout value of the application for the supported orchestrators to manage the application's lifecycle.
 Defaults to `0`.
 
 (#cli-package-version)=
 
-### `[--version VERSION]`
+#### `[--version VERSION]`
 
 An optional version number of the application. When specified, it overrides the value specified in the [configuration file](./run_config.md).
 
+
+### Advanced Build Options
+
+(#cli-package-add-host)=
+
+#### `[--add-host ADD_HOSTS]`
+
+Optionally add one or more host-to-IP mapping (format: host:ip). 
+
 (#cli-package-base-image)=
 
-### `[--base-image BASE_IMAGE]`
+#### `[--base-image BASE_IMAGE]`
 
 Optionally specifies the base container image for building packaged application. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a base image to use from [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
 
 (#cli-package-build-image)=
 
-### `[--build-image BUILD_IMAGE]`
+#### `[--build-image BUILD_IMAGE]`
 
 Optionally specifies the build container image for building C++ applications. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a build image to use from [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
 
+
+(#cli-package-build-cache)=
+
+#### `[--build-cache BUILD_CACHE]`
+
+Specifies a directory path for storing Docker cache. Defaults to `~/.holoscan_build_cache`. If the `$HOME` directory is inaccessible, the CLI uses the `/tmp` directory.
+
+(#cli-package-cmake-args)=
+
+#### `[--cmake-args CMAKE_ARGS]`
+
+A comma-separated list of *cmake* arguments to be used when building C++ applications.
+
+For example:
+
+```bash
+holoscan package --cmake-args "-DCMAKE_BUILD_TYPE=DEBUG -DCMAKE_ARG=VALUE"
+```
+
+(#cli-package-holoscan-sdk-file)=
+
+#### `[--holoscan-sdk-file HOLOSCAN_SDK_FILE]`
+
+Path to the Holoscan SDK Debian or PyPI package. If not specified, the packager downloads the SDK file from the internet depending on the SDK version detected/specified. The `HOLOSCAN_SDK_FILE` filename must have `.deb` or `.whl` file extension for Debian package or PyPI wheel package, respectively.
+
+
 (#cli-package-includes)=
 
-### `[--includes  [{debug,holoviz,torch,onnx}]]`
+#### `[--includes  [{debug,holoviz,torch,onnx}]]`
 
 To reduce the size of the packaged application container, the CLI Packager, by default, includes minimum runtime dependencies to run applications designed for Holoscan. You can specify additional runtime dependencies to be included in the packaged application using this option. The following options are available:
 
@@ -227,65 +253,52 @@ Usage:
 holoscan package --includes holoviz torch onnx
 ```
 
-(#cli-package-build-cache)=
 
-### `[--build-cache BUILD_CACHE]`
+(#cli-package-input-data)=
 
-Specifies a directory path for storing Docker cache. Defaults to `~/.holoscan_build_cache`. If the `$HOME` directory is inaccessible, the CLI uses the `/tmp` directory.
+#### `[--input-data INPUT_DATA]`
 
-(#cli-package-cmake-args)=
+Optionally, embed input data in the package. `INPUT_DATA` must be a valid path to a directory containing the data to be embedded in `/var/holoscan/input`, and it can be accessed inside the container via the `HOLOSCAN_INPUT_PATH` environment variable.
 
-### `[--cmake-args CMAKE_ARGS]`
+(#cli-package-monai-deploy-sdk-file)=
 
-A comma-separated list of *cmake* arguments to be used when building C++ applications.
+#### `[--monai-deploy-sdk-file MONAI_DEPLOY_SDK_FILE]`
 
-For example:
+Path to the MONAI Deploy App SDK Debian or PyPI package. If not specified, the packager downloads the SDK file from the internet based on the SDK version. The `MONAI_DEPLOY_SDK_FILE` package filename must have `.whl` or `.gz` file extension.
 
-```bash
-holoscan package --cmake-args "-DCMAKE_BUILD_TYPE=DEBUG -DCMAKE_ARG=VALUE"
-```
 
 (#cli-package-no-cache)=
 
-### `[--no-cache|-n]`
+#### `[--no-cache|-n]`
 
 Do not use cache when building image.
 
 (#cli-package-sdk)=
 
-### `[--sdk SDK]`
+#### `[--sdk SDK]`
 
 SDK for building the application: Holoscan or MONAI-Deploy. `SDK` must be one of: holoscan, monai-deploy.
 
+
+(#cli-package-sdk-version)=
+
+#### `[--sdk-version SDK_VERSION]`
+
+Set the version of the SDK that is used to build and package the Application. If not specified, the packager attempts to detect the installed version.
+
 (#cli-package-source)=
 
-### `[--source URL|FILE]`
+#### `[--source URL|FILE]`
 
 Override the artifact manifest source with a securely hosted file or from the local file system.
 
 E.g. https://my.domain.com/my-file.json
 
-(#cli-package-sdk-version)=
-
-### `[--sdk-version SDK_VERSION]`
-
-Set the version of the SDK that is used to build and package the Application. If not specified, the packager attempts to detect the installed version.
-
-(#cli-package-holoscan-sdk-file)=
-
-### `[--holoscan-sdk-file HOLOSCAN_SDK_FILE]`
-
-Path to the Holoscan SDK Debian or PyPI package. If not specified, the packager downloads the SDK file from the internet depending on the SDK version detected/specified. The `HOLOSCAN_SDK_FILE` filename must have `.deb` or `.whl` file extension for Debian package or PyPI wheel package, respectively.
-
-(#cli-package-monai-deploy-sdk-file)=
-
-### `[--monai-deploy-sdk-file MONAI_DEPLOY_SDK_FILE]`
-
-Path to the MONAI Deploy App SDK Debian or PyPI package. If not specified, the packager downloads the SDK file from the internet based on the SDK version. The `MONAI_DEPLOY_SDK_FILE` package filename must have `.whl` or `.gz` file extension.
+### Output Options
 
 (#cli-package-output)=
 
-### `[--output|-o OUTPUT]`
+#### `[--output|-o OUTPUT]`
 
 Output directory where result images will be written.
 
@@ -295,7 +308,7 @@ If this flag isn't present, the packager will load the generated image onto Dock
 
 (#cli-package-tag)=
 
-### `--tag|-t TAG`
+#### `--tag|-t TAG`
 
 Name and optionally a tag (format: `name:tag`).
 
@@ -308,15 +321,17 @@ my-application:1.0.1
 my-application
 ```
 
+### Security Options
+
 (#cli-package-username)=
 
-### `[--username USERNAME]`
+#### `[--username USERNAME]`
 
 Optional *username* to be created in the container execution context. Defaults to `holoscan`.
 
 (#cli-package-uid)=
 
-### `[--uid UID]`
+#### `[--uid UID]`
 
 Optional *user ID* to be associated with the user created with `--username` with default of `1000`.
 
@@ -327,6 +342,6 @@ It is recommended to use the default value of `1000` when packaging an applicati
 
 (#cli-package-gid)=
 
-### `[--gid GID]`
+#### `[--gid GID]`
 
 Optional *group ID* to be associated with the user created with `--username` with default of `1000`

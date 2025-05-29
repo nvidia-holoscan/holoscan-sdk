@@ -31,6 +31,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <atomic>
 
 #include "../../app_driver.hpp"
 #include "../../executor.hpp"
@@ -86,6 +87,22 @@ class GXFExecutor : public holoscan::Executor {
    * This method calls GxfGraphInterrupt() to interrupt the execution.
    */
   void interrupt() override;
+
+  /**
+   * @brief Reset execution state to allow for multiple runs
+   *
+   * Resets internal flags related to graph initialization and activation
+   * to allow for multiple consecutive executions.
+   */
+  void reset_execution_state();
+
+  /**
+   * @brief Destroy the GXF context.
+   *
+   * Releases resources associated with the GXF context if it exists.
+   * No operation is performed if the context is null or the context is not owned by this.
+   */
+  void destroy_context();
 
   /**
    * @brief Set the context.
@@ -205,6 +222,12 @@ class GXFExecutor : public holoscan::Executor {
    */
   const std::string& entity_prefix() { return entity_prefix_; }
 
+  /// Set up signal handlers for graceful shutdown
+  std::function<void(void*, int)> setup_signal_handlers(Fragment* fragment);
+
+  /// Reset the interrupt flags
+  void reset_interrupt_flags();
+
  protected:
   bool initialize_fragment() override;
   bool initialize_operator(Operator* op) override;
@@ -232,12 +255,14 @@ class GXFExecutor : public holoscan::Executor {
                                   ///< initializing a new operator if this is 0.
   gxf_uid_t op_cid_ = 0;          ///< The GXF component ID of the operator. Create new component
                                   ///< for initializing a new operator if this is 0.
-  nvidia::gxf::Extension* gxf_holoscan_extension_ = nullptr;  ///< The GXF holoscan extension.
+  std::shared_ptr<nvidia::gxf::Extension> gxf_holoscan_extension_;  ///< The GXF holoscan extension.
 
   /// The flag to indicate whether the GXF graph is initialized.
   bool is_gxf_graph_initialized_ = false;
   /// The flag to indicate whether the GXF graph is activated.
   bool is_gxf_graph_activated_ = false;
+  /// The flag to indicate whether run() or run_async() has been invoked.
+  bool is_run_called_ = false;
 
   /// The entity prefix for the fragment.
   std::string entity_prefix_;
@@ -366,6 +391,10 @@ class GXFExecutor : public holoscan::Executor {
   std::shared_ptr<GPUDevice> add_gpu_device_to_graph_entity(
       const std::string& device_name, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,
       std::optional<int32_t> device_id = std::nullopt);
+
+  // Static flags for signal handling
+  static std::atomic<bool> interrupt_requested_;
+  static std::atomic<bool> force_exit_countdown_started_;
 };
 
 }  // namespace holoscan::gxf

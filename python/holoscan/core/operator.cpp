@@ -10,16 +10,16 @@
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
-4 * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
 
 #include "operator.hpp"
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>         // for unordered_map -> dict, etc.
 #include <pybind11/functional.h>  // for lambda functions
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>  // for unordered_map -> dict, etc.
 
 #include <list>
 #include <memory>
@@ -401,7 +401,7 @@ void init_operator(py::module_& m) {
 }  // init_operator
 
 PyOperatorSpec::PyOperatorSpec(Fragment* fragment, py::object op)
-    : OperatorSpec(fragment), py_op_(std::move(op)) {}
+    : OperatorSpec(fragment), py_op_(py::cast<std::shared_ptr<PyOperator>>(op)) {}
 
 void PyOperatorSpec::py_param(const std::string& name, const py::object& default_value,
                               const ParameterFlag& flag, const py::kwargs& kwargs) {
@@ -437,17 +437,22 @@ void PyOperatorSpec::py_param(const std::string& name, const py::object& default
     auto& parameter = receivers_params_.back();
     param(parameter, name.c_str(), headline.c_str(), description.c_str(), {}, flag);
   } else {
-    // Create parameter object
-    py_params_.emplace_back(py_op());
+    // Create parameter object.
+    // Note that we create a weakref object to avoid incrementing/decrementing the
+    // reference count for the object because owning the object would create a cyclic reference.
+    py_params_.emplace_back(py::weakref(py_op()));
 
     // Register parameter
     auto& parameter = py_params_.back();
+    // Please see register_py_type() in 'public/python/holoscan/core/arg.cpp' to see how
+    // Parameter<py::object> is handled.
     param(parameter, name.c_str(), headline.c_str(), description.c_str(), default_value, flag);
   }
 }
 
 py::object PyOperatorSpec::py_op() const {
-  return py_op_;
+  if (auto py_op = py_op_.lock()) { return py::cast(py_op); }
+  return py::none();
 }
 
 std::list<Parameter<py::object>>& PyOperatorSpec::py_params() {
@@ -774,17 +779,23 @@ void PyOperator::initialize() {
   auto* context = fragment_->executor().context();
 
   // Create PyExecutionContext, PyInputContext, PyOutputContext objects and store them
-  py_context_ = std::make_shared<PyExecutionContext>(context, py_op_);
-  py_op_input_ = py_context_->py_input();
-  py_op_output_ = py_context_->py_output();
+  if (py_op_) {
+    auto py_op = py_op_.cast<std::shared_ptr<PyOperator>>();
+    py_context_ = std::make_shared<PyExecutionContext>(context, py_op);
+    py_op_input_ = py_context_->py_input();
+    py_op_output_ = py_context_->py_output();
 
-  // Make sure CudaObjectHandler has been initialized for use by py_emit and py_receive
-  py_context_->init_cuda_object_handler(this);
-  py_op_input_->cuda_object_handler(py_context_->cuda_object_handler());
-  py_op_output_->cuda_object_handler(py_context_->cuda_object_handler());
-  HOLOSCAN_LOG_TRACE("PyOperator: py_context_->cuda_object_handler() for op '{}' is {}null",
-                     name(),
-                     py_context_->cuda_object_handler() == nullptr ? "" : "not ");
+    // Make sure CudaObjectHandler has been initialized for use by py_emit and py_receive
+    py_context_->init_cuda_object_handler(this);
+    py_op_input_->cuda_object_handler(py_context_->cuda_object_handler());
+    py_op_output_->cuda_object_handler(py_context_->cuda_object_handler());
+    HOLOSCAN_LOG_TRACE("PyOperator: py_context_->cuda_object_handler() for op '{}' is {}null",
+                       name(),
+                       py_context_->cuda_object_handler() == nullptr ? "" : "not ");
+  } else {
+    HOLOSCAN_LOG_ERROR("PyOperator: py_op_ is not set");
+    throw std::runtime_error("PyOperator: py_op_ is not set");
+  }
 
   py_initialize_.operator()();
 }
@@ -829,6 +840,52 @@ void PyOperator::release_internal_resources() {
   Operator::release_internal_resources();
 
   // Reset the Python objects
+
+  // Note: We hold py_op_ (the Python object reference) in the C++ layer via
+  //       PyApplication::python_operator_registry_ and
+  //       PyFragment::python_operator_registry_
+  //
+  // Explanation:
+  // py_op_ holds the py::object reference to the original Python wrapper object created
+  // when this Operator's Python subclass was instantiated. Resetting it (e.g., via
+  // 'py_op_ = py::none();') would release the C++ object's ownership of the Python
+  // reference count for that wrapper.
+  //
+  // If no other Python code holds a reference to this specific Python wrapper object
+  // at the time the C++ object is destroyed (or if py_op_ were reset earlier),
+  // resetting py_op_ would allow Python's garbage collector to destroy the wrapper.
+  //
+  // When a pybind11 wrapper object is destroyed, its entry is removed from pybind11's
+  // internal instance registry (which maps C++ pointers to existing Python wrappers).
+  //
+  // Consequently, if the same underlying C++ Operator is later retrieved from C++ code
+  // and passed back to Python (e.g., via a call like fragment.graph.get_nodes()),
+  // pybind11 would fail to find the original wrapper in its registry. It would then
+  // be forced to create a *new*, base-class Python wrapper object ('holoscan.core._core.Operator').
+  //
+  // This new wrapper would:
+  //   1. Have a different Python id().
+  //   2. Lack any dynamically added attributes (like 'none_count' used in tests) that
+  //      might have been set only on the original Python subclass instance.
+  //
+  // This behavior would break tests like 'test_ping_app_none_condition' in
+  // 'python/tests/system/test_application_ping_none_condition.py', which depend on
+  // dynamic attributes persisting on operators retrieved from the application graph.
+  //
+  // Therefore, we maintain the Python Operator object reference indefinitely within
+  // the C++ object to guarantee the persistence and identity (id()) of the original Python wrapper
+  // object throughout the lifetime of the C++ Operator instance it corresponds to.
+  //
+  // Current implementation is maintaining the Python objects in
+  // PyApplication::python_operator_registry_ and PyFragment::python_operator_registry_ when
+  // add_operator() or add_flow() method is called on PyApplication or PyFragment.
+  //
+  // We can safely reset py_op_ (the Python object reference) here because we maintain the reference
+  // in `python_operator_registry_`. This reference will be properly reset via the `reset_state()`
+  // method before the `run()` or `run_async()` method is called, or when the Application/Fragment
+  // object's destructor executes. This approach enables consecutive runs while allowing operator
+  // information to be accessed by the data flow tracker, and prevents memory leaks that could occur
+  // from self-referencing Python objects in the PyOperator class.
   py_op_ = py::none();
   py_initialize_ = py::none();
   py_start_ = py::none();

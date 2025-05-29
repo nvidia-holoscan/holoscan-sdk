@@ -53,6 +53,10 @@ void GxfTensorBuffer::resize(size_t /*number_of_elements*/) {
   throw std::runtime_error("Resizing of GxfTensorBuffer is not supported");
 }
 
+gxf_result_t report_error(const std::string& module, const std::string& submodule) {
+  return static_cast<gxf_result_t>(HoloInfer::report_error(module, submodule));
+}
+
 gxf_result_t extract_data(const std::shared_ptr<HoloInfer::DataBuffer>& db,
                           nvidia::gxf::MemoryStorageType to,
                           nvidia::gxf::MemoryStorageType storage_type,
@@ -76,7 +80,7 @@ gxf_result_t extract_data(const std::shared_ptr<HoloInfer::DataBuffer>& db,
       if (cuda_result != cudaSuccess) {
         HOLOSCAN_LOG_ERROR("Data extraction, error in DtoH cudaMemcpy: {}",
                            cudaGetErrorString(cuda_result));
-        return HoloInfer::report_error(module, "Data extraction, DtoH cudaMemcpy.");
+        return report_error(module, "Data extraction, DtoH cudaMemcpy.");
       }
       // When copying from device memory to pagable memory the call is synchronous with the host
       // execution. No need to synchronize here.
@@ -96,10 +100,10 @@ gxf_result_t extract_data(const std::shared_ptr<HoloInfer::DataBuffer>& db,
         if (cuda_result != cudaSuccess) {
           HOLOSCAN_LOG_ERROR("Data transmission (DtoD) failed: {}",
                              cudaGetErrorString(cuda_result));
-          return HoloInfer::report_error(module, "Data extraction, DtoD cudaMemcpy");
+          return report_error(module, "Data extraction, DtoD cudaMemcpy");
         }
       } else {
-        return HoloInfer::report_error(module, "Data extraction parameters not supported.");
+        return report_error(module, "Data extraction parameters not supported.");
       }
     }
   }
@@ -140,8 +144,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
         }
       }
       if (!maybe_in_tensor) {
-        return HoloInfer::report_error(module,
-                                       "Data extraction, Tensor " + in_tensors[i] + " not found");
+        return report_error(module, "Data extraction, Tensor " + in_tensors[i] + " not found");
       }
 
       const auto& in_tensor = maybe_in_tensor.value();
@@ -149,18 +152,17 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
 
       if (!in_tensor->isContiguous()) {
         HOLOSCAN_LOG_ERROR("Input tensor {} must have row-major memory layout.", in_tensors[i]);
-        return HoloInfer::report_error(module, "Data extraction, Memory layout not row-major.");
+        return report_error(module, "Data extraction, Memory layout not row-major.");
       }
 
       if (storage_type != nvidia::gxf::MemoryStorageType::kHost &&
           storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
-        return HoloInfer::report_error(
+        return report_error(
             module, "Data extraction, memory not resident on CUDA pinned host memory or GPU.");
       }
       if (to != nvidia::gxf::MemoryStorageType::kHost &&
           to != nvidia::gxf::MemoryStorageType::kDevice) {
-        return HoloInfer::report_error(module,
-                                       "Input storage type in data extraction not supported.");
+        return report_error(module, "Input storage type in data extraction not supported.");
       }
 
       HoloInfer::holoinfer_datatype dtype;
@@ -187,8 +189,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
         default: {
           HOLOSCAN_LOG_INFO(
               "Incoming tensors must be of type: float, float16, int32, int64, int8, uint8");
-          return HoloInfer::report_error(module,
-                                         "Data extraction, data type not supported in extraction.");
+          return report_error(module, "Data extraction, data type not supported in extraction.");
         }
       }
 
@@ -223,7 +224,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
                                            module,
                                            cstream);
         if (status != GXF_SUCCESS) {
-          return HoloInfer::report_error(module, "Data extraction, In tensor extraction failed.");
+          return report_error(module, "Data extraction, In tensor extraction failed.");
         }
       }
     }
@@ -231,8 +232,8 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, module);
   } catch (std::exception& _ex) {
-    return HoloInfer::report_error(module, "Data extraction, Message: " + std::string(_ex.what()));
-  } catch (...) { return HoloInfer::report_error(module, "Data extraction, Unknown exception"); }
+    return report_error(module, "Data extraction, Message: " + std::string(_ex.what()));
+  } catch (...) { return report_error(module, "Data extraction, Unknown exception"); }
   return GXF_SUCCESS;
 }
 
@@ -276,8 +277,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
         }
       }
       if (!maybe_in_tensor) {
-        return HoloInfer::report_error(module,
-                                       "Data extraction, Tensor " + in_tensors[i] + " not found");
+        return report_error(module, "Data extraction, Tensor " + in_tensors[i] + " not found");
       }
 
       const auto& in_tensor = maybe_in_tensor.value();
@@ -285,18 +285,17 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
 
       if (!in_tensor->isContiguous()) {
         HOLOSCAN_LOG_ERROR("Input tensor {} must have row-major memory layout.", in_tensors[i]);
-        return HoloInfer::report_error(module, "Data extraction, Memory layout not row-major.");
+        return report_error(module, "Data extraction, Memory layout not row-major.");
       }
 
       if (storage_type != nvidia::gxf::MemoryStorageType::kHost &&
           storage_type != nvidia::gxf::MemoryStorageType::kDevice) {
-        return HoloInfer::report_error(
+        return report_error(
             module, "Data extraction, memory not resident on CUDA pinned host memory or GPU.");
       }
       if (to != nvidia::gxf::MemoryStorageType::kHost &&
           to != nvidia::gxf::MemoryStorageType::kDevice) {
-        return HoloInfer::report_error(module,
-                                       "Input storage type in data extraction not supported.");
+        return report_error(module, "Input storage type in data extraction not supported.");
       }
 
       HoloInfer::holoinfer_datatype dtype;
@@ -323,8 +322,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
         default: {
           HOLOSCAN_LOG_INFO(
               "Incoming tensors must be of type: float, float16, int32, int64, int8, uint8");
-          return HoloInfer::report_error(module,
-                                         "Data extraction, data type not supported in extraction.");
+          return report_error(module, "Data extraction, data type not supported in extraction.");
         }
       }
 
@@ -359,7 +357,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
                                            module,
                                            cuda_stream_out);
         if (status != GXF_SUCCESS) {
-          return HoloInfer::report_error(module, "Data extraction, In tensor extraction failed.");
+          return report_error(module, "Data extraction, In tensor extraction failed.");
         }
       }
     }
@@ -367,8 +365,8 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, module);
   } catch (std::exception& _ex) {
-    return HoloInfer::report_error(module, "Data extraction, Message: " + std::string(_ex.what()));
-  } catch (...) { return HoloInfer::report_error(module, "Data extraction, Unknown exception"); }
+    return report_error(module, "Data extraction, Message: " + std::string(_ex.what()));
+  } catch (...) { return report_error(module, "Data extraction, Unknown exception"); }
   return GXF_SUCCESS;
 }
 
@@ -380,19 +378,18 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
                            const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_,
                            const std::string& module, cudaStream_t cstream) {
   auto out_tensor = out_message.value().add<nvidia::gxf::Tensor>(current_tensor.c_str());
-  if (!out_tensor)
-    return HoloInfer::report_error(module, "Data transmission, Out tensor allocation.");
+  if (!out_tensor) return report_error(module, "Data transmission, Out tensor allocation.");
 
   if (from == nvidia::gxf::MemoryStorageType::kHost) {
     if (to == nvidia::gxf::MemoryStorageType::kHost) {
       out_tensor.value()->reshape<T>(
           output_shape, nvidia::gxf::MemoryStorageType::kHost, allocator_);
       if (!out_tensor.value()->pointer())
-        return HoloInfer::report_error(module, "Data transmission, Out tensor buffer allocation.");
+        return report_error(module, "Data transmission, Out tensor buffer allocation.");
 
       nvidia::gxf::Expected<T*> out_tensor_data = out_tensor.value()->data<T>();
       if (!out_tensor_data)
-        return HoloInfer::report_error(module, "Data transmission, Getting out tensor data.");
+        return report_error(module, "Data transmission, Getting out tensor data.");
 
       auto current_model_output = input_data_map.at(current_tensor);
       memcpy(out_tensor_data.value(),
@@ -402,11 +399,11 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
       out_tensor.value()->reshape<T>(
           output_shape, nvidia::gxf::MemoryStorageType::kDevice, allocator_);
       if (!out_tensor.value()->pointer())
-        return HoloInfer::report_error(module, "Data transmission, Out tensor buffer allocation.");
+        return report_error(module, "Data transmission, Out tensor buffer allocation.");
 
       nvidia::gxf::Expected<T*> out_tensor_data = out_tensor.value()->data<T>();
       if (!out_tensor_data)
-        return HoloInfer::report_error(module, "Data transmission, Getting out tensor data.");
+        return report_error(module, "Data transmission, Getting out tensor data.");
 
       auto current_model_dev_buff = input_data_map.at(current_tensor)->host_buffer_->data();
       cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
@@ -416,7 +413,7 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
                                                 cstream);
       if (cuda_result != cudaSuccess) {
         HOLOSCAN_LOG_ERROR("Data transmission (HtoD) failed: {}", cudaGetErrorString(cuda_result));
-        return HoloInfer::report_error(module, "Data Transmission, HtoD cudaMemcpy.");
+        return report_error(module, "Data Transmission, HtoD cudaMemcpy.");
       }
       // When copying from pagable memory to device memory cudaMemcpyAsync() is copying the memory
       // to staging memory first and therefore is synchronous with the host execution. No need to
@@ -428,11 +425,11 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
         out_tensor.value()->reshape<T>(
             output_shape, nvidia::gxf::MemoryStorageType::kDevice, allocator_);
         if (!out_tensor.value()->pointer())
-          return HoloInfer::report_error(module, "Data transmission, out tensor allocation.");
+          return report_error(module, "Data transmission, out tensor allocation.");
 
         nvidia::gxf::Expected<T*> out_tensor_data = out_tensor.value()->data<T>();
         if (!out_tensor_data)
-          return HoloInfer::report_error(module, "Data Transmission, getting out tensor data.");
+          return report_error(module, "Data Transmission, getting out tensor data.");
 
         void* current_model_dev_buff = input_data_map.at(current_tensor)->device_buffer_->data();
         cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
@@ -443,17 +440,17 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
         if (cuda_result != cudaSuccess) {
           HOLOSCAN_LOG_ERROR("Data transmission (DtoD) failed: {}",
                              cudaGetErrorString(cuda_result));
-          return HoloInfer::report_error(module, "Data extraction, DtoD cudaMemcpy.");
+          return report_error(module, "Data extraction, DtoD cudaMemcpy.");
         }
       } else {  // to is on host
         out_tensor.value()->reshape<T>(
             output_shape, nvidia::gxf::MemoryStorageType::kHost, allocator_);
         if (!out_tensor.value()->pointer())
-          return HoloInfer::report_error(module, "Data Transmission, out tensor allocation");
+          return report_error(module, "Data Transmission, out tensor allocation");
 
         nvidia::gxf::Expected<T*> out_tensor_data = out_tensor.value()->data<T>();
         if (!out_tensor_data)
-          return HoloInfer::report_error(module, "Data Transmission, getting out tensor data");
+          return report_error(module, "Data Transmission, getting out tensor data");
 
         void* current_model_dev_buff = input_data_map.at(current_tensor)->device_buffer_->data();
         cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
@@ -464,7 +461,7 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
         if (cuda_result != cudaSuccess) {
           HOLOSCAN_LOG_ERROR("Data transmission (DtoH) failed: {}",
                              cudaGetErrorString(cuda_result));
-          return HoloInfer::report_error(module, "Data transmission, DtoH cudaMemcpy");
+          return report_error(module, "Data transmission, DtoH cudaMemcpy");
         }
         // When copying from device memory to pagable memory the call is synchronous with the host
         // execution. No need to synchronize here.
@@ -497,9 +494,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
     // single transmitter used
     auto out_message = nvidia::gxf::Entity::New(cont);
-    if (!out_message) {
-      return HoloInfer::report_error(module, "Data transmission, Out message allocation");
-    }
+    if (!out_message) { return report_error(module, "Data transmission, Out message allocation"); }
 
     // to combine static and dynamic I/O tensors, existing out_tensors must be checked for every
     // tensor in input_data_map
@@ -511,8 +506,8 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
     for (unsigned int i = 0; i < out_tensors.size(); ++i) {
       if (input_data_map.find(out_tensors[i]) == input_data_map.end()) {
-        return HoloInfer::report_error(
-            module, "Data Transmission, Mapped data not found for " + out_tensors[i]);
+        return report_error(module,
+                            "Data Transmission, Mapped data not found for " + out_tensors[i]);
       }
       auto current_out_tensor = out_tensors[i];
 
@@ -551,8 +546,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
       }
 
       if (tensor_out_dims_map.find(key_name) == tensor_out_dims_map.end())
-        return HoloInfer::report_error(module,
-                                       "Tensor mapping not found in dimension map for " + key_name);
+        return report_error(module, "Tensor mapping not found in dimension map for " + key_name);
 
       std::vector<int64_t> dims = tensor_out_dims_map.at(key_name)[tensor_index];
 
@@ -584,7 +578,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         }
         default: {
           HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and 4.");
-          return HoloInfer::report_error(
+          return report_error(
               module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
         }
       }
@@ -666,7 +660,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         }
       }
       if (stat != GXF_SUCCESS) {
-        return HoloInfer::report_error(
+        return report_error(
             module, "Data Transmission, Out tensor transmission failed for " + current_out_tensor);
       }
     }
@@ -684,9 +678,8 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     op_output.emit(result, "transmitter");
     HoloInfer::timer_init(e_time);
   } catch (std::exception& _ex) {
-    return HoloInfer::report_error(module,
-                                   "Data transmission, Message: " + std::string(_ex.what()));
-  } catch (...) { return HoloInfer::report_error(module, "Data transmission, Unknown exception"); }
+    return report_error(module, "Data transmission, Message: " + std::string(_ex.what()));
+  } catch (...) { return report_error(module, "Data transmission, Unknown exception"); }
   HoloInfer::timer_init(e_time);
   HoloInfer::timer_check(s_time, e_time, module + " Data transmission ");
 
@@ -715,9 +708,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
     // single transmitter used
     auto out_message = nvidia::gxf::Entity::New(cont);
-    if (!out_message) {
-      return HoloInfer::report_error(module, "Data transmission, Out message allocation");
-    }
+    if (!out_message) { return report_error(module, "Data transmission, Out message allocation"); }
 
     // to combine static and dynamic I/O tensors, existing out_tensors must be checked for every
     // tensor in input_data_map
@@ -729,8 +720,8 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
     for (unsigned int i = 0; i < out_tensors.size(); ++i) {
       if (input_data_map.find(out_tensors[i]) == input_data_map.end()) {
-        return HoloInfer::report_error(
-            module, "Data Transmission, Mapped data not found for " + out_tensors[i]);
+        return report_error(module,
+                            "Data Transmission, Mapped data not found for " + out_tensors[i]);
       }
       auto current_out_tensor = out_tensors[i];
 
@@ -769,8 +760,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
       }
 
       if (tensor_out_dims_map.find(key_name) == tensor_out_dims_map.end())
-        return HoloInfer::report_error(module,
-                                       "Tensor mapping not found in dimension map for " + key_name);
+        return report_error(module, "Tensor mapping not found in dimension map for " + key_name);
 
       std::vector<int64_t> dims = tensor_out_dims_map.at(key_name)[tensor_index];
 
@@ -802,7 +792,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         }
         default: {
           HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and 4.");
-          return HoloInfer::report_error(
+          return report_error(
               module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
         }
       }
@@ -884,7 +874,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         }
       }
       if (stat != GXF_SUCCESS) {
-        return HoloInfer::report_error(
+        return report_error(
             module, "Data Transmission, Out tensor transmission failed for " + current_out_tensor);
       }
     }
@@ -894,9 +884,8 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     op_output.emit(result, "transmitter");
     HoloInfer::timer_init(e_time);
   } catch (std::exception& _ex) {
-    return HoloInfer::report_error(module,
-                                   "Data transmission, Message: " + std::string(_ex.what()));
-  } catch (...) { return HoloInfer::report_error(module, "Data transmission, Unknown exception"); }
+    return report_error(module, "Data transmission, Message: " + std::string(_ex.what()));
+  } catch (...) { return report_error(module, "Data transmission, Unknown exception"); }
   HoloInfer::timer_init(e_time);
   HoloInfer::timer_check(s_time, e_time, module + " Data transmission ");
 
@@ -907,7 +896,7 @@ gxf_result_t set_activation_per_model(
     std::shared_ptr<HoloInfer::InferenceSpecs>& inference_specs,
     const HoloInfer::Mappings& activation_map,
     const std::vector<HoloInfer::ActivationSpec>& activation_specs, const std::string& module) {
-  if (!inference_specs) { return HoloInfer::report_error(module, "Inference specs is null"); }
+  if (!inference_specs) { return report_error(module, "Inference specs is null"); }
 
   HoloInfer::Mappings on_fly_act_map;
   // Merge predefined act with on_fly_act_map

@@ -26,9 +26,6 @@ namespace holoscan::gxf {
 void GXFNetworkContext::set_parameters() {
   update_params_from_args();
 
-  if (!spec_) {
-    throw std::runtime_error(fmt::format("No component spec for GXFNetworkContext '{}'", name_));
-  }
   // Set Handler parameters
   for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
 }

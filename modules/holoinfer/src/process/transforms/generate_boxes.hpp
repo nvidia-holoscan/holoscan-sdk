@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,7 +123,7 @@ class GenerateBoxes : public TransformBase {
   /// object (if there is a mismatch)
   std::vector<std::string> label_strings = {"object"};
 
-  /// Stores mapping of model tensors to Holoscan GXF tensors
+  /// Stores mapping of model tensors to Holoscan tensors
   std::map<std::string, std::string> tensor_to_output_map;
 
   /// Color to be displayed for masks per object

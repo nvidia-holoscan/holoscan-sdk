@@ -104,12 +104,14 @@ void init_execution_context(py::module_& m) {
           },
           "cuda_stream_ptr"_a,
           doc::ExecutionContext::doc_device_from_stream)
-      .def("find_operator",
-           [](PyExecutionContext& context, const std::string& op_name = "") -> py::object {
+      .def(
+          "find_operator",
+          [](PyExecutionContext& context, const std::string& op_name = "") -> py::object {
             auto op = context.find_operator(op_name);
             return py::cast(op);
           },
-          "op_name"_a = "", doc::ExecutionContext::doc_find_operator)
+          "op_name"_a = "",
+          doc::ExecutionContext::doc_find_operator)
       .def(
           "get_operator_status",
           [](ExecutionContext& context, const std::string& op_name = "") -> py::object {
@@ -124,14 +126,19 @@ void init_execution_context(py::module_& m) {
           doc::ExecutionContext::doc_get_operator_status);
 }
 
-PyExecutionContext::PyExecutionContext(gxf_context_t context, py::object py_op)
+PyExecutionContext::PyExecutionContext(gxf_context_t context,
+                                       const std::shared_ptr<PyOperator>& py_op)
     : gxf::GXFExecutionContext() {
-  op_ = py_op.cast<Operator*>();
-  if (op_->graph_entity()) { eid_ = op_->graph_entity()->eid(); }
-  py_input_context_ =
-      std::make_shared<PyInputContext>(this, op_, op_->spec()->inputs(), py_op);
-  py_output_context_ =
-      std::make_shared<PyOutputContext>(this, op_, op_->spec()->outputs(), py_op);
+  if (py_op) {
+    op_ = py_op.get();
+    if (op_->graph_entity()) { eid_ = op_->graph_entity()->eid(); }
+    py_input_context_ = std::make_shared<PyInputContext>(this, op_, op_->spec()->inputs(), py_op);
+    py_output_context_ =
+        std::make_shared<PyOutputContext>(this, op_, op_->spec()->outputs(), py_op);
+  } else {
+    HOLOSCAN_LOG_ERROR("PyExecutionContext: py_op is nullptr");
+    throw std::runtime_error("PyExecutionContext: py_op is nullptr");
+  }
 
   gxf_input_context_ = py_input_context_;
   gxf_output_context_ = py_output_context_;

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,11 +13,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# create a folder to store the compiled libraries
+################################################################################
+# Root folder to store the holoscan python module
+################################################################################
 set(HOLOSCAN_PYTHON_MODULE_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/../${HOLOSCAN_INSTALL_LIB_DIR}/holoscan)
 file(MAKE_DIRECTORY ${HOLOSCAN_PYTHON_MODULE_BINARY_DIR})
 
+################################################################################
+# Pybind11 ABI config
+################################################################################
+# Prevent strict ABI protection in pybind11
+# https://github.com/pybind/pybind11/pull/2602
+add_library(pybind11_abi_config INTERFACE)
+target_compile_definitions(pybind11_abi_config
+    INTERFACE
+        PYBIND11_COMPILER_TYPE=""
+        PYBIND11_STDLIB=""
+        PYBIND11_BUILD_ABI=""
+)
+
+# Use it as holoscan::pybind11 in this build and projects importing holoscan
+add_library(holoscan::pybind11 ALIAS pybind11_abi_config)
+set_target_properties(pybind11_abi_config PROPERTIES
+    EXPORT_NAME pybind11
+)
+
+################################################################################
 # Utility function to generate pybind11 modules
+################################################################################
 function(holoscan_pybind11_module pybind11_module_name)
     set(module_target ${pybind11_module_name}_python)
     pybind11_add_module(${module_target} MODULE ${ARGN})
@@ -25,7 +48,9 @@ function(holoscan_pybind11_module pybind11_module_name)
     add_dependencies(holoscan-python ${module_target})
 
     target_link_libraries(${module_target}
-        PRIVATE holoscan::core
+        PRIVATE
+            holoscan::core
+            holoscan::pybind11
     )
 
     # Sets the rpath of the module
@@ -79,7 +104,10 @@ function(holoscan_pybind11_module pybind11_module_name)
     )
 endfunction()
 
-# custom target for top-level __init__.py file is copied
+################################################################################
+# Copy pure python files
+################################################################################
+# __init__.py
 set(CMAKE_PYBIND11_PRIMARY_INIT_FILE ${CMAKE_CURRENT_LIST_DIR}/__init__.py.in)
 configure_file(
     ${CMAKE_PYBIND11_PRIMARY_INIT_FILE}
@@ -87,7 +115,7 @@ configure_file(
     @ONLY
 )
 
-# custom target for top-level decorator.py file is copied
+# decorator.py
 set(CMAKE_PYBIND11_DECORATORS_PY_FILE ${CMAKE_CURRENT_LIST_DIR}/decorator.py)
 add_custom_target(holoscan-python-decorator
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PYBIND11_DECORATORS_PY_FILE}" "${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/"
@@ -95,17 +123,18 @@ add_custom_target(holoscan-python-decorator
 )
 add_dependencies(holoscan-python holoscan-python-decorator)
 
-
-# copy Holoscan Python CLI module
+# cli
 set(HOLOSCAN_PYTHON_CLI_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cli)
 add_custom_target(holoscan-python-cli
     COMMAND ${CMAKE_COMMAND} -E copy "${HOLOSCAN_PYTHON_CLI_MODULE_PATH}" "${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/"
     DEPENDS "${HOLOSCAN_PYTHON_CLI_MODULE_PATH}"
 )
 add_dependencies(holoscan-python holoscan-python-cli)
+add_subdirectory(cli) # redundant?
 
-# submodules
-add_subdirectory(cli)
+################################################################################
+# Pybind11 modules
+################################################################################
 add_subdirectory(conditions)
 add_subdirectory(core)
 add_subdirectory(executors)
@@ -117,7 +146,9 @@ add_subdirectory(operators)
 add_subdirectory(resources)
 add_subdirectory(schedulers)
 
-# install
+################################################################################
+# Install the whole module
+################################################################################
 install(
     DIRECTORY "${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}"
     DESTINATION python/${HOLOSCAN_INSTALL_LIB_DIR}

@@ -41,7 +41,9 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-class EmitterReceiverRegistry;  // Forward declaration
+// Forward declarations
+class EmitterReceiverRegistry;
+class PyOperator;
 
 void init_io_context(py::module_&);
 
@@ -51,12 +53,12 @@ class PYBIND11_EXPORT PyInputContext : public gxf::GXFInputContext {
   using gxf::GXFInputContext::GXFInputContext;
   PyInputContext(ExecutionContext* execution_context, Operator* op,
                  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,
-                 py::object py_op);
+                 const std::shared_ptr<PyOperator>& py_op);
 
   py::object py_receive(const std::string& name, const std::string& kind);
 
  private:
-  py::object py_op_ = py::none();
+  PyOperator* py_op_ = nullptr;
 
   /// @brief Receive data as a Python object from the specified input port
   py::object receive_as_single(const std::string& name);
@@ -72,13 +74,13 @@ class PYBIND11_EXPORT PyOutputContext : public gxf::GXFOutputContext {
 
   PyOutputContext(ExecutionContext* execution_context, Operator* op,
                   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs,
-                  py::object py_op);
+                  const std::shared_ptr<PyOperator>& py_op);
 
   void py_emit(py::object& data, const std::string& name, const std::string& emitter_name = "",
                const int64_t acq_timestamp = -1);
 
  private:
-  py::object py_op_ = py::none();
+  PyOperator* py_op_ = nullptr;
 
   /// @brief Handle emitting data if it is a PyEntity object
   bool handle_py_entity(py::object& data, const std::string& name, int64_t acq_timestamp,

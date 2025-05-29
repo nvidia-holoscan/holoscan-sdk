@@ -31,14 +31,12 @@
 #include <utility>
 #include <vector>
 
-#include "gxf/std/system.hpp"  // for stopping the GXF scheduler
 #include "holoscan/core/app_worker.hpp"
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/cli_options.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/graph.hpp"  // for FragmentNodeType
-#include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 #include "holoscan/core/schedulers/greedy_fragment_allocation.hpp"
 #include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
@@ -60,6 +58,7 @@ namespace holoscan {
 // Grace period for worker termination. Needs to be less than kWorkerTerminationGracePeriodMs that
 // is defined in app_driver.cpp.
 constexpr int kWorkerTerminationGracePeriodMs = 400;
+constexpr int kDriverShutdownTimeoutSeconds = 10;
 
 bool AppDriver::get_bool_env_var(const char* name, bool default_value) {
   const char* env_value = std::getenv(name);
@@ -906,6 +905,11 @@ std::unordered_map<std::string, std::string> AppDriver::schedule() const {
 }
 
 void AppDriver::check_fragment_schedule(const std::string& worker_address) {
+  if (!driver_server_) {
+    HOLOSCAN_LOG_ERROR("check_fragment_schedule exited early, driver_server_ was null");
+    return;
+  }
+
   // Create a client to communicate with the worker
   if (!worker_address.empty() && worker_address != "") {
     driver_server_->connect_to_worker(worker_address);
@@ -999,11 +1003,7 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
       app_status_ = AppStatus::kError;
 
       // Stop the driver server
-      if (driver_server_) {
-        driver_server_->stop();
-      } else {
-        HOLOSCAN_LOG_DEBUG("No driver server available to stop.");
-      }
+      driver_server_->stop();
       return;
     }
 
@@ -1130,6 +1130,10 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
                      worker_id,
                      static_cast<int>(error_code));
 
+  if (!driver_server_) {
+    HOLOSCAN_LOG_ERROR("check_worker_execution exited early because driver_server_ was null");
+    return;
+  }
   bool is_removed = driver_server_->close_worker_connection(worker_id);
   if (is_removed) {
     switch (error_code) {
@@ -1162,12 +1166,7 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
         app_status_ = AppStatus::kError;
 
         // Stop the driver server
-        if (driver_server_) {
-          driver_server_->stop();
-          // Do not call 'driver_server_->wait()' as current thread is the driver server thread
-        } else {
-          HOLOSCAN_LOG_DEBUG("No driver server available to stop.");
-        }
+        driver_server_->stop();
       } break;
     }
   }
@@ -1387,31 +1386,44 @@ std::future<void> AppDriver::launch_fragments_async(
 
 void AppDriver::setup_signal_handlers() {
   auto sig_handler = [this]([[maybe_unused]] void* context, int signum) {
-    HOLOSCAN_LOG_WARN("Received interrupt signal (Ctrl+C). Initiating clean shutdown...");
+    // Set a static flag instead of logging in the signal handler
+    static std::atomic<bool> shutdown_in_progress{false};
+    bool expected = false;
 
-    // Start termination process
-    if (app_status_ != AppStatus::kError) {
-      // Terminate all workers with cancelled status
-      terminate_all_workers(AppWorkerTerminationCode::kCancelled);
-
-      // Set app status to finished
-      app_status_ = AppStatus::kFinished;
-
-      // Stop the driver server
-      if (driver_server_) {
-        driver_server_->stop();
-      }
+    // Only one thread should handle the shutdown
+    if (!shutdown_in_progress.compare_exchange_strong(expected, true)) {
+      return;  // Another thread is already handling shutdown
     }
 
-    // Create a watchdog thread to ensure we exit even if clean shutdown hangs
-    std::thread([signum]() {
-      // Wait for a reasonable time for clean shutdown
-      std::this_thread::sleep_for(std::chrono::seconds(10));
+    // Now that we're outside the immediate signal handler context,
+    // it's safer to log (though still not ideal)
+    std::thread([this, signum]() {
+      // Run cleanup in a separate thread to avoid signal handler issues
+      HOLOSCAN_LOG_WARN("Received interrupt signal (Ctrl+C). Initiating clean shutdown...");
 
-      HOLOSCAN_LOG_ERROR("Clean shutdown timed out after 10 seconds. Forcing exit...");
-      // Use the original signal to terminate
-      std::signal(signum, SIG_DFL);
-      std::raise(signum);
+      // Start termination process
+      if (app_status_ != AppStatus::kError) {
+        // Terminate all workers with cancelled status
+        terminate_all_workers(AppWorkerTerminationCode::kCancelled);
+
+        // Set app status to finished
+        app_status_ = AppStatus::kFinished;
+
+        // Stop the driver server
+        if (driver_server_) { driver_server_->stop(); }
+      }
+
+      // Create a watchdog thread to ensure we exit even if clean shutdown hangs
+      std::thread([signum]() {
+        // Wait for a reasonable time for clean shutdown
+        std::this_thread::sleep_for(std::chrono::seconds(kDriverShutdownTimeoutSeconds));
+
+        HOLOSCAN_LOG_ERROR("Clean shutdown timed out after {} seconds. Forcing exit...",
+                           kDriverShutdownTimeoutSeconds);
+        // Use the original signal to terminate
+        std::signal(signum, SIG_DFL);
+        std::raise(signum);
+      }).detach();
     }).detach();
   };
 

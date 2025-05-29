@@ -31,13 +31,12 @@
 #include <vector>
 
 #include <common/type_name.hpp>
-#include <gxf/cuda/cuda_stream.hpp>
 #include "./common.hpp"
 #include "./domain/tensor_map.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
 #include "./gxf/entity.hpp"
-#include "./gxf/gxf_cuda.hpp"
+#include "./gxf/gxf_cuda.hpp"  // for holoscan::gxf::CudaObjectHandler
 #include "./message.hpp"
 #include "./operator.hpp"
 #include "./type_traits.hpp"

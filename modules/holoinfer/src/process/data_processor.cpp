@@ -171,6 +171,26 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
                   "float32");
             }
 
+            // extract output dimensions
+            std::string current_output_dimensions = "output_dimensions-" + kernel_identifier;
+            if (custom_kernels.find(current_output_dimensions) != custom_kernels.end()) {
+              auto output_dimensions_string = custom_kernels.at(current_output_dimensions);
+              std::vector<std::string> output_dimensions;
+              string_split(output_dimensions_string, output_dimensions, ',');
+              std::vector<int> output_dimensions_int;
+              for (auto& dim : output_dimensions) {
+                output_dimensions_int.push_back(std::stoi(dim));
+              }
+              custom_kernel_output_dimensions_[kernel_identifier] =
+                  std::move(output_dimensions_int);
+            } else {
+              // If there are multiple custom cuda kernels chained, then for all custom cuda
+              // kernels, the output dimensions must be specified in the parameter set otherwise
+              // the output dimensions for specific kernels are ignored and the output dimensions
+              // is assumed to be the same as the input dimensions for all custom cuda kernels
+              dynamic_output_dim_ = false;
+            }
+
             // extract threads per block
             std::string current_threads_per_block = "thread_per_block-" + kernel_identifier;
             if (custom_kernels.find(current_threads_per_block) != custom_kernels.end()) {

@@ -15,11 +15,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
-from env_wrapper import env_var_context
-
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, Operator, OperatorSpec
 from holoscan.operators import PingTxOp
+
+from ..env_wrapper import env_var_context
 
 NUM_EXCEPTIONS = 10
 

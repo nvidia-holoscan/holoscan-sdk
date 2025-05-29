@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/holoscan.hpp"
@@ -35,7 +36,7 @@ class StringTxOp : public Operator {
                [[maybe_unused]] ExecutionContext& context) override {
     auto value = std::make_shared<std::string>(message_);
     if (verbose_) { HOLOSCAN_LOG_INFO("{}: sending message", name()); }
-    op_output.emit(value, "out");
+    op_output.emit(std::move(value), "out");
   };
 
   void set_message(const std::string& message, bool verbose = false) {

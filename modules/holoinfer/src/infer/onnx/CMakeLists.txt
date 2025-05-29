@@ -31,8 +31,6 @@ target_link_libraries(holoinfer_ort
         CUDA::cudart
         holoscan::logger
         holoscan::infer
-        GXF::core
-        yaml-cpp
         holoscan_security_flags
 )
 target_include_directories(holoinfer_ort

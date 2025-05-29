@@ -22,6 +22,7 @@ install(
     download_ngc_data
     generate_extension_uuids.py
     generate_gxf_manifest.py
+    get_cmake_cuda_archs.py
     graph_surgeon.py
     gxf_entity_codec.py
     video_validation.py

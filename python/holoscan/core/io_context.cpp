@@ -210,8 +210,7 @@ py::object PyInputContext::receive_as_single(const std::string& name) {
 }
 
 py::object PyInputContext::py_receive(const std::string& name, const std::string& kind) {
-  auto* py_op = py_op_.cast<PyOperator*>();
-  auto py_op_spec = py_op->py_shared_spec();
+  auto py_op_spec = py_op_->py_shared_spec();
 
   bool should_return_tuple = should_return_as_tuple(name, kind, py_op_spec);
   if (should_return_tuple) { return receive_as_tuple(name); }
@@ -287,8 +286,7 @@ bool PyOutputContext::check_distributed_app(const std::string& name) {
 
   // If this operator doesn't have a UCX connector, can still determine if the app is
   // a multi-fragment app via the application pointer assigned to the fragment
-  auto* py_op = py_op_.cast<PyOperator*>();
-  auto py_op_spec = py_op->py_shared_spec();
+  auto py_op_spec = py_op_->py_shared_spec();
   auto* app_ptr = py_op_spec->fragment()->application();
   if (app_ptr != nullptr) {
     // a non-empty fragment graph means that the application is multi-fragment
@@ -333,8 +331,13 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   // avoid overhead of retrieving operator name for release builds
 #ifdef NDEBUG
 #else
-  auto op_name = py_op_.attr("name").cast<std::string>();
-  HOLOSCAN_LOG_DEBUG("py_emit (operator name={}, port name={}):", op_name, name);
+  if (py_op_) {
+    auto op_name = py_op_->name();
+    HOLOSCAN_LOG_DEBUG("py_emit (operator name={}, port name={}):", op_name, name);
+  } else {
+    HOLOSCAN_LOG_ERROR("PyOutputContext: py_op_ is not set");
+    throw std::runtime_error("PyOutputContext: py_op_ is not set");
+  }
 #endif
 
   auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
@@ -506,14 +509,14 @@ void init_io_context(py::module_& m) {
 
 PyInputContext::PyInputContext(ExecutionContext* execution_context, Operator* op,
                                std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,
-                               py::object py_op)
+                               const std::shared_ptr<PyOperator>& py_op)
     : gxf::GXFInputContext::GXFInputContext(execution_context, op, inputs),
-      py_op_(std::move(py_op)) {}
+      py_op_(py_op.get()) {}
 
 PyOutputContext::PyOutputContext(ExecutionContext* execution_context, Operator* op,
                                  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs,
-                                 py::object py_op)
+                                 const std::shared_ptr<PyOperator>& py_op)
     : gxf::GXFOutputContext::GXFOutputContext(execution_context, op, outputs),
-      py_op_(std::move(py_op)) {}
+      py_op_(py_op.get()) {}
 
 }  // namespace holoscan

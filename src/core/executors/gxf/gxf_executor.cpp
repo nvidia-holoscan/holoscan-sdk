@@ -20,12 +20,14 @@
 #include <signal.h>
 
 #include <algorithm>
+#include <atomic>
 #include <deque>
 #include <list>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <typeinfo>
 #include <unordered_map>
@@ -47,6 +49,7 @@
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/errors.hpp"
+#include "holoscan/core/executors/gxf/gxf_logger.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/graph.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
@@ -134,48 +137,8 @@ static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
     "libgxf_ucx_holoscan.so",  // serialize holoscan::Message
 };
 
-static nvidia::Severity s_gxf_log_level = nvidia::Severity::INFO;
-
-void gxf_logging_holoscan_format(const char* file, int line, nvidia::Severity severity,
-                                 const char* log, void*) {
-  if (severity == nvidia::Severity::ALL || severity == nvidia::Severity::COUNT) {
-    HOLOSCAN_LOG_ERROR("Invalid severity level ({}): Log severity cannot be 'ALL' or 'COUNT'.",
-                       static_cast<int>(severity));
-  }
-
-  // Ignore severity if requested
-  if (s_gxf_log_level == nvidia::Severity::NONE || severity > s_gxf_log_level) { return; }
-
-  LogLevel holoscan_log_level = LogLevel::INFO;
-
-  switch (severity) {
-    case nvidia::Severity::VERBOSE:
-      holoscan_log_level = LogLevel::TRACE;
-      break;
-    case nvidia::Severity::DEBUG:
-      holoscan_log_level = LogLevel::DEBUG;
-      break;
-    case nvidia::Severity::INFO:
-      holoscan_log_level = LogLevel::INFO;
-      break;
-    case nvidia::Severity::WARNING:
-      holoscan_log_level = LogLevel::WARN;
-      break;
-    case nvidia::Severity::ERROR:
-      holoscan_log_level = LogLevel::ERROR;
-      break;
-    case nvidia::Severity::PANIC:
-      holoscan_log_level = LogLevel::CRITICAL;
-      break;
-    default:
-      holoscan_log_level = LogLevel::INFO;
-  }
-
-  std::string_view file_str(file);
-  std::string_view file_base = file_str.substr(file_str.find_last_of("/") + 1);
-
-  holoscan::log_message(file_base.data(), line, "", holoscan_log_level, log);
-}
+// Timeout in seconds before forcing application exit on SIGINT/SIGTERM
+static constexpr int kForceExitTimeoutSeconds = 3;
 
 static void setup_gxf_logging() {
   LogLevel holoscan_log_level = holoscan::log_level();
@@ -231,9 +194,15 @@ static void setup_gxf_logging() {
     }
   }
 
-  s_gxf_log_level = gxf_log_level;
+  // Set the GXF log level that is used by the holoscan::gxf::GXFLogger ILogger interface
+  GXFLogger::set_gxf_log_level(static_cast<int>(gxf_log_level));
 
-  nvidia::LoggingFunction = gxf_logging_holoscan_format;
+  nvidia::logger::GxfLogger& gxf_logger = nvidia::logger::GlobalGxfLogger::instance();
+
+  // If the GXF logger is not already set, set it to a new GXFLogger
+  std::shared_ptr<GXFLogger> gxf_logger_ptr =
+      std::dynamic_pointer_cast<GXFLogger>(gxf_logger.logger());
+  if (!gxf_logger_ptr) { gxf_logger.logger(std::make_shared<GXFLogger>()); }
 }
 
 GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
@@ -241,45 +210,13 @@ GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
   if (fragment == nullptr) { throw std::runtime_error("Fragment is nullptr"); }
 
   if (create_gxf_context) {
-    setup_gxf_logging();
-
-    bool trace_enable = AppDriver::get_bool_env_var("HOLOSCAN_ENABLE_PROFILE", false);
-    holoscan::profiler::trace(trace_enable);
-
-    Application* application = fragment->application();
-
-    // TODO(gbae): make shared context work
-    // Note:: Do not create shared context for now as it can cause segmentation fault while
-    // multiple fragments are activated at the same time.
-    // We don't have a way to prevent this from happening yet without modifying GXF.
-
-    // if (application) {
-    //   GXF_LOG_INFO("Creating a sharing context");
-    //   gxf_context_t shared_context = nullptr;
-    //   HOLOSCAN_GXF_CALL_FATAL(
-    //       GxfGetSharedContext(application->executor().context(), &shared_context));
-    //   HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate1(shared_context, &context_));
-    // } else {
-    auto frag_name_display = fragment_->name();
-    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
-    HOLOSCAN_LOG_INFO("{}Creating context", frag_name_display);
-    HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate(&context_));
-    // }
     owns_context_ = true;
-    extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
-    extension_manager_->refresh();
-    // Register extensions for holoscan (GXFWrapper codelet)
-    register_extensions();
-
-    // When we use the GXF shared context, entity name collisions can occur if multiple fragments
-    // are initialized at the same time.
-    // To avoid this, we prefix the entity names with the fragment name.
-    if (application != fragment) { entity_prefix_ = fmt::format("{}__", fragment_->name()); }
-    HOLOSCAN_LOG_DEBUG("Entity prefix for fragment '{}': '{}'", fragment_->name(), entity_prefix_);
+    reset_execution_state();
   }
 }
 
 GXFExecutor::~GXFExecutor() {
+  // Clean up all GXF entity resources before context destruction to prevent memory errors
   implicit_broadcast_entities_.clear();
   util_entity_.reset();
   gpu_device_entity_.reset();
@@ -287,33 +224,7 @@ GXFExecutor::~GXFExecutor() {
   network_context_entity_.reset();
   connections_entity_.reset();
 
-  // Deinitialize GXF context only if `owns_context_` is true
-  if (owns_context_) {
-    auto frag_name_display = fragment_->name();
-    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
-    try {
-      HOLOSCAN_LOG_INFO("{}Destroying context", frag_name_display);
-    } catch (const std::exception& e) {}
-
-    // Unregister signal handlers if any
-    try {
-      SignalHandler::unregister_signal_handler(context_, SIGINT);
-      SignalHandler::unregister_signal_handler(context_, SIGTERM);
-    } catch (const std::exception& e) {
-      try {
-        HOLOSCAN_LOG_ERROR("Failed to unregister signal handlers: {}", e.what());
-      } catch (const std::exception& e) {}
-    }
-    try {
-      HOLOSCAN_GXF_CALL(GxfContextDestroy(context_));
-    } catch (const std::exception& e) {}
-  }
-
-  // Delete GXF Holoscan Extension
-  if (gxf_holoscan_extension_) {
-    delete gxf_holoscan_extension_;
-    gxf_holoscan_extension_ = nullptr;
-  }
+  destroy_context();
 }
 
 void GXFExecutor::initialize_gxf_resources(
@@ -375,10 +286,102 @@ void GXFExecutor::interrupt() {
   }
 }
 
+void GXFExecutor::reset_execution_state() {
+  if (!owns_context_) {
+    HOLOSCAN_LOG_DEBUG("GXFExecutor does not own the context, skipping reset_execution_state");
+    return;
+  }
+
+  HOLOSCAN_LOG_DEBUG("Resetting GXFExecutor execution state");
+  op_eid_ = 0;
+  op_cid_ = 0;
+
+  is_gxf_graph_initialized_ = false;
+  is_gxf_graph_activated_ = false;
+  entity_prefix_ = "";
+
+  connection_items_.clear();
+
+  implicit_broadcast_entities_.clear();
+  util_entity_.reset();
+  gpu_device_entity_.reset();
+  scheduler_entity_.reset();
+  network_context_entity_.reset();
+  connections_entity_.reset();
+
+  setup_gxf_logging();
+
+  bool trace_enable = AppDriver::get_bool_env_var("HOLOSCAN_ENABLE_PROFILE", false);
+  holoscan::profiler::trace(trace_enable);
+
+  Application* application = fragment_->application();
+
+  // Create new context only if run method was invoked or context is nullptr
+  if (is_run_called_ || !context_) {
+    // Destroy existing context if it exists and run has been called already
+    if (is_run_called_ && context_) { destroy_context(); }
+
+    auto frag_name_display = fragment_->name();
+    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+    HOLOSCAN_LOG_INFO("{}Creating context", frag_name_display);
+    HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate(&context_));
+
+    // Initialize extension manager
+    if (!extension_manager_) {
+      extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
+    } else {
+      extension_manager_->reset_context(context_);
+    }
+
+    // Initialize extension.
+
+    // Refresh internal extension list
+    extension_manager_->refresh();
+    // Register extensions for holoscan (GXFWrapper codelet)
+    register_extensions();
+  }
+
+  // When we use the GXF shared context, entity name collisions can occur if multiple fragments
+  // are initialized at the same time.
+  // To avoid this, we prefix the entity names with the fragment name.
+  if (application != fragment_) { entity_prefix_ = fmt::format("{}__", fragment_->name()); }
+  HOLOSCAN_LOG_DEBUG("Entity prefix for fragment '{}': '{}'", fragment_->name(), entity_prefix_);
+}
+
+void GXFExecutor::destroy_context() {
+  // Deinitialize GXF context only if `owns_context_` is true and context is not nullptr
+  if (owns_context_ && context_) {
+    auto frag_name_display = fragment_->name();
+    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+    try {
+      HOLOSCAN_LOG_INFO("{}Destroying context", frag_name_display);
+    } catch (const std::exception& e) {}
+
+    // Unregister signal handlers if any
+    try {
+      SignalHandler::unregister_signal_handler(context_, SIGINT);
+      SignalHandler::unregister_signal_handler(context_, SIGTERM);
+      // Reset the interrupt flags
+      reset_interrupt_flags();
+    } catch (const std::exception& e) {
+      try {
+        HOLOSCAN_LOG_ERROR("Failed to unregister signal handlers: {}", e.what());
+      } catch (const std::exception& e) {}
+    }
+    try {
+      HOLOSCAN_GXF_CALL(GxfContextDestroy(context_));
+    } catch (const std::exception& e) {}
+    // Reset the context pointer
+    context_ = nullptr;
+    // Reset the GXF holoscan extension after destroying the context
+    gxf_holoscan_extension_.reset();
+  }
+}
+
 void GXFExecutor::context(void* context) {
   context_ = context;
-  extension_manager_ = std::make_shared<GXFExtensionManager>(context_);
-  extension_manager_->refresh();
+  // Reset the execution state with the new context
+  reset_execution_state();
 }
 
 std::shared_ptr<ExtensionManager> GXFExecutor::extension_manager() {
@@ -2398,29 +2401,68 @@ void GXFExecutor::activate_gxf_graph() {
   }
 }
 
-void GXFExecutor::run_gxf_graph() {
-  auto context = context_;
+// Initialize the static members
+std::atomic<bool> GXFExecutor::interrupt_requested_(false);
+std::atomic<bool> GXFExecutor::force_exit_countdown_started_(false);
 
-  // Install signal handler
-  auto sig_handler = [](void* context, [[maybe_unused]] int signum) {
-    gxf_result_t code = GxfGraphInterrupt(context);
-    if (code != GXF_SUCCESS) {
-      HOLOSCAN_LOG_ERROR("GxfGraphInterrupt Error: {}", GxfResultStr(code));
-      HOLOSCAN_LOG_ERROR("Send interrupt once more to terminate immediately");
-      SignalHandler::unregister_signal_handler(context, signum);
-      // Register the global signal handler.
-      SignalHandler::register_global_signal_handler(signum, []([[maybe_unused]] int sig) {
-        HOLOSCAN_LOG_ERROR("Interrupted by user (global signal handler)");
-        exit(1);
-      });
+// Update setup_signal_handlers to use class members
+std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fragment) {
+  // Define the signal handler
+  auto sig_handler = [fragment]([[maybe_unused]] void* user_data, [[maybe_unused]] int sig) {
+    if (!interrupt_requested_.load()) {
+      // First signal, request graceful shutdown
+      interrupt_requested_.store(true);
+
+      // Launch a thread to handle the interrupt outside the signal handler context
+      std::thread([fragment]() {
+        // First signal, request graceful shutdown
+        HOLOSCAN_LOG_INFO("Interrupt signal received. Shutting down gracefully...");
+        // Call stop_execution to gracefully shut down
+        fragment->stop_execution();
+
+        // Start a force exit countdown if graceful shutdown takes too long
+        if (!force_exit_countdown_started_.load()) {
+          force_exit_countdown_started_.store(true);
+
+          // Launch another thread for the force exit countdown
+          std::thread([]() {
+            // Sleep for kForceExitTimeoutSeconds seconds, then force exit if we're still alive
+            std::this_thread::sleep_for(std::chrono::seconds(kForceExitTimeoutSeconds));
+            if (interrupt_requested_.load()) {
+              HOLOSCAN_LOG_ERROR(
+                  "Application did not shut down within {} seconds of interrupt. Forcing exit...",
+                  kForceExitTimeoutSeconds);
+              std::quick_exit(1);  // Force immediate termination
+            }
+          }).detach();
+        }
+      }).detach();
+    } else {
+      // This is a second or later signal, force exit if we're still alive
+      std::thread([]() {
+        HOLOSCAN_LOG_ERROR("Received multiple interrupt signals. Forcing immediate exit.");
+        std::quick_exit(1);  // Force immediate termination
+      }).detach();
     }
   };
+
+  return sig_handler;
+}
+
+void GXFExecutor::run_gxf_graph() {
+  auto context = context_;
+  Fragment* fragment = fragment_;
+
+  // Setup signal handlers for graceful shutdown
+  auto sig_handler = setup_signal_handlers(fragment);
+  // Register signal handlers that are effective during GXF graph execution.
   SignalHandler::register_signal_handler(context, SIGINT, sig_handler);
   SignalHandler::register_signal_handler(context, SIGTERM, sig_handler);
 
   // Run the graph
-  auto frag_name_display = fragment_->name();
+  auto frag_name_display = fragment->name();
   if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+
   activate_gxf_graph();
   HOLOSCAN_LOG_INFO("{}Running Graph...", frag_name_display);
   HOLOSCAN_GXF_CALL_FATAL(GxfGraphRunAsync(context));
@@ -2433,12 +2475,13 @@ void GXFExecutor::run_gxf_graph() {
     HOLOSCAN_GXF_CALL_WARN(GxfGraphDeactivate(context));
   }
   is_gxf_graph_activated_ = false;
+  is_run_called_ = true;
 
   // TODO(unknown): do we want to move the log level of these info messages to debug?
   HOLOSCAN_LOG_INFO("{}Graph execution finished.", frag_name_display);
 
   // clean up any shared pointers to graph entities within operators, scheulder, network context
-  fragment_->reset_graph_entities();
+  fragment->reset_graph_entities();
 
   if (wait_result != GXF_SUCCESS) {
     const std::string error_msg =
@@ -2531,9 +2574,9 @@ void GXFExecutor::register_extensions() {
     nvidia::gxf::Extension* extension_ptr = nullptr;
     if (!extension_factory.register_extension(&extension_ptr)) {
       HOLOSCAN_LOG_ERROR("Failed to register Holoscan SDK internal extension");
+    } else {
+      gxf_holoscan_extension_ = std::shared_ptr<nvidia::gxf::Extension>(extension_ptr);
     }
-    // Set the extension pointer so that we can delete the extension object later in ~GXFExecutor()
-    gxf_holoscan_extension_ = extension_ptr;
   }
 }
 
@@ -2738,6 +2781,11 @@ void GXFExecutor::add_component_args_to_graph_entity(
       }
     }
   }
+}
+
+void GXFExecutor::reset_interrupt_flags() {
+  interrupt_requested_.store(false);
+  force_exit_countdown_started_.store(false);
 }
 
 }  // namespace holoscan::gxf

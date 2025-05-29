@@ -2,7 +2,7 @@
 # Writing Python bindings for a C++ Operator
 
 
-For convenience while maintaining high performance, {ref}`operators written in C++<holoscan-defining-operators-cpp>` can be wrapped in Python. The general approach uses [Pybind11](https://pybind11.readthedocs.io/en/stable/index.html) to concisely create bindings that provide a familiar, Pythonic experience to application authors. 
+For convenience while maintaining high performance, {ref}`operators written in C++<holoscan-defining-operators-cpp>` can be wrapped in Python. The general approach uses [Pybind11](https://pybind11.readthedocs.io/en/stable/index.html) to concisely create bindings that provide a familiar, Pythonic experience to application authors.
 
 :::{note}
 While we provide some utilities to simplify part of the process, this section is designed for advanced developers, since the wrapping of the C++ class using pybind11 is mostly manual and can vary between each operator.
@@ -227,7 +227,7 @@ To have your bindings built, ensure the CMake code below is executed as part of 
 ````{tab-item} In HoloHub
 We provide a CMake utility function named [pybind11_add_holohub_module](https://github.com/nvidia-holoscan/holohub/blob/main/cmake/pybind11_add_holohub_module.cmake) in HoloHub to facilitate configuring and building your python bindings.
 
-In our skeleton code below, a top-level CMakeLists.txt which already defined the `tool_tracking_postprocessor` target for the C++ operator would need to do `add_subdirectory(tool_tracking_postprocessor)` to include the following [CMakeLists.txt](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/CMakeLists.txt). The `pybind11_add_holohub_module` lists that C++ operator target, the C++ class to wrap, and the path to the C++ binding source code we implemented above.  Note how the module name provided as the first argument to PYPBIND11_MODULE needs to match `_<CPP_CMAKE_TARGET>` (`_tool_tracking_postprocessor_op` in this case).
+In our skeleton code below, a top-level CMakeLists.txt which already defined the `tool_tracking_postprocessor` target for the C++ operator would need to do `add_subdirectory(tool_tracking_postprocessor)` to include the following [CMakeLists.txt](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/CMakeLists.txt). The `pybind11_add_holohub_module` lists that C++ operator target, the C++ class to wrap, and the path to the C++ binding source code we implemented above.
 
 ```{code-block} cmake
 :caption: tool_tracking_postprocessor/python/CMakeLists.txt
@@ -240,46 +240,75 @@ pybind11_add_holohub_module(
 )
 ```
 
-The key details here are that `CLASS_NAME` should match the name of the C++ class that is being wrapped and is also the name that will be used for the class from Python. `SOURCES` should point to the file where the C++ operator that is being wrapped is defined. The `CPP_CMAKE_TARGET` name will be the name of the holohub package submodule that will contain the operator. 
+The key details here are that:
+- `CLASS_NAME` should match the name of the C++ class that is being wrapped and is also the name that will be used for the class from Python.
+- `SOURCES` should point to the file where the C++ operator that is being wrapped is defined.
+- The `CPP_CMAKE_TARGET` name defines multiple things:
+   1. The name of the C++ CMake target to link against (the library that exposes your C++ operator to wrap).
+   2. The name of the holohub package submodule that will contain the operator (for `import holohub.tool_tracking_postprocessor` to work for example)
+   3. The name of the generated shared library for your bindings. This **MUST** match - minus the preceding underscore - the module name passed as the first argument to the `PYBIND11_MODULE` macro in the bindings implementation file (`_tool_tracking_postprocessor` in the example above).
 
-Note that the python subdirectory where this CMakeLists.txt resides is reachable thanks to the `add_subdirectory(python)` in the [CMakeLists.txt one folder above](https://github.com/nvidia-holoscan/holohub/blob/30d2797e37615f87056075b36ebf1d905b6c770b/operators/tool_tracking_postprocessor/CMakeLists.txt#L33-L35), but that's an arbitrary opinionated location and not a required directory structure.
+Note that the python subdirectory where this CMakeLists.txt resides is accessed with the `add_subdirectory(python)` in the [CMakeLists.txt one folder above](https://github.com/nvidia-holoscan/holohub/blob/30d2797e37615f87056075b36ebf1d905b6c770b/operators/tool_tracking_postprocessor/CMakeLists.txt#L33-L35), but that's an arbitrary opinionated location, not a required directory structure.
 
 ````
 ````{tab-item} Standalone CMake
 
-Follow the [pybind11 documentation](https://pybind11.readthedocs.io/en/stable/compiling.html#building-with-cmake) to configure your CMake project to use pybind11. Then, use the [pybind11_add_module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) function with the cpp files containing the code above, and link against `holoscan::core` and the library that exposes your C++ operator to wrap.
+Follow the [pybind11 documentation](https://pybind11.readthedocs.io/en/stable/compiling.html#building-with-cmake) to configure your CMake project to use pybind11. Then, use the [pybind11_add_module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) function with the cpp files containing the code above. You will need to link your Python binding target against the library that exposes your C++ operator to wrap, `holoscan::core` (for core Holoscan symbols), and `holoscan::pybind11` (holoscan SDK 3.3.0 or later).
 
 ```{code-block} cmake
 :caption: my_op_python/CMakeLists.txt
 
 pybind11_add_module(my_python_module my_op_pybind.cpp)
 target_link_libraries(my_python_module
-  PRIVATE holoscan::core
-  PUBLIC my_op
+  PRIVATE
+    holoscan::core
+    holoscan::pybind11
+  PUBLIC
+    my_op
 )
 ```
 
-**Example**: in the SDK, this is done [here](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/python/holoscan/CMakeLists.txt).
+**Example**: in the SDK, the main Python module links against these targets [here](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/CMakeLists.txt).
 
 ````
 `````
 
 (pybind11-module_name_warning)=
 :::{warning}
-The name chosen for `CPP_CMAKE_TARGET` **must** also be used (along with a preceding underscore) as the module name passed as the first argument to the [PYBIND11_MODULE macro in the bindings](https://github.com/grlee77/holohub/blob/3adbba16baafb5958950b261a0d6521f7544cfeb/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor.cpp#L94).
 
-Note that there is an initial underscore prepended to the name. This is the naming convention used for the shared library and corresponding `__init__.py` file that will be generated by the `pybind11_add_holohub_module` helper function above.
+The module name passed to `PYBIND11_MODULE` in your bindings needs to match the name of the shared library that you generate in your CMake project.
+- In the Holoscan SDK and HoloHub, helper functions prepend an underscore (`_`) to the name of the output shared library, and to the import name of said shared library in the auto-generated `__init__.py` file.
+- When using `pybind11_add_module` directly instead with no changes to the `OUTPUT_NAME` property of the generated CMake target, the name passed to that macro will be used as the name of the shared library, and should match the module name passed to `PYBIND11_MODULE`.
 
-If the name is specified incorrectly, the build will still complete, but at application run time an `ImportError` such as the following would occur
+If the name is specified incorrectly, the build will still complete, but at application run time an `ImportError` such as the following would occur:
 
 ```bash
-[command] python3 /workspace/holohub/applications/endoscopy_tool_tracking/python/endoscopy_tool_tracking.py --data /workspace/holohub/data/endoscopy
-Traceback (most recent call last):
-  File "/workspace/holohub/applications/endoscopy_tool_tracking/python/endoscopy_tool_tracking.py", line 38, in <module>
-    from holohub.tool_tracking_postprocessor import ToolTrackingPostprocessorOp
-  File "/workspace/holohub/build/python/lib/holohub/tool_tracking_postprocessor/__init__.py", line 19, in <module>
     from ._tool_tracking_postprocessor import ToolTrackingPostprocessorOp
 ImportError: dynamic module does not define module export function (PyInit__tool_tracking_postprocessor)
+```
+:::
+
+(pybind11-abi-compatibility)=
+:::{note}
+
+The `holoscan::pybind11` CMake target is available starting with the Holoscan SDK 3.3.0 release. It provides an interface to pybind11 compiler definitions used within the Holoscan SDK to relax conservative ABI compatibility checks, which is necessary to support building custom operator bindings with a different compiler version than what the Holoscan SDK was built with ([details](https://github.com/pybind/pybind11/pull/2602)). Otherwise, the following `ImportError` would occur:
+
+```bash
+ImportError: generic_type: type "MyOp" referenced unknown base type "holoscan::Operator"
+```
+
+For versions of the Holoscan SDK prior to 3.3.0, either build your operator bindings in the NGC Holoscan container to ensure the same gcc version is used, or inspect the gcc and C++ lib versions your Holoscan SDK installation with the following commands:
+
+```bash
+# gcc version: 11.4.0
+$ find <holoscan_install_dir> -name "_core.cpython*\.so" | xargs readelf -p .comment
+[     0]  GCC: (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0
+```
+
+```bash
+# c++ lib: libstdc++
+$ find <holoscan_install_dir> -name "_core.cpython*\.so" | xargs readelf -d | grep c++
+ 0x0000000000000001 (NEEDED)             Shared library: [libstdc++.so.6]
 ```
 :::
 
@@ -290,7 +319,7 @@ ImportError: dynamic module does not define module export function (PyInit__tool
 ````{tab-item} In HoloHub
 
 When building your project, two files will be generated inside `<build_or_install_dir>/python/lib/holohub/<CPP_CMAKE_TARGET>` (e.g. `build/python/lib/holohub/tool_tracking_postprocessor/`):
-1. the shared library for your bindings (`_tool_tracking_postprocessor_op.cpython-<pyversion>-<arch>-linux-gnu.so`)
+1. the shared library for your bindings (`_tool_tracking_postprocessor.cpython-<pyversion>-<arch>-linux-gnu.so`)
 2. an `__init__.py` file that makes the necessary imports to expose this in python
 
 Assuming you have `export PYTHONPATH=<build_or_install_dir>/python/lib/`, you should then be able to create an application in Holohub that imports your class via:
@@ -305,13 +334,13 @@ from holohub.tool_tracking_postprocessor_op import ToolTrackingPostProcessorOp
 
 When building your project, a shared library file holding the python bindings and named `my_python_module.cpython-<pyversion>-<arch>-linux-gnu.so` will be generated inside `<build_or_install_dir>/my_op_python` (configurable with `OUTPUT_NAME` and `LIBRARY_OUTPUT_DIRECTORY` respectively in CMake).
 
-From there, you can import it in python via:
+From there, you can import it in python like so, assuming `<build_or_install_dir>` is listed under the `PYTHONPATH` environment variable:
 
 ```py
 import holoscan.core
 import holoscan.gxf  # if your c++ operator uses gxf extensions
 
-from <build_or_install_dir>.my_op_python import MyOp
+from <build_or_install_dir>.my_op_python.my_python_module import MyOp
 ```
 
 :::{tip}

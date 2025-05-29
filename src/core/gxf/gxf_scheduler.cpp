@@ -36,10 +36,6 @@ nvidia::gxf::Clock* GXFScheduler::gxf_clock() {
 void GXFScheduler::set_parameters() {
   update_params_from_args();
 
-  if (!spec_) {
-    throw std::runtime_error(fmt::format("No component spec for GXFScheduler '{}'", name_));
-  }
-
   // Set Handler parameters
   for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
 }

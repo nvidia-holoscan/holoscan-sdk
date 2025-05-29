@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,9 @@ namespace py = pybind11;
 
 namespace holoscan {
 
+PyComponentSpec::PyComponentSpec(Fragment* fragment, py::object component)
+    : ComponentSpec(fragment), py_component_(py::cast<std::shared_ptr<PyComponent>>(component)) {}
+
 // TOIMPROVE: Should we parse headline and description from kwargs or just
 //            add them to the function signature?
 void PyComponentSpec::py_param(const std::string& name, const py::object& default_value,
@@ -55,12 +58,23 @@ void PyComponentSpec::py_param(const std::string& name, const py::object& defaul
     }
   }
 
-  // Create parameter object
-  py_params_.emplace_back(py_component());
+  // Create parameter object.
+  // Note that we create a weakref object to avoid incrementing/decrementing the
+  // reference count for the object because owning the object would create a cyclic reference.
+  py_params_.emplace_back(py::weakref(py_component()));
 
   // Register parameter
   auto& parameter = py_params_.back();
+  // Please see register_py_type() in 'public/python/holoscan/core/arg.cpp' to see how
+  // Parameter<py::object> is handled.
   param(parameter, name.c_str(), headline.c_str(), description.c_str(), default_value, flag);
+}
+
+py::object PyComponentSpec::py_component() const {
+  if (auto py_component = py_component_.lock()) {
+    return py::cast(py_component);
+  }
+  return py::none();
 }
 
 void init_component(py::module_& m) {

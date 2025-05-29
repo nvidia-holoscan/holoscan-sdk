@@ -406,7 +406,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   const uint32_t device_index = window_->select_device(instance_, compatible_physical_devices);
 
   // Finally initialize the device
-  nvvk_.vk_ctx_.initDevice(device_index, context_info);
+  nvvk_.vk_ctx_.initDevice(compatible_physical_devices[device_index], context_info);
   device_ = nvvk_.vk_ctx_.m_device;
   physical_device_ = nvvk_.vk_ctx_.m_physicalDevice;
 

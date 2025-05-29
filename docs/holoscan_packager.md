@@ -202,7 +202,7 @@ Additional arguments are required when launching the container to enable the pac
 3. Use the [`holoscan package`](./cli/package.md) command to create a HAP container image. For example:
 
    ```bash
-   holoscan package --platform x64-workstation --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
+   holoscan package --platform x86_64 --tag my-awesome-app --config /path/to/my/awesome/application/config.yaml /path/to/my/awesome/application/
    ```
 
 ### Additional Requirements for Non-Distributed Applications

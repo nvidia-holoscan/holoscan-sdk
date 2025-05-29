@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,10 +37,10 @@ cudaError_t check_cuda(cudaError_t result) {
   return result;
 }
 
-gxf_result_t report_error(const std::string& module, const std::string& submodule) {
+int report_error(const std::string& module, const std::string& submodule) {
   std::string error_string{"Error in " + module + ", Sub-module->" + submodule};
   HOLOSCAN_LOG_ERROR("{}", error_string);
-  return GXF_FAILURE;
+  return 1;  // GXF_FAILURE
 }
 
 void raise_error(const std::string& module, const std::string& message) {
@@ -52,11 +52,11 @@ void timer_init(TimePoint& _t) {
   _t = std::chrono::steady_clock::now();
 }
 
-gxf_result_t timer_check(TimePoint& start, TimePoint& end, const std::string& module) {
+int timer_check(TimePoint& start, TimePoint& end, const std::string& module) {
   timer_init(end);
   int64_t delta = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   HOLOSCAN_LOG_DEBUG("{} : {} microseconds", module.c_str(), delta);
-  return GXF_SUCCESS;
+  return 0;  // GXF_SUCCESS
 }
 
 bool is_platform_aarch64() {

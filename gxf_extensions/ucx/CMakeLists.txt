@@ -19,13 +19,13 @@ add_library(gxf_ucx_holoscan_lib SHARED
 )
 target_link_libraries(gxf_ucx_holoscan_lib
   PUBLIC
-    CUDA::cudart
     GXF::std
     GXF::multimedia
     GXF::serialization
-    ucx::ucp
-    yaml-cpp
     holoscan::core  # needed for ucx_holoscan_component_serializer.cpp
+  PRIVATE
+    ucx::ucp
+    GXF::ucx
 )
 
 # Create extension

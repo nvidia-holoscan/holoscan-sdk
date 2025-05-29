@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,12 +15,45 @@
 # limitations under the License.
 #
 
-# It is necessary to set the TORCH_CUDA_ARCH_LIST explicitly for newer versions of Torch (circa v2.3.0)
-# Note: `find_package(Torch)` is overwriting CUDA_ARCHITECTURES, make sure to pay attention to this
-# when adding CUDA kernels to this the Torch backend library.
-set(TORCH_CUDA_ARCH_LIST "5.0 8.0 8.6 8.9 9.0")
+# Torch ignores CUDA_ARCHITECTURES and sets it to OFF after calling `find_package(Torch)`.
+# Instead, it uses TORCH_CUDA_ARCH_LIST to generate the NVCC gencode flags which it appends to
+# CUDA_NVCC_FLAGS. The format of that list differs from CUDA_ARCHITECTURES.
+# Here we convert CUDA_ARCHITECTURES to the TORCH_CUDA_ARCH_LIST equivalent.
+if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
+    set(TORCH_CUDA_ARCH_LIST "Auto")
+else()
+    set(TORCH_CUDA_ARCH_LIST "")
+
+    foreach(arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
+        set(ptx true)
+
+        # Check for suffixes, remove them, and set the PTX flag
+        if(arch MATCHES "-virtual$")
+            string(REGEX REPLACE "-virtual$" "" arch ${arch})
+        elseif(arch MATCHES "-real$")
+            string(REGEX REPLACE "-real$" "" arch ${arch})
+            set(ptx false)
+        endif()
+
+        # Insert decimal point before the last digit.
+        # ex: 86 -> 8.6, 120 -> 12.0, 90a -> 9.0a
+        string(REGEX REPLACE "([0-9]+)([0-9][a-zA-Z]*)$" "\\1.\\2" arch "${arch}")
+
+        # Append +PTX suffix if needed
+        if(ptx)
+            set(arch "${arch}+PTX")
+        endif()
+
+        list(APPEND TORCH_CUDA_ARCH_LIST ${arch})
+    endforeach()
+endif()
+message(STATUS "TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}")
+
+# Find dependencies
 find_package(Torch REQUIRED)
 find_package(TorchVision REQUIRED)
+
+# Create the holoinfer torch backend library
 add_library(holoinfer_torch SHARED core.cpp)
 add_library(holoscan::infer::torch ALIAS holoinfer_torch)
 set_target_properties(holoinfer_torch PROPERTIES
@@ -35,7 +68,6 @@ target_link_libraries(holoinfer_torch
         torch
         -Wl,--no-as-needed TorchVision::TorchVision # torch plugin
         holoscan::logger
-        GXF::core
         yaml-cpp
         holoscan_security_flags
 )

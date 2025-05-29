@@ -188,9 +188,46 @@ if(HOLOSCAN_BUILD_GXF_EXTENSIONS)
 endif()
 
 # ##############################################################################
+# # Build Python module
+# ##############################################################################
+if(HOLOSCAN_BUILD_PYTHON)
+    add_subdirectory(python)
+endif()
+
+# ##############################################################################
 # # Configure scripts
 # ##############################################################################
 add_subdirectory(scripts)
+
+# ##############################################################################
+# # Download datasets
+# ##############################################################################
+add_subdirectory(data)
+
+# ##############################################################################
+# # Build examples
+# ##############################################################################
+if(HOLOSCAN_BUILD_EXAMPLES)
+  if(HOLOSCAN_BUILD_TESTS)
+    include(CTest)
+  endif()
+
+  add_subdirectory(examples)
+endif()
+
+# ##############################################################################
+# # Add tests
+# ##############################################################################
+if(HOLOSCAN_BUILD_TESTS)
+    # Enable testing for the current directory and below
+    include(CTest) # it calls 'enable_testing()' internally
+
+    add_subdirectory(tests)
+
+    # add Holoviz tests
+    add_test(NAME HOLOVIZ_FUNCTIONAL_TEST COMMAND holoscan::viz::functionaltests)
+    add_test(NAME HOLOVIZ_UNIT_TEST COMMAND holoscan::viz::unittests)
+endif()
 
 # ##############################################################################
 # # Package project
@@ -231,6 +268,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_v4l2
     profiler
     spdlog_logger
+    yaml-cpp
 )
 if(HOLOSCAN_BUILD_LIBTORCH)
   list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_torch)
@@ -238,14 +276,9 @@ endif()
 if(HOLOSCAN_BUILD_ORT)
     list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_ort)
 endif()
-
-# Add PUBLIC dependencies to our install target
-# Note: required due to. However, could only export but not install?
-# TODO: work on limiting PUBLIC dependencies by not including third-party
-# headers in our nterface headers, using forward declaration or PIMPL
-list(APPEND HOLOSCAN_INSTALL_TARGETS
-    yaml-cpp   # needed by holoscan::core
-)
+if(HOLOSCAN_BUILD_PYTHON)
+    list(APPEND HOLOSCAN_INSTALL_TARGETS pybind11_abi_config)
+endif()
 
 # Copy library files
 install(TARGETS ${HOLOSCAN_INSTALL_TARGETS}
@@ -325,7 +358,7 @@ foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
     endif()
 endforeach()
 
-if(HOLOSCAN_BUILD_PYTHON)
+if(HOLOSCAN_BUILD_PYTHON AND GXF_PYTHON_MODULE_PATH)
   install(
     DIRECTORY ${GXF_PYTHON_MODULE_PATH}
     DESTINATION python/${HOLOSCAN_INSTALL_LIB_DIR}
@@ -456,37 +489,6 @@ install(FILES "${CMAKE_BINARY_DIR}/${HOLOSCAN_PACKAGE_NAME}-config-version.cmake
         COMPONENT holoscan-core)
 
 # ##############################################################################
-# # Download datasets
+# # Configure CPack packaging
 # ##############################################################################
-add_subdirectory(data)
-
-# ##############################################################################
-# # Build examples
-# ##############################################################################
-if(HOLOSCAN_BUILD_EXAMPLES)
-  if(HOLOSCAN_BUILD_TESTS)
-    include(CTest)
-  endif()
-
-  add_subdirectory(examples)
-endif()
-
-# ##############################################################################
-# # Add tests
-# ##############################################################################
-if(HOLOSCAN_BUILD_TESTS)
-    # Enable testing for the current directory and below
-    include(CTest) # it calls 'enable_testing()' internally
-
-    add_subdirectory(tests)
-
-    # add Holoviz tests
-    add_test(NAME HOLOVIZ_FUNCTIONAL_TEST COMMAND holoscan::viz::functionaltests)
-    add_test(NAME HOLOVIZ_UNIT_TEST COMMAND holoscan::viz::unittests)
-endif()
-
-if(HOLOSCAN_BUILD_PYTHON)
-    add_subdirectory(python)
-endif()
-
 include(HoloscanCPack)

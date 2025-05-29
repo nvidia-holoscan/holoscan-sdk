@@ -53,32 +53,8 @@ void init_operator(py::module_&);
  *
  */
 
-class PYBIND11_EXPORT PyOperatorSpec : public OperatorSpec {
- public:
-  /* Inherit the constructors */
-  using OperatorSpec::OperatorSpec;
-
-  // Override the constructor to get the py::object for the Python class
-  explicit PyOperatorSpec(Fragment* fragment = nullptr, py::object op = py::none());
-
-  // TOIMPROVE: Should we parse headline and description from kwargs or just
-  //            add them to the function signature?
-  void py_param(const std::string& name, const py::object& default_value, const ParameterFlag& flag,
-                const py::kwargs& kwargs);
-
-  py::object py_op() const;
-
-  std::list<Parameter<py::object>>& py_params();
-
-  std::list<Parameter<std::vector<IOSpec*>>>& py_receivers();
-
- private:
-  py::object py_op_ = py::none();
-  // NOTE: we use std::list instead of std::vector because we register the address of Parameter<T>
-  // object to the GXF framework. The address of a std::vector element may change when the vector is
-  // resized.
-  std::list<Parameter<py::object>> py_params_;
-};
+// Forward declaration
+class PyOperatorSpec;
 
 class PYBIND11_EXPORT PyOperator : public Operator {
  public:
@@ -155,7 +131,7 @@ class PYBIND11_EXPORT PyOperator : public Operator {
   void release_internal_resources() override;
 
  private:
-  py::object py_op_ = py::none();                               ///> cache the Python operator
+  py::handle py_op_;                                            ///> cache the Python operator
   py::object py_initialize_ = py::none();                       ///> cache the initialize method
   py::object py_start_ = py::none();                            ///> cache the start method
   py::object py_stop_ = py::none();                             ///> cache the stop method
@@ -166,6 +142,33 @@ class PYBIND11_EXPORT PyOperator : public Operator {
 
   /// Python application pointer to access the trace/profile functions
   PyApplication* py_app_ = nullptr;
+};
+
+class PYBIND11_EXPORT PyOperatorSpec : public OperatorSpec {
+ public:
+  /* Inherit the constructors */
+  using OperatorSpec::OperatorSpec;
+
+  // Override the constructor to get the py::object for the Python class
+  explicit PyOperatorSpec(Fragment* fragment = nullptr, py::object op = py::none());
+
+  // TOIMPROVE: Should we parse headline and description from kwargs or just
+  //            add them to the function signature?
+  void py_param(const std::string& name, const py::object& default_value, const ParameterFlag& flag,
+                const py::kwargs& kwargs);
+
+  py::object py_op() const;
+
+  std::list<Parameter<py::object>>& py_params();
+
+  std::list<Parameter<std::vector<IOSpec*>>>& py_receivers();
+
+ private:
+  std::weak_ptr<PyOperator> py_op_;
+  // NOTE: we use std::list instead of std::vector because we register the address of Parameter<T>
+  // object to the GXF framework. The address of a std::vector element may change when the vector is
+  // resized.
+  std::list<Parameter<py::object>> py_params_;
 };
 
 }  // namespace holoscan

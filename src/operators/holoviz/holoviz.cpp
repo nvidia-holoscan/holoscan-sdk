@@ -34,6 +34,7 @@
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/executor.hpp"
+#include "holoscan/core/file_fifo_mutex.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_context.hpp"
@@ -141,6 +142,35 @@ class ScopedPushInstance {
   const holoscan::viz::InstanceHandle prev_instance_;
 };
 
+/**
+ * @brief Holoviz specific RAII class of the FileFIFOMutex. It enables a
+ * scoped FileFIFOMutex only if the is_mutex_enabled flag is true. This class
+ * manages scoped lock and unlock of the FileFIFOMutex.
+ *
+ */
+class ScopedHolovizFileMutex {
+ public:
+  // Deleting the default, copy and assignment constructors
+  ScopedHolovizFileMutex() = delete;
+  ScopedHolovizFileMutex(const ScopedHolovizFileMutex&) = delete;
+  ScopedHolovizFileMutex& operator=(const ScopedHolovizFileMutex&) = delete;
+
+  explicit ScopedHolovizFileMutex(bool is_mutex_enabled,
+                                  std::shared_ptr<holoscan::FileFIFOMutex> mutex) {
+    if (is_mutex_enabled && mutex) {
+      mutex_ = std::move(mutex);
+      mutex_->lock();
+    }
+  }
+  bool locked() const { return mutex_ && mutex_->locked(); }
+  ~ScopedHolovizFileMutex() {
+    if (mutex_) { mutex_->unlock(); }
+  }
+
+ private:
+  std::shared_ptr<holoscan::FileFIFOMutex> mutex_;
+};
+
 }  // namespace
 
 namespace holoscan::ops {
@@ -203,6 +233,8 @@ void HolovizOp::setup(OperatorSpec& spec) {
   constexpr bool DEFAULT_HEADLESS = false;
   constexpr bool DEFAULT_FRAMEBUFFER_SRGB = false;
   constexpr bool DEFAULT_VSYNC = false;
+  constexpr uint32_t DEFAULT_MULTIPROCESS_FRAMEDROP_WAITTIME_MS = 0;
+  static const std::string DEFAULT_HOLOVIZ_MULTIPROCESS_MUTEX_PATH("/tmp/holoscan_holoviz_mutex");
   constexpr ColorSpace DEFAULT_DISPLAY_COLOR_SPACE = ColorSpace::AUTO;
 
   spec.input<std::vector<gxf::Entity>>("receivers", IOSpec::kAnySize);
@@ -305,6 +337,21 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Enable vertical sync. If set to true the operator waits for the next vertical "
              "blanking period of the display to update the current image.",
              DEFAULT_VSYNC);
+  spec.param(multiprocess_framedrop_waittime_ms_,
+             "multiprocess_framedrop_waittime_ms",
+             "Multiprocess Framedrop Wait Time in ms",
+             "To enable frame dropping in multiprocess scenarios when Holoviz mutex is not "
+             "available, set this parameter to a non-zero positive integer. Setting it to zero "
+             "(default value) will not drop any frames. This option is only available when "
+             "HOLOSCAN_HOLOVIZ_MUTEX environment variable is set. ",
+             DEFAULT_MULTIPROCESS_FRAMEDROP_WAITTIME_MS);
+  spec.param(holoviz_multiprocess_mutex_path_,
+             "holoviz_multiprocess_mutex_path",
+             "Holoviz Multiprocess Mutex Path",
+             "Path to the mutex file for multiprocess scenarios."
+             "This option is only available when "
+             "HOLOSCAN_HOLOVIZ_MUTEX environment variable is set.",
+             DEFAULT_HOLOVIZ_MULTIPROCESS_MUTEX_PATH);
   spec.param(display_color_space_,
              "display_color_space",
              "Display Color Space",
@@ -700,17 +747,10 @@ bool HolovizOp::enable_conditional_port(const std::string& port_name,
 
 void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_output,
                                   ExecutionContext& context) {
-  auto entity = nvidia::gxf::Entity::New(context.context());
-  if (!entity) {
-    throw std::runtime_error("Failed to allocate message for the render buffer output.");
-  }
+  nvidia::gxf::Expected<nvidia::gxf::Entity> entity = nvidia::gxf::Unexpected{GXF_FAILURE};
+  nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>> video_buffer =
+      nvidia::gxf::Unexpected{GXF_FAILURE};
 
-  auto video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>("render_buffer_output");
-  if (!video_buffer) {
-    throw std::runtime_error("Failed to allocate the video buffer for the render buffer output.");
-  }
-
-  nvidia::gxf::VideoBufferInfo info;
   if (render_buffer_input_enabled_) {
     // check if there is a input buffer given to copy the output into
     auto maybe_render_buffer_input = op_input.receive<gxf::Entity>("render_buffer_input");
@@ -722,27 +762,24 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
-    auto render_buffer_input = maybe_render_buffer_input.value();
+    entity = maybe_render_buffer_input.value();
 
     // Get the empty input buffer
-    const auto& video_buffer_in =
-        static_cast<nvidia::gxf::Entity>(render_buffer_input).get<nvidia::gxf::VideoBuffer>();
-    if (!video_buffer_in) {
+    video_buffer = entity.value().get<nvidia::gxf::VideoBuffer>();
+    if (!video_buffer) {
       throw std::runtime_error("No video buffer attached to message on 'render_buffer_input'.");
     }
-
-    info = video_buffer_in.value()->video_frame_info();
-
-    if ((info.color_format != nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA)) {
-      throw std::runtime_error("Invalid render buffer input, expected an RGBA buffer.");
+  } else {
+    entity = holoscan::gxf::Entity::New(&context);
+    if (!entity) {
+      throw std::runtime_error("Failed to allocate message for the render buffer output.");
     }
 
-    video_buffer.value()->wrapMemory(info,
-                                     video_buffer_in.value()->size(),
-                                     video_buffer_in.value()->storage_type(),
-                                     video_buffer_in.value()->pointer(),
-                                     nullptr);
-  } else {
+    video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>("render_buffer_output");
+    if (!video_buffer) {
+      throw std::runtime_error("Failed to allocate the video buffer for the render buffer output.");
+    }
+
     // if there is no input buffer given, allocate one
     if (!allocator_.get()) {
       throw std::runtime_error("No render buffer input specified and no allocator set.");
@@ -761,8 +798,12 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
     if (!video_buffer.value()->pointer()) {
       throw std::runtime_error("Failed to allocate render output buffer.");
     }
+  }
 
-    info = video_buffer.value()->video_frame_info();
+  const nvidia::gxf::VideoBufferInfo info = video_buffer.value()->video_frame_info();
+
+  if ((info.color_format != nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA)) {
+    throw std::runtime_error("Invalid render buffer input, expected an RGBA buffer.");
   }
 
   // read the framebuffer
@@ -1408,6 +1449,20 @@ void HolovizOp::initialize() {
 }
 
 void HolovizOp::start() {
+  static const char* mutex_env_str = std::getenv("HOLOSCAN_HOLOVIZ_MUTEX");
+  if (mutex_env_str) {
+    // Check if HOLOSCAN_HOLOVIZ_MUTEX is a non-zero value or not
+    this->is_holoviz_multiprocess_mutex_enabled_ = mutex_env_str[0] == '0' ? false : true;
+  } else {
+    this->is_holoviz_multiprocess_mutex_enabled_ = false;
+  }
+
+  if (is_holoviz_multiprocess_mutex_enabled_ && !holoviz_multiprocess_mutex_) {
+    holoviz_multiprocess_mutex_ =
+        std::make_shared<holoscan::FileFIFOMutex>(holoviz_multiprocess_mutex_path_.get());
+    holoviz_multiprocess_mutex_->set_wait_time_ms(multiprocess_framedrop_waittime_ms_);
+  }
+
   // set the font to be used
   if (!font_path_.get().empty()) { viz::SetFont(font_path_.get().c_str(), 25.F); }
 
@@ -1427,9 +1482,15 @@ void HolovizOp::start() {
   if (headless_) { init_flags = viz::InitFlags::HEADLESS; }
 
   if (use_exclusive_display_) {
+    // In exclusive mode, we don't use Holoviz mutex for initialization.
     viz::Init(
         display_name_.get().c_str(), width_, height_, uint32_t(framerate_ * 1000.F), init_flags);
   } else {
+    ScopedHolovizFileMutex scoped_mutex(is_holoviz_multiprocess_mutex_enabled_,
+                                        holoviz_multiprocess_mutex_);
+    // At initialization, we do not consider the framedrop option as
+    // initialization must happen in every case. Therefore, we do our best to issue a
+    // mutually exclusive initialization.
     viz::Init(width_,
               height_,
               window_title_.get().c_str(),
@@ -1544,6 +1605,11 @@ void HolovizOp::start() {
 
 void HolovizOp::stop() {
   if (instance_) { viz::Shutdown(instance_); }
+  if (is_holoviz_multiprocess_mutex_enabled_ && multiprocess_framedrop_waittime_ms_) {
+    HOLOSCAN_LOG_INFO("Dropped {} frames due to unavailable mutex in multiprocess scenario.",
+                      dropped_frame_count_);
+  }
+  holoviz_multiprocess_mutex_.reset();  // early cleanup
 }
 
 void HolovizOp::disable_via_window_close() {
@@ -1565,10 +1631,10 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   // receive input messages
   auto maybe_receivers_messages = op_input.receive<std::vector<gxf::Entity>>("receivers");
   if (!maybe_receivers_messages || maybe_receivers_messages->empty()) {
-    std::string err_msg =
-        fmt::format("No input messages received for op '{}' on port 'receivers': {}",
-                    name_,
-                    maybe_receivers_messages.error().what());
+    std::string err_msg = fmt::format(
+        "No input messages received for op '{}' on port 'receivers': {}",
+        name_,
+        !maybe_receivers_messages.has_value() ? maybe_receivers_messages.error().what() : "empty");
     HOLOSCAN_LOG_ERROR(err_msg);
     throw std::runtime_error(err_msg);
   }
@@ -1590,6 +1656,17 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
   // nothing to do if minimized
   if (viz::WindowIsMinimized()) { return; }
+
+  // Right near the window minimization option, check if we need to lock and whether
+  // the mutex is available.
+  ScopedHolovizFileMutex scoped_mutex(is_holoviz_multiprocess_mutex_enabled_,
+                                      holoviz_multiprocess_mutex_);
+  if (is_holoviz_multiprocess_mutex_enabled_ && multiprocess_framedrop_waittime_ms_ &&
+      !scoped_mutex.locked()) {
+    HOLOSCAN_LOG_DEBUG("Frame dropped due to unavailable mutex in multiprocess scenario.");
+    dropped_frame_count_++;
+    return;
+  }
 
   // handle camera messages
   if (camera_eye_message || camera_eye_message || camera_up_message) {

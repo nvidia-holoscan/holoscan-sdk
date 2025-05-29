@@ -38,6 +38,8 @@
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 
+#include "../core/resource.hpp"
+
 #include "gxf/core/gxf.h"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)

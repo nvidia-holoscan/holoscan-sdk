@@ -40,7 +40,9 @@ enum class FormatDType {
   kUnsigned8,
   kFloat32,
   kYUV420,
-  kNV12,
+  kNV12BT709HDTV,
+  kNV12BT709CSC,
+  kNV12BT601Full,
   kYUYV
 };
 
@@ -55,8 +57,10 @@ enum class FormatConversionType {
   kRGB888ToYUV420,
   kYUV420ToRGBA8888,
   kYUV420ToRGB888,
-  kNV12ToRGB888,
-  kYUYVToRGB888,
+  kNV12BT709HDTVToRGB888,
+  kNV12BT709CSCToRGB888,
+  kNV12BT601FullToRGB888,
+  kYUYVToRGB888
 };
 
 /**
@@ -66,12 +70,13 @@ enum class FormatConversionType {
  *
  * - **source_video** : `nvidia::gxf::Tensor` or `nvidia::gxf::VideoBuffer`
  *   - The input video frame to process. If the input is a VideoBuffer it must be in format
- *     GXF_VIDEO_FORMAT_RGBA, GXF_VIDEO_FORMAT_RGB or GXF_VIDEO_FORMAT_NV12. If a video buffer is
- *     not found, the input port message is searched for a tensor with the name specified by
- *     `in_tensor_name`. This must be a tensor in one of several supported formats (unsigned 8-bit
- *     int or float32 graycale, unsigned 8-bit int RGB or RGBA YUV420, NV12 or YUYV). The tensor or
- *     video buffer may be in either host or device memory (a host->device copy is performed if
- *     needed).
+ *     GXF_VIDEO_FORMAT_RGBA, GXF_VIDEO_FORMAT_RGB or GXF_VIDEO_FORMAT_NV12,
+ *     GXF_VIDEO_FORMAT_NV12_ER, GXF_VIDEO_FORMAT_NV12_709 or GXF_VIDEO_FORMAT_NV12_709_ER. If
+ *     a video buffer is not found, the input port message is searched for a tensor with the name
+ *     specified by `in_tensor_name`. This must be a tensor in one of several supported formats
+ *     (unsigned 8-bit int or float32 graycale, unsigned 8-bit int RGB or RGBA YUV420,
+ *     NV12BT601Full, NV12BT709CSC, NV12BT709HDTV, or YUYV). The tensor or video buffer may be in
+ *     either host or device memory (a host->device copy is performed if needed).
  *
  * ==Named Outputs==
  *
@@ -90,14 +95,16 @@ enum class FormatConversionType {
  *   - `"float32"`
  *   - `"rgba8888"`
  *   - `"yuv420"`
- *   - `"nv12"`
  * - **in_dtype**: Source data type. The available options are:
  *   - `"rgb888"`
  *   - `"uint8"`
  *   - `"float32"`
  *   - `"rgba8888"`
  *   - `"yuv420"`
- *   - `"nv12"`
+ *   - `"nv12"`            (alias for nv12_bt709_hdtv)
+ *   - `"nv12_bt601_full"` (BT.601 full range as in NPP's NV12ToRGB functions and IPP's YUVToRGB)
+ *   - `"nv12_bt709_hdtv"` (BT.709 recommendation for high-definition TV (HDTV))
+ *   - `"nv12_bt709_csc"`  (BT.709 recommendation for computer systems consideration (CSC))
  *   - `"yuyv"`
  *   Optional (default: `"rgb888"`).
  * - **in_tensor_name**: The name of the input tensor. Optional (default: `""`).

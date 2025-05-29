@@ -36,8 +36,6 @@
 #include "./type_traits.hpp"
 #include "holoscan/logger/logger.hpp"
 
-// #include "gxf/std/complex.hpp"  // nvidia::gxf::complex64, complex128
-
 namespace holoscan {
 
 /**
@@ -177,8 +175,6 @@ class ArgType {
       to_element_type_pair<uint64_t>(ArgElementType::kUnsigned64),
       to_element_type_pair<float>(ArgElementType::kFloat32),
       to_element_type_pair<double>(ArgElementType::kFloat64),
-      // to_element_type_pair<nvidia::gxf::complex64>(ArgElementType::kComplex64),
-      // to_element_type_pair<nvidia::gxf::complex128>(ArgElementType::kComplex128),
       to_element_type_pair<std::complex<float>>(ArgElementType::kComplex64),
       to_element_type_pair<std::complex<double>>(ArgElementType::kComplex128),
       to_element_type_pair<std::string>(ArgElementType::kString),
@@ -203,8 +199,6 @@ class ArgType {
       {ArgElementType::kFloat64, "double"},
       {ArgElementType::kComplex64, "std::complex<float>"},
       {ArgElementType::kComplex128, "std::complex<double>"},
-      // {ArgElementType::kComplex64, "nvidia::gxf::complex64"},
-      // {ArgElementType::kComplex128, "nvidia::gxf::complex128"},
       {ArgElementType::kString, "std::string"},
       {ArgElementType::kHandle, "std::any"},
       {ArgElementType::kYAMLNode, "YAML::Node"},

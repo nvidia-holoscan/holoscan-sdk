@@ -36,9 +36,10 @@ class FiniteSourceOp : public holoscan::Operator {
     spec.param(max_count_, "max_count", "Maximum Count", "Maximum number of times to emit data", 5);
   }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
-    if (count_< max_count_.get()) {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
+    if (count_ < max_count_.get()) {
       std::cout << "[" << name() << "] Emitting data: " << count_ << std::endl;
       op_output.emit(count_, "out");
 
@@ -72,7 +73,7 @@ class ProcessorOp : public holoscan::Operator {
   }
 
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto data = op_input.receive<int>("in").value();
 
     // Process the data
@@ -98,8 +99,9 @@ class ConsumerOp : public holoscan::Operator {
 
   void setup(holoscan::OperatorSpec& spec) override { spec.input<int>("in"); }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
+  void compute(holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto data = op_input.receive<int>("in").value();
 
     // Consume the data
@@ -128,8 +130,9 @@ class MonitorOp : public holoscan::Operator {
                {});
   }
 
-  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-               holoscan::ExecutionContext& context) override {
+  void compute([[maybe_unused]] holoscan::InputContext& op_input,
+               [[maybe_unused]] holoscan::OutputContext& op_output,
+               [[maybe_unused]] holoscan::ExecutionContext& context) override {
     static int consecutive_idle_count = 0;
 
     std::cerr << "[" << name() << "] Operator status summary:" << std::endl;

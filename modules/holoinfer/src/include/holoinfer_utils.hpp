@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,8 +24,6 @@
 #include <string>
 #include <vector>
 
-#include "gxf/core/gxf.h"
-
 #include "holoinfer_buffer.hpp"
 #include "holoinfer_constants.hpp"
 
@@ -39,21 +37,19 @@ namespace inference {
 cudaError_t check_cuda(cudaError_t result);
 
 /**
- * Reports error with module, submodule and message
+ * Reports error with module, submodule and message, but does not throw an exception
  *
  * @param module    Module of error occurrence
  * @param submodule Submodule/Function of error occurrence with the error message (as string)
- *
- * @return GXF Error code: GXF_FAILURE
  */
-gxf_result_t _HOLOSCAN_EXTERNAL_API_ report_error(const std::string& module,
-                                                  const std::string& submodule);
+int _HOLOSCAN_EXTERNAL_API_ report_error(const std::string& module, const std::string& submodule);
 
 /**
  * Raise error with module, submodule and message
  *
  * @param module    Module of error occurrence
  * @param submodule Submodule/Function of error occurrence with the error message (as string)
+ * @returns 1 (enum value of GXF_FAILURE)
  */
 void _HOLOSCAN_EXTERNAL_API_ raise_error(const std::string& module, const std::string& submodule);
 
@@ -88,7 +84,14 @@ InferStatus processor_validity_check(const MultiMappings& processed_map,
 bool is_platform_aarch64();
 
 void timer_init(TimePoint& _t);
-gxf_result_t timer_check(TimePoint& start, TimePoint& end, const std::string& module);
+
+/**
+ * @brief Logs the module name and (end - start) time difference (at DEBUG level).
+ *
+ * @returns 0 if successful.
+ */
+int timer_check(TimePoint& start, TimePoint& end, const std::string& module);
+
 void string_split(const std::string& line, std::vector<std::string>& tokens, char c);
 
 /**

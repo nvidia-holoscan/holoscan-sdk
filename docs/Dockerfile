@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.2@sha256:e2a8561e419ab1ba6b2fe6cbdf49fd92b95912df1cf7d313c3e2230a333fdbcc
 
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@ ARG BASE_IMAGE=holoscan-sdk-build
 ################################################################
 # Base docs image that installs docs dependencies
 ################################################################
-FROM ubuntu:22.04 AS docs-base
+FROM ubuntu:24.04 AS docs-base
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -52,7 +52,7 @@ RUN cd /tmp/ \
 # Install Python dependencies
 # Pinned additional sphinxcontrib-* extensions to specific versions to avoid following error:
 # "The sphinxcontrib.* extension used by this project needs at least Sphinx v5.0;"
-RUN python3 -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
     exhale==0.3.5 \
     Sphinx==4.5.0 \
     sphinxcontrib-applehelp==1.0.2 \
@@ -76,7 +76,7 @@ FROM $BASE_IMAGE AS docs-html
 # Copy over installed dependencies from docs-base
 COPY --from=docs-base /usr/bin/dot /usr/bin/dot
 COPY --from=docs-base /usr/local/bin/doxygen /usr/local/bin/doxygen
-COPY --from=docs-base /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=docs-base /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
 COPY --from=docs-base /usr/local/bin/sphinx-build /usr/local/bin/sphinx-build
 COPY --from=docs-base /usr/local/bin/sphinx-autobuild /usr/local/bin/sphinx-autobuild
 COPY --from=docs-base /usr/lib/python3/dist-packages /usr/lib/python3/dist-packages
@@ -98,5 +98,5 @@ RUN apt-get update \
     texlive-extra-utils \
     # For Chromium (used by Puppeteer)
     libgbm1 \
-    libasound2 \
+    libasound2t64 \
     && rm -rf /var/lib/apt/lists/*

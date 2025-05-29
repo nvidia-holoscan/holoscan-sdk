@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,7 +83,7 @@ rapids_cpm_find(GLFW 3.4
     "GLFW_BUILD_WAYLAND ON"
     "GLFW_BUILD_TESTS OFF"
     "GLFW_BUILD_EXAMPLES OFF"
-    "GLFW_BULID_DOCS OFF"
+    "GLFW_BUILD_DOCS OFF"
     "GLFW_INSTALL OFF"
     EXCLUDE_FROM_ALL
 )

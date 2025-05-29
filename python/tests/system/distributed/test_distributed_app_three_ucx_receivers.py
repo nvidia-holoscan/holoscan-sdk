@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,11 +22,12 @@ import tempfile
 
 import numpy as np
 import pytest
-from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec, Tracker
-from utils import remove_ignored_errors
+
+from ..env_wrapper import env_var_context
+from .utils import remove_ignored_errors
 
 # # Uncomment the following line to use the real HolovizOp and VideoStreamReplayerOp operators
 # from holoscan.operators import HolovizOp, VideoStreamReplayerOp
@@ -258,7 +259,31 @@ def test_distributed_app_three_ucx_receivers(use_new_receivers, data_flow_tracki
 
 
 if __name__ == "__main__":
-    launch_app()
+    NUM_MSGS = 100
+    data_flow_tracking = True
+    use_new_receivers = True
+
+    # only record the log for the use_new_receivers case so we also test the no-logging code path
+    write_logfile = data_flow_tracking and use_new_receivers
+    logfile_directory = tempfile.mkdtemp() if write_logfile else None
+    try:
+        logfile = logfile_directory + "/holoscan.log" if write_logfile else None
+        launch_app(
+            use_new_receivers=use_new_receivers,
+            data_flow_tracking=data_flow_tracking,
+            logfile=logfile,
+        )
+        if data_flow_tracking and logfile is not None:
+            # verify that the logfile was created and is not empty
+            assert os.path.isfile(logfile)
+            with open(logfile) as f:
+                log_content = "".join(f.readlines())
+            assert "fragment1.replayer" in log_content
+            assert "fragment1.triangle" in log_content
+            assert "fragment1.rectangle" in log_content
+    finally:
+        if logfile_directory is not None:
+            shutil.rmtree(logfile_directory)
 
 # When running this test with real HolovizOp and VideoStreamReplayerOp operators, the following
 # configuration file (as "video_replayer_distributed.yaml" ) can be used:

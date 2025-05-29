@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,25 +46,35 @@ static void register_py_type() {
     // (Otherwise, run() method calls GxfGraphWait() which blocks the Python thread.)
     py::gil_scoped_acquire scope_guard;
 
+    // Get the operator object from the parameter (operator object is stored as a weakref object
+    // in `PyOperatorSpec::py_params_` to prevent cyclic references).
+    py::object op_obj = param.get()();  // call the object to get actual object
+    if (op_obj.is_none()) {
+      throw std::runtime_error(
+          fmt::format("operator weak reference is no longer valid while accessing parameter '{}'",
+                      param.key()));
+    }
+
     // If arg has no name and value, that indicates that we want to set the default value for
     // the native operator if it is not specified.
     if (arg.name().empty() && !arg.has_value()) {
       const char* key = param.key().c_str();
       // If the attribute is not None, we do not need to set it.
       // Otherwise, we set it to the default value (if it exists).
-      if (!py::hasattr(param.get(), key) ||
-          (py::getattr(param.get(), key).is(py::none()) && param.has_default_value())) {
-        py::setattr(param.get(), key, param.default_value());
+      if (!py::hasattr(op_obj, key) ||
+          (py::getattr(op_obj, key).is(py::none()) && param.has_default_value())) {
+        py::setattr(op_obj, key, param.default_value());
       }
       return;
     }
 
     // `PyOperatorSpec.py_param` will have stored the actual Operator class from Python
-    // into a Parameter<py::object> param, so `param.get()` here is `PyOperatorSpec.py_op`.
+    // into a Parameter<py::object> param (as a weakref object), so `op_obj` here is
+    // `PyOperatorSpec::py_op_`.
     // `param.key()` is the name of the attribute on the Python class.
     // We can then set that Class attribute's value to the value contained in Arg.
     // Here we use the `arg_to_py_object` utility to convert from `Arg` to `py::object`.
-    py::setattr(param.get(), param.key().c_str(), arg_to_py_object(arg));
+    py::setattr(op_obj, param.key().c_str(), arg_to_py_object(arg));
   });
 }
 

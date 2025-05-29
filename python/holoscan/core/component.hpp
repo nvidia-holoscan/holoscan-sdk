@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,29 +37,8 @@ namespace holoscan {
 
 void init_component(py::module_&);
 
-class PyComponentSpec : public ComponentSpec {
- public:
-  /* Inherit the constructors */
-  using ComponentSpec::ComponentSpec;
-
-  // Override the constructor to get the py::object for the Python class
-  explicit PyComponentSpec(Fragment* fragment = nullptr, py::object component = py::none())
-      : ComponentSpec(fragment), py_component_(std::move(component)) {}
-
-  void py_param(const std::string& name, const py::object& default_value, const ParameterFlag& flag,
-                const py::kwargs& kwargs);
-
-  py::object py_component() const { return py_component_; }
-
-  std::list<Parameter<py::object>>& py_params() { return py_params_; }
-
- private:
-  py::object py_component_ = py::none();
-  // NOTE: we use std::list instead of std::vector because we register the address of Parameter<T>
-  // object to the GXF framework. The address of a std::vector element may change when the vector is
-  // resized.
-  std::list<Parameter<py::object>> py_params_;
-};
+// Forward declarations
+class PyComponentSpec;
 
 class PyComponentBase : public ComponentBase {
  public:
@@ -83,6 +62,29 @@ class PyComponent : public Component {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(void, Component, initialize);
   }
+};
+
+class PyComponentSpec : public ComponentSpec {
+ public:
+  /* Inherit the constructors */
+  using ComponentSpec::ComponentSpec;
+
+  // Override the constructor to get the py::object for the Python class
+  explicit PyComponentSpec(Fragment* fragment = nullptr, py::object component = py::none());
+
+  void py_param(const std::string& name, const py::object& default_value, const ParameterFlag& flag,
+                const py::kwargs& kwargs);
+
+  py::object py_component() const;
+
+  std::list<Parameter<py::object>>& py_params() { return py_params_; }
+
+ private:
+  std::weak_ptr<PyComponent> py_component_;
+  // NOTE: we use std::list instead of std::vector because we register the address of Parameter<T>
+  // object to the GXF framework. The address of a std::vector element may change when the vector is
+  // resized.
+  std::list<Parameter<py::object>> py_params_;
 };
 
 }  // namespace holoscan

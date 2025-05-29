@@ -363,7 +363,9 @@ class DataProcessor {
   std::map<std::string, CUfunction> kernel_;
   std::map<std::string, holoinfer_datatype> output_dtype_;
   std::map<std::string, std::string> custom_kernel_thread_per_block_;
+  std::map<std::string, std::vector<int>> custom_kernel_output_dimensions_;
   std::map<std::string, bool> custom_cuda_kernel_processed_;
+  bool dynamic_output_dim_ = true;
 
   std::map<std::string, bool> first_time_kernel_launch_map_;
   std::map<std::string, std::vector<std::shared_ptr<DataBuffer>>> intermediate_buffers_;

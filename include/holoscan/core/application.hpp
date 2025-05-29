@@ -447,6 +447,20 @@ class Application : public Fragment {
   std::shared_ptr<AppDriver> app_driver_;  ///< The application driver.
   std::shared_ptr<AppWorker> app_worker_;  ///< The application worker.
 
+ protected:
+  /**
+   * @brief Reset internal application state to allow for multiple run calls
+   *
+   * This method resets the necessary internal state to allow multiple consecutive
+   * calls to run() or run_async() without requiring manual cleanup.
+   */
+  void reset_state() override;
+
+  // This flag tracks whether the fragment graph has been composed, allowing us to preserve
+  // the graph structure when compose_graph() is called after reset_state()
+  // sets is_composed_ to false.
+  bool is_fragment_graph_composed_ = false;
+
  private:
   /**
    * @brief Configure UCX environment variables

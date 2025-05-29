@@ -17,6 +17,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "holoscan/holoscan.hpp"
 
@@ -33,7 +34,7 @@ class PingTxOp : public Operator {
   void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
     auto value = std::make_shared<std::string>("Periodic ping...");
-    op_output.emit(value, "out");
+    op_output.emit(std::move(value), "out");
   };
 };
 

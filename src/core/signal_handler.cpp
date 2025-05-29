@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,10 @@
 
 #include "holoscan/core/signal_handler.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <utility>
 
 #include "holoscan/logger/logger.hpp"
@@ -25,7 +28,12 @@
 namespace holoscan {
 
 // Static member initializations
-struct sigaction SignalHandler::signal_handler_ {};
+struct sigaction SignalHandler::signal_handler_{};
+
+// Constants for signal handler timeouts
+constexpr auto kSignalHandlerStuckTimeoutMs =
+    2000;  // timeout before force exit if signal handler is stuck
+constexpr auto kSignalHandlerWatchdogTimeoutSec = 1;  // timeout for watchdog thread
 
 void static_handle_signal(int signal) {
   SignalHandler::static_handle_signal(signal);
@@ -184,36 +192,77 @@ void SignalHandler::unregister_signal_handler_impl(void* context, int signal) {
 }
 
 void SignalHandler::handle_signal(int signal) {
-  std::lock_guard lock(signal_handlers_mutex_);
+  // To maintain async-signal-safety, we need an extremely minimal signal handler
+  // Use a static atomic flag that can be safely accessed from multiple threads or signal handlers
+  static std::atomic<bool> signal_in_progress{false};
+  static std::atomic<std::chrono::steady_clock::time_point> signal_start_time{
+      std::chrono::steady_clock::now()};
 
-  // Call global handlers. This takes precedence over context specific handlers
-  auto it = global_signal_handlers_.find(signal);
-  if (it != global_signal_handlers_.end()) {
-    // Call registered handler
-    HOLOSCAN_LOG_DEBUG("Calling global signal handler for signal {}", signal);
-    it->second(signal);
+  // Try to set the flag - if it was already set, check how long it's been active
+  bool expected = false;
+  if (!signal_in_progress.compare_exchange_strong(expected, true)) {
+    // Another thread is already handling a signal - check how long it's been active
+    auto current_time = std::chrono::steady_clock::now();
+    auto start_time = signal_start_time.load();
+    auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time).count();
+
+    // If signal handler is stuck for more than kSignalHandlerStuckTimeoutMs, force exit
+    if (elapsed_ms > kSignalHandlerStuckTimeoutMs) {
+      // We're stuck in signal handler for too long - force immediate exit
+      std::quick_exit(128 + signal);  // Standard exit code for signal termination
+    }
+
+    // Just return if another thread is already handling
+    return;
+  }
+
+  // Update start time for deadlock detection
+  signal_start_time.store(std::chrono::steady_clock::now());
+
+  // Since we set the flag, we're responsible for handling the signal
+  // We must be extremely careful not to use any non-async-signal-safe functions here
+
+  // Call global handlers first (no mutex)
+  auto global_handler_it = global_signal_handlers_.find(signal);
+  if (global_handler_it != global_signal_handlers_.end() && global_handler_it->second) {
+    // Call the handler without any locks or logging
+    global_handler_it->second(signal);
   } else {
+    // Call context-specific handlers (no mutex)
     for (auto& [context, signal_handler_map] : signal_handlers_) {
-      auto it = signal_handler_map.find(signal);
-      if (it != signal_handler_map.end()) {
-        // Call registered handler for each context
-        HOLOSCAN_LOG_DEBUG("Calling signal ({}) handler for context: {}", signal, context);
-        it->second(context, signal);
+      auto handler_it = signal_handler_map.find(signal);
+      if (handler_it != signal_handler_map.end() && handler_it->second) {
+        // Call the handler without any locks or logging
+        handler_it->second(context, signal);
       }
     }
   }
 
-  // If the existing handler exists, pass it to the old signal handler
+  // Call old signal handler if it exists
   auto old_signal_handler_it = old_signal_handlers_.find(signal);
   if (old_signal_handler_it != old_signal_handlers_.end()) {
     auto& old_signal_handler = old_signal_handler_it->second;
-
     if (old_signal_handler.sa_handler != nullptr && old_signal_handler.sa_handler != SIG_IGN &&
         old_signal_handler.sa_handler != SIG_DFL) {
-      HOLOSCAN_LOG_DEBUG("Calling old signal handler for signal {}", signal);
       old_signal_handler.sa_handler(signal);
     }
   }
+
+  // Create a watchdog thread that will force exit if the signal handler itself gets stuck
+  std::thread([signal]() {
+    // Wait kSignalHandlerWatchdogTimeoutSec for the handler to complete
+    std::this_thread::sleep_for(std::chrono::seconds(kSignalHandlerWatchdogTimeoutSec));
+
+    // If signal_in_progress is still true, the handler is stuck
+    if (signal_in_progress.load()) {
+      // Force exit with appropriate signal code
+      std::quick_exit(128 + signal);
+    }
+  }).detach();
+
+  // Reset the flag to allow future signal handling
+  signal_in_progress.store(false);
 }
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include "resource.hpp"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -35,75 +37,67 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-class PyResource : public Resource {
- public:
-  /* Inherit the constructors */
-  using Resource::Resource;
+// Define a kwargs-based constructor that can create an ArgList
+// for passing on to the variadic-template based constructor.
+PyResource::PyResource(py::object resource, Fragment* fragment, const py::args& args,
+                       const py::kwargs& kwargs)
+    : py_resource_(std::move(resource)) {
+  using std::string_literals::operator""s;
 
-  // Define a kwargs-based constructor that can create an ArgList
-  // for passing on to the variadic-template based constructor.
-  PyResource(py::object resource, Fragment* fragment, const py::args& args,
-             const py::kwargs& kwargs)
-      : py_resource_(std::move(resource)) {
-    using std::string_literals::operator""s;
+  fragment_ = fragment;
 
-    fragment_ = fragment;
-
-    int n_fragments = 0;
-    for (const auto& item : args) {
-      auto arg_value = item.cast<py::object>();
-      if (py::isinstance<Fragment>(arg_value)) {
-        if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
-        fragment_ = arg_value.cast<Fragment*>();
-        n_fragments += 1;
-      } else {
-        this->add_arg(py_object_to_arg(arg_value, ""s));
-      }
-    }
-    for (const auto& [name, value] : kwargs) {
-      auto kwarg_name = name.cast<std::string>();
-      auto kwarg_value = value.cast<py::object>();
-      if (kwarg_name == "name"s) {
-        if (py::isinstance<py::str>(kwarg_value)) {
-          name_ = kwarg_value.cast<std::string>();
-        } else {
-          throw std::runtime_error("name kwarg must be a string");
-        }
-      } else if (kwarg_name == "fragment"s) {
-        if (py::isinstance<Fragment>(kwarg_value)) {
-          if (n_fragments > 0) {
-            throw std::runtime_error(
-                "Cannot add kwarg fragment, when a Fragment was also provided positionally");
-          }
-          fragment_ = kwarg_value.cast<Fragment*>();
-        } else {
-          throw std::runtime_error("fragment kwarg must be a Fragment");
-        }
-      } else {
-        this->add_arg(py_object_to_arg(kwarg_value, kwarg_name));
-      }
+  int n_fragments = 0;
+  for (const auto& item : args) {
+    auto arg_value = item.cast<py::object>();
+    if (py::isinstance<Fragment>(arg_value)) {
+      if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
+      fragment_ = arg_value.cast<Fragment*>();
+      n_fragments += 1;
+    } else {
+      this->add_arg(py_object_to_arg(arg_value, ""s));
     }
   }
-
-  // Override spec() method
-  std::shared_ptr<PyComponentSpec> py_shared_spec() {
-    auto spec_ptr = spec_shared();
-    return std::static_pointer_cast<PyComponentSpec>(spec_ptr);
+  for (const auto& [name, value] : kwargs) {
+    auto kwarg_name = name.cast<std::string>();
+    auto kwarg_value = value.cast<py::object>();
+    if (kwarg_name == "name"s) {
+      if (py::isinstance<py::str>(kwarg_value)) {
+        name_ = kwarg_value.cast<std::string>();
+      } else {
+        throw std::runtime_error("name kwarg must be a string");
+      }
+    } else if (kwarg_name == "fragment"s) {
+      if (py::isinstance<Fragment>(kwarg_value)) {
+        if (n_fragments > 0) {
+          throw std::runtime_error(
+              "Cannot add kwarg fragment, when a Fragment was also provided positionally");
+        }
+        fragment_ = kwarg_value.cast<Fragment*>();
+      } else {
+        throw std::runtime_error("fragment kwarg must be a Fragment");
+      }
+    } else {
+      this->add_arg(py_object_to_arg(kwarg_value, kwarg_name));
+    }
   }
+}
 
-  /* Trampolines (need one for each virtual function) */
-  void initialize() override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Resource, initialize);
-  }
-  void setup(ComponentSpec& spec) override {
-    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
-    PYBIND11_OVERRIDE(void, Resource, setup, spec);
-  }
+// Override spec() method
+std::shared_ptr<PyComponentSpec> PyResource::py_shared_spec() {
+  auto spec_ptr = spec_shared();
+  return std::static_pointer_cast<PyComponentSpec>(spec_ptr);
+}
 
- private:
-  py::object py_resource_ = py::none();
-};
+/* Trampolines (need one for each virtual function) */
+void PyResource::initialize() {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Resource, initialize);
+}
+
+void PyResource::setup(ComponentSpec& spec) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Resource, setup, spec);
+}
 
 void init_resource(py::module_& m) {
   // note: added py::dynamic_attr() to allow dynamically adding attributes in a Python subclass

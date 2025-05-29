@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "holoscan/core/conditions/gxf/boolean.hpp"
+#include "holoscan/core/file_fifo_mutex.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
@@ -1070,6 +1071,8 @@ class HolovizOp : public Operator {
   Parameter<bool> headless_;
   Parameter<bool> framebuffer_srgb_;
   Parameter<bool> vsync_;
+  Parameter<uint32_t> multiprocess_framedrop_waittime_ms_;
+  Parameter<std::string> holoviz_multiprocess_mutex_path_;
   Parameter<ColorSpace> display_color_space_;
   Parameter<std::shared_ptr<BooleanCondition>> window_close_condition_;
   Parameter<std::shared_ptr<BooleanCondition>> window_close_scheduling_term_;
@@ -1099,6 +1102,9 @@ class HolovizOp : public Operator {
   bool render_buffer_output_enabled_ = false;
   bool camera_pose_output_enabled_ = false;
   bool is_first_tick_ = true;
+  bool is_holoviz_multiprocess_mutex_enabled_ = false;
+  std::shared_ptr<holoscan::FileFIFOMutex> holoviz_multiprocess_mutex_;
+  unsigned long long dropped_frame_count_ = 0;
 
   static std::remove_pointer_t<viz::KeyCallbackFunction> key_callback_handler;
   static std::remove_pointer_t<viz::UnicodeCharCallbackFunction> unicode_char_callback_handler;

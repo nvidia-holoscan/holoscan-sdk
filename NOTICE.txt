@@ -1,5 +1,5 @@
 Holoscan SDK
-Copyright (c) 2021-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Copyright (c) 2021-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 This product includes software developed at NVIDIA CORPORATION (https://www.nvidia.com/).
 
@@ -33,10 +33,6 @@ Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v0.7/LICENSE)
 docker-buildx-plugin (https://github.com/docker/buildx)
 Copyright 2013-2017 Docker, Inc.
 Licensed under Apache-2.0 (https://github.com/docker/buildx/blob/master/LICENSE)
-
-docker-ce-cli (https://github.com/docker/cli/)
-Copyright 2013-2017 Docker, Inc.
-Licensed under Apache-2.0 (https://github.com/docker/cli/blob/master/LICENSE)
 
 expected (https://github.com/TartanLlama/expected)
 Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPYING)
@@ -204,6 +200,10 @@ Copyright: 2017 NVIDIA CORPORATION
 Copyright: 2017 Samsung Electronics Co., Ltd
 Licensed under X11 (https://changelogs.ubuntu.com/changelogs/pool/main/w/wayland/wayland_1.20.0-1ubuntu0.1/copyright)
 
+libx11 (https://xorg.freedesktop.org/archive/individual/lib)
+Copyright (c) 1991-2021 The X.Org Foundation
+Licensed under MIT (https://changelogs.ubuntu.com/changelogs/pool/main/libx/libx11/libx11_1.7.5-1ubuntu0.3/copyright)
+
 libxkbcommon-dev (https://packages.ubuntu.com/jammy/libxkbcommon-dev)
 Copyright 1985, 1987, 1988, 1990, 1998  The Open Group
 Copyright 2008, 2009  Dan Nicholson
@@ -241,6 +241,10 @@ openblas (https://packages.ubuntu.com/jammy/libopenblas0)
 2013      Martin Koehler, grisuthedragon@users.github.com
 2020      IBM Corporation
 Licensed under BSD (http://changelogs.ubuntu.com/changelogs/pool/universe/o/openblas/openblas_0.3.20+ds-1/copyright)
+
+pillow (https://github.com/python-pillow/Pillow)
+Copyright (C) 2010 by Jeffrey A. Clark and contributors
+Licensed under MIT-CMU License (https://github.com/python-pillow/Pillow/blob/main/LICENSE)
 
 pkg-config (https://packages.ubuntu.com/jammy/pkg-config)
 Copyright (C) 2001, 2002 Red Hat Inc.
@@ -429,4 +433,4 @@ Licensed under MIT (https://www.x.org/releases/X11R7.7/doc/xorg-docs/License.txt
 
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.
-Licensed under MIT (https://github.com/jbeder/yaml-cpp/blob/yaml-cpp-0.7.0/LICENSE)
+Licensed under MIT (https://github.com/jbeder/yaml-cpp/blob/yaml-cpp-0.8.0/LICENSE)

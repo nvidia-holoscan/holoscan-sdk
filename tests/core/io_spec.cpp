@@ -388,6 +388,7 @@ conditions:
 TEST(IOSpec, TestIOSpecInvalidPortName) {
   // "." character is not allowed in IOSPec names
   OperatorSpec op_spec = OperatorSpec();
+
   EXPECT_THROW(
       { IOSpec spec = IOSpec(&op_spec, std::string("a.b"), IOSpec::IOType::kInput); },
       std::invalid_argument);

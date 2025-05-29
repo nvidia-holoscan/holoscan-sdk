@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "common/logger/spdlog_logger.hpp"
+#include "holoscan/logger/holoscan_logger.hpp"
 
 namespace holoscan {
 
@@ -32,19 +33,11 @@ using nvidia::logger::SpdlogLogger;
 bool Logger::log_pattern_set_by_user = false;
 bool Logger::log_level_set_by_user = false;
 
-class HoloscanLogger : public SpdlogLogger {
- public:
-  static HoloscanLogger& instance() {
-    static HoloscanLogger logger("holoscan");
-    return logger;
-  }
-
-  HoloscanLogger(const HoloscanLogger&) = delete;
-  HoloscanLogger& operator=(const HoloscanLogger&) = delete;
-
- private:
-  using SpdlogLogger::SpdlogLogger;
-};
+// HoloscanLogger static instance
+HoloscanLogger& HoloscanLogger::instance() {
+  static HoloscanLogger logger("holoscan");
+  return logger;
+}
 
 static std::string get_concrete_log_pattern(std::string pattern) {
   // Convert to uppercase

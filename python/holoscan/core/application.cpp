@@ -167,6 +167,17 @@ void init_application(py::module_& m) {
           R"doc(Return repr(self).)doc");
 }
 
+PyApplication::~PyApplication() {
+  py::gil_scoped_acquire scope_guard;
+  // We must not call the parent class destructor here because Pybind11 already handles this
+  // through its holder mechanism. Specifically, Pybind11 calls destructors explicitly via
+  // `v_h.holder<holder_type>().~holder_type();` in the `class_::dealloc()` method in pybind11.h.
+  // Application::~Application(); // DO NOT CALL THIS - would cause double destruction
+
+  // Clear the operator registry
+  python_operator_registry_.clear();
+}
+
 py::list PyApplication::py_argv() {
   py::list argv;
   // In Python, `sys.argv` returns `['']` if there are no arguments (i.e., when just `python` is
@@ -185,12 +196,31 @@ py::list PyApplication::py_argv() {
 }
 
 void PyApplication::add_operator(const std::shared_ptr<Operator>& op) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[op.get()] = py::cast(op);
+  }
+
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Application, add_operator, op);
 }
 
 void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
                              const std::shared_ptr<Operator>& downstream_op) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[upstream_op.get()] = py::cast(upstream_op);
+    python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
+  }
+
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op);
 }
@@ -198,6 +228,16 @@ void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
 void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
                              const std::shared_ptr<Operator>& downstream_op,
                              std::set<std::pair<std::string, std::string>> io_map) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[upstream_op.get()] = py::cast(upstream_op);
+    python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
+  }
+
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op, io_map);
 }
@@ -229,10 +269,10 @@ void PyApplication::run() {
   // to avoid blocking the GXF runtime mutex.
   LazyDLManagedTensorDeleter deleter;
 
-  // Get the trace and profile functions from sys
   {
     pybind11::gil_scoped_acquire gil;
 
+    // Get the trace and profile functions from sys
     auto sys_module = py::module::import("sys");
 
     // Note that when cProfile is used, the profile_func_ is a cProfile.Profile object, not a
@@ -259,6 +299,15 @@ void PyApplication::run() {
 
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Application, run);
+}
+
+void PyApplication::reset_state() {
+  // Ensure the Python Global Interpreter Lock (GIL) is held during execution.
+  py::gil_scoped_acquire gil;
+  Application::reset_state();
+
+  // Clear the operator registry
+  python_operator_registry_.clear();
 }
 
 }  // namespace holoscan

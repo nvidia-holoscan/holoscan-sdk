@@ -1140,7 +1140,10 @@ launch() {
         ${extra_args[@]} \
         $img -c "
             export PATH=\$PATH:${container_top}/${working_dir}/bin;
-            export PYTHONPATH=\$PYTHONPATH:\$(realpath \$(find /opt/nvidia/gxf -name Gxf.py | head -n1 | xargs dirname)/../..);
+            gxf_path=\$(find /opt/nvidia/gxf -name Gxf.py 2>/dev/null | head -n1);
+            if [ -f \"\${gxf_path}\" ]; then
+                export PYTHONPATH=\$PYTHONPATH:\$(realpath \$(dirname "\$gxf_path")/../..)
+            fi;
             $run_cmd" 
 }
 

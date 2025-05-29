@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 
+#include "gxf/std/scheduling_terms.hpp"  // for AsynchronousEventState
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resource.hpp"

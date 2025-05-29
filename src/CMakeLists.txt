@@ -155,7 +155,9 @@ add_holoscan_library(core
     core/domain/tensor.cpp
     core/endpoint.cpp
     core/errors.cpp
+    core/file_fifo_mutex.cpp
     core/executors/gxf/gxf_executor.cpp
+    core/executors/gxf/gxf_logger.cpp
     core/executors/gxf/gxf_parameter_adaptor.cpp
     core/flow_tracking_annotation.cpp
     core/fragment.cpp

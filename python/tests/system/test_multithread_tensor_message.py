@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,13 +19,14 @@ import sys
 
 import cupy as cp
 import pytest
-from env_wrapper import env_var_context
 
 import holoscan
 from holoscan.conditions import CountCondition
 from holoscan.operators import FormatConverterOp
 from holoscan.resources import UnboundedAllocator
 from holoscan.schedulers import EventBasedScheduler, MultiThreadScheduler
+
+from .env_wrapper import env_var_context
 
 cuda_device = cp.cuda.Device()
 # disable CuPy memory pool

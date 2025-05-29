@@ -10,6 +10,7 @@ This folder includes the following scripts:
 - [`download_ngc_data`](#download_ngc_data)
 - [`generate_extension_uuids.py`](#generate_extension_uuidspy)
 - [`generate_gxf_manifest.py`](#generate_gxf_manifestpy)
+- [`get_cmake_cuda_archs.py`](#get_cmake_cuda_archspy)
 - [`graph_surgeon.py`](#graph_surgeonpy)
 - [`gxf_entity_codec.py`](#gxf_entity_codecpy)
 - [`video_validation.py`](#video_validationpy)
@@ -176,6 +177,45 @@ python3 scripts/generate_gxf_manifest.py \
     --version <version> \
     --extension-dependencies [libgxf_std.so,libgxf_ucx.so,...]
     ...
+```
+
+____
+
+## get_cmake_cuda_archs.py
+
+Determines and formats a semicolon-separated list of CUDA architectures suitable for CMake's `CMAKE_CUDA_ARCHITECTURES` variable. It uses `nvcc -code-ls` to find supported architectures and then filters them. By default, it excludes architectures primarily for specific features (e.g., `sm_89` for FP8) or platform-specific (e.g., `sm_XXa`, `sm_XXf`) unless explicitly requested by the user with a specific flag. The filtering also considers minimum architecture requirements and platform compatibility (e.g., removing iGPU architectures on x86_64). The final list includes each selected architecture suffixed with `-real` (for SASS generation). It also adds one `-virtual` architecture entry based on the highest non-specific (no 'a' or 'f' letter suffix) architecture chosen; if no such base architecture is found, no PTX target is added.
+
+### Usage
+
+```sh
+python3 scripts/get_cmake_cuda_archs.py <requested_archs> [options]
+```
+
+**Positional Arguments:**
+
+-   `requested_archs`: Defines the target architectures. Can be:
+    -   `all`: Use all nvcc supported, platform-compatible, and non-feature-specific architectures.
+    -   `all-major`: Use only major versions from the `all` selection (e.g., 70, 80, 90).
+    -   `native`: Passes the string "native" directly through (for CMake to detect).
+    -   A comma or space-separated list of specific architecture numbers (e.g., `'75 86 90a'`).
+
+**Options:**
+
+-   `--nvcc-path <path>`, `-n <path>`: Path to the `nvcc` executable. Defaults to searching PATH, then `/usr/local/cuda/bin/nvcc`.
+-   `--min-arch <num>`, `-m <num>`: Minimum major CUDA architecture to consider (e.g., `70` for Volta and newer). Set to `0` or omit to disable.
+-   `--allow-specific-archs`, `-f`: Allow feature-specific architectures (e.g., `sm_89`, `sm_XXa/f`) when they are explicitly listed in `requested_archs`. This flag does not affect the `all` or `all-major` selections, which always exclude these.
+-   `--verbose`, `-v`: Enable verbose debug logging to stderr.
+
+### Examples
+
+Get all supported architectures for the current platform, with a minimum of sm_70:
+```sh
+python3 scripts/get_cmake_cuda_archs.py all --min-arch 70
+```
+
+Get specific architectures:
+```sh
+python3 scripts/get_cmake_cuda_archs.py "75 86 90a"
 ```
 
 ____

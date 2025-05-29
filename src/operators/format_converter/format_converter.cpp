@@ -72,8 +72,14 @@ static FormatDType toFormatDType(const std::string& str) {
     return FormatDType::kRGBA8888;
   } else if (str == "yuv420") {
     return FormatDType::kYUV420;
-  } else if (str == "nv12") {
-    return FormatDType::kNV12;
+  } else if (str == "nv12") {  // alias for "nv12_bt709_hdtv" to retain backwards compatibility
+    return FormatDType::kNV12BT709HDTV;
+  } else if (str == "nv12_bt709_hdtv") {
+    return FormatDType::kNV12BT709HDTV;
+  } else if (str == "nv12_bt709_csc") {
+    return FormatDType::kNV12BT709CSC;
+  } else if (str == "nv12_bt601_full") {
+    return FormatDType::kNV12BT601Full;
   } else if (str == "yuyv") {
     return FormatDType::kYUYV;
   } else {
@@ -100,8 +106,12 @@ static constexpr FormatConversionType getFormatConversionType(FormatDType from, 
     return FormatConversionType::kYUV420ToRGBA8888;
   } else if (from == FormatDType::kYUV420 && to == FormatDType::kUnsigned8) {
     return FormatConversionType::kYUV420ToRGB888;
-  } else if (from == FormatDType::kNV12 && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kNV12ToRGB888;
+  } else if (from == FormatDType::kNV12BT601Full && to == FormatDType::kUnsigned8) {
+    return FormatConversionType::kNV12BT601FullToRGB888;
+  } else if (from == FormatDType::kNV12BT709HDTV && to == FormatDType::kUnsigned8) {
+    return FormatConversionType::kNV12BT709HDTVToRGB888;
+  } else if (from == FormatDType::kNV12BT709CSC && to == FormatDType::kUnsigned8) {
+    return FormatConversionType::kNV12BT709CSCToRGB888;
   } else if (from == FormatDType::kYUYV && to == FormatDType::kUnsigned8) {
     return FormatConversionType::kYUYVToRGB888;
   } else {
@@ -124,7 +134,9 @@ static constexpr nvidia::gxf::PrimitiveType primitiveTypeFromFormatDType(FormatD
     case FormatDType::kRGBA8888:
     case FormatDType::kUnsigned8:
     case FormatDType::kYUV420:
-    case FormatDType::kNV12:
+    case FormatDType::kNV12BT601Full:
+    case FormatDType::kNV12BT709HDTV:
+    case FormatDType::kNV12BT709CSC:
     case FormatDType::kYUYV:
       return nvidia::gxf::PrimitiveType::kUnsigned8;
     case FormatDType::kFloat32:
@@ -301,6 +313,9 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
             static_cast<int32_t>(buffer_info.height), static_cast<int32_t>(buffer_info.width), 3};
         break;
       case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12:
+      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_ER:
+      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709:
+      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709_ER:
         in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned8;
         in_channels = buffer_info.color_planes.size();
         switch (out_dtype_) {
@@ -504,7 +519,9 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
       break;
     }
     case FormatConversionType::kRGBA8888ToRGB888:
-    case FormatConversionType::kNV12ToRGB888:
+    case FormatConversionType::kNV12BT601FullToRGB888:
+    case FormatConversionType::kNV12BT709CSCToRGB888:
+    case FormatConversionType::kNV12BT709HDTVToRGB888:
     case FormatConversionType::kYUV420ToRGB888:
     case FormatConversionType::kRGBA8888ToFloat32:
     case FormatConversionType::kYUYVToRGB888: {
@@ -812,7 +829,8 @@ void FormatConverterOp::convertTensorFormat(
       break;
     }
     case FormatConversionType::kYUV420ToRGBA8888: {
-      nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420> color_format;
+      // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420>
+      //     color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
       const auto in_u_ptr = in_y_ptr + in_color_planes[0].size;
       const auto in_v_ptr = in_u_ptr + in_color_planes[1].size;
@@ -833,7 +851,8 @@ void FormatConverterOp::convertTensorFormat(
       break;
     }
     case FormatConversionType::kYUV420ToRGB888: {
-      nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420> color_format;
+      // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420>
+      //     color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
       const auto in_u_ptr = in_y_ptr + in_color_planes[0].size;
       const auto in_v_ptr = in_u_ptr + in_color_planes[1].size;
@@ -853,8 +872,9 @@ void FormatConverterOp::convertTensorFormat(
       }
       break;
     }
-    case FormatConversionType::kNV12ToRGB888: {
-      nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12> color_format;
+    case FormatConversionType::kNV12BT709HDTVToRGB888: {
+      // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709_ER>
+      //     color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
       const auto in_uv_ptr = in_y_ptr + in_color_planes[0].size;
       const uint8_t* in_y_uv_ptrs[2] = {in_y_ptr, in_uv_ptr};
@@ -866,8 +886,48 @@ void FormatConverterOp::convertTensorFormat(
       status =
           nppiNV12ToRGB_709HDTV_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
       if (status != NPP_SUCCESS) {
-        throw std::runtime_error(fmt::format(
-            "NV12 to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
+        throw std::runtime_error(
+            fmt::format("NV12 to BT.709HDTV rgb888 conversion failed (NPP error code: {})",
+                        static_cast<int>(status)));
+      }
+      break;
+    }
+    case FormatConversionType::kNV12BT709CSCToRGB888: {
+      // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709>
+      //     color_format;
+      const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
+      const auto in_uv_ptr = in_y_ptr + in_color_planes[0].size;
+      const uint8_t* in_y_uv_ptrs[2] = {in_y_ptr, in_uv_ptr};
+
+      const int32_t in_y_uv_step = in_color_planes[0].stride;
+
+      const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
+
+      status =
+          nppiNV12ToRGB_709CSC_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
+      if (status != NPP_SUCCESS) {
+        throw std::runtime_error(
+            fmt::format("NV12 BT.709CSC to rgb888 conversion failed (NPP error code: {})",
+                        static_cast<int>(status)));
+      }
+      break;
+    }
+    case FormatConversionType::kNV12BT601FullToRGB888: {
+      // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_ER>
+      //     color_format;
+      const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
+      const auto in_uv_ptr = in_y_ptr + in_color_planes[0].size;
+      const uint8_t* in_y_uv_ptrs[2] = {in_y_ptr, in_uv_ptr};
+
+      const int32_t in_y_uv_step = in_color_planes[0].stride;
+
+      const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
+
+      status = nppiNV12ToRGB_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
+      if (status != NPP_SUCCESS) {
+        throw std::runtime_error(
+            fmt::format("NV12 BT.601 full range to rgb888 conversion failed (NPP error code: {})",
+                        static_cast<int>(status)));
       }
       break;
     }

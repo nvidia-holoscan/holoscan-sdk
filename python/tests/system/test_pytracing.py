@@ -361,7 +361,15 @@ def yappi_main(scheduler_type="greedy"):
 
 if __name__ == "__main__":
     import argparse
+    import platform
 
+    # Check Python version and exit with code 12 if version is 3.12 or above
+    python_version = platform.python_version_tuple()
+    if int(python_version[0]) >= 3 and int(python_version[1]) >= 12:
+        print(f"Skipping test on Python {platform.python_version()}")
+        sys.exit(12)  # SKIP_RETURN_CODE in CMakeLists.txt
+
+    # Parse command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",

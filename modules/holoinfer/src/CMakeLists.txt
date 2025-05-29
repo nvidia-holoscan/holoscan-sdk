@@ -51,13 +51,8 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC
-        GXF::core
-        GXF::cuda
-        GXF::multimedia
-        GXF::std
         CUDA::cuda_driver
         CUDA::nvrtc
-        yaml-cpp
     PRIVATE
         ${CMAKE_DL_LIBS} # to dlopen holoinfer_torch
         CUDA::cudart
@@ -65,6 +60,7 @@ target_link_libraries(${PROJECT_NAME}
         TensorRT::nvinfer_plugin
         TensorRT::nvonnxparser
         holoscan_security_flags
+        yaml-cpp
 )
 
 if(HOLOSCAN_BUILD_LIBTORCH)

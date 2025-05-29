@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,15 @@ GXFExtensionManager::GXFExtensionManager(gxf_context_t context) : ExtensionManag
 }
 
 GXFExtensionManager::~GXFExtensionManager() {
-  for (auto& handle : extension_handles_) { dlclose(handle); }
+  for (auto& [_, handle] : extension_handles_map_) { dlclose(handle); }
+}
+
+void GXFExtensionManager::reset_context(gxf_context_t context) {
+  // We keep Extension handles because we want to keep the handle for loaded extensions
+  // extension_handles_.clear(); // DO NOT CLEAR EXTENSION HANDLES
+
+  extension_tids_.clear();
+  context_ = context;
 }
 
 void GXFExtensionManager::refresh() {
@@ -58,6 +66,24 @@ void GXFExtensionManager::refresh() {
 
   // Add the extension tids to the set
   for (uint64_t i = 0; i < num_extensions; ++i) { extension_tids_.insert(extensions[i]); }
+
+  // Load extensions that were previously loaded & cached
+  for (const auto& [tid, extension] : loaded_extensions_) {
+    if (extension_tids_.find(tid) == extension_tids_.end()) {
+      gxf_extension_info_t info;
+      info.num_components = 0;
+      auto info_result = extension->getInfo(&info);
+      if (!info_result != GXF_SUCCESS) {
+        HOLOSCAN_LOG_ERROR("Unable to get extension info from the cached extension ({:x} {:x})",
+                           tid.hash1,
+                           tid.hash2);
+        return;
+      }
+
+      HOLOSCAN_LOG_DEBUG("Loading cached extension '{}'", info.name);
+      load_extension(extension);
+    }
+  }
 }
 
 bool GXFExtensionManager::load_extension(const std::string& file_name, bool no_error_message,
@@ -68,12 +94,24 @@ bool GXFExtensionManager::load_extension(const std::string& file_name, bool no_e
     return true;  // return true to avoid breaking the pipeline
   }
 
+  // Check if the extension is already loaded
+  if (extension_handles_map_.find(file_name) != extension_handles_map_.end()) {
+    HOLOSCAN_LOG_DEBUG(
+        "Extension '{}' has been previously loaded and will be reloaded during refresh(). Skipping "
+        "loading now.",
+        file_name);
+
+    return true;
+  }
+
+  std::string file_name_key = file_name;
+
   HOLOSCAN_LOG_DEBUG("Loading extension from '{}'", file_name);
 
   // We set RTLD_NODELETE to avoid unloading the extension when the library handle is closed.
   // This is because it can cause a crash when the extension is used by another library or it
   // uses thread_local variables.
-  void* handle = dlopen(file_name.c_str(), RTLD_LAZY | RTLD_NODELETE);
+  void* handle = open_extension_library(file_name);
   if (handle == nullptr) {
     // Try to load the extension from the environment variable (search_path_env) indicating the
     // folder where the extension is located.
@@ -112,12 +150,13 @@ bool GXFExtensionManager::load_extension(const std::string& file_name, bool no_e
                                      base_name.c_str(),
                                      candidate_parent_path.c_str());
                   if (handle == nullptr) {
-                    handle = dlopen(candidate_path.c_str(), RTLD_LAZY | RTLD_NODELETE);
+                    handle = open_extension_library(candidate_path.string());
                   }
                   if (handle != nullptr) {
                     HOLOSCAN_LOG_DEBUG("Loaded extension {} from search path '{}'",
                                        base_name.c_str(),
                                        candidate_parent_path.c_str());
+                    file_name_key = candidate_path.string();
                     found_extension = true;
                     break;
                   }
@@ -136,8 +175,6 @@ bool GXFExtensionManager::load_extension(const std::string& file_name, bool no_e
       }
       return false;
     }
-  } else {
-    HOLOSCAN_LOG_DEBUG("Loaded extension {}", file_name);
   }
   void* func_ptr = dlsym(handle, kGxfExtensionFactoryName);
   if (func_ptr == nullptr) {
@@ -166,12 +203,15 @@ bool GXFExtensionManager::load_extension(const std::string& file_name, bool no_e
   nvidia::gxf::Extension* extension = static_cast<nvidia::gxf::Extension*>(result);
 
   // Load the extension from the pointer
-  const bool is_loaded = load_extension(extension, handle);
+  const bool is_loaded = load_extension(extension);
   if (!is_loaded) {
     HOLOSCAN_LOG_ERROR("Unable to load extension from '{}'", file_name);
     dlclose(handle);
     return false;
   }
+
+  // Add the extension handle to the set of handles to be closed when the manager is destroyed
+  extension_handles_map_[file_name_key] = handle;
   return true;
 }
 
@@ -196,38 +236,6 @@ bool GXFExtensionManager::load_extensions_from_yaml(const YAML::Node& node, bool
     HOLOSCAN_LOG_ERROR("Error loading extension from yaml: {}", e.what());
     return false;
   }
-  return true;
-}
-
-bool GXFExtensionManager::load_extension(nvidia::gxf::Extension* extension, void* handle) {
-  if (extension == nullptr) {
-    HOLOSCAN_LOG_DEBUG("Extension pointer is null. Skipping extension loading.");
-    return true;  // return true to avoid breaking the pipeline
-  }
-
-  // Check if the extension is already loaded
-  gxf_extension_info_t info;
-  info.num_components = 0;
-  auto info_result = extension->getInfo(&info);
-  if (!info_result != GXF_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Unable to get extension info");
-    return false;
-  }
-
-  // Check and ignore if the extension is already loaded
-  if (extension_tids_.find(info.id) != extension_tids_.end()) {
-    HOLOSCAN_LOG_DEBUG("Extension '{}' is already loaded. Skipping extension loading.", info.name);
-    return true;  // return true to avoid breaking the pipeline
-  }
-
-  extension_tids_.insert(info.id);
-
-  // Load the extension
-  HOLOSCAN_GXF_CALL_FATAL(GxfLoadExtensionFromPointer(context_, extension));
-
-  // Add the extension handle to the set of handles to be closed when the manager is destroyed
-  if (handle != nullptr) { extension_handles_.insert(handle); }
-
   return true;
 }
 
@@ -257,6 +265,52 @@ std::vector<std::string> GXFExtensionManager::tokenize(const std::string& str,
     search_paths.push_back(str.substr(start, end - start));
   }
   return search_paths;
+}
+
+bool GXFExtensionManager::load_extension(nvidia::gxf::Extension* extension) {
+  if (extension == nullptr) {
+    HOLOSCAN_LOG_DEBUG("Extension pointer is null. Skipping extension loading.");
+    return true;  // return true to avoid breaking the pipeline
+  }
+
+  // Check if the extension is already loaded
+  gxf_extension_info_t info;
+  info.num_components = 0;
+  auto info_result = extension->getInfo(&info);
+  if (!info_result != GXF_SUCCESS) {
+    HOLOSCAN_LOG_ERROR("Unable to get extension info");
+    return false;
+  }
+
+  // Check and ignore if the extension is already loaded
+  if (extension_tids_.find(info.id) != extension_tids_.end()) {
+    HOLOSCAN_LOG_DEBUG("Extension '{}' is already loaded. Skipping extension loading.", info.name);
+    return true;  // return true to avoid breaking the pipeline
+  }
+
+  if (loaded_extension_tids_map_.find(info.id) == loaded_extension_tids_map_.end()) {
+    // Also add it to the ordered list of loaded extensions
+    loaded_extensions_.push_back({info.id, extension});
+    // Store the extension in the map with its ID as the key
+    loaded_extension_tids_map_[info.id] = extension;
+  }
+
+  // Register the extension ID in our tracking set of loaded extensions.
+  extension_tids_.insert(info.id);
+
+  // Load the extension
+  HOLOSCAN_GXF_CALL_FATAL(GxfLoadExtensionFromPointer(context_, extension));
+  return true;
+}
+
+void* GXFExtensionManager::open_extension_library(const std::string& file_path) {
+  // Check if the extension is already loaded
+  auto it = extension_handles_map_.find(file_path);
+  if (it != extension_handles_map_.end()) { return it->second; }
+
+  // Load the extension
+  void* handle = dlopen(file_path.c_str(), RTLD_LAZY | RTLD_NODELETE);
+  return handle;
 }
 
 }  // namespace holoscan::gxf

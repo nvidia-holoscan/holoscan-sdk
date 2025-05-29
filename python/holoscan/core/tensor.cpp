@@ -151,7 +151,8 @@ void init_tensor(py::module_& m) {
             }
 
             // Call the C++ function with the converted parameters
-            return PyTensor::dlpack(obj, stream, cpp_max_version, cpp_dl_device, cpp_copy);
+            return PyTensor::dlpack(
+                obj, std::move(stream), cpp_max_version, cpp_dl_device, cpp_copy);
           },
           py::kw_only(),
           "stream"_a = py::none(),
@@ -459,7 +460,8 @@ py::object PyTensor::as_tensor(const py::object& obj) {
   return py_tensor;
 }
 
-py::object PyTensor::from_dlpack_pyobj(const py::object& obj, py::object device, py::object copy) {
+py::object PyTensor::from_dlpack_pyobj(const py::object& obj, const py::object& device,
+                                       const py::object& copy) {
   std::shared_ptr<PyTensor> tensor;
   if (py::hasattr(obj, "__dlpack__") && py::hasattr(obj, "__dlpack_device__")) {
     tensor = PyTensor::from_dlpack(obj, device, copy);
@@ -608,8 +610,8 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
   return tensor;
 }
 
-std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj, py::object device,
-                                                py::object copy) {
+std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj, const py::object& device,
+                                                const py::object& copy) {
   // Pybind11 doesn't have a way to get/set a pointer with a name so we have to use the C API
   // for efficiency.
   // auto dlpack_capsule = py::reinterpret_borrow<py::capsule>(obj.attr("__dlpack__")());

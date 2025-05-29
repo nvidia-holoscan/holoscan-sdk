@@ -38,7 +38,8 @@ class PyExecutionContext : public gxf::GXFExecutionContext {
   /* Inherit the constructors */
   using gxf::GXFExecutionContext::GXFExecutionContext;
 
-  explicit PyExecutionContext(gxf_context_t context, py::object py_op = py::none());
+  explicit PyExecutionContext(gxf_context_t context,
+                              const std::shared_ptr<PyOperator>& py_op = nullptr);
 
   std::shared_ptr<PyInputContext> py_input() const;
 
@@ -52,7 +53,7 @@ class PyExecutionContext : public gxf::GXFExecutionContext {
   using gxf::GXFExecutionContext::init_cuda_object_handler;
 
  private:
-  py::object py_op_ = py::none();
+  std::weak_ptr<PyOperator> py_op_;
   std::shared_ptr<PyInputContext> py_input_context_;
   std::shared_ptr<PyOutputContext> py_output_context_;
 };

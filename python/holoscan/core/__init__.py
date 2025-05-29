@@ -62,81 +62,67 @@ create a custom application.
     holoscan.core.py_object_to_arg
 """
 
-import os
-import sys
+import logging
 
 # Note: Python 3.7+ expects the threading module to be initialized (imported) before additional
 # threads are created (by C++ modules using pybind11).
 # Otherwise you will get an assert tlock.locked() error on exit.
 # (CLARAHOLOS-765)
 import threading as _threading  # noqa: F401, I001
+
+# Add ThreadPoolExecutor to imports if not already there
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-# Temporarily set RTLD_GLOBAL to ensure that global symbols in the Holoscan C++ API
-# (including logging-related symbols like nvidia::LoggingFunction) are shared
-# across bindings. This is necessary because the Python interpreter loads the
-# Pybind11 module with RTLD_LOCAL by default, which can duplicate symbols and
-# lead to symbol resolution issues when the C++ API and global symbols are loaded
-# as shared libraries by the Python interpreter.
-original_flags = sys.getdlopenflags()  # Save the current dlopen flags
-try:
-    sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_LAZY)
+# Import statements for the C++ API classes
+from ..graphs._graphs import FragmentGraph, OperatorGraph
+from ._core import Application as _Application
+from ._core import (
+    Arg,
+    ArgContainerType,
+    ArgElementType,
+    ArgList,
+    ArgType,
+    CLIOptions,
+    Component,
+    ConditionType,
+    Config,
+    DataFlowMetric,
+    DataFlowTracker,
+    DLDevice,
+    DLDeviceType,
+    Executor,
+    FlowInfo,
+    IOSpec,
+    Message,
+    MetadataDictionary,
+    MetadataPolicy,
+    MultiMessageConditionInfo,
+    NetworkContext,
+    OperatorStatus,
+    ParameterFlag,
+    Scheduler,
+    SchedulingStatusType,
+    arg_to_py_object,
+    arglist_to_kwargs,
+    kwargs_to_arglist,
+    py_object_to_arg,
+)
+from ._core import Condition as _Condition
+from ._core import Fragment as _Fragment
+from ._core import Operator as _Operator
+from ._core import PyComponentSpec as ComponentSpec
+from ._core import PyExecutionContext as ExecutionContext
+from ._core import PyInputContext as InputContext
+from ._core import PyOperatorSpec as OperatorSpec
+from ._core import PyOutputContext as OutputContext
+from ._core import PyRegistryContext as _RegistryContext
+from ._core import PyTensor as Tensor
+from ._core import Resource as _Resource
+from ._core import register_types as _register_types
 
-    # Import statements for the C++ API classes
-    from ..graphs._graphs import FragmentGraph, OperatorGraph
-    from ._core import Application as _Application
-    from ._core import (
-        Arg,
-        ArgContainerType,
-        ArgElementType,
-        ArgList,
-        ArgType,
-        CLIOptions,
-        Component,
-        ConditionType,
-        Config,
-        DataFlowMetric,
-        DataFlowTracker,
-        DLDevice,
-        DLDeviceType,
-        Executor,
-        FlowInfo,
-        IOSpec,
-        Message,
-        MetadataDictionary,
-        MetadataPolicy,
-        MultiMessageConditionInfo,
-        NetworkContext,
-        OperatorStatus,
-        ParameterFlag,
-        Scheduler,
-        SchedulingStatusType,
-        arg_to_py_object,
-        arglist_to_kwargs,
-        kwargs_to_arglist,
-        py_object_to_arg,
-    )
-    from ._core import Condition as _Condition
-    from ._core import Fragment as _Fragment
-    from ._core import Operator as _Operator
-    from ._core import PyComponentSpec as ComponentSpec
-    from ._core import PyExecutionContext as ExecutionContext
-    from ._core import PyInputContext as InputContext
-    from ._core import PyOperatorSpec as OperatorSpec
-    from ._core import PyOutputContext as OutputContext
-    from ._core import PyRegistryContext as _RegistryContext
-    from ._core import PyTensor as Tensor
-    from ._core import Resource as _Resource
-    from ._core import register_types as _register_types
-finally:
-    # Restore the original dlopen flags immediately after the imports
-    sys.setdlopenflags(original_flags)
-del original_flags
-
-# need these imports for ThreadPool return type of Fragment.make_thread_pool to work
-from ..gxf._gxf import GXFResource as _GXFResource  # noqa: E402, F401, I001
-from ..resources import ThreadPool as _ThreadPool  # noqa: E402, F401, I001
-
+# Get a logger instance for this module
+logger = logging.getLogger(__name__)
 
 Graph = OperatorGraph  # define alias for backward compatibility
 
@@ -196,6 +182,10 @@ def metadata_repr(self):
     return f"{items}"
 
 
+# need these imports for ThreadPool return type of Fragment.make_thread_pool to work
+from ..gxf._gxf import GXFResource as _GXFResource  # noqa: E402, F401, I001
+from ..resources import ThreadPool as _ThreadPool  # noqa: E402, F401, I001
+
 MetadataDictionary.__repr__ = metadata_repr
 
 # Defines the special operator name used to initiate application execution.
@@ -237,23 +227,51 @@ class Application(_Application):
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
         _Application.__init__(self, argv, *args, **kwargs)
+        self._async_executor = None
+        self._async_executor_lock = _threading.Lock()
         self._start_op = None
 
     def run_async(self):
-        """Run the application asynchronously.
+        """Run the application asynchronously using a shared executor.
 
-        This method is a convenience method that creates a thread pool with
-        one thread and runs the application in that thread. The thread pool
-        is created using `concurrent.futures.ThreadPoolExecutor`.
+        This method uses a shared ThreadPoolExecutor associated with this
+        Application instance. The executor is created on the first call.
+        Call `shutdown_async_executor()` when done with async runs
+        to clean up resources.
 
         Returns
         -------
         future : ``concurrent.futures.Future`` object
         """
-        from concurrent.futures import ThreadPoolExecutor
+        # Ensure only one thread creates the executor
+        with self._async_executor_lock:
+            if self._async_executor is None:
+                # Create the executor ONCE
+                self._async_executor = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix=f"HoloscanApp_{self.name}_Async"
+                )
 
-        executor = ThreadPoolExecutor(max_workers=1)
-        return executor.submit(self.run)
+        # Submit the job to the shared executor
+        return self._async_executor.submit(self.run)
+
+    def shutdown_async_executor(self, wait=True):
+        """Shuts down the shared asynchronous executor.
+
+        Call this method when the application instance is no longer needed
+        and asynchronous runs initiated by `run_async` should terminate.
+
+        Parameters
+        ----------
+        wait : bool
+            If True (default), wait for running tasks to complete before shutting down.
+            If False, shut down immediately.
+        """
+        # Use the lock to prevent race conditions with run_async
+        with self._async_executor_lock:
+            if self._async_executor is not None:
+                # Shutting down async executor
+                self._async_executor.shutdown(wait=wait)
+                self._async_executor = None
 
     def start_op(self):
         """Get or create the start operator for this application.
@@ -289,6 +307,23 @@ class Application(_Application):
     # def __del__(self):
     #    context_destroy(self._context)
 
+    def __del__(self):
+        # This is best-effort cleanup, not guaranteed to be called reliably.
+        # Avoid potentially blocking calls or complex logic here.
+        if self._async_executor is not None:
+            # Non-blocking shutdown is safer in __del__ if possible,
+            # but might leave work unfinished or resources dangling longer.
+            # Using wait=False might be preferable here, but check implications.
+            try:
+                self._async_executor.shutdown(wait=False)  # Try non-blocking first
+            except Exception as e:
+                logger.error(
+                    f"Error during __del__ executor shutdown for Application {self.name}: {e}",
+                    exc_info=True,
+                )
+            finally:
+                self._async_executor = None
+
 
 # copy docstrings defined in core_pydoc.hpp
 Application.__doc__ = _Application.__doc__
@@ -311,26 +346,54 @@ class Fragment(_Fragment):
         # Set the fragment config to the application config.
         if app:
             self.config(app.config())
+        self._async_executor = None
+        self._async_executor_lock = _threading.Lock()
         self._start_op = None
 
     def compose(self):
         pass
 
     def run_async(self):
-        """Run the fragment asynchronously.
+        """Run the fragment asynchronously using a shared executor.
 
-        This method is a convenience method that creates a thread pool with
-        one thread and runs the fragment in that thread. The thread pool
-        is created using `concurrent.futures.ThreadPoolExecutor`.
+        This method uses a shared ThreadPoolExecutor associated with this
+        Application instance. The executor is created on the first call.
+        Call `shutdown_async_executor()` when done with async runs
+        to clean up resources.
 
         Returns
         -------
         future : ``concurrent.futures.Future`` object
         """
-        from concurrent.futures import ThreadPoolExecutor
+        # Ensure only one thread creates the executor
+        with self._async_executor_lock:
+            if self._async_executor is None:
+                # Create the executor ONCE
+                self._async_executor = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix=f"HoloscanFragment_{self.name}_Async"
+                )
 
-        executor = ThreadPoolExecutor(max_workers=1)
-        return executor.submit(self.run)
+        # Submit the job to the shared executor
+        return self._async_executor.submit(self.run)
+
+    def shutdown_async_executor(self, wait=True):
+        """Shuts down the shared asynchronous executor.
+
+        Call this method when the application instance is no longer needed
+        and asynchronous runs initiated by `run_async` should terminate.
+
+        Parameters
+        ----------
+        wait : bool
+            If True (default), wait for running tasks to complete before shutting down.
+            If False, shut down immediately.
+        """
+        # Use the lock to prevent race conditions with run_async
+        with self._async_executor_lock:
+            if self._async_executor is not None:
+                # Shutting down async executor
+                self._async_executor.shutdown(wait=wait)
+                self._async_executor = None
 
     def start_op(self):
         """Get or create the start operator for this fragment.
@@ -357,6 +420,23 @@ class Fragment(_Fragment):
             self._start_op = Operator(self, CountCondition(self, 1), name=START_OPERATOR_NAME)
             self.add_operator(self._start_op)
         return self._start_op
+
+    def __del__(self):
+        # This is best-effort cleanup, not guaranteed to be called reliably.
+        # Avoid potentially blocking calls or complex logic here.
+        if self._async_executor is not None:
+            # Non-blocking shutdown is safer in __del__ if possible,
+            # but might leave work unfinished or resources dangling longer.
+            # Using wait=False might be preferable here, but check implications.
+            try:
+                self._async_executor.shutdown(wait=False)  # Try non-blocking first
+            except Exception as e:
+                logger.error(
+                    f"Error during __del__ executor shutdown for Fragment {self.name}: {e}",
+                    exc_info=True,
+                )
+            finally:
+                self._async_executor = None
 
 
 # copy docstrings defined in core_pydoc.hpp

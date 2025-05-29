@@ -28,6 +28,10 @@ ARG UPGRADE_PACKAGES="false"
 ARG USERNAME=holoscan
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
+# The 24.04 image added the non-root user 'ubuntu' with uid 1000 which needs to be removed first
+# else creating our user will fail
+# see https://bugs.launchpad.net/cloud-images/+bug/2005129
+RUN if id "ubuntu" >/dev/null 2>&1; then touch /var/mail/ubuntu && chown ubuntu /var/mail/ubuntu && userdel -r ubuntu; fi
 # Install needed packages and setup non-root user. Use a separate RUN statement to add your own dependencies.
 COPY library-scripts/common-debian.sh /tmp/library-scripts/
 RUN yes | unminimize 2>&1 \

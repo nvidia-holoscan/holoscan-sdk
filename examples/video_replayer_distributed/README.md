@@ -148,7 +148,7 @@ Example of packaging the application for x64 systems:
 cd ./examples/video_replayer_distributed/cpp # for C++ version of Hello World
 cd ./examples/video_replayer_distributed/python # or Python version
 
-holoscan package -t video_replayer_distributed --platform x64-workstation --platform-config dgpu --config video_replayer_distributed.yaml .
+holoscan package -t video_replayer_distributed --platform x86_64  --config video_replayer_distributed.yaml --includes holoviz  .
 ```
 
 ### Run the containerized application

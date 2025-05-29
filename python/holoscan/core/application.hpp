@@ -24,6 +24,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -49,10 +50,12 @@ void init_application(py::module_&);
  *
  */
 
-class PyApplication : public Application {
+class PYBIND11_EXPORT PyApplication : public Application {
  public:
   /* Inherit the constructors */
   using Application::Application;
+
+  ~PyApplication() override;
 
   /**
    * @brief Return the argv_ as a Python list.
@@ -82,6 +85,9 @@ class PyApplication : public Application {
   void compose() override;
   void run() override;
 
+ protected:
+  void reset_state() override;
+
  private:
   friend class PyOperator;
 
@@ -99,6 +105,9 @@ class PyApplication : public Application {
   Py_tracefunc c_tracefunc_ = nullptr;
   py::handle c_profileobj_ = nullptr;
   py::handle c_traceobj_ = nullptr;
+
+  /// Map from Operator raw pointer to the Python wrapper object
+  std::unordered_map<Operator*, py::object> python_operator_registry_;
 };
 
 }  // namespace holoscan

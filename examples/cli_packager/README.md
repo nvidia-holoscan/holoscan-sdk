@@ -12,11 +12,11 @@ Refer to the documentation in the [user guide](https://docs.nvidia.com/holoscan/
 
 ### Define configurations
 
-The packager will require a `--platform` and a `--platform-config`. We set them here as a prerequisite for this example. Refer to the user guide for other possible configurations.
+The packager will require a `--platform`. We set them here as a prerequisite for this example. Refer to the user guide for other possible configurations.
 
 ```bash
 export gpu_mode=dgpu
-export platform=x64-workstation
+export platform=x86_64
 ```
 
 The packager will also need the path to the configuration file passed to `--config`. We point to the one in this folder:
@@ -52,7 +52,6 @@ This command will create a docker container that includes the application:
 ```bash
 holoscan package -t holoscan-hello-world-app \
   --platform $platform \
-  --platform-config $gpu_mode \
   --config $holoscan_app_config_path \
   $holoscan_app_path
 ```

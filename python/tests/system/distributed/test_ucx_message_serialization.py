@@ -23,7 +23,8 @@ import pytest
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec
 from holoscan.operators.holoviz import HolovizOp
-from utils import remove_ignored_errors
+
+from .utils import remove_ignored_errors
 
 with contextlib.suppress(ImportError):
     import cupy as cp

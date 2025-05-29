@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,10 +18,11 @@ limitations under the License.
 import os
 
 import pytest
-from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, ConditionType, IOSpec, Operator, OperatorSpec, Tracker
+
+from .env_wrapper import env_var_context
 
 
 class PingMultiQueueTxOp(Operator):

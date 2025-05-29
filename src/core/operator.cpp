@@ -554,6 +554,8 @@ void Operator::reset_graph_entities() {
       };
   for (auto& [_, resource] : resources_) { reset_resource(resource); }
   for (auto& [_, condition] : conditions_) { reset_condition(condition); }
+  resources_.clear();
+  conditions_.clear();
   reset_iospec(spec_->inputs());
   reset_iospec(spec_->outputs());
   ComponentBase::reset_graph_entities();

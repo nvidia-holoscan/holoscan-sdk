@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,8 +61,8 @@ class InferBase {
 
   /**
    * @brief Get output data dimensions from the model
-   * @return Vector of input dimensions. Each dimension is a vector of int64_t corresponding to
-   *         the shape of the input tensor.
+   * @return Vector of output dimensions. Each dimension is a vector of int64_t corresponding to
+   *         the shape of the output tensor.
    * */
   virtual std::vector<std::vector<int64_t>> get_output_dims() const { return {}; }
 

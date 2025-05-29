@@ -67,14 +67,10 @@ void TestBase::SetUp() {
   }
 
   ASSERT_NO_THROW(viz::Init(width_, height_, "Holoviz test", init_flags_));
-  initialized_ = true;
 }
 
 void TestBase::TearDown() {
-  if (initialized_) {
-    ASSERT_NO_THROW(viz::Shutdown());
-    initialized_ = false;
-  }
+  if (viz::GetCurrent()) { ASSERT_NO_THROW(viz::Shutdown()); }
 }
 
 void TestBase::SetCUDADevice(uint32_t device_ordinal) {

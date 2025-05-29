@@ -23,10 +23,16 @@
 #include <unordered_map>
 #include <utility>
 
+#include <gxf/core/entity.hpp>
+
 #include "holoscan/core/conditions/gxf/asynchronous.hpp"
 #include "holoscan/core/domain/tensor_map.hpp"
+#include "holoscan/core/errors.hpp"
+#include "holoscan/core/expected.hpp"
+#include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/type_traits.hpp"
 
 namespace holoscan::ops {
 

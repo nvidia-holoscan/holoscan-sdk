@@ -75,7 +75,7 @@ constexpr bool kDefaultMetadataEnabled = true;
 class Fragment {
  public:
   Fragment() = default;
-  virtual ~Fragment() = default;
+  virtual ~Fragment();
 
   Fragment(Fragment&&) = default;
 
@@ -828,6 +828,14 @@ class Fragment {
   /// Cleanup helper that will by called by GXFExecutor prior to GxfContextDestroy.
   void reset_graph_entities();
 
+  /**
+   * @brief Reset internal fragment state to allow for multiple run calls
+   *
+   * This method resets the necessary internal state to allow multiple consecutive
+   * calls to run() or run_async() without requiring manual cleanup.
+   */
+  virtual void reset_state();
+
   /// Load the GXF extensions specified in the configuration.
   void load_extensions_from_config();
 
@@ -846,6 +854,7 @@ class Fragment {
   std::vector<std::shared_ptr<ThreadPool>>
       thread_pools_;          ///< Any thread pools used by the fragment
   bool is_composed_ = false;  ///< Whether the graph is composed or not.
+  bool is_run_called_ = false;  ///< Whether run() or run_async() has been called.
   std::optional<bool> is_metadata_enabled_ =
       std::nullopt;  ///< Whether metadata is enabled or not. If nullopt, value from Application()
                      ///< is used if it has been set. Otherwise defaults to true.

@@ -16,13 +16,14 @@ limitations under the License.
 """  # noqa: E501
 
 import pytest
-from env_wrapper import env_var_context
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Executor, Operator, OperatorSpec
 from holoscan.operators import PingRxOp, PingTxOp
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
+
+from .env_wrapper import env_var_context
 
 
 class MinimalOp(Operator):

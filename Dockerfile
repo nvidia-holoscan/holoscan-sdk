@@ -24,7 +24,7 @@ ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
 ARG LIBTORCH_VERSION=2.5.0_24.08
 ARG TORCHVISION_VERSION=0.20.0_24.08
 ARG GRPC_VERSION=1.54.2
-ARG GXF_VERSION=4.1.1.11_20250310_16a6cef
+ARG GXF_VERSION=5.0.0_20250506_dad6e7b
 ARG MOFED_VERSION=24.07-0.6.1.0
 
 ############################################################
@@ -193,9 +193,8 @@ FROM base AS gxf-downloader
 ARG GXF_VERSION
 
 WORKDIR /opt/nvidia/gxf
-RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=x86_64; fi \
-    && curl -S -# -L -o gxf.tgz \
-        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_${ARCH}.tar.gz
+RUN curl -S -# -L -o gxf.tgz \
+        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_$(uname -m).tar.gz
 RUN mkdir -p ${GXF_VERSION}
 RUN tar xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1
 
@@ -257,18 +256,6 @@ COPY --from=gxf-downloader ${GXF} ${GXF}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
 ENV PYTHONPATH="${PYTHONPATH}:/opt/nvidia/gxf/${GXF_VERSION}/python"
 
-# Setup Docker & NVIDIA Container Toolkit's apt repositories to enable DooD
-# for packaging & running applications with the CLI
-# Ref: Docker installation: https://docs.docker.com/engine/install/ubuntu/
-# DooD (Docker-out-of-Docker): use the Docker (or Moby) CLI in your dev container to connect to
-#  your host's Docker daemon by bind mounting the Docker Unix socket.
-RUN install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && chmod a+r /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-        "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
-        tee /etc/apt/sources.list.d/docker.list > /dev/null
-
 # Install NVIDIA Performance Libraries on arm64 dGPU platform
 # as a runtime requirement for the Holoinfer `libtorch` backend (2.5.0).
 ARG GPU_TYPE
@@ -299,8 +286,6 @@ RUN if [[ $(uname -m) = "aarch64" && ${GPU_TYPE} = "dgpu" ]]; then \
 #  v4l-utils - V4L2 operator utility
 #  libpng-dev - torchvision dependency
 #  libjpeg-dev - torchvision, v4l2 mjpeg dependency
-#  docker-ce-cli - enable Docker DooD for CLI
-#  docker-buildx-plugin - enable Docker DooD for CLI
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         valgrind="1:3.18.1-*" \
@@ -325,9 +310,25 @@ RUN apt-get update \
         v4l-utils="1.22.1-*" \
         libpng-dev="1.6.37-*" \
         libjpeg-turbo8-dev="2.1.2-*" \
-        docker-ce-cli="5:25.0.3-*" \
-        docker-buildx-plugin="0.12.1-*" \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python 3.12 and replace Python 3.10
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y \
+        python3.12 \
+        python3.12-dev \
+    && apt purge -y \
+        python3-pip \
+        software-properties-common \
+    && apt-get autoremove --purge -y \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
 
 # PIP INSTALLS
 #  mkl - dependency for libtorch plugin on x86_64 (match pytorch container version)
@@ -354,10 +355,6 @@ RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.dev.txt -r /tmp/r
 # A pre-existing NumPy 1.x may have been kept by the above requirements.txt. Explicitly install 2.x
 RUN python3 -m pip install "numpy>2.0"
 
-# Creates a home directory for docker-in-docker to store files temporarily in the container,
-# necessary when running the holoscan CLI packager
-ENV HOME=/home/holoscan
-RUN mkdir -p $HOME && chmod 777 $HOME
 
 ############################################################################################
 # Extra stage: igpu build image

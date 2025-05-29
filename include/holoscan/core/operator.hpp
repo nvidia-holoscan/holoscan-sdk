@@ -800,7 +800,8 @@ class Operator : public ComponentBase {
   /**
    * @brief Internal method to clean up operator resources and prevent circular references.
    *
-   * This is an internal method called automatically by the GXFWrapper during operator shutdown.
+   * This is an internal method called automatically by the GXFWrapper during operator shutdown
+   * (in `GXFWrapper::stop()` method).
    * It resets std::shared_ptr fields and std::function objects such as `input_exec_spec_`,
    * `output_exec_spec_`, `next_flows_`, `dynamic_flows_`, and `dynamic_flow_func_` to break
    * potential circular references between connected Operator objects.

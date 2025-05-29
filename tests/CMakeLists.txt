@@ -148,6 +148,7 @@ ConfigureTest(
   system/loading_gxf_extension.cpp
   system/message_conditions_via_constructor.cpp
   system/multi_receiver_operator_ping_app.cpp
+  system/multiple_run_app.cpp
   system/multithreaded_app.cpp
   system/native_async_operator_ping_app.cpp
   system/native_operator_minimal_app.cpp

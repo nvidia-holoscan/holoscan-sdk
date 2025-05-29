@@ -17,8 +17,8 @@ Setup your developer kit:
 
 Developer Kit | User Guide | OS | GPU Mode
 ------------- | ---------- | --- | ---
-[NVIDIA IGX Orin][igx] | [Guide][igx-guide] | [IGX Software][igx-sw] 1.1 Production Release | iGPU **or*** dGPU
-[NVIDIA Jetson AGX Orin and Orin Nano][jetson-orin] | [Guide][jetson-guide] | [JetPack][jp] 6.1 | iGPU
+[NVIDIA IGX Orin][igx] | [Guide][igx-guide] | [IGX Software][igx-sw] 1.1.1 Production Release | iGPU **or*** dGPU
+[NVIDIA Jetson AGX Orin and Orin Nano][jetson-orin] | [Guide][jetson-guide] | [JetPack][jp] 6.2 | iGPU
 [NVIDIA Clara AGX][clara-agx]<br>_Only supporting the NGC container_ | [Guide][clara-guide] | [HoloPack][sdkm] 1.2<br>_[Upgrade to 535+ drivers required][cagx-upgrade]_ | dGPU
 
 [clara-agx]: https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments
@@ -52,6 +52,7 @@ Supported x86_64 distributions:
 OS | NGC Container | Debian/RPM package | Python wheel | Build from source
 -- | ------------- | -------------- | ------------ | -----------------
 **Ubuntu 22.04** | Yes | Yes | Yes | Yes
+**Ubuntu 24.04** | Yes | Yes | Yes | Yes
 **RHEL 9.x** | Yes | No | No | No¹
 **Other Linux distros** | No² | No | No³ | No¹
 
@@ -82,11 +83,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.2.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.3.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.2.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.3.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -189,13 +190,13 @@ For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia
 - The [**Holoscan container image on NGC**][container] it the safest way to ensure all the dependencies are present with the expected versions (including Torch and ONNX Runtime), and should work on most Linux distributions. It is the simplest way to run the embedded examples, while still allowing you to create your own C++ and Python Holoscan application on top of it. These benefits come at a cost:
   - large image size from the numerous (some of them optional) dependencies. If you need a lean runtime image, see {ref}`section below<runtime-container>`.
   - standard inconvenience that exist when using Docker, such as more complex run instructions for proper configuration.
-- If you are confident in your ability to manage dependencies on your own in your host environment, the **Holoscan Debian package** should provide all the capabilities needed to use the Holoscan SDK, assuming you are on Ubuntu 22.04.
-- If you are not interested in the C++ API but just need to work in Python, or want to use a different version than Python 3.10, you can use the [**Holoscan python wheels**][pypi] on PyPI. While they are the easiest solution to install the SDK, it might require the most work to setup your environment with extra dependencies based on your needs. Finally, they are only formally supported on Ubuntu 22.04, though should support other linux distributions with glibc 2.35 or above.
+- If you are confident in your ability to manage dependencies on your own in your host environment, the **Holoscan Debian package** should provide all the capabilities needed to use the Holoscan SDK, assuming you are on Ubuntu 22.04 or Ubuntu 24.04.
+- If you are not interested in the C++ API but just need to work in Python, or want to use a different version than Python 3.10, you can use the [**Holoscan python wheels**][pypi] on PyPI. While they are the easiest solution to install the SDK, it might require the most work to setup your environment with extra dependencies based on your needs. Finally, they are only formally supported on Ubuntu 22.04 and Ubuntu 24.04, though should support other linux distributions with glibc 2.35 or above.
 
 |  | NGC dev Container | Debian Package | Python Wheels |
 |---|:---:|:---:|:---:|
 | Runtime libraries | **Included** | **Included** | **Included** |
-| Python module | 3.10 | 3.10 | **3.9 to 3.12** |
+| Python module | 3.10 | N/A | **3.9 to 3.12** |
 | C++ headers and<br>CMake config | **Included** | **Included** | N/A |
 | Examples (+ source) | **Included** | **Included** | [retrieve from<br>GitHub][examples] |
 | Sample datasets | **Included** | [retrieve from<br>NGC][data] | [retrieve from<br>NGC][data] |

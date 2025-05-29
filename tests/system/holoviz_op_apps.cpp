@@ -362,3 +362,142 @@ TEST_P(HolovizInputTestFixture, TestHolovizInputs) {
         << exception << "\n===========\n";
   }
 }
+
+// This operator is used to test the render buffer input, it creates a video buffer and emits it as
+// an output. It also creates a simple cube geometry and specs and emits it.
+class RenderBufferSourceOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(RenderBufferSourceOp)
+
+  RenderBufferSourceOp() = default;
+
+  void initialize() override {
+    allocator_ = fragment()->make_resource<UnboundedAllocator>("pool");
+    add_arg(allocator_);
+    Operator::initialize();
+  }
+
+  void setup(OperatorSpec& spec) override {
+    spec.output<holoscan::gxf::Entity>("outputs");
+    spec.output<std::vector<ops::HolovizOp::InputSpec>>("output_specs");
+    spec.output<holoscan::gxf::Entity>("render_buffer");
+  }
+
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
+    // Create a new entity for geometries
+    auto entity = holoscan::gxf::Entity::New(&context);
+    auto specs = std::vector<ops::HolovizOp::InputSpec>();
+
+    // Create a simple cube geometry
+    add_data<24, 3>(entity,
+                    "cube",
+                    {{{-0.2f, -0.2f, -0.2f}, {-0.2f, 0.2f, -0.2f},  // Front face
+                      {-0.2f, 0.2f, -0.2f},  {0.2f, 0.2f, -0.2f},  {0.2f, 0.2f, -0.2f},
+                      {0.2f, -0.2f, -0.2f},  {0.2f, -0.2f, -0.2f}, {-0.2f, -0.2f, -0.2f},
+                      {-0.2f, -0.2f, 0.2f},  {-0.2f, 0.2f, 0.2f},  // Back face
+                      {-0.2f, 0.2f, 0.2f},   {0.2f, 0.2f, 0.2f},   {0.2f, 0.2f, 0.2f},
+                      {0.2f, -0.2f, 0.2f},   {0.2f, -0.2f, 0.2f},  {-0.2f, -0.2f, 0.2f},
+                      {-0.2f, -0.2f, -0.2f}, {-0.2f, -0.2f, 0.2f},  // Connecting lines
+                      {-0.2f, 0.2f, -0.2f},  {-0.2f, 0.2f, 0.2f},  {0.2f, 0.2f, -0.2f},
+                      {0.2f, 0.2f, 0.2f},    {0.2f, -0.2f, -0.2f}, {0.2f, -0.2f, 0.2f}}},
+                    context);
+
+    op_output.emit(entity, "outputs");
+
+    // Create input spec for the cube
+    ops::HolovizOp::InputSpec cube_spec;
+    cube_spec.tensor_name_ = "cube";
+    cube_spec.type_ = ops::HolovizOp::InputType::LINES_3D;
+    cube_spec.color_ = {1.0f, 0.0f, 0.0f, 1.0f};  // Red color
+    specs.push_back(cube_spec);
+
+    op_output.emit(specs, "output_specs");
+
+    // Create a render buffer
+    auto render_entity = nvidia::gxf::Entity::New(context.context());
+    auto video_buffer = render_entity.value().add<nvidia::gxf::VideoBuffer>("render_buffer");
+
+    // Create allocator handle
+    auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
+                                                                         allocator_->gxf_cid());
+
+    // Allocate buffer
+    video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
+        640U,
+        480U,
+        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
+        nvidia::gxf::MemoryStorageType::kDevice,
+        allocator.value());
+
+    // Emit output
+    auto result = holoscan::gxf::Entity(std::move(render_entity.value()));
+    op_output.emit(result, "render_buffer");
+  }
+
+ private:
+  template <std::size_t N, std::size_t C>
+  void add_data(holoscan::gxf::Entity& entity, const char* name,
+                const std::array<std::array<float, C>, N>& data, ExecutionContext& context) {
+    auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
+                                                                         allocator_->gxf_cid());
+    auto tensor = static_cast<nvidia::gxf::Entity&>(entity).add<nvidia::gxf::Tensor>(name).value();
+    tensor->reshape<float>(
+        nvidia::gxf::Shape({N, C}), nvidia::gxf::MemoryStorageType::kHost, allocator.value());
+    std::memcpy(tensor->pointer(), data.data(), N * C * sizeof(float));
+  }
+
+  std::shared_ptr<UnboundedAllocator> allocator_;
+};
+
+// This operator is used to test the render buffer output, it receives a render buffer and logs it
+class RenderBufferSinkOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(RenderBufferSinkOp)
+
+  RenderBufferSinkOp() = default;
+
+  void setup(OperatorSpec& spec) override { spec.input<nvidia::gxf::Entity>("input"); }
+
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
+    auto render_buffer = op_input.receive<nvidia::gxf::Entity>("input").value();
+    holoscan::log_info("Received render buffer");
+  }
+};
+
+// This application is used to test the render buffer input and output
+class RenderBufferInputApp : public holoscan::Application {
+ public:
+  void compose() override {
+    auto source = make_operator<RenderBufferSourceOp>("source");
+    auto renderer = make_operator<ops::HolovizOp>("renderer",
+                                                  make_condition<CountCondition>(2),
+                                                  Arg("headless", true),
+                                                  Arg("enable_render_buffer_input", true),
+                                                  Arg("enable_render_buffer_output", true),
+                                                  Arg("width", 640U),
+                                                  Arg("height", 480U));
+    auto sink = make_operator<RenderBufferSinkOp>("sink");
+
+    add_flow(source, renderer, {{"outputs", "receivers"}});
+    add_flow(source, renderer, {{"output_specs", "input_specs"}});
+    add_flow(source, renderer, {{"render_buffer", "render_buffer_input"}});
+    add_flow(renderer, sink, {{"render_buffer_output", "input"}});
+  }
+
+  InputType input_type_;
+};
+
+TEST(HolovizApps, TestRenderBufferInput) {
+  auto app = make_application<RenderBufferInputApp>();
+
+  // capture output to check that the expected messages were logged
+  testing::internal::CaptureStderr();
+  EXPECT_NO_THROW(app->run());
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  EXPECT_TRUE(log_output.find("Received render buffer") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
+}
