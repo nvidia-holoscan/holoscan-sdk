@@ -85,7 +85,7 @@ WORKDIR /opt/onnxruntime
 RUN curl -S -L -# -o ort.tgz \
     https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-$(uname -m).tar.gz
 RUN mkdir -p ${ONNX_RUNTIME_VERSION}
-RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2
+RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2 --no-same-owner --no-same-permissions
 
 ############################################################
 # Libtorch
