@@ -152,4 +152,12 @@ void ComponentBase::reset_graph_entities() {
   }
 }
 
+void ComponentBase::fragment(Fragment* frag) {
+  fragment_ = frag;
+}
+
+void ComponentBase::service_provider(FragmentServiceProvider* provider) {
+  service_provider_ = provider;
+}
+
 }  // namespace holoscan

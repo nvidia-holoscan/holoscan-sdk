@@ -214,5 +214,21 @@ void ProcessingTests::parameter_setup_test() {
       status, test_module, 22, test_identifier_process.at(22), HoloInfer::holoinfer_code::H_ERROR);
   clear_processor();
 
+  custom_kernels["cuda_kernel-1"] = R"(
+      extern "C" __global__ void
+      customKernel1(const unsigned char* input, unsigned char* output, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) { output[idx] = input[idx]; }
+  }
+  )";
+
+  status = setup_processor(true);
+  processing_assert(status,
+                    test_module,
+                    23,
+                    test_identifier_process.at(23),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
+  clear_processor();
+
   process_operations.at("plax_cham_infer").pop_back();
 }

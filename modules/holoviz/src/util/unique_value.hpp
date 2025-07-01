@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,7 @@ class UniqueValue : public NonCopyable {
    */
   void reset(T value = T()) noexcept {
     T old_value = value_;
-    value_ = value;
+    value_ = std::move(value);
     if (old_value != T()) { F(old_value); }
   }
 

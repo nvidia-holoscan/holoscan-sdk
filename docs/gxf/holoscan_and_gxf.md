@@ -37,7 +37,7 @@ The Holoscan SDK added Python wrapping and native operators to further increase 
 ### Holoscan SDK v0.5
 
 1. The built-in Holoscan GXF extensions are loaded automatically and don't need to be listed in the YAML configuration file of Holoscan applications. This allows Holoscan applications to be defined without requiring a YAML configuration file.
-2. No significant changes to build operators. However, most built-in operators were switched to native implementations, with the ability to [convert native operators to GXF codelets](gxf_wrap_holoscan_op.md) for GXF application developers.
+2. No significant changes to build operators. However, most built-in operators were switched to native implementations, with the ability to [convert native operators to GXF codelets](gxf_wrap_holoscan.md) for GXF application developers.
 
 ### Holoscan SDK v1.0
 

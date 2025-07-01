@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,14 +37,19 @@ Resource::~Resource() {
 
   // check if this resource had been imported to CUDA
   if (!external_mems_.empty()) {
-    const CudaService::ScopedPush cuda_context = vulkan_->get_cuda_service()->PushContext();
-
-    external_mems_.clear();
-    cuda_access_signal_semaphore_.reset();
-    vulkan_access_wait_semaphore_.reset();
-
-    cuda_access_wait_semaphore_.reset();
-    vulkan_access_signal_semaphore_.reset();
+    try {
+      const CudaService::ScopedPush cuda_context = vulkan_->get_cuda_service()->PushContext();
+      external_mems_.clear();
+      cuda_access_signal_semaphore_.reset();
+      vulkan_access_wait_semaphore_.reset();
+      cuda_access_wait_semaphore_.reset();
+      vulkan_access_signal_semaphore_.reset();
+    } catch (const std::exception& e) {
+      // Silently handle any exceptions during cleanup
+      try {
+        HOLOSCAN_LOG_ERROR("Resource destructor failed with {}", e.what());
+      } catch (...) {}
+    }
   }
 }
 

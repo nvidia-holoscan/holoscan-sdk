@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,10 +63,10 @@ class PingTxOp : public holoscan::Operator {
                holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value1 = std::make_shared<ValueData>(index_++);
-    op_output.emit(value1, "out1");
+    op_output.emit(std::move(value1), "out1");
 
     auto value2 = std::make_shared<ValueData>(index_++);
-    op_output.emit(value2, "out2");
+    op_output.emit(std::move(value2), "out2");
   };
   int index_ = 1;
 };
@@ -89,7 +89,7 @@ class PingNullSharedPtrTxOp : public holoscan::Operator {
     op_output.emit(nullptr, "out1");
 
     auto value2 = std::make_shared<ValueData>(index_++);
-    op_output.emit(value2, "out2");
+    op_output.emit(std::move(value2), "out2");
   };
   int index_ = 1;
 };

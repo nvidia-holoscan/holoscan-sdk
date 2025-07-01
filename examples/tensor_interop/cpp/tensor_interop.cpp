@@ -27,6 +27,7 @@
 #include <gxf/std/tensor.hpp>
 #include <holoscan/core/domain/tensor_map.hpp>
 #include <holoscan/core/gxf/gxf_extension_registrar.hpp>
+#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
 #include <holoscan/holoscan.hpp>
 
 #include "./receive_tensor_gxf.hpp"
@@ -176,6 +177,11 @@ class App : public holoscan::Application {
 
 int main() {
   auto app = holoscan::make_application<App>();
+
+  // DataLogger classes log input/outputs of native operators (ProcessTensorOp for this app)
+  app->add_data_logger(app->make_resource<holoscan::data_loggers::BasicConsoleLogger>(
+      "console_logger", holoscan::Arg{"log_tensor_data_content", false}));
+
   app->run();
 
   return 0;

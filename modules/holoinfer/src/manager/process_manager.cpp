@@ -26,7 +26,7 @@ namespace holoscan {
 namespace inference {
 
 InferStatus ManagerProcessor::initialize(const MultiMappings& process_operations,
-                                         const Mappings& custom_kernels,
+                                         const Mappings& custom_kernels, bool use_cuda_graphs,
                                          const std::string config_path = {}) {
   try {
     infer_data_ = std::make_unique<DataProcessor>();
@@ -34,7 +34,7 @@ InferStatus ManagerProcessor::initialize(const MultiMappings& process_operations
     return InferStatus(holoinfer_code::H_ERROR,
                        "Process Manager, Holoscan out data core: Memory allocation error");
   }
-  return infer_data_->initialize(process_operations, custom_kernels, config_path);
+  return infer_data_->initialize(process_operations, custom_kernels, use_cuda_graphs, config_path);
 }
 
 InferStatus ManagerProcessor::process_multi_tensor_operation(
@@ -259,9 +259,10 @@ InferStatus ProcessorContext::process(const MultiMappings& tensor_to_oper_map,
 }
 
 InferStatus ProcessorContext::initialize(const MultiMappings& process_operations,
-                                         const Mappings& custom_kernels,
+                                         const Mappings& custom_kernels, bool use_cuda_graphs,
                                          const std::string config_path = {}) {
-  return process_manager_->initialize(process_operations, custom_kernels, config_path);
+  return process_manager_->initialize(
+      process_operations, custom_kernels, use_cuda_graphs, config_path);
 }
 
 }  // namespace inference

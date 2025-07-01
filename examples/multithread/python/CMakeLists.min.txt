@@ -28,6 +28,19 @@ if(BUILD_TESTING)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "sum of received values: 496"
+                       # representative expected log entries
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:tx.out\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.values:15\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.in\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_val\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_name\\]"
+                       # rx.names:* expected to be excluded by denylist
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.names:15\\]"
+                       PASS_REGULAR_EXPRESSION "Category:Message \\(std::any\\)"
+                       # log_python_object_contents -> messages contain the Python type and repr
+                       PASS_REGULAR_EXPRESSION "Python\\(int\\): 15"
+                       PASS_REGULAR_EXPRESSION "Python\\(str\\): delay15"
                        PASS_REGULAR_EXPRESSION "sum of received values: 496")
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_8_TEST

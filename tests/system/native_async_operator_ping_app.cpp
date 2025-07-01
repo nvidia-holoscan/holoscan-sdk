@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,6 @@
 
 #include <holoscan/holoscan.hpp>
 
-#include "../config.hpp"
 #include "common/assert.hpp"
 
 #include <holoscan/operators/async_ping_rx/async_ping_rx.hpp>
@@ -31,8 +30,6 @@
 #include <holoscan/operators/ping_tx/ping_tx.hpp>
 
 using namespace std::string_literals;
-
-static HoloscanTestConfig test_config;
 
 namespace holoscan {
 

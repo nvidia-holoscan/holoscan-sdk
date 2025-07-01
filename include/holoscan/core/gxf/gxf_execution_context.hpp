@@ -98,12 +98,12 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
    * The stream should correspond to a CudaStreamId that was received on one of the Operator's
    * input ports or a stream that was allocated via `allocate_cuda_stream`.
    *
-   * @param stream_handle A CUDA stream object.
+   * @param stream A CUDA stream object.
    * @return The GXF CudaStream handle if found, or unexpected if not found.
    */
   expected<gxf::CudaStreamHandle, RuntimeError> stream_handle_from_stream(cudaStream_t stream);
 
-  std::shared_ptr<CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
+  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
 
   /// @brief initialize the CudaObjectHandler for the Operator
   void init_cuda_object_handler(Operator* op);
@@ -130,7 +130,7 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
   gxf_uid_t eid_ = kNullUid;                                ///< The GXF entity ID of the operator.
   std::shared_ptr<GXFInputContext> gxf_input_context_{};    ///< The GXF input context.
   std::shared_ptr<GXFOutputContext> gxf_output_context_{};  ///< The GXF output context.
-  std::shared_ptr<CudaObjectHandler> cuda_object_handler_{};
+  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler_{};
   std::unordered_map<std::string, gxf_uid_t> operator_eid_cache_{};  ///< Cache for operator EIDs.
 };
 

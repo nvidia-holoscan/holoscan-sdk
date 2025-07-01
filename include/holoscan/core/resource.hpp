@@ -88,6 +88,10 @@ class NetworkContext;
 class Scheduler;
 class Operator;
 
+// Memory storage type used by various resources (e.g. Endpoint, Allocator)
+// values 0-2 map to nvidia::gxf::MemoryStorageType
+enum struct MemoryStorageType { kHost = 0, kDevice = 1, kSystem = 2 };
+
 /**
  * @brief Base class for all resources.
  *
@@ -113,7 +117,8 @@ class Resource : public Component {
   /**
    * @brief Construct a new Resource object.
    *
-   * @param args The arguments to be passed to the resource.
+   * @param arg The first argument to be passed to the resource.
+   * @param args The remaining arguments to be passed to the resource.
    */
   HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()
   explicit Resource(ArgT&& arg, ArgsT&&... args) {

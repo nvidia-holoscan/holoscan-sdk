@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@ delay_step: 0.01
 count: 1
 silent: false
 tracking: false
+data_logging: false
 
 greedy_scheduler:
   stop_on_deadlock: true
@@ -36,3 +37,11 @@ event_based_scheduler:
   worker_thread_number: 8
   stop_on_deadlock: true
   stop_on_deadlock_timeout: 500
+
+basic_console_logger:
+  log_inputs: true
+  log_outputs: true
+  log_metadata: false
+  log_tensor_data_content: false
+  allowlist_patterns: []
+  denylist_patterns: [".*rx.names.*"]

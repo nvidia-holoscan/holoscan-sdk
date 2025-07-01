@@ -21,7 +21,7 @@
 
 #include "./inference.hpp"
 
-#include "holoscan/core/codec_registry.hpp"
+#include "holoscan/core/codecs.hpp"
 #include "holoscan/core/endpoint.hpp"
 #include "holoscan/core/expected.hpp"
 

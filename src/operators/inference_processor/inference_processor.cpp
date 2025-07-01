@@ -134,6 +134,7 @@ void InferenceProcessorOp::setup(OperatorSpec& spec) {
   spec.param(input_on_cuda_, "input_on_cuda", "Input buffer on CUDA", "", false);
   spec.param(output_on_cuda_, "output_on_cuda", "Output buffer on CUDA", "", false);
   spec.param(transmit_on_cuda_, "transmit_on_cuda", "Transmit message on CUDA", "", false);
+  spec.param(use_cuda_graphs_, "use_cuda_graphs", "Use CUDA Graphs for custom kernels", "", false);
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
   spec.param(cuda_stream_pool_,
              "cuda_stream_pool",
@@ -200,8 +201,10 @@ void InferenceProcessorOp::start() {
   } catch (...) { HoloInfer::raise_error(module_, "Start, Unknown exception"); }
 
   // Initialize holoscan processing context
-  auto status = holoscan_postprocess_context_->initialize(
-      process_operations_.get().get_map(), custom_kernels_.get().get_map(), config_path_.get());
+  auto status = holoscan_postprocess_context_->initialize(process_operations_.get().get_map(),
+                                                          custom_kernels_.get().get_map(),
+                                                          use_cuda_graphs_.get(),
+                                                          config_path_.get());
   if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
     status.display_message();
     HoloInfer::raise_error(module_, "Start, Out data setup");

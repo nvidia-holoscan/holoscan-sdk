@@ -76,7 +76,7 @@ class OperatorSpec : public ComponentSpec {
   /**
    * @brief Add a Condition that depends on the status of multiple input ports.
    *
-   * @param type The type of multi-message condition (currently only kMultiMessageAvailable)
+   * @param kind The type of multi-message condition (currently only kMultiMessageAvailable)
    * @param port_names The names of the input ports the condition will apply to
    * @param args ArgList of arguments to pass to the MultiMessageAvailableCondition
    */

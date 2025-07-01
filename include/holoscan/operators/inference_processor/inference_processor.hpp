@@ -156,6 +156,10 @@ class InferenceProcessorOp : public holoscan::Operator {
   ///  Supported value: False
   Parameter<bool> transmit_on_cuda_;
 
+  /// @brief  Flag showing if custom CUDA kernels use CUDA Graphs for processing.
+  /// Default is False.
+  Parameter<bool> use_cuda_graphs_;
+
   ///  @brief Optional CUDA stream pool for allocation of an internal CUDA stream if none is
   ///  available in the incoming messages.
   Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};

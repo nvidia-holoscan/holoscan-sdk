@@ -39,10 +39,11 @@ class UnboundedAllocator : public Allocator {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(UnboundedAllocator, Allocator)
   UnboundedAllocator() = default;
-  UnboundedAllocator(const std::string& name, nvidia::gxf::UnboundedAllocator* component)
-      : Allocator(name, component) {}
+  UnboundedAllocator(const std::string& name, nvidia::gxf::UnboundedAllocator* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::UnboundedAllocator"; }
+
+  nvidia::gxf::UnboundedAllocator* get() const;
 };
 
 }  // namespace holoscan

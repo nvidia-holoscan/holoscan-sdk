@@ -27,6 +27,7 @@
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
@@ -78,7 +79,7 @@ class PyInferenceOp : public InferenceOp {
                 const py::dict& model_path_map,     // InferenceOp::DataMap
                 const py::dict& pre_processor_map,  // InferenceOp::DataVecMap
                 const py::dict& device_map,         // InferenceOp::DataMap
-                const py::dict& dla_core_map,         // InferenceOp::DataMap
+                const py::dict& dla_core_map,       // InferenceOp::DataMap
                 const py::dict& temporal_map,       // InferenceOp::DataMap
                 const py::dict& activation_map,     // InferenceOp::DataMap
                 const py::dict& backend_map,        // InferenceOp::DataMap
@@ -272,8 +273,9 @@ PYBIND11_MODULE(_inference, m) {
            "Set model active flag",
            py::arg("active") = true);
 
-  CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>(
-      "std::vector<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>", true);
+  gxf::CodecRegistry::get_instance()
+      .add_codec<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>(
+          "std::vector<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>", true);
   // See python bindings for holoviz operator
   m.def("register_types", [](EmitterReceiverRegistry& registry) {
     HOLOSCAN_LOG_INFO("Call in register types for ActivationSpec");

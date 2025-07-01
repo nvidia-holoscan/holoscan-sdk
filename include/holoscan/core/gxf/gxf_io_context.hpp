@@ -108,6 +108,10 @@ class GXFInputContext : public InputContext {
                         bool no_error_message = false) override;
 
   gxf_result_t retrieve_cuda_streams(nvidia::gxf::Entity& message, const std::string& input_name);
+
+  std::shared_ptr<gxf::CudaObjectHandler> gxf_cuda_object_handler() {
+    return std::dynamic_pointer_cast<gxf::CudaObjectHandler>(cuda_object_handler_);
+  }
 };
 
 /**
@@ -156,6 +160,10 @@ class GXFOutputContext : public OutputContext {
  protected:
   void emit_impl(std::any data, const char* name = nullptr, OutputType out_type = OutputType::kAny,
                  const int64_t acq_timestamp = -1) override;
+
+  std::shared_ptr<gxf::CudaObjectHandler> gxf_cuda_object_handler() {
+    return std::dynamic_pointer_cast<gxf::CudaObjectHandler>(cuda_object_handler_);
+  }
 
  private:
   void populate_output_metadata(nvidia::gxf::Handle<MetadataDictionary> metadata);

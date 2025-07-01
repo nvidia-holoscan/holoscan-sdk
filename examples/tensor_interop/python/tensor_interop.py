@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@ limitations under the License.
 import os
 
 from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.data_loggers import BasicConsoleLogger
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 
 try:
@@ -128,6 +129,17 @@ class MyVideoProcessingApp(Application):
 
 def main(config_file):
     app = MyVideoProcessingApp()
+
+    # log the messages sent between operators
+    app.add_data_logger(
+        BasicConsoleLogger(
+            app,
+            name="console_logger",
+            log_tensor_data_content=False,
+            log_metadata=False,
+        )
+    )
+
     # if the --config command line argument was provided, it will override this config_file
     app.config(config_file)
     app.run()

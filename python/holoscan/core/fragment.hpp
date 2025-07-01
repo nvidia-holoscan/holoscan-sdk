@@ -74,6 +74,15 @@ class PyFragment : public Fragment {
   void compose() override;
   void run() override;
 
+  /// Get a Python service from the registry
+  py::object get_python_service(const std::string& service_id) const;
+
+  /// Set a Python service in the registry
+  void set_python_service(const std::string& service_id, py::object service);
+
+  /// Clear a Python service from the registry
+  void clear_python_service(const std::string& service_id);
+
  protected:
   void reset_state() override;
 
@@ -81,6 +90,8 @@ class PyFragment : public Fragment {
   py::object py_compose_ = py::none();
   /// Map from Operator raw pointer to the Python wrapper object
   std::unordered_map<Operator*, py::object> python_operator_registry_;
+  /// Map from service ID to the original Python service object
+  std::unordered_map<std::string, py::object> python_service_registry_;
 };
 
 }  // namespace holoscan

@@ -56,6 +56,22 @@ function(add_holoscan_operator operator)
     target_link_libraries(${target} PRIVATE holoscan_security_flags)
 endfunction()
 
+function(add_holoscan_data_logger data_logger)
+    set(target data_loggers_${data_logger})
+    add_library(${target} SHARED ${ARGN})
+    add_library(${HOLOSCAN_PACKAGE_NAME}::data_loggers::${data_logger} ALIAS ${target})
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME ${HOLOSCAN_PACKAGE_NAME}_${target}
+        EXPORT_NAME data_loggers::${data_logger}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        VERSION ${PROJECT_VERSION}
+    )
+    target_link_libraries(${target}
+        PUBLIC ${HOLOSCAN_PACKAGE_NAME}::core
+    )
+    target_link_libraries(${target} PRIVATE holoscan_security_flags)
+endfunction()
+
 # ##############################################################################
 # # Add library holoscan::spdlog_logger
 # ##############################################################################
@@ -108,17 +124,34 @@ target_include_directories(profiler
 )
 
 # ##############################################################################
+# # Add library holoscan::pose_tree
+# ##############################################################################
+add_holoscan_library(pose_tree
+    pose_tree/pose_tree_history.cpp
+    pose_tree/pose_tree.cpp
+    pose_tree/pose_tree_manager.cpp)
+
+# Note: holoscan::pose_tree depends on holoscan::core and holoscan::eigen3,
+# but we can separate the core pose tree module (which doesn't depend on the Holoscan SDK)
+# into `holoscan::pose_tree_core` later if needed.
+target_link_libraries(pose_tree
+    PUBLIC
+        holoscan::core
+        holoscan::eigen3
+)
+
+# ##############################################################################
 # # Add library: holoscan::core
 # ##############################################################################
 
 set(CORE_PROTO_FILES
-    core/services/proto/app_driver.proto
-    core/services/proto/app_worker.proto
-    core/services/proto/connection_item.proto
-    core/services/proto/error_code.proto
-    core/services/proto/multi_fragment_port_info.proto
-    core/services/proto/result.proto
-    core/services/proto/system_resource.proto
+    core/distributed/proto/app_driver.proto
+    core/distributed/proto/app_worker.proto
+    core/distributed/proto/connection_item.proto
+    core/distributed/proto/error_code.proto
+    core/distributed/proto/multi_fragment_port_info.proto
+    core/distributed/proto/result.proto
+    core/distributed/proto/system_resource.proto
 )
 
 grpc_generate_cpp(CORE_GRPC_SRCS CORE_GRPC_HDRS ${CORE_PROTO_FILES})
@@ -133,7 +166,6 @@ add_holoscan_library(core
     core/argument_setter.cpp
     core/cli_options.cpp
     core/cli_parser.cpp
-    core/codec_registry.cpp
     core/component.cpp
     core/component_spec.cpp
     core/condition.cpp
@@ -152,8 +184,15 @@ add_holoscan_library(core
     core/conditions/gxf/expiring_message.cpp
     core/config.cpp
     core/dataflow_tracker.cpp
+    core/distributed/app_driver/client.cpp
+    core/distributed/app_driver/service_impl.cpp
+    core/distributed/app_driver/server.cpp
+    core/distributed/app_worker/client.cpp
+    core/distributed/app_worker/service_impl.cpp
+    core/distributed/app_worker/server.cpp
+    core/distributed/common/forward_op.cpp
+    core/distributed/common/virtual_operator.cpp
     core/domain/tensor.cpp
-    core/endpoint.cpp
     core/errors.cpp
     core/file_fifo_mutex.cpp
     core/executors/gxf/gxf_executor.cpp
@@ -162,7 +201,10 @@ add_holoscan_library(core
     core/flow_tracking_annotation.cpp
     core/fragment.cpp
     core/fragment_scheduler.cpp
+    core/fragment_service.cpp
     core/graphs/flow_graph.cpp
+    core/gxf/codec_registry.cpp
+    core/gxf/endpoint.cpp
     core/gxf/entity.cpp
     core/gxf/entity_group.cpp
     core/gxf/gxf_component.cpp
@@ -187,6 +229,7 @@ add_holoscan_library(core
     core/operator.cpp
     core/operator_spec.cpp
     core/resource.cpp
+    core/resources/data_logger.cpp
     core/resources/gxf/allocator.cpp
     core/resources/gxf/annotated_double_buffer_receiver.cpp
     core/resources/gxf/annotated_double_buffer_transmitter.cpp
@@ -200,6 +243,7 @@ add_holoscan_library(core
     core/resources/gxf/double_buffer_transmitter.cpp
     core/resources/gxf/dfft_collector.cpp
     core/resources/gxf/gxf_component_resource.cpp
+    core/resources/gxf/first_fit_allocator_base.cpp
     core/resources/gxf/holoscan_ucx_receiver.cpp
     core/resources/gxf/holoscan_ucx_transmitter.cpp
     core/resources/gxf/manual_clock.cpp
@@ -218,19 +262,12 @@ add_holoscan_library(core
     core/resources/gxf/ucx_receiver.cpp
     core/resources/gxf/ucx_serialization_buffer.cpp
     core/resources/gxf/ucx_transmitter.cpp
+    core/resources/gxf/unbounded_allocator.cpp
     core/scheduler.cpp
     core/schedulers/greedy_fragment_allocation.cpp
     core/schedulers/gxf/event_based_scheduler.cpp
     core/schedulers/gxf/greedy_scheduler.cpp
     core/schedulers/gxf/multithread_scheduler.cpp
-    core/services/app_driver/client.cpp
-    core/services/app_driver/service_impl.cpp
-    core/services/app_driver/server.cpp
-    core/services/app_worker/client.cpp
-    core/services/app_worker/service_impl.cpp
-    core/services/app_worker/server.cpp
-    core/services/common/forward_op.cpp
-    core/services/common/virtual_operator.cpp
     core/signal_handler.cpp
     core/system/cpu_resource_monitor.cpp
     core/system/gpu_resource_monitor.cpp
@@ -257,6 +294,7 @@ target_link_libraries(core
         GXF::std
         GXF::ucx
         yaml-cpp
+        holoscan::eigen3
     PRIVATE
         hwloc
         gRPC::grpc++
@@ -270,6 +308,8 @@ target_include_directories(core
       $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
       $<BUILD_INTERFACE:${cli11_SOURCE_DIR}/include>
       $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>
+      $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/single_include>
+      $<BUILD_INTERFACE:${concurrent_queue_SOURCE_DIR}>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
 )
 
@@ -289,3 +329,9 @@ target_link_libraries(infer_utils
 # # Add libraries: holoscan::ops::...
 # ##############################################################################
 add_subdirectory(operators)
+
+# ##############################################################################
+# # Add libraries: holoscan::data_loggers::...
+# ##############################################################################
+add_subdirectory(data_loggers)
+

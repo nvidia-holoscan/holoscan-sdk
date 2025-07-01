@@ -166,7 +166,14 @@ FileFIFOMutex::FileFIFOMutex(std::string file_path) {
 }
 
 FileFIFOMutex::~FileFIFOMutex() {
-  unlock();
+  try {
+    unlock();
+  } catch (const std::exception& e) {
+    // Silently handle any exceptions during cleanup
+    try {
+      HOLOSCAN_LOG_ERROR("FileFIFOMutex destructor failed with {}", e.what());
+    } catch (...) {}
+  }
   if (fd_ != -1) { close(fd_); }
   if (queue_fd_ != -1) { close(queue_fd_); }
 }

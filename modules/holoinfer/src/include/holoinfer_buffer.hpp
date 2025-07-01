@@ -42,7 +42,7 @@ namespace inference {
 /**
  * @brief Get the element size
  *
- * @param element_type Input data type. Float32 is the only supported element type.
+ * @param t Input data type. Float32 is the only supported element type.
  *
  * @return Bytes used in storing element type
  */
@@ -207,7 +207,7 @@ class DataBuffer {
   /**
    * @brief Constructor
    *
-   * @param type Data type, defaults to float32
+   * @param data_type Data type, defaults to float32
    * @param device_id GPU device ID, defaults to 0
    */
   explicit DataBuffer(holoinfer_datatype data_type = holoinfer_datatype::h_Float32,
@@ -258,14 +258,16 @@ using MultiMappings = std::map<std::string, std::vector<std::string>>;
  * select a subset models at runtime.
  */
 struct ActivationSpec {
+  ActivationSpec() = default;
+
   /**
    * @brief Construct a new Activation Spec object.
    * @param model_name: Name of model which defined in model_path_map parameter.
    * @param active: Active model flag (true or false), default true.
    */
-  ActivationSpec() = default;
   explicit ActivationSpec(const std::string& model_name, bool active = true)
       : model_name_(model_name), active_(active) {}
+
   bool is_active() const { return active_; }
   std::string model() const { return model_name_; }
   void set_active(bool value = true) { active_ = value; }

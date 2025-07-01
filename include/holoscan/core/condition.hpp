@@ -18,7 +18,6 @@
 #ifndef HOLOSCAN_CORE_CONDITION_HPP
 #define HOLOSCAN_CORE_CONDITION_HPP
 
-#include <gxf/core/gxf.h>  // for gxf_uid_t
 #include <yaml-cpp/yaml.h>
 
 #include <any>
@@ -110,7 +109,24 @@ class Resource;
 /// Moving it to the holoscan namespace improves usability when working with async operators.
 /// See Operator::async_condition() for accessing the internal condition to control execution
 /// timing.
-using nvidia::gxf::AsynchronousEventState;
+
+// Copy of nvidia::gxf::AsynchronousEventState in holoscan namespace (avoid GXF header dependency)
+enum class AsynchronousEventState {
+  // uppercase values as in GXF for backwards compatibility
+  READY = 0,      // Init state, first tick is pending
+  WAIT,           // Request to async service yet to be sent, nothing to do but wait
+  EVENT_WAITING,  // Request sent to an async service, pending event done notification
+  EVENT_DONE,     // Event done notification received, entity ready to be ticked
+  EVENT_NEVER,    // Entity does not want to be ticked again, end of execution
+
+  // values following holoscan naming convention
+  kReady = READY,  // Init state, first tick is pending
+  kWait = WAIT,    // Request to async service yet to be sent, nothing to do but wait
+  kEventWaiting =
+      EVENT_WAITING,          // Request sent to an async service, pending event done notification
+  kEventDone = EVENT_DONE,    // Event done notification received, entity ready to be ticked
+  kEventNever = EVENT_NEVER,  // Entity does not want to be ticked again, end of execution
+};
 
 // Note: Update `IOSpec::to_yaml_node()` if you add new condition types
 enum class ConditionType {
@@ -175,7 +191,7 @@ class Condition : public Component {
    * timestamp.
    *
    * @param timestamp The current timestamp
-   * @param type The status of the condition
+   * @param status_type The status of the condition
    * @param target_timestamp The target timestamp (used if the term is waiting for a time event).
    */
   virtual void check([[maybe_unused]] int64_t timestamp,
@@ -335,14 +351,19 @@ class Condition : public Component {
   std::optional<std::shared_ptr<Transmitter>> transmitter(const std::string& port_name);
 
   /**
-   * Get the GXF component ID of the underlying GXFSchedulingTermWrapper
+   * Get the component ID of a native Condition in the underlying backend.
    *
-   * This method is only relevant for native conditions. For conditions
-   * inheriting from GXFCondition, please use GXFCondition::gxf_cid() instead.
+   * This may not be used by all backends.
+   *
+   * In the case of GXF, this is the gxf_uid_t (alias for int64_t) of the GXFSchedulingTermWrapper
+   * component that is used to wrap the native condition as a GXF SchedulingTerm.
+   *
+   * This method is only relevant for native conditions. For conditions inheriting from
+   * GXFCondition, please just use GXFCondition::gxf_cid() instead.
    *
    * @return The unique GXF component id for this condition.
    */
-  gxf_uid_t wrapper_cid() const;
+  int64_t wrapper_cid() const;
 
  protected:
   // Add friend classes that can call reset_graph_entites
@@ -360,11 +381,13 @@ class Condition : public Component {
   void set_operator(Operator* op) { op_ = op; }
 
   /**
-   * Store GXF component ID of underlying GXFSchedulingTermWrapper
+   * Store the component ID for this condition in the underlying backend implementation.
    *
-   * @param GXF component id.
+   * This method may not be needed for all backends.
+   *
+   * @param cid component id corresponding to the underlying framework
    */
-  void wrapper_cid(gxf_uid_t cid);
+  void wrapper_cid(int64_t cid);
 
   /// Update parameters based on the specified arguments
   void update_params_from_args();
@@ -379,7 +402,7 @@ class Condition : public Component {
   ConditionComponentType condition_type_ =
       ConditionComponentType::kNative;  ///< The type of the component.
   Operator* op_ = nullptr;              ///< The operator this condition is associated with.
-  gxf_uid_t wrapper_cid_ = 0;           ///< Component ID of underlying GXFSchedulingTermWrapper
+  int64_t wrapper_cid_ = 0;             ///< Component ID of underlying GXFSchedulingTermWrapper
 };
 
 }  // namespace holoscan

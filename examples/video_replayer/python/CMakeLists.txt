@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,6 +87,11 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_TEST PROPERTIES
     DEPENDS "video_replayer_test.py"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    # check strings expected due to data_logging: true
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
+    # data logging is happening as expected
+    PASS_REGULAR_EXPRESSION ", data=\\["
   )
 
   # Add a test to check the validity of the frames
@@ -111,5 +116,11 @@ if(HOLOSCAN_BUILD_TESTS)
   )
   set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_DUAL_WINDOW_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    # check strings expected due to data_logging: true
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz-2.receivers:0\\]"
+    # data logging is happening as expected
+    PASS_REGULAR_EXPRESSION ", data=\\["
   )
 endif()

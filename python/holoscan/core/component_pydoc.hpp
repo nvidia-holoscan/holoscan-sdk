@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -172,6 +172,42 @@ Initialize the component.
 
 PYDOC(description, R"doc(
 YAML formatted string describing the component.
+)doc")
+
+PYDOC(service, R"doc(
+Retrieve a registered fragment service through the component's fragment.
+
+This method delegates to the fragment's service() method to retrieve a previously
+registered fragment service by its type and optional identifier.
+Returns ``None`` if no fragment service is found with the specified type and identifier.
+
+Parameters
+----------
+service_type : type
+    The type of the fragment service to retrieve. Must be a type that inherits from
+    Resource or FragmentService.
+id : str, optional
+    The identifier of the fragment service. If empty, retrieves by service type only.
+    For Resources, this would typically be the resource's name.
+
+Returns
+-------
+object or None
+    The fragment service instance of the requested type, or ``None`` if not found.
+    If the service wraps a Resource and a Resource type is requested, the unwrapped
+    Resource instance is returned.
+
+Raises
+------
+RuntimeError
+    If the component has no associated fragment or if the fragment's service method
+    cannot be accessed.
+
+Notes
+-----
+This is a convenience method that internally calls the fragment's service() method.
+For services that wrap Resources, the method will automatically unwrap and return
+the Resource if a Resource type is requested.
 )doc")
 
 }  // namespace Component

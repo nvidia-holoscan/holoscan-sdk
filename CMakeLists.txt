@@ -191,6 +191,9 @@ endif()
 # # Build Python module
 # ##############################################################################
 if(HOLOSCAN_BUILD_PYTHON)
+    if(HOLOSCAN_BUILD_TESTS)
+       include(CTest)
+    endif()
     add_subdirectory(python)
 endif()
 
@@ -243,6 +246,7 @@ endif()
 # List targets to export/install
 list(APPEND HOLOSCAN_INSTALL_TARGETS
     core
+    eigen3_interface
     holoviz
     holoviz_imgui
     holoinfer
@@ -250,6 +254,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     logger
     nvtx3-c
     nvtx3-cpp
+    data_loggers_basic_console_logger
     op_async_ping_rx
     op_async_ping_tx
     op_bayer_demosaic
@@ -266,6 +271,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_video_stream_recorder
     op_video_stream_replayer
     op_v4l2
+    pose_tree
     profiler
     spdlog_logger
     yaml-cpp

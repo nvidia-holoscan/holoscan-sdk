@@ -22,6 +22,11 @@ Licensed under MIT (https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
 DLPack (https://github.com/dmlc/dlpack)
 Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v0.7/LICENSE)
 
+eigen (https://gitlab.com/libeigen/eigen)
+Copyright (c) 2006-2025, Eigen authors
+Licensed under Mozilla Public License Version 2.0 (https://gitlab.com/libeigen/eigen/-/blob/3.4.0/COPYING.MPL2)
+The source code for Eigen is available at <https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/eigen/eigen-3.4.0.tar.gz>. In compliance with the MPL 2.0 license, you may also obtain a copy of the Source Code Form by reasonable means in a timely manner, at a charge no more than the cost of distribution to the recipient.
+
 expected (https://github.com/TartanLlama/expected)
 Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPYING)
 

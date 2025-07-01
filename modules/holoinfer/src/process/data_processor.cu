@@ -127,6 +127,11 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
   }
 
   auto out_tensor_name = output_tensors[0];
+
+  if (cuda_graph_created_.find(out_tensor_name) == cuda_graph_created_.end()) {
+    cuda_graph_created_[out_tensor_name] = false;
+    cuda_graph_instantiated_[out_tensor_name] = false;
+  }
   size_t dsize = accumulate(dimensions.begin(), dimensions.end(), 1, std::multiplies<size_t>());
   size_t dimensionX = dimensions[0];
   size_t dimensionY = dimensions[1];
@@ -184,6 +189,8 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
   }
 
   int buffer_count = 0;
+  const char* error_string;
+
   for (auto id : ids) {
     if (dynamic_output_dim_ && buffer_count > 0) {
       // output of the previous kernel is the input to the current kernel
@@ -261,32 +268,124 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
     dim3 gridDim(blocksPerGridx, blocksPerGridy, blocksPerGridz);
     dim3 blockDim(threadsPerBlockx, threadsPerBlocky, threadsPerBlockz);
 
-    result = cuLaunchKernel(kernel_.at(id),
-                            blocksPerGridx,
-                            blocksPerGridy,
-                            blocksPerGridz,
-                            threadsPerBlockx,
-                            threadsPerBlocky,
-                            threadsPerBlockz,
-                            0,
-                            cuda_stream,
-                            args.data(),
-                            0);
+    if (use_cuda_graph_) {
+      if (!cuda_graph_created_[out_tensor_name]) {
+        cuda_graph_created_[out_tensor_name] = true;
+        CUgraph l_graph;
+        result = cuGraphCreate(&l_graph, 0);
+        if (result != CUDA_SUCCESS) {
+          cuGetErrorString(result, &error_string);
 
-    if (result != CUDA_SUCCESS) {
-      const char* error_string;
-      cuGetErrorString(result, &error_string);
-      HOLOSCAN_LOG_ERROR("CUDA error in launching custom kernel: {}", error_string);
-      return InferStatus(holoinfer_code::H_ERROR,
-                         "Data processor, error in launching custom kernel.");
+          HOLOSCAN_LOG_ERROR("CUDA graph creation failed in launchKernel: {}", error_string);
+          return InferStatus(holoinfer_code::H_ERROR,
+                             "Data processor, CUDA graph creation failed.");
+        }
+        graph_[out_tensor_name] = l_graph;
+      }
+
+      if (!cuda_graph_instantiated_[out_tensor_name]) {
+        CUDA_KERNEL_NODE_PARAMS kernelNodeParam = {0};
+        kernelNodeParam.func = kernel_.at(id);
+        kernelNodeParam.gridDimX = blocksPerGridx;
+        kernelNodeParam.gridDimY = blocksPerGridy;
+        kernelNodeParam.gridDimZ = blocksPerGridz;
+        kernelNodeParam.blockDimX = threadsPerBlockx;
+        kernelNodeParam.blockDimY = threadsPerBlocky;
+        kernelNodeParam.blockDimZ = threadsPerBlockz;
+        kernelNodeParam.sharedMemBytes = 0;
+        kernelNodeParam.kernelParams = args.data();
+        kernel_node_params_[out_tensor_name].push_back(std::move(kernelNodeParam));
+        CUgraphNode kernelNode;
+        if (buffer_count == 0) {
+          result = cuGraphAddKernelNode(&kernelNode,
+                                        graph_[out_tensor_name],
+                                        nullptr,
+                                        0,
+                                        &kernel_node_params_[out_tensor_name][buffer_count]);
+        } else {
+          CUgraphNode dependencies[] = {kernel_nodes_[out_tensor_name][buffer_count - 1]};
+          result = cuGraphAddKernelNode(&kernelNode,
+                                        graph_[out_tensor_name],
+                                        dependencies,
+                                        1,
+                                        &kernel_node_params_[out_tensor_name][buffer_count]);
+        }
+        if (result != CUDA_SUCCESS) {
+          cuGetErrorString(result, &error_string);
+
+          HOLOSCAN_LOG_ERROR("CUDA graph node addition failed in launchKernel: {}", error_string);
+          return InferStatus(holoinfer_code::H_ERROR,
+                             "Data processor, CUDA graph node creation failed.");
+        }
+        kernel_nodes_[out_tensor_name].push_back(kernelNode);
+      }
+
+      if (cuda_graph_instantiated_[out_tensor_name]) {
+        CUDA_KERNEL_NODE_PARAMS updatedParams = kernel_node_params_[out_tensor_name][buffer_count];
+        updatedParams.kernelParams = args.data();
+        result = cuGraphExecKernelNodeSetParams(cuda_graph_instance_[out_tensor_name],
+                                                kernel_nodes_[out_tensor_name][buffer_count],
+                                                &updatedParams);
+        if (result != CUDA_SUCCESS) {
+          cuGetErrorString(result, &error_string);
+
+          HOLOSCAN_LOG_ERROR("CUDA graph node setting failed in launchKernel: {}", error_string);
+          return InferStatus(holoinfer_code::H_ERROR,
+                             "Data processor, CUDA graph node setting failed.");
+        }
+      }
+    } else {
+      result = cuLaunchKernel(kernel_.at(id),
+                              blocksPerGridx,
+                              blocksPerGridy,
+                              blocksPerGridz,
+                              threadsPerBlockx,
+                              threadsPerBlocky,
+                              threadsPerBlockz,
+                              0,
+                              cuda_stream,
+                              args.data(),
+                              0);
+
+      if (result != CUDA_SUCCESS) {
+        cuGetErrorString(result, &error_string);
+        HOLOSCAN_LOG_ERROR("CUDA error in launching custom kernel: {}", error_string);
+        return InferStatus(holoinfer_code::H_ERROR,
+                           "Data processor, error in launching custom kernel.");
+      }
     }
 
     buffer_count++;
   }
 
+  if (use_cuda_graph_) {
+    if (!cuda_graph_instantiated_[out_tensor_name]) {
+      result =
+          cuGraphInstantiate(&cuda_graph_instance_[out_tensor_name], graph_[out_tensor_name], 0);
+      if (result != CUDA_SUCCESS) {
+        cuGetErrorString(result, &error_string);
+
+        HOLOSCAN_LOG_ERROR("CUDA graph instantiation failed in launchKernel: {}", error_string);
+        return InferStatus(holoinfer_code::H_ERROR,
+                           "Data processor, CUDA graph instantiation failed.");
+      }
+    }
+    result = cuGraphLaunch(cuda_graph_instance_[out_tensor_name], cuda_stream);
+    if (result != CUDA_SUCCESS) {
+      cuGetErrorString(result, &error_string);
+
+      HOLOSCAN_LOG_ERROR("CUDA graph launch failed in launchKernel: {}", error_string);
+      return InferStatus(holoinfer_code::H_ERROR, "Data processor, CUDA graph launch failed.");
+    }
+
+    cuda_graph_instantiated_[out_tensor_name] = true;
+  }
+
   result = cuCtxPopCurrent(&context_);
   if (result != CUDA_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Cuda context pop failed in launchKernel.");
+    cuGetErrorString(result, &error_string);
+
+    HOLOSCAN_LOG_ERROR("Cuda context pop failed in launchKernel: {}", error_string);
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context setting failed.");
   }
 

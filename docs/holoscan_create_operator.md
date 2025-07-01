@@ -268,7 +268,8 @@ Example:
   void initialize() override {
     // Register custom type and codec for serialization
     register_converter<std::array<float, 3>>();
-    register_codec<std::vector<InputSpec>>("std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
+    gxf::GXFExecutor::register_codec<std::vector<InputSpec>>(
+        "std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
 
     // Set up prerequisite parameters before calling Operator::initialize()
     auto frag = fragment();

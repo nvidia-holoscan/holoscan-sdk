@@ -69,6 +69,8 @@ class OnnxInfer : public InferBase {
    *
    * @param input_data Input DataBuffer
    * @param output_buffer Output DataBuffer, is populated with inferred results
+   * @param cuda_event_data CUDA event to synchronize input data preparation
+   * @param cuda_event_inference Pointer to CUDA event for inference synchronization
    * @return InferStatus
    * */
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,

@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -356,7 +356,7 @@ clear_cache() {
     run_command rm -rf ${TOP}/build-*
     run_command rm -rf ${TOP}/install-*
 
-    run_command rm -rf ${TOP}/src/core/services/generated/*
+    run_command rm -rf ${TOP}/src/core/distributed/generated/*
 
     run_command rm -rf ${TOP}/.cache/ccache
     run_command rm -rf ${TOP}/.cache/cpm
@@ -816,7 +816,7 @@ lint() {
             --exclude install \
             --exclude build-\* \
             --exclude install-\* \
-            --exclude src/core/services/generated \
+            --exclude src/core/distributed/generated \
             --exclude modules/holoviz/thirdparty/nvpro_core \
             --exclude examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu \
             --recursive $DIR_TO_RUN \

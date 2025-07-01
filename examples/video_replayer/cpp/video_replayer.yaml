@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
 # limitations under the License.
 ---
 dual_window: false
+data_logging: true
 
 replayer:
   directory: "../data/racerx"
@@ -46,3 +47,14 @@ event_based_scheduler:
   worker_thread_number: 3
   stop_on_deadlock: true
   stop_on_deadlock_timeout: 200
+
+basic_console_logger:
+  log_inputs: true
+  log_outputs: true
+  log_metadata: false
+  log_tensor_data_content: true
+  allowlist_patterns: []
+  denylist_patterns: []
+
+simple_text_serializer:
+  max_elements: 8

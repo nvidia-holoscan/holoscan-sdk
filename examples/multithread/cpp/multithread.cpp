@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "holoscan/holoscan.hpp"
+#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
 
 namespace holoscan::ops {
 
@@ -77,6 +78,10 @@ class DelayOp : public Operator {
       if (!silent) { HOLOSCAN_LOG_INFO("{}: finished waiting", name()); }
     }
     if (!silent) { HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value); }
+
+    // Debug logging for data logger issue
+    HOLOSCAN_LOG_INFO("{}: About to emit int {} and string '{}'", name(), new_value, nm);
+
     op_output.emit(new_value, "out_val");
     op_output.emit(std::move(nm), "out_name");
   };
@@ -206,6 +211,15 @@ int main([[maybe_unused]] int argc, char** argv) {
         "'greedy', 'default')",
         scheduler));
   }
+
+  // enable data logging to console if requested
+  auto enable_data_logging = app->from_config("data_logging").as<bool>();
+  if (enable_data_logging) {
+    app->add_data_logger(app->make_resource<holoscan::data_loggers::BasicConsoleLogger>(
+        "console_logger", app->from_config("basic_console_logger")));
+  }
+
+  HOLOSCAN_LOG_INFO("number of data loggers added: {}", app->data_loggers().size());
 
   app->run();
 

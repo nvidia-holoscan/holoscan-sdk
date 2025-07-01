@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@
 #include "gxf/serialization/component_serializer.hpp"
 #include "gxf/std/allocator.hpp"
 #include "gxf/std/tensor.hpp"
-#include "holoscan/core/codec_registry.hpp"
+#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/metadata.hpp"

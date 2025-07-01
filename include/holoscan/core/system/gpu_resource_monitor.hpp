@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,6 +101,7 @@ constexpr uint64_t kDefaultGpuMetrics = GPUMetricFlag::GPU_DEVICE_ID;
  *   HOLOSCAN_LOG_INFO("GPU {} power_usage: {}", i, gpu_info[i].power_usage);
  *   HOLOSCAN_LOG_INFO("GPU {} temperature: {}", i, gpu_info[i].temperature);
  * }
+ * ```
  */
 class GPUResourceMonitor {
  public:

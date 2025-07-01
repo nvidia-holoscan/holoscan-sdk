@@ -51,12 +51,13 @@ class ManagerProcessor {
    * the tensor as vector of strings. Each value in the vector of strings is the supported
    * operation.
    * @param custom_kernels Map of custom kernel identifier, mapped to related value as a string
+   * @param use_cuda_graphs Flag to enable cuda graphs for processing custom kernels
    * @param config_path Path to the processing configuration settings
    *
    * @return InferStatus with appropriate code and message
    */
   InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
-                         const std::string config_path);
+                         bool use_cuda_graphs, const std::string config_path);
 
   /*
    * @brief Executes post processing operations and generates the result

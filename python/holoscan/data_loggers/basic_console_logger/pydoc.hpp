@@ -1,0 +1,111 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef PYHOLOSCAN_DATA_LOGGERS_BASIC_CONSOLE_LOGGER_PYDOC_HPP
+#define PYHOLOSCAN_DATA_LOGGERS_BASIC_CONSOLE_LOGGER_PYDOC_HPP
+
+#include <string>
+
+#include "../../macros.hpp"
+
+namespace holoscan::doc {
+
+namespace BasicConsoleLogger {
+
+PYDOC(BasicConsoleLogger, R"doc(
+Basic console logger for debugging and development purposes.
+
+This data logger outputs structured log messages to the console (via the Holoscan logging system)
+for any data received. It can handle tensors, tensor maps, metadata, and general data types by
+converting them to human-readable text format.
+
+The logger provides filtering capabilities to control which messages are logged.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment (constructor only)
+    The fragment that the data logger belongs to.
+serializer : holoscan.data_loggers.SimpleTextSerializer, optional
+    Text serializer used to convert data to string format. If not provided, a default
+    SimpleTextSerializer will be created automatically.
+log_inputs : bool, optional
+    Whether to log input messages. Default is True.
+log_outputs : bool, optional
+    Whether to log output messages. Default is True.
+log_tensor_data_content : bool, optional
+    Whether to log the actual content of tensor data. Default is False.
+log_metadata : bool, optional
+    Whether to log metadata associated with messages. Default is True.
+allowlist_patterns : list of str, optional
+    List of regex patterns. Only messages matching these patterns will be logged.
+    If empty, all messages are allowed.
+denylist_patterns : list of str, optional
+    List of regex patterns. Messages matching these patterns will be filtered out.
+    Denylist takes precedence over allowlist.
+name : str, optional (constructor only)
+    The name of the data logger. Default value is ``"basic_console_logger"``.
+}  // namespace BasicConsoleLogger
+
+Notes
+-----
+If `allowlist_patterns` or `denylist_patterns` are specified, they are applied to the `unique_id`
+assigned to messages by the underlying framework.
+
+In a non-distributed application (without a fragment name), the unique_id for a message will have
+one of the following forms:
+
+- operator_name.port_name
+- operator_name.port_name:index  (for multi-receivers with N:1 connection)
+
+For distributed applications, the fragment name will also appear in the unique id:
+
+- fragment_name.operator_name.port_name
+- fragment_name.operator_name.port_name:index  (for multi-receivers with N:1 connection)
+)doc")
+
+}  // namespace BasicConsoleLogger
+
+namespace SimpleTextSerializer {
+
+PYDOC(SimpleTextSerializer, R"doc(
+Simple text serializer for converting various data types to human-readable strings.
+
+This serializer can handle common data types including integers, floats, strings, vectors,
+metadata dictionaries, tensors, and tensor maps. It provides configurable limits for
+vector elements and metadata items to prevent excessively long output.
+
+
+Parameters
+----------
+fragment : holoscan.core.Fragment (constructor only)
+    The fragment that the serializer belongs to.
+max_elements : int, optional
+    Maximum number of vector elements to display before truncation. Default is 10.
+max_metadata_items : int, optional
+    Maximum number of metadata dictionary items to display before truncation. Default is 10.
+log_python_object_contents : bool, optional
+    Whether to log Python object contents. Default is True. Warning: logging the contents of Python
+    objects via the ``repr`` method requires acquiring the GIL which can be slow.
+name : str, optional (constructor only)
+    The name of the serializer. Default value is ``"simple_text_serializer"``.
+)doc")
+
+}  // namespace SimpleTextSerializer
+
+}  // namespace holoscan::doc
+
+#endif /* PYHOLOSCAN_DATA_LOGGERS_BASIC_CONSOLE_LOGGER_PYDOC_HPP */

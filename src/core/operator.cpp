@@ -56,6 +56,16 @@ void Operator::initialize() {
       is_metadata_enabled_ = fragment_ptr->is_metadata_enabled();
     }
 
+    // Set unique_id for all input and output specs
+    if (spec_) {
+      for (auto& [port_name, input_spec] : spec_->inputs()) {
+        input_spec->set_unique_id(fmt::format("{}.{}", qualified_name(), port_name));
+      }
+      for (auto& [port_name, output_spec] : spec_->outputs()) {
+        output_spec->set_unique_id(fmt::format("{}.{}", qualified_name(), port_name));
+      }
+    }
+
     // Now we can set the contexts for the operator
     ensure_contexts();
   } else {
@@ -362,8 +372,9 @@ void Operator::initialize_conditions() {
                          term_handle->cid(),
                          graph_entity_->eid());
 
-      // need to store the GXF cid for potential use by GXFParameterAdapter
-      condition->wrapper_cid(term_handle->cid());
+      // need to store the GXF cid (of type gxf_uid_t) for potential use by GXFParameterAdapter
+      // note: gxf_uid_t is an alias for int64_t so the static cast isn't strictly necessary
+      condition->wrapper_cid(static_cast<int64_t>(term_handle->cid()));
 
       // initialize as a native (non-GXF) resource
       condition->initialize();

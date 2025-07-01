@@ -43,21 +43,21 @@ The example uses the `EventBasedScheduler` with multiple worker threads, though 
 
 The execution flow follows this pattern:
 ```
-Main Thread               ControllerOp Thread        SimpleOp Threads (op1, op2, op3)
--------------             ------------------         ------------------------------
-Start app_run_async()     Initialize (EVENT_WAITING) Initialize (WAIT)
-                          Start Controller           Wait for execution
-Get controller ─────────> Return controller
-Execute op3 ─────────────> Set op3 to EVENT_DONE ───> op3 executes
-Wait for notification <─── Wait for notification <─── op3 sends notification
-Execute op2 ─────────────> Set op2 to EVENT_DONE ───> op2 executes
-Wait for notification <─── Wait for notification <─── op2 sends notification
-Execute op1 ─────────────> Set op1 to EVENT_DONE ───> op1 executes
-Wait for notification <─── Wait for notification <─── op1 sends notification
-Shutdown ─────────────────> Set ops to EVENT_NEVER    Operators stop
-                            Set controller to EVENT_DONE
-                            Controller compute() executes
-                            Stop execution
+Main Thread                ControllerOp Thread             SimpleOp Threads (op1, op2, op3)
+-------------              ------------------              --------------------------------
+Start app_run_async()      Initialize (kEventWaiting)      Initialize (kWait)
+                           Start Controller                Wait for execution
+Get controller ──────────> Return controller
+Execute op3 ─────────────> Set op3 to (kEventDone) ──────> op3 executes
+Wait for notification <─── Wait for notification   <────── op3 sends notification
+Execute op2 ─────────────> Set op2 to (kEventDone) ──────> op2 executes
+Wait for notification <─── Wait for notification   <────── op2 sends notification
+Execute op1 ─────────────> Set op1 to (kEventDone) ──────> op1 executes
+Wait for notification <─── Wait for notification   <────── op1 sends notification
+Shutdown ────────────────> Set ops to kEventNever          Operators stop
+                           Set controller to (kEventDone)
+                           Controller compute() executes
+                           Stop execution
 Application exits
 ```
 
@@ -65,10 +65,10 @@ Application exits
 
 The application consists of two operator types:
 1. `SimpleOp`: A basic operator that:
-   - Initializes in WAIT state
+   - Initializes in kWait state
    - Executes its compute method when triggered
    - Notifies the controller upon completion
-   - Returns to WAIT state to await the next trigger
+   - Returns to kWait state to await the next trigger
 
 2. `ControllerOp`: A controller operator that:
    - Maintains a registry of all operators in the application
@@ -77,8 +77,8 @@ The application consists of two operator types:
    - Controls application shutdown by setting appropriate event states
 
 Key implementation aspects:
-- SimpleOp operators use `async_condition()->event_state(WAIT)` to pause execution
-- The controller uses `async_condition()->event_state(EVENT_WAITING)` to prevent the application from being terminated at start by the deadlock detector
+- SimpleOp operators use `async_condition()->event_state(kWait)` to pause execution
+- The controller uses `async_condition()->event_state(kEventWaiting)` to prevent the application from being terminated at start by the deadlock detector
 - The main thread triggers operators via `controller->execute_operator("op_name")`
 - Notification callbacks and condition variables ensure thread-safe synchronization
 
@@ -99,10 +99,10 @@ Then, run:
 
 The Python implementation demonstrates the same concepts using the Python API. It includes the same two operator types with equivalent functionality:
 1. `SimpleOp`: A basic operator that:
-   - Initializes in WAIT state
+   - Initializes in kWait state
    - Executes its compute method when triggered
    - Notifies the controller upon completion
-   - Returns to WAIT state to await the next trigger
+   - Returns to kWait state to await the next trigger
 2. `ControllerOp`: A controller operator that:
    - Maintains a registry of all operators in the application
    - Provides methods to execute specific operators by name
@@ -128,10 +128,10 @@ python3 ./examples/execution_control/async_operator_execution_control/python/asy
 
 - `Operator::async_condition()->event_state()`: Controls operator execution states
 - `AsynchronousEventState` enum values:
-  - `WAIT`: Makes the operator wait for the controller to change its state to READY
-  - `EVENT_WAITING`: Prevents the application from being terminated at start by the deadlock detector (at least one operator needs to be in this state)
-  - `EVENT_DONE`: Signals the scheduler that the operator is ready to execute
-  - `EVENT_NEVER`: Changes the operator's scheduling condition type to NEVER, preventing execution
+  - `kWait` (`WAIT`): Makes the operator wait for the controller to change its state to kReady
+  - `kEventWaiting` (`EVENT_WAITING`): Prevents the application from being terminated at start by the deadlock detector (at least one operator needs to be in this state)
+  - `kEventDone` (`EVENT_DONE`): Signals the scheduler that the operator is ready to execute
+  - `kEventNever` (`EVENT_NEVER`): Changes the operator's scheduling condition type to kNever, preventing execution
 - Thread synchronization using condition variables and callbacks
 - External control of operator execution from outside the runtime
 - Graceful application shutdown sequence
@@ -141,7 +141,7 @@ For more detailed information about the asynchronous condition API, see the Holo
 ### Important Considerations
 
 When implementing this pattern, keep these points in mind:
-- **Deadlock prevention**: Ensure at least one operator is in `EVENT_WAITING` state rather than `WAIT` to prevent deadlock detection from terminating the application
+- **Deadlock prevention**: Ensure at least one operator is in `kEventWaiting` state rather than `kWait` to prevent deadlock detection from terminating the application
 - **Thread safety**: All communication between operators must be thread-safe; use appropriate synchronization primitives
 - **Error handling**: Consider how to handle failures in asynchronously executing operators
 - **Performance impact**: Synchronization between threads can introduce overhead; use this pattern when the control benefits outweigh performance costs
@@ -180,7 +180,7 @@ Key concepts demonstrated:
 5. Graceful shutdown of an application with async operators
 -------------------------------------------------------------------
 Execution flow:
-- All operators start in WAIT state except the controller (EVENT_WAITING)
+- All operators start in kWait state except the controller (kEventWaiting)
 - Main thread gets controller and executes operators in sequence
 - Each operator signals completion via the notification callback
 - The controller then shuts down the application

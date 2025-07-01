@@ -18,6 +18,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <fmt/format.h>
 #include <list>
 #include <memory>
 #include <string>
@@ -25,6 +26,7 @@
 
 #include "component.hpp"
 #include "component_pydoc.hpp"
+#include "fragment.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -117,7 +119,8 @@ void init_component(py::module_& m) {
       .def(py::init<>(), doc::Component::doc_Component)
       .def_property_readonly("id", &ComponentBase::id, doc::Component::doc_id)
       .def_property_readonly("name", &ComponentBase::name, doc::Component::doc_name)
-      .def_property_readonly("fragment", &ComponentBase::fragment, doc::Component::doc_fragment)
+      .def_property_readonly(
+          "fragment", py::overload_cast<>(&ComponentBase::fragment), doc::Component::doc_fragment)
       .def("add_arg",
            py::overload_cast<const Arg&>(&ComponentBase::add_arg),
            "arg"_a,
@@ -132,6 +135,37 @@ void init_component(py::module_& m) {
            doc::Component::doc_initialize)  // note: virtual function
       .def_property_readonly(
           "description", &ComponentBase::description, doc::Component::doc_description)
+      .def(
+          "service",
+          [](py::object component_obj, py::type service_type, const std::string& id) -> py::object {
+            auto component = component_obj.cast<ComponentBase*>();
+
+            // Get the fragment and delegate to its service method
+            auto fragment = component->fragment();
+            if (!fragment) { throw std::runtime_error("Component has no associated fragment"); }
+
+            // Get the Python fragment object and call its service method
+            try {
+              // Get the fragment as a Python object
+              py::object py_fragment = py::cast(fragment, py::return_value_policy::reference);
+
+              // Call the fragment's service method with the service type and id
+              if (py::hasattr(py_fragment, "service")) {
+                auto service_method = py_fragment.attr("service");
+                return service_method(service_type, id);
+              } else {
+                // If the fragment doesn't have a service method, return none
+                return py::none();
+              }
+            } catch (const py::error_already_set& e) {
+              // If we can't access the fragment's service method, throw an error
+              throw std::runtime_error(
+                  fmt::format("Failed to access fragment's service method: {}", e.what()));
+            }
+          },
+          "service_type"_a,
+          "id"_a = "",
+          doc::Component::doc_service)
       .def(
           "__repr__",
           [](const py::object& obj) {

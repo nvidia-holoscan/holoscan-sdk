@@ -26,21 +26,12 @@
 #include "./errors.hpp"
 #include "./expected.hpp"
 #include "./resource.hpp"
-#include "gxf/serialization/endpoint.hpp"
-
-namespace nvidia {
-namespace gxf {
-enum struct MemoryStorageType;
-}
-}  // namespace nvidia
 
 namespace holoscan {
 
 /**
- * @brief GXF serialization endpoint wrapper.
+ * @brief Holoscan serialization endpoint.
  *
- * This class holds a pointer to an nvidia::gxf::Endpoint and its methods dispatch to
- * that endpoint.
  */
 class Endpoint : public Resource {
  public:
@@ -48,63 +39,13 @@ class Endpoint : public Resource {
   Endpoint(Endpoint&&) = default;
   ~Endpoint() override = default;
 
-  explicit Endpoint(nvidia::gxf::Endpoint* gxf_endpoint) : gxf_endpoint_(gxf_endpoint) {}
-
-  using MemoryStorageType = nvidia::gxf::MemoryStorageType;
-
   // C++ API wrappers
-  virtual bool is_write_available() {
-    if (!gxf_endpoint_) { throw std::runtime_error("GXF endpoint has not been set"); }
-    return gxf_endpoint_->isWriteAvailable();
-  }
-  virtual bool is_read_available() {
-    if (!gxf_endpoint_) { throw std::runtime_error("GXF endpoint has not been set"); }
-    return gxf_endpoint_->isReadAvailable();
-  }
-
-  virtual expected<size_t, RuntimeError> write(const void* data, size_t size) {
-    if (!gxf_endpoint_) {
-      return make_unexpected<RuntimeError>(
-          RuntimeError(ErrorCode::kCodecError, "GXF endpoint has not been set"));
-    }
-    auto maybe_size = gxf_endpoint_->write(data, size);
-    if (!maybe_size) {
-      // converted nvidia::gxf::Unexpected to holoscan::unexpected
-      auto err_msg = fmt::format("GXF endpoint read failure: {}", GxfResultStr(maybe_size.error()));
-      return make_unexpected<RuntimeError>(RuntimeError(ErrorCode::kCodecError, err_msg));
-    }
-    return maybe_size.value();
-  }
-  virtual expected<size_t, RuntimeError> read(void* data, size_t size) {
-    if (!gxf_endpoint_) {
-      return make_unexpected<RuntimeError>(
-          RuntimeError(ErrorCode::kCodecError, "GXF endpoint has not been set"));
-    }
-    auto maybe_size = gxf_endpoint_->read(data, size);
-    if (!maybe_size) {
-      // converted nvidia::gxf::Unexpected to holoscan::unexpected
-      auto err_msg = fmt::format("GXF endpoint read failure: {}", GxfResultStr(maybe_size.error()));
-      return make_unexpected<RuntimeError>(RuntimeError(ErrorCode::kCodecError, err_msg));
-    }
-    return maybe_size.value();
-  }
+  virtual bool is_write_available() = 0;
+  virtual bool is_read_available() = 0;
+  virtual expected<size_t, RuntimeError> write(const void* data, size_t size) = 0;
+  virtual expected<size_t, RuntimeError> read(void* data, size_t size) = 0;
   virtual expected<void, RuntimeError> write_ptr(const void* pointer, size_t size,
-                                                 MemoryStorageType type) {
-    if (!gxf_endpoint_) {
-      return make_unexpected<RuntimeError>(
-          RuntimeError(ErrorCode::kCodecError, "GXF endpoint has not been set"));
-    }
-    auto maybe_void = gxf_endpoint_->write_ptr(pointer, size, type);
-    if (!maybe_void) {
-      // converted nvidia::gxf::Unexpected to holoscan::unexpected
-      auto err_msg = fmt::format("GXF endpoint read failure: {}", GxfResultStr(maybe_void.error()));
-      return make_unexpected<RuntimeError>(RuntimeError(ErrorCode::kCodecError, err_msg));
-    }
-    return expected<void, RuntimeError>();
-  }
-
-  // Note: in GXF, writeTrivialType and readTrivialType below are not on Endpoint itself, but on
-  // SerializationBuffer and UcxSerializationBuffer
+                                                 holoscan::MemoryStorageType type) = 0;
 
   // Writes an object of type T to the endpoint
   template <typename T>
@@ -117,9 +58,6 @@ class Endpoint : public Resource {
   expected<size_t, RuntimeError> read_trivial_type(T* object) {
     return read(object, sizeof(T));
   }
-
- private:
-  nvidia::gxf::Endpoint* gxf_endpoint_ = nullptr;
 };
 }  // namespace holoscan
 

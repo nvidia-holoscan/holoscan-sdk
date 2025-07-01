@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,11 +38,10 @@
 #include <gxf/multimedia/camera.hpp>
 #include "../../core/emitter_receiver_registry.hpp"  // EmitterReceiverRegistry
 #include "../../core/io_context.hpp"                 // PyOutputContext
-#include "holoscan/core/codec_registry.hpp"
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/io_context.hpp"
+#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
@@ -103,7 +102,8 @@ class PyHolovizOp : public HolovizOp {
       bool use_exclusive_display = false, bool fullscreen = false, bool headless = false,
       bool framebuffer_srgb = false, bool vsync = false,
       ColorSpace display_color_space = ColorSpace::AUTO, bool enable_render_buffer_input = false,
-      bool enable_render_buffer_output = false, bool enable_camera_pose_output = false,
+      bool enable_render_buffer_output = false, bool enable_depth_buffer_input = false,
+      bool enable_depth_buffer_output = false, bool enable_camera_pose_output = false,
       const std::string& camera_pose_output_type = "projection_matrix"s,
       const std::array<float, 3>& camera_eye = {0.F, 0.F, 1.F},
       const std::array<float, 3>& camera_look_at = {0.F, 0.F, 0.F},
@@ -136,6 +136,8 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"display_color_space", display_color_space},
                           Arg{"enable_render_buffer_input", enable_render_buffer_input},
                           Arg{"enable_render_buffer_output", enable_render_buffer_output},
+                          Arg{"enable_depth_buffer_input", enable_depth_buffer_input},
+                          Arg{"enable_depth_buffer_output", enable_depth_buffer_output},
                           Arg{"enable_camera_pose_output", enable_camera_pose_output},
                           Arg{"camera_pose_output_type", camera_pose_output_type},
                           Arg{"camera_eye", camera_eye},
@@ -247,6 +249,8 @@ PYBIND11_MODULE(_holoviz, m) {
                           bool,
                           bool,
                           bool,
+                          bool,
+                          bool,
                           const std::string&,
                           const std::array<float, 3>&,
                           const std::array<float, 3>&,
@@ -280,6 +284,8 @@ PYBIND11_MODULE(_holoviz, m) {
                  "display_color_space"_a = HolovizOp::ColorSpace::AUTO,
                  "enable_render_buffer_input"_a = false,
                  "enable_render_buffer_output"_a = false,
+                 "enable_depth_buffer_input"_a = false,
+                 "enable_depth_buffer_output"_a = false,
                  "enable_camera_pose_output"_a = false,
                  "camera_pose_output_type"_a = "projection_matrix"s,
                  "camera_eye"_a = std::array<float, 3>{0.F, 0.F, 1.F},
@@ -375,7 +381,7 @@ PYBIND11_MODULE(_holoviz, m) {
   // Register the std::vector<InputSpec> codec when the Python module is imported.
   // This is useful for, e.g. testing serialization with pytest without having to first create a
   // HolovizOp operator (which registers the type in its initialize method).
-  CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::HolovizOp::InputSpec>>(
+  gxf::CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::HolovizOp::InputSpec>>(
       "std::vector<std::vector<holoscan::ops::HolovizOp::InputSpec>>", true);
 
   // Import the emitter/receiver registry from holoscan.core and pass it to this function to

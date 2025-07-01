@@ -19,6 +19,8 @@ from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import PingRxOp
 
+from .env_wrapper import env_var_context
+
 # Number of times the application will be run in the test
 GLOBAL_RUN_COUNT = 2000
 # The statistics count limit is based on experimental observations.
@@ -60,10 +62,15 @@ def test_multiple_run():
 
     tracemalloc.start()
 
-    app = MyPingApp()
-    for _ in range(GLOBAL_RUN_COUNT):
-        app.run()
-        gc.collect()
+    # log at warning level to make logs less verbose on failure
+    env_var_settings = {
+        ("HOLOSCAN_LOG_LEVEL", "WARN"),
+    }
+    with env_var_context(env_var_settings):
+        app = MyPingApp()
+        for _ in range(GLOBAL_RUN_COUNT):
+            app.run()
+            gc.collect()
 
     snapshot = tracemalloc.take_snapshot()
     top_stats = snapshot.statistics("lineno")
@@ -85,11 +92,18 @@ def test_multiple_run_async():
     import gc
     import tracemalloc
 
-    app = MyPingApp()
-    for _ in range(GLOBAL_RUN_COUNT):
-        future = app.run_async()
-        future.result()
-        gc.collect()
+    tracemalloc.start()
+
+    # log at warning level to make logs less verbose on failure
+    env_var_settings = {
+        ("HOLOSCAN_LOG_LEVEL", "WARN"),
+    }
+    with env_var_context(env_var_settings):
+        app = MyPingApp()
+        for _ in range(GLOBAL_RUN_COUNT):
+            future = app.run_async()
+            future.result()
+            gc.collect()
 
     snapshot = tracemalloc.take_snapshot()
     top_stats = snapshot.statistics("lineno")

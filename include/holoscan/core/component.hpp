@@ -71,7 +71,8 @@ class ComponentBase {
   /**
    * @brief Construct a new Component object.
    *
-   * @param args The arguments to be passed to the component.
+   * @param arg The first argument to be passed to the component.
+   * @param args The remaining arguments to be passed to the component.
    */
   HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()
   explicit ComponentBase(ArgT&& arg, ArgsT&&... args) {
@@ -106,6 +107,13 @@ class ComponentBase {
    * @return The Pointer to Fragment object.
    */
   Fragment* fragment() { return fragment_; }
+
+  /**
+   * @brief Get a const pointer to Fragment object.
+   *
+   * @return The const pointer to Fragment object.
+   */
+  const Fragment* fragment() const { return fragment_; }
 
   /**
    * @brief Add an argument to the component.
@@ -241,6 +249,38 @@ class ComponentBase {
    */
   std::string description() const;
 
+  /**
+   * @brief Retrieve a registered fragment service or resource.
+   *
+   * Retrieves a previously registered fragment service or resource by its type and optional
+   * identifier. Returns nullptr if no service/resource is found with the specified type and
+   * identifier.
+   *
+   * Note that any changes to the service retrieval logic in this method should be synchronized with
+   * the implementation in `Fragment::service()` method to maintain consistency.
+   *
+   * @tparam ServiceT The type of the service/resource to retrieve. Must inherit from either
+   * Resource or FragmentService. Defaults to DefaultFragmentService if
+   * not specified.
+   * @param id The identifier of the service/resource. If empty, retrieves by type only.
+   * @return The shared pointer to the service/resource, or nullptr if not found or if type casting
+   * fails.
+   */
+  template <typename ServiceT = DefaultFragmentService>
+  std::shared_ptr<ServiceT> service(std::string_view id = "") const;
+
+  /**
+   * @brief Retrieve a registered fragment service or resource for Python bindings.
+   *
+   * This is a helper method for Python bindings to retrieve a service by its C++ type info.
+   *
+   * @param service_type The type info of the service/resource to retrieve.
+   * @param id The identifier of the service/resource. If empty, retrieves by type only.
+   * @return The shared pointer to the base service, or nullptr if not found.
+   */
+  std::shared_ptr<FragmentService> get_service_by_type_info(const std::type_info& service_type,
+                                                            std::string_view id = "") const;
+
  protected:
   friend class holoscan::Executor;
   // Make GXFExecutor a friend class so it can call protected initialization methods
@@ -265,10 +305,17 @@ class ComponentBase {
   /// Reset the GXF GraphEntity of any arguments that have one
   virtual void reset_graph_entities();
 
+  /// Set the fragment that owns this component
+  void fragment(Fragment* frag);
+
+  /// Set the service provider that owns this component
+  void service_provider(FragmentServiceProvider* provider);
+
   int64_t id_ = -1;               ///< The ID of the component.
   std::string name_ = "";         ///< Name of the component
   Fragment* fragment_ = nullptr;  ///< Pointer to the fragment that owns this component
   std::vector<Arg> args_;         ///< List of arguments
+  FragmentServiceProvider* service_provider_ = nullptr;  ///< Pointer to the service provider
 };
 
 /**

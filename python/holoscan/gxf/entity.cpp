@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +42,7 @@ void init_entity(py::module_& m) {
       m, "PyEntity", doc::Entity::doc_Entity)
       .def(py::init(&PyEntity::py_create), doc::Entity::doc_Entity)
       .def("__bool__", &PyEntity::operator bool)
-      .def("get", &PyEntity::py_get, "name"_a = "", doc::Entity::doc_get)
+      .def("get", &PyEntity::py_get, "name"_a = "", "log_errors"_a = true, doc::Entity::doc_get)
       .def("add", &PyEntity::py_add, "obj"_a, "name"_a = "");
 }  // PYBIND11_MODULE
 
@@ -56,8 +56,8 @@ PyEntity PyEntity::py_create(const PyExecutionContext& ctx) {
   return static_cast<PyEntity>(result.value());
 }
 
-py::object PyEntity::py_get(const char* name) const {
-  auto tensor = get<Tensor>(name);
+py::object PyEntity::py_get(const char* name, bool log_errors) const {
+  auto tensor = get<Tensor>(name, log_errors);
   if (!tensor) { return py::none(); }
 
   auto py_tensor = py::cast(tensor);

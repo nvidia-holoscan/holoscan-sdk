@@ -36,6 +36,7 @@
 #include "../../app_driver.hpp"
 #include "../../executor.hpp"
 #include "../../graph.hpp"
+#include "../../gxf/codec_registry.hpp"
 #include "../../gxf/gxf_extension_manager.hpp"
 #include "gxf/app/graph_entity.hpp"
 
@@ -228,11 +229,67 @@ class GXFExecutor : public holoscan::Executor {
   /// Reset the interrupt flags
   void reset_interrupt_flags();
 
+  /**
+   * @brief Register the codec for serialization/deserialization of a custom type.
+   *
+   * If any operator has an argument with a custom type, the codec must be registered
+   * using this method.
+   *
+   * For example, suppose we want to emit using the following custom struct type:
+   *
+   * ```cpp
+   * namespace holoscan {
+   *   struct Coordinate {
+   *     int16_t x;
+   *     int16_t y;
+   *     int16_t z;
+   *   }
+   * }  // namespace holoscan
+   * ```
+   *
+   * Then, we can define codec<Coordinate> as follows where the serialize and deserialize methods
+   * would be used for serialization and deserialization of this type, respectively.
+   *
+   * ```cpp
+   * namespace holoscan {
+   *
+   *   template <>
+   *   struct codec<Coordinate> {
+   *     static expected<size_t, RuntimeError> serialize(const Coordinate& value, Endpoint*
+   * endpoint) { return serialize_trivial_type<Coordinate>(value, endpoint);
+   *     }
+   *     static expected<Coordinate, RuntimeError> deserialize(Endpoint* endpoint) {
+   *       return deserialize_trivial_type<Coordinate>(endpoint);
+   *     }
+   *   };
+   * }  // namespace holoscan
+   * ```
+   *
+   * In this case, since this is a simple struct with a static size, we can use the
+   * existing serialize_trivial_type and deserialize_trivial_type implementations.
+   *
+   * Finally, to register this custom codec at runtime, we need to make the following call
+   * within the setup method of our Operator.
+   *
+   * ```cpp
+   * GXFExecutor::register_codec<Coordinate>("Coordinate");
+   * ```
+   *
+   * @tparam typeT The type of the argument to register.
+   * @param codec_name The name of the codec (must be unique unless overwrite is true).
+   * @param overwrite If true and codec_name already exists, the codec will be overwritten.
+   */
+  template <typename typeT>
+  static void register_codec(const std::string& codec_name, bool overwrite = true) {
+    gxf::CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
+  }
+
  protected:
   bool initialize_fragment() override;
   bool initialize_operator(Operator* op) override;
   bool initialize_scheduler(Scheduler* sch) override;
   bool initialize_network_context(NetworkContext* network_context) override;
+  bool initialize_fragment_services() override;
   bool add_receivers(const std::shared_ptr<Operator>& op, const std::string& receivers_name,
                      std::vector<std::string>& new_input_labels,
                      std::vector<holoscan::IOSpec*>& iospec_vector) override;
@@ -251,10 +308,10 @@ class GXFExecutor : public holoscan::Executor {
                                     std::shared_ptr<Operator> op);
 
   void register_extensions();
-  gxf_uid_t op_eid_ = 0;          ///< The GXF entity ID of the operator. Create new entity for
-                                  ///< initializing a new operator if this is 0.
-  gxf_uid_t op_cid_ = 0;          ///< The GXF component ID of the operator. Create new component
-                                  ///< for initializing a new operator if this is 0.
+  gxf_uid_t op_eid_ = 0;  ///< The GXF entity ID of the operator. Create new entity for
+                          ///< initializing a new operator if this is 0.
+  gxf_uid_t op_cid_ = 0;  ///< The GXF component ID of the operator. Create new component
+                          ///< for initializing a new operator if this is 0.
   std::shared_ptr<nvidia::gxf::Extension> gxf_holoscan_extension_;  ///< The GXF holoscan extension.
 
   /// The flag to indicate whether the GXF graph is initialized.
@@ -278,6 +335,7 @@ class GXFExecutor : public holoscan::Executor {
   std::shared_ptr<nvidia::gxf::GraphEntity> scheduler_entity_;
   std::shared_ptr<nvidia::gxf::GraphEntity> network_context_entity_;
   std::shared_ptr<nvidia::gxf::GraphEntity> connections_entity_;
+  std::shared_ptr<nvidia::gxf::GraphEntity> fragment_services_entity_;
 
  private:
   // Map of connections indexed by source port uid and stores a pair of the target operator name

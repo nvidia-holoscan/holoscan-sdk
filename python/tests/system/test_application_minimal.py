@@ -110,9 +110,9 @@ def test_deprecated_extension(deprecated_extension_config_file, capfd):
     assert captured_error.count(warning_msg) == 2
 
 
-def test_app_config_keys(config_file):
+def test_app_config_keys(operators_config_file):
     app = MinimalApp()
-    app.config(config_file)
+    app.config(operators_config_file)
     keys = app.config_keys()
     assert isinstance(keys, set)
 

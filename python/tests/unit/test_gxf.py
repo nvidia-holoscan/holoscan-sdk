@@ -114,8 +114,7 @@ class TestGXFResource(TestGXFComponent):
 
 
 class TestGXFInputContext:
-    def test_init(self, app, config_file):
-        app.config(config_file)
+    def test_init(self, app):
         context = app.executor.context
         op = GXFOperator()
         exec_context = GXFExecutionContext(context, op)
@@ -124,8 +123,7 @@ class TestGXFInputContext:
 
 
 class TestGXFOutputContext:
-    def test_init(self, app, config_file):
-        app.config(config_file)
+    def test_init(self, app):
         context = app.executor.context
         op = GXFOperator()
         exec_context = GXFExecutionContext(context, op)
@@ -134,8 +132,7 @@ class TestGXFOutputContext:
 
 
 class TestGXFExecutionContext:
-    def test_init(self, app, config_file):
-        app.config(config_file)
+    def test_init(self, app):
         context = app.executor.context
         op = GXFOperator()
         output_context = GXFExecutionContext(context, op)

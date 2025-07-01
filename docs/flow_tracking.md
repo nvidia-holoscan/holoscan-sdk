@@ -54,6 +54,7 @@ with Tracker(app) as tracker:
 ````
 `````
 
+(holoscan-flow-tracking-example)=
 ## Enabling Data Flow Tracking for Distributed Applications
 
 For distributed (multi-fragment) applications, a separate tracker object is used for each Fragment so the API is slightly different than in the single fragment case.
@@ -111,8 +112,7 @@ various methods on the DataFlowTracker ({cpp:class}`C++ <holoscan::DataFlowTrack
           minimum end-to-end latency.
    - `get_metric(holoscan::DataFlowMetric metric = DataFlowMetric::kNumSrcMessages)` returns a map of source operator and its edge, and the number of messages sent from the source operator to the edge.
 
-In the {ref}`above example <holoscan-enable-data-flow-tracking-cpp>`, the data flow tracking results can be printed to the standard output like the
-following:
+In the {ref}`above example <holoscan-data-flow-tracking-example>`, the data flow tracking results can be printed to standard output like the following:
 
 `````{tab-set}
 ````{tab-item} C++

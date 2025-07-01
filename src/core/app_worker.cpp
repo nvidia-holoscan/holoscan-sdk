@@ -33,10 +33,10 @@
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/cli_options.hpp"
+#include "holoscan/core/distributed/app_worker/server.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
-#include "holoscan/core/services/app_worker/server.hpp"
 #include "holoscan/core/signal_handler.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 
@@ -73,12 +73,13 @@ FragmentGraph& AppWorker::fragment_graph() {
   return *fragment_graph_;
 }
 
-service::AppWorkerServer* AppWorker::server(std::unique_ptr<service::AppWorkerServer>&& server) {
+distributed::AppWorkerServer* AppWorker::server(
+    std::unique_ptr<distributed::AppWorkerServer>&& server) {
   worker_server_ = std::move(server);
   return worker_server_.get();
 }
 
-service::AppWorkerServer* AppWorker::server() {
+distributed::AppWorkerServer* AppWorker::server() {
   return worker_server_.get();
 }
 
@@ -190,7 +191,7 @@ bool AppWorker::execute_fragments(
   return true;
 }
 
-std::shared_ptr<service::AppDriverClient> AppWorker::app_driver_client() const {
+std::shared_ptr<distributed::AppDriverClient> AppWorker::app_driver_client() const {
   return worker_server_->app_driver_client();
 }
 

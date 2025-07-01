@@ -44,6 +44,15 @@ if(BUILD_TESTING)
   )
   set_tests_properties(EXAMPLE_PYTHON_TENSOR_INTEROP_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    # All operator ports should appear in the log.
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:image_processing.input_tensor\\]"
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:image_processing.output_tensor\\]"
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
+    # Data logging tests (Tensors are sent via the C++ TensorMap type).
+    PASS_REGULAR_EXPRESSION "Category:TensorMap"
+    # Data logging tests (Various tensor attributes are logged)
+    PASS_REGULAR_EXPRESSION "TensorMap\\(size=1\\) \\{'': Tensor\\(shape=\\[540, 960, 3], dtype=kDLUInt:8:1, device=kDLCUDA:0, size=1555200, nbytes=1555200, C-contiguous=true\\)\\}"
   )
 
   # Add a test to check the validity of the frames

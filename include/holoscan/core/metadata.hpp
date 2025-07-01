@@ -26,7 +26,6 @@
 #include <utility>
 #include <vector>
 
-#include "./codec_registry.hpp"
 #include "./common.hpp"
 #include "./message.hpp"
 
@@ -42,7 +41,7 @@ using MetadataObject = holoscan::Message;  ///< The metadata object type used in
  */
 enum class MetadataPolicy {
   kReject,         ///< Reject the new value if the key already exists
-  kInplaceUpdate,  ///< Replace the `std:::any` value within the existing
+  kInplaceUpdate,  ///< Replace the `std::any` value within the existing
                    ///< `std::shared_ptr<MetadataObject>` if the key already exists
   kUpdate,   ///< Replace the `std::shared_ptr<MetadataObject>` with a newly constructed one if the
              ///< key already exists

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@ add_executable(tensor_interop
 target_link_libraries(tensor_interop
   PRIVATE
   holoscan::core
+  holoscan::data_loggers::basic_console_logger
   CUDA::cudart
 )
 
@@ -64,5 +65,11 @@ if(HOLOSCAN_BUILD_TESTS)
   )
   set_tests_properties(EXAMPLE_CPP_TENSOR_INTEROP_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Scheduling 3 entities"
+    # data logging tests
+    # note: tx and rx are GXFOperators (Codelets) so their ports are not logged
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:mx.in\\]"
+    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:mx.out\\]"
+    PASS_REGULAR_EXPRESSION "Category:TensorMap"
+    PASS_REGULAR_EXPRESSION "TensorMap\\(size=1\\) \\{'tensor': Tensor\\(shape=\\[4, 4, 3], dtype=kDLUInt:8:1, device=kDLCUDA:0, size=48, nbytes=48, C-contiguous=true\\)\\}"
   )
 endif()

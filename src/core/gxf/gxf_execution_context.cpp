@@ -53,7 +53,7 @@ GXFExecutionContext::GXFExecutionContext(gxf_context_t context,
 }
 
 void GXFExecutionContext::init_cuda_object_handler(Operator* op) {
-  cuda_object_handler_ = std::make_shared<CudaObjectHandler>();
+  cuda_object_handler_ = std::make_shared<gxf::CudaObjectHandler>();
   cuda_object_handler_->init_from_operator(op);
 }
 
@@ -76,7 +76,8 @@ void GXFExecutionContext::synchronize_streams(
   for (const auto& stream : cuda_streams) {
     if (stream.has_value()) { streams.push_back(stream.value()); }
   }
-  auto gxf_result = cuda_object_handler_->synchronize_streams(streams, target_cuda_stream);
+  auto result_code = cuda_object_handler_->synchronize_streams(streams, target_cuda_stream);
+  gxf_result_t gxf_result = static_cast<gxf_result_t>(result_code);
   if (gxf_result != GXF_SUCCESS) {
     throw std::runtime_error(fmt::format("Failed to sync streams: {}", GxfResultStr(gxf_result)));
   }

@@ -152,12 +152,12 @@ class V4L2VideoCaptureOp : public Operator {
    * Output memory type, the operator automatically selects the memory type supported by the system
    * which is best suited for CUDA operations.
    **/
-  nvidia::gxf::MemoryStorageType memory_storage_type_;
+  nvidia::gxf::MemoryStorageType memory_storage_type_ = nvidia::gxf::MemoryStorageType::kSystem;
   /**
    * Capture memory method, the operator automatically uses `V4L2_MEMORY_USERPTR` if supported, else
    * `V4L2_MEMORY_MMAP`.
    */
-  enum v4l2_memory capture_memory_method_;
+  enum v4l2_memory capture_memory_method_ = V4L2_MEMORY_MMAP;
 
   /// capture buffer properties
   struct Buffer {

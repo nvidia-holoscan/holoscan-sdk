@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2018-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 //--------------------------------------------------------------------
@@ -67,7 +67,7 @@ void CameraManipulator::setCamera(Camera camera, bool instantSet /*=true*/)
 void CameraManipulator::setLookat(const nvmath::vec3f& eye, const nvmath::vec3f& center, const nvmath::vec3f& up, bool instantSet)
 {
   Camera camera{eye, center, up, m_current.fov};
-  setCamera(camera, instantSet);
+  setCamera(std::move(camera), instantSet);
 }
 
 //--------------------------------------------------------------------------------------------------

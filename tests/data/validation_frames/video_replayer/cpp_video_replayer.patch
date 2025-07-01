@@ -1,6 +1,6 @@
 --- examples/video_replayer/cpp/video_replayer.cpp	2023-12-11 14:11:08.450220903 -0800
 +++ build-x86_64/examples/video_replayer/cpp/video_replayer_test.cpp	2023-12-11 14:33:13.446159002 -0800
-@@ -20,6 +20,12 @@
+@@ -21,6 +21,12 @@
  #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
  #include <holoscan/operators/holoviz/holoviz.hpp>
  
@@ -13,7 +13,7 @@
  class VideoReplayerApp : public holoscan::Application {
   public:
    void compose() override {
-@@ -52,6 +58,9 @@ class VideoReplayerApp : public holoscan::Application {
+@@ -53,6 +59,9 @@ class VideoReplayerApp : public holoscan::Application {
        auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz"));
        add_flow(replayer, visualizer2, {{"output", "receivers"}});
      }

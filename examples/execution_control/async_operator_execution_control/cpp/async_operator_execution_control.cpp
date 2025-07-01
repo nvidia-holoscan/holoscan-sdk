@@ -44,8 +44,8 @@ class SimpleOp : public holoscan::Operator {
     // Call parent's initialize method
     Operator::initialize();
 
-    // Set the operator to WAIT state to wait for the controller to change the state to READY
-    async_condition()->event_state(holoscan::AsynchronousEventState::WAIT);
+    // Set the operator to kWait state to wait for the controller to change the state to kReady
+    async_condition()->event_state(holoscan::AsynchronousEventState::kWait);
   }
 
   void compute([[maybe_unused]] holoscan::InputContext& op_input,
@@ -53,9 +53,9 @@ class SimpleOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     std::cout << "[" << name() << "] Executing compute method" << std::endl;
 
-    // Set async condition to WAIT state to wait for the controller to change the state to READY
-    // by setting the event state to EVENT_DONE
-    async_condition()->event_state(holoscan::AsynchronousEventState::WAIT);
+    // Set async condition to kWait state to wait for the controller to change the state to kReady
+    // by setting the event state to kEventDone
+    async_condition()->event_state(holoscan::AsynchronousEventState::kWait);
 
     // Call the notification callback so notifying the controller that the execution of the
     // operator is done
@@ -96,12 +96,12 @@ class ControllerOp : public holoscan::Operator {
   }
 
   void start() override {
-    // Set this operator's async condition to EVENT_WAITING to prevent its compute method
-    // from being called until the controller sets the event state to EVENT_DONE.
+    // Set this operator's async condition to kEventWaiting to prevent its compute method
+    // from being called until the controller sets the event state to kEventDone.
     // Note that at least one operator's event state (in this case, the controller) needs to be set
-    // to EVENT_WAITING instead of WAIT to prevent the application from being terminated at start by
-    // the deadlock detector.
-    async_condition()->event_state(holoscan::AsynchronousEventState::EVENT_WAITING);
+    // to kEventWaiting instead of kWait to prevent the application from being terminated at start
+    // by the deadlock detector.
+    async_condition()->event_state(holoscan::AsynchronousEventState::kEventWaiting);
 
     is_started_ = true;
     start_cv_.notify_all();
@@ -112,12 +112,12 @@ class ControllerOp : public holoscan::Operator {
   void compute([[maybe_unused]] holoscan::InputContext& op_input,
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
-    // If the event state is set to EVENT_DONE, the compute method will be called.
-    // Setting the event state to EVENT_DONE triggers the scheduler,
-    // which updates the operator's scheduling condition type to READY, leading to the execution of
+    // If the event state is set to kEventDone, the compute method will be called.
+    // Setting the event state to kEventDone triggers the scheduler,
+    // which updates the operator's scheduling condition type to kReady, leading to the execution of
     // the compute method.
     std::cout << "[" << name() << "] Stopping controller execution" << std::endl;
-    // Stop this operator's execution (event state is set to EVENT_NEVER)
+    // Stop this operator's execution (event state is set to kEventNever)
     stop_execution();
   }
 
@@ -135,8 +135,8 @@ class ControllerOp : public holoscan::Operator {
     }
 
     auto op = op_it->second;
-    // Set the operator to EVENT_DONE to signal the scheduler that the operator is ready to execute
-    op->async_condition()->event_state(holoscan::AsynchronousEventState::EVENT_DONE);
+    // Set the operator to kEventDone to signal the scheduler that the operator is ready to execute
+    op->async_condition()->event_state(holoscan::AsynchronousEventState::kEventDone);
 
     // Wait for a notification from the operator
     {
@@ -147,18 +147,18 @@ class ControllerOp : public holoscan::Operator {
   }
 
   void shutdown() {
-    // Set all operators' event states to EVENT_NEVER to change their scheduling condition type to
+    // Set all operators' event states to kEventNever to change their scheduling condition type to
     // NEVER.
     std::cout << "[" << name() << "] Shutting down controller" << std::endl;
 
     for (auto& [op_name, op] : op_map_) {
-      op->async_condition()->event_state(holoscan::AsynchronousEventState::EVENT_NEVER);
+      op->async_condition()->event_state(holoscan::AsynchronousEventState::kEventNever);
     }
 
-    // Set the controller to EVENT_DONE to stop the application (this will trigger the scheduler to
-    // get notified and make the scheduling condition type of the operator to be READY, executing
+    // Set the controller to kEventDone to stop the application (this will trigger the scheduler to
+    // get notified and make the scheduling condition type of the operator to be kReady, executing
     // the compute method)
-    async_condition()->event_state(holoscan::AsynchronousEventState::EVENT_DONE);
+    async_condition()->event_state(holoscan::AsynchronousEventState::kEventDone);
   }
 
  private:
@@ -174,9 +174,7 @@ class AsyncOperatorExecutionControlApp : public holoscan::Application {
  public:
   std::shared_ptr<ControllerOp> get_controller() {
     // Wait for the controller to have a non-null pointer
-    while (!controller_) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    while (!controller_) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
     controller_->wait_for_start();
     return controller_;
   }
@@ -216,7 +214,7 @@ class AsyncOperatorExecutionControlApp : public holoscan::Application {
     std::cout << "5. Graceful shutdown of an application with async operators" << std::endl;
     std::cout << "-------------------------------------------------------------------" << std::endl;
     std::cout << "Execution flow:" << std::endl;
-    std::cout << "- All operators start in WAIT state except the controller (EVENT_WAITING)"
+    std::cout << "- All operators start in kWait state except the controller (kEventWaiting)"
               << std::endl;
     std::cout << "- Main thread gets controller and executes operators in sequence" << std::endl;
     std::cout << "- Each operator signals completion via the notification callback" << std::endl;

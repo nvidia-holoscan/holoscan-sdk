@@ -28,36 +28,40 @@ create a custom application.
     holoscan.core.CLIOptions
     holoscan.core.Component
     holoscan.core.ComponentSpec
-    holoscan.core.ConditionType
     holoscan.core.Condition
+    holoscan.core.ConditionType
     holoscan.core.Config
     holoscan.core.DataFlowMetric
     holoscan.core.DataFlowTracker
+    holoscan.core.DataLoggerResource
+    holoscan.core.DefaultFragmentService
     holoscan.core.DLDevice
     holoscan.core.DLDeviceType
     holoscan.core.ExecutionContext
     holoscan.core.Executor
     holoscan.core.Fragment
     holoscan.core.FlowInfo
+    holoscan.core.Fragment
     holoscan.core.Graph
+    holoscan.core.FragmentService
     holoscan.core.InputContext
     holoscan.core.IOSpec
     holoscan.core.Message
     holoscan.core.MetadataDictionary
-    holoscan.core.MultiMessageConditionInfo
     holoscan.core.MetadataPolicy
+    holoscan.core.MultiMessageConditionInfo
     holoscan.core.NetworkContext
     holoscan.core.Operator
     holoscan.core.OperatorSpec
     holoscan.core.OperatorStatus
     holoscan.core.OutputContext
     holoscan.core.ParameterFlag
+    holoscan.core.arg_to_py_object
+    holoscan.core.arglist_to_kwargs
     holoscan.core.Resource
     holoscan.core.SchedulingStatusType
     holoscan.core.Tensor
     holoscan.core.Tracker
-    holoscan.core.arg_to_py_object
-    holoscan.core.arglist_to_kwargs
     holoscan.core.kwargs_to_arglist
     holoscan.core.py_object_to_arg
 """
@@ -89,10 +93,12 @@ from ._core import (
     Config,
     DataFlowMetric,
     DataFlowTracker,
+    DataLoggerResource,
     DLDevice,
     DLDeviceType,
     Executor,
     FlowInfo,
+    FragmentService,
     IOSpec,
     Message,
     MetadataDictionary,
@@ -109,6 +115,7 @@ from ._core import (
     py_object_to_arg,
 )
 from ._core import Condition as _Condition
+from ._core import DefaultFragmentService as _DefaultFragmentService
 from ._core import Fragment as _Fragment
 from ._core import Operator as _Operator
 from ._core import PyComponentSpec as ComponentSpec
@@ -141,6 +148,8 @@ __all__ = [
     "Config",
     "DataFlowMetric",
     "DataFlowTracker",
+    "DataLoggerResource",
+    "DefaultFragmentService",
     "DLDevice",
     "DLDeviceType",
     "ExecutionContext",
@@ -148,6 +157,7 @@ __all__ = [
     "FlowInfo",
     "Fragment",
     "FragmentGraph",
+    "FragmentService",
     "Graph",
     "InputContext",
     "IOSpec",
@@ -349,6 +359,8 @@ class Fragment(_Fragment):
         self._async_executor = None
         self._async_executor_lock = _threading.Lock()
         self._start_op = None
+        # Initialize the Python service registry for PyFragment
+        self._python_service_registry = {}
 
     def compose(self):
         pass
@@ -634,6 +646,50 @@ class Resource(_Resource):
 # copy docstrings defined in core_pydoc.hpp
 Resource.__doc__ = _Resource.__doc__
 Resource.__init__.__doc__ = _Resource.__init__.__doc__
+
+
+class DefaultFragmentService(_DefaultFragmentService):
+    """Base class for fragment services in Python.
+
+    Provides default implementations of virtual methods to avoid
+    infinite recursion issues with pybind11 trampolines.
+    """
+
+    def __init__(self, resource=None, *args, **kwargs):
+        """Initialize the fragment service.
+
+        Parameters
+        ----------
+        resource : Resource, optional
+            The underlying resource for this service.
+        """
+        # Call the C++ base class constructor
+        if resource is not None:
+            _DefaultFragmentService.__init__(self, resource, *args, **kwargs)
+        else:
+            _DefaultFragmentService.__init__(self, *args, **kwargs)
+        self._resource_ref = resource
+
+    def resource(self, new_resource=None):
+        """Get or set the underlying Resource associated with this service.
+
+        This method is called by the C++ backend.
+
+        Parameters
+        ----------
+        new_resource : Resource or None
+            If provided, sets the resource. If None, acts as getter.
+
+        Returns
+        -------
+        Resource or None
+            The associated resource when called as a getter.
+        """
+        if new_resource is not None:
+            self._resource_ref = new_resource
+            # We also need to call the C++ base class's resource setter
+            super().resource(new_resource)
+        return self._resource_ref
 
 
 class Tracker:

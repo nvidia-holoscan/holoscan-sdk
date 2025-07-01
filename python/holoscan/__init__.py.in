@@ -103,11 +103,13 @@ as_tensor.__doc__ = core.Tensor.as_tensor.__doc__
 # Other modules are exposed to the public API but will only be lazily loaded
 _EXTRA_MODULES = [
     "conditions",
+    "data_loggers",
     "decorator",
     "executors",
     "graphs",
     "logger",
     "operators",
+    "pose_tree",
     "resources",
     "schedulers",
 ]

@@ -72,6 +72,11 @@ class PYBIND11_EXPORT PyApplication : public Application {
    */
   py::list py_argv();
 
+  // Python service registry methods (similar to PyFragment)
+  py::object get_python_service(const std::string& service_id) const;
+  void set_python_service(const std::string& service_id, py::object service);
+  void clear_python_service(const std::string& service_id);
+
   /* Trampolines (need one for each virtual function) */
   void add_operator(const std::shared_ptr<Operator>& op) override;
   void add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -108,6 +113,9 @@ class PYBIND11_EXPORT PyApplication : public Application {
 
   /// Map from Operator raw pointer to the Python wrapper object
   std::unordered_map<Operator*, py::object> python_operator_registry_;
+
+  /// Map from service ID to the Python service object
+  std::unordered_map<std::string, py::object> python_service_registry_;
 };
 
 }  // namespace holoscan

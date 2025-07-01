@@ -44,7 +44,11 @@ PyResource::PyResource(py::object resource, Fragment* fragment, const py::args& 
     : py_resource_(std::move(resource)) {
   using std::string_literals::operator""s;
 
+  // Initialize the component's internal state by setting up the fragment and service provider
+  // This mirrors what Fragment::setup_component_internals() does in C++, enabling service()
+  // method access
   fragment_ = fragment;
+  service_provider_ = fragment;
 
   int n_fragments = 0;
   for (const auto& item : args) {

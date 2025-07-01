@@ -42,7 +42,7 @@ If you need to package for a different platform or want to transfer the generate
 
 ## Positional Arguments
 
-(#cli-package-application)=
+(cli-package-application)=
 
 #### `application`
 

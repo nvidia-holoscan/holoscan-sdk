@@ -34,7 +34,7 @@
 #include <vector>
 
 #include "./arg.hpp"
-#include "./codec_registry.hpp"
+#include "./gxf/codec_registry.hpp"
 #include "./common.hpp"
 #include "./component.hpp"
 #include "./condition.hpp"
@@ -169,7 +169,8 @@ class Operator : public ComponentBase {
   /**
    * @brief Construct a new Operator object.
    *
-   * @param args The arguments to be passed to the operator.
+   * @param arg The first argument to be passed to the operator.
+   * @param args The remaining arguments to be passed to the operator.
    */
   HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
   explicit Operator(ArgT&& arg, ArgsT&&... args) {
@@ -475,57 +476,16 @@ class Operator : public ComponentBase {
 
   /**
    * @brief Register the codec for serialization/deserialization of a custom type.
-   *
-   * If the operator has an argument with a custom type, the codec must be registered
-   * using this method.
-   *
-   * For example, suppose we want to emit using the following custom struct type:
-   *
-   * ```cpp
-   * namespace holoscan {
-   *   struct Coordinate {
-   *     int16_t x;
-   *     int16_t y;
-   *     int16_t z;
-   *   }
-   * }  // namespace holoscan
-   * ```
-   *
-   * Then, we can define codec<Coordinate> as follows where the serialize and deserialize methods
-   * would be used for serialization and deserialization of this type, respectively.
-   *
-   * ```cpp
-   * namespace holoscan {
-   *
-   *   template <>
-   *   struct codec<Coordinate> {
-   *     static expected<size_t, RuntimeError> serialize(const Coordinate& value, Endpoint*
-   * endpoint) { return serialize_trivial_type<Coordinate>(value, endpoint);
-   *     }
-   *     static expected<Coordinate, RuntimeError> deserialize(Endpoint* endpoint) {
-   *       return deserialize_trivial_type<Coordinate>(endpoint);
-   *     }
-   *   };
-   * }  // namespace holoscan
-   * ```
-   *
-   * In this case, since this is a simple struct with a static size, we can use the
-   * existing serialize_trivial_type and deserialize_trivial_type implementations.
-   *
-   * Finally, to register this custom codec at runtime, we need to make the following call
-   * within the setup method of our Operator.
-   *
-   * ```cpp
-   * register_codec<Coordinate>("Coordinate");
-   * ```
-   *
-   * @tparam typeT The type of the argument to register.
-   * @param codec_name The name of the codec (must be unique unless overwrite is true).
-   * @param overwrite If true and codec_name already exists, the codec will be overwritten.
+   * @deprecated Use holoscan::gxf::GXFExecutor::register_codec instead.
    */
   template <typename typeT>
+  [[deprecated(
+      "Use holoscan::gxf::GXFExecutor::register_codec() instead of Operator::register_codec()")]]
   static void register_codec(const std::string& codec_name, bool overwrite = true) {
-    CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
+    HOLOSCAN_LOG_WARN(
+        "Operator::register_codec is deprecated. Please use the static method "
+        "holoscan::gxf::GXFExecutor::register_codec instead.");
+    gxf::CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
   }
 
   /**
@@ -828,9 +788,9 @@ class Operator : public ComponentBase {
   friend class Fragment;
 
   friend gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
-                                         const char* name);
+                                         const char* receiver_name);
   friend gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Operator* op,
-                                       const char* name);
+                                       const char* transmitter_name);
 
   /**
    * @brief This function creates a GraphEntity corresponding to the operator

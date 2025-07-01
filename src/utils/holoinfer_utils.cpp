@@ -133,7 +133,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
       HOLOSCAN_LOG_DEBUG("Extracting data from tensor {}", in_tensors[i]);
       nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>> maybe_in_tensor =
           nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
-      size_t message_index;
+      size_t message_index = 0;
       for (unsigned int j = 0; j < messages.size(); ++j) {
         maybe_in_tensor =
             messages[j].nvidia::gxf::Entity::get<nvidia::gxf::Tensor>(in_tensors[i].c_str());
@@ -266,7 +266,7 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
       HOLOSCAN_LOG_DEBUG("Extracting data from tensor {}", in_tensors[i]);
       nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>> maybe_in_tensor =
           nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
-      size_t message_index;
+      size_t message_index = 0;
       for (unsigned int j = 0; j < messages.size(); ++j) {
         maybe_in_tensor =
             messages[j].nvidia::gxf::Entity::get<nvidia::gxf::Tensor>(in_tensors[i].c_str());
@@ -900,7 +900,7 @@ gxf_result_t set_activation_per_model(
 
   HoloInfer::Mappings on_fly_act_map;
   // Merge predefined act with on_fly_act_map
-  for (auto it : activation_map) { on_fly_act_map[it.first] = it.second; }
+  for (auto& it : activation_map) { on_fly_act_map[it.first] = it.second; }
 
   // Update activation_map by specs
   for (const auto& x : activation_specs) {

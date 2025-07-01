@@ -88,7 +88,8 @@ class GXFReceiveTensorOp : public ::holoscan::ops::GXFCodeletOp {
     //
     // Example:
     // - `register_converter<T>();` to register a converter for a specific type
-    // - `register_codec<T>("codec_name", bool_overwrite);` to register a codec for a specific type
+    // - `holoscan::gxf::GXFExecutor::register_codec<T>("codec_name", bool_overwrite);` to register
+    //   a codec for a specific type.
     // - `add_arg(holoscan::Arg("arg_name", arg_value));`
     //   or `add_arg(holoscan::Arg("arg_name") = arg_value);` to add an argument to the GXF Operator
 

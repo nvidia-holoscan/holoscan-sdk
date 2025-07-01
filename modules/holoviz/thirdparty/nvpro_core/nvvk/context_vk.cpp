@@ -443,7 +443,7 @@ bool Context::initDevice(VkPhysicalDevice physical_device, const ContextCreateIn
   if (info.verboseAvailable) {
     LOGI("_____________________________\n");
     LOGI("Available Device Extensions :\n");
-    for (auto it : extensionProperties) { LOGI("%s (v. %d)\n", it.extensionName, it.specVersion); }
+    for (auto &it : extensionProperties) { LOGI("%s (v. %d)\n", it.extensionName, it.specVersion); }
   }
 
   if (fillFilteredNameArray(

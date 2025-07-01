@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,7 +110,7 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeHoloscanMessage(
 
   // retrieve the name of the codec corresponding to the data in the Message
   auto index = std::type_index(message.value().type());
-  auto& registry = holoscan::CodecRegistry::get_instance();
+  auto& registry = holoscan::gxf::CodecRegistry::get_instance();
   auto maybe_name = registry.index_to_name(index);
   if (!maybe_name) {
     GXF_LOG_ERROR("No codec found for type_index with name: %s", index.name());
@@ -140,7 +140,7 @@ Expected<holoscan::Message> UcxHoloscanComponentSerializer::deserializeHoloscanM
   if (!maybe_codec_name) { return ForwardError(maybe_codec_name); }
 
   // deserialize the message contents
-  auto& registry = holoscan::CodecRegistry::get_instance();
+  auto& registry = holoscan::gxf::CodecRegistry::get_instance();
   auto deserialize_func = registry.get_deserializer(maybe_codec_name.value());
   return deserialize_func(endpoint);
 }

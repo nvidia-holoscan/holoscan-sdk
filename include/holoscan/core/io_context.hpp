@@ -32,11 +32,12 @@
 
 #include <common/type_name.hpp>
 #include "./common.hpp"
+#include "./cuda_object_handler.hpp"
 #include "./domain/tensor_map.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
+#include "./fragment.hpp"
 #include "./gxf/entity.hpp"
-#include "./gxf/gxf_cuda.hpp"  // for holoscan::gxf::CudaObjectHandler
 #include "./message.hpp"
 #include "./operator.hpp"
 #include "./type_traits.hpp"
@@ -222,6 +223,8 @@ class InputContext {
    */
   template <typename DataT>
   holoscan::expected<DataT, holoscan::RuntimeError> receive(const char* name = nullptr) {
+    auto& data_loggers = op_->fragment()->data_loggers();
+
     // Special case handling for std::shared_ptr<holoscan::Tensor>
     if constexpr (std::is_same_v<DataT, std::shared_ptr<holoscan::Tensor>>) {
       auto maybe_tensormap = receive<holoscan::TensorMap>(name);
@@ -229,7 +232,13 @@ class InputContext {
         auto& tensor_map = maybe_tensormap.value();
         if (tensor_map.size() == 1) {
           // Return the shared_ptr directly from the map
-          return tensor_map.begin()->second;
+          auto tensor_ptr = tensor_map.begin()->second;
+          if (!data_loggers.empty()) {
+            HOLOSCAN_LOG_TRACE("[receive] logging single Tensor from TensorMap");
+            std::string input_name = holoscan::get_well_formed_name(name, inputs_);
+            log_tensor(tensor_ptr, input_name.c_str(), IOSpec::IOType::kInput);
+          }
+          return tensor_ptr;
         }
         return make_unexpected<holoscan::RuntimeError>(create_receive_error(
             name,
@@ -237,8 +246,13 @@ class InputContext {
             "receive<holoscan::TensorMap>(name) instead."));
       } else {
         std::string input_name = holoscan::get_well_formed_name(name, inputs_);
-        return receive_single_value<std::shared_ptr<holoscan::Tensor>>(input_name.c_str(),
-                                                                       InputType::kAny);
+        auto maybe_tensor = receive_single_value<std::shared_ptr<holoscan::Tensor>>(
+            input_name.c_str(), InputType::kAny);
+        if (maybe_tensor.has_value() && !data_loggers.empty()) {
+          HOLOSCAN_LOG_TRACE("[receive] logging single Tensor");
+          log_tensor(maybe_tensor.value(), input_name.c_str(), IOSpec::IOType::kInput);
+        }
+        return maybe_tensor;
       }
     }
 
@@ -287,10 +301,10 @@ class InputContext {
    * have a stable API. Application authors should instead rely on the public `receive_cuda_stream`
    * and `receive_cuda_streams` methods.
    **/
-  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
+  std::shared_ptr<CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
 
   /// @brief Set the CUDA stream/event handler used by this input context
-  void cuda_object_handler(std::shared_ptr<gxf::CudaObjectHandler> handler) {
+  void cuda_object_handler(std::shared_ptr<CudaObjectHandler> handler) {
     cuda_object_handler_ = std::move(handler);
   }
 
@@ -347,6 +361,7 @@ class InputContext {
    * with the given name.
    *
    * @param name The name of the input port.
+   * @param in_type The input type (kGXFEntity or kAny).
    * @param no_error_message Whether to print an error message when the input port is not
    * found.
    * @return The data received from the input port.
@@ -382,7 +397,8 @@ class InputContext {
         return false;
       }
 
-      if (!process_received_value(value, value_type, name, index, input_vector, error_message)) {
+      if (!process_received_value(
+              value, value_type, port_name.c_str(), input_vector, error_message)) {
         return false;
       }
     }
@@ -416,9 +432,45 @@ class InputContext {
         input_vector = std::move(std::any_cast<DataT>(value));
         return true;
       }
-
-      if (!process_received_value(value, value_type, name, index++, input_vector, error_message)) {
+      if (!process_received_value(value, value_type, name, input_vector, error_message)) {
         return false;
+      }
+      index++;
+    }
+    return true;
+  }
+
+  // Get unique_id for an input or output port
+  std::string get_unique_id(Operator* op, const std::string& port_name, IOSpec::IOType io_type) {
+    if (!op->spec()) { throw std::runtime_error("Operator spec is not available"); }
+
+    auto& ports = io_type == IOSpec::IOType::kInput ? op->spec()->inputs() : op->spec()->outputs();
+    auto it = ports.find(port_name);
+    if (it != ports.end()) { return it->second->unique_id(); }
+
+    HOLOSCAN_LOG_WARN("Input port '{}' not found", port_name);
+    return fmt::format("{}.{}", op->qualified_name(), port_name);
+  }
+
+  inline bool log_tensor(const std::shared_ptr<Tensor>& tensor, const char* port_name,
+                         IOSpec::IOType io_type) {
+    const std::string unique_id{get_unique_id(op_, port_name, io_type)};
+    auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+    for (auto& data_logger : op_->fragment()->data_loggers()) {
+      if (data_logger->should_log_input()) {
+        data_logger->log_tensor_data(tensor, unique_id, -1, metadata_ptr, io_type);
+      }
+    }
+    return true;
+  }
+
+  inline bool log_tensor_map(const holoscan::TensorMap& tensor_map, const char* port_name,
+                             IOSpec::IOType io_type) {
+    const std::string unique_id{get_unique_id(op_, port_name, io_type)};
+    auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+    for (auto& data_logger : op_->fragment()->data_loggers()) {
+      if (data_logger->should_log_input()) {
+        data_logger->log_tensormap_data(tensor_map, unique_id, -1, metadata_ptr, io_type);
       }
     }
     return true;
@@ -443,10 +495,8 @@ class InputContext {
 
   template <typename DataT>
   inline bool process_received_value(std::any& value, const std::type_info& value_type,
-                                     const char* name, int index, DataT& input_vector,
+                                     const char* port_name, DataT& input_vector,
                                      std::string& error_message) {
-    bool is_bad_any_cast = false;
-
     // Assume that the received data is not of type NoMessageType
     // (this case should be handled by the caller)
 
@@ -472,21 +522,16 @@ class InputContext {
           input_vector.push_back(casted_value);
         }
       } catch (const std::bad_any_cast& e) {
-        is_bad_any_cast = true;
+        return handle_bad_any_cast<DataT>(value, port_name, input_vector, error_message);
       } catch (const std::exception& e) {
         error_message = fmt::format(
-            "Unable to cast the received data to the specified type for input '{}:{}' of "
+            "Unable to cast the received data to the specified type for input '{}' of "
             "type {}: {}",
-            name,
-            index,
+            port_name,
             value_type.name(),
             e.what());
         return false;
       }
-    }
-
-    if (is_bad_any_cast) {
-      return handle_bad_any_cast<DataT>(value, name, index, input_vector, error_message);
     }
 
     return true;
@@ -501,15 +546,14 @@ class InputContext {
   }
 
   template <typename DataT>
-  inline bool handle_bad_any_cast(std::any& value, const char* name, int index, DataT& input_vector,
+  inline bool handle_bad_any_cast(std::any& value, const char* port_name, DataT& input_vector,
                                   std::string& error_message) {
     if constexpr (is_one_of_derived_v<typename DataT::value_type, nvidia::gxf::Entity>) {
       error_message = fmt::format(
           "Unable to cast the received data to the specified type (holoscan::gxf::Entity) for "
           "input "
-          "'{}:{}'",
-          name,
-          index);
+          "'{}'",
+          port_name);
       HOLOSCAN_LOG_DEBUG(error_message);
       return false;
     } else if constexpr (is_one_of_derived_v<typename DataT::value_type, holoscan::TensorMap>) {
@@ -519,28 +563,30 @@ class InputContext {
         bool is_tensor_map_populated = populate_tensor_map(gxf_entity, tensor_map);
         if (!is_tensor_map_populated) {
           error_message = fmt::format(
-              "Unable to populate the TensorMap from the received GXF Entity for input '{}:{}'",
-              name,
-              index);
+              "Unable to populate the TensorMap from the received GXF Entity for input '{}'",
+              port_name);
           HOLOSCAN_LOG_DEBUG(error_message);
           return false;
+        }
+        HOLOSCAN_LOG_TRACE("[receive] logging tensor map (via bad_any_cast)");
+        auto& data_loggers = op_->fragment()->data_loggers();
+        if (tensor_map.size() > 0 && !data_loggers.empty()) {
+          log_tensor_map(tensor_map, port_name, IOSpec::IOType::kInput);
         }
       } catch (const std::bad_any_cast& e) {
         error_message = fmt::format(
             "Unable to cast the received data to the specified type (holoscan::TensorMap) for "
             "input "
-            "'{}:{}'",
-            name,
-            index);
+            "'{}'",
+            port_name);
         HOLOSCAN_LOG_DEBUG(error_message);
         return false;
       }
       input_vector.push_back(std::move(tensor_map));
     } else {
       error_message = fmt::format(
-          "Unable to cast the received data to the specified type for input '{}:{}' of type {}: {}",
-          name,
-          index,
+          "Unable to cast the received data to the specified type for input '{}' of type {}: {}",
+          port_name,
           value.type().name(),
           error_message);
       HOLOSCAN_LOG_DEBUG(error_message);
@@ -587,6 +633,11 @@ class InputContext {
           return make_unexpected<holoscan::RuntimeError>(
               create_receive_error(name, error_message.c_str()));
         }
+        HOLOSCAN_LOG_TRACE("[receive] logging tensor map");
+        auto& data_loggers = op_->fragment()->data_loggers();
+        if (tensor_map.size() > 0 && !data_loggers.empty()) {
+          log_tensor_map(tensor_map, name, IOSpec::IOType::kInput);
+        }
         return tensor_map;
       } else {
         return std::any_cast<DataT>(value);
@@ -627,8 +678,8 @@ class InputContext {
   Operator* op_ = nullptr;  ///< The operator that this context is associated with.
   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs_;  ///< The inputs.
 
- private:
-  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler_{};
+ protected:
+  std::shared_ptr<CudaObjectHandler> cuda_object_handler_{};
 };
 
 /**
@@ -869,10 +920,10 @@ class OutputContext {
    * have a stable API. Application authors should instead rely on the public `set_cuda_stream`
    * method.
    **/
-  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
+  std::shared_ptr<CudaObjectHandler> cuda_object_handler() { return cuda_object_handler_; }
 
   /// @brief Set the CUDA stream handler used by this output context
-  void cuda_object_handler(std::shared_ptr<gxf::CudaObjectHandler> handler) {
+  void cuda_object_handler(std::shared_ptr<CudaObjectHandler> handler) {
     cuda_object_handler_ = std::move(handler);
   }
 
@@ -898,7 +949,7 @@ class OutputContext {
       nullptr;              ///< The execution context that is associated with.
   Operator* op_ = nullptr;  ///< The operator that this context is associated with.
   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs_;  ///< The outputs.
-  std::shared_ptr<gxf::CudaObjectHandler> cuda_object_handler_{};
+  std::shared_ptr<CudaObjectHandler> cuda_object_handler_{};
 };
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@ limitations under the License.
 import os
 
 from holoscan.core import Application
+from holoscan.data_loggers import BasicConsoleLogger, SimpleTextSerializer
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 from holoscan.resources import RMMAllocator
 
@@ -83,6 +84,24 @@ def main(config_file):
                 worker_thread_number=3,
                 stop_on_deadlock=True,
                 stop_on_deadlock_timeout=200,
+            )
+        )
+
+    # optionally enable logging of message contents
+    enable_data_logging = app.kwargs("data_logging").get("data_logging", False)
+    if enable_data_logging:
+        app.add_data_logger(
+            BasicConsoleLogger(
+                app,
+                name="console_logger",
+                log_tensor_data_content=True,
+                log_metadata=False,
+                # set max_elements to limit the number of data elements printed for each tensor
+                serializer=SimpleTextSerializer(
+                    app,
+                    name="simple_text_serializer",
+                    max_elements=8,
+                ),
             )
         )
 

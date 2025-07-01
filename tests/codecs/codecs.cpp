@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,6 @@
 #include "./mock_serialization_buffer.hpp"
 #include "./mock_allocator.hpp"
 #include "holoscan/core/argument_setter.hpp"
-#include "holoscan/core/codec_registry.hpp"
 #include "holoscan/core/codecs.hpp"
 #include "holoscan/core/expected.hpp"
 #include "holoscan/operators/holoviz/codecs.hpp"
@@ -39,7 +38,7 @@ template <typename dataT>
 void codec_compare(dataT& value, size_t buffer_size = 4096, bool omit_size_check = false) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<dataT>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -56,7 +55,7 @@ void codec_shared_compare(std::shared_ptr<dataT> value, size_t buffer_size = 409
                           bool omit_size_check = false) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<std::shared_ptr<dataT>>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -72,7 +71,7 @@ template <typename dataT>
 void codec_data_blob_compare(dataT& data, size_t buffer_size = 4096) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<dataT>::serialize(data, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -92,7 +91,7 @@ template <typename dataT>
 void codec_shared_data_blob_compare(std::shared_ptr<dataT> data, size_t buffer_size = 4096) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<std::shared_ptr<dataT>>::serialize(data, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -112,7 +111,7 @@ void codec_vector_compare(dataT& value, size_t buffer_size = 4096, bool omit_siz
                           bool omit_values_check = false) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<dataT>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -137,7 +136,7 @@ void codec_shared_vector_compare(std::shared_ptr<dataT> value, size_t buffer_siz
                                  bool omit_size_check = false, bool omit_values_check = false) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<std::shared_ptr<dataT>>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -162,7 +161,7 @@ void codec_vector_vector_compare(dataT& vectors, size_t buffer_size = 4096,
                                  bool omit_size_check = true, bool omit_values_check = false) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<dataT>::serialize(vectors, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -192,7 +191,7 @@ void codec_shared_vector_vector_compare(std::shared_ptr<dataT> vectors, size_t b
                                         bool omit_values_check = false) {
   // need buffer_size large enough to hold any tested type
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      buffer_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      buffer_size, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<std::shared_ptr<dataT>>::serialize(vectors, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -305,8 +304,8 @@ TEST(Codecs, TestVectorBool) {
   std::vector<bool> value{0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1};
 
   // serialize
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      128, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(128, holoscan::MemoryStorageType::kSystem);
   auto maybe_size = codec<std::vector<bool>>::serialize(value, endpoint.get());
 
   // Check that serialization used bit packing as expected.
@@ -394,7 +393,7 @@ TEST(Codecs, TestVectorVectorBool) {
 
   // serialize to buffer of exactly expected_size (exception thrown if expected_size is too small)
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      expected_size, holoscan::Endpoint::MemoryStorageType::kSystem);
+      expected_size, holoscan::MemoryStorageType::kSystem);
   auto maybe_size = codec<std::vector<std::vector<bool>>>::serialize(bvecs, endpoint.get());
   EXPECT_EQ(maybe_size.value(), expected_size);
 
@@ -418,8 +417,8 @@ TEST(Codecs, TestCustomTrivialSerializer) {
 
   Coordinate value{1.0, 2.0, 3.5};
   // need buffer_size large enough to hold any tested type
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      512, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(512, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<Coordinate>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -440,8 +439,8 @@ TEST(Codecs, TestCustomTrivialSerializer2) {
   std::vector ivec{1, 2, 3, 4, 5};
   MixedType value{1, 2.5, ivec.data(), -8};
   // need buffer_size large enough to hold any tested type
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      512, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(512, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<MixedType>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -465,8 +464,8 @@ TEST(Codecs, TestViewSerializer) {
   v1.matrix_ = std::array<float, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
   // need buffer_size large enough to hold any tested type
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      512, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(512, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<ops::HolovizOp::InputSpec::View>::serialize(v1, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -492,8 +491,8 @@ TEST(Codecs, TestViewSerializerNoMatrix) {
   ops::HolovizOp::InputSpec::View v1{0.2, 0.1, 0.6, 0.8};
 
   // need buffer_size large enough to hold any tested type
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      512, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(512, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<ops::HolovizOp::InputSpec::View>::serialize(v1, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -519,8 +518,8 @@ TEST(Codecs, TestVectorViewSerializer) {
   views.push_back(v2);
 
   // need buffer_size large enough to hold any tested type
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      512, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(512, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size =
       codec<std::vector<ops::HolovizOp::InputSpec::View>>::serialize(views, endpoint.get());
@@ -555,8 +554,8 @@ TEST(Codecs, TestInputSpec) {
   ops::HolovizOp::InputSpec spec{tensor_name, ops::HolovizOp::InputType::COLOR};
 
   // need buffer_size large enough to hold any tested type
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      4096, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(4096, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<ops::HolovizOp::InputSpec>::serialize(spec, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
@@ -578,8 +577,8 @@ TEST(Codecs, TestVectorInputSpec) {
   std::vector<ops::HolovizOp::InputSpec> specs{spec1, spec2};
 
   // need buffer_size large enough to hold any tested type
-  auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
-      4096, holoscan::Endpoint::MemoryStorageType::kSystem);
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(4096, holoscan::MemoryStorageType::kSystem);
 
   auto maybe_size = codec<std::vector<ops::HolovizOp::InputSpec>>::serialize(specs, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));

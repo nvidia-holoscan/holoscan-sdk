@@ -18,3 +18,6 @@ IncludeBlocks: Preserve
 
 # One parameter per line
 BinPackArguments: false
+
+# Leave SPDX comments as is (CommentPragmas is available since clang-format 3.7)
+CommentPragmas: '^(\s*\* )?SPDX-(FileCopyrightText|License-Identifier):'

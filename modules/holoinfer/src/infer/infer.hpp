@@ -49,7 +49,7 @@ class InferBase {
    * */
   virtual InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
                                    std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
-                                   cudaEvent_t cuda_event_data, cudaEvent_t *cuda_event_inference) {
+                                   cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference) {
     return InferStatus();
   }
 

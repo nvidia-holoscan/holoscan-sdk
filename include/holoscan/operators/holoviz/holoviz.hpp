@@ -93,6 +93,11 @@ struct BufferInfo;
  *     GXF_VIDEO_FORMAT_RGBA and be in device memory. This input port only exists if
  *     `enable_render_buffer_input` was set to true, in which case `compute` will only be
  *     called when a message arrives on this input.
+ * - **depth_buffer_input** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - An empty depth buffer can optionally be provided. The video buffer must have format
+ *     GXF_VIDEO_FORMAT_D32F and be in device memory. This input port only exists if
+ *     `enable_depth_buffer_input` was set to true, in which case `compute` will only be
+ *     called when a message arrives on this input.
  * - **camera_eye_input** : `std::array<float, 3>` (optional)
  *   - Camera eye position. The camera is animated to reach the new position.
  * - **camera_look_at_input** : `std::array<float, 3>` (optional)
@@ -108,6 +113,12 @@ struct BufferInfo;
  *     GXF_VIDEO_FORMAT_RGBA and will be in device memory. This output is useful for offline
  *     rendering or headless mode. This output port only exists if `enable_render_buffer_output`
  *     was set to true.
+ * - **depth_buffer_output** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - Output for a filled depth buffer. If an input depth buffer is specified, it is using
+ *     that one, else it allocates a new buffer. The video buffer will have format
+ *     GXF_VIDEO_FORMAT_D32F and will be in device memory. This output is useful for offline
+ *     rendering or headless mode. This output port only exists if `enable_depth_buffer_output`
+ *     was set to true.
  * - **camera_pose_output** : `std::array<float, 16>` or `nvidia::gxf::Pose3D` (optional)
  *   - Output the camera pose. Depending on the value of `camera_pose_output_type` this outputs a
  *     4x4 row major projection matrix (type `std::array<float, 16>`) or the camera extrinsics
@@ -122,6 +133,10 @@ struct BufferInfo;
  * - **enable_render_buffer_input**: Enable `render_buffer_input` (default: `false`)
  *   - type: `bool`
  * - **enable_render_buffer_output**: Enable `render_buffer_output` (default: `false`)
+ *   - type: `bool`
+ * - **enable_depth_buffer_input**: Enable `depth_buffer_input` (default: `false`)
+ *   - type: `bool`
+ * - **enable_depth_buffer_output**: Enable `depth_buffer_output` (default: `false`)
  *   - type: `bool`
  * - **enable_camera_pose_output**: Enable `camera_pose_output` (default: `false`)
  *   - type: `bool`
@@ -203,8 +218,8 @@ struct BufferInfo;
  *   - type: `bool`
  * - **fullscreen**: Enable fullscreen window (default: `false`)
  *   - type: `bool`
- * - **headless**: Enable headless mode. No window is opened, the render buffer is output to
- *   `render_buffer_output`. (default: `false`)
+ * - **headless**: Enable headless mode. No window is opened, the render buffer can be output to
+ *   `render_buffer_output` and/or `depth_buffer_output` if enabled. (default: `false`)
  *   - type: `bool`
  * - **framebuffer_srgb**: Enable sRGB framebuffer. If set to true, the operator will use an sRGB
  *   framebuffer for rendering. If set to false, the operator will use a linear framebuffer.
@@ -228,7 +243,8 @@ struct BufferInfo;
  *   `window_close_condition`. Please use `window_close_condition` instead as
  *   `window_close_scheduling_term` will be removed in a future release.
  *   - type: `gxf::Handle<gxf::BooleanSchedulingTerm>`
- * - **allocator**: Allocator used to allocate memory for `render_buffer_output`
+ * - **allocator**: Allocator used to allocate memory for `render_buffer_output` and
+ * `depth_buffer_output`
  *   - type: `gxf::Handle<gxf::Allocator>`
  * - **font_path**: File path for the font used for rendering text (default: `""`)
  *   - type: `std::string`
@@ -267,12 +283,12 @@ struct BufferInfo;
  *
  * ==Device Memory Requirements==
  *
- * If `render_buffer_input` is enabled, the provided buffer is used and no memory block will be
- * allocated. Otherwise, when using this operator with a `BlockMemoryPool`, a single device memory
- * block is needed (`storage_type` = 1). The size of this memory block can be determined by
- * rounding the width and height up to the nearest even size and then padding the rows as needed so
- * that the row stride is a multiple of 256 bytes. C++ code to calculate the block size is as
- * follows:
+ * If `render_buffer_input` or `depth_buffer_input` is enabled, the provided buffer is used and no
+ * memory block will be allocated. Otherwise, when using this operator with a `BlockMemoryPool`, a
+ * single device memory block is needed (`storage_type` = 1). The size of this memory block can be
+ * determined by rounding the width and height up to the nearest even size and then padding the rows
+ * as needed so that the row stride is a multiple of 256 bytes. C++ code to calculate the block size
+ * is as follows:
  *
  * ```cpp
  * #include <cstdint>
@@ -280,7 +296,7 @@ struct BufferInfo;
  * int64_t get_block_size(int32_t height, int32_t width) {
  *   int32_t height_even = height + (height & 1);
  *   int32_t width_even = width + (width & 1);
- *   int64_t row_bytes = width_even * 4;  // 4 bytes per pixel for 8-bit RGBA
+ *   int64_t row_bytes = width_even * 4;  // 4 bytes per pixel for 8-bit RGBA or 32-bit depth
  *   int64_t row_stride = (row_bytes % 256 == 0) ? row_bytes : ((row_bytes / 256 + 1) * 256);
  *   return height_even * row_stride;
  * }
@@ -368,7 +384,8 @@ struct BufferInfo;
  *    Using a display in exclusive mode is also supported with the `use_exclusive_display`
  *    parameter. This reduces the latency by avoiding the desktop compositor.
  *
- *    The rendered framebuffer can be output to `render_buffer_output`.
+ *    The rendered framebuffer can be output to `render_buffer_output` or `depth_buffer_output` if
+ * enabled.
  */
 class HolovizOp : public Operator {
  public:
@@ -690,10 +707,10 @@ class HolovizOp : public Operator {
    */
   enum class YuvRange {
     ITU_FULL,    ///< specifies that the full range of the encoded values are valid and
-                 ///< interpreted according to the ITU “full range” quantization rules
+                 ///< interpreted according to the ITU "full range" quantization rules
     ITU_NARROW,  ///< specifies that headroom and foot room are reserved in the numerical range
                  ///< of encoded values, and the remaining values are expanded according to the
-                 ///< ITU “narrow range” quantization rules
+                 ///< ITU "narrow range" quantization rules
   };
 
   /**
@@ -726,7 +743,7 @@ class HolovizOp : public Operator {
     BT2020_LINEAR,         ///< BT2020 color space to be displayed using a linear EOTF
     HDR10_ST2084,  ///< HDR10 (BT2020 color) space to be displayed using the SMPTE ST2084 Perceptual
                    ///< Quantizer (PQ) EOTF
-    PASS_THROUGH,  ///< color components are used “as is”
+    PASS_THROUGH,  ///< color components are used "as is"
     BT709_LINEAR,  ///< BT709 color space to be displayed using a linear EOTF
     AUTO = -1,  ///< Auto select the color format. Is a display is connected then `SRGB_NONLINEAR`
                 ///< is used, in headless mode `PASS_THROUGH` is used.
@@ -820,9 +837,10 @@ class HolovizOp : public Operator {
   /**
    * Function pointer type for key callbacks.
    *
-   * @param key the key that was pressed
-   * @param action key action (PRESS, RELEASE, REPEAT)
-   * @param modifiers bit field describing which modifieres were held down
+   * The callback function receives:
+   * - key: the key that was pressed
+   * - action: key action (PRESS, RELEASE, REPEAT)
+   * - modifiers: bit field describing which modifiers were held down
    */
   using KeyCallbackFunction =
       std::function<void(Key key, KeyAndButtonAction action, KeyModifiers modifiers)>;
@@ -830,16 +848,18 @@ class HolovizOp : public Operator {
   /**
    * Function pointer type for Unicode character callbacks.
    *
-   * @param code_point Unicode code point of the character
+   * The callback function receives:
+   * - code_point: Unicode code point of the character
    */
   using UnicodeCharCallbackFunction = std::function<void(uint32_t code_point)>;
 
   /**
    * Function pointer type for mouse button callbacks.
    *
-   * @param button the mouse button that was pressed
-   * @param action button action (PRESS, RELEASE)
-   * @param modifiers bit field describing which modifieres were held down
+   * The callback function receives:
+   * - button: the mouse button that was pressed
+   * - action: button action (PRESS, RELEASE)
+   * - modifiers: bit field describing which modifiers were held down
    */
   using MouseButtonCallbackFunction =
       std::function<void(MouseButton button, KeyAndButtonAction action, KeyModifiers modifiers)>;
@@ -847,34 +867,38 @@ class HolovizOp : public Operator {
   /**
    * Function pointer type for scroll callbacks.
    *
-   * @param x_offset scroll offset along the x-axis
-   * @param y_offset scroll offset along the y-axis
+   * The callback function receives:
+   * - x_offset: scroll offset along the x-axis
+   * - y_offset: scroll offset along the y-axis
    */
   using ScrollCallbackFunction = std::function<void(double x_offset, double y_offset)>;
 
   /**
    * Function pointer type for cursor position callbacks.
    *
-   * @param x_pos new cursor x-coordinate in screen coordinates, relative to the left edge of the
-   * content area
-   * @param y_pos new cursor y-coordinate in screen coordinates, relative to the left edge of the
-   * content area
+   * The callback function receives:
+   * - x_pos: new cursor x-coordinate in screen coordinates, relative to the left edge of the
+   *   content area
+   * - y_pos: new cursor y-coordinate in screen coordinates, relative to the left edge of the
+   *   content area
    */
   using CursorPosCallbackFunction = std::function<void(double x_pos, double y_pos)>;
 
   /**
    * Function pointer type for framebuffer size callbacks.
    *
-   * @param width new width of the framebuffer in pixels
-   * @param height new height of the framebuffer in pixels
+   * The callback function receives:
+   * - width: new width of the framebuffer in pixels
+   * - height: new height of the framebuffer in pixels
    */
   using FramebufferSizeCallbackFunction = std::function<void(int width, int height)>;
 
   /**
    * Function pointer type for window size callbacks.
    *
-   * @param width new width of the window in screen coordinates
-   * @param height new height of the window in screen coordinates
+   * The callback function receives:
+   * - width: new width of the window in screen coordinates
+   * - height: new height of the window in screen coordinates
    */
   using WindowSizeCallbackFunction = std::function<void(int width, int height)>;
 
@@ -882,7 +906,8 @@ class HolovizOp : public Operator {
    * Function pointer type for layer callbacks. This function is called when HolovizOp processed
    * all layers defined by the input specification. It can be used to add extra layers.
    *
-   * @param inputs the entities received from the 'receivers' input port
+   * The callback function receives:
+   * - inputs: the entities received from the 'receivers' input port
    */
   using LayerCallbackFunction =
       std::function<void(const std::vector<holoscan::gxf::Entity>& inputs)>;
@@ -923,7 +948,7 @@ class HolovizOp : public Operator {
   /**
    * Convert a image format enum to a string
    *
-   * @param input_type image format enum
+   * @param image_format image format enum
    * @return image format string
    */
   static std::string imageFormatToString(holoscan::ops::HolovizOp::ImageFormat image_format);
@@ -1045,7 +1070,8 @@ class HolovizOp : public Operator {
   void set_input_spec(const InputSpec& input_spec);
   void set_input_spec_geometry(const InputSpec& input_spec);
   void read_frame_buffer(InputContext& op_input, OutputContext& op_output,
-                         ExecutionContext& context);
+                         ExecutionContext& context, bool buffer_input_enabled,
+                         const std::string& buffer_name, nvidia::gxf::VideoFormat video_format);
   void render_color_image(const InputSpec& input_spec, BufferInfo& buffer_info);
   void render_geometry(const InputSpec& input_spec, BufferInfo& buffer_info, cudaStream_t stream);
   void render_depth_map(InputSpec* const input_spec_depth_map,
@@ -1055,6 +1081,8 @@ class HolovizOp : public Operator {
 
   Parameter<holoscan::IOSpec*> render_buffer_input_;
   Parameter<holoscan::IOSpec*> render_buffer_output_;
+  Parameter<holoscan::IOSpec*> depth_buffer_input_;
+  Parameter<holoscan::IOSpec*> depth_buffer_output_;
   Parameter<holoscan::IOSpec*> camera_pose_output_;
 
   Parameter<std::vector<InputSpec>> tensors_;
@@ -1100,6 +1128,8 @@ class HolovizOp : public Operator {
   std::vector<InputSpec> initial_input_spec_;
   bool render_buffer_input_enabled_ = false;
   bool render_buffer_output_enabled_ = false;
+  bool depth_buffer_input_enabled_ = false;
+  bool depth_buffer_output_enabled_ = false;
   bool camera_pose_output_enabled_ = false;
   bool is_first_tick_ = true;
   bool is_holoviz_multiprocess_mutex_enabled_ = false;
@@ -1126,6 +1156,11 @@ class HolovizOp : public Operator {
  */
 template <>
 struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
+  /**
+   * @brief Encodes an InputSpec object to a YAML Node.
+   * @param input_spec The InputSpec object to encode.
+   * @return YAML Node representation of the InputSpec.
+   */
   static Node encode(const holoscan::ops::HolovizOp::InputSpec& input_spec) {
     Node node;
     node["type"] = holoscan::ops::HolovizOp::inputTypeToString(input_spec.type_);
@@ -1191,6 +1226,12 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
     return node;
   }
 
+  /**
+   * @brief Decodes a YAML Node to an InputSpec object.
+   * @param node The YAML Node to decode.
+   * @param input_spec The InputSpec object to populate.
+   * @return true if successful, false otherwise.
+   */
   static bool decode(const Node& node, holoscan::ops::HolovizOp::InputSpec& input_spec) {
     if (!node.IsMap()) {
       HOLOSCAN_LOG_ERROR("InputSpec: expected a map");
@@ -1294,6 +1335,11 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
  */
 template <>
 struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
+  /**
+   * @brief Encodes an InputSpec::View object to a YAML Node.
+   * @param view The InputSpec::View object to encode.
+   * @return YAML Node representation of the View.
+   */
   static Node encode(const holoscan::ops::HolovizOp::InputSpec::View& view) {
     Node node;
     node["offset_x"] = view.offset_x_;
@@ -1304,6 +1350,12 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
     return node;
   }
 
+  /**
+   * @brief Decodes a YAML Node to an InputSpec::View object.
+   * @param node The YAML Node to decode.
+   * @param view The InputSpec::View object to populate.
+   * @return true if successful, false otherwise.
+   */
   static bool decode(const Node& node, holoscan::ops::HolovizOp::InputSpec::View& view) {
     if (!node.IsMap()) {
       HOLOSCAN_LOG_ERROR("InputSpec: expected a map");
@@ -1331,12 +1383,23 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
  */
 template <>
 struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
+  /**
+   * @brief Encodes a ColorSpace enum to a YAML Node.
+   * @param color_space The ColorSpace enum to encode.
+   * @return YAML Node representation of the ColorSpace.
+   */
   static Node encode(const holoscan::ops::HolovizOp::ColorSpace& color_space) {
     Node node;
     node.push_back(holoscan::ops::HolovizOp::colorSpaceToString(color_space));
     return node;
   }
 
+  /**
+   * @brief Decodes a YAML Node to a ColorSpace enum.
+   * @param node The YAML Node to decode.
+   * @param color_space The ColorSpace enum to populate.
+   * @return true if successful, false otherwise.
+   */
   static bool decode(const Node& node, holoscan::ops::HolovizOp::ColorSpace& color_space) {
     if (!node.IsScalar()) { return false; }
 
@@ -1364,16 +1427,17 @@ struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
  *
  * @tparam TYPE
  */
-#define HOLOVIZ_YAML_CONVERTER(TYPE)                             \
-  template <>                                                    \
-  struct YAML::convert<TYPE> {                                   \
-    static Node encode(TYPE&) {                                  \
-      throw std::runtime_error(#TYPE " is unsupported in YAML"); \
-    }                                                            \
-                                                                 \
-    static bool decode(const Node&, TYPE&) {                     \
-      throw std::runtime_error(#TYPE " is unsupported in YAML"); \
-    }                                                            \
+#define HOLOVIZ_YAML_CONVERTER(TYPE)                                                 \
+  template <>                                                                        \
+  struct YAML::convert<TYPE> {                                                       \
+    /** @brief Throws runtime error as encoding this type is unsupported in YAML. */ \
+    static Node encode(TYPE&) {                                                      \
+      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
+    }                                                                                \
+    /** @brief Throws runtime error as decoding this type is unsupported in YAML. */ \
+    static bool decode(const Node&, TYPE&) {                                         \
+      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
+    }                                                                                \
   };
 
 HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::KeyCallbackFunction);

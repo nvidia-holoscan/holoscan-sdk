@@ -18,24 +18,30 @@
 #ifndef HOLOSCAN_CORE_FRAGMENT_HPP
 #define HOLOSCAN_CORE_FRAGMENT_HPP
 
-#include <future>       // for std::future
-#include <iostream>     // for std::cout
-#include <memory>       // for std::shared_ptr
-#include <set>          // for std::set
-#include <string>       // for std::string
+#include <future>        // for std::future
+#include <iostream>      // for std::cout
+#include <memory>        // for std::shared_ptr
+#include <set>           // for std::set
+#include <shared_mutex>  // for std::shared_mutex
+#include <string>        // for std::string
+#include <string_view>   // for std::string_view
+#include <tuple>
 #include <type_traits>  // for std::enable_if_t, std::is_constructible
+#include <typeinfo>     // for std::type_info
 #include <unordered_map>
 #include <unordered_set>
-#include <tuple>
 #include <utility>  // for std::pair
 #include <vector>
 
 #include "common.hpp"
 #include "config.hpp"
+#include "data_logger.hpp"
 #include "dataflow_tracker.hpp"
 #include "executor.hpp"
+#include "fragment_service_provider.hpp"
 #include "graph.hpp"
 #include "network_context.hpp"
+#include "resources/data_logger.hpp"
 #include "scheduler.hpp"
 
 namespace holoscan {
@@ -46,6 +52,9 @@ class GXFExecutor;
 }  // namespace gxf
 
 class ThreadPool;
+
+// Forward declare ComponentBase for the friend declaration or internal setter
+class ComponentBase;
 
 /// The name of the start operator. Used to identify the start operator in the graph.
 constexpr static const char* kStartOperatorName = "<|start|>";
@@ -72,14 +81,16 @@ constexpr bool kDefaultMetadataEnabled = true;
  * The run-time execution manages communication across fragments. In a Fragment, Operators (Graph
  * Nodes) are connected to each other by flows (Graph Edges).
  */
-class Fragment {
+class Fragment : public FragmentServiceProvider {
  public:
   Fragment() = default;
-  virtual ~Fragment();
+  ~Fragment() override;
 
-  Fragment(Fragment&&) = default;
-
-  Fragment& operator=(Fragment&&) = default;
+  // Delete copy and move operations due to std::shared_mutex member
+  Fragment(const Fragment&) = delete;
+  Fragment& operator=(const Fragment&) = delete;
+  Fragment(Fragment&&) = delete;
+  Fragment& operator=(Fragment&&) = delete;
 
   /**
    * @brief Set the name of the operator.
@@ -254,11 +265,11 @@ class Fragment {
    */
   std::shared_ptr<NetworkContext> network_context();
 
-  // /**
-  //  * @brief Set the network context used by the executor
-  //  *
-  //  * @param network_context The network context to be added.
-  //  */
+  /**
+   * @brief Set the network context used by the executor
+   *
+   * @param network_context The network context to be added.
+   */
   void network_context(const std::shared_ptr<NetworkContext>& network_context);
 
   /**
@@ -320,7 +331,9 @@ class Fragment {
     HOLOSCAN_LOG_DEBUG("Creating operator '{}'", name);
     auto op = std::make_shared<OperatorT>(std::forward<ArgsT>(args)...);
     op->name(name);
-    op->fragment(this);
+
+    setup_component_internals(op.get());
+
     auto spec = std::make_shared<OperatorSpec>(this);
     op->setup(*spec.get());
     op->spec(spec);
@@ -358,7 +371,9 @@ class Fragment {
     HOLOSCAN_LOG_DEBUG("Creating resource '{}'", name);
     auto resource = std::make_shared<ResourceT>(std::forward<ArgsT>(args)...);
     resource->name(name);
-    resource->fragment(this);
+
+    setup_component_internals(resource.get());
+
     auto spec = std::make_shared<ComponentSpec>(this);
     resource->setup(*spec.get());
     resource->spec(spec);
@@ -395,7 +410,9 @@ class Fragment {
     HOLOSCAN_LOG_DEBUG("Creating condition '{}'", name);
     auto condition = std::make_shared<ConditionT>(std::forward<ArgsT>(args)...);
     condition->name(name);
-    condition->fragment(this);
+
+    setup_component_internals(condition.get());
+
     auto spec = std::make_shared<ComponentSpec>(this);
     condition->setup(*spec.get());
     condition->spec(spec);
@@ -503,6 +520,194 @@ class Fragment {
    * @return The shared pointer to the thread pool resource.
    */
   std::shared_ptr<ThreadPool> make_thread_pool(const std::string& name, int64_t initial_size = 1);
+
+  /**
+   * @brief Get a fragment service by type information and identifier.
+   *
+   * Implementation of the FragmentServiceProvider interface method for retrieving
+   * registered fragment services using runtime type information. This method provides
+   * type-erased access to services and is thread-safe.
+   *
+   * @param service_type The type information of the service to retrieve.
+   * @param id The identifier of the service. If empty, retrieves by type only.
+   * @return The shared pointer to the fragment service, or nullptr if not found.
+   */
+  std::shared_ptr<FragmentService> get_service_erased(const std::type_info& service_type,
+                                                      std::string_view id) const override;
+
+  /**
+   * @brief Register an existing fragment service instance.
+   *
+   * Registers an already created fragment service instance with the specified identifier.
+   * This allows the fragment service to be retrieved later using the service() method.
+   *
+   * @tparam ServiceT The type of the fragment service.
+   * @param svc The shared pointer to the fragment service instance to register.
+   * @param id The identifier for the fragment service registration. If empty, uses the fragment
+   * service type as identifier.
+   * @return true if the service was successfully registered, false otherwise.
+   */
+  template <typename ServiceT>
+  bool register_service(const std::shared_ptr<ServiceT>& svc, std::string_view id = "") {
+    static_assert(holoscan::is_one_of_derived_v<ServiceT, Resource, FragmentService>,
+                  "ServiceT must inherit from Resource or FragmentService");
+
+    if (!svc) {
+      HOLOSCAN_LOG_ERROR("Cannot register null pointer to fragment service");
+      return false;
+    }
+
+    bool is_service = true;
+    std::shared_ptr<FragmentService> svc_to_register;
+    std::shared_ptr<Resource> resource;
+    if constexpr (std::is_base_of_v<Resource, ServiceT>) {
+      resource = svc;
+      is_service = false;
+    }
+    if constexpr (std::is_base_of_v<FragmentService, ServiceT>) {
+      svc_to_register = svc;
+      resource = svc->resource();
+      if constexpr (holoscan::is_one_of_derived_v<ServiceT, Resource>) {
+        // For classes that inherit from both FragmentService and Resource, use the object itself
+        // as the resource if no other resource has been specified.
+        if (!resource) {
+          resource = std::const_pointer_cast<ServiceT>(svc);
+          svc->resource(resource);
+        }
+      }
+      // When a class inherits from both Resource and FragmentService, prioritize treating it as a
+      // service
+      is_service = true;
+    }
+
+    // If the resource is available, we use resource's name for id and the id should be empty
+    if (resource) {
+      if (!id.empty()) {
+        HOLOSCAN_LOG_ERROR(
+            "If the Holoscan Resource is registered as a service, the id should be empty");
+        return false;
+      }
+      id = resource->name();
+
+      if (fragment_resource_services_by_name_.find(std::string(id)) !=
+          fragment_resource_services_by_name_.end()) {
+        HOLOSCAN_LOG_ERROR(
+            "Resource service '{}' already exists in the fragment. Please specify a unique "
+            "name when creating a Resource instance.",
+            id);
+        return false;
+      }
+    }
+
+    // If the service is a resource, we need to create a new DefaultFragmentService object with the
+    // resource
+    if (!is_service) {
+      auto fragment_service = std::make_shared<DefaultFragmentService>(resource);
+      svc_to_register = fragment_service;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(fragment_service_registry_mutex_);
+
+    ServiceKey key{is_service ? typeid(*svc_to_register) : typeid(DefaultFragmentService),
+                   std::string(id)};
+
+    if (resource) {
+      fragment_resource_services_by_name_[std::string(id)] = resource;
+      // We use 'insert_or_assign' here since ServiceKey contains a std::type_index member which
+      // cannot be default-constructed
+      fragment_resource_to_service_key_map_.insert_or_assign(resource, key);
+
+      // Also register the service with its resource type
+      ServiceKey resource_key{typeid(*resource), std::string(id)};
+      fragment_services_by_key_[resource_key] = svc_to_register;
+    }
+
+    fragment_services_by_key_[key] = std::move(svc_to_register);
+
+    HOLOSCAN_LOG_DEBUG("Registered service '{}' with id '{}'", typeid(ServiceT).name(), id);
+    return true;
+  }
+
+  /**
+   * @brief Retrieve a registered fragment service or resource
+   *
+   * Retrieves a previously registered fragment service or resource by its type and optional
+   * identifier. Returns nullptr if no service/resource is found with the specified type and
+   * identifier.
+   *
+   * Note that any changes to the service retrieval logic in this method should be synchronized with
+   * the implementation in `ComponentBase::service()` method to maintain consistency.
+   *
+   * @tparam ServiceT The type of the service/resource to retrieve. Must inherit from either
+   * Resource or FragmentService. Defaults to DefaultFragmentService if
+   * not specified.
+   * @param id The identifier of the service/resource. If empty, retrieves by type only.
+   * @return The shared pointer to the service/resource, or nullptr if not found or if type casting
+   * fails.
+   */
+  template <typename ServiceT = DefaultFragmentService>
+  std::shared_ptr<ServiceT> service(std::string_view id = "") const {
+    static_assert(holoscan::is_one_of_derived_v<ServiceT, Resource, FragmentService>,
+                  "ServiceT must inherit from Resource or FragmentService");
+
+    // Get the base service from the service registry
+    auto base_service = get_service_erased(typeid(ServiceT), id);
+    if (!base_service) {
+      HOLOSCAN_LOG_DEBUG("Fragment '{}': Service of type {} with id '{}' not found.",
+                         name(),
+                         typeid(ServiceT).name(),
+                         std::string(id));
+      return nullptr;
+    }
+
+    // Handle Resource-derived services
+    if constexpr (std::is_base_of_v<Resource, ServiceT>) {
+      auto resource_ptr = base_service->resource();
+      if (!resource_ptr) {
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment '{}': No service resource is available for service with id '{}'.",
+            name(),
+            std::string(id));
+        return nullptr;
+      }
+
+      // Attempt to cast the resource to the requested type
+      auto typed_resource = std::dynamic_pointer_cast<ServiceT>(resource_ptr);
+      if (!typed_resource) {
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment '{}': Service resource with id '{}' is not type-castable to type '{}'.",
+            name(),
+            std::string(id),
+            typeid(ServiceT).name());
+      }
+      return typed_resource;
+    } else {
+      // Handle FragmentService-derived services
+      // Since DefaultFragmentService implements FragmentService, we can safely cast
+      auto typed_service = std::dynamic_pointer_cast<ServiceT>(base_service);
+      if (!typed_service) {
+        HOLOSCAN_LOG_DEBUG("Fragment '{}': Service with id '{}' is not type-castable to type '{}'.",
+                           name(),
+                           std::string(id),
+                           typeid(ServiceT).name());
+      }
+      return typed_service;
+    }
+  }
+
+  /**
+   * @brief Retrieve a registered fragment service or resource for Python bindings.
+   *
+   * This is a helper method for Python bindings to retrieve a service by its C++ type info.
+   *
+   * @param service_type The type info of the service/resource to retrieve.
+   * @param id The identifier of the service/resource. If empty, retrieves by type only.
+   * @return The shared pointer to the base service, or nullptr if not found.
+   */
+  std::shared_ptr<FragmentService> get_service_by_type_info(const std::type_info& service_type,
+                                                            std::string_view id = "") const {
+    return get_service_erased(service_type, id);
+  }
 
   /**
    * @brief Get or create the start operator for this fragment.
@@ -731,7 +936,7 @@ class Fragment {
    * Note that individual operators may still have been configured to override this default
    * via Operator::enable_metadata.
    *
-   * @param enable Boolean indicating whether metadata is enabled.
+   * @return Boolean indicating whether metadata is enabled.
    */
   virtual bool is_metadata_enabled() const;
 
@@ -740,7 +945,7 @@ class Fragment {
    *
    * Please use `enable_metadata` instead.
    *
-   * @param enable Boolean indicating whether metadata should be enabled.
+   * @param enabled Boolean indicating whether metadata should be enabled.
    */
   virtual void is_metadata_enabled(bool enabled);
 
@@ -800,10 +1005,25 @@ class Fragment {
    */
   virtual void stop_execution(const std::string& op_name = "");
 
+  /**
+   * @brief Add a data logger to the fragment.
+   *
+   * @param logger The shared pointer to the data logger to add.
+   */
+  void add_data_logger(const std::shared_ptr<DataLogger>& logger);
+
+  /**
+   * @brief Get the data loggers associated with this fragment.
+   *
+   * @return A const reference to the vector of data loggers.
+   */
+  const std::vector<std::shared_ptr<DataLogger>>& data_loggers() const { return data_loggers_; }
+
  protected:
   friend class Application;  // to access 'scheduler_' in Application
   friend class AppDriver;
   friend class gxf::GXFExecutor;
+  friend class holoscan::ComponentBase;  // Allow ComponentBase to access internal setup
 
   template <typename ConfigT, typename... ArgsT>
   std::shared_ptr<Config> make_config(ArgsT&&... args) {
@@ -841,6 +1061,17 @@ class Fragment {
 
   std::vector<std::shared_ptr<ThreadPool>>& thread_pools() { return thread_pools_; }
 
+  /**
+   * @brief Set up internal state for a component.
+   *
+   * Configures the component's internal references to this fragment and its service provider.
+   * This method is called internally when creating operators, resources, conditions, and other
+   * components to ensure they have proper access to fragment services.
+   *
+   * @param component Pointer to the ComponentBase instance to configure. Must not be nullptr.
+   */
+  void setup_component_internals(ComponentBase* component);
+
   // Note: Maintain the order of declarations (executor_ and graph_) to ensure proper destruction
   //       of the executor's context.
   std::string name_;                      ///< The name of the fragment.
@@ -852,14 +1083,25 @@ class Fragment {
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
   std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment
   std::vector<std::shared_ptr<ThreadPool>>
-      thread_pools_;          ///< Any thread pools used by the fragment
-  bool is_composed_ = false;  ///< Whether the graph is composed or not.
+      thread_pools_;            ///< Any thread pools used by the fragment
+  bool is_composed_ = false;    ///< Whether the graph is composed or not.
   bool is_run_called_ = false;  ///< Whether run() or run_async() has been called.
   std::optional<bool> is_metadata_enabled_ =
       std::nullopt;  ///< Whether metadata is enabled or not. If nullopt, value from Application()
                      ///< is used if it has been set. Otherwise defaults to true.
   std::optional<MetadataPolicy> metadata_policy_ = std::nullopt;
   std::shared_ptr<Operator> start_op_;  ///< The start operator of the fragment (optional).
+  std::vector<std::shared_ptr<DataLogger>> data_loggers_;  ///< Data loggers (optional)
+
+  // Service registry members
+  mutable std::shared_mutex
+      fragment_service_registry_mutex_;  ///< Mutex for thread-safe service registry access
+  std::unordered_map<ServiceKey, std::shared_ptr<FragmentService>, ServiceKeyHash>
+      fragment_services_by_key_;  ///< service registry map
+  std::unordered_map<std::string, std::shared_ptr<Resource>>
+      fragment_resource_services_by_name_;  ///< service resource registry map
+  std::unordered_map<std::shared_ptr<Resource>, ServiceKey>
+      fragment_resource_to_service_key_map_;  ///< service resource registry map
 };
 
 }  // namespace holoscan

@@ -200,6 +200,18 @@ The supported policies are:
 - `MetadataPolicy.RAISE`: Raise an exception if the key already exists
 )doc")
 
+PYDOC(add_data_logger, R"doc(
+Add a data logger to the application.
+
+This method adds a data logger to the application. For distributed applications, the data
+logger is added to each fragment in the fragment graph.
+
+Parameters
+----------
+logger : holoscan.core.DataLogger
+    The data logger to add.
+)doc")
+
 }  // namespace Application
 
 }  // namespace holoscan::doc

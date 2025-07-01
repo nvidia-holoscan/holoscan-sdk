@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,9 +37,16 @@ def fragment():
 
 
 @pytest.fixture
-def config_file():
+def operators_config_file():
     yaml_file_dir = os.path.dirname(__file__)
     config_file = os.path.join(yaml_file_dir, "operator_parameters.yaml")
+    return config_file
+
+
+@pytest.fixture
+def data_loggers_config_file():
+    yaml_file_dir = os.path.dirname(__file__)
+    config_file = os.path.join(yaml_file_dir, "data_logger_parameters.yaml")
     return config_file
 
 

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@ from argparse import ArgumentParser
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, IOSpec, Operator, OperatorSpec, Tracker
+from holoscan.data_loggers import BasicConsoleLogger, SimpleTextSerializer
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 
@@ -144,7 +145,17 @@ class ParallelPingApp(Application):
 
 
 def main(
-    threads, num_delays, delay, delay_step, event_based, count, silent, track, name, output_file
+    threads,
+    num_delays,
+    delay,
+    delay_step,
+    event_based,
+    count,
+    silent,
+    track,
+    enable_data_logging,
+    name,
+    output_file,
 ):
     app = ParallelPingApp(
         num_delays=num_delays, delay=delay, delay_step=delay_step, count=count, silent=silent
@@ -162,6 +173,25 @@ def main(
             name="multithread_scheduler",
         )
     app.scheduler(scheduler)
+
+    # enable data logging to console if requested
+    if enable_data_logging:
+        app.add_data_logger(
+            BasicConsoleLogger(
+                app,
+                name="console_logger",
+                log_tensor_data_content=False,
+                log_metadata=False,
+                denylist_patterns=[".*rx.names.*"],
+                # configure to log the __repr__ of Python objects
+                serializer=SimpleTextSerializer(
+                    app,
+                    name="text-serializer",
+                    log_python_object_contents=True,
+                ),
+            )
+        )
+
     tstart = time.time()
     if track:
         with Tracker(
@@ -249,6 +279,11 @@ if __name__ == "__main__":
         help="enable data flow tracking",
     )
     parser.add_argument(
+        "--data_log",
+        action="store_true",
+        help="enable data logging",
+    )
+    parser.add_argument(
         "--name",
         help="specify the name of the specific run for the output file",
     )
@@ -281,6 +316,7 @@ if __name__ == "__main__":
         count=args.count,
         silent=args.silent,
         track=args.track,
+        enable_data_logging=args.data_log,
         name=args.name,
         output_file=args.output_file,
     )

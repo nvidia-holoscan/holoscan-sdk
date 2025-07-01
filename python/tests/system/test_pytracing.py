@@ -189,6 +189,8 @@ def verify_ncalls(pstats, func_name, expected_ncalls, func_count=1):
             # Lib/pstats.py#L202 to understand the structure of the tuple
             # (pcalls, ncalls, ...)
             assert pstats.stats[key][1] == expected_ncalls
+    if count != func_count:
+        print(f"{count=} and {func_count=}, but expected these to be equal")
     assert count == func_count
 
 

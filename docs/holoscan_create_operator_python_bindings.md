@@ -419,9 +419,9 @@ where now that `min_prob` and `overlay_img_colors` are optional, they are only c
 
 Sometimes, operators may use a Parameter with an enum type. It is necessary to wrap the C++ enum to be able to use it as a Python type when providing the argument to the operator.
 
-The built-in {cpp:class}`holoscan::ops::AJASourceOp` is an example of a C++ operator that takes a [enum Parameter](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/python/holoscan/operators/aja_source/aja_source.cpp#L58) (an `NTV2Channel` enum).
+The {cpp:class}`holoscan::ops::AJASourceOp` on Holohub is an example of a C++ operator that takes a [enum Parameter](https://github.com/nvidia-holoscan/holohub/blob/holoscan-sdk-3.3.0/operators/aja_source/aja_source.hpp#L116) (an `NTV2Channel` enum).
 
-The enum can easily be wrapped for use from Python via `py::enum_` as shown [here](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/python/holoscan/operators/aja_source/aja_source.cpp#L98-L108). It is recommended in this case to follow Python's convention of using capitalized names in the enum.
+The enum can easily be wrapped for use from Python via `py::enum_` as shown [here](https://github.com/nvidia-holoscan/holohub/blob/holoscan-sdk-3.3.0/operators/aja_source/python/aja_source.cpp#L126-L136). It is recommended in this case to follow Python's convention of using capitalized names in the enum.
 
 ### (Advanced) Custom C++ classes as arguments
 

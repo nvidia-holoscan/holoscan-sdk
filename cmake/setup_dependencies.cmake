@@ -49,6 +49,7 @@ superbuild_depend(v4l2)
 superbuild_depend(yaml-cpp_rapids)
 superbuild_depend(gxf)
 superbuild_depend(nvtx3)
+superbuild_depend(eigen3_urm)
 
 # Testing dependencies
 if(HOLOSCAN_BUILD_TESTS)

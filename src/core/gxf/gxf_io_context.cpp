@@ -23,7 +23,10 @@
 #include <utility>
 #include <vector>
 
+#include "holoscan/core/domain/tensor.hpp"
+#include "holoscan/core/domain/tensor_map.hpp"
 #include "holoscan/core/execution_context.hpp"
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_cuda.hpp"
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 #include "holoscan/core/gxf/gxf_operator.hpp"
@@ -38,6 +41,43 @@
 #include "gxf/std/transmitter.hpp"
 
 namespace holoscan::gxf {
+
+namespace {
+// Check if any nvidia::gxf::Tensor components are present in the entity and log them
+// TODO(grelee): should we have a flag to disable this entity-based logging?
+//               should we log other components aside from Tensor that are in the entity?
+inline void log_tensors_in_entity(Operator* op, const nvidia::gxf::Entity& gxf_entity,
+                                  const std::shared_ptr<IOSpec>& io_spec, IOSpec::IOType io_type,
+                                  int64_t acq_timestamp = -1) {
+  auto tensor_components_expected = gxf_entity.findAllHeap<nvidia::gxf::Tensor>();
+  if (tensor_components_expected.has_value() && tensor_components_expected.value().size() > 0) {
+    TensorMap tensor_map;
+    for (const auto& gxf_tensor : tensor_components_expected.value()) {
+      // Do zero-copy conversion to holoscan::Tensor (as in
+      // gxf_entity.get<holoscan::Tensor>())
+      auto maybe_dl_ctx = (*gxf_tensor->get()).toDLManagedTensorContext();
+      if (!maybe_dl_ctx) {
+        HOLOSCAN_LOG_ERROR(
+            "Failed to get std::shared_ptr<DLManagedTensorContext> from "
+            "nvidia::gxf::Tensor");
+        continue;
+      }
+      auto holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
+      tensor_map.insert({gxf_tensor->name(), holoscan_tensor});
+    }
+    if (tensor_map.size() > 0) {
+      const std::string unique_id = io_spec->unique_id();
+      auto metadata_ptr = op->is_metadata_enabled() ? op->metadata() : nullptr;
+      for (auto& data_logger : op->fragment()->data_loggers()) {
+        if (data_logger->should_log_output()) {
+          data_logger->log_tensormap_data(
+              tensor_map, unique_id, acq_timestamp, metadata_ptr, io_type);
+        }
+      }
+    }
+  }
+}
+}  // namespace
 
 nvidia::gxf::Receiver* get_gxf_receiver(const std::shared_ptr<IOSpec>& input_spec) {
   auto connector = input_spec->connector();
@@ -94,7 +134,7 @@ bool GXFInputContext::empty_impl(const char* name) {
 gxf_result_t GXFInputContext::retrieve_cuda_streams(nvidia::gxf::Entity& message,
                                                     const std::string& input_name) {
   auto context = gxf_context();
-  auto object_handler = cuda_object_handler();
+  auto object_handler = gxf_cuda_object_handler();
   if (object_handler == nullptr) {
     HOLOSCAN_LOG_DEBUG("CudaObjectHandler is not initialized, could not retrieve CUDA streams");
     return GXF_FAILURE;
@@ -149,6 +189,7 @@ std::vector<std::optional<cudaStream_t>> GXFInputContext::receive_cuda_streams(
 
 std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool no_error_message) {
   std::string input_name = holoscan::get_well_formed_name(name, inputs_);
+  auto& data_loggers = op_->fragment()->data_loggers();
 
   auto it = inputs_.find(input_name);
   if (it == inputs_.end()) {
@@ -194,8 +235,8 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
       return no_accessible_error_message;
     }
   }
-
-  auto receiver = get_gxf_receiver(it->second);
+  auto io_spec = it->second;
+  auto receiver = get_gxf_receiver(io_spec);
   if (!receiver) {
     auto no_accessible_error_message = NoAccessibleMessageType(
         fmt::format("Invalid receiver found for the input port with name {}", input_name));
@@ -235,6 +276,9 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
 
   // If the input type is GXFEntity, return the entity directly
   if (in_type == InputType::kGXFEntity) {
+    if (!data_loggers.empty()) {
+      log_tensors_in_entity(op_, entity, io_spec, IOSpec::IOType::kInput);
+    }
     // Convert nvidia::gxf::Entity to holoscan::gxf::Entity
     holoscan::gxf::Entity entity_wrapper(entity);
     return entity_wrapper;  // to handle gxf::Entity as it is
@@ -242,6 +286,9 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
 
   auto message = entity.get<holoscan::Message>();
   if (!message) {
+    if (!data_loggers.empty()) {
+      log_tensors_in_entity(op_, entity, io_spec, IOSpec::IOType::kInput);
+    }
     // Convert nvidia::gxf::Entity to holoscan::gxf::Entity
     holoscan::gxf::Entity entity_wrapper(entity);
     return entity_wrapper;  // to handle gxf::Entity as it is
@@ -250,6 +297,22 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
   // Return the value of the message
   auto message_ptr = message.value();
   auto value = message_ptr->value();
+
+  if (!data_loggers.empty()) {
+    auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+    const std::string unique_id = io_spec->unique_id();
+
+    for (auto& data_logger : data_loggers) {
+      // TODO(grelee): should we log any information on CUDA streams? If so there are multiple
+      // considerations:
+      //   1. should we log all streams found on the emitted/received by a port
+      //   2. should we log the stream associated with the operator
+      //   3. should the value logged be the memory address of the cudaStream_t? (or GXF cid?)
+      if (data_logger->should_log_input()) {
+        data_logger->log_data(value, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput);
+      }
+    }
+  }
 
   return value;
 }
@@ -374,7 +437,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
   // check if there is a CUDA stream to be emitted on this output port
   bool stream_found = false;
   gxf_uid_t stream_cid{kNullUid};
-  auto object_handler = cuda_object_handler();
+  auto object_handler = gxf_cuda_object_handler();
   if (object_handler == nullptr) {
     HOLOSCAN_LOG_DEBUG("CudaObjectHandler not initialized, no streams will be emitted");
   } else {
@@ -399,13 +462,12 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
   void* tx_ptr;
   HOLOSCAN_GXF_CALL_FATAL(GxfComponentPointer(context, gxf_resource->gxf_cid(), tx_tid, &tx_ptr));
 
+  HOLOSCAN_LOG_TRACE("in GXFOutputContext::emit_impl: out_type: {}", static_cast<int>(out_type));
   switch (out_type) {
     case OutputType::kAny: {
       // Create an Entity object and add a Message object to it.
       auto gxf_entity = nvidia::gxf::Entity::New(gxf_context());
       auto buffer = gxf_entity.value().add<Message>();
-      // Set the data to the value of the Message object.
-      buffer.value()->set_value(std::move(data));
 
       if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
         auto metadata = gxf_entity.value().add<MetadataDictionary>("metadata_");
@@ -419,6 +481,58 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
                                                GxfResultStr(stream_result)));
         }
       }
+
+      auto& data_loggers = op_->fragment()->data_loggers();
+      HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
+
+      if (!data_loggers.empty()) {
+        enum class DataType { Tensor, TensorMap, Other };
+        DataType data_type = DataType::Other;
+        std::shared_ptr<Tensor> tensor_ptr;
+        TensorMap tensor_map;
+        if (data.type() == typeid(std::shared_ptr<Tensor>)) {
+          try {
+            tensor_ptr = std::any_cast<std::shared_ptr<Tensor>>(data);
+            data_type = DataType::Tensor;
+          } catch (const std::bad_any_cast& e) {
+            HOLOSCAN_LOG_WARN("Failed to cast data to std::shared_ptr<Tensor>: {}", e.what());
+            data_type = DataType::Other;
+          }
+        } else if (data.type() == typeid(TensorMap)) {
+          try {
+            tensor_map = std::any_cast<TensorMap>(data);
+            data_type = DataType::TensorMap;
+          } catch (const std::bad_any_cast& e) {
+            HOLOSCAN_LOG_WARN("Failed to cast data to TensorMap: {}", e.what());
+            data_type = DataType::Other;
+          }
+        }
+        auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+        const std::string unique_id = output_spec->unique_id();
+
+        for (auto& data_logger : data_loggers) {
+          if (data_logger->should_log_output()) {
+            switch (data_type) {
+              case DataType::Tensor:
+                data_logger->log_tensor_data(
+                    tensor_ptr, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
+                break;
+              case DataType::TensorMap:
+                data_logger->log_tensormap_data(
+                    tensor_map, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
+                break;
+              case DataType::Other:
+              default:
+                data_logger->log_data(
+                    data, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
+                break;
+            }
+          }
+        }
+      }
+
+      // Set the data to the value of the Message object. Can only move **after** logging the data
+      buffer.value()->set_value(std::move(data));
 
       // Publish the Entity object.
       nvidia::gxf::Expected<void> gxf_result;
@@ -455,6 +569,13 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           }
         }
 
+        auto& data_loggers = op_->fragment()->data_loggers();
+        HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
+        if (!data_loggers.empty()) {
+          log_tensors_in_entity(
+              op_, gxf_entity, output_spec, IOSpec::IOType::kOutput, acq_timestamp);
+        }
+
         nvidia::gxf::Expected<void> gxf_result;
         if (acq_timestamp != -1) {
           gxf_result =
@@ -476,5 +597,4 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
     }
   }
 }
-
 }  // namespace holoscan::gxf

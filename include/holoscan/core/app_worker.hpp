@@ -35,7 +35,7 @@ namespace holoscan {
 // Forward declarations
 struct ConnectionItem;
 
-namespace service {
+namespace distributed {
 class AppDriverClient;
 }
 
@@ -72,9 +72,9 @@ class AppWorker {
 
   FragmentGraph& fragment_graph();
 
-  service::AppWorkerServer* server(std::unique_ptr<service::AppWorkerServer>&& server);
+  distributed::AppWorkerServer* server(std::unique_ptr<distributed::AppWorkerServer>&& server);
 
-  service::AppWorkerServer* server();
+  distributed::AppWorkerServer* server();
 
   bool execute_fragments(
       std::unordered_map<std::string, std::vector<std::shared_ptr<holoscan::ConnectionItem>>>&
@@ -86,12 +86,12 @@ class AppWorker {
 
   void process_message_queue();
 
-  std::shared_ptr<service::AppDriverClient> app_driver_client() const;
+  std::shared_ptr<distributed::AppDriverClient> app_driver_client() const;
 
   void setup_signal_handlers();
 
  private:
-  friend class service::AppWorkerServer;  ///< Allow AppWorkerServer to access private members.
+  friend class distributed::AppWorkerServer;  ///< Allow AppWorkerServer to access private members.
 
   /// Get target fragments from the options.
   std::vector<FragmentNodeType> get_target_fragments(FragmentGraph& fragment_graph);
@@ -99,7 +99,7 @@ class AppWorker {
   Application* app_ = nullptr;     ///< The application to run.
   CLIOptions* options_ = nullptr;  ///< The command line options.
 
-  std::unique_ptr<service::AppWorkerServer> worker_server_;
+  std::unique_ptr<distributed::AppWorkerServer> worker_server_;
 
   FragmentGraph* fragment_graph_ = nullptr;
   std::vector<FragmentNodeType> target_fragments_;

@@ -397,10 +397,10 @@ Window::CallbackHandle GLFWWindow::add_key_callback(KeyCallbackFunction callback
   return CallbackHandle(
       reinterpret_cast<void*>(
           impl_->key_callbacks_.back().target<std::remove_pointer_t<KeyCallbackType>>()),
-      [this](void* callback) {
-        impl_->key_callbacks_.remove_if([callback](KeyCallbackFunction f) {
+      [this](void* callback_ptr) {
+        impl_->key_callbacks_.remove_if([callback_ptr](KeyCallbackFunction f) {
           return reinterpret_cast<void*>(f.target<std::remove_pointer_t<KeyCallbackType>>()) ==
-                 callback;
+                 callback_ptr;
         });
       });
 }
@@ -412,10 +412,10 @@ Window::CallbackHandle GLFWWindow::add_unicode_char_callback(UnicodeCharCallback
   return CallbackHandle(
       reinterpret_cast<void*>(impl_->unicode_char_callbacks_.back()
                                   .target<std::remove_pointer_t<UnicodeCharCallbackType>>()),
-      [this](void* callback) {
-        impl_->unicode_char_callbacks_.remove_if([callback](UnicodeCharCallbackFunction f) {
+      [this](void* callback_ptr) {
+        impl_->unicode_char_callbacks_.remove_if([callback_ptr](UnicodeCharCallbackFunction f) {
           return reinterpret_cast<void*>(
-                     f.target<std::remove_pointer_t<UnicodeCharCallbackType>>()) == callback;
+                     f.target<std::remove_pointer_t<UnicodeCharCallbackType>>()) == callback_ptr;
         });
       });
 }
@@ -427,10 +427,10 @@ Window::CallbackHandle GLFWWindow::add_mouse_button_callback(MouseButtonCallback
   return CallbackHandle(
       reinterpret_cast<void*>(impl_->mouse_button_callbacks_.back()
                                   .target<std::remove_pointer_t<MouseButtonCallbackType>>()),
-      [this](void* callback) {
-        impl_->mouse_button_callbacks_.remove_if([callback](MouseButtonCallbackFunction f) {
+      [this](void* callback_ptr) {
+        impl_->mouse_button_callbacks_.remove_if([callback_ptr](MouseButtonCallbackFunction f) {
           return reinterpret_cast<void*>(
-                     f.target<std::remove_pointer_t<MouseButtonCallbackType>>()) == callback;
+                     f.target<std::remove_pointer_t<MouseButtonCallbackType>>()) == callback_ptr;
         });
       });
 }
@@ -442,10 +442,10 @@ Window::CallbackHandle GLFWWindow::add_scroll_callback(ScrollCallbackFunction ca
   return CallbackHandle(
       reinterpret_cast<void*>(
           impl_->scroll_callbacks_.back().target<std::remove_pointer_t<ScrollCallbackType>>()),
-      [this](void* callback) {
-        impl_->scroll_callbacks_.remove_if([callback](ScrollCallbackFunction f) {
+      [this](void* callback_ptr) {
+        impl_->scroll_callbacks_.remove_if([callback_ptr](ScrollCallbackFunction f) {
           return reinterpret_cast<void*>(f.target<std::remove_pointer_t<ScrollCallbackType>>()) ==
-                 callback;
+                 callback_ptr;
         });
       });
 }
@@ -457,10 +457,10 @@ Window::CallbackHandle GLFWWindow::add_cursor_pos_callback(CursorPosCallbackFunc
   return CallbackHandle(
       reinterpret_cast<void*>(impl_->cursor_pos_callbacks_.back()
                                   .target<std::remove_pointer_t<CursorPosCallbackType>>()),
-      [this](void* callback) {
-        impl_->cursor_pos_callbacks_.remove_if([callback](CursorPosCallbackFunction f) {
+      [this](void* callback_ptr) {
+        impl_->cursor_pos_callbacks_.remove_if([callback_ptr](CursorPosCallbackFunction f) {
           return reinterpret_cast<void*>(
-                     f.target<std::remove_pointer_t<CursorPosCallbackType>>()) == callback;
+                     f.target<std::remove_pointer_t<CursorPosCallbackType>>()) == callback_ptr;
         });
       });
 }
@@ -473,11 +473,13 @@ Window::CallbackHandle GLFWWindow::add_framebuffer_size_callback(
   return CallbackHandle(
       reinterpret_cast<void*>(impl_->framebuffer_size_callbacks_.back()
                                   .target<std::remove_pointer_t<FramebufferSizeCallbackType>>()),
-      [this](void* callback) {
-        impl_->framebuffer_size_callbacks_.remove_if([callback](FramebufferSizeCallbackFunction f) {
-          return reinterpret_cast<void*>(
-                     f.target<std::remove_pointer_t<FramebufferSizeCallbackType>>()) == callback;
-        });
+      [this](void* callback_ptr) {
+        impl_->framebuffer_size_callbacks_.remove_if(
+            [callback_ptr](FramebufferSizeCallbackFunction f) {
+              return reinterpret_cast<void*>(
+                         f.target<std::remove_pointer_t<FramebufferSizeCallbackType>>()) ==
+                     callback_ptr;
+            });
       });
 }
 
@@ -488,10 +490,10 @@ Window::CallbackHandle GLFWWindow::add_window_size_callback(WindowSizeCallbackFu
   return CallbackHandle(
       reinterpret_cast<void*>(impl_->window_size_callbacks_.back()
                                   .target<std::remove_pointer_t<WindowSizeCallbackType>>()),
-      [this](void* callback) {
-        impl_->window_size_callbacks_.remove_if([callback](WindowSizeCallbackFunction f) {
+      [this](void* callback_ptr) {
+        impl_->window_size_callbacks_.remove_if([callback_ptr](WindowSizeCallbackFunction f) {
           return reinterpret_cast<void*>(
-                     f.target<std::remove_pointer_t<WindowSizeCallbackType>>()) == callback;
+                     f.target<std::remove_pointer_t<WindowSizeCallbackType>>()) == callback_ptr;
         });
       });
 }

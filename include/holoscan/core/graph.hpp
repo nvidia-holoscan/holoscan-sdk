@@ -185,8 +185,8 @@ class Graph {
   /**
    * @brief Get the previous nodes of the given node.
    *
-   * @param op A node in the graph.
-   * @return A vector of next nodes.
+   * @param node A node in the graph.
+   * @return A vector of previous nodes.
    */
   virtual std::vector<NodeType> get_previous_nodes(const NodeType& node) const = 0;
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -139,7 +139,8 @@ py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
           // Skip checking for Tensor as it's a stream ID from CudaStreamHandler
           continue;
         }
-        auto holoscan_pytensor = entity_wrapper.py_get(component_name);
+        // Attempt to retrieve tensor component without error logging
+        auto holoscan_pytensor = entity_wrapper.py_get(component_name, false);
         if (holoscan_pytensor) { dict_tensor[component_name] = holoscan_pytensor; }
       }
       return dict_tensor;

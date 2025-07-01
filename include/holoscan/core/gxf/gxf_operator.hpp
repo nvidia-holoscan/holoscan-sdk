@@ -38,7 +38,8 @@ class GXFOperator : public holoscan::Operator {
   /**
    * @brief Construct a new GXFOperator object.
    *
-   * @param args The arguments to be passed to the operator.
+   * @param arg The first argument to be passed to the operator.
+   * @param args The remaining arguments to be passed to the operator.
    */
   HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
   explicit GXFOperator(ArgT&& arg, ArgsT&&... args)

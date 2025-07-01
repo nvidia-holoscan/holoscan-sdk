@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,7 @@ struct DataBuffer {
 };
 
 constexpr int32_t kDefaultMemoryStorageType =
-    static_cast<int32_t>(holoscan::Endpoint::MemoryStorageType::kSystem);
+    static_cast<int32_t>(holoscan::MemoryStorageType::kSystem);
 
 // mock version of UcxSerializationBuffer
 class MockUcxSerializationBuffer : public Endpoint {
@@ -74,7 +74,9 @@ class MockUcxSerializationBuffer : public Endpoint {
   expected<void, RuntimeError> resize(size_t size, MemoryStorageType storage_type);
 
   // The type of memory where the data is stored
-  MemoryStorageType storage_type() const { return buffer_.storage_type(); }
+  MemoryStorageType storage_type() const {
+    return static_cast<holoscan::MemoryStorageType>(buffer_.storage_type());
+  }
   // Returns a read-only pointer to buffer data
   const std::byte* data() const { return buffer_.pointer(); }
   // Returns the capacity of the buffer

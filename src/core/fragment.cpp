@@ -123,6 +123,10 @@ void Fragment::metadata_policy(MetadataPolicy policy) {
   metadata_policy_ = policy;
 }
 
+void Fragment::add_data_logger(const std::shared_ptr<DataLogger>& logger) {
+  data_loggers_.push_back(logger);
+}
+
 void Fragment::config(const std::string& config_file, const std::string& prefix) {
   if (config_) { HOLOSCAN_LOG_WARN("Config object was already created. Overwriting..."); }
   if (is_composed_) {
@@ -757,6 +761,15 @@ void Fragment::reset_state() {
   // Clear thread pools to prevent memory leaks
   thread_pools_.clear();
 
+  // Clear service registry to prevent memory leaks and stale references
+  {
+    std::unique_lock<std::shared_mutex> lock(fragment_service_registry_mutex_);
+    fragment_services_by_key_.clear();
+    fragment_resource_services_by_name_.clear();
+    fragment_resource_to_service_key_map_.clear();
+    HOLOSCAN_LOG_DEBUG("Cleared service registry/resources for fragment '{}'", name_);
+  }
+
   // Reset the is_composed_ flag to ensure graphs are recomposed
   is_composed_ = false;
 }
@@ -808,6 +821,28 @@ std::shared_ptr<ThreadPool> Fragment::make_thread_pool(const std::string& name,
   thread_pools_.push_back(pool_resource);
 
   return pool_resource;
+}
+
+std::shared_ptr<FragmentService> Fragment::get_service_erased(const std::type_info& service_type,
+                                                              std::string_view id) const {
+  std::shared_lock<std::shared_mutex> lock(fragment_service_registry_mutex_);
+  ServiceKey key{service_type, std::string(id)};
+  auto it = fragment_services_by_key_.find(key);
+  if (it == fragment_services_by_key_.end()) {
+    HOLOSCAN_LOG_DEBUG(
+        "Service (erased) for type_info {} id '{}' not found", service_type.name(), id);
+    return nullptr;
+  }
+  return it->second;
+}
+
+void Fragment::setup_component_internals(ComponentBase* component) {
+  if (component) {
+    // 'this' (Fragment instance) is both the Fragment and the FragmentServiceProvider
+    component->fragment(this);
+    component->service_provider(this);
+    // Potentially other common setup tasks for components could go here.
+  }
 }
 
 }  // namespace holoscan

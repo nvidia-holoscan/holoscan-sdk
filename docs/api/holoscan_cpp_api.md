@@ -14,7 +14,11 @@
     - [GXF Components](#gxf-components)
       - [Conditions](#conditions)
       - [Resources](#resources)
+      - [Schedulers](#schedulers)
+      - [Network Contexts](#network-contexts)
     - [Native Operator Support](#native-operator-support)
+    - [Analytics](#analytics)
+    - [Data Logging](#data-logging)
     - [Domain Objects](#domain-objects)
       - [Tensor (interoperability with GXF Tensor and DLPack interface)](#tensor-interoperability-with-gxf-tensor-and-dlpack-interface)
         - [Class/Struct](#classstruct)
@@ -190,6 +194,13 @@
 
 - {ref}`exhale_class_classholoscan_1_1CsvDataExporter`
 - {ref}`exhale_class_classholoscan_1_1DataExporter`
+
+### Data Logging
+
+- {ref}`exhale_class_classholoscan_1_1DataLogger`
+- {ref}`exhale_class_classholoscan_1_1DataLoggerResource`
+- {ref}`exhale_class_classholoscan_1_1data__loggers_1_1BasicConsoleLogger`
+- {ref}`exhale_class_classholoscan_1_1data__loggers_1_1SimpleTextSerializer`
 
 ### Domain Objects
 

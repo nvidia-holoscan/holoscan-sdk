@@ -78,7 +78,7 @@ void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* wid
   const void* image_data = nullptr;
   stbi_uc* const file_image_data =
       stbi_load(filename.c_str(), width, height, components, convert_to_intensity ? 0 : 4);
-  if (!image_data) { throw std::runtime_error("Loading image failed."); }
+  if (!file_image_data) { throw std::runtime_error("Loading image failed."); }
 
   std::vector<uint8_t> tmp_image_data;
   if ((*components != 1) && (convert_to_intensity)) {
@@ -425,55 +425,63 @@ void cleanupCuda() {
 }
 
 int main(int argc, char** argv) {
-  bool benchmark_mode = false;
-  bool headless_mode = false;
-
-  struct option long_options[] = {{"help", no_argument, 0, 'h'},
-                                  {"depth_dir", required_argument, 0, 'd'},
-                                  {"color_dir", required_argument, 0, 'c'},
-                                  {"bench", no_argument, 0, 'b'},
-                                  {"headless", no_argument, 0, 'l'},
-                                  {0, 0, 0, 0}};
-
-  // parse options
-  while (true) {
-    int option_index = 0;
-    const int c =
-        getopt_long(argc, argv, "hd:c:bl", static_cast<option*>(long_options), &option_index);
-
-    if (c == -1) { break; }
-
-    const std::string argument(optarg ? optarg : "");
-    switch (c) {
-      case 'h':
-        std::cout << "Usage: " << argv[0] << " [options]" << std::endl
-                  << "Options:" << std::endl
-                  << "  -d DIR, --depth_dir DIR  directory to load depth images from" << std::endl
-                  << "  -c DIR, --color_dir DIR  directory to load color images from" << std::endl
-                  << "  -b, --bench              benchmark mode" << std::endl
-                  << "  -l, --headless           headless mode" << std::endl
-                  << "  -h, --help               display this information" << std::endl
-                  << std::endl;
-        return EXIT_SUCCESS;
-      case 'b':
-        benchmark_mode = true;
-        show_ui = false;
-        break;
-      case 'l':
-        headless_mode = true;
-        break;
-      case 'd':
-        std::strncpy(depth_dir, argument.c_str(), sizeof(depth_dir));
-        break;
-      case 'c':
-        std::strncpy(color_dir, argument.c_str(), sizeof(color_dir));
-        break;
-      default:
-        throw std::runtime_error("Unhandled option ");
-    }
-  }
-
   try {
+    bool benchmark_mode = false;
+    bool headless_mode = false;
+
+    struct option long_options[] = {{"help", no_argument, 0, 'h'},
+                                    {"depth_dir", required_argument, 0, 'd'},
+                                    {"color_dir", required_argument, 0, 'c'},
+                                    {"bench", no_argument, 0, 'b'},
+                                    {"headless", no_argument, 0, 'l'},
+                                    {0, 0, 0, 0}};
+
+    // parse options
+    while (true) {
+      int option_index = 0;
+      const int c =
+          getopt_long(argc, argv, "hd:c:bl", static_cast<option*>(long_options), &option_index);
+
+      if (c == -1) { break; }
+
+      const std::string argument(optarg ? optarg : "");
+      switch (c) {
+        case 'h':
+          std::cout << "Usage: " << argv[0] << " [options]" << std::endl
+                    << "Options:" << std::endl
+                    << "  -d DIR, --depth_dir DIR  directory to load depth images from" << std::endl
+                    << "  -c DIR, --color_dir DIR  directory to load color images from" << std::endl
+                    << "  -b, --bench              benchmark mode" << std::endl
+                    << "  -l, --headless           headless mode" << std::endl
+                    << "  -h, --help               display this information" << std::endl
+                    << std::endl;
+          return EXIT_SUCCESS;
+        case 'b':
+          benchmark_mode = true;
+          show_ui = false;
+          break;
+        case 'l':
+          headless_mode = true;
+          break;
+        case 'd':
+          if (argument.length() >= sizeof(depth_dir)) {
+            throw std::runtime_error("Depth directory path is too long (max " +
+                                     std::to_string(sizeof(depth_dir) - 1) + " characters)");
+          }
+          snprintf(depth_dir, sizeof(depth_dir), "%s", argument.c_str());
+          break;
+        case 'c':
+          if (argument.length() >= sizeof(color_dir)) {
+            throw std::runtime_error("Color directory path is too long (max " +
+                                     std::to_string(sizeof(color_dir) - 1) + " characters)");
+          }
+          snprintf(color_dir, sizeof(color_dir), "%s", argument.c_str());
+          break;
+        default:
+          throw std::runtime_error("Unhandled option ");
+      }
+    }
+
     initCuda();
 
     viz::InitFlags flags = viz::InitFlags::NONE;

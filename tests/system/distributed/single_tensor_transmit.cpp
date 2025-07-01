@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "distributed_app_fixture.hpp"
@@ -92,7 +93,7 @@ class TensorSource : public holoscan::Operator {
       auto out_tensor = std::make_shared<holoscan::Tensor>(maybe_dl_ctx.value());
       // out_message.insert({"tensor", out_tensor});
       // op_output.emit(out_message, "out_tensor");
-      op_output.emit(out_tensor, "out_tensor");
+      op_output.emit(std::move(out_tensor), "out_tensor");
     }
   }
 
@@ -100,7 +101,7 @@ class TensorSource : public holoscan::Operator {
   bool use_tensormap_ = false;
   std::vector<float> host_array_buffer_;
   std::shared_ptr<nvidia::gxf::Tensor> gxf_tensor_ = std::make_shared<nvidia::gxf::Tensor>();
-  uint64_t counter;
+  uint64_t counter{0};
 };
 
 class TensorSink : public holoscan::Operator {

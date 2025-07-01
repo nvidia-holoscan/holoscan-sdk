@@ -665,18 +665,18 @@ class TestConfig:
         assert "warning" in captured.err
         assert "Config file 'nonexistent-file' doesn't exist" in captured.err
 
-    def test_init_from_config_file(self, config_file):
-        conf = Config(config_file)
-        assert conf.config_file == config_file
+    def test_init_from_config_file(self, operators_config_file):
+        conf = Config(operators_config_file)
+        assert conf.config_file == operators_config_file
         assert conf.prefix == ""
 
-    def test_init_from_config_file_and_prefix(self, config_file):
-        conf = Config(config_file, prefix="abcd")
-        assert conf.config_file == config_file
+    def test_init_from_config_file_and_prefix(self, operators_config_file):
+        conf = Config(operators_config_file, prefix="abcd")
+        assert conf.config_file == operators_config_file
         assert conf.prefix == "abcd"
 
-    def test_dynamic_attribute_not_allowed(self, config_file):
-        obj = Config(config_file)
+    def test_dynamic_attribute_not_allowed(self, operators_config_file):
+        obj = Config(operators_config_file)
         with pytest.raises(AttributeError):
             obj.custom_attribute = 5
 
@@ -718,8 +718,8 @@ class TestFragment:
         assert isinstance(executor, GXFExecutor)
         assert executor.fragment is fragment
 
-    def test_from_config(self, fragment, config_file):
-        fragment.config(config_file)
+    def test_from_config(self, fragment, operators_config_file):
+        fragment.config(operators_config_file)
 
         replayer_kwargs = fragment.from_config("replayer")
         assert isinstance(replayer_kwargs, ArgList)
@@ -728,15 +728,15 @@ class TestFragment:
         for arg in replayer_kwargs.args:
             assert arg.arg_type.element_type == ArgElementType.YAML_NODE
 
-    def test_from_config_nested_key(self, fragment, config_file):
-        fragment.config(config_file)
+    def test_from_config_nested_key(self, fragment, operators_config_file):
+        fragment.config(operators_config_file)
 
         width = fragment.from_config("replayer.frame_rate")
         assert isinstance(width, Arg)
         assert width.arg_type.element_type == ArgElementType.YAML_NODE
 
-    def test_from_config_missing_key(self, fragment, config_file, capfd):
-        fragment.config(config_file)
+    def test_from_config_missing_key(self, fragment, operators_config_file, capfd):
+        fragment.config(operators_config_file)
         nonexistent_kwargs = fragment.from_config("nonexistent")
         assert nonexistent_kwargs.size == 0
         msg = "Unable to find the parameter item/map with key 'nonexistent'"
@@ -747,16 +747,12 @@ class TestFragment:
     def test_uninitialized_config(self, fragment):
         assert fragment.config().config_file == ""
 
-    def test_add_operator(self, fragment, config_file):
-        fragment.config(config_file)
-
+    def test_add_operator(self, fragment):
         op_tx, op_rx = get_tx_and_rx_ops(fragment)
         fragment.add_operator(op_tx)
         fragment.add_operator(op_rx)
 
-    def test_make_thread_pool(self, fragment, config_file):
-        fragment.config(config_file)
-
+    def test_make_thread_pool(self, fragment):
         op_tx, op_rx = get_tx_and_rx_ops(fragment)
         op_tx2, op_rx2 = get_tx_and_rx_ops(fragment)
 
@@ -779,9 +775,7 @@ class TestFragment:
         assert "gxf_typename: nvidia::gxf::ThreadPool" in repr(pool1)
         assert "operators in pool" in repr(pool1)
 
-    def test_add_flow(self, fragment, config_file, capfd):
-        fragment.config(config_file)
-
+    def test_add_flow(self, fragment, capfd):
         op_tx, op_rx = get_tx_and_rx_ops(fragment)
 
         # test add_flow with tuple of 2-tuple
@@ -936,22 +930,22 @@ class TestApplication:
         assert isinstance(executor, GXFExecutor)
         assert executor.fragment is app
 
-    def test_from_config(self, app, config_file):
-        app.config(config_file)
+    def test_from_config(self, app, operators_config_file):
+        app.config(operators_config_file)
 
         replayer_kwargs = app.from_config("replayer")
         assert isinstance(replayer_kwargs, ArgList)
         assert replayer_kwargs.size == 5
 
-    def test_kwargs(self, app, config_file):
-        app.config(config_file)
+    def test_kwargs(self, app, operators_config_file):
+        app.config(operators_config_file)
 
         replayer_kwargs = app.kwargs("replayer")
         assert isinstance(replayer_kwargs, dict)
         assert "frame_rate" in replayer_kwargs
 
-    def test_from_config_missing_key(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_from_config_missing_key(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         nonexistent_kwargs = app.from_config("nonexistent")
         assert nonexistent_kwargs.size == 0
         msg = "Unable to find the parameter item/map with key 'nonexistent'"
@@ -962,33 +956,25 @@ class TestApplication:
     def test_uninitialized_config(self, app):
         assert app.config().config_file == ""
 
-    def test_add_operator(self, app, config_file):
-        app.config(config_file)
-
+    def test_add_operator(self, app):
         op_tx, op_rx = get_tx_and_rx_ops(app)
         app.add_operator(op_tx)
         app.add_operator(op_rx)
 
-    def test_add_fragment(self, app, config_file):
-        app.config(config_file)
-
+    def test_add_fragment(self, app):
         fragment1 = Fragment(app, name="fragment1")
         fragment2 = Fragment(app, name="fragment2")
 
         app.add_fragment(fragment1)
         app.add_fragment(fragment2)
 
-    def test_reserved_fragment_name(self, app, config_file, capfd):
-        app.config(config_file)
-
+    def test_reserved_fragment_name(self, app, capfd):
         Fragment(app, name="all")
 
         captured = capfd.readouterr()
         assert "Fragment name 'all' is reserved" in captured.err
 
-    def test_add_flow(self, app, config_file, capfd):
-        app.config(config_file)
-
+    def test_add_flow(self, app, capfd):
         op_tx, op_rx = get_tx_and_rx_ops(app)
 
         # list of 2-tuples
@@ -1004,9 +990,7 @@ class TestApplication:
         assert "error" in captured.err
         assert "nonexistent" in captured.err
 
-    def test_add_operators_with_same_name(self, app, config_file, capfd):
-        app.config(config_file)
-
+    def test_add_operators_with_same_name(self, app, capfd):
         op_tx = OpTx(app, name="op")
         op_rx = OpRx(app, name="op")
 
@@ -1020,9 +1004,7 @@ class TestApplication:
         captured = capfd.readouterr()
         assert "duplicate name" in captured.err
 
-    def test_add_flow_fragments(self, app, config_file, capfd):
-        app.config(config_file)
-
+    def test_add_flow_fragments(self, app, capfd):
         fragment1 = Fragment(app, "fragment1")
         fragment2 = Fragment(app, "fragment2")
 
@@ -1044,9 +1026,7 @@ class TestApplication:
         assert "error" in captured.err
         assert "empty port_pairs" in captured.err
 
-    def test_add_fragments_with_same_name(self, app, config_file, capfd):
-        app.config(config_file)
-
+    def test_add_fragments_with_same_name(self, app, capfd):
         fragment1 = Fragment(app, "fragment")
         fragment2 = Fragment(app, "fragment")
 

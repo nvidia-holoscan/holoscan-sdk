@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,12 +18,13 @@
 #ifndef HOLOSCAN_CORE_SYSTEM_CPU_INFO_HPP
 #define HOLOSCAN_CORE_SYSTEM_CPU_INFO_HPP
 
+#include <cstdint>
 #include <memory>
 
 namespace holoscan {
 
 namespace CPUMetricFlag {
-enum : uint64_t {
+enum CPUMetricEnum : uint64_t {
   DEFAULT = 0x00,
   CORE_COUNT = 0x01,
   CPU_COUNT = 0x02,

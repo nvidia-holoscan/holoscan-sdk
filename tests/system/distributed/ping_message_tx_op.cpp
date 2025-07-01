@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/operators/holoviz/codecs.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 
@@ -29,7 +30,7 @@ namespace holoscan {
 namespace ops {
 
 void PingMessageTxOp::initialize() {
-  register_codec<std::vector<HolovizOp::InputSpec>>(
+  holoscan::gxf::GXFExecutor::register_codec<std::vector<HolovizOp::InputSpec>>(
       std::string("std::vector<holoscan::ops::HolovizOp::InputSpec>"), true);
 
   // parent class initialize() call must be after the argument additions above

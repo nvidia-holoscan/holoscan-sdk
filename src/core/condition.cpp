@@ -21,7 +21,6 @@
 #include <string>
 #include <utility>
 
-#include "gxf/std/scheduling_terms.hpp"  // for AsynchronousEventState
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resource.hpp"
@@ -125,11 +124,11 @@ std::optional<std::shared_ptr<Transmitter>> Condition::transmitter(const std::st
   return op_->transmitter(port_name);
 }
 
-void Condition::wrapper_cid(gxf_uid_t cid) {
+void Condition::wrapper_cid(int64_t cid) {
   wrapper_cid_ = cid;
 }
 
-gxf_uid_t Condition::wrapper_cid() const {
+int64_t Condition::wrapper_cid() const {
   if (condition_type_ != ConditionComponentType::kNative) {
     HOLOSCAN_LOG_ERROR(
         "The wrapper_cid() method only applies to native Conditions. Use gxf_cid() "

@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "../cuda_object_handler.hpp"
 #include "../operator_spec.hpp"
 #include "../parameter.hpp"
 #include "../resources/gxf/cuda_stream_pool.hpp"
@@ -92,12 +93,12 @@ using CudaStreamHandle = nvidia::gxf::Handle<nvidia::gxf::CudaStream>;
  * the streams received via `InputContext::receive_cuda_streams` or if additional internal streams
  * were allocated via `ExecutionContext::allocate_cuda_stream`.
  */
-class CudaObjectHandler {
+class CudaObjectHandler : public holoscan::CudaObjectHandler {
  public:
   /**
    * @brief Destroy the CudaObjectHandler object
    */
-  ~CudaObjectHandler();
+  ~CudaObjectHandler() override;
 
   /**
    * @brief Use a CudaStreamPool from the specified Operator if one is present.
@@ -105,7 +106,7 @@ class CudaObjectHandler {
    * @param op : The operator this instance of CudaObjectHandler is attached to. This operator must
    * have already been initialized.
    */
-  void init_from_operator(Operator* op);
+  void init_from_operator(Operator* op) override;
 
   /**
    * Add stream to output port (must be called before any emit call using that port)
@@ -124,7 +125,7 @@ class CudaObjectHandler {
    * @param output_port_name The name of the output port
    * @return gxf_result_t
    */
-  gxf_result_t add_stream(const cudaStream_t stream, const std::string& output_port_name);
+  int add_stream(const cudaStream_t stream, const std::string& output_port_name) override;
 
   /**
    * @brief Get the CUDA stream handle which should be used for CUDA commands involving data
@@ -184,8 +185,8 @@ class CudaObjectHandler {
    * synchronization is done to the first stream found on the port instead.
    * @return cudaStream_t
    */
-  cudaStream_t get_cuda_stream(gxf_context_t context, const std::string& input_port_name,
-                               bool allocate = false, bool sync_to_default = true);
+  cudaStream_t get_cuda_stream(void* context, const std::string& input_port_name,
+                               bool allocate = false, bool sync_to_default = true) override;
 
   /**
    * @brief Get the CUDA stream which should be used for CUDA commands involving data from
@@ -199,8 +200,8 @@ class CudaObjectHandler {
    * @param input_port_name The name of the input port from which to retrieve the stream
    * @return vector<std::optional<cudaStream_t>>
    */
-  std::vector<std::optional<cudaStream_t>> get_cuda_streams(gxf_context_t context,
-                                                            const std::string& input_port_name);
+  std::vector<std::optional<cudaStream_t>> get_cuda_streams(
+      void* context, const std::string& input_port_name) override;
 
   /**
    * @brief Sync all streams in stream_handles with target_stream_handle.
@@ -224,15 +225,15 @@ class CudaObjectHandler {
    * @param cuda_streams The vector of streams to sync.
    * @param target_stream The stream to sync to.
    * @param sync_to_default_stream If true, also synchronize the target stream to the default stream
-   * @return gxf_result_t GXF_SUCCESS if all streams were successfully synced.
+   * @return int 0 if all streams were successfully synced, otherwise an error code
    */
-  gxf_result_t synchronize_streams(std::vector<cudaStream_t> cuda_streams,
-                                   cudaStream_t target_stream, bool sync_to_default_stream = true);
+  int synchronize_streams(std::vector<cudaStream_t> cuda_streams, cudaStream_t target_stream,
+                          bool sync_to_default_stream = true) override;
 
   /**
    * @brief Get the cudaStream_t value corresponding to a CudaStreamHandle
    *
-   * @param cuda_stream_handle The CudaStreamHandle
+   * @param stream_handle The CudaStreamHandle
    * @return The CUDA stream contained within the CudaStream object
    */
   cudaStream_t stream_from_stream_handle(CudaStreamHandle stream_handle);
@@ -240,7 +241,7 @@ class CudaObjectHandler {
   /**
    * @brief Get the CudaStreamHandle corresponding to a cudaStream_t
    *
-   * @param cuda_stream_handle The CUDA stream
+   * @param stream The CUDA stream
    * @return GXF Handle to the CudaStream object if found, otherwise an unexpected is returned.
    */
   expected<CudaStreamHandle, RuntimeError> stream_handle_from_stream(cudaStream_t stream);
@@ -256,7 +257,9 @@ class CudaObjectHandler {
   /**
    * @brief Get the GXF component IDs for any events to be emitted on the specified output port
    *
-   * @param output_port_name The name of the output port
+   * @param context The GXF context
+   * @param message The GXF message entity
+   * @param input_name The name of the input port
    * @return expected<std::vector<gxf_uid_t>>
    */
   gxf_result_t streams_from_message(gxf_context_t context, const nvidia::gxf::Entity& message,
@@ -266,21 +269,21 @@ class CudaObjectHandler {
    * Allocate an internal CUDA stream and store it in the mapping for the given input port
    *
    * @param context The GXF context
-   * @param port_name The name of the input port
+   * @param stream_name The name of the stream
    * @return GXF Handle to the allocated CudaStream component
    */
   expected<CudaStreamHandle, RuntimeError> allocate_internal_stream(gxf_context_t context,
                                                                     const std::string& stream_name);
 
   /// @brief Release all internally allocated CUDA streams
-  gxf_result_t release_internal_streams(gxf_context_t context);
+  int release_internal_streams(void* context) override;
 
   /** @brief Retain the existing unordered_maps and vectors of received streams, but clear the
    * contents.
    *
    * This is used to refresh the state of the received streams before each `Operator::compute` call.
    */
-  void clear_received_streams();
+  void clear_received_streams() override;
 
  private:
   /// @brief allocate a new stream from the internal stream pool

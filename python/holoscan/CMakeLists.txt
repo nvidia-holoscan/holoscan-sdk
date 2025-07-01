@@ -137,12 +137,14 @@ add_subdirectory(cli) # redundant?
 ################################################################################
 add_subdirectory(conditions)
 add_subdirectory(core)
+add_subdirectory(data_loggers)
 add_subdirectory(executors)
 add_subdirectory(graphs)
 add_subdirectory(gxf)
 add_subdirectory(logger)
 add_subdirectory(network_contexts)
 add_subdirectory(operators)
+add_subdirectory(pose_tree)
 add_subdirectory(resources)
 add_subdirectory(schedulers)
 

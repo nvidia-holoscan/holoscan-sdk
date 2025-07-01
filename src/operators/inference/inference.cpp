@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "holoscan/core/execution_context.hpp"
+#include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
@@ -214,8 +215,8 @@ void InferenceOp::setup(OperatorSpec& spec) {
 void InferenceOp::initialize() {
   register_converter<DataMap>();
   register_converter<DataVecMap>();
-  register_codec<std::vector<ActivationSpec>>("std::vector<holoscan::ops::InferenceOp::InputSpec>",
-                                              true);
+  holoscan::gxf::GXFExecutor::register_codec<std::vector<ActivationSpec>>(
+      "std::vector<holoscan::ops::InferenceOp::InputSpec>", true);
   Operator::initialize();
 }
 

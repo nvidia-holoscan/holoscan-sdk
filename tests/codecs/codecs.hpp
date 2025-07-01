@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,6 @@
  * limitations under the License.
  */
 #include <cstdint>
-
-#include "holoscan/core/codec_registry.hpp"
-#include "holoscan/core/codecs.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/expected.hpp"
 
 namespace holoscan {
 

@@ -95,12 +95,13 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    *                             applied in sequence on the tensor
    * @param custom_kernels       Map of custom kernel identifier, mapped to related value as a
    *                             string
+   * @param use_cuda_graphs       Flag to enable CUDA Graphs for processing custom CUDA kernels
    * @param config_path          Configuration path as a string
    *
    * @return InferStatus with appropriate holoinfer_code and message.
    */
   InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
-                         const std::string config_path);
+                         bool use_cuda_graphs, const std::string config_path);
 
   /**
    * Process the tensors with operations as initialized.

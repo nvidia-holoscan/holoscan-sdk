@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,6 @@
 
 #ifndef PYHOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP
 #define PYHOLOSCAN_OPERATORS_HOLOVIZ_PYDOC_HPP
-
-#include <string>
 
 #include "../../macros.hpp"
 
@@ -48,19 +46,29 @@ This is a Vulkan-based visualizer.
         specification at run time. No inputs are required on this port in order for the operator
         to ``compute``.
     render_buffer_input : nvidia::gxf::VideoBuffer, optional
-        An empty render buffer can optionally be provided. The video buffer must have format
+        An empty color render buffer can optionally be provided. The video buffer must have format
         GXF_VIDEO_FORMAT_RGBA and be in device memory. This input port only exists if
         ``enable_render_buffer_input`` was set to ``True``, in which case ``compute`` will only be
+        called when a message arrives on this input.
+    depth_buffer_input : nvidia::gxf::VideoBuffer, optional
+        An empty depth buffer can optionally be provided. The video buffer must have format
+        GXF_VIDEO_FORMAT_D32F and be in device memory. This input port only exists if
+        ``enable_depth_buffer_input`` was set to ``True``, in which case ``compute`` will only be
         called when a message arrives on this input.
 
 **==Named Outputs==**
 
     render_buffer_output : nvidia::gxf::VideoBuffer, optional
-        Output for a filled render buffer. If an input render buffer is specified, it is using
+        Output for a filled color render buffer. If an input render buffer is specified, it is using
         that one, else it allocates a new buffer. The video buffer will have format
         GXF_VIDEO_FORMAT_RGBA and will be in device memory. This output is useful for offline
         rendering or headless mode. This output port only exists if ``enable_render_buffer_output``
         was set to ``True``.
+    depth_buffer_output : nvidia::gxf::VideoBuffer, optional
+        Output for a filled depth buffer. If an input depth buffer is specified, it is using
+        that one, else it allocates a new buffer. The video buffer will have format
+        GXF_VIDEO_FORMAT_D32F and will be in device memory. This output port only exists if
+        ``enable_depth_buffer_output`` was set to ``True``.
     camera_pose_output : std::array<float, 16> or nvidia::gxf::Pose3D, optional
         The camera pose. Depending on the value of ``camera_pose_output_type`` this outputs a 4x4
         row major projection matrix (type ``std::array<float, 16>``) or the camera extrinsics model
@@ -69,19 +77,19 @@ This is a Vulkan-based visualizer.
 
 **==Device Memory Requirements==**
 
-    If ``render_buffer_input`` is enabled, the provided buffer is used and no memory block will be
-    allocated. Otherwise, when using this operator with a ``holoscan.resources.BlockMemoryPool``, a
-    single device memory block is needed (``storage_type=1``). The size of this memory block can be
-    determined by rounding the width and height up to the nearest even size and then padding the
-    rows as needed so that the row stride is a multiple of 256 bytes. C++ code to calculate the
-    block size is as follows
+    If ``render_buffer_input`` or ``depth_buffer_input`` is enabled, the provided buffer is used and
+    no memory block will be allocated. Otherwise, when using this operator with a
+    ``holoscan.resources.BlockMemoryPool``, a single device memory block is needed
+    (``storage_type=1``). The size of this memory block can be determined by rounding the width and
+    height up to the nearest even size and then padding the rows as needed so that the row stride is
+    a multiple of 256 bytes. C++ code to calculate the block size is as follows
 
 .. code-block:: python
 
     def get_block_size(height, width):
         height_even = height + (height & 1)
         width_even = width + (width & 1)
-        row_bytes = width_even * 4  # 4 bytes per pixel for 8-bit RGBA
+        row_bytes = width_even * 4  # 4 bytes per pixel for 8-bit RGBA or 32-bit float depth
         row_stride = row_bytes if (row_bytes % 256 == 0) else ((row_bytes // 256 + 1) * 256)
         return height_even * row_stride
 
@@ -118,8 +126,8 @@ use_exclusive_display : bool, optional
 fullscreen : bool, optional
     Enable fullscreen window. Default value is ``False``.
 headless : bool, optional
-    Enable headless mode. No window is opened, the render buffer is output to
-    port ``render_buffer_output``. Default value is ``False``.
+    Enable headless mode. No window is opened, the render buffer can be output to
+    port ``render_buffer_output`` and/or ``depth_buffer_output``. Default value is ``False``.
 framebuffer_srgb : bool, optional
     Enable sRGB framebuffer. If set to true, the operator will use an sRGB framebuffer for
     rendering. If set to false, the operator will use a linear framebuffer.
@@ -139,6 +147,12 @@ enable_render_buffer_input : bool, optional
     operator. Default value is ``False``.
 enable_render_buffer_output : bool, optional
     If ``True``, an additional output port, named ``"render_buffer_output"`` is added to the
+    operator. Default value is ``False``.
+enable_depth_buffer_input : bool, optional
+    If ``True``, an additional input port, named ``"depth_buffer_input"`` is added to the
+    operator. Default value is ``False``.
+enable_depth_buffer_output : bool, optional
+    If ``True``, an additional output port, named ``"depth_buffer_output"`` is added to the
     operator. Default value is ``False``.
 enable_camera_pose_output : bool, optional
     If ``True``, an additional output port, named ``"camera_pose_output"`` is added to the
@@ -463,7 +477,8 @@ The details of the dictionary is as follows:
    Using a display in exclusive mode is also supported with the ``use_exclusive_display``
    parameter. This reduces the latency by avoiding the desktop compositor.
 
-   The rendered framebuffer can be output to ``render_buffer_output``.
+   The rendered framebuffer can be output to ``render_buffer_output`` and/or
+   ``depth_buffer_output``.
 )doc")
 
 }  // namespace holoscan::doc::HolovizOp

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,12 +19,14 @@
 
 #include "arg.hpp"
 #include "core.hpp"
+#include "data_logger.hpp"
 #include "execution_context.hpp"
+#include "fragment_service.hpp"
 #include "io_context.hpp"
 #include "io_spec.hpp"
 #include "kwarg_handling.hpp"
-#include "tensor.hpp"
 #include "operator.hpp"
+#include "tensor.hpp"
 
 namespace holoscan {
 
@@ -40,6 +42,7 @@ PYBIND11_MODULE(_core, m) {
   init_component(m);
   init_condition(m);
   init_resource(m);
+  init_data_logger(m);
   init_io_context(m);
   init_execution_context(m);
   init_io_spec(m);
@@ -53,6 +56,7 @@ PYBIND11_MODULE(_core, m) {
   init_data_flow_tracker(m);
   init_tensor(m);
   init_cli(m);
+  init_fragment_service(m);
 }  // PYBIND11_MODULE NOLINT
 
 }  // namespace holoscan

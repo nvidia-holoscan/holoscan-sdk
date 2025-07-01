@@ -21,12 +21,14 @@ holoscan_pybind11_module(
     component.cpp
     condition.cpp
     core.cpp
+    data_logger.cpp
     dataflow_tracker.cpp
     dl_converter.cpp
     emitter_receiver_registry.cpp
     execution_context.cpp
     executor.cpp
     fragment.cpp
+    fragment_service.cpp
     io_context.cpp
     io_spec.cpp
     kwarg_handling.cpp

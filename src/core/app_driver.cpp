@@ -31,9 +31,13 @@
 #include <utility>
 #include <vector>
 
+#include "distributed/app_worker/client.hpp"
 #include "holoscan/core/app_worker.hpp"
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/cli_options.hpp"
+#include "holoscan/core/distributed/app_driver/server.hpp"
+#include "holoscan/core/distributed/app_worker/server.hpp"
+#include "holoscan/core/distributed/common/network_constants.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/graph.hpp"  // for FragmentNodeType
@@ -42,14 +46,10 @@
 #include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
-#include "holoscan/core/services/app_driver/server.hpp"
-#include "holoscan/core/services/app_worker/server.hpp"
-#include "holoscan/core/services/common/network_constants.hpp"
 #include "holoscan/core/signal_handler.hpp"
 #include "holoscan/core/system/network_utils.hpp"
 #include "holoscan/core/system/system_resource_manager.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
-#include "services/app_worker/client.hpp"
 
 #include "holoscan/logger/logger.hpp"
 
@@ -201,9 +201,9 @@ void AppDriver::run() {
 
     // Get parameters for connecting to the driver
     auto max_connection_retry_count = get_int_env_var("HOLOSCAN_MAX_CONNECTION_RETRY_COUNT",
-                                                      service::kDefaultMaxConnectionRetryCount);
-    auto connection_retry_interval_ms = get_int_env_var("HOLOSCAN_CONNECTION_RETRY_INTERVAL_MS",
-                                                        service::kDefaultConnectionRetryIntervalMs);
+                                                      distributed::kDefaultMaxConnectionRetryCount);
+    auto connection_retry_interval_ms = get_int_env_var(
+        "HOLOSCAN_CONNECTION_RETRY_INTERVAL_MS", distributed::kDefaultConnectionRetryIntervalMs);
 
     // Connect to the driver
     bool connection_result =
@@ -797,8 +797,8 @@ bool AppDriver::check_configuration() {
   // Parse the server address using the parse_address method.
   auto [server_ip, server_port] = CLIOptions::parse_address(
       server_address,
-      "0.0.0.0",                                       // default IP address
-      std::to_string(service::kDefaultAppDriverPort),  // default port, converted to string
+      "0.0.0.0",                                           // default IP address
+      std::to_string(distributed::kDefaultAppDriverPort),  // default port, converted to string
       true);  // enclose IPv6 address in square brackets if port is not empty
 
   server_address = server_ip + (server_port.empty() ? "" : ":" + server_port);
@@ -1050,7 +1050,7 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
       }
       auto& used_ports = used_ports_map[ip_address];
       auto available_ports = worker_client->available_ports(
-          total_port_count, service::kMinNetworkPort, service::kMaxNetworkPort, used_ports);
+          total_port_count, distributed::kMinNetworkPort, distributed::kMaxNetworkPort, used_ports);
 
       if (available_ports.size() != total_port_count) {
         HOLOSCAN_LOG_ERROR("Worker {} does not have enough ports (required: {}, available: {})",
@@ -1254,7 +1254,7 @@ void AppDriver::launch_app_driver() {
   collect_resource_requirements(app_config, fragment_graph);
 
   driver_server_ =
-      std::make_unique<service::AppDriverServer>(this, need_driver_, need_health_check_);
+      std::make_unique<distributed::AppDriverServer>(this, need_driver_, need_health_check_);
   driver_server_->start();
 }
 
@@ -1263,7 +1263,7 @@ void AppDriver::launch_app_worker() {
   auto& app_worker = app_->worker();
   // Create and start server
   auto worker_server = app_worker.server(
-      std::make_unique<service::AppWorkerServer>(&app_worker, need_health_check_));
+      std::make_unique<distributed::AppWorkerServer>(&app_worker, need_health_check_));
   worker_server->start();
 }
 
@@ -1290,8 +1290,11 @@ std::future<void> AppDriver::launch_fragments_async(
   int32_t required_port_count = index_to_ip_map_.size();
   // Get preferred network ports from environment variable
   auto prefer_ports = get_preferred_network_ports("HOLOSCAN_UCX_PORTS");
-  auto unused_ports = get_unused_network_ports(
-      required_port_count, service::kMinNetworkPort, service::kMaxNetworkPort, {}, prefer_ports);
+  auto unused_ports = get_unused_network_ports(required_port_count,
+                                               distributed::kMinNetworkPort,
+                                               distributed::kMaxNetworkPort,
+                                               {},
+                                               prefer_ports);
 
   if (unused_ports.size() != static_cast<size_t>(required_port_count)) {
     HOLOSCAN_LOG_ERROR("System does not have enough ports (required: {}, available: {})",

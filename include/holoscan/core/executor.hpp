@@ -217,20 +217,33 @@ class Executor {
   }
 
   /**
+   * @brief Initialize the fragment services for the executor.
+   *
+   * This method is called during executor initialization to set up any required fragment services.
+   *
+   * Depending on the type of executor, this method may be overridden to initialize specific
+   * fragment services. For example, the default executor (GXFExecutor) may initialize fragment
+   * services using the GXF API.
+   *
+   * @return true if the fragment services are initialized successfully. Otherwise, false.
+   */
+  virtual bool initialize_fragment_services() { return true; }
+
+  /**
    * @brief Add the receivers as input ports of the given operator.
    *
    * This method is to be called by the Fragment::add_flow() method to support for the case where
    * the destination input port label points to the parameter name of the downstream operator, and
    * the parameter type is 'std::vector<holoscan::IOSpec*>'. This finds a parameter with with
    * 'std::vector<holoscan::IOSpec*>' type and create a new input port with a specific label
-   * ('<parameter name>:<index>'. e.g, 'receivers:0').
+   * ('parameter name:index'. e.g, 'receivers:0').
    *
    * @param op The reference to the shared pointer of the operator.
    * @param receivers_name The name of the receivers whose parameter type is
    * 'std::vector<holoscan::IOSpec*>'.
    * @param new_input_labels The reference to the vector of input port labels to which the input
    * port labels are added. In the case of multiple receivers, the input port label is updated to
-   * '<parameter name>:<index>' (e.g. 'receivers' => 'receivers:<index>').
+   * 'parameter name:index' (e.g. 'receivers' => 'receivers:0').
    * @param iospec_vector The reference to the vector of IOSpec pointers.
    * @return true if the receivers are added successfully. Otherwise, false.
    */

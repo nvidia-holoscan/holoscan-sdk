@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.3.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.3.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -992,8 +992,7 @@ See https://docs.nvidia.com/nsight-systems/InstallationGuide/index.html#linux-re
 
 A14: The
 
-```
-
+```bash
 sudo sh -c 'echo 2 >/proc/sys/kernel/perf_event_paranoid'
 ```
 
@@ -1001,8 +1000,7 @@ command needs to be executed on the host system, not inside the container.
 
 * Check the current value
 
-```
-
+```bash
 cat /proc/sys/kernel/perf_event_paranoid
 ```
 
@@ -1014,7 +1012,7 @@ sudo sh -c 'echo 2 >/proc/sys/kernel/perf_event_paranoid'
 
 *  To make the change permanent, edit `/etc/sysctl.conf`: Add or modify the line:
 
-```
+```text
 update /etc/sysctl.conf
 ```
 
@@ -1022,7 +1020,7 @@ update /etc/sysctl.conf
 
 * Then apply the changes:
 
-```
+```bash
 sudo sysctl -p
 ```
 
@@ -1093,8 +1091,7 @@ A16:The reason why you are getting this error is because HolovizOp returns a gxf
 
 **As a potential fix, I have disabled the main display in nvidia-settings for the compositor, but the application still crashes with the following error:**
 
-```
-
+```text
 [error] [context.cpp:56] /workspace/holoscan-sdk/modules/holoviz/thirdparty/nvpro_core/nvvk/swapchain_vk.cpp(172): Vulkan Error : unknown
 [error] [context.cpp:56] /workspace/holoscan-sdk/modules/holoviz/thirdparty/nvpro_core/nvvk/swapchain_vk.cpp(172): Vulkan Error : unknown
 [error] [context.cpp:56] /workspace/holoscan-sdk/modules/holoviz/thirdparty/nvpro_core/nvvk/swapchain_vk.cpp(172): Vulkan Error : unknown
@@ -1112,7 +1109,7 @@ Given that the display they want to use for Holoviz appears to be the primary di
 
 **Q19:I am running into these errors when using the Holoscan Packager in my networking environment:**
 
-```
+```text
 curl: (6) Could not resolve host: github.com.
 Failed to establish a new connection:: [Errno -3] Temporary failure in name solution...
 
@@ -1121,7 +1118,7 @@ Failed to establish a new connection:: [Errno -3] Temporary failure in name solu
 
 A19:To resolve these errors, edit the `/etc/docker/daemon.json` file to include `dns` and `dns-search` fields as follows:
 
-```
+```text
 {
     "default-runtime": "nvidia",
     "runtimes": {
@@ -1142,7 +1139,7 @@ You may need to consult your IT team and replace `IP-x` and `DNS-SERVER-x` with 
 
 When running the application, if it fails to start with an error like the following being logged:
 
-```cpp
+```text
 [error] [rmm_allocator.cpp:74] Unexpected error while initializing RMM Allocator rmm_allocator: std::bad_alloc: out_of_memory: RMM failure at:bazel-out/k8-opt/bin/external/rmm/_virtual_includes/rmm/rmm/mr/device/pool_memory_resource.hpp:424: Maximum pool size exceeded
 ```
 

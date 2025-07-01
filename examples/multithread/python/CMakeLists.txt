@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,10 +42,23 @@ if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TEST
     COMMAND python3 multithread.py --name EXAMPLE_PYTHON_MULTITHREAD_TEST
                                    --output_file multithread_times
+                                   --data_log
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "sum of received values: 496")
+                       PASS_REGULAR_EXPRESSION "sum of received values: 496"
+                       # representative expected log entries
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:tx.out\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.values:15\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.in\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_val\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_name\\]"
+                       # rx.names:* expected to be excluded by denylist
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.names:15\\]"
+                       PASS_REGULAR_EXPRESSION "Category:Message \\(std::any\\)"
+                       # log_python_object_contents -> messages contain the Python type and repr
+                       PASS_REGULAR_EXPRESSION "Python\\(int\\): 15"
+                       PASS_REGULAR_EXPRESSION "Python\\(str\\): delay15")
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_8_TEST
            COMMAND python3 multithread.py --threads 8 --num_delay_ops 8 --delay 0.25 --delay_step 0.1

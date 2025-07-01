@@ -27,17 +27,18 @@
 #include <utility>        // for std::pair
 #include <vector>         // for std::vector
 
-#include "./fragment.hpp"
+#include "app_worker.hpp"
+#include "cli_parser.hpp"
+#include "data_logger.hpp"
 #include "dataflow_tracker.hpp"
-
-#include "./app_worker.hpp"
-#include "./cli_parser.hpp"
+#include "fragment.hpp"
 
 namespace holoscan {
 
 // forward declaration
 class AppDriver;
 class AppDriverClient;
+class DataLogger;
 
 /**
  * @brief Utility function to create an application.
@@ -297,6 +298,7 @@ class Application : public Fragment {
    * @param num_start_messages_to_skip The number of start messages to skip.
    * @param num_last_messages_to_discard The number of last messages to discard.
    * @param latency_threshold The latency threshold.
+   * @param is_limited_tracking Whether to enable limited tracking for performance.
    * @return std::unordered_map<std::string, DataFlowTracker*> Fragment name to DataFlowTracker*
    * mapping.
    */
@@ -312,7 +314,7 @@ class Application : public Fragment {
    * `Fragment::enable_metadata` and individual operators may override their fragment's default
    * via `Operator::enable_metadata`.
    *
-   * @param enable Boolean indicating whether metadata is enabled.
+   * @return Boolean indicating whether metadata is enabled.
    */
   bool is_metadata_enabled() const override;
 
@@ -323,7 +325,7 @@ class Application : public Fragment {
    *
    * @param enable Boolean indicating whether metadata should be enabled.
    */
-  void is_metadata_enabled(bool) override;
+  void is_metadata_enabled(bool enable) override;
 
   /**
    * @brief Enable or disable metadata for the application.
@@ -371,7 +373,7 @@ class Application : public Fragment {
    *
    * @return The shared pointer to the AppDriverClient.
    */
-  std::shared_ptr<service::AppDriverClient> app_driver_client() const;
+  std::shared_ptr<distributed::AppDriverClient> app_driver_client() const;
 
   /**
    * @brief Initiate shutdown of the distributed application.
@@ -382,6 +384,16 @@ class Application : public Fragment {
    * @param fragment_name The name of the fragment initiating the shutdown.
    */
   void initiate_distributed_app_shutdown(const std::string& fragment_name);
+
+  /**
+   * @brief Add a data logger to the application.
+
+   * This method adds a data logger to the application. For distributed applications, the data
+   * logger is added to each fragment in the fragment graph.
+   *
+   * @param logger The data logger to add.
+   */
+  void add_data_logger(std::shared_ptr<DataLogger> logger);
 
  protected:
   friend class AppDriver;

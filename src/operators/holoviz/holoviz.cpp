@@ -29,25 +29,21 @@
 #include <magic_enum.hpp>
 
 #include "holoscan/core/application.hpp"
-#include "holoscan/core/codecs.hpp"
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/executor.hpp"
+#include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/file_fifo_mutex.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/operators/holoviz/buffer_info.hpp"
 #include "holoscan/operators/holoviz/codecs.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 
 #include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
-#include "gxf/std/scheduling_terms.hpp"
 #include "gxf/std/tensor.hpp"
 #include "holoviz/holoviz.hpp"  // holoviz module
 
@@ -164,7 +160,18 @@ class ScopedHolovizFileMutex {
   }
   bool locked() const { return mutex_ && mutex_->locked(); }
   ~ScopedHolovizFileMutex() {
-    if (mutex_) { mutex_->unlock(); }
+    if (mutex_) {
+      try {
+        mutex_->unlock();
+      } catch (const std::exception& e) {
+        // Silently handle any exceptions during cleanup
+        try {
+          HOLOSCAN_LOG_ERROR(
+              "FileFIFOMutex unlock failed during ScopedHolovizFileMutex destructor with {}",
+              e.what());
+        } catch (...) {}
+      }
+    }
   }
 
  private:
@@ -249,15 +256,32 @@ void HolovizOp::setup(OperatorSpec& spec) {
   spec.param(render_buffer_input_,
              "render_buffer_input",
              "RenderBufferInput",
-             "Input for an empty render buffer.",
+             "Input for an empty color render buffer.",
              &render_buffer_input);
   auto& render_buffer_output = spec.output<gxf::Entity>("render_buffer_output");
-  spec.param(render_buffer_output_,
-             "render_buffer_output",
-             "RenderBufferOutput",
-             "Output for a filled render buffer. If an input render buffer is specified it is "
-             "using that one, else it allocates a new buffer.",
-             &render_buffer_output);
+  spec.param(
+      render_buffer_output_,
+      "render_buffer_output",
+      "RenderBufferOutput",
+      "Output for a filled color render buffer. If an input color render buffer is specified "
+      "it is using that one, else it allocates a new buffer.",
+      &render_buffer_output);
+
+  auto& depth_buffer_input =
+      spec.input<gxf::Entity>("depth_buffer_input").condition(ConditionType::kNone);
+  spec.param(depth_buffer_input_,
+             "depth_buffer_input",
+             "DepthBufferInput",
+             "Input for an empty depth render buffer.",
+             &depth_buffer_input);
+  auto& depth_buffer_output = spec.output<gxf::Entity>("depth_buffer_output");
+  spec.param(
+      depth_buffer_output_,
+      "depth_buffer_output",
+      "DepthBufferOutput",
+      "Output for a filled depth render buffer. If an input depth render buffer is specified "
+      "it is using that one, else it allocates a new buffer.",
+      &depth_buffer_output);
 
   auto& camera_pose_output = spec.output<nvidia::gxf::Pose3D>("camera_pose_output");
   spec.param(camera_pose_output_,
@@ -319,12 +343,13 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Use fullscreen window",
              "Enable fullscreen window",
              DEFAULT_FULLSCREEN);
-  spec.param(headless_,
-             "headless",
-             "Headless",
-             "Enable headless mode. No window is opened, the render buffer is output to "
-             "`render_buffer_output`.",
-             DEFAULT_HEADLESS);
+  spec.param(
+      headless_,
+      "headless",
+      "Headless",
+      "Enable headless mode. No window is opened, the color render buffer is output to "
+      "`render_buffer_output` and the depth render buffer is output to `depth_buffer_output`.",
+      DEFAULT_HEADLESS);
   spec.param(framebuffer_srgb_,
              "framebuffer_srgb",
              "Framebuffer SRGB",
@@ -377,8 +402,10 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "condition across both. By sharing the same condition, if one of the display "
              "windows is closed it would also close the other(s).",
              ParameterFlag::kOptional);
-  spec.param(
-      allocator_, "allocator", "Allocator", "Allocator used to allocate render buffer output.");
+  spec.param(allocator_,
+             "allocator",
+             "Allocator",
+             "Allocator used to allocate color and depth render buffer outputs.");
   spec.param(font_path_,
              "font_path",
              "FontPath",
@@ -746,19 +773,23 @@ bool HolovizOp::enable_conditional_port(const std::string& port_name,
 }
 
 void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_output,
-                                  ExecutionContext& context) {
+                                  ExecutionContext& context, bool buffer_input_enabled,
+                                  const std::string& buffer_name,
+                                  nvidia::gxf::VideoFormat video_format) {
   nvidia::gxf::Expected<nvidia::gxf::Entity> entity = nvidia::gxf::Unexpected{GXF_FAILURE};
   nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>> video_buffer =
       nvidia::gxf::Unexpected{GXF_FAILURE};
 
-  if (render_buffer_input_enabled_) {
+  const std::string buffer_input_name = fmt::format("{}_buffer_input", buffer_name);
+  const std::string buffer_output_name = fmt::format("{}_buffer_output", buffer_name);
+
+  if (buffer_input_enabled) {
     // check if there is a input buffer given to copy the output into
-    auto maybe_render_buffer_input = op_input.receive<gxf::Entity>("render_buffer_input");
+    auto maybe_render_buffer_input = op_input.receive<gxf::Entity>(buffer_input_name.c_str());
     if (!maybe_render_buffer_input || maybe_render_buffer_input.value().is_null()) {
-      std::string err_msg =
-          fmt::format("Operator '{}': No message available at 'render_buffer_input': {}",
-                      name_,
-                      maybe_render_buffer_input.error().what());
+      std::string err_msg = fmt::format("Operator '{}': No message available at '{}': {}",
+                                        name_,
+                                        maybe_render_buffer_input.error().what());
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
@@ -767,34 +798,46 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
     // Get the empty input buffer
     video_buffer = entity.value().get<nvidia::gxf::VideoBuffer>();
     if (!video_buffer) {
-      throw std::runtime_error("No video buffer attached to message on 'render_buffer_input'.");
+      throw std::runtime_error(
+          fmt::format("No video buffer attached to message on '{}'.", buffer_input_name));
     }
   } else {
     entity = holoscan::gxf::Entity::New(&context);
-    if (!entity) {
-      throw std::runtime_error("Failed to allocate message for the render buffer output.");
-    }
+    if (!entity) { throw std::runtime_error("Failed to allocate message for buffer output."); }
 
-    video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>("render_buffer_output");
+    video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>(buffer_output_name.c_str());
     if (!video_buffer) {
-      throw std::runtime_error("Failed to allocate the video buffer for the render buffer output.");
+      throw std::runtime_error("Failed to allocate the video buffer for buffer output.");
     }
 
     // if there is no input buffer given, allocate one
     if (!allocator_.get()) {
-      throw std::runtime_error("No render buffer input specified and no allocator set.");
+      throw std::runtime_error("No buffer input specified and no allocator set.");
     }
 
     // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
     auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
                                                                          allocator_->gxf_cid());
 
-    video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
-        width_,
-        height_,
-        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
-        nvidia::gxf::MemoryStorageType::kDevice,
-        allocator.value());
+    if (video_format == nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA) {
+      video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
+          width_,
+          height_,
+          nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
+          nvidia::gxf::MemoryStorageType::kDevice,
+          allocator.value());
+    } else if (video_format == nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F) {
+      video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F>(
+          width_,
+          height_,
+          nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
+          nvidia::gxf::MemoryStorageType::kDevice,
+          allocator.value());
+    } else {
+      throw std::runtime_error(
+          fmt::format("Unsupported video format: {}", magic_enum::enum_name(video_format)));
+    }
+
     if (!video_buffer.value()->pointer()) {
       throw std::runtime_error("Failed to allocate render output buffer.");
     }
@@ -802,12 +845,23 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
 
   const nvidia::gxf::VideoBufferInfo info = video_buffer.value()->video_frame_info();
 
-  if ((info.color_format != nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA)) {
-    throw std::runtime_error("Invalid render buffer input, expected an RGBA buffer.");
+  if ((info.color_format != video_format)) {
+    throw std::runtime_error(fmt::format("Invalid buffer input, expected a {} buffer.",
+                                         magic_enum::enum_name(video_format)));
+  }
+
+  viz::ImageFormat image_format;
+  if (video_format == nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA) {
+    image_format = viz::ImageFormat::R8G8B8A8_UNORM;
+  } else if (video_format == nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F) {
+    image_format = viz::ImageFormat::D32_SFLOAT;
+  } else {
+    throw std::runtime_error(
+        fmt::format("Unsupported video format: {}", magic_enum::enum_name(video_format)));
   }
 
   // read the framebuffer
-  viz::ReadFramebuffer(viz::ImageFormat::R8G8B8A8_UNORM,
+  viz::ReadFramebuffer(image_format,
                        width_,
                        height_,
                        video_buffer.value()->size(),
@@ -816,7 +870,7 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
 
   // Output the filled render buffer object
   auto result = gxf::Entity(std::move(entity.value()));
-  op_output.emit(result, "render_buffer_output");
+  op_output.emit(result, buffer_output_name.c_str());
 }
 
 void HolovizOp::set_input_spec(const InputSpec& input_spec) {
@@ -1393,7 +1447,8 @@ void HolovizOp::initialize() {
   register_converter<FramebufferSizeCallbackFunction>();
   register_converter<WindowSizeCallbackFunction>();
   register_converter<LayerCallbackFunction>();
-  register_codec<std::vector<InputSpec>>("std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
+  holoscan::gxf::GXFExecutor::register_codec<std::vector<InputSpec>>(
+      "std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
 
   // Set up prerequisite parameters before calling Operator::initialize()
   auto frag = fragment();
@@ -1442,6 +1497,8 @@ void HolovizOp::initialize() {
   // Conditional inputs and outputs are enabled using a boolean argument
   render_buffer_input_enabled_ = enable_conditional_port("render_buffer_input");
   render_buffer_output_enabled_ = enable_conditional_port("render_buffer_output", true);
+  depth_buffer_input_enabled_ = enable_conditional_port("depth_buffer_input");
+  depth_buffer_output_enabled_ = enable_conditional_port("depth_buffer_output", true);
   camera_pose_output_enabled_ = enable_conditional_port("camera_pose_output", true);
 
   // parent class initialize() call must be after the argument additions above
@@ -1729,7 +1786,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       }
     }
 
-    const auto video_buffers = message.findAll<nvidia::gxf::VideoBuffer>();
+    const auto video_buffers = message.findAllHeap<nvidia::gxf::VideoBuffer>();
     for (auto&& video_buffer : video_buffers.value()) {
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(video_buffer->name());
@@ -1949,7 +2006,22 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   viz::End();
 
   // check if the render buffer should be output
-  if (render_buffer_output_enabled_) { read_frame_buffer(op_input, op_output, context); }
+  if (render_buffer_output_enabled_) {
+    read_frame_buffer(op_input,
+                      op_output,
+                      context,
+                      render_buffer_input_enabled_,
+                      "render",
+                      nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA);
+  }
+  if (depth_buffer_output_enabled_) {
+    read_frame_buffer(op_input,
+                      op_output,
+                      context,
+                      depth_buffer_input_enabled_,
+                      "depth",
+                      nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F);
+  }
 
   // check if the the camera pose should be output
   if (camera_pose_output_enabled_) {

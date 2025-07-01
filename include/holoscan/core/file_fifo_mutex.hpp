@@ -90,7 +90,7 @@ class FileFIFOMutex {
   FileFIFOMutex() = delete;
   /**
    * @brief Constructs a new file-backed mutex at the given path and a queue
-   * file at <file_path>.queue, if not already present. It also opens both the files.
+   * file at `file_path.queue`, if not already present. It also opens both the files.
    *
    * @param file_path the path to the mutex file.
    */

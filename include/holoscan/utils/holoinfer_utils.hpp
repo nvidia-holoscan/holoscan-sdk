@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_UTILS_HOLOINFER_HPP
-#define HOLOSCAN_UTILS_HOLOINFER_HPP
+#ifndef HOLOSCAN_UTILS_HOLOINFER_UTILS_HPP
+#define HOLOSCAN_UTILS_HOLOINFER_UTILS_HPP
 
 #include <map>
 #include <memory>
@@ -111,17 +111,16 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
  * This version of transmit_data_per_model uses the legacy CudaStreamHandler utility. Use the
  * variant without a cuda_stream_handler argument to use the built-in CudaObjectHandler instead.
  *
- * @param context GXF context for transmission
+ * @param cont GXF context for transmission
  * @param model_to_tensor_map Map of model name as key, mapped to a vector of tensor names
  * @param input_data_map Map of tensor name as key, mapped to the data buffer as a vector
  * @param op_output Output context. Assume that the output port's name is "transmitter".
  * @param out_tensors Output tensor names
- * @param data_per_model Map is updated with output tensor name as key mapped to data buffer
  * @param tensor_out_dims_map Map is updated with model name as key mapped to dimension of
  *                          output tensor as a vector
  * @param cuda_buffer_in Flag to demonstrate if memory storage of input buffers is on CUDA
  * @param cuda_buffer_out Flag to demonstrate if memory storage of output message is on CUDA
- * @param allocator GXF Memory allocator
+ * @param allocator_ GXF Memory allocator
  * @param module Module that called for data transmission
  * @param cuda_stream_handler Cuda stream handler
  * @return GXF result code
@@ -139,17 +138,16 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 /**
  * Transmits multiple buffers via GXF Transmitters.
  *
- * @param context GXF context for transmission
+ * @param cont GXF context for transmission
  * @param model_to_tensor_map Map of model name as key, mapped to a vector of tensor names
  * @param input_data_map Map of tensor name as key, mapped to the data buffer as a vector
  * @param op_output Output context. Assume that the output port's name is "transmitter".
  * @param out_tensors Output tensor names
- * @param data_per_model Map is updated with output tensor name as key mapped to data buffer
  * @param tensor_out_dims_map Map is updated with model name as key mapped to dimension of
  *                          output tensor as a vector
  * @param cuda_buffer_in Flag to demonstrate if memory storage of input buffers is on CUDA
  * @param cuda_buffer_out Flag to demonstrate if memory storage of output message is on CUDA
- * @param allocator GXF Memory allocator
+ * @param allocator_ GXF Memory allocator
  * @param module Module that called for data transmission
  * @param cstream The CUDA stream to use for async memory copies.
  * @return GXF result code
@@ -179,4 +177,4 @@ gxf_result_t set_activation_per_model(
     const std::vector<HoloInfer::ActivationSpec>& activation_specs, const std::string& module);
 }  // namespace holoscan::utils
 
-#endif /* HOLOSCAN_UTILS_HOLOINFER_HPP */
+#endif /* HOLOSCAN_UTILS_HOLOINFER_UTILS_HPP */

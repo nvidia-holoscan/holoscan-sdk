@@ -20,11 +20,13 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <fmt/format.h>
 #include <memory>
 #include <set>
 #include <string>
 #include <utility>
 
+#include "application.hpp"
 #include "application_pydoc.hpp"
 #include "fragment_pydoc.hpp"
 #include "holoscan/core/application.hpp"
@@ -34,6 +36,7 @@
 #include "holoscan/core/graph.hpp"
 #include "holoscan/core/network_context.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/scheduler.hpp"
 #include "kwarg_handling.hpp"
@@ -155,6 +158,14 @@ void init_fragment(py::module_& m) {
                     py::overload_cast<>(&Fragment::metadata_policy, py::const_),
                     py::overload_cast<MetadataPolicy>(&Fragment::metadata_policy),
                     doc::Fragment::doc_metadata_policy)
+      .def("add_data_logger",
+           &Fragment::add_data_logger,
+           "logger"_a,
+           doc::Fragment::doc_add_data_logger)
+      .def_property_readonly("data_loggers",
+                             &Fragment::data_loggers,
+                             doc::Fragment::doc_data_loggers,
+                             py::return_value_policy::reference_internal)
       .def("make_thread_pool",
            &Fragment::make_thread_pool,
            "name"_a,
@@ -182,6 +193,322 @@ void init_fragment(py::module_& m) {
            &Fragment::stop_execution,
            "op_name"_a = "",
            doc::Fragment::doc_stop_execution)
+      // Service registry methods
+      .def(
+          "register_service",
+          [](py::object fragment_obj, py::object service_obj, const std::string& id) {
+            // Helper function to generate a unique ID for Python services
+            auto generate_python_service_id = [](py::object obj, const std::string& base_id) {
+              if (!base_id.empty()) {
+                return base_id;  // Use provided ID as-is
+              }
+              // Generate unique ID based on Python type's fully qualified name
+              try {
+                auto type_obj = py::type::of(obj);
+                auto module = type_obj.attr("__module__").cast<std::string>();
+                auto name = type_obj.attr("__qualname__").cast<std::string>();
+                return fmt::format("__py__{}.{}", module, name);
+              } catch (const py::error_already_set&) {
+                // Fallback to a generic unique identifier
+                return fmt::format("__py__service_{}", reinterpret_cast<uintptr_t>(obj.ptr()));
+              }
+            };
+
+            // Get the Fragment from the Python object
+            auto fragment = fragment_obj.cast<std::shared_ptr<Fragment>>();
+            if (!fragment) { throw py::type_error("Invalid fragment object."); }
+
+            // Store the original Python object in PyFragment's registry if it's a PyFragment
+            std::string effective_id = generate_python_service_id(service_obj, id);
+
+            // Check if this is a PyFragment or PyApplication and if the service is in the Python
+            // registry
+            auto py_fragment = std::dynamic_pointer_cast<PyFragment>(fragment);
+            auto py_app = std::dynamic_pointer_cast<PyApplication>(fragment);
+
+            // For storing in Python registry, we need to determine the actual storage key
+            std::string storage_id(effective_id);
+            try {
+              auto fs_ptr = service_obj.cast<std::shared_ptr<FragmentService>>();
+              if (auto resource_ptr = fs_ptr->resource()) { storage_id = resource_ptr->name(); }
+            } catch (const py::cast_error&) {
+              try {
+                auto resource_ptr = service_obj.cast<std::shared_ptr<Resource>>();
+                storage_id = resource_ptr->name();
+              } catch (const py::cast_error&) {
+                // Not a resource or a service with a resource, use effective_id
+              }
+            } catch (...) {
+              // resource() might throw an exception for services that don't implement it
+            }
+
+            if (py_fragment) {
+              py_fragment->set_python_service(storage_id, service_obj);
+            } else if (py_app) {
+              py_app->set_python_service(storage_id, service_obj);
+            } else {
+              // For Python fragments that don't inherit from PyFragment, use Python-level registry
+              try {
+                if (py::hasattr(fragment_obj, "_python_service_registry")) {
+                  auto registry = fragment_obj.attr("_python_service_registry");
+                  registry.attr("__setitem__")(storage_id, service_obj);
+                }
+              } catch (const py::error_already_set&) {
+                HOLOSCAN_LOG_DEBUG(
+                    "Unable to register Python fragment service with id '{}' in custom registry. "
+                    "Skipping.",
+                    storage_id);
+              }
+            }
+
+            // Helper lambda to clean up stored Python object on failure
+            auto cleanup_on_failure = [&]() {
+              if (py_fragment) {
+                py_fragment->clear_python_service(storage_id);
+              } else if (py_app) {
+                py_app->clear_python_service(storage_id);
+              } else {
+                try {
+                  if (py::hasattr(fragment_obj, "_python_service_registry")) {
+                    auto registry = fragment_obj.attr("_python_service_registry");
+                    if (py::hasattr(registry, "__delitem__")) {
+                      registry.attr("__delitem__")(storage_id);
+                    }
+                  }
+                } catch (const py::error_already_set&) {
+                  HOLOSCAN_LOG_DEBUG(
+                      "Unable to clear Python fragment service with id '{}'. Skipping.",
+                      storage_id);
+                }
+              }
+            };
+
+            // Special handling for Python-defined services only
+            if (storage_id.find("__py__") == 0) {
+              try {
+                // For Python services, always register as DefaultFragmentService to ensure proper
+                // lookup
+                auto fragment_service = service_obj.cast<std::shared_ptr<DefaultFragmentService>>();
+
+                // Check if this DefaultFragmentService wraps a Resource
+                std::string service_id = storage_id;
+                try {
+                  if (fragment_service->resource()) {
+                    // If it wraps a resource, use empty ID (resource name will be used)
+                    service_id = "";
+                  }
+                } catch (...) {
+                  // If resource() throws, use the storage_id
+                }
+
+                if (!fragment->register_service(fragment_service, service_id)) {
+                  cleanup_on_failure();
+                  HOLOSCAN_LOG_ERROR("Failed to register Python fragment service with id '{}'",
+                                     service_id);
+                  throw std::runtime_error("Failed to register Python fragment service.");
+                }
+                return;
+              } catch (const py::cast_error&) {
+                // Python service doesn't inherit from DefaultFragmentService
+                // Fall through to try other types
+              }
+            }
+
+            // For C++ services, try the exact type casts in order to preserve the actual type
+            // This is important for C++ code that uses service<MyService>() to retrieve services
+
+            // Try FragmentService (for services that implement the interface)
+            try {
+              auto service = service_obj.cast<std::shared_ptr<FragmentService>>();
+
+              // Check if this is a DefaultFragmentService wrapping a Resource
+              bool has_resource = false;
+              try {
+                if (service->resource()) { has_resource = true; }
+              } catch (...) {
+                // If resource() throws, it means there's no resource
+                has_resource = false;
+              }
+
+              // If the service has a resource, use empty ID (resource name will be used)
+              std::string service_id = has_resource ? "" : storage_id;
+
+              if (!fragment->register_service(service, service_id)) {
+                cleanup_on_failure();
+                HOLOSCAN_LOG_ERROR("Failed to register fragment service with id '{}'", service_id);
+                throw std::runtime_error("Failed to register fragment service.");
+              }
+              return;
+            } catch (const py::cast_error&) {
+              // Not an FragmentService, continue
+            }
+
+            // Try Resource
+            try {
+              auto resource = service_obj.cast<std::shared_ptr<Resource>>();
+
+              // For resources, the ID must be empty as the resource's name is used as ID
+              std::string resource_id = "";
+              if (!storage_id.empty() && storage_id.find("__py__") != 0) {
+                // If a non-empty ID was provided for a resource (and it's not a Python
+                // auto-generated ID), log a debug message and use empty string instead
+                HOLOSCAN_LOG_DEBUG(
+                    "Resource '{}' registration: ID parameter '{}' will be ignored. "
+                    "Resource name will be used as ID.",
+                    resource->name(),
+                    storage_id);
+                resource_id = "";
+              } else if (storage_id.find("__py__") == 0) {
+                // For Python resources with auto-generated IDs, we still use empty string
+                // but keep the storage_id for Python registry storage
+                resource_id = "";
+              }
+
+              if (!fragment->register_service(resource, resource_id)) {
+                cleanup_on_failure();
+                HOLOSCAN_LOG_ERROR("Failed to register fragment resource '{}'", resource->name());
+                throw std::runtime_error("Failed to register fragment resource.");
+              }
+              return;
+            } catch (const py::cast_error&) {
+              // Not a Resource
+            }
+
+            throw py::type_error(
+                "Service must be a holoscan.Resource or holoscan.FragmentService instance.");
+          },
+          "service"_a,
+          "id"_a = "",
+          doc::Fragment::doc_register_service)
+      .def(
+          "service",
+          [](py::object fragment_obj, py::type service_type, const std::string& id) -> py::object {
+            // Helper function to generate the same unique ID used during registration
+            auto generate_python_service_id = [&service_type](const std::string& base_id) {
+              if (!base_id.empty()) {
+                return base_id;  // Use provided ID as-is
+              }
+              // Generate unique ID based on Python type's fully qualified name
+              try {
+                auto module = service_type.attr("__module__").cast<std::string>();
+                auto name = service_type.attr("__qualname__").cast<std::string>();
+                return fmt::format("__py__{}.{}", module, name);
+              } catch (const py::error_already_set&) {
+                // Cannot generate type-based ID, just use empty string
+                return std::string("");
+              }
+            };
+
+            std::string effective_id = generate_python_service_id(id);
+
+            // Get the Fragment from the Python object
+            auto fragment = fragment_obj.cast<std::shared_ptr<Fragment>>();
+            if (!fragment) { throw py::type_error("Invalid fragment object."); }
+
+            // Check if this is a PyFragment or PyApplication and if the service is in the Python
+            // registry
+            auto py_fragment = std::dynamic_pointer_cast<PyFragment>(fragment);
+            auto py_app = std::dynamic_pointer_cast<PyApplication>(fragment);
+
+            // Helper lambda to check Python service registry
+            auto check_python_registry = [](auto py_obj,
+                                            const std::string& check_id) -> py::object {
+              if (py_obj) {
+                auto py_service = py_obj->get_python_service(check_id);
+                if (!py_service.is_none()) { return py_service; }
+              }
+              return py::none();
+            };
+
+            py::object py_service = py::none();
+            // If looking up by resource name, first check with that name
+            if (!id.empty()) {
+              py_service = check_python_registry(py_fragment, id);
+              if (py_service.is_none()) { py_service = check_python_registry(py_app, id); }
+            }
+            if (py_service.is_none() && effective_id != id) {
+              // Otherwise check with the generated __py__ id
+              py_service = check_python_registry(py_fragment, effective_id);
+              if (py_service.is_none()) {
+                py_service = check_python_registry(py_app, effective_id);
+              }
+            }
+
+            // Check if we found anything
+            if (!py_service.is_none()) {
+              // We found something. Now check if it's the right type or needs unwrapping.
+              bool is_req_type_resource = false;
+              try {
+                auto resource_py_type = py::type::of<Resource>();
+                auto mro = service_type.attr("__mro__").cast<py::tuple>();
+                for (const auto& base : mro) {
+                  if (base.is(resource_py_type)) {
+                    is_req_type_resource = true;
+                    break;
+                  }
+                }
+              } catch (const py::error_already_set& e) {
+                throw py::type_error(
+                    fmt::format("Unable to check MRO for service type: {}", e.what()));
+              }
+
+              if (is_req_type_resource) {
+                // Requesting a resource type
+                if (py::isinstance(py_service, service_type)) { return py_service; }  // Direct hit
+
+                // Try unwrapping
+                try {
+                  auto wrapper = py_service.cast<std::shared_ptr<FragmentService>>();
+                  if (auto resource_sptr = wrapper->resource()) {
+                    py::object py_underlying_resource = py::cast(resource_sptr);
+                    if (py::isinstance(py_underlying_resource, service_type)) {
+                      return py_underlying_resource;
+                    }
+                  }
+                } catch (const py::cast_error&) {}
+              } else {
+                // Requesting a service (non-resource) type
+                if (py::isinstance(py_service, service_type)) { return py_service; }
+              }
+            }
+
+            // Fallback to C++ lookup
+            const std::type_info* lookup_type = nullptr;
+            const auto* cpp_type = py::detail::get_type_info((PyTypeObject*)service_type.ptr());
+            if (!cpp_type) {
+              throw py::type_error("Unable to get C++ type info from Python type.");
+            }
+            lookup_type = cpp_type->cpptype;
+
+            auto base_service = fragment->get_service_by_type_info(*lookup_type, id);
+            if (!base_service) { return py::none(); }
+
+            bool is_resource = false;
+            try {
+              auto resource_py_type = py::type::of<Resource>();
+              auto mro = service_type.attr("__mro__").cast<py::tuple>();
+              for (const auto& base : mro) {
+                if (base.is(resource_py_type)) {
+                  is_resource = true;
+                  break;
+                }
+              }
+            } catch (const py::error_already_set& e) {
+              throw py::type_error(
+                  fmt::format("Unable to check MRO for service type: {}", e.what()));
+            }
+
+            if (is_resource) {
+              auto resource = base_service->resource();
+              if (!resource) { return py::none(); }
+              return py::cast(resource);
+            } else {
+              return py::cast(base_service);
+            }
+          },
+          "service_type"_a,
+          "id"_a = "",
+          doc::Fragment::doc_service)
       .def(
           "__repr__",
           [](const py::object& obj) {
@@ -199,14 +526,23 @@ PyFragment::PyFragment(const py::object& op) {
 }
 
 PyFragment::~PyFragment() {
-  py::gil_scoped_acquire scope_guard;
-  // We must not call the parent class destructor here because Pybind11 already handles this
-  // through its holder mechanism. Specifically, Pybind11 calls destructors explicitly via
-  // `v_h.holder<holder_type>().~holder_type();` in the `class_::dealloc()` method in pybind11.h.
-  // Fragment::~Fragment(); // DO NOT CALL THIS - would cause double destruction
+  try {
+    py::gil_scoped_acquire scope_guard;
+    // We must not call the parent class destructor here because Pybind11 already handles this
+    // through its holder mechanism. Specifically, Pybind11 calls destructors explicitly via
+    // `v_h.holder<holder_type>().~holder_type();` in the `class_::dealloc()` method in pybind11.h.
+    // Fragment::~Fragment(); // DO NOT CALL THIS - would cause double destruction
 
-  // Clear the operator registry
-  python_operator_registry_.clear();
+    // Clear the operator registry
+    python_operator_registry_.clear();
+    // Clear the service registry
+    python_service_registry_.clear();
+  } catch (const std::exception& e) {
+    // Silently handle any exceptions during cleanup
+    try {
+      HOLOSCAN_LOG_ERROR("PyFragment destructor failed with {}", e.what());
+    } catch (...) {}
+  }
 }
 
 void PyFragment::add_operator(const std::shared_ptr<Operator>& op) {
@@ -285,5 +621,24 @@ void PyFragment::reset_state() {
 
   // Clear the operator registry
   python_operator_registry_.clear();
+  // Clear the service registry
+  python_service_registry_.clear();
+}
+
+py::object PyFragment::get_python_service(const std::string& service_id) const {
+  py::gil_scoped_acquire gil;
+  auto it = python_service_registry_.find(service_id);
+  if (it != python_service_registry_.end()) { return it->second; }
+  return py::none();
+}
+
+void PyFragment::set_python_service(const std::string& service_id, py::object service) {
+  py::gil_scoped_acquire gil;
+  python_service_registry_[service_id] = std::move(service);
+}
+
+void PyFragment::clear_python_service(const std::string& service_id) {
+  py::gil_scoped_acquire gil;
+  python_service_registry_.erase(service_id);
 }
 }  // namespace holoscan

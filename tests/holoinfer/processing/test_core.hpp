@@ -35,7 +35,7 @@ class ProcessingTests {
                          HoloInfer::holoinfer_code assert_type);
 
   HoloInfer::InferStatus call_parameter_check_processing();
-  HoloInfer::InferStatus setup_processor();
+  HoloInfer::InferStatus setup_processor(bool use_cuda_graphs = false);
   HoloInfer::InferStatus execute_processor();
   void clear_processor();
 
@@ -87,7 +87,8 @@ class ProcessingTests {
       {19, "Processing Params, Custom CUDA kernel: Incorrect naming"},
       {20, "Processing Params, Custom CUDA kernel: Incorrect key in custom kernel map"},
       {21, "Processing Params, Custom CUDA kernel: Empty kernel in custom kernel map"},
-      {22, "Processing Params, Custom CUDA kernel: Incorrect kernel in custom kernel map"}};
+      {22, "Processing Params, Custom CUDA kernel: Incorrect kernel in custom kernel map"},
+      {23, "Processing Params, Custom CUDA kernel: CUDA Graphs true"}};
 };
 
 #endif /* HOLOINFER_PROCESSING_TEST_CORE_HPP */

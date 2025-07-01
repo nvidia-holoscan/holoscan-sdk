@@ -23,12 +23,12 @@
 #include <vector>
 
 #include <common/fixed_vector.hpp>
+#include <gxf/core/entity.hpp>
+#include <gxf/std/resources.hpp>  // GPUDevice
+#include <magic_enum.hpp>
 
 #include "holoscan/core/gxf/gxf_utils.hpp"
-
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/gxf/gxf_execution_context.hpp"
-#include "holoscan/core/io_context.hpp"
+#include "holoscan/logger/logger.hpp"
 
 namespace fmt {
 

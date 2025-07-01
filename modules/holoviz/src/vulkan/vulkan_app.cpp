@@ -212,7 +212,9 @@ class Vulkan::Impl {
         if (alloc_initialized_) { alloc_.deinit(); }
         vk_ctx_.deinit();
       } catch (const std::exception& e) {
-        HOLOSCAN_LOG_ERROR("NvvkObjects destructor failed with {}", e.what());
+        try {
+          HOLOSCAN_LOG_ERROR("NvvkObjects destructor failed with {}", e.what());
+        } catch (...) {}
       }
     }
 
@@ -337,7 +339,9 @@ Vulkan::Impl::~Impl() {
       ImGui_ImplVulkan_Shutdown();
     }
   } catch (const std::exception& e) {
-    HOLOSCAN_LOG_ERROR("Vulkan::Impl destructor failed with {}", e.what());
+    try {
+      HOLOSCAN_LOG_ERROR("Vulkan::Impl destructor failed with {}", e.what());
+    } catch (...) {}
   }
 }
 
@@ -2237,9 +2241,9 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
         // allocate temporary memory, note this is using the stream ordered memory allocator which
         // is not syncing globally like the normal `cuMemAlloc`
         tmp_device_ptr.reset([dst_pitch, read_height, stream] {
-          CUdeviceptr device_ptr;
-          CudaCheck(cuMemAllocAsync(&device_ptr, dst_pitch * read_height, stream));
-          return std::pair<CUdeviceptr, CUstream>(device_ptr, stream);
+          CUdeviceptr dev_ptr;
+          CudaCheck(cuMemAllocAsync(&dev_ptr, dst_pitch * read_height, stream));
+          return std::pair<CUdeviceptr, CUstream>(dev_ptr, stream);
         }());
         dst_device_ptr = tmp_device_ptr.get().first;
       } else {

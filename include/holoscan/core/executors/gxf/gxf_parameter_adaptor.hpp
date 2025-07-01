@@ -313,7 +313,9 @@ class GXFParameterAdaptor {
                 }
                 return GxfParameterSetHandle(context, uid, key, gxf_resource->gxf_cid());
               } else {
-                HOLOSCAN_LOG_TRACE("Resource is null for key '{}'. Not setting parameter.", key);
+                HOLOSCAN_LOG_TRACE(
+                    "Resource is null (or a native resource) for key '{}'. Not setting parameter.",
+                    key);
                 return GXF_SUCCESS;
               }
             }
@@ -334,8 +336,8 @@ class GXFParameterAdaptor {
                   gxf_condition->initialize();
                 }
                 return GxfParameterSetHandle(context, uid, key, gxf_condition->gxf_cid());
-              } else {
-                auto native_condition_cid = value->wrapper_cid();
+              } else if (value) {
+                auto native_condition_cid = static_cast<gxf_uid_t>(value->wrapper_cid());
                 if (native_condition_cid != 0) {
                   return GxfParameterSetHandle(context, uid, key, native_condition_cid);
                 } else {
@@ -345,6 +347,9 @@ class GXFParameterAdaptor {
                       value->name(),
                       key);
                 }
+              } else {
+                HOLOSCAN_LOG_TRACE("Condition item in the vector is null. Skipping it for key '{}'",
+                                   key);
               }
               HOLOSCAN_LOG_ERROR("Unable to handle ArgElementType::kCondition for key '{}'", key);
             }
@@ -464,7 +469,9 @@ class GXFParameterAdaptor {
                   yaml_node.push_back(full_resource_name);
                 } else {
                   HOLOSCAN_LOG_TRACE(
-                      "Resource item in the vector is null. Skipping it for key '{}'", key);
+                      "Resource item in the vector is null (or a native resource). Skipping it "
+                      "for key '{}'",
+                      key);
                 }
               }
               return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
@@ -494,8 +501,8 @@ class GXFParameterAdaptor {
                   std::string full_condition_name =
                       gxf::get_full_component_name(context, condition_cid);
                   yaml_node.push_back(full_condition_name);
-                } else {
-                  auto native_condition_cid = condition->wrapper_cid();
+                } else if (condition) {
+                  auto native_condition_cid = static_cast<gxf_uid_t>(condition->wrapper_cid());
                   if (native_condition_cid != 0) {
                     std::string full_condition_name =
                         gxf::get_full_component_name(context, native_condition_cid);
@@ -507,6 +514,9 @@ class GXFParameterAdaptor {
                         condition->name(),
                         key);
                   }
+                } else {
+                  HOLOSCAN_LOG_TRACE(
+                      "Condition item in the vector is null. Skipping it for key '{}'", key);
                 }
               }
               return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");

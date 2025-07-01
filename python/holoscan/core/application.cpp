@@ -127,6 +127,10 @@ void init_application(py::module_& m) {
                     py::overload_cast<>(&Application::metadata_policy, py::const_),
                     py::overload_cast<MetadataPolicy>(&Application::metadata_policy),
                     doc::Application::doc_metadata_policy)
+      .def("add_data_logger",
+           &Application::add_data_logger,
+           "logger"_a,
+           doc::Application::doc_add_data_logger)
       .def(
           "track_distributed",
           // This version of `track_distributed differs from the C++ API only in return type, using
@@ -168,14 +172,28 @@ void init_application(py::module_& m) {
 }
 
 PyApplication::~PyApplication() {
-  py::gil_scoped_acquire scope_guard;
-  // We must not call the parent class destructor here because Pybind11 already handles this
-  // through its holder mechanism. Specifically, Pybind11 calls destructors explicitly via
-  // `v_h.holder<holder_type>().~holder_type();` in the `class_::dealloc()` method in pybind11.h.
-  // Application::~Application(); // DO NOT CALL THIS - would cause double destruction
+  try {
+    py::gil_scoped_acquire scope_guard;
+    // We must not call the parent class destructor here because Pybind11 already handles this
+    // through its holder mechanism. Specifically, Pybind11 calls destructors explicitly via
+    // `v_h.holder<holder_type>().~holder_type();` in the `class_::dealloc()` method in pybind11.h.
+    // Application::~Application(); // DO NOT CALL THIS - would cause double destruction
 
-  // Clear the operator registry
-  python_operator_registry_.clear();
+    // Clear the operator registry
+    python_operator_registry_.clear();
+    // Clear the service registry
+    python_service_registry_.clear();
+
+    // #if PY_VERSION_HEX >= 0x030D0000  // >= Python 3.13.0
+    //     // decrement strong reference obtained via PyThreadState_GetFrame
+    //     Py_XDECREF(py_last_frame_);
+    // #endif
+  } catch (const std::exception& e) {
+    // Silently handle any exceptions during cleanup
+    try {
+      HOLOSCAN_LOG_ERROR("PyApplication destructor failed with {}", e.what());
+    } catch (...) {}
+  }
 }
 
 py::list PyApplication::py_argv() {
@@ -282,13 +300,34 @@ void PyApplication::run() {
     py_profile_func_ = sys_module.attr("getprofile")();
     py_trace_func_ = sys_module.attr("gettrace")();
 
+#if PY_VERSION_HEX >= 0x030D0000  // >= Python 3.13.0
+    // public API available in Python 3.13
+    auto* py_thread_state = PyThreadState_GetUnchecked();
+#else
     auto* py_thread_state = _PyThreadState_UncheckedGet();
+#endif
+    // Warning: these PyThreadState fields are part of CPython's private C API
     c_profilefunc_ = py_thread_state->c_profilefunc;
     c_profileobj_ = py_thread_state->c_profileobj;
     c_tracefunc_ = py_thread_state->c_tracefunc;
     c_traceobj_ = py_thread_state->c_traceobj;
 
-#if PY_VERSION_HEX >= 0x030b0000  // >= Python 3.11.0
+#if PY_VERSION_HEX >= 0x030D0000  // >= Python 3.13.0
+    // Note:
+    // Python 3.12 implemented PEP-669: Low Impact Monitoring for CPython
+    //   https://peps.python.org/pep-0669/
+    // as sys.monitoring:
+    //   https://docs.python.org/3/library/sys.monitoring.html#module-sys.monitoring)
+    // Python 3.13 introduced a corresponding C-API:
+    //   https://docs.python.org/3/c-api/monitoring.html
+
+    // PyThreadState_GetFrame returns a strong reference so a Py_DECREF will be needed
+    // py_last_frame_ = PyThreadState_GetFrame(py_thread_state);
+
+    // PyEval_GetFrame returns a borrowed reference so Py_DECREF is not needed
+    // The PyFrameObject* corresponds to the current thread.
+    py_last_frame_ = PyEval_GetFrame();
+#elif PY_VERSION_HEX >= 0x030B0000  // >= Python 3.11.0
     // _PyInterpreterFrame*
     py_last_frame_ = py_thread_state->cframe->current_frame;
 #else
@@ -308,6 +347,25 @@ void PyApplication::reset_state() {
 
   // Clear the operator registry
   python_operator_registry_.clear();
+  // Clear the service registry
+  python_service_registry_.clear();
+}
+
+py::object PyApplication::get_python_service(const std::string& service_id) const {
+  py::gil_scoped_acquire gil;
+  auto it = python_service_registry_.find(service_id);
+  if (it != python_service_registry_.end()) { return it->second; }
+  return py::none();
+}
+
+void PyApplication::set_python_service(const std::string& service_id, py::object service) {
+  py::gil_scoped_acquire gil;
+  python_service_registry_[service_id] = std::move(service);
+}
+
+void PyApplication::clear_python_service(const std::string& service_id) {
+  py::gil_scoped_acquire gil;
+  python_service_registry_.erase(service_id);
 }
 
 }  // namespace holoscan

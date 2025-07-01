@@ -484,19 +484,19 @@ struct codec<Coordinate> {
 
 ```
 
-In practice, one would not actually need to define `codec<Coordinate>` at all since `Coordinate` is a trivially serializable type and the existing `codec` treats any types for which there is not a template specialization as a trivially serializable type. It is, however, still necessary to register the codec type with the {cpp:class}`~holoscan::CodecRegistry` as described below.
+In practice, one would not actually need to define `codec<Coordinate>` at all since `Coordinate` is a trivially serializable type and the existing `codec` treats any types for which there is not a template specialization as a trivially serializable type. It is, however, still necessary to register the codec type with the {cpp:class}`~holoscan::gxf::CodecRegistry` as described below.
 
 For non-trivial types, one will likely also need to use the {cpp:func}`~holoscan::Endpoint::read` and {cpp:func}`~holoscan::Endpoint::write` methods to implement the codec. Example use of these for the built-in codecs can be found in [`holoscan/core/codecs.hpp`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/core/codecs.hpp).
 
-Once such a codec has been defined, the remaining step is to register it with the static {cpp:class}`~holoscan::CodecRegistry` class. This will make the UCX-based classes used by distributed applications aware of the existence of a codec for serialization of this object type. If the type is specific to a particular operator, then one can register it via the {cpp:func}`~holoscan::OperatorSpec::register_codec` class.
+Once such a codec has been defined, the remaining step is to register it with the static {cpp:class}`~holoscan::gxf::CodecRegistry` class. This will make the UCX-based classes used by distributed applications aware of the existence of a codec for serialization of this object type. If the type is specific to a particular operator, then one can register it via the {cpp:func}`~holoscan::gxf::GXFExecutor::register_codec` class.
 
 ```cpp
-#include "holoscan/core/codec_registry.hpp"
+#include <holsocan/core/executors/gxf/gxf_executor.h>  // for holoscan::gxf::GXFExecutor
 
 namespace holoscan::ops {
 
 void MyCoordinateOperator::initialize() {
-  register_codec<Coordinate>("Coordinate");
+  gxf::GXFExecutor::register_codec<Coordinate>("Coordinate");
 
   // ...
 
@@ -507,7 +507,7 @@ void MyCoordinateOperator::initialize() {
 }  // namespace holoscan::ops
 ```
 
-Here, the argument provided to `register_codec` is the name the registry will use for the codec. This name will be serialized in the message header so that the deserializer knows which deserialization function to use on the received data. In this example, we chose a name that matches the class name, but that is not a requirement. If the name matches one that is already present in the {cpp:class}`~holoscan::CodecRegistry` class, then any existing codec under that name will be replaced by the newly registered one.
+Here, the argument provided to `register_codec` is the name the registry will use for the codec. This name will be serialized in the message header so that the deserializer knows which deserialization function to use on the received data. In this example, we chose a name that matches the class name, but that is not a requirement. If the name matches one that is already present in the {cpp:class}`~holoscan::gxf::CodecRegistry` class, then any existing codec under that name will be replaced by the newly registered one.
 
 It is also possible to directly register the type outside of the context of {cpp:func}`~holoscan::Operator::initialize` by directly retrieving the static instance of the codec registry as follows.
 
@@ -515,7 +515,7 @@ It is also possible to directly register the type outside of the context of {cpp
 
 namespace holoscan {
 
-CodecRegistry::get_instance().add_codec<Coordinate>("Coordinate");
+gxf::CodecRegistry::get_instance().add_codec<Coordinate>("Coordinate");
 
 }  // namespace holoscan
 ```

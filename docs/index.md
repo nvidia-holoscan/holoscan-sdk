@@ -34,6 +34,7 @@ holoscan_create_condition
 holoscan_dynamic_flow_control
 holoscan_cuda_stream_handling
 holoscan_logging
+holoscan_data_logging
 holoscan_debugging
 holoscan_create_operator_python_bindings
 ```

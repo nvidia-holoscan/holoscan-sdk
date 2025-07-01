@@ -46,7 +46,7 @@ struct BufferInfo {
   /**
    * Initialize with video buffer
    *
-   * @param tensor
+   * @param video The video buffer handle
    * @param input_image_format if HolovizOp::ImageFormat::AUTO_DETECT then auto detect the image
    * format, else use the provided image format
    *

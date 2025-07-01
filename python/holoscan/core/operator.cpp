@@ -474,7 +474,11 @@ PyOperator::PyOperator(const py::object& op, Fragment* fragment, const py::args&
   using std::string_literals::operator""s;
 
   HOLOSCAN_LOG_TRACE("PyOperator::PyOperator()");
+  // Initialize the component's internal state by setting up the fragment and service provider
+  // This mirrors what Fragment::setup_component_internals() does in C++, enabling service()
+  // method access
   fragment_ = fragment;
+  service_provider_ = fragment;
 
   // Store the application object to access the trace/profile functions
   auto* app = fragment_->application();
@@ -651,8 +655,12 @@ void PyOperator::set_py_tracing() {
     // If tracing is not enabled, do nothing and return
     if (!tracing_data.in_tracing) { return; }
 
+#if PY_VERSION_HEX >= 0x030D0000  // >= Python 3.13.0
+    // Python 3.13 increased enforcement of thread safety
+    auto* py_thread_state = PyThreadState_Get();
+#else
     auto* py_thread_state = _PyThreadState_UncheckedGet();
-
+#endif
     // If tracing_data.is_func_set is false, cache the current trace/profile functions for
     // the current thread.
     if (!tracing_data.is_func_set) {
@@ -714,7 +722,10 @@ void PyOperator::set_py_tracing() {
     // Depending on the Python version, the way to set the trace/profile functions is different.
 
     // Set current frame to the last valid Python frame
-#if PY_VERSION_HEX >= 0x030B0000  // >= Python 3.11.0
+#if PY_VERSION_HEX >= 0x030D0000  // >= Python 3.13.0
+    // _PyThreadState_SetFrame is removed in Python 3.13 and there does not seem to
+    // be any equivalent available.
+#elif PY_VERSION_HEX >= 0x030B0000  // >= Python 3.11.0
     // https://github.com/python/cpython/blob/c184c6750e40ca4ffa4f62a5d145b892cbd066bc
     //   /Doc/whatsnew/3.11.rst#L2301
     // - tstate->frame is removed.
@@ -726,7 +737,16 @@ void PyOperator::set_py_tracing() {
     py_thread_state->frame = reinterpret_cast<PyFrameObject*>(tracing_data.py_last_frame);
 #endif
 
-#if PY_VERSION_HEX >= 0x030B0000  // >= Python 3.11.0
+#if PY_VERSION_HEX >= 0x030D0000  // >= Python 3.13.0
+    // set profile and tracing for the current thread using public API
+    // (this API also exists even back in Python 3.9)
+    PyEval_SetProfile(tracing_data.c_profilefunc, tracing_data.c_profileobj.ptr());
+    PyEval_SetTrace(tracing_data.c_tracefunc, tracing_data.c_traceobj.ptr());
+
+    // Python 3.12+ also has AllThreads variants of these
+    // PyEval_SetProfileAllThreads(tracing_data.c_profilefunc, tracing_data.c_profileobj.ptr());
+    // PyEval_SetTraceAllThreads(tracing_data.c_tracefunc, tracing_data.c_traceobj.ptr());
+#elif PY_VERSION_HEX >= 0x030B0000  // >= Python 3.11.0
     // Recommended way to set the trace/profile functions in Python 3.11
     // (see
     // https://discuss.python.org/t/python-3-11-frame-structure-and-various-changes/17895/19)
@@ -743,7 +763,6 @@ void PyOperator::set_py_tracing() {
     Py_XINCREF(tracing_data.c_traceobj.ptr());
     Py_XDECREF(py_thread_state->c_traceobj);
     py_thread_state->c_traceobj = tracing_data.c_traceobj.ptr();
-
 #if PY_VERSION_HEX >= 0x030A00B1  // >= Python 3.10.0 b1
     py_thread_state->cframe->use_tracing = 1;
 #else                             // < Python 3.10.0 b1
@@ -774,7 +793,9 @@ void PyOperator::initialize() {
   // `super().__init__(fragment, *args, **kwargs)`.
   Operator::initialize();
 
+#if PY_VERSION_HEX < 0x030C0000  // < 3.12
   set_py_tracing();
+#endif
 
   auto* context = fragment_->executor().context();
 
@@ -804,7 +825,9 @@ void PyOperator::start() {
   // Get the start method of the Python Operator class and call it
   py::gil_scoped_acquire scope_guard;
 
+#if PY_VERSION_HEX < 0x030C0000  // < 3.12
   set_py_tracing();
+#endif
 
   py_start_.operator()();
 }
@@ -813,7 +836,9 @@ void PyOperator::stop() {
   // Get the stop method of the Python Operator class and call it
   py::gil_scoped_acquire scope_guard;
 
+#if PY_VERSION_HEX < 0x030C0000  // < 3.12
   set_py_tracing();
+#endif
 
   py_stop_.operator()();
 }
@@ -825,7 +850,9 @@ void PyOperator::compute(InputContext& op_input, OutputContext& op_output,
 
   py_context_->clear_received_streams();
 
+#if PY_VERSION_HEX < 0x030C0000  // < 3.12
   set_py_tracing();
+#endif
 
   py_compute_.operator()(py::cast(py_op_input_), py::cast(py_op_output_), py::cast(py_context_));
 }

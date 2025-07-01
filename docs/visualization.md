@@ -462,25 +462,23 @@ When providing CUDA resources to Holoviz through (e.g., {func}`viz::ImageCudaDev
 
 The rendered frame buffer can be read back. This is useful when doing offscreen rendering or running Holoviz in a headless environment.
 
-:::{note}
-Reading the depth buffer is not supported when using the Holoviz operator.
-:::
-
 `````{tab-set}
 ````{tab-item} Operator
 
-To read back the color frame buffer, set the `enable_render_buffer_output` parameter to `true` and provide an allocator to the operator.
+To read back the color or depth frame buffer, set the `enable_render_buffer_output` or `enable_depth_buffer_output_` parameter to `true` and provide an allocator to the operator.
 
-The frame buffer is emitted on the `render_buffer_output` port.
+The color frame buffer is emitted on the `render_buffer_output` port, the depth frame buffer is emitted on the `depth_buffer_output` port.
 
 ```cpp
 std::shared_ptr<holoscan::ops::HolovizOp> visualizer =
     make_operator<ops::HolovizOp>("visualizer",
         Arg("enable_render_buffer_output", true),
+        Arg("enable_depth_buffer_output", true),
         Arg("allocator") = make_resource<holoscan::UnboundedAllocator>("allocator"),
         Arg("cuda_stream_pool") = cuda_stream_pool);
 
-add_flow(visualizer, destination, {{"render_buffer_output", "input"}});
+add_flow(visualizer, destination, {{"render_buffer_output", "color_input"}});
+add_flow(visualizer, destination, {{"depth_buffer_output", "depth_input"}});
 ```
 
 ````

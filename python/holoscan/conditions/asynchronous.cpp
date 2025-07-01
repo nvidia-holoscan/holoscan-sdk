@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,11 +61,11 @@ class PyAsynchronousCondition : public AsynchronousCondition {
 
 void init_asynchronous(py::module_& m) {
   py::enum_<holoscan::AsynchronousEventState>(m, "AsynchronousEventState")
-      .value("READY", holoscan::AsynchronousEventState::READY)
-      .value("WAIT", holoscan::AsynchronousEventState::WAIT)
-      .value("EVENT_WAITING", holoscan::AsynchronousEventState::EVENT_WAITING)
-      .value("EVENT_DONE", holoscan::AsynchronousEventState::EVENT_DONE)
-      .value("EVENT_NEVER", holoscan::AsynchronousEventState::EVENT_NEVER);
+      .value("READY", holoscan::AsynchronousEventState::kReady)
+      .value("WAIT", holoscan::AsynchronousEventState::kWait)
+      .value("EVENT_WAITING", holoscan::AsynchronousEventState::kEventWaiting)
+      .value("EVENT_DONE", holoscan::AsynchronousEventState::kEventDone)
+      .value("EVENT_NEVER", holoscan::AsynchronousEventState::kEventNever);
 
   py::class_<AsynchronousCondition,
              PyAsynchronousCondition,

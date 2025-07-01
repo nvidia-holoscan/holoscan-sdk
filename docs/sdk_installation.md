@@ -83,11 +83,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.3.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.3.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -107,7 +107,7 @@ This will not install dependencies needed for the Torch nor ONNXRuntime inferenc
 
 **If `holoscan` is not found with apt:**
 
-```txt
+```text
 E: Unable to locate package holoscan
 ```
 
@@ -122,7 +122,7 @@ Try the following before repeating the installation steps above:
 
 **If you get missing CUDA libraries at runtime like below:**
 
-```log
+```text
 ImportError: libcudart.so.12: cannot open shared object file: No such file or directory
 ```
 
@@ -136,7 +136,7 @@ sudo apt update && sudo apt install -y cuda-toolkit-12-6
 
 **If you get missing CUDA headers at compile time like below:**
 
-```cmake
+```text
 the link interface contains: CUDA::nppidei but the target was not found. [...] fatal error: npp.h: No such file or directory
 ```
 

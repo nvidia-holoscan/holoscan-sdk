@@ -83,12 +83,13 @@ class DataProcessor {
    * the tensor as vector of strings. Each value in the vector of strings is the supported
    * operation.
    * @param custom_kernels Map of custom kernel identifier, mapped to related value as a string
+   * @param use_cuda_graphs Flag to enable CUDA Graphs for custom kernel processing
    * @param config_path Path to the processing configuration settings
    *
    * @return InferStatus with appropriate code and message
    */
   InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
-                         const std::string config_path);
+                         bool use_cuda_graphs, const std::string config_path);
 
   /**
    * @brief Executes an operation via function callback.
@@ -117,7 +118,7 @@ class DataProcessor {
    * @param transform Data transform operation to perform.
    * @param key String identifier for the transform
    * @param indata Map with key as tensor name and value as data buffer
-   * @param indims Map with key as tensor name and value as dimension of the input tensor
+   * @param indim Map with key as tensor name and value as dimension of the input tensor
    * @param processed_data Output data map, that will be populated
    * @param processed_dims Dimension of the output tensor, is populated during the processing
    * @return InferStatus with appropriate code and message
@@ -131,7 +132,6 @@ class DataProcessor {
    * @brief Computes max per channel in input data and scales it to [0, 1]. (supports both GPU and
    * CPU data)
    *
-   * @param operation Operation to perform. Refer to user docs for a list of supported operations
    * @param in_dims Dimension of the input tensor
    * @param in_data Input data buffer
    * @param out_dims Dimension of the output tensor
@@ -148,7 +148,6 @@ class DataProcessor {
   /**
    * @brief Scales intensity using min-max values and histogram. (CPU based)
    *
-   * @param operation Operation to perform. Refer to user docs for a list of supported operations
    * @param in_dims Dimension of the input tensor
    * @param in_data Input data buffer
    * @param out_dims Dimension of the output tensor
@@ -203,7 +202,7 @@ class DataProcessor {
   /**
    * @brief Launches custom kernel at runtime.
    *
-   * @param id Unique custom kernel id
+   * @param ids Unique custom kernel ids
    * @param dimensions Dimensions of input buffer
    * @param input Input data buffer
    * @param processed_dims Dimension of the output tensor, is populated during the processing
@@ -370,6 +369,14 @@ class DataProcessor {
   std::map<std::string, bool> first_time_kernel_launch_map_;
   std::map<std::string, std::vector<std::shared_ptr<DataBuffer>>> intermediate_buffers_;
   std::map<std::string, std::vector<void*>> intermediate_inputs_;
+
+  bool use_cuda_graph_ = false;
+  std::map<std::string, bool> cuda_graph_instantiated_;
+  std::map<std::string, bool> cuda_graph_created_;
+  std::map<std::string, CUgraph> graph_;
+  std::map<std::string, CUgraphExec> cuda_graph_instance_;
+  std::map<std::string, std::vector<CUgraphNode>> kernel_nodes_;
+  std::map<std::string, std::vector<CUDA_KERNEL_NODE_PARAMS>> kernel_node_params_;
 };
 
 }  // namespace inference

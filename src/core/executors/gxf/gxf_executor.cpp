@@ -47,6 +47,8 @@
 #include "holoscan/core/conditions/gxf/multi_message_available.hpp"
 #include "holoscan/core/conditions/gxf/multi_message_available_timeout.hpp"
 #include "holoscan/core/config.hpp"
+#include "holoscan/core/distributed/common/forward_op.hpp"
+#include "holoscan/core/distributed/common/virtual_operator.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/errors.hpp"
 #include "holoscan/core/executors/gxf/gxf_logger.hpp"
@@ -67,6 +69,7 @@
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resource.hpp"
+#include "holoscan/core/resources/data_logger.hpp"
 #include "holoscan/core/resources/gxf/annotated_double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/condition_combiner.hpp"
@@ -77,8 +80,6 @@
 #include "holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
-#include "holoscan/core/services/common/forward_op.hpp"
-#include "holoscan/core/services/common/virtual_operator.hpp"
 #include "holoscan/core/signal_handler.hpp"
 
 #include "gxf/app/arg.hpp"
@@ -223,6 +224,7 @@ GXFExecutor::~GXFExecutor() {
   scheduler_entity_.reset();
   network_context_entity_.reset();
   connections_entity_.reset();
+  fragment_services_entity_.reset();
 
   destroy_context();
 }
@@ -308,6 +310,7 @@ void GXFExecutor::reset_execution_state() {
   scheduler_entity_.reset();
   network_context_entity_.reset();
   connections_entity_.reset();
+  fragment_services_entity_.reset();
 
   setup_gxf_logging();
 
@@ -1484,6 +1487,14 @@ void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType 
 bool GXFExecutor::initialize_fragment() {
   HOLOSCAN_LOG_DEBUG("Initializing Fragment.");
 
+  // Initialize fragment services (including service resources).
+  // This is required to ensure that the fragment's services are initialized before
+  // creating GXF entities related to the Holoscan operators.
+  if (!initialize_fragment_services()) {
+    HOLOSCAN_LOG_ERROR("Failed to initialize fragment services.");
+    return false;
+  }
+
   // Initialize the GXF graph by creating GXF entities related to the Holoscan operators in a
   // topologically sorted order. Operators are created as nodes in the graph of the fragment are
   // visited.
@@ -1859,6 +1870,12 @@ bool GXFExecutor::initialize_fragment() {
         }
       }
     }
+  }
+
+  // must call initialize() on any loggers that inherit from DataLoggerResource
+  for (auto& data_logger : fragment_->data_loggers()) {
+    auto data_logger_resource = std::dynamic_pointer_cast<DataLoggerResource>(data_logger);
+    if (data_logger_resource) { data_logger_resource->initialize(); }
   }
   return true;
 }
@@ -2665,6 +2682,39 @@ bool GXFExecutor::initialize_network_context(NetworkContext* network_context) {
   }
   // Set GXF NetworkContext ID as the ID of the network_context
   network_context->id(network_context_cid);
+  return true;
+}
+
+bool GXFExecutor::initialize_fragment_services() {
+  // Early return if no fragment services to initialize
+  if (fragment_->fragment_resource_to_service_key_map_.empty()) { return true; }
+
+  // Create fragment services entity
+  const std::string fragment_services_entity_name =
+      fmt::format("{}_holoscan_services_entity", entity_prefix_);
+
+  fragment_services_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
+  if (!fragment_services_entity_->setup(context_, fragment_services_entity_name.c_str())) {
+    HOLOSCAN_LOG_ERROR("Failed to create utility entity: '{}'", fragment_services_entity_name);
+    return false;
+  }
+
+  // Initialize all fragment service resources
+  HOLOSCAN_LOG_DEBUG("Initializing fragment service resources.");
+  for (const auto& [resource, service_key] : fragment_->fragment_resource_to_service_key_map_) {
+    HOLOSCAN_LOG_TRACE(
+        "\tfragment '{}': initializing resource: {}", fragment_->name(), resource->name());
+
+    auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
+    if (gxf_resource) {
+      // assign the resource to the fragment services entity
+      gxf_resource->add_to_graph_entity(fragment_, fragment_services_entity_);
+    } else {
+      // initialize as a native (non-GXF) resource
+      resource->initialize();
+    }
+  }
+
   return true;
 }
 

@@ -321,6 +321,84 @@ op_name : str, optional
     The name of the operator to stop. If empty, all operators will be stopped.
 )doc")
 
+PYDOC(add_data_logger, R"doc(
+Add a data logger to the fragment.
+
+Parameters
+----------
+logger : holoscan.core.DataLogger
+    The shared pointer to the data logger to add.
+)doc")
+
+PYDOC(data_loggers, R"doc(
+Get the data loggers associated with this fragment.
+
+Returns
+-------
+list[holoscan.core.DataLogger]
+    A list of data loggers associated with this fragment.
+)doc")
+
+PYDOC(register_service, R"doc(
+Register a fragment service instance.
+
+Registers an already created fragment service instance with the specified identifier.
+This allows the fragment service to be retrieved later using the service() method.
+
+A service must be an instance of a class that inherits from `holoscan.core.Resource`
+or `holoscan.core.FragmentService`.
+
+Parameters
+----------
+service : holoscan.core.Resource or holoscan.core.FragmentService
+    The service instance to register.
+id : str, optional
+    The identifier for the service registration. If empty:
+    - For Resource instances: The resource's name will be used as the identifier.
+    - For other services: A unique identifier based on the service type will be generated.
+    Note: When registering a Resource, the id parameter must be empty or will be ignored.
+
+Raises
+------
+TypeError
+    If the service is not a Resource or FragmentService instance.
+RuntimeError
+    If the service registration fails.
+
+Notes
+-----
+Resources are automatically wrapped in a DefaultFragmentService when registered.
+For Python-defined services, a unique identifier is generated if no id is provided.
+)doc")
+
+PYDOC(service, R"doc(
+Retrieve a registered fragment service.
+
+Retrieves a previously registered fragment service by its type and optional identifier.
+The lookup process checks the Python service registry first, then falls back to the
+C++ service registry if needed.
+
+Parameters
+----------
+service_type : type
+    The type of the fragment service to retrieve. Must be a type that inherits from
+    Resource or FragmentService.
+id : str, optional
+    The identifier of the fragment service. If empty, retrieves by service type only.
+    For Resources, this would typically be the resource's name.
+
+Returns
+-------
+object or None
+    The fragment service instance of the requested type, or ``None`` if not found.
+    If the service wraps a Resource and a Resource type is requested, the unwrapped
+    Resource instance is returned.
+
+Notes
+-----
+For services that wrap Resources, the method will automatically unwrap and return
+the Resource if a Resource type is requested.
+)doc")
 }  // namespace Fragment
 
 }  // namespace holoscan::doc

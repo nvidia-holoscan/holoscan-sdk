@@ -82,7 +82,7 @@ class ThreadPool : public gxf::GXFSystemResourceBase {
   /**
    * @brief Add multiple operators to the thread pool
    *
-   * @param op The operators to add.
+   * @param ops The operators to add.
    * @param pin_operator Whether the operators should be pinned to a specific thread in the pool.
    */
   void add(std::vector<std::shared_ptr<Operator>> ops, bool pin_operator = true);

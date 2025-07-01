@@ -1,17 +1,21 @@
---- examples/tensor_interop/python/tensor_interop.py	2023-11-05 19:17:26.710302091 -0800
-+++ examples/tensor_interop/python/tensor_interop_test.py	2023-11-20 16:44:15.675280252 -0800
-@@ -19,7 +19,9 @@
- import sys
+--- a/public/examples/tensor_interop/python/tensor_interop.py
++++ b/public/examples/tensor_interop/python/tensor_interop.py
+@@ -19,7 +19,13 @@ import os
  
  from holoscan.core import Application, Operator, OperatorSpec
+ from holoscan.data_loggers import BasicConsoleLogger
 -from holoscan.operators import HolovizOp, VideoStreamReplayerOp
-+from holoscan.operators import HolovizOp, VideoStreamReplayerOp, VideoStreamRecorderOp, FormatConverterOp
++from holoscan.operators import (
++    FormatConverterOp,
++    HolovizOp,
++    VideoStreamRecorderOp,
++    VideoStreamReplayerOp,
++)
 +from holoscan.resources import UnboundedAllocator
-+
  
  try:
      import cupy as cp
-@@ -126,6 +128,24 @@
+@@ -126,6 +132,22 @@ class MyVideoProcessingApp(Application):
          self.add_flow(source, image_processing)
          self.add_flow(image_processing, visualizer, {("", "receivers")})
  
@@ -20,19 +24,17 @@
 +            name="recorder_format_converter",
 +            in_dtype="rgba8888",
 +            out_dtype="rgb888",
-+            pool=UnboundedAllocator(self, name="pool")
++            pool=UnboundedAllocator(self, name="pool"),
 +        )
-+        recorder = VideoStreamRecorderOp(
-+            self,
-+            name="recorder",
-+            **self.kwargs("recorder")
-+        )
++        recorder = VideoStreamRecorderOp(self, name="recorder", **self.kwargs("recorder"))
 +
 +        visualizer.add_arg(allocator=UnboundedAllocator(self, name="allocator"))
 +
-+        self.add_flow(visualizer, recorder_format_converter, {("render_buffer_output", "source_video")})
++        self.add_flow(
++            visualizer, recorder_format_converter, {("render_buffer_output", "source_video")}
++        )
 +        self.add_flow(recorder_format_converter, recorder)
 +
  
- if __name__ == "__main__":
-     config_file = os.path.join(os.path.dirname(__file__), "tensor_interop.yaml")
+ def main(config_file):
+     app = MyVideoProcessingApp()

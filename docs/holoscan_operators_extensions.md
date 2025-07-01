@@ -11,7 +11,6 @@ The operators below are defined under the `holoscan::ops` namespace for C++ and 
 
 | Class    | CMake target/lib | Documentation                  |
 |--------- |----------------- |------------------------------- |
-| **AJASourceOp** | `aja` | {cpp:class}`C++ <holoscan::ops::AJASourceOp>`/{py:class}`Python <holoscan.operators.AJASourceOp>` |
 | **BayerDemosaicOp** | `bayer_demosaic` | {cpp:class}`C++ <holoscan::ops::BayerDemosaicOp>`/{py:class}`Python <holoscan.operators.BayerDemosaicOp>` |
 | **FormatConverterOp** | `format_converter` | {cpp:class}`C++ <holoscan::ops::FormatConverterOp>`/{py:class}`Python <holoscan.operators.FormatConverterOp>` |
 | **HolovizOp** | `holoviz` | {cpp:class}`C++ <holoscan::ops::HolovizOp>`/{py:class}`Python <holoscan.operators.HolovizOp>` |

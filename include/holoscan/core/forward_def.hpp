@@ -32,13 +32,14 @@ class CLIOptions;
 class CLIParser;
 template <typename typeT>
 struct codec;
-class CodecRegistry;
 class ComponentBase;
 class Component;
 class ComponentSpec;
 class Condition;
 enum class ConditionType;
 class Config;
+class DataLogger;
+class DefaultFragmentService;
 class Endpoint;
 class ExecutionContext;
 class ExtensionManager;
@@ -47,6 +48,8 @@ class Fragment;
 template <typename NodeT, typename EdgeDataElementT>
 class Graph;
 class GXFParameterAdaptor;
+class FragmentService;
+class FragmentServiceProvider;
 class InputContext;
 class IOSpec;
 class Logger;
@@ -73,10 +76,13 @@ class Scheduler;
 
 // holoscan::gxf
 namespace gxf {
+class CodecRegistry;
+class Endpoint;
 class Entity;
 class EntityGroup;
 class GXFComponent;
 class GXFCondition;
+class GXFExecutor;
 class GXFInputContext;
 class GXFOutputContext;
 class GXFResource;
@@ -90,13 +96,13 @@ class GXFSystemResourceBase;
 class AppDriver;
 class AppWorker;
 
-// holoscan::service
-namespace service {
+// holoscan::distributed
+namespace distributed {
 class AppDriverServer;
 class AppDriverClient;
 class AppWorkerServer;
 class AppWorkerClient;
-}  // namespace service
+}  // namespace distributed
 
 // NetworkContexts
 class UcxContext;
@@ -137,6 +143,7 @@ class ConditionCombiner;
 class CudaAllocator;
 class CudaStreamPool;
 class CPUThread;
+class DataLoggerResource;
 class DoubleBufferReceiver;
 class DoubleBufferTransmitter;
 class GPUDevice;

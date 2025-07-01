@@ -47,6 +47,10 @@
 
 namespace holoscan {
 
+// Forward declarations
+class OperatorSpec;
+class Operator;
+
 /**
  * @brief Class to define the specification of an input/output port of an Operator.
  *
@@ -142,6 +146,7 @@ class IOSpec {
    * @param io_type The type of this input/output.
    * @param typeinfo The type info of the data of this input/output.
    * @param size The size of the input/output queue.
+   * @param policy The queue policy (optional).
    */
   IOSpec(OperatorSpec* op_spec, const std::string& name, IOType io_type,
          const std::type_info* typeinfo = &typeid(void*), IOSpec::IOSize size = IOSpec::kSizeOne,
@@ -426,6 +431,26 @@ class IOSpec {
    */
   std::string description() const;
 
+  /**
+   * @brief Get the unique identifier for this IOSpec.
+   *
+   * The unique identifier follows the pattern: "{operator.qualified_name()}.{port_name}"
+   * This is used for data logging and identification purposes.
+   * The unique_id is set during operator initialization.
+   *
+   * @return The unique identifier string.
+   */
+  const std::string& unique_id() const { return unique_id_; }
+
+  /**
+   * @brief Set the unique identifier for this IOSpec.
+   *
+   * This method is called during operator initialization to set the unique identifier.
+   *
+   * @param unique_id The unique identifier string to set.
+   */
+  void set_unique_id(const std::string& unique_id) { unique_id_ = unique_id; }
+
  private:
   OperatorSpec* op_spec_ = nullptr;
   std::string name_;
@@ -436,6 +461,7 @@ class IOSpec {
   ConnectorType connector_type_ = ConnectorType::kDefault;
   IOSize queue_size_ = kSizeOne;
   std::optional<QueuePolicy> queue_policy_ = std::nullopt;
+  std::string unique_id_;
 };
 
 }  // namespace holoscan

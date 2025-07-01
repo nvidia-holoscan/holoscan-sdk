@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _HOLOSCAN_TORCH_INFER_CORE_H
-#define _HOLOSCAN_TORCH_INFER_CORE_H
+#ifndef MODULES_HOLOINFER_SRC_INFER_TORCH_CORE_HPP
+#define MODULES_HOLOINFER_SRC_INFER_TORCH_CORE_HPP
 
 #include <chrono>
 #include <cmath>
@@ -49,6 +49,8 @@ class TorchInfer : public InferBase {
    * @brief Constructor
    * @param model_file_path Path to torch model file
    * @param cuda_flag Flag to show if inference will happen using CUDA
+   * @param cuda_buf_in Flag to demonstrate if input data buffer is on cuda
+   * @param cuda_buf_out Flag to demonstrate if output data buffer will be on cuda
    * */
   TorchInfer(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
              bool cuda_buf_out);
@@ -66,6 +68,8 @@ class TorchInfer : public InferBase {
    *
    * @param input_data Vector of Input DataBuffer
    * @param output_buffer Vector of Output DataBuffer, is populated with inferred results
+   * @param cuda_event_data CUDA event to synchronize input data preparation
+   * @param cuda_event_inference Pointer to CUDA event for inference synchronization
    * @return InferStatus
    * */
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
@@ -115,4 +119,4 @@ class TorchInfer : public InferBase {
 }  // namespace inference
 }  // namespace holoscan
 
-#endif
+#endif /* MODULES_HOLOINFER_SRC_INFER_TORCH_CORE_HPP */

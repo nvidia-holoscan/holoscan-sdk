@@ -25,7 +25,6 @@
 #include "../config.hpp"
 #include "tensor_compare_op.hpp"
 
-#include "holoscan/holoscan.hpp"
 #include "holoscan/operators/format_converter/format_converter.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 #include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
@@ -38,7 +37,7 @@ using StringOrArg = std::variant<std::string, Arg>;
 
 class HolovizToHolovizApp : public holoscan::Application {
  public:
-  explicit HolovizToHolovizApp(StringOrArg enable_arg, ArgList source_args)
+  explicit HolovizToHolovizApp(StringOrArg& enable_arg, ArgList source_args)
       : Application(), enable_arg_(enable_arg), source_args_(source_args) {
     if (source_args_.size() == 0) {
       source_args_ = ArgList({Arg("rows", height_), Arg("columns", width_), Arg("channels", 3)});
@@ -380,7 +379,8 @@ class RenderBufferSourceOp : public Operator {
   void setup(OperatorSpec& spec) override {
     spec.output<holoscan::gxf::Entity>("outputs");
     spec.output<std::vector<ops::HolovizOp::InputSpec>>("output_specs");
-    spec.output<holoscan::gxf::Entity>("render_buffer");
+    spec.output<holoscan::gxf::Entity>("color_buffer");
+    spec.output<holoscan::gxf::Entity>("depth_buffer");
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
@@ -416,14 +416,14 @@ class RenderBufferSourceOp : public Operator {
 
     // Create a render buffer
     auto render_entity = nvidia::gxf::Entity::New(context.context());
-    auto video_buffer = render_entity.value().add<nvidia::gxf::VideoBuffer>("render_buffer");
+    auto color_buffer = render_entity.value().add<nvidia::gxf::VideoBuffer>("color_buffer");
 
     // Create allocator handle
     auto allocator = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(context.context(),
                                                                          allocator_->gxf_cid());
 
     // Allocate buffer
-    video_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
+    color_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA>(
         640U,
         480U,
         nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
@@ -432,7 +432,23 @@ class RenderBufferSourceOp : public Operator {
 
     // Emit output
     auto result = holoscan::gxf::Entity(std::move(render_entity.value()));
-    op_output.emit(result, "render_buffer");
+    op_output.emit(result, "color_buffer");
+
+    // Create a depth buffer
+    auto depth_entity = nvidia::gxf::Entity::New(context.context());
+    auto depth_buffer = depth_entity.value().add<nvidia::gxf::VideoBuffer>("depth_buffer");
+
+    // Allocate buffer
+    depth_buffer.value()->resize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F>(
+        640U,
+        480U,
+        nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR,
+        nvidia::gxf::MemoryStorageType::kDevice,
+        allocator.value());
+
+    // Emit output
+    result = holoscan::gxf::Entity(std::move(depth_entity.value()));
+    op_output.emit(result, "depth_buffer");
   }
 
  private:
@@ -457,12 +473,32 @@ class RenderBufferSinkOp : public Operator {
 
   RenderBufferSinkOp() = default;
 
-  void setup(OperatorSpec& spec) override { spec.input<nvidia::gxf::Entity>("input"); }
+  void setup(OperatorSpec& spec) override {
+    spec.input<nvidia::gxf::Entity>("render_buffer_input");
+    spec.input<nvidia::gxf::Entity>("depth_buffer_input");
+  }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto render_buffer = op_input.receive<nvidia::gxf::Entity>("input").value();
+    auto maybe_render_buffer = op_input.receive<nvidia::gxf::Entity>("render_buffer_input");
+    ASSERT_TRUE(maybe_render_buffer && !maybe_render_buffer.value().is_null());
+    auto video_buffer = maybe_render_buffer.value().get<nvidia::gxf::VideoBuffer>();
+    ASSERT_TRUE(video_buffer && !video_buffer.value().is_null());
+    auto render_buffer_info = video_buffer.value()->video_frame_info();
+    ASSERT_EQ(render_buffer_info.width, 640U);
+    ASSERT_EQ(render_buffer_info.height, 480U);
+    ASSERT_EQ(render_buffer_info.color_format, nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA);
     holoscan::log_info("Received render buffer");
+
+    auto maybe_depth_buffer = op_input.receive<nvidia::gxf::Entity>("depth_buffer_input");
+    ASSERT_TRUE(maybe_depth_buffer && !maybe_depth_buffer.value().is_null());
+    video_buffer = maybe_depth_buffer.value().get<nvidia::gxf::VideoBuffer>();
+    ASSERT_TRUE(video_buffer && !video_buffer.value().is_null());
+    auto depth_buffer_info = video_buffer.value()->video_frame_info();
+    ASSERT_EQ(depth_buffer_info.width, 640U);
+    ASSERT_EQ(depth_buffer_info.height, 480U);
+    ASSERT_EQ(depth_buffer_info.color_format, nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F);
+    holoscan::log_info("Received depth buffer");
   }
 };
 
@@ -476,14 +512,18 @@ class RenderBufferInputApp : public holoscan::Application {
                                                   Arg("headless", true),
                                                   Arg("enable_render_buffer_input", true),
                                                   Arg("enable_render_buffer_output", true),
+                                                  Arg("enable_depth_buffer_input", true),
+                                                  Arg("enable_depth_buffer_output", true),
                                                   Arg("width", 640U),
                                                   Arg("height", 480U));
     auto sink = make_operator<RenderBufferSinkOp>("sink");
 
     add_flow(source, renderer, {{"outputs", "receivers"}});
     add_flow(source, renderer, {{"output_specs", "input_specs"}});
-    add_flow(source, renderer, {{"render_buffer", "render_buffer_input"}});
-    add_flow(renderer, sink, {{"render_buffer_output", "input"}});
+    add_flow(source, renderer, {{"color_buffer", "render_buffer_input"}});
+    add_flow(renderer, sink, {{"render_buffer_output", "render_buffer_input"}});
+    add_flow(source, renderer, {{"depth_buffer", "depth_buffer_input"}});
+    add_flow(renderer, sink, {{"depth_buffer_output", "depth_buffer_input"}});
   }
 
   InputType input_type_;
@@ -497,7 +537,8 @@ TEST(HolovizApps, TestRenderBufferInput) {
   EXPECT_NO_THROW(app->run());
   std::string log_output = testing::internal::GetCapturedStderr();
 
-  EXPECT_TRUE(log_output.find("Received render buffer") != std::string::npos)
+  EXPECT_TRUE((log_output.find("Received render buffer") != std::string::npos) &&
+              (log_output.find("Received depth buffer") != std::string::npos))
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 }

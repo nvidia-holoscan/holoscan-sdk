@@ -205,14 +205,14 @@ class TestOperator:
         op.add_arg(Arg("a1"))
         capfd.readouterr()
 
-    def test_initialize(self, app, config_file, capfd):
+    def test_initialize(self, app, operators_config_file, capfd):
         spec = OperatorSpecBase(app)
 
         op = Operator(app)
         # Operator.__init__ will have added op.spec for us
         assert isinstance(op.spec, OperatorSpecBase)
 
-        app.config(config_file)
+        app.config(operators_config_file)
 
         # initialize context
         context = app.executor.context
@@ -434,10 +434,9 @@ class TestTensor:
 
 
 class TestFormatConverterOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         name = "recorder_format_converter"
-        print(f"kwargs={app.kwargs('recorder_format_converter')}")
         op = FormatConverterOp(
             fragment=app,
             name=name,
@@ -471,8 +470,8 @@ class TestFormatConverterOp:
 
 
 class TestInferenceOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         model_path = os.path.join(sample_data_path, "multiai_ultrasound", "models")
 
         model_path_map = {
@@ -498,8 +497,8 @@ class TestInferenceOp:
 
 
 class TestInferenceProcessorOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         name = "inference_processor"
         op = InferenceProcessorOp(
             app,
@@ -536,8 +535,8 @@ class TestSegmentationPostprocessorOp:
 
 
 class TestVideoStreamRecorderOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         name = "recorder"
         op = VideoStreamRecorderOp(name=name, fragment=app, **app.kwargs("recorder"))
         assert isinstance(op, _Operator)
@@ -551,8 +550,8 @@ class TestVideoStreamRecorderOp:
 
 
 class TestVideoStreamReplayerOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         name = "replayer"
         data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
         op = VideoStreamReplayerOp(
@@ -904,8 +903,8 @@ class TestHolovizOpInputSpecView:
 
 
 class TestHolovizOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         op = HolovizOp(app, name="visualizer", **app.kwargs("holoviz"))
         assert isinstance(op, _Operator)
         assert op.operator_type == Operator.OperatorType.NATIVE
@@ -1020,14 +1019,17 @@ class HolovizDepthMapSinkOp(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
-        spec.input("in")
+        spec.input("render_buffer_input")
+        spec.input("depth_buffer_input")
 
     def compute(self, op_input, op_output, context):
         # TODO(unknown): Holoviz outputs a video buffer, but there is no support for video buffers in Python  # noqa: FIX002, E501
         # yet
         pass
-        # message = op_input.receive("in")
+        # message = op_input.receive("render_buffer_input")
         # image = message.get("render_buffer_output")
+        # message = op_input.receive("depth_buffer_input")
+        # image = message.get("depth_buffer_output")
 
 
 class MyHolovizDepthMapApp(Application):
@@ -1063,6 +1065,7 @@ class MyHolovizDepthMapApp(Application):
             height=render_height,
             headless=True,
             enable_render_buffer_output=True,
+            enable_depth_buffer_output=True,
             allocator=alloc,
             tensors=[
                 dict(name="depth_map", type="depth_map"),
@@ -1076,7 +1079,8 @@ class MyHolovizDepthMapApp(Application):
         sink = HolovizDepthMapSinkOp(self, CountCondition(self, 1), name="sink")
 
         self.add_flow(source, holoviz, {("", "receivers")})
-        self.add_flow(holoviz, sink, {("render_buffer_output", "")})
+        self.add_flow(holoviz, sink, {("render_buffer_output", "render_buffer_input")})
+        self.add_flow(holoviz, sink, {("depth_buffer_output", "depth_buffer_input")})
 
 
 @pytest.mark.parametrize("depth_data_type", [np.uint8, np.float32])
@@ -1146,8 +1150,8 @@ def test_holoviz_callbacks(capfd):
 
 
 class TestBayerDemosaicOp:
-    def test_kwarg_based_initialization(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         demosaic_stream_pool = CudaStreamPool(
             app,
             name="cuda_stream",
@@ -1222,10 +1226,9 @@ class TestV4L2VideoCaptureOp:
         assert "error" not in captured.err
         assert "warning" not in captured.err
 
-    def test_initialization_from_yaml(self, app, config_file, capfd):
-        app.config(config_file)
+    def test_initialization_from_yaml(self, app, operators_config_file, capfd):
+        app.config(operators_config_file)
         name = "video_capture"
-        print(f"{app.kwargs('v4l2_video_capture')}")
         op = V4L2VideoCaptureOp(
             app,
             name=name,

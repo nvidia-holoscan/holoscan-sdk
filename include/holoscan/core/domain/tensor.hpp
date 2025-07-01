@@ -229,7 +229,7 @@ DLDevice dldevice_from_pointer(void* ptr);
  *
  * @param tensor DLTensor object that holds information to fill strides.
  * @param[out] strides Strides to fill.
- * @param to_num_elments If true, the strides in `strides` argument are in number of elements, not
+ * @param to_num_elements If true, the strides in `strides` argument are in number of elements, not
  * bytes (default: false).
  */
 void calc_strides(const DLTensor& tensor, std::vector<int64_t>& strides,

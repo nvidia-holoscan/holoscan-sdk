@@ -149,7 +149,7 @@ class DataFlowTracker {
    * receive timestamp, message publish timestamp) is logged in a file. The logging does not take
    * into account the number of message to skip or discard or the threshold latency.
    *
-   * This function buffers a number of lines set by the @num_buffered_messages parameter before
+   * This function buffers a number of lines set by the num_buffered_messages parameter before
    * flushing the buffer to the log file.
    *
    * @param filename The name of the log file.
@@ -220,7 +220,7 @@ class DataFlowTracker {
   friend class AnnotatedDoubleBufferReceiver;
 
   friend gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
-                                         const char* name);
+                                         const char* receiver_name);
 
   /**
    * @brief Update the tracker with the current latency for a given path.

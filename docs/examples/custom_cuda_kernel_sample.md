@@ -73,7 +73,6 @@ Inference Processor operator (`InferenceProcessorOp`) is designed using APIs fro
             - 1D: (const void* input, void* output, int size)
             - 2D: (const void* input, void* output, int width, int height)
             - 3D: (const void* input, void* output, int width, int height, int depth)
-        - Output buffer allocation is of same size as input. Customized buffer dimension support will come in future releases.
         - Custom CUDA kernel can be ingested via a filepath or a string. If the custom CUDA kernel is ingested via a filepath, the operator will read the kernel from the file. If the custom CUDA kernel is ingested via a string in the parameter set, the operator will use the kernel from the string. Filepath must end with **.cu** extension. All specifications for the kernel must be present in the file.
     - Output data type for custom CUDA kernel with identifier **1** is defined as **out_dtype-1**.
         - Options: kFloat32, kFloat16, kUInt8, kInt8, kInt32, kInt64
@@ -109,6 +108,13 @@ Inference Processor operator (`InferenceProcessorOp`) is designed using APIs fro
     processor_op:
         process_operations:
             "input_tensor": ["custom_cuda_kernel-1:custom_cuda_kernel-2"]
+    ```
+- CUDA Graphs support: is enabled for execution of custom CUDA kernels. In use cases with multiple custom CUDA kernels chained together, usage of CUDA Graphs may optimize the execution. By default, CUDA Graphs are disabled. It can be enabled by setting **use_cuda_graphs** as **true** in the parameter set as shown below. If CUDA Graphs are enabled, it will be applied for all custom CUDA kernel executions and for all the tensors using custom CUDA kernels for processing.
+    ```yaml
+    processor_op:
+        process_operations:
+            "input_tensor": ["custom_cuda_kernel-1:custom_cuda_kernel-2"]
+        use_cuda_graphs: true
     ```
     
 ## Holoviz Operator

@@ -42,7 +42,23 @@ class CountCondition : public gxf::GXFCondition {
 
   const char* gxf_typename() const override { return "nvidia::gxf::CountSchedulingTerm"; }
 
+  /**
+   * @brief Set the initial count.
+   *
+   * Note: This method cannot be used to modify the remaining count at runtime.
+   *
+   * @param count The initial count for the condition.
+   */
   void count(int64_t count) { count_ = count; }
+
+  /**
+   * @brief Get the initial count.
+   *
+   * Note: nvidia::gxf::CountSchedulingTerm does not expose a public method to get the remaining
+   * count at runtime.
+   *
+   * @returns initial count
+   */
   int64_t count() { return count_; }
 
   void setup(ComponentSpec& spec) override;

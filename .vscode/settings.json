@@ -128,7 +128,9 @@
         "expected": "cpp",
         "simd": "cpp",
         "stacktrace": "cpp",
-        "__sso_allocator": "cpp"
+        "__sso_allocator": "cpp",
+        "__debug": "cpp",
+        "target": "cpp"
     },
     "git.alwaysSignOff": true,
     "git.untrackedChanges": "separate",

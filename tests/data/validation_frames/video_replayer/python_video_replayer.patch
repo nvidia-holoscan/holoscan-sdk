@@ -1,11 +1,9 @@
 --- ../examples/video_replayer/python/video_replayer.py	2023-11-16 01:35:53.593301380 +0000
 +++ examples/video_replayer/python/video_replayer_test.py	2023-11-20 03:25:57.853150634 +0000
-@@ -18,8 +18,13 @@ limitations under the License.
- import os
- 
- from holoscan.core import Application
--from holoscan.operators import HolovizOp, VideoStreamReplayerOp
--from holoscan.resources import RMMAllocator
+@@ -21,6 +21,13 @@ from holoscan.core import Application
+ from holoscan.data_loggers import BasicConsoleLogger
+ from holoscan.operators import HolovizOp, VideoStreamReplayerOp
+ from holoscan.resources import RMMAllocator
 +from holoscan.operators import (
 +    FormatConverterOp,
 +    HolovizOp,
@@ -16,7 +14,7 @@
  
  sample_data_path = os.environ.get("HOLOSCAN_INPUT_PATH", "../data")
  
-@@ -58,6 +63,23 @@ class VideoReplayerApp(Application):
+@@ -59,6 +66,23 @@ class VideoReplayerApp(Application):
          # Define the workflow
          self.add_flow(replayer, visualizer, {("output", "receivers")})
  

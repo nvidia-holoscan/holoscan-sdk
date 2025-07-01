@@ -24,6 +24,7 @@
 #include "./core/arg.hpp"
 #include "./core/condition.hpp"
 #include "./core/config.hpp"
+#include "./core/data_logger.hpp"
 #include "./core/dataflow_tracker.hpp"
 #include "./core/execution_context.hpp"
 #include "./core/executor.hpp"
@@ -60,6 +61,7 @@
 #include "./core/network_contexts/gxf/ucx_context.hpp"
 
 // Resources
+#include "./core/resources/data_logger.hpp"
 #include "./core/resources/gxf/block_memory_pool.hpp"
 #include "./core/resources/gxf/clock.hpp"
 #include "./core/resources/gxf/condition_combiner.hpp"

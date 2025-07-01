@@ -519,13 +519,15 @@ Example code for how the condition would be configured from an application's `co
 
 The state of an asynchronous event is described using `AsynchronousEventState` and is updated using the `event_state()` API.
 
-| **AsynchronousEventState**   | **Description**                                                     |
-|------------------------------|---------------------------------------------------------------------|
-| READY                        | Init state, first execution of `compute()` method is pending        |
-| WAIT                         | Request to async service yet to be sent, nothing to do but wait     |
-| EVENT\_WAITING               | Request sent to an async service, pending event done notification   |
-| EVENT\_DONE                  | Event done notification received, operator ready to be ticked       |
-| EVENT\_NEVER                 | Operator does not want to be executed again, end of execution       |
+| **AsynchronousEventState**     | **Description**                                                     |
+|--------------------------------|---------------------------------------------------------------------|
+| READY (kReady)                 | Init state, first execution of `compute()` method is pending        |
+| WAIT (kWait)                   | Request to async service yet to be sent, nothing to do but wait     |
+| EVENT\_WAITING (kEventWaiting) | Request sent to an async service, pending event done notification   |
+| EVENT\_DONE (kEventDone)       | Event done notification received, operator ready to be ticked       |
+| EVENT\_NEVER (kEventNone)      | Operator does not want to be executed again, end of execution       |
+
+Note that usually Holoscan's Python API uses an UPPER_CASE naming convention while the C++ API uses a k-prefix naming convention. The `AsynchronousEventState` enum also supports UPPER_CASE in C++ for backwards compatibility with older releases, but the use of uppercase from C++ should be considered deprecated.
 
 Operators associated with this scheduling term most likely have an asynchronous thread which can update the state of the condition outside of its regular execution cycle performed by the scheduler. When the asynchronous event state is in `WAIT` state, the scheduler regularly polls for the scheduling state of the operator. When the asynchronous event state is in `EVENT_WAITING` state, schedulers will not check the scheduling status of the operator again until they receive an event notification. Setting the state of the asynchronous event to `EVENT_DONE` automatically sends the event notification to the scheduler. Operators can use the `EVENT_NEVER` state to indicate the end of its execution cycle. As for all of the condition types, the condition type can be used with any of the schedulers.
 

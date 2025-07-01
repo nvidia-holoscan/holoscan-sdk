@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@ add_executable(multithread
 target_link_libraries(multithread
   PRIVATE
   holoscan::core
+  holoscan::data_loggers::basic_console_logger
 )
 
 # Copy config file to the build tree
@@ -78,6 +79,7 @@ if(HOLOSCAN_BUILD_TESTS)
   # Test the flow tracking
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/multithread.yaml CONFIG_STRING)
   string(REPLACE "tracking: false" "tracking: true" CONFIG_STRING "${CONFIG_STRING}")
+  string(REPLACE "data_logging: false" "data_logging: true" CONFIG_STRING "${CONFIG_STRING}")
 
   # Write the config
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/multithread_tracking.yaml)
@@ -89,5 +91,14 @@ if(HOLOSCAN_BUILD_TESTS)
           )
   set_tests_properties(EXAMPLE_CPP_MULTITHREAD_OPERATOR_TRACKING_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "Data Flow Tracking Results:"
-                       PASS_REGULAR_EXPRESSION "tx->out: 1")
+                       PASS_REGULAR_EXPRESSION "tx->out: 1"
+                       # representative expected data log entries
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:tx.out\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.values:15\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.in\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_val\\]"
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_name\\]"
+                       # rx.names:* expected to be excluded by denylist
+                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.names:15\\]"
+                       PASS_REGULAR_EXPRESSION "Category:Message \\(std::any\\)")
 endif()

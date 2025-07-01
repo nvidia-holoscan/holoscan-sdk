@@ -194,6 +194,9 @@ exhale_args = {
         EXCLUDE = \
             ../include/specific_path_to_exclude
 
+        # Avoid problem in doxygen parsing due to visibility macro
+        PREDEFINED = _HOLOSCAN_EXTERNAL_API_=
+
         EXCLUDE_PATTERNS = *.cpp *.cu *.pb.cc *.pb.h
     """
     ),

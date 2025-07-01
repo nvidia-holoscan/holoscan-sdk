@@ -58,10 +58,10 @@ HoloInfer::InferStatus ProcessingTests::call_parameter_check_processing() {
       processed_map, in_tensor_processing, out_tensor_processing);
 }
 
-HoloInfer::InferStatus ProcessingTests::setup_processor() {
+HoloInfer::InferStatus ProcessingTests::setup_processor(bool use_cuda_graphs) {
   holoscan_processor_context_ = std::make_unique<HoloInfer::ProcessorContext>();
-  auto status =
-      holoscan_processor_context_->initialize(process_operations, custom_kernels, config_path);
+  auto status = holoscan_processor_context_->initialize(
+      process_operations, custom_kernels, use_cuda_graphs, config_path);
   return status;
 }
 

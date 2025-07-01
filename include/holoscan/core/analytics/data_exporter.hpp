@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +56,7 @@ class DataExporter {
    * @brief A pure virtual function that needs to be implemented by subclasses
    *        to export the data in required format.
    *
-   * @param Data The data to be written to the CSV file.
+   * @param data The data to be written to the CSV file.
    */
   virtual void export_data(const std::vector<std::string>& data) = 0;
 

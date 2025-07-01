@@ -31,7 +31,7 @@ namespace holoscan {
 namespace inference {
 
 InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
-                                      const Mappings& custom_kernels,
+                                      const Mappings& custom_kernels, bool use_cuda_graphs,
                                       const std::string config_path = {}) {
   if (config_path.length() > 0) {
     if (std::filesystem::exists(config_path)) {
@@ -226,6 +226,7 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
         HOLOSCAN_LOG_ERROR("Error in initializing custom cuda kernels");
         return status;
       }
+      use_cuda_graph_ = use_cuda_graphs;
     } catch (...) {
       return InferStatus(holoinfer_code::H_ERROR,
                          "Data processor, Exception in initializing custom cuda kernels.");
@@ -601,9 +602,42 @@ InferStatus DataProcessor::process_operation(const std::string& operation,
 
 DataProcessor::~DataProcessor() {
   const char* error_string;
+  CUresult err;
+
+  if (kernel_nodes_.size() != 0) {
+    for (auto& nodes_vec : kernel_nodes_) {
+      for (auto& node : nodes_vec.second) {
+        err = cuGraphDestroyNode(node);
+        if (err != CUDA_SUCCESS) {
+          cuGetErrorString(err, &error_string);
+          HOLOSCAN_LOG_ERROR("Error in Graph node destruction: {}", error_string);
+        }
+      }
+    }
+  }
+
+  if (cuda_graph_instance_.size() != 0) {
+    for (auto& graph_instance : cuda_graph_instance_) {
+      err = cuGraphExecDestroy(graph_instance.second);
+      if (err != CUDA_SUCCESS) {
+        cuGetErrorString(err, &error_string);
+        HOLOSCAN_LOG_ERROR("Error in Graph instance destruction: {}", error_string);
+      }
+    }
+  }
+
+  if (graph_.size() != 0) {
+    for (auto& graph : graph_) {
+      err = cuGraphDestroy(graph.second);
+      if (err != CUDA_SUCCESS) {
+        cuGetErrorString(err, &error_string);
+        HOLOSCAN_LOG_ERROR("Error in Graph destruction: {}", error_string);
+      }
+    }
+  }
 
   if (module_ != nullptr) {
-    CUresult err = cuModuleUnload(module_);
+    err = cuModuleUnload(module_);
     if (err != CUDA_SUCCESS) {
       cuGetErrorString(err, &error_string);
       HOLOSCAN_LOG_ERROR("Error unloading CUDA module: {}", error_string);
@@ -611,7 +645,7 @@ DataProcessor::~DataProcessor() {
   }
 
   if (context_ != nullptr) {
-    CUresult err = cuCtxDestroy(context_);
+    err = cuCtxDestroy(context_);
     if (err != CUDA_SUCCESS) {
       cuGetErrorString(err, &error_string);
       HOLOSCAN_LOG_ERROR("Error destroying CUDA context: {}", error_string);

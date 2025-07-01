@@ -96,6 +96,17 @@ if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
 endif()
 
 # ##################################################################################################
+# * pose_tree tests ----------------------------------------------------------------------------------
+ConfigureTest(POSE_TREE_TEST
+  pose_tree/pose_tree.cpp
+  pose_tree/pose_tree_history.cpp
+)
+target_link_libraries(POSE_TREE_TEST
+  PRIVATE
+  holoscan::pose_tree
+)
+
+# ##################################################################################################
 # * codecs tests ----------------------------------------------------------------------------------
 ConfigureTest(CODECS_TEST
   codecs/codec_registry.cpp
@@ -131,6 +142,16 @@ target_link_libraries(OPERATORS_CLASSES_TEST
 add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 
 # ##################################################################################################
+# * data logger class unit tests ----------------------------------------------------------------------------------
+ConfigureTest(DATA_LOGGER_CLASSES_TEST
+  data_loggers/data_logger_classes.cpp
+)
+target_link_libraries(DATA_LOGGER_CLASSES_TEST
+  PRIVATE
+  holoscan::data_loggers::basic_console_logger
+)
+
+# ##################################################################################################
 # * system tests ----------------------------------------------------------------------------------
 ConfigureTest(
   SYSTEM_TEST
@@ -154,6 +175,7 @@ ConfigureTest(
   system/native_operator_minimal_app.cpp
   system/native_operator_multibroadcasts_app.cpp
   system/native_operator_ping_app.cpp
+  system/operator_condition_and_resource_methods.cpp
   system/operator_metadata_apps.cpp
   system/operator_status_test.cpp
   system/ping_rx_op.cpp

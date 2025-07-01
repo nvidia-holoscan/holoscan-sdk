@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,7 +80,8 @@ expected<void, RuntimeError> MockUcxSerializationBuffer::resize(size_t size,
   std::unique_lock<std::mutex> lock(mutex_);
   write_offset_ = 0;
   read_offset_ = 0;
-  auto result = buffer_.resize(allocator_, size, storage_type);
+  auto result =
+      buffer_.resize(allocator_, size, static_cast<nvidia::gxf::MemoryStorageType>(storage_type));
   if (!result) {
     return make_unexpected<RuntimeError>(
         RuntimeError(ErrorCode::kCodecError, "error in MemoryBuffer resize"));

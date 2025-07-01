@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,10 @@
  * limitations under the License.
  */
 #include <string>
+#include <vector>
 
 #include <holoscan/holoscan.hpp>
+#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
 #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 
@@ -68,6 +70,23 @@ int main(int argc, char** argv) {
     // use event-based scheduler to allow multiple operators to run in parallel
     app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
         "event-based-scheduler", app->from_config("event_based_scheduler")));
+  }
+
+  // enable logging of message contents to console if requested
+  auto enable_data_logging = app->from_config("data_logging").as<bool>();
+  if (enable_data_logging) {
+    // custom text serializer to limit the number of data elements printed for each tensor
+    auto text_serializer = app->make_resource<holoscan::data_loggers::SimpleTextSerializer>(
+        "simple_text_serializer", app->from_config("simple_text_serializer"));
+
+    // configure the console logger to use the custom text serializer
+    auto console_logger = app->make_resource<holoscan::data_loggers::BasicConsoleLogger>(
+        "console_logger",
+        holoscan::Arg("serializer", text_serializer),
+        app->from_config("basic_console_logger"));
+
+    // add the console logger to the application
+    app->add_data_logger(console_logger);
   }
 
   app->run();

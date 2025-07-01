@@ -17,7 +17,7 @@ The NVIDIA Developer Kits equipped with a [ConnectX network adapter](https://www
 
 :::{note}
 NVIDIA is committed to supporting hardware vendors enabling RDMA within their own drivers, an example of which is provided by the {ref}`aja_video_systems`, as part of a partnership with
-NVIDIA for the Holoscan SDK. The `AJASource` operator is an example of how the SDK can leverage RDMA.
+NVIDIA for the Holoscan SDK. The [AJASource operator](https://github.com/nvidia-holoscan/holohub/tree/holoscan-sdk-3.3.0/operators/aja_source) is an example of how the SDK can leverage RDMA.
 :::
 
 For more information about GPUDirect RDMA, see the following:

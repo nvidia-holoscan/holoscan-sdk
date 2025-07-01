@@ -87,7 +87,7 @@ Graph File Format
 
 The graph file stores list of entities. Each entity has a unique name and list of components. Each component has a name, a type, and properties. Properties are stored as key-value pairs.
 
-.. code-block:: yaml
+.. code-block:: text
 
    %YAML 1.2
    ---

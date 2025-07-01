@@ -186,16 +186,15 @@ gxf_result_t CudaObjectHandler::add_stream(const CudaStreamHandle& stream_handle
   return GXF_SUCCESS;
 }
 
-gxf_result_t CudaObjectHandler::add_stream(const cudaStream_t stream,
-                                           const std::string& output_port_name) {
+int CudaObjectHandler::add_stream(const cudaStream_t stream, const std::string& output_port_name) {
   HOLOSCAN_LOG_TRACE("Adding stream to output port '{}'", output_port_name);
   auto it = stream_to_stream_handle_.find(stream);
   if (it != stream_to_stream_handle_.end()) {
     const auto& stream_handle = it->second;
     emitted_cuda_stream_cids_.emplace(output_port_name, stream_handle.cid());
-    return GXF_SUCCESS;
+    return static_cast<int>(GXF_SUCCESS);
   }
-  return GXF_FAILURE;
+  return static_cast<int>(GXF_FAILURE);
 }
 
 expected<std::vector<std::optional<CudaStreamHandle>>, RuntimeError>
@@ -422,9 +421,8 @@ expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::stream_handle_from_s
                    "No CudaStreamHandle is currently mapped to the provided CUDA stream."));
 }
 
-cudaStream_t CudaObjectHandler::get_cuda_stream(gxf_context_t context,
-                                                const std::string& input_port_name, bool allocate,
-                                                bool sync_to_default) {
+cudaStream_t CudaObjectHandler::get_cuda_stream(void* context, const std::string& input_port_name,
+                                                bool allocate, bool sync_to_default) {
   auto maybe_cuda_stream_handle =
       get_cuda_stream_handle(context, input_port_name, allocate, sync_to_default);
   if (maybe_cuda_stream_handle.has_value()) {
@@ -444,7 +442,7 @@ cudaStream_t CudaObjectHandler::get_cuda_stream(gxf_context_t context,
 }
 
 std::vector<std::optional<cudaStream_t>> CudaObjectHandler::get_cuda_streams(
-    gxf_context_t context, const std::string& input_port_name) {
+    void* context, const std::string& input_port_name) {
   auto maybe_cuda_stream_handle_vec = get_cuda_stream_handles(context, input_port_name);
   if (maybe_cuda_stream_handle_vec.has_value()) {
     auto out = std::vector<std::optional<cudaStream_t>>{};
@@ -487,12 +485,13 @@ gxf_result_t CudaObjectHandler::synchronize_streams(
       cuda_streams.push_back(stream_from_stream_handle(maybe_stream_handle.value()));
     }
   }
-  return synchronize_streams(cuda_streams, target_cuda_stream, sync_to_default_stream);
+  auto gxf_result = synchronize_streams(cuda_streams, target_cuda_stream, sync_to_default_stream);
+  return static_cast<gxf_result_t>(gxf_result);
 }
 
-gxf_result_t CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cuda_streams,
-                                                    cudaStream_t target_cuda_stream,
-                                                    bool sync_to_default_stream) {
+int CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cuda_streams,
+                                           cudaStream_t target_cuda_stream,
+                                           bool sync_to_default_stream) {
   HOLOSCAN_LOG_DEBUG("Synchronizing {} streams to target stream.", cuda_streams.size());
   // exit early if there is nothing to synchronize
   if (target_cuda_stream == cudaStreamDefault) { sync_to_default_stream = false; }
@@ -504,7 +503,7 @@ gxf_result_t CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cu
         HOLOSCAN_CUDA_CALL(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
     if (cudaSuccess != result) {
       HOLOSCAN_LOG_ERROR("Stream synchronization failed");
-      return GXF_FAILURE;
+      return static_cast<int>(GXF_FAILURE);
     }
     event_created_ = true;
   }
@@ -523,7 +522,7 @@ gxf_result_t CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cu
     result = HOLOSCAN_CUDA_CALL(cudaStreamWaitEvent(target_cuda_stream, cuda_event_));
     if (cudaSuccess != result) {
       HOLOSCAN_LOG_ERROR("Stream synchronization failed");
-      return GXF_FAILURE;
+      return static_cast<int>(GXF_FAILURE);
     }
   }
 
@@ -532,9 +531,9 @@ gxf_result_t CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cu
     cudaError_t result = HOLOSCAN_CUDA_CALL(cudaEventRecord(cuda_event_, target_cuda_stream));
     if (cudaSuccess != result) { return GXF_FAILURE; }
     result = HOLOSCAN_CUDA_CALL(cudaStreamWaitEvent(cudaStreamDefault, cuda_event_));
-    if (cudaSuccess != result) { return GXF_FAILURE; }
+    if (cudaSuccess != result) { return static_cast<int>(GXF_FAILURE); }
   }
-  return GXF_SUCCESS;
+  return static_cast<int>(GXF_SUCCESS);
 }
 
 expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::allocate_internal_stream(
@@ -554,7 +553,7 @@ expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::allocate_internal_st
   return allocated_cuda_stream_handles_[stream_name];
 }
 
-gxf_result_t CudaObjectHandler::release_internal_streams(gxf_context_t context) {
+int CudaObjectHandler::release_internal_streams(void* context) {
   if (allocated_cuda_stream_handles_.empty()) { return GXF_SUCCESS; }
 
   auto maybe_gxf_stream_pool_handle = cuda_stream_pool_handle(context);
@@ -563,7 +562,7 @@ gxf_result_t CudaObjectHandler::release_internal_streams(gxf_context_t context) 
         "Found internally allocated CUDA streams, but no CUDA stream pool. These streams will "
         "not "
         "be released.");
-    return GXF_FAILURE;
+    return static_cast<int>(GXF_FAILURE);
   }
   auto cuda_stream_pool = maybe_gxf_stream_pool_handle.value();
 
@@ -575,7 +574,7 @@ gxf_result_t CudaObjectHandler::release_internal_streams(gxf_context_t context) 
       result = GXF_FAILURE;
     }
   }
-  return result;
+  return static_cast<int>(result);
 }
 
 void CudaObjectHandler::clear_received_streams() {

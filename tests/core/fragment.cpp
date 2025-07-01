@@ -305,17 +305,6 @@ TEST(Fragment, TestFragmentExecutor) {
   EXPECT_EQ(E.fragment(), &F);
 }
 
-TEST(Fragment, TestFragmentMoveAssignment) {
-  Fragment G;
-  G.name("G");
-  Fragment F;
-  F.name("F");
-
-  // can only move assign (copy assignment operator has been deleted)
-  F = std::move(G);
-  EXPECT_EQ(F.name(), "G");
-}
-
 // Fragment::make_condition is tested elsewhere in condition_classes.cpp
 // Fragment::make_resource is tested elsewhere in resource_classes.cpp
 // Fragment::make_operator is tested elsewhere in operator_classes.cpp

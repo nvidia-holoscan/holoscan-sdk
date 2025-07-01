@@ -197,7 +197,7 @@ class AppDriver {
   void set_status(AppStatus status);
 
  private:
-  friend class service::AppDriverServer;  ///< Allow AppDriverServer to access private members.
+  friend class distributed::AppDriverServer;  ///< Allow AppDriverServer to access private members.
 
   void setup_signal_handlers();
 
@@ -290,7 +290,7 @@ class AppDriver {
   /// Maps port indices to real port numbers (initially set to 0).
   std::unordered_map<int32_t, uint32_t> index_to_port_map_;
 
-  std::unique_ptr<service::AppDriverServer> driver_server_;
+  std::unique_ptr<distributed::AppDriverServer> driver_server_;
 
   std::unique_ptr<FragmentScheduler> fragment_scheduler_;
 

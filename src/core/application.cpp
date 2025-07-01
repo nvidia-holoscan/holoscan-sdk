@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "./distributed/app_driver/client.hpp"
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/app_worker.hpp"
 #include "holoscan/core/config.hpp"
@@ -39,7 +40,6 @@
 #include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
-#include "./services/app_driver/client.hpp"
 
 namespace CLI {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -318,13 +318,23 @@ void Application::is_metadata_enabled(bool enabled) {
   std::call_once(warn_flag, []() {
     HOLOSCAN_LOG_WARN(
         "The Application::is_metadata_enabled(bool) setter is deprecated. Please use "
-        "Application::enable_metadata(bool) instead.");
+        "Application::(bool) instead.");
   });
   is_metadata_enabled_ = enabled;
 }
 
 void Application::enable_metadata(bool enabled) {
   is_metadata_enabled_ = enabled;
+}
+
+void Application::add_data_logger(std::shared_ptr<DataLogger> logger) {
+  if (fragment_graph().is_empty()) {
+    // single-fragment application
+    Fragment::add_data_logger(logger);
+  } else {
+    // add the data logger to each fragment in the fragment graph
+    for (const auto& fragment : fragment_graph().get_nodes()) { fragment->add_data_logger(logger); }
+  }
 }
 
 MetadataPolicy Application::metadata_policy() const {
@@ -470,6 +480,7 @@ void Application::compose_graph() {
   // (The GXFCodeletOp and GXFComponentResource classes are required to access the underlying GXF
   //  types in the setup() method when composing a graph.)
   load_extensions_from_config();
+
   compose();
   is_composed_ = true;
   is_fragment_graph_composed_ = true;
@@ -583,7 +594,7 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
   }
 }
 
-std::shared_ptr<service::AppDriverClient> Application::app_driver_client() const {
+std::shared_ptr<distributed::AppDriverClient> Application::app_driver_client() const {
   if (!app_worker_) {
     HOLOSCAN_LOG_ERROR("Cannot get AppDriverClient for this fragment: app_worker_ is null");
     return nullptr;

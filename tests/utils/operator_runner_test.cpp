@@ -54,7 +54,9 @@ class ProcessingOp : public holoscan::Operator {
 
   ProcessingOp() = default;
 
-  explicit ProcessingOp(std::function<int(int)> op_func) : Operator() { op_func_ = op_func; }
+  explicit ProcessingOp(std::function<int(int)> op_func) : Operator() {
+    op_func_ = std::move(op_func);
+  }
 
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input<int>("in");
@@ -220,7 +222,7 @@ class VerificationOp : public holoscan::Operator {
   }
 
  private:
-  T expected_value_;
+  T expected_value_{};
 };
 
 // Template operator that uses OperatorRunner to forward data
@@ -230,6 +232,8 @@ class DataForwardOp : public holoscan::Operator {
   HOLOSCAN_OPERATOR_FORWARD_ARGS(DataForwardOp)
 
   DataForwardOp() = default;
+
+  explicit DataForwardOp(T& expected_value) : expected_value_(expected_value) {}
 
   void initialize() override {
     Operator::initialize();
@@ -266,12 +270,10 @@ class DataForwardOp : public holoscan::Operator {
     if (output) { op_output.emit(output.value(), "out"); }
   }
 
-  void set_expected_value(const T& value) { expected_value_ = value; }
-
  private:
   std::shared_ptr<VerificationOp<T>> verification_op_;
   std::shared_ptr<holoscan::ops::OperatorRunner> op_runner_;
-  T expected_value_;
+  T expected_value_{};
 };
 
 // Generator operator for test data
@@ -307,15 +309,14 @@ class OperatorRunnerTypeTestApp : public holoscan::Application {
 
     // Create operators
     auto generator = make_operator<TestDataGeneratorOp<T>>("generator", test_value_);
-    auto forwarder = make_operator<DataForwardOp<T>>("forwarder");
-    forwarder->set_expected_value(test_value_);
+    auto forwarder = make_operator<DataForwardOp<T>>("forwarder", test_value_);
 
     // Add flow
     add_flow(generator, forwarder);
   }
 
  private:
-  T test_value_;
+  T test_value_{};
 };
 
 // Test cases for different types
@@ -397,7 +398,7 @@ class TestDataGeneratorOp<nvidia::gxf::Entity> : public holoscan::Operator {
     // Create a new GXF entity
     auto entity = nvidia::gxf::Entity::New(context.context());
 
-    op_output.emit(entity, "out");
+    op_output.emit(std::move(entity), "out");
   }
 };
 

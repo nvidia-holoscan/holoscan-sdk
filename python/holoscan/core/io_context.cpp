@@ -38,6 +38,7 @@
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/expected.hpp"
+#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 #include "holoscan/operators/inference/inference.hpp"
@@ -101,7 +102,7 @@ struct codec<std::shared_ptr<GILGuardedPyObject>> {
 // NOLINTEND(altera-struct-pack-align)
 
 static void register_py_object_codec() {
-  auto& codec_registry = CodecRegistry::get_instance();
+  auto& codec_registry = gxf::CodecRegistry::get_instance();
   codec_registry.add_codec<std::shared_ptr<GILGuardedPyObject>>(
       "std::shared_ptr<GILGuardedPyObject>"s);
 }
@@ -510,8 +511,7 @@ void init_io_context(py::module_& m) {
 PyInputContext::PyInputContext(ExecutionContext* execution_context, Operator* op,
                                std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,
                                const std::shared_ptr<PyOperator>& py_op)
-    : gxf::GXFInputContext::GXFInputContext(execution_context, op, inputs),
-      py_op_(py_op.get()) {}
+    : gxf::GXFInputContext::GXFInputContext(execution_context, op, inputs), py_op_(py_op.get()) {}
 
 PyOutputContext::PyOutputContext(ExecutionContext* execution_context, Operator* op,
                                  std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs,
