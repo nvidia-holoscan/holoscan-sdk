@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,15 +27,21 @@ namespace holoscan {
 RealtimeClock::RealtimeClock(const std::string& name, nvidia::gxf::RealtimeClock* component)
     : Clock(name, component) {
   auto maybe_offset = component->getParameter<double>("offset");
-  if (!maybe_offset) { throw std::runtime_error("Failed to get initial_time_offset"); }
+  if (!maybe_offset) {
+    throw std::runtime_error("Failed to get initial_time_offset");
+  }
   initial_time_offset_ = maybe_offset.value();
 
   auto maybe_scale = component->getParameter<double>("scale");
-  if (!maybe_scale) { throw std::runtime_error("Failed to get initial_time_scale"); }
+  if (!maybe_scale) {
+    throw std::runtime_error("Failed to get initial_time_scale");
+  }
   initial_time_scale_ = maybe_scale.value();
 
   auto maybe_use_epoch = component->getParameter<bool>("use_epoch");
-  if (!maybe_use_epoch) { throw std::runtime_error("Failed to get use_time_since_epoch"); }
+  if (!maybe_use_epoch) {
+    throw std::runtime_error("Failed to get use_time_since_epoch");
+  }
   use_time_since_epoch_ = maybe_use_epoch.value();
 }
 
@@ -45,13 +51,17 @@ nvidia::gxf::RealtimeClock* RealtimeClock::get() const {
 
 double RealtimeClock::time() const {
   auto clock = get();
-  if (clock) { return clock->time(); }
+  if (clock) {
+    return clock->time();
+  }
   return 0.0;
 }
 
 int64_t RealtimeClock::timestamp() const {
   auto clock = get();
-  if (clock) { return clock->timestamp(); }
+  if (clock) {
+    return clock->timestamp();
+  }
   return 0;
 }
 

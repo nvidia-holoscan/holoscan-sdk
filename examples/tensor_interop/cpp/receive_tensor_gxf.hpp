@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,9 @@ class ReceiveTensor : public Codelet {
   gxf_result_t start() override { return GXF_SUCCESS; }
   gxf_result_t tick() override {
     const auto in_message = signal_->receive();
-    if (!in_message || in_message.value().is_null()) { return GXF_CONTRACT_MESSAGE_NOT_AVAILABLE; }
+    if (!in_message || in_message.value().is_null()) {
+      return GXF_CONTRACT_MESSAGE_NOT_AVAILABLE;
+    }
 
     const auto maybe_in_tensor = in_message.value().get<gxf::Tensor>("tensor");
     if (!maybe_in_tensor) {
@@ -74,7 +76,9 @@ class ReceiveTensor : public Codelet {
 
     CUDA_TRY(cudaMemcpy(in_data.data(), in_data_ptr, data_size, cudaMemcpyDeviceToHost));
 
-    for (size_t i = 0; i < data_size; i++) { std::cout << static_cast<int>(in_data[i]) << " "; }
+    for (size_t i = 0; i < data_size; i++) {
+      std::cout << static_cast<int>(in_data[i]) << " ";
+    }
     std::cout << std::endl;
 
     return GXF_SUCCESS;

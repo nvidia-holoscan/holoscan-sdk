@@ -146,9 +146,15 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"font_path", font_path}}) {
     // only append tensors argument if it is not empty
     //     avoids [holoscan] [error] [gxf_operator.hpp:126] Unable to handle parameter 'tensors'
-    if (!tensors.empty()) { this->add_arg(Arg{"tensors", tensors}); }
-    if (!receivers.empty()) { this->add_arg(Arg{"receivers", receivers}); }
-    if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    if (!tensors.empty()) {
+      this->add_arg(Arg{"tensors", tensors});
+    }
+    if (!receivers.empty()) {
+      this->add_arg(Arg{"receivers", receivers});
+    }
+    if (cuda_stream_pool) {
+      this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool});
+    }
     if (window_close_condition) {
       this->add_arg(Arg{"window_close_condition", window_close_condition});
     }

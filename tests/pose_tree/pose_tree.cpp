@@ -34,49 +34,59 @@ static inline double get_time() {
   return tv.tv_sec + tv.tv_usec * 1e-6;
 }
 
-#define EXPECT_VEC_EQ(A, B)                                            \
-  {                                                                    \
-    auto _a = (A);                                                     \
-    auto _b = (B);                                                     \
-    ASSERT_EQ(_a.size(), _b.size());                                   \
-    const size_t a_length = _a.size();                                 \
-    for (size_t i = 0; i < a_length; i++) { EXPECT_EQ(_a[i], _b[i]); } \
+#define EXPECT_VEC_EQ(A, B)                 \
+  {                                         \
+    auto _a = (A);                          \
+    auto _b = (B);                          \
+    ASSERT_EQ(_a.size(), _b.size());        \
+    const size_t a_length = _a.size();      \
+    for (size_t i = 0; i < a_length; i++) { \
+      EXPECT_EQ(_a[i], _b[i]);              \
+    }                                       \
   }
 
-#define EXPECT_VEC_NEAR(A, B, T)                                            \
-  {                                                                         \
-    auto _a = (A);                                                          \
-    auto _b = (B);                                                          \
-    ASSERT_EQ(_a.size(), _b.size());                                        \
-    const size_t a_length = _a.size();                                      \
-    for (size_t i = 0; i < a_length; i++) { EXPECT_NEAR(_a[i], _b[i], T); } \
+#define EXPECT_VEC_NEAR(A, B, T)            \
+  {                                         \
+    auto _a = (A);                          \
+    auto _b = (B);                          \
+    ASSERT_EQ(_a.size(), _b.size());        \
+    const size_t a_length = _a.size();      \
+    for (size_t i = 0; i < a_length; i++) { \
+      EXPECT_NEAR(_a[i], _b[i], T);         \
+    }                                       \
   }
 
-#define EXPECT_MAT_NEAR(A, B, T)                                                  \
-  {                                                                               \
-    auto _a = (A);                                                                \
-    auto _b = (B);                                                                \
-    ASSERT_EQ(_a.rows(), _b.rows());                                              \
-    ASSERT_EQ(_a.cols(), _b.cols());                                              \
-    for (int i = 0; i < _a.rows(); i++) {                                         \
-      for (int j = 0; j < _a.cols(); j++) { EXPECT_NEAR(_a(i, j), _b(i, j), T); } \
-    }                                                                             \
+#define EXPECT_MAT_NEAR(A, B, T)            \
+  {                                         \
+    auto _a = (A);                          \
+    auto _b = (B);                          \
+    ASSERT_EQ(_a.rows(), _b.rows());        \
+    ASSERT_EQ(_a.cols(), _b.cols());        \
+    for (int i = 0; i < _a.rows(); i++) {   \
+      for (int j = 0; j < _a.cols(); j++) { \
+        EXPECT_NEAR(_a(i, j), _b(i, j), T); \
+      }                                     \
+    }                                       \
   }
 
-#define ASSERT_VEC_NEAR(A, B, T)                                            \
-  {                                                                         \
-    auto _a = (A);                                                          \
-    auto _b = (B);                                                          \
-    ASSERT_EQ(_a.size(), _b.size());                                        \
-    const size_t a_length = _a.size();                                      \
-    for (size_t i = 0; i < a_length; i++) { ASSERT_NEAR(_a[i], _b[i], T); } \
+#define ASSERT_VEC_NEAR(A, B, T)            \
+  {                                         \
+    auto _a = (A);                          \
+    auto _b = (B);                          \
+    ASSERT_EQ(_a.size(), _b.size());        \
+    const size_t a_length = _a.size();      \
+    for (size_t i = 0; i < a_length; i++) { \
+      ASSERT_NEAR(_a[i], _b[i], T);         \
+    }                                       \
   }
 
-#define EXPECT_VEC_NEAR_ZERO(A, T)                                      \
-  {                                                                     \
-    auto _a = (A);                                                      \
-    const size_t a_length = _a.size();                                  \
-    for (size_t i = 0; i < a_length; i++) { EXPECT_NEAR(_a[i], 0, T); } \
+#define EXPECT_VEC_NEAR_ZERO(A, T)          \
+  {                                         \
+    auto _a = (A);                          \
+    const size_t a_length = _a.size();      \
+    for (size_t i = 0; i < a_length; i++) { \
+      EXPECT_NEAR(_a[i], 0, T);             \
+    }                                       \
   }
 
 #define EXPECT_SO_NEAR_ID(A, T) EXPECT_NEAR((A).angle(), 0.0, T);
@@ -101,7 +111,9 @@ template <typename Derived, typename RandomEngine>
 auto vector_normal_distribution(const Eigen::MatrixBase<Derived>& sigma, RandomEngine& rng) {
   std::normal_distribution<typename Derived::Scalar> normal;
   auto result = sigma.eval();
-  for (int i = 0; i < result.size(); i++) { result[i] *= normal(rng); }
+  for (int i = 0; i < result.size(); i++) {
+    result[i] *= normal(rng);
+  }
   return result;
 }
 
@@ -113,7 +125,9 @@ Vector<K, N> random_point_on_sphere(RandomEngine& rng, size_t n = N) {
   while (true) {
     auto result = vector_normal_distribution(Vector<K, N>::Constant(n), rng);
     K length = result.norm();
-    if (is_almost_zero(length)) { continue; }
+    if (is_almost_zero(length)) {
+      continue;
+    }
     return result / length;
   }
 }
@@ -291,7 +305,9 @@ TEST(PoseTree, Tree) {
         const Pose3d pose = pose_normal_distribution(sigma, s_rng);
         nodes[d].push_back(pg.create_frame().value());
         ASSERT_TRUE(pg.set(nodes[d - 1][0], nodes[d][b], 0.0, pose));
-        if (b == 0) { actual = actual * pose; }
+        if (b == 0) {
+          actual = actual * pose;
+        }
       }
     }
     auto maybe = pg.get(nodes[0][0], nodes[kDepth - 1][0], 0.0);

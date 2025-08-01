@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,20 +33,28 @@ constexpr int32_t kDefaultDeviceId = 0;
 BlockMemoryPool::BlockMemoryPool(const std::string& name, nvidia::gxf::BlockMemoryPool* component)
     : Allocator(name, component) {
   auto maybe_storage_type = component->getParameter<int32_t>("storage_type");
-  if (!maybe_storage_type) { throw std::runtime_error("Failed to get storage_type"); }
+  if (!maybe_storage_type) {
+    throw std::runtime_error("Failed to get storage_type");
+  }
   storage_type_ = maybe_storage_type.value();
 
   auto maybe_block_size = component->getParameter<uint64_t>("block_size");
-  if (!maybe_block_size) { throw std::runtime_error("Failed to get block_size"); }
+  if (!maybe_block_size) {
+    throw std::runtime_error("Failed to get block_size");
+  }
   block_size_ = maybe_block_size.value();
 
   auto maybe_num_blocks = component->getParameter<uint64_t>("num_blocks");
-  if (!maybe_num_blocks) { throw std::runtime_error("Failed to get num_blocks"); }
+  if (!maybe_num_blocks) {
+    throw std::runtime_error("Failed to get num_blocks");
+  }
   num_blocks_ = maybe_num_blocks.value();
 
   auto maybe_gpu_device =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
-  if (!maybe_gpu_device) { throw std::runtime_error("Failed to get dev_id"); }
+  if (!maybe_gpu_device) {
+    throw std::runtime_error("Failed to get dev_id");
+  }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();
 }
@@ -59,8 +67,8 @@ void BlockMemoryPool::setup(ComponentSpec& spec) {
   spec.param(storage_type_,
              "storage_type",
              "Storage type",
-             "The memory storage type used by this allocator. Can be kHost (0), kDevice (1) or "
-             "kSystem (2)",
+             "The memory storage type used by this allocator. Can be kHost (0), kDevice (1), "
+             "kSystem (2), or kCudaManaged (3)",
              0);
   spec.param(block_size_,
              "block_size",

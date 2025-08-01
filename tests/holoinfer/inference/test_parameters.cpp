@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <iostream>
 #include <string>
 #include <utility>
 
@@ -195,7 +196,9 @@ void HoloInferTests::parameter_setup_test() {
       status, test_module, 25, test_identifier_params.at(25), HoloInfer::holoinfer_code::H_ERROR);
 
   // Test: Torch backend, Config file missing
-  std::filesystem::rename(model_folder + "identity_model.pt", model_folder + "model.pt");
+  std::filesystem::copy_file(model_folder + "test_torch_backend/simple_policy.pt",
+                             model_folder + "model.pt",
+                             std::filesystem::copy_options::overwrite_existing);
   status = create_specifications();
   clear_specs();
   holoinfer_assert(
@@ -222,7 +225,7 @@ void HoloInferTests::parameter_setup_test() {
 
   // Test: Torch backend, dtype missing in input node in Config file
   torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
-  torch_inference["inference"]["input_nodes"]["input"]["id"] = "1";
+  torch_inference["inference"]["input_nodes"]["0"]["dim"] = "3";
   std::cout << torch_inference << std::endl;
   torch_config_file << torch_inference;
   torch_config_file.close();
@@ -233,7 +236,7 @@ void HoloInferTests::parameter_setup_test() {
 
   // Test: Torch backend, Incorrect dtype in config file
   torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
-  torch_inference["inference"]["input_nodes"]["input"]["dtype"] = "float";
+  torch_inference["inference"]["input_nodes"]["0"]["dtype"] = "float";
   torch_config_file << torch_inference;
   torch_config_file.close();
   status = create_specifications();
@@ -243,7 +246,7 @@ void HoloInferTests::parameter_setup_test() {
 
   // Test: Torch backend, Output node missing in config file correct
   torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
-  torch_inference["inference"]["input_nodes"]["input"]["dtype"] = "kFloat32";
+  torch_inference["inference"]["input_nodes"]["0"]["dtype"] = "kFloat32";
   torch_config_file << torch_inference;
   torch_config_file.close();
   status = create_specifications();
@@ -251,8 +254,44 @@ void HoloInferTests::parameter_setup_test() {
   holoinfer_assert(
       status, test_module, 31, test_identifier_params.at(31), HoloInfer::holoinfer_code::H_ERROR);
 
+  // Test: Torch backend, Unsupported input format in Config file
+  torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
+  torch_inference["inference"]["output_nodes"]["tensor_0"]["dim"] = "1";
+  torch_inference["inference"]["output_nodes"]["tensor_0"]["dtype"] = "kFloat32";
+  // Create a 5-level nested list containing a single string "0"
+  YAML::Node nested_list;
+  nested_list[0][0][0][0][0] = "0";
+  torch_inference["inference"]["input_format"] = nested_list;
+  torch_config_file << torch_inference;
+  torch_config_file.close();
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 33, test_identifier_params.at(33), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Test: Torch backend, outer most node is not a list in Config file
+  torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
+  // Create a dictionary node with key-value pair
+  YAML::Node dict_node;
+  dict_node["key"] = "0";
+  torch_inference["inference"]["input_format"] = dict_node;
+  torch_config_file << torch_inference;
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 34, test_identifier_params.at(34), HoloInfer::holoinfer_code::H_ERROR);
+
+  // Test: Torch backend, Input format mismatch in Config file
+  torch_config_file.open(model_folder + "model.yaml", std::ofstream::trunc);
+  torch_inference["inference"]["input_format"] = {dict_node};
+  torch_config_file << torch_inference;
+  status = create_specifications();
+  clear_specs();
+  holoinfer_assert(
+      status, test_module, 35, test_identifier_params.at(35), HoloInfer::holoinfer_code::H_ERROR);
+
   // Restore all changes to previous state
-  std::filesystem::rename(model_folder + "model.pt", model_folder + "identity_model.pt");
+  std::filesystem::remove(model_folder + "model.pt");
   std::filesystem::remove(model_folder + "model.yaml");
   model_path_map = std::move(backup_path_map);
   pre_processor_map = std::move(backup_pre_map);

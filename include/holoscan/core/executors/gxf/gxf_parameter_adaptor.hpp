@@ -409,7 +409,9 @@ class GXFParameterAdaptor {
                   for (typename holoscan::type_info<typeT>::element_type item : vec) {
                     inner_yaml_node.push_back(item);
                   }
-                  if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
+                  if (inner_yaml_node.size() > 0) {
+                    yaml_node.push_back(inner_yaml_node);
+                  }
                 }
                 return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
               }

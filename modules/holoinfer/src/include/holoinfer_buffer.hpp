@@ -309,11 +309,11 @@ struct InferenceSpecs {
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
-                 const Mappings& dla_core_map,
-                 const Mappings& temporal_map, const Mappings& activation_map,
-                 const std::vector<int32_t>& trt_opt_profile, bool is_engine_path, bool oncpu,
-                 bool parallel_proc, bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out,
-                 bool use_cuda_graphs, int32_t dla_core, bool dla_gpu_fallback)
+                 const Mappings& dla_core_map, const Mappings& temporal_map,
+                 const Mappings& activation_map, const std::vector<int32_t>& trt_opt_profile,
+                 bool is_engine_path, bool oncpu, bool parallel_proc, bool use_fp16,
+                 bool cuda_buffer_in, bool cuda_buffer_out, bool use_cuda_graphs, int32_t dla_core,
+                 bool dla_gpu_fallback)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
@@ -376,7 +376,9 @@ struct InferenceSpecs {
    */
   void set_activation_map(const Mappings& activation_map) {
     activation_map_.clear();
-    for (const auto& [key, value] : activation_map) { activation_map_[key] = value; }
+    for (const auto& [key, value] : activation_map) {
+      activation_map_[key] = value;
+    }
   }
 
   /// @brief Backend type (for all models)

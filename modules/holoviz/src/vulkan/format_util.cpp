@@ -24,8 +24,12 @@ namespace holoscan::viz {
 void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
                  uint32_t* component_size, uint32_t* width_divisor, uint32_t* height_divisor,
                  uint32_t plane) {
-  if (width_divisor) { *width_divisor = 1; }
-  if (height_divisor) { *height_divisor = 1; }
+  if (width_divisor) {
+    *width_divisor = 1;
+  }
+  if (height_divisor) {
+    *height_divisor = 1;
+  }
   switch (format) {
     case ImageFormat::R8_UINT:
     case ImageFormat::R8_SINT:
@@ -104,8 +108,12 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
         *channels = *hw_channels = 1U;
       } else if (plane == 1) {
         *channels = *hw_channels = 2U;
-        if (width_divisor) { *width_divisor = 2; }
-        if (height_divisor) { *height_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
+        if (height_divisor) {
+          *height_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -116,7 +124,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
         *channels = *hw_channels = 1U;
       } else if (plane == 1) {
         *channels = *hw_channels = 2U;
-        if (width_divisor) { *width_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -127,8 +137,12 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *component_size = sizeof(uint8_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
-        if (width_divisor) { *width_divisor = 2; }
-        if (height_divisor) { *height_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
+        if (height_divisor) {
+          *height_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -138,7 +152,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *component_size = sizeof(uint8_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
-        if (width_divisor) { *width_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -148,8 +164,12 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
         *channels = *hw_channels = 1U;
       } else if (plane == 1) {
         *channels = *hw_channels = 2U;
-        if (width_divisor) { *width_divisor = 2; }
-        if (height_divisor) { *height_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
+        if (height_divisor) {
+          *height_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -160,7 +180,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
         *channels = *hw_channels = 1U;
       } else if (plane == 1) {
         *channels = *hw_channels = 2U;
-        if (width_divisor) { *width_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -171,8 +193,12 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *component_size = sizeof(uint16_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
-        if (width_divisor) { *width_divisor = 2; }
-        if (height_divisor) { *height_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
+        if (height_divisor) {
+          *height_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -182,7 +208,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *component_size = sizeof(uint16_t);
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
-        if (width_divisor) { *width_divisor = 2; }
+        if (width_divisor) {
+          *width_divisor = 2;
+        }
       } else {
         throw std::invalid_argument("Unhandled plane index");
       }
@@ -584,7 +612,9 @@ std::vector<ImageFormat> get_supported_formats(vk::PhysicalDevice physical_devic
 
   // Filter only formats supported by the hardware
   for (const auto& fmt : all_formats) {
-    if (is_format_supported(physical_device, fmt)) { supported_formats.push_back(fmt); }
+    if (is_format_supported(physical_device, fmt)) {
+      supported_formats.push_back(fmt);
+    }
   }
 
   return supported_formats;

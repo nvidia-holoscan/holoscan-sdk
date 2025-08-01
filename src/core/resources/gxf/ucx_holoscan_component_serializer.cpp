@@ -45,7 +45,9 @@ void UcxHoloscanComponentSerializer::initialize() {
     auto allocator = frag->make_resource<UnboundedAllocator>("ucx_holoscan_component_allocator");
     add_arg(Arg("allocator") = allocator);
     allocator->gxf_cname(allocator->name().c_str());
-    if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
+    if (gxf_eid_ != 0) {
+      allocator->gxf_eid(gxf_eid_);
+    }
   } else {
     // must set the gxf_eid for the provided allocator or GXF parameter registration will fail
     auto allocator_arg = *has_allocator;

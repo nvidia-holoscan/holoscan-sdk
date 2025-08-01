@@ -21,7 +21,7 @@ add_executable(video_replayer
 target_link_libraries(video_replayer
   PRIVATE
   holoscan::core
-  holoscan::data_loggers::basic_console_logger
+  holoscan::data_loggers::async_console_logger
   holoscan::ops::video_stream_replayer
   holoscan::ops::holoviz
 )
@@ -108,7 +108,7 @@ if(HOLOSCAN_BUILD_TESTS)
   target_link_libraries(video_replayer_test
     PRIVATE
     holoscan::core
-    holoscan::data_loggers::basic_console_logger
+    holoscan::data_loggers::async_console_logger
     holoscan::ops::holoviz
     holoscan::ops::video_stream_replayer
     holoscan::ops::video_stream_recorder

@@ -69,7 +69,9 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
     HOLOSCAN_LOG_INFO("TRT Inference: converting ONNX model at {}", model_path_);
 
     bool status = generate_engine_path(network_options_, model_path_, engine_path_);
-    if (!status) { throw std::runtime_error("TRT Inference: could not generate TRT engine path."); }
+    if (!status) {
+      throw std::runtime_error("TRT Inference: could not generate TRT engine path.");
+    }
 
     status = build_engine(model_path_, engine_path_, network_options_, logger_);
     if (!status) {
@@ -94,19 +96,35 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
   check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
 
   bool status = load_engine();
-  if (!status) { throw std::runtime_error("TRT Inference: failed to load TRT engine file."); }
+  if (!status) {
+    throw std::runtime_error("TRT Inference: failed to load TRT engine file.");
+  }
 
   status = initialize_parameters();
-  if (!status) { throw std::runtime_error("TRT Inference: Initialization error."); }
+  if (!status) {
+    throw std::runtime_error("TRT Inference: Initialization error.");
+  }
 }
 
 TrtInfer::~TrtInfer() {
-  if (context_) { context_.reset(); }
-  if (engine_) { engine_.reset(); }
-  if (cuda_stream_) { cudaStreamDestroy(cuda_stream_); }
-  if (cuda_event_) { cudaEventDestroy(cuda_event_); }
-  if (cuda_graph_instance_) { cudaGraphExecDestroy(cuda_graph_instance_); }
-  if (infer_runtime_) { infer_runtime_.reset(); }
+  if (context_) {
+    context_.reset();
+  }
+  if (engine_) {
+    engine_.reset();
+  }
+  if (cuda_stream_) {
+    cudaStreamDestroy(cuda_stream_);
+  }
+  if (cuda_event_) {
+    cudaEventDestroy(cuda_event_);
+  }
+  if (cuda_graph_instance_) {
+    cudaGraphExecDestroy(cuda_graph_instance_);
+  }
+  if (infer_runtime_) {
+    infer_runtime_.reset();
+  }
 }
 
 bool TrtInfer::load_engine() {
@@ -213,9 +231,13 @@ bool TrtInfer::initialize_parameters() {
         holoinfer_type = holoinfer_datatype::h_Float16;
         break;
       }
+      case nvinfer1::DataType::kINT64: {
+        holoinfer_type = holoinfer_datatype::h_Int64;
+        break;
+      }
       default: {
         HOLOSCAN_LOG_INFO(
-            "TensorRT backend supports float, float16, int8, int32, uint8 data types.");
+            "TensorRT backend supports float, float16, float64, int8, int32, uint8 data types.");
         HOLOSCAN_LOG_ERROR("Data type not supported.");
         return false;
       }
@@ -230,7 +252,9 @@ bool TrtInfer::initialize_parameters() {
         nvinfer1::Dims in_dimensions;
         in_dimensions.nbDims = dims.nbDims;
 
-        for (size_t in = 0; in < dims.nbDims; in++) { in_dimensions.d[in] = dims.d[in]; }
+        for (size_t in = 0; in < dims.nbDims; in++) {
+          in_dimensions.d[in] = dims.d[in];
+        }
 
         auto set_status = context_->setInputShape(tensor_name, in_dimensions);
         if (!set_status) {
@@ -239,14 +263,18 @@ bool TrtInfer::initialize_parameters() {
         }
 
         std::vector<int64_t> indim;
-        for (size_t in = 0; in < dims.nbDims; in++) { indim.push_back(dims.d[in]); }
+        for (size_t in = 0; in < dims.nbDims; in++) {
+          indim.push_back(dims.d[in]);
+        }
         input_dims_.push_back(std::move(indim));
 
         in_data_types_.push_back(holoinfer_type);
       } break;
       case nvinfer1::TensorIOMode::kOUTPUT: {
         std::vector<int64_t> outdim;
-        for (size_t in = 0; in < dims.nbDims; in++) { outdim.push_back(dims.d[in]); }
+        for (size_t in = 0; in < dims.nbDims; in++) {
+          outdim.push_back(dims.d[in]);
+        }
 
         output_dims_.push_back(outdim);
         out_data_types_.push_back(holoinfer_type);
@@ -405,7 +433,9 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
     // Instantiate during the first iteration or whenever the update fails for any reason
     if (!cuda_graph_instance_ || (update_result.result != cudaGraphExecUpdateSuccess)) {
       // If a previous update failed, destroy the cudaGraphExec_t before re-instantiating it
-      if (cuda_graph_instance_ != NULL) { check_cuda(cudaGraphExecDestroy(cuda_graph_instance_)); }
+      if (cuda_graph_instance_ != NULL) {
+        check_cuda(cudaGraphExecDestroy(cuda_graph_instance_));
+      }
 
       // Instantiate graphExec from graph. The error node and error message parameters are unused
       // here.

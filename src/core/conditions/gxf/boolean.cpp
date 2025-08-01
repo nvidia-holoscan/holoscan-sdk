@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,13 +52,17 @@ void BooleanCondition::setup(ComponentSpec& spec) {
 
 void BooleanCondition::enable_tick() {
   auto boolean_condition = get();
-  if (boolean_condition) { boolean_condition->enable_tick(); }
+  if (boolean_condition) {
+    boolean_condition->enable_tick();
+  }
   enable_tick_ = true;
 }
 
 void BooleanCondition::disable_tick() {
   auto boolean_condition = get();
-  if (boolean_condition) { boolean_condition->disable_tick(); }
+  if (boolean_condition) {
+    boolean_condition->disable_tick();
+  }
   enable_tick_ = false;
 }
 

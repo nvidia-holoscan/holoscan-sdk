@@ -64,8 +64,12 @@ class PyMultiMessageAvailableTimeoutCondition : public MultiMessageAvailableTime
       : MultiMessageAvailableTimeoutCondition(Arg("execution_frequency", execution_frequency)) {
     name_ = name;
     fragment_ = fragment;
-    if (min_sum.has_value()) { this->add_arg(Arg("min_sum", min_sum.value())); }
-    if (min_sizes.has_value()) { this->add_arg(Arg("min_sizes", min_sizes.value())); }
+    if (min_sum.has_value()) {
+      this->add_arg(Arg("min_sum", min_sum.value()));
+    }
+    if (min_sizes.has_value()) {
+      this->add_arg(Arg("min_sizes", min_sizes.value()));
+    }
 
     // need to pass mode via a YAML::Node. Can take either a string or enum from Python
     if (std::holds_alternative<std::string>(sampling_mode)) {

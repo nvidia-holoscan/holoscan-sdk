@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the \"License\");
@@ -46,7 +46,15 @@ if(BUILD_TESTING)
 
   set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_TEST PROPERTIES
     DEPENDS "video_replayer_distributed_test.py"
-    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    # PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+    # test for some expected strings in the distributed app port-mapping output
+    # PASS_REGULAR_EXPRESSION "APPLICATION_PORT_MAPPING"
+    # PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:"
+    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment1' PORT MAPPING"
+    # PASS_REGULAR_EXPRESSION "fragment1.replayer.output:"
+    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment2' PORT MAPPING"
+    PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:0"
   )
 
   # Add a test to check the validity of the frames

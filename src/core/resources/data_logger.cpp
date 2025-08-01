@@ -18,6 +18,8 @@
 
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <regex>
 #include <string>
 #include <vector>
@@ -26,6 +28,9 @@
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
+
+// Shared mutex for thread-safe console output coordination across all console logger types
+std::mutex console_output_mutex;
 
 void DataLoggerResource::setup(ComponentSpec& spec) {
   // logging parameters
@@ -43,13 +48,15 @@ void DataLoggerResource::setup(ComponentSpec& spec) {
   spec.param(allowlist_patterns_,
              "allowlist_patterns",
              "Allowlist Patterns",
-             "Regex patterns for unique_ids to always log (if any specified, only matching "
-             "messages are logged)",
+             "Regex patterns for unique_ids to log. If empty all messages not matching a denylist "
+             "pattern are logged. Otherwise, there must be a match to one of the allowlist "
+             "patterns.",
              std::vector<std::string>{});
   spec.param(denylist_patterns_,
              "denylist_patterns",
              "Denylist Patterns",
-             "Regex patterns for unique_ids to never log (ignored if allowlist is specified)",
+             "Regex patterns for unique_ids to log. If specified and there is a match to one of "
+             "these patterns, the message is not logged.",
              std::vector<std::string>{});
 
   // TODO(grelee): should metadata have a separate allowlist/denylist?
@@ -82,24 +89,10 @@ int64_t DataLoggerResource::get_timestamp() const {
 bool DataLoggerResource::should_log_message(const std::string& unique_id) const {
   // Patterns are already compiled during initialize()
 
-  // If allowlist patterns are specified, unique_id must match at least one
-  if (!compiled_allowlist_patterns_.empty()) {
-    for (const auto& pattern : compiled_allowlist_patterns_) {
-      try {
-        if (std::regex_search(unique_id, pattern)) {
-          return true;  // Found match in allowlist
-        }
-      } catch (const std::regex_error& e) {
-        HOLOSCAN_LOG_WARN("DataLoggerResource: Regex error in allowlist pattern: {}", e.what());
-      }
-    }
-    return false;
-  }
-
-  // No allowlist specified, check denylist
-  for (const auto& pattern : compiled_denylist_patterns_) {
+  // First check denylist
+  if (compiled_denylist_pattern_.has_value()) {
     try {
-      if (std::regex_search(unique_id, pattern)) {
+      if (std::regex_search(unique_id, compiled_denylist_pattern_.value())) {
         // Found match in denylist
         return false;
       }
@@ -108,41 +101,93 @@ bool DataLoggerResource::should_log_message(const std::string& unique_id) const 
     }
   }
 
-  return true;  // No denylist match, should log
+  // If no allowlist was specified, allow everything
+  if (!compiled_allowlist_pattern_.has_value()) {
+    return true;
+  }
+
+  try {
+    if (std::regex_search(unique_id, compiled_allowlist_pattern_.value())) {
+      return true;  // Found match in allowlist
+    }
+  } catch (const std::regex_error& e) {
+    HOLOSCAN_LOG_WARN("DataLoggerResource: Regex error in allowlist pattern: {}", e.what());
+  }
+  return false;
 }
 
 void DataLoggerResource::compile_patterns() {
   // Compile allowlist patterns
-  compiled_allowlist_patterns_.clear();
+  compiled_allowlist_pattern_.reset();
   if (allowlist_patterns_.has_value()) {
-    for (const auto& pattern : allowlist_patterns_.get()) {
+    const auto& patterns = allowlist_patterns_.get();
+    if (!patterns.empty()) {
+      std::string combined_pattern;
+      for (const auto& pattern : patterns) {
+        if (!combined_pattern.empty()) {
+          combined_pattern += '|';
+        }
+        combined_pattern += '(';
+        combined_pattern += pattern;
+        combined_pattern += ')';
+      }
+
       try {
-        compiled_allowlist_patterns_.emplace_back(pattern, std::regex_constants::optimize);
+        compiled_allowlist_pattern_.emplace(combined_pattern, std::regex_constants::optimize);
       } catch (const std::regex_error& e) {
-        HOLOSCAN_LOG_ERROR(
-            "DataLoggerResource: Invalid allowlist regex pattern '{}': {}", pattern, e.what());
+        HOLOSCAN_LOG_ERROR("DataLoggerResource: Invalid combined allowlist regex pattern '{}': {}",
+                           combined_pattern,
+                           e.what());
       }
     }
   }
 
   // Compile denylist patterns
-  compiled_denylist_patterns_.clear();
+  compiled_denylist_pattern_.reset();
   if (denylist_patterns_.has_value()) {
-    for (const auto& pattern : denylist_patterns_.get()) {
+    const auto& patterns = denylist_patterns_.get();
+    if (!patterns.empty()) {
+      std::string combined_pattern;
+      for (const auto& pattern : patterns) {
+        if (!combined_pattern.empty()) {
+          combined_pattern += '|';
+        }
+        combined_pattern += '(';
+        combined_pattern += pattern;
+        combined_pattern += ')';
+      }
+
       try {
-        compiled_denylist_patterns_.emplace_back(pattern, std::regex_constants::optimize);
+        compiled_denylist_pattern_.emplace(combined_pattern, std::regex_constants::optimize);
       } catch (const std::regex_error& e) {
-        HOLOSCAN_LOG_ERROR(
-            "DataLoggerResource: Invalid denylist regex pattern '{}': {}", pattern, e.what());
+        HOLOSCAN_LOG_ERROR("DataLoggerResource: Invalid combined denylist regex pattern '{}': {}",
+                           combined_pattern,
+                           e.what());
       }
     }
   }
 
   patterns_compiled_ = true;
 
-  HOLOSCAN_LOG_DEBUG("DataLoggerResource: Compiled {} allowlist patterns and {} denylist patterns",
-                     compiled_allowlist_patterns_.size(),
-                     compiled_denylist_patterns_.size());
+  HOLOSCAN_LOG_DEBUG("DataLoggerResource: Compiled all allowlist and denylist patterns");
+}
+
+bool DataLoggerResource::log_backend_specific(const std::any& data, const std::string& unique_id,
+                                              int64_t acquisition_timestamp,
+                                              const std::shared_ptr<MetadataDictionary>& metadata,
+                                              IOSpec::IOType io_type) {
+  // Default implementation: backend-specific logging is not supported
+  HOLOSCAN_LOG_DEBUG(
+      "Backend-specific logging not supported for type '{}'. Please use a logger "
+      "implementing log_backend_specific instead to log this type.",
+      data.type().name());
+  // still log metadata and timestamp
+  auto result = log_data(data, unique_id, acquisition_timestamp, metadata, io_type);
+  if (!result) {
+    HOLOSCAN_LOG_ERROR("DataLoggerResource: Failed to log metadata for port '{}'.", unique_id);
+  }
+  // return false since data was not processed
+  return false;
 }
 
 }  // namespace holoscan

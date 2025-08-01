@@ -60,7 +60,9 @@ class PyDownstreamMessageAffordableCondition : public DownstreamMessageAffordabl
       : DownstreamMessageAffordableCondition(Arg{"min_size", min_size}) {
     name_ = name;
     fragment_ = fragment;
-    if (transmitter.has_value()) { this->add_arg(Arg("transmitter", transmitter.value())); }
+    if (transmitter.has_value()) {
+      this->add_arg(Arg("transmitter", transmitter.value()));
+    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // Note "transmitter" parameter is set automatically from GXFExecutor
     setup(*spec_);

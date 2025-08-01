@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +46,9 @@ class PyScheduler : public Scheduler {
     for (const auto& item : args) {
       auto arg_value = item.cast<py::object>();
       if (py::isinstance<Fragment>(arg_value)) {
-        if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
+        if (n_fragments > 0) {
+          throw std::runtime_error("multiple Fragment objects provided");
+        }
         fragment_ = arg_value.cast<Fragment*>();
         n_fragments += 1;
       } else {
@@ -113,7 +115,9 @@ void init_scheduler(py::module_& m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto scheduler = obj.cast<std::shared_ptr<Scheduler>>();
-            if (scheduler) { return scheduler->description(); }
+            if (scheduler) {
+              return scheduler->description();
+            }
             return std::string("<Scheduler: None>");
           },
           R"doc(Return repr(self).)doc");

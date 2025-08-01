@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -331,7 +331,9 @@ void tick() {
 }
 
 void initCuda() {
-  if (cuInit(0) != CUDA_SUCCESS) { throw std::runtime_error("cuInit failed."); }
+  if (cuInit(0) != CUDA_SUCCESS) {
+    throw std::runtime_error("cuInit failed.");
+  }
 
   if (cuDevicePrimaryCtxRetain(&cuda_context, 0) != CUDA_SUCCESS) {
     throw std::runtime_error("cuDevicePrimaryCtxRetain failed.");
@@ -372,7 +374,9 @@ void loadImage() {
                                         reinterpret_cast<int*>(&height),
                                         &components,
                                         0);
-  if (!image_data) { throw std::runtime_error("Loading image failed."); }
+  if (!image_data) {
+    throw std::runtime_error("Loading image failed.");
+  }
 
   const uint32_t row_pitch = width * components;
 
@@ -500,7 +504,9 @@ int main(int argc, char** argv) {
     const int c =
         getopt_long(argc, argv, "hblfed:p:c:", static_cast<option*>(long_options), &option_index);
 
-    if (c == -1) { break; }
+    if (c == -1) {
+      break;
+    }
 
     const std::string argument(optarg ? optarg : "");
     switch (c) {
@@ -607,8 +613,12 @@ int main(int argc, char** argv) {
     } else {
       viz::InitFlags flags = viz::InitFlags::NONE;
 
-      if (headless_mode) { flags = viz::InitFlags::HEADLESS; }
-      if (fullscreen) { flags = viz::InitFlags::FULLSCREEN; }
+      if (headless_mode) {
+        flags = viz::InitFlags::HEADLESS;
+      }
+      if (fullscreen) {
+        flags = viz::InitFlags::FULLSCREEN;
+      }
 
       display_width = 1024;
       display_height = uint32_t(static_cast<float>(height) / static_cast<float>(width) * 1024.F);
@@ -627,7 +637,9 @@ int main(int argc, char** argv) {
 
       auto surface_format_it = surface_formats.begin();
       while (surface_format_it != surface_formats.end()) {
-        if (surface_format_it->color_space_ == color_space) { break; }
+        if (surface_format_it->color_space_ == color_space) {
+          break;
+        }
         ++surface_format_it;
       }
       if (surface_format_it == surface_formats.end()) {
@@ -643,7 +655,9 @@ int main(int argc, char** argv) {
         for (current_format_index = 0; current_format_index < IM_ARRAYSIZE(format_items);
              ++current_format_index) {
           start = std::chrono::steady_clock::time_point();
-          do { tick(); } while (elapsed.count() < 2000);
+          do {
+            tick();
+          } while (elapsed.count() < 2000);
           std::cout << current_source << " " << format_items[current_format_index] << " "
                     << float(iterations) / (float(elapsed.count()) / 1000.F) << " fps" << std::endl;
         }
@@ -676,10 +690,14 @@ int main(int argc, char** argv) {
       std::cout << "Writing image to " << filename << "." << std::endl;
       stbi_write_png("framebuffer.png", display_width, display_height, 4, data.data(), 0);
 
-      if (cuMemFree(read_buffer) != CUDA_SUCCESS) { throw std::runtime_error("cuMemFree failed."); }
+      if (cuMemFree(read_buffer) != CUDA_SUCCESS) {
+        throw std::runtime_error("cuMemFree failed.");
+      }
     } else {
       while (!viz::WindowShouldClose()) {
-        if (!viz::WindowIsMinimized()) { tick(); }
+        if (!viz::WindowIsMinimized()) {
+          tick();
+        }
       }
     }
 

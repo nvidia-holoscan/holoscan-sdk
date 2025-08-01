@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,9 @@
 namespace holoscan::gxf {
 
 Entity Entity::New(ExecutionContext* context) {
-  if (context == nullptr) { throw std::runtime_error("Null context is not allowed"); }
+  if (context == nullptr) {
+    throw std::runtime_error("Null context is not allowed");
+  }
   auto gxf_context = context->context();
 
   gxf_uid_t eid;
@@ -65,7 +67,9 @@ nvidia::gxf::Handle<nvidia::gxf::VideoBuffer> get_videobuffer(Entity entity, con
 
   // Create a handle to the GXF VideoBuffer object.
   auto result = nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>::Create(entity.context(), cid);
-  if (!result) { throw std::runtime_error("Failed to create Handle to nvidia::gxf::VideoBuffer"); }
+  if (!result) {
+    throw std::runtime_error("Failed to create Handle to nvidia::gxf::VideoBuffer");
+  }
   return result.value();
 }
 

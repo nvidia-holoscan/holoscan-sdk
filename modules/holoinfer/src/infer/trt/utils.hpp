@@ -61,7 +61,8 @@ class Logger : public nvinfer1::ILogger {
     }
     try {  // ignore potential fmt::format_error exception
       HOLOSCAN_LOG_CALL(log_level, msg);
-    } catch (std::exception& e) {}
+    } catch (std::exception& e) {
+    }
   };
 };
 

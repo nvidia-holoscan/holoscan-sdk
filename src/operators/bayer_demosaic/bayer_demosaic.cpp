@@ -178,8 +178,10 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
     auto input_memory_type = frame->storage_type();
     input_data_ptr = frame->pointer();
 
+    bool is_cuda_managed = input_memory_type == nvidia::gxf::MemoryStorageType::kCudaManaged;
     // if the input tensor is not coming from device then move it to device
-    if (input_memory_type == nvidia::gxf::MemoryStorageType::kSystem) {
+    if (input_memory_type == nvidia::gxf::MemoryStorageType::kSystem ||
+        input_memory_type == nvidia::gxf::MemoryStorageType::kHost || is_cuda_managed) {
       size_t buffer_size = rows * columns * in_channels * element_size;
 
       if (buffer_size > device_scratch_buffer_.size()) {
@@ -195,7 +197,7 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
           cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
                      static_cast<const void*>(frame->pointer()),
                      buffer_size,
-                     cudaMemcpyHostToDevice),
+                     is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyHostToDevice),
           "Failed to copy input data to device scratch buffer");
       input_data_ptr = device_scratch_buffer_.pointer();
     }
@@ -249,9 +251,10 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
 
     DLDevice dev = in_tensor->device();
     if ((dev.device_type != kDLCUDA) && (dev.device_type != kDLCPU) &&
-        (dev.device_type != kDLCUDAHost)) {
+        (dev.device_type != kDLCUDAHost) && (dev.device_type != kDLCUDAManaged)) {
       throw std::runtime_error(
-          "Input tensor must be in CUDA device memory, CUDA pinned memory or on the CPU.");
+          "Input tensor must be in CUDA device memory, CUDA pinned memory, CUDA managed memory or "
+          "on the CPU.");
     }
 
     // Originally had:
@@ -271,7 +274,8 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
                       in_tensor_gxf.stride(2)));
     }
 
-    if (dev.device_type == kDLCPU) {
+    if (dev.device_type == kDLCPU || dev.device_type == kDLCUDAHost ||
+        dev.device_type == kDLCUDAManaged) {
       size_t buffer_size = rows * columns * in_channels * element_size;
 
       if (buffer_size > device_scratch_buffer_.size()) {
@@ -284,10 +288,11 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
       }
 
       HOLOSCAN_CUDA_CALL_THROW_ERROR(
-          cudaMemcpy(static_cast<void*>(device_scratch_buffer_.pointer()),
-                     static_cast<const void*>(in_tensor_gxf.pointer()),
-                     buffer_size,
-                     cudaMemcpyHostToDevice),
+          cudaMemcpy(
+              static_cast<void*>(device_scratch_buffer_.pointer()),
+              static_cast<const void*>(in_tensor_gxf.pointer()),
+              buffer_size,
+              dev.device_type == kDLCUDAManaged ? cudaMemcpyDefault : cudaMemcpyHostToDevice),
           "Failed to copy input data to device scratch buffer");
       input_data_ptr = device_scratch_buffer_.pointer();
     } else {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +47,9 @@ std::shared_ptr<MetadataObject>& MetadataDictionary::operator[](const std::strin
 
 const MetadataObject* MetadataDictionary::operator[](const std::string& key) const {
   auto iter = dictionary_->find(key);
-  if (iter == dictionary_->end()) { return nullptr; }
+  if (iter == dictionary_->end()) {
+    return nullptr;
+  }
 
   const MetadataObject* constentry = iter->second.get();
   return constentry;
@@ -156,7 +158,9 @@ void MetadataDictionary::update(MetadataDictionary& other) {
       break;
     case MetadataPolicy::kRaise:
       // rely on inplace implementation in set
-      for (const auto& [key, value] : *other.dictionary_) { set(key, value); }
+      for (const auto& [key, value] : *other.dictionary_) {
+        set(key, value);
+      }
       break;
     default:
       // Handle unknown policy

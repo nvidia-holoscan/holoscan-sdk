@@ -67,7 +67,9 @@ InferStatus allocate_buffers(DataMap& buffers, std::vector<int64_t>& dims,
     return status;
   }
   data_buffer->host_buffer_->resize(buffer_size);
-  if (allocate_cuda) { data_buffer->device_buffer_->resize(buffer_size); }
+  if (allocate_cuda) {
+    data_buffer->device_buffer_->resize(buffer_size);
+  }
   buffers.insert({keyname, std::move(data_buffer)});
   return InferStatus();
 }
@@ -77,11 +79,12 @@ bool DeviceAllocator::operator()(void** ptr, size_t size) const {
 }
 
 void DeviceFree::operator()(void* ptr) const {
-  if (ptr) { cudaFree(ptr); }
+  if (ptr) {
+    cudaFree(ptr);
+  }
 }
 
-DataBuffer::DataBuffer(holoinfer_datatype data_type, int device_id)
-    : data_type_(data_type) {
+DataBuffer::DataBuffer(holoinfer_datatype data_type, int device_id) : data_type_(data_type) {
   try {
     device_buffer_ = std::make_shared<DeviceBuffer>(data_type_, device_id);
   } catch (std::exception& e) {
@@ -102,7 +105,9 @@ DeviceBuffer::DeviceBuffer(holoinfer_datatype type, int device_id)
 DeviceBuffer::DeviceBuffer(size_t size, holoinfer_datatype type)
     : Buffer(type), size_(size), capacity_(size) {
   size_t bytes = size_ * get_element_size(type);
-  if (!allocator_(&buffer_, bytes)) { throw std::bad_alloc(); }
+  if (!allocator_(&buffer_, bytes)) {
+    throw std::bad_alloc();
+  }
 }
 
 void* DeviceBuffer::data() {
@@ -121,7 +126,9 @@ void DeviceBuffer::resize(size_t number_of_elements) {
   size_ = number_of_elements;
   if (capacity_ < number_of_elements) {
     free_(buffer_);
-    if (!allocator_(&buffer_, this->get_bytes())) { throw std::bad_alloc{}; }
+    if (!allocator_(&buffer_, this->get_bytes())) {
+      throw std::bad_alloc{};
+    }
     capacity_ = number_of_elements;
   }
 }

@@ -19,9 +19,11 @@ from holoscan.conditions import CountCondition
 from holoscan.core import ComponentSpec, Resource
 from holoscan.core import _Resource as ResourceBase
 from holoscan.gxf import GXFResource, GXFSystemResourceBase
-from holoscan.operators import PingTxOp
+from holoscan.operators import PingRxOp, PingTxOp
 from holoscan.resources import (
     Allocator,
+    AsyncBufferReceiver,
+    AsyncBufferTransmitter,
     BlockMemoryPool,
     Clock,
     CudaAllocator,
@@ -34,6 +36,7 @@ from holoscan.resources import (
     RealtimeClock,
     Receiver,
     RMMAllocator,
+    SchedulingPolicy,
     SerializationBuffer,
     StdComponentSerializer,
     StdEntitySerializer,
@@ -257,6 +260,58 @@ class TestStdDoubleBufferTransmitter:
         DoubleBufferTransmitter(app)
 
 
+class TestStdAsyncBufferReceiver:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "async-receiver"
+        r = AsyncBufferReceiver(
+            fragment=app,
+            name=name,
+        )
+        assert isinstance(r, Receiver)
+        assert isinstance(r, GXFResource)
+        assert isinstance(r, ResourceBase)
+        assert r.id == -1
+        assert r.gxf_typename == "holoscan::HoloscanAsyncBufferReceiver"
+        r.initialize()  # manually initialize so we can check resource_type
+        assert r.resource_type == Resource.ResourceType.GXF
+        assert f"name: {name}" in repr(r)
+
+        # assert no unexpected warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        # expect one warning due to manually calling initialize() above
+        assert captured.err.count("warning") < 2
+
+    def test_default_initialization(self, app):
+        AsyncBufferReceiver(app)
+
+
+class TestStdAsyncBufferTransmitter:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "async-transmitter"
+        r = AsyncBufferTransmitter(
+            fragment=app,
+            name=name,
+        )
+        assert isinstance(r, Transmitter)
+        assert isinstance(r, GXFResource)
+        assert isinstance(r, ResourceBase)
+        assert r.id == -1
+        assert r.gxf_typename == "holoscan::HoloscanAsyncBufferTransmitter"
+        r.initialize()  # manually initialize so we can check resource_type
+        assert r.resource_type == Resource.ResourceType.GXF
+        assert f"name: {name}" in repr(r)
+
+        # assert no unexpected warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        # expect one warning due to manually calling initialize() above
+        assert captured.err.count("warning") < 2
+
+    def test_default_initialization(self, app):
+        AsyncBufferTransmitter(app)
+
+
 class TestStdComponentSerializer:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "std-serializer"
@@ -394,6 +449,83 @@ class TestThreadPool:
 
     def test_default_initialization(self, app):
         ThreadPool(fragment=app)
+
+    def test_add_realtime_method_fifo(self, app):
+        tx_op = PingTxOp(app, CountCondition(app, 5), name="tx")
+        rx_op = PingRxOp(app, name="rx")
+
+        # Test add_realtime with SCHED_FIFO real-time scheduling policy
+        pool = ThreadPool(fragment=app, initial_size=2, name="test_pool")
+        pool.add_realtime(
+            tx_op,
+            SchedulingPolicy.SCHED_FIFO,
+            pin_operator=True,
+            pin_cores=[0, 2],
+            sched_priority=1,
+        )
+
+        # Test regular add with pin_cores
+        pool.add(rx_op, pin_operator=True, pin_cores=[1, 3])
+
+        assert len(pool.operators) == 2
+        assert tx_op in pool.operators
+        assert rx_op in pool.operators
+
+    def test_add_realtime_method_rr(self, app):
+        tx_op = PingTxOp(app, CountCondition(app, 5), name="tx")
+        rx_op = PingRxOp(app, name="rx")
+
+        # Test add_realtime with SCHED_RR real-time scheduling policy
+        pool = ThreadPool(fragment=app, initial_size=2, name="test_pool")
+        pool.add_realtime(
+            tx_op,
+            SchedulingPolicy.SCHED_RR,
+            pin_operator=True,
+            pin_cores=[0, 2],
+            sched_priority=2,
+        )
+
+        # Test regular add with pin_cores
+        pool.add(rx_op, pin_operator=True, pin_cores=[1, 3])
+
+        assert len(pool.operators) == 2
+        assert tx_op in pool.operators
+        assert rx_op in pool.operators
+
+    def test_add_realtime_method_deadline(self, app):
+        tx_op = PingTxOp(app, CountCondition(app, 5), name="tx")
+        rx_op = PingRxOp(app, name="rx")
+
+        # Test add_realtime with SCHED_DEADLINE real-time scheduling policy
+        pool = ThreadPool(fragment=app, initial_size=2, name="test_pool")
+        pool.add_realtime(
+            tx_op,
+            SchedulingPolicy.SCHED_DEADLINE,
+            pin_operator=True,
+            pin_cores=[0, 2],
+            sched_runtime=1000000,
+            sched_deadline=1000000000,
+            sched_period=1000000000,
+        )
+
+        # Test regular add with pin_cores
+        pool.add(rx_op, pin_operator=True, pin_cores=[1, 3])
+
+        assert len(pool.operators) == 2
+        assert tx_op in pool.operators
+        assert rx_op in pool.operators
+
+    def test_add_with_pin_cores_parameter(self, app):
+        pool = ThreadPool(fragment=app, initial_size=2, name="test_pool")
+        tx_op = PingTxOp(app, CountCondition(app, 5), name="tx")
+
+        # Test backward compatibility - no pin_cores
+        pool.add(tx_op, pin_operator=True)
+
+        # Test with pin_cores parameter
+        pool.add(tx_op, pin_operator=True, pin_cores=[0, 2])
+
+        assert len(pool.operators) == 2  # Same operator added twice
 
 
 class TestUcxSerializationBuffer:

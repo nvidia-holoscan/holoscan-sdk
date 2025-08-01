@@ -109,7 +109,9 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   } catch (std::out_of_range const& ex) {
     HOLOSCAN_LOG_ERROR("Invalid range in Device map: {}", ex.what());
     raise_error("Inference Manager", "Error in Device map.");
-  } catch (...) { raise_error("Inference Manager", "Error in Device map."); }
+  } catch (...) {
+    raise_error("Inference Manager", "Error in Device map.");
+  }
 
   auto vec_unique_gpu_ids = std::vector<int>(unique_gpu_ids.begin(), unique_gpu_ids.end());
 
@@ -223,7 +225,9 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       check_cuda(cudaSetDevice(device_id));
 
       auto current_backend = holoinfer_backend::h_trt;
-      if (backend_type.length() != 0) { current_backend = supported_backend_.at(backend_type); }
+      if (backend_type.length() != 0) {
+        current_backend = supported_backend_.at(backend_type);
+      }
 
       if (backend_map.size() != 0) {
         if (backend_map.find(model_name) == backend_map.end()) {
@@ -352,6 +356,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           status.set_message("Torch context setup failure.");
           return status;
 #endif
+
           break;
         }
         default: {
@@ -517,6 +522,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   }
 
   parallel_processing_ = inference_specs->parallel_processing_;
+
   return InferStatus();
 }
 
@@ -526,9 +532,13 @@ void ManagerInfer::cleanup() {
     context.reset();
   }
 
-  for (auto& [_, infer_p] : infer_param_) { infer_p.reset(); }
+  for (auto& [_, infer_p] : infer_param_) {
+    infer_p.reset();
+  }
 
-  if (cuda_event_) { cudaEventDestroy(cuda_event_); }
+  if (cuda_event_) {
+    cudaEventDestroy(cuda_event_);
+  }
 }
 
 ManagerInfer::~ManagerInfer() {
@@ -656,8 +666,11 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
 
   check_cuda(cudaSetDevice(device_id));
   cudaEvent_t cuda_event_inference = nullptr;
-  auto i_status = holo_infer_context_.at(model_name)
-                      ->do_inference(indata, outdata, cuda_event_, &cuda_event_inference);
+  check_cuda(cudaEventCreate(&cuda_event_inference));
+
+  InferStatus i_status = holo_infer_context_.at(model_name)
+                             ->do_inference(indata, outdata, cuda_event_, &cuda_event_inference);
+
   check_cuda(cudaSetDevice(device_gpu_dt_));
 
   if (i_status.get_code() == holoinfer_code::H_ERROR) {
@@ -666,7 +679,9 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
     return status;
   }
 
-  if (cuda_event_inference) { check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_inference)); }
+  if (cuda_event_inference) {
+    check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_inference));
+  }
 
   // Output data setup after inference
   // by default memory mapped for all backends
@@ -739,7 +754,9 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
 
   auto activation_map = inference_specs->get_activation_map();
 
-  if (frame_counter_++ == UINT_MAX - 1) { frame_counter_ = 0; }
+  if (frame_counter_++ == UINT_MAX - 1) {
+    frame_counter_ = 0;
+  }
 
   if (infer_param_.size() == 0) {
     status.set_code(holoinfer_code::H_ERROR);
@@ -764,7 +781,9 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
           HOLOSCAN_LOG_WARN("Activation map can have either a value of 0 or 1 for a model.");
           HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
         }
-        if (activation_value == 0) { process_model = false; }
+        if (activation_value == 0) {
+          process_model = false;
+        }
       } catch (std::invalid_argument const& ex) {
         HOLOSCAN_LOG_WARN("Invalid argument in activation map: {}", ex.what());
         HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
@@ -843,7 +862,9 @@ InferContext::InferContext() {
       g_managers.erase("current_manager");
     }
     g_managers.insert({"current_manager", std::make_shared<ManagerInfer>()});
-  } catch (const std::bad_alloc&) { throw; }
+  } catch (const std::bad_alloc&) {
+    throw;
+  }
 }
 
 InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
@@ -892,7 +913,9 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
     }
 
     std::string unique_id_name("");
-    for (auto& [model_name, _] : multi_model_map) { unique_id_name += model_name + "_[]_"; }
+    for (auto& [model_name, _] : multi_model_map) {
+      unique_id_name += model_name + "_[]_";
+    }
 
     unique_id_ = unique_id_name;
     HOLOSCAN_LOG_INFO("Inference context ID: {}", unique_id_);

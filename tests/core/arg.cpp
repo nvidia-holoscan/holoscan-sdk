@@ -106,7 +106,8 @@ class ArgParameterizedTestFixture : public ::testing::TestWithParam<ParamTuple> 
 };
 
 void any_to_arg(const std::any& value, Arg& arg) {
-  if (value.type() == typeid(double)) arg = std::any_cast<double>(value);
+  if (value.type() == typeid(double))
+    arg = std::any_cast<double>(value);
   else if (value.type() == typeid(float))
     arg = std::any_cast<float>(value);
   else if (value.type() == typeid(bool))

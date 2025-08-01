@@ -155,6 +155,8 @@ class Executor {
                                 // Executor (initialize_scheduler()).
   friend class NetworkContext;  // make NetworkContext a friend class to access protected members
                                 // of Executor (initialize_network_context()).
+  friend class AppWorker;       // make AppWorker a friend class to access protected members of
+                                // Executor (initialize_fragment_services()).
 
   /**
    * @brief Initialize the fragment_ in this Executor.
@@ -273,9 +275,9 @@ class Executor {
     return false;
   }
 
-  Fragment* fragment_ = nullptr;                         ///< The fragment of the executor.
-  void* context_ = nullptr;                              ///< The context.
-  bool owns_context_ = false;  ///< Whether the context is owned by the executor.
+  Fragment* fragment_ = nullptr;  ///< The fragment of the executor.
+  void* context_ = nullptr;       ///< The context.
+  bool owns_context_ = false;     ///< Whether the context is owned by the executor.
   std::shared_ptr<ExtensionManager> extension_manager_;  ///< The extension manager.
   std::exception_ptr exception_;                         ///< The stored exception.
 };

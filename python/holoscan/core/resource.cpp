@@ -54,7 +54,9 @@ PyResource::PyResource(py::object resource, Fragment* fragment, const py::args& 
   for (const auto& item : args) {
     auto arg_value = item.cast<py::object>();
     if (py::isinstance<Fragment>(arg_value)) {
-      if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
+      if (n_fragments > 0) {
+        throw std::runtime_error("multiple Fragment objects provided");
+      }
       fragment_ = arg_value.cast<Fragment*>();
       n_fragments += 1;
     } else {
@@ -133,7 +135,9 @@ void init_resource(py::module_& m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto resource = obj.cast<std::shared_ptr<Resource>>();
-            if (resource) { return resource->description(); }
+            if (resource) {
+              return resource->description();
+            }
             return std::string("<Resource: None>");
           },
           R"doc(Return repr(self).)doc");

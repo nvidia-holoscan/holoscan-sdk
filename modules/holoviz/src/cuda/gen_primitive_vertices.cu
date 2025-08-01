@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,9 @@ namespace {
 
 __global__ void copy_and_add_zero(uint32_t vertex_count, const float* src, float* dst) {
   const uint vertex_index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (vertex_index >= vertex_count) { return; }
+  if (vertex_index >= vertex_count) {
+    return;
+  }
 
   // just copy and add zero for Z
   src += vertex_index * 2;
@@ -41,7 +43,9 @@ __global__ void copy_and_add_zero(uint32_t vertex_count, const float* src, float
 __global__ void gen_cross_list_vertices(uint32_t primitive_count, float aspect_ratio,
                                         const float* src, float* dst) {
   const uint primitive_index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (primitive_index >= primitive_count) { return; }
+  if (primitive_index >= primitive_count) {
+    return;
+  }
 
   src += primitive_index * 3;
   const float x = src[0];
@@ -67,7 +71,9 @@ __global__ void gen_cross_list_vertices(uint32_t primitive_count, float aspect_r
 __global__ void gen_rectangle_list_vertices(uint32_t primitive_count, const float* src,
                                             float* dst) {
   const uint primitive_index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (primitive_index >= primitive_count) { return; }
+  if (primitive_index >= primitive_count) {
+    return;
+  }
 
   src += primitive_index * 4;
   const float x0 = src[0];
@@ -95,7 +101,9 @@ __global__ void gen_rectangle_list_vertices(uint32_t primitive_count, const floa
 
 __global__ void gen_oval_list_vertices(uint32_t primitive_count, const float* src, float* dst) {
   const uint primitive_index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (primitive_index >= primitive_count) { return; }
+  if (primitive_index >= primitive_count) {
+    return;
+  }
 
   src += primitive_index * 4;
   const float x = src[0];

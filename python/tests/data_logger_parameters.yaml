@@ -27,3 +27,18 @@ simple_text_serializer:
   max_elements: 10
   max_metadata_items: 10
   log_python_object_contents: true
+
+async_console_logger:
+  log_inputs: true
+  log_outputs: true
+  log_metadata: true
+  log_tensor_data_content: true
+  allowlist_patterns: []
+  denylist_patterns : [".*op3.*", ".*op5.*"]
+  max_queue_size: 5000
+  worker_sleep_time: 50000
+  queue_policy: reject  # AsyncQueuePolicy.kReject (case-insensitive)
+  large_data_max_queue_size: 1000
+  large_data_worker_sleep_time: 200000
+  large_data_queue_policy: Reject  # AsyncQueuePolicy.kReject (case-insensitive)
+  enable_large_data_queue: true

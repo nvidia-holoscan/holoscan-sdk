@@ -15,8 +15,10 @@
 # limitations under the License.
 ---
 pose_tree_config:
-  number_frames: 32
-  number_edges: 64
-  history_length: 4096
-  default_number_edges: 16
-  default_history_length: 256
+  number_frames: 32                  # default: 1024
+  number_edges: 64                   # default: 16384
+  history_length: 4096               # default: 1048576
+  default_number_edges: 16           # default: 16
+  default_history_length: 256        # default: 1024
+  edges_chunk_size: 4                # default: 4
+  history_chunk_size: 64             # default: 64

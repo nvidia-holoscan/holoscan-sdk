@@ -41,7 +41,9 @@ YAML::Node Scheduler::to_yaml_node() const {
     node["spec"] = YAML::Null;
   }
   node["resources"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const auto& r : resources_) { node["resources"].push_back(r.second->to_yaml_node()); }
+  for (const auto& r : resources_) {
+    node["resources"].push_back(r.second->to_yaml_node());
+  }
   return node;
 }
 
@@ -50,7 +52,9 @@ void Scheduler::reset_graph_entities() {
   for (auto& [_, resource] : resources_) {
     if (resource) {
       auto gxf_resource = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(resource);
-      if (gxf_resource) { gxf_resource->reset_gxf_graph_entity(); }
+      if (gxf_resource) {
+        gxf_resource->reset_gxf_graph_entity();
+      }
       resource->reset_graph_entities();
     }
   }

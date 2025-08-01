@@ -30,6 +30,7 @@
 #include "../../gxf/entity_group.hpp"
 #include "../../gxf/gxf_resource.hpp"
 #include "../../operator.hpp"
+#include "cpu_thread.hpp"
 
 namespace holoscan {
 
@@ -76,16 +77,38 @@ class ThreadPool : public gxf::GXFSystemResourceBase {
    *
    * @param op The operator to add.
    * @param pin_operator Whether the operator should be pinned to a specific thread in the pool.
+   * @param pin_cores CPU core IDs to pin the worker threads to (empty means no core pinning).
    */
-  void add(const std::shared_ptr<Operator>& op, bool pin_operator = true);
+  void add(const std::shared_ptr<Operator>& op, bool pin_operator = true,
+           std::vector<uint32_t> pin_cores = std::vector<uint32_t>());
 
   /**
    * @brief Add multiple operators to the thread pool
    *
    * @param ops The operators to add.
    * @param pin_operator Whether the operators should be pinned to a specific thread in the pool.
+   * @param pin_cores CPU core IDs to pin the worker thread to (empty means no core pinning).
    */
-  void add(std::vector<std::shared_ptr<Operator>> ops, bool pin_operator = true);
+  void add(std::vector<std::shared_ptr<Operator>> ops, bool pin_operator = true,
+           std::vector<uint32_t> pin_cores = std::vector<uint32_t>());
+
+  /**
+   * @brief Add an operator to the thread pool with real-time scheduling capabilities
+   *
+   * @param op The operator to add.
+   * @param sched_policy Real-time scheduling policy (kFirstInFirstOut, kRoundRobin, kDeadline).
+   * @param pin_operator Whether the operator should be pinned to a specific thread in the pool.
+   * @param pin_cores CPU core IDs to pin the worker thread to (empty means no core pinning).
+   * @param sched_priority Thread priority for FirstInFirstOut and RoundRobin policies.
+   * @param sched_runtime Expected worst case execution time in nanoseconds for Deadline policy.
+   * @param sched_deadline Relative deadline in nanoseconds for Deadline policy.
+   * @param sched_period Period in nanoseconds for Deadline policy.
+   */
+  void add_realtime(const std::shared_ptr<Operator>& op, SchedulingPolicy sched_policy,
+                    bool pin_operator = true,
+                    std::vector<uint32_t> pin_cores = std::vector<uint32_t>(),
+                    uint32_t sched_priority = 0, uint64_t sched_runtime = 0,
+                    uint64_t sched_deadline = 0, uint64_t sched_period = 0);
 
   // The entity group that this thread pool is associated with.
   std::shared_ptr<gxf::EntityGroup> entity_group() const { return entity_group_; }

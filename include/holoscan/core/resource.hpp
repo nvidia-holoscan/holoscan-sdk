@@ -90,7 +90,7 @@ class Operator;
 
 // Memory storage type used by various resources (e.g. Endpoint, Allocator)
 // values 0-2 map to nvidia::gxf::MemoryStorageType
-enum struct MemoryStorageType { kHost = 0, kDevice = 1, kSystem = 2 };
+enum struct MemoryStorageType { kHost = 0, kDevice = 1, kSystem = 2, kCudaManaged = 3 };
 
 /**
  * @brief Base class for all resources.

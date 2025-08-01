@@ -49,16 +49,22 @@ StreamOrderedAllocator::StreamOrderedAllocator(const std::string& name,
   device_memory_initial_size_ = maybe_device_initial.value();
 
   auto maybe_device_max = component->getParameter<std::string>("device_memory_max_size");
-  if (!maybe_device_max) { throw std::runtime_error("Failed to get device_memory_max_size"); }
+  if (!maybe_device_max) {
+    throw std::runtime_error("Failed to get device_memory_max_size");
+  }
   device_memory_max_size_ = maybe_device_max.value();
 
   auto maybe_release_threshold = component->getParameter<std::string>("release_threshold");
-  if (!maybe_release_threshold) { throw std::runtime_error("Failed to get release_threshold"); }
+  if (!maybe_release_threshold) {
+    throw std::runtime_error("Failed to get release_threshold");
+  }
   release_threshold_ = maybe_release_threshold.value();
 
   auto maybe_gpu_device =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
-  if (!maybe_gpu_device) { throw std::runtime_error("Failed to get dev_id"); }
+  if (!maybe_gpu_device) {
+    throw std::runtime_error("Failed to get dev_id");
+  }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();
 }

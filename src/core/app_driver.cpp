@@ -68,8 +68,12 @@ bool AppDriver::get_bool_env_var(const char* name, bool default_value) {
     std::transform(
         value.begin(), value.end(), value.begin(), [](unsigned char c) { return std::tolower(c); });
 
-    if (value == "true" || value == "1" || value == "on") { return true; }
-    if (value == "false" || value == "0" || value == "off") { return false; }
+    if (value == "true" || value == "1" || value == "on") {
+      return true;
+    }
+    if (value == "false" || value == "0" || value == "off") {
+      return false;
+    }
   }
 
   return default_value;
@@ -117,7 +121,9 @@ void AppDriver::exclude_cuda_ipc_transport_on_igpu() {
   gpu_resource_monitor.update();
   bool is_integrated =
       (gpu_resource_monitor.num_gpus() > 0) && gpu_resource_monitor.is_integrated_gpu(0);
-  if (is_integrated) { set_ucx_to_exclude_cuda_ipc(); }
+  if (is_integrated) {
+    set_ucx_to_exclude_cuda_ipc();
+  }
 }
 
 uint64_t AppDriver::parse_memory_size(const std::string& size_str) {
@@ -193,7 +199,9 @@ void AppDriver::run() {
     return;
   }
 
-  if (need_driver_) { launch_app_driver(); }
+  if (need_driver_) {
+    launch_app_driver();
+  }
 
   if (need_worker_) {
     launch_app_worker();
@@ -227,7 +235,9 @@ void AppDriver::run() {
     app_->driver().setup_signal_handlers();
   }
 
-  if (driver_server_) { driver_server_->wait(); }
+  if (driver_server_) {
+    driver_server_->wait();
+  }
 }
 
 std::future<void> AppDriver::run_async() {
@@ -236,7 +246,9 @@ std::future<void> AppDriver::run_async() {
     return std::async(std::launch::async, []() {});
   }
 
-  if (need_driver_) { launch_app_driver(); }
+  if (need_driver_) {
+    launch_app_driver();
+  }
 
   auto& fragment_graph = app_->fragment_graph();
 
@@ -265,17 +277,23 @@ AppDriver::AppStatus AppDriver::status() {
 }
 
 CLIOptions* AppDriver::options() {
-  if (app_ == nullptr) { return nullptr; }
+  if (app_ == nullptr) {
+    return nullptr;
+  }
   return options_;
 }
 
 FragmentScheduler* AppDriver::fragment_scheduler() {
-  if (fragment_scheduler_) { return fragment_scheduler_.get(); }
+  if (fragment_scheduler_) {
+    return fragment_scheduler_.get();
+  }
   return nullptr;
 }
 
 MultipleFragmentsPortMap* AppDriver::all_fragment_port_map() {
-  if (all_fragment_port_map_) { return all_fragment_port_map_.get(); }
+  if (all_fragment_port_map_) {
+    return all_fragment_port_map_.get();
+  }
   return nullptr;
 }
 
@@ -342,12 +360,16 @@ bool AppDriver::need_to_update_port_names(
   for (auto& [source_op_port, target_op_ports] : *port_map) {
     auto [src_operator_name, _] = Operator::parse_port_name(source_op_port);
 
-    if (src_operator_name.find(".") == std::string::npos) { return true; }
+    if (src_operator_name.find(".") == std::string::npos) {
+      return true;
+    }
 
     for (const auto& target_op_port : target_op_ports) {
       auto [target_operator_name, _] = Operator::parse_port_name(target_op_port);
 
-      if (target_operator_name.find(".") == std::string::npos) { return true; }
+      if (target_operator_name.find(".") == std::string::npos) {
+        return true;
+      }
     }
   }
   return false;
@@ -637,7 +659,9 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
     worklist.pop_front();
 
     // Check if we have already visited this node
-    if (visited_nodes.find(frag) != visited_nodes.end()) { continue; }
+    if (visited_nodes.find(frag) != visited_nodes.end()) {
+      continue;
+    }
     visited_nodes.insert(frag);
 
     // Add the connections from the previous operator to the current operator, for both direct
@@ -773,8 +797,12 @@ bool AppDriver::check_configuration() {
   auto& app_options = *options_;
 
   // Check if the driver or worker service needs to be launched
-  if (app_options.run_driver) { need_driver_ = true; }
-  if (app_options.run_worker) { need_worker_ = true; }
+  if (app_options.run_driver) {
+    need_driver_ = true;
+  }
+  if (app_options.run_worker) {
+    need_worker_ = true;
+  }
 
   // By default, we disable health check service. The health check service can be enabled by
   // setting the environment variable HOLOSCAN_ENABLE_HEALTH_CHECK to true when driver or worker is
@@ -846,7 +874,8 @@ void AppDriver::collect_resource_requirements(const Config& app_config,
           }
         }
       }
-    } catch (std::exception& e) {}
+    } catch (std::exception& e) {
+    }
   }
 
   // For the remaining fragments, we use the default resource requirement
@@ -871,7 +900,9 @@ SystemResourceRequirement AppDriver::parse_resource_requirement(
   req.cpu_limit = node["cpuLimit"].as<float>(req.cpu_limit);
   req.gpu = node["gpu"].as<float>(req.gpu);
   req.gpu_limit = node["gpuLimit"].as<float>(req.gpu_limit);
-  if (node["memory"]) { req.memory = parse_memory_size(node["memory"].as<std::string>()); }
+  if (node["memory"]) {
+    req.memory = parse_memory_size(node["memory"].as<std::string>());
+  }
   if (node["memoryLimit"]) {
     req.memory_limit = parse_memory_size(node["memoryLimit"].as<std::string>());
   }
@@ -905,8 +936,27 @@ std::unordered_map<std::string, std::string> AppDriver::schedule() const {
 }
 
 void AppDriver::check_fragment_schedule(const std::string& worker_address) {
+  // Check if scheduling has already been completed successfully
+  {
+    std::lock_guard<std::mutex> lock(scheduling_mutex_);
+    if (scheduling_started_) {
+      HOLOSCAN_LOG_DEBUG(
+          "Fragment scheduling has already been initiated. Ignoring schedule check request from "
+          "worker: {}",
+          worker_address);
+      return;
+    }
+    // Claim the right to schedule before releasing the lock
+    scheduling_started_ = true;
+  }  // Mutex released here
+
   if (!driver_server_) {
     HOLOSCAN_LOG_ERROR("check_fragment_schedule exited early, driver_server_ was null");
+    // Reset the flag since we're returning early
+    {
+      std::lock_guard<std::mutex> lock(scheduling_mutex_);
+      scheduling_started_ = false;
+    }
     return;
   }
 
@@ -927,6 +977,10 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
     // store the schedule for later reuse during ordered shutdown
     schedule_ = schedule;
 
+    // Set scheduling_started_ to true to prevent rescheduling
+    // Only set this after we know scheduling succeeded
+    // The flag is already set at the beginning of this function
+
     HOLOSCAN_LOG_INFO("Fragment schedule is available:");
     for (auto& [fragment_name, worker_id] : schedule) {
       HOLOSCAN_LOG_INFO("  Fragment '{}' => Worker '{}'", fragment_name, worker_id);
@@ -940,7 +994,9 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
 
     std::unordered_set<std::string> not_participated_workers(worker_addresses.begin(),
                                                              worker_addresses.end());
-    for (auto& [fragment_name, worker_id] : schedule) { not_participated_workers.erase(worker_id); }
+    for (auto& [fragment_name, worker_id] : schedule) {
+      not_participated_workers.erase(worker_id);
+    }
     for (const auto& worker_addr : not_participated_workers) {
       HOLOSCAN_LOG_INFO("Worker '{}' does not participate in the schedule", worker_addr);
       auto& worker_client = driver_server_->connect_to_worker(worker_addr);
@@ -977,7 +1033,9 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
           break;
         }
       }
-      if (is_root_fragment) { current_root_workers_.insert(worker_id); }
+      if (is_root_fragment) {
+        current_root_workers_.insert(worker_id);
+      }
 
       // Retrieve information for all operator ports in the scheduled fragments from the workers
       // so we don't have to compose the target fragments on the driver to get this information.
@@ -1002,13 +1060,21 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
       // Set app status to error
       app_status_ = AppStatus::kError;
 
+      // Reset scheduling_started_ since we failed
+      {
+        std::lock_guard<std::mutex> lock(scheduling_mutex_);
+        scheduling_started_ = false;
+      }
+
       // Stop the driver server
       driver_server_->stop();
       return;
     }
 
     // (populates index_to_port_map_, index_to_ip_map_, connection_map_, receiver_port_map_)
-    if (!collect_connections(fragment_graph)) { HOLOSCAN_LOG_ERROR("Cannot collect connections"); }
+    if (!collect_connections(fragment_graph)) {
+      HOLOSCAN_LOG_ERROR("Cannot collect connections");
+    }
 
     // Collect # of connectors for each fragment
     std::unordered_map<std::string, int> fragment_connector_count;
@@ -1057,6 +1123,11 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
                            worker_id,
                            total_port_count,
                            available_ports.size());
+        // Reset scheduling_started_ since we failed
+        {
+          std::lock_guard<std::mutex> lock(scheduling_mutex_);
+          scheduling_started_ = false;
+        }
         // TODO(gbae): Handle this error (remove the worker and client from the schedule)
         return;
       }
@@ -1080,6 +1151,8 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
 
     // Request worker to launch fragments
     for (const auto& [worker_id, fragment_names] : worker_fragment_map) {
+      HOLOSCAN_LOG_DEBUG(
+          "Launching fragments on worker {}, fragments: {}", worker_id, fragment_names);
       std::vector<std::shared_ptr<Fragment>> fragment_vector;
       fragment_vector.reserve(fragment_names.size());
 
@@ -1100,6 +1173,12 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
         // Set app status to error
         app_status_ = AppStatus::kError;
 
+        // Reset scheduling_started_ since we failed
+        {
+          std::lock_guard<std::mutex> lock(scheduling_mutex_);
+          scheduling_started_ = false;
+        }
+
         // Stop the driver server
         if (driver_server_) {
           driver_server_->stop();
@@ -1116,6 +1195,11 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
 
   } else {
     HOLOSCAN_LOG_INFO(schedule_result.error());
+    // Reset scheduling_started_ since scheduling failed
+    {
+      std::lock_guard<std::mutex> lock(scheduling_mutex_);
+      scheduling_started_ = false;
+    }
   }
 }
 
@@ -1144,7 +1228,9 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
         if (num_worker_connections == 0) {
           HOLOSCAN_LOG_INFO("All workers have finished execution");
           // Set app status to finished
-          if (app_status_ != AppStatus::kError) { app_status_ = AppStatus::kFinished; }
+          if (app_status_ != AppStatus::kError) {
+            app_status_ = AppStatus::kFinished;
+          }
           // Stop the driver server
           if (driver_server_) {
             driver_server_->stop();
@@ -1175,12 +1261,16 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
 void AppDriver::update_root_fragments(const FragmentGraph& graph,
                                       const std::unordered_set<std::string>& terminated_fragments) {
   // Remove terminated fragments from tracking
-  for (const auto& terminated : terminated_fragments) { current_root_workers_.erase(terminated); }
+  for (const auto& terminated : terminated_fragments) {
+    current_root_workers_.erase(terminated);
+  }
 
   // Update root fragment workers based on current graph state
   for (const auto& [fragment_name, worker_id] : schedule_) {
     const auto node = graph.find_node(fragment_name);
-    if (node && graph.is_root(node)) { current_root_workers_.insert(worker_id); }
+    if (node && graph.is_root(node)) {
+      current_root_workers_.insert(worker_id);
+    }
   }
 }
 
@@ -1218,7 +1308,9 @@ void AppDriver::terminate_all_workers(AppWorkerTerminationCode error_code) {
             terminated_fragments.insert(fragment_name);
             // Remove node from graph
             auto node = fragment_graph.find_node(fragment_name);
-            if (node) { fragment_graph.remove_node(node); }
+            if (node) {
+              fragment_graph.remove_node(node);
+            }
           }
         }
 
@@ -1314,6 +1406,11 @@ std::future<void> AppDriver::launch_fragments_async(
   // Disable CUDA Interprocess Communication (issue 4318442)
   set_ucx_to_exclude_cuda_ipc();
 
+  // Set larger default segment size for UCX
+  // Default value of 8k results in slow TCP/IP + cuda_copy performance
+  setenv("UCX_TCP_RX_SEG_SIZE", kDefaultTCPIPSegmentSize, 0);
+  setenv("UCX_TCP_TX_SEG_SIZE", kDefaultTCPIPSegmentSize, 0);
+
   int gpu_count = 0;
   cudaError_t cuda_err = HOLOSCAN_CUDA_CALL_WARN_MSG(
       cudaGetDeviceCount(&gpu_count), "Initializing UcxContext with support for CPU data only");
@@ -1321,7 +1418,18 @@ std::future<void> AppDriver::launch_fragments_async(
     HOLOSCAN_LOG_DEBUG("Detected {} GPU(s), initializing UcxContext with GPU support", gpu_count);
   }
 
-  // Add the UCX network context
+  // Set scheduler for each fragment
+  // Should be called before GXFExecutor::initialize_gxf_graph()
+  Application::set_scheduler_for_fragments(target_fragments);
+
+  // Initialize fragment services for distributed execution
+  if (!handle_driver_start("127.0.0.1")) {  // Local server for local execution
+    HOLOSCAN_LOG_ERROR("Failed to start driver services");
+    return std::async(std::launch::async,
+                      []() { throw std::runtime_error("Failed to start driver services"); });
+  }
+
+  // Add the UCX network context - moved here after handle_driver_start succeeds
   bool enable_async = get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", false);
   for (auto& fragment : target_fragments) {
     auto network_context = fragment->make_network_context<holoscan::UcxContext>(
@@ -1329,9 +1437,12 @@ std::future<void> AppDriver::launch_fragments_async(
     fragment->network_context(network_context);
   }
 
-  // Set scheduler for each fragment
-  // Should be called before GXFExecutor::initialize_gxf_graph()
-  Application::set_scheduler_for_fragments(target_fragments);
+  // Initialize distributed fragment service endpoints
+  app_->worker().handle_worker_connect("127.0.0.1");  // Workers connect locally
+  // Attach application services to every fragment
+  for (auto& fragment : target_fragments) {
+    app_->attach_services_to_fragment(fragment);
+  }
 
   // Initialize fragment graphs
   for (auto& fragment : target_fragments) {
@@ -1359,13 +1470,29 @@ std::future<void> AppDriver::launch_fragments_async(
       std::async(std::launch::async,
                  [futures = std::move(futures), app = app_, &driver_server = driver_server_]() {
                    // Wait until all fragments have finished
-                   for (auto& [fragment, future_obj] : futures) { future_obj.wait(); }
+                   for (auto& [fragment, future_obj] : futures) {
+                     future_obj.wait();
+                   }
 
                    // Stop driver server
                    if (driver_server) {
                      driver_server->stop();
                      driver_server->wait();
                      driver_server = nullptr;
+                   }
+
+                   // Disconnect worker endpoints for distributed fragment services
+                   app->worker().handle_worker_disconnect();
+                   // Terminate distributed fragment services
+                   if (!app->driver().handle_driver_shutdown()) {
+                     HOLOSCAN_LOG_ERROR(
+                         "Driver shutdown encountered errors - some services may not have shut "
+                         "down cleanly");
+                     // Store an exception to be rethrown later
+                     if (!app->executor().exception()) {
+                       app->executor().exception(std::make_exception_ptr(
+                           std::runtime_error("Driver shutdown failed - check logs for details")));
+                     }
                    }
 
                    // Set the exception if any of the fragments raises an exception
@@ -1382,9 +1509,115 @@ std::future<void> AppDriver::launch_fragments_async(
 
                    // Rethrow the exception if any
                    auto& stored_exception = app->executor().exception();
-                   if (stored_exception) { std::rethrow_exception(stored_exception); }
+                   if (stored_exception) {
+                     std::rethrow_exception(stored_exception);
+                   }
                  });
   return future;
+}
+
+bool AppDriver::handle_driver_start(const std::string_view& server_ip) {
+  try {
+    auto gxf_executor = std::dynamic_pointer_cast<gxf::GXFExecutor>(app_->executor_shared());
+    if (gxf_executor) {
+      gxf_executor->initialize_fragment_services();
+    }
+
+    // Initialize distributed fragment service endpoints
+    std::unordered_set<std::shared_ptr<FragmentService>> executed_services;
+    std::vector<std::string> failed_services;  // Track failures
+
+    for (const auto& [service_key, service] : app_->fragment_services_by_key()) {
+      if (executed_services.find(service) != executed_services.end()) {
+        continue;
+      }
+      executed_services.insert(service);
+
+      try {
+        HOLOSCAN_LOG_DEBUG(
+            "handle_driver_start: checking '{}' ('{}')", service_key.id, service_key.type.name());
+        auto driver_endpoint =
+            std::dynamic_pointer_cast<distributed::ServiceDriverEndpoint>(service);
+        if (driver_endpoint) {
+          HOLOSCAN_LOG_DEBUG("handle_driver_start: Starting server endpoint for service '{}'",
+                             service_key.id);
+          driver_endpoint->driver_start(server_ip);
+        }
+      } catch (const std::exception& e) {
+        HOLOSCAN_LOG_ERROR(
+            "handle_driver_start: Failed to start service '{}': {}", service_key.id, e.what());
+        failed_services.push_back(service_key.id);
+      }
+    }
+
+    if (!failed_services.empty()) {
+      HOLOSCAN_LOG_ERROR("Failed to start services: {}", fmt::join(failed_services, ", "));
+      return false;
+    }
+    return true;
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("handle_driver_start: exception caught: {}", e.what());
+    return false;
+  } catch (...) {
+    HOLOSCAN_LOG_ERROR("handle_driver_start: unknown exception caught");
+    return false;
+  }
+}
+
+bool AppDriver::handle_driver_shutdown() noexcept {
+  bool success = true;
+  try {
+    std::unordered_set<std::shared_ptr<FragmentService>> executed_services;
+    std::vector<std::string> failed_services;  // Track failures
+
+    for (const auto& [service_key, service] : app_->fragment_services_by_key()) {
+      if (executed_services.find(service) != executed_services.end()) {
+        continue;
+      }
+      executed_services.insert(service);
+
+      try {
+        HOLOSCAN_LOG_DEBUG("handle_driver_shutdown: checking '{}' ('{}')",
+                           service_key.id,
+                           service_key.type.name());
+        auto driver_endpoint =
+            std::dynamic_pointer_cast<distributed::ServiceDriverEndpoint>(service);
+        if (driver_endpoint) {
+          HOLOSCAN_LOG_DEBUG(
+              "handle_driver_shutdown: Shutting down driver endpoint for service '{}'",
+              service_key.id);
+          driver_endpoint->driver_shutdown();
+        }
+      } catch (const std::exception& e) {
+        HOLOSCAN_LOG_ERROR("handle_driver_shutdown: Failed to shutdown service '{}': {}",
+                           service_key.id,
+                           e.what());
+        failed_services.push_back(service_key.id);
+        success = false;
+      }
+    }
+
+    if (!failed_services.empty()) {
+      // Log the aggregate error but don't throw since we're noexcept
+      HOLOSCAN_LOG_ERROR("Failed to shutdown services: {}", fmt::join(failed_services, ", "));
+    }
+  } catch (const std::exception& e) {
+    // Wrap error logging in try-catch since we're in the outermost catch
+    try {
+      HOLOSCAN_LOG_ERROR("handle_driver_shutdown: exception caught: {}", e.what());
+    } catch (...) {
+    }
+    success = false;
+  } catch (...) {
+    // Wrap error logging in try-catch since we're in the outermost catch
+    try {
+      HOLOSCAN_LOG_ERROR("handle_driver_shutdown: unknown exception caught");
+    } catch (...) {
+    }
+    success = false;
+  }
+
+  return success;
 }
 
 void AppDriver::setup_signal_handlers() {
@@ -1413,7 +1646,9 @@ void AppDriver::setup_signal_handlers() {
         app_status_ = AppStatus::kFinished;
 
         // Stop the driver server
-        if (driver_server_) { driver_server_->stop(); }
+        if (driver_server_) {
+          driver_server_->stop();
+        }
       }
 
       // Create a watchdog thread to ensure we exit even if clean shutdown hangs

@@ -83,12 +83,15 @@ struct YAML::convert<myres::CustomIntType4Resource> {
   }
 
   static bool decode(const Node& node, myres::CustomIntType4Resource& rhs) {
-    if (!node.IsScalar()) return false;
+    if (!node.IsScalar())
+      return false;
 
     try {
       rhs.value(node.as<int>());
       return true;
-    } catch (...) { return false; }
+    } catch (...) {
+      return false;
+    }
   }
 };
 

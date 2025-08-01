@@ -14,6 +14,7 @@
 # limitations under the License.
 
 # submodules for data loggers
+add_subdirectory(async_console_logger)
 add_subdirectory(basic_console_logger)
 
 # same template approach as taken for the operators module

@@ -69,7 +69,9 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     } else {
       this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
     }
-    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
+    if (receiver.has_value()) {
+      this->add_arg(Arg("receiver", receiver.value()));
+    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -89,7 +91,9 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     } else {
       this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
     }
-    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
+    if (receiver.has_value()) {
+      this->add_arg(Arg("receiver", receiver.value()));
+    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     // Note "receiver" parameter is set automatically from GXFExecutor
     setup(*spec_);

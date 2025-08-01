@@ -38,7 +38,9 @@
 #if VK_HEADER_VERSION < 213
 namespace vk {
 VULKAN_HPP_INLINE void resultCheck(Result result, char const* message) {
-  if (result != Result::eSuccess) { throwResultException(result, message); }
+  if (result != Result::eSuccess) {
+    throwResultException(result, message);
+  }
 }
 }  // namespace vk
 #endif
@@ -57,11 +59,15 @@ struct GLFWWindow::Impl {
     if (glfw_init_count_ == 0) {
       glfwSetErrorCallback(glfw_error_callback);
 
-      if (glfwInit() == GLFW_FALSE) { throw std::runtime_error("Failed to initialize glfw"); }
+      if (glfwInit() == GLFW_FALSE) {
+        throw std::runtime_error("Failed to initialize glfw");
+      }
     }
     ++glfw_init_count_;
 
-    if (!glfwVulkanSupported()) { throw std::runtime_error("Vulkan is not supported"); }
+    if (!glfwVulkanSupported()) {
+      throw std::runtime_error("Vulkan is not supported");
+    }
   }
   Impl() = delete;
 
@@ -81,7 +87,9 @@ struct GLFWWindow::Impl {
     }
 
     --glfw_init_count_;
-    if (glfw_init_count_ == 0) { glfwTerminate(); }
+    if (glfw_init_count_ == 0) {
+      glfwTerminate();
+    }
   }
 
   static void key_cb(GLFWwindow* window, int key, int scancode, int action, int mods);
@@ -194,7 +202,9 @@ GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitF
         }
       }
     }
-    if (!monitor) { monitor = glfwGetPrimaryMonitor(); }
+    if (!monitor) {
+      monitor = glfwGetPrimaryMonitor();
+    }
   }
 
   {
@@ -202,7 +212,9 @@ GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitF
     std::lock_guard<std::mutex> guard(impl_->mutex_);
     impl_->window_ = glfwCreateWindow(width, height, title, monitor, NULL);
   }
-  if (!impl_->window_) { throw std::runtime_error("Failed to create glfw window"); }
+  if (!impl_->window_) {
+    throw std::runtime_error("Failed to create glfw window");
+  }
 
   impl_->intern_window_ = true;
 
@@ -238,18 +250,30 @@ static KeyAndButtonAction to_key_and_button_action(int action) {
 
 KeyModifiers GLFWWindow::Impl::to_modifiers(int mods) {
   KeyModifiers modifiers{};
-  if (mods & GLFW_MOD_SHIFT) { modifiers.shift = 1; }
-  if (mods & GLFW_MOD_CONTROL) { modifiers.control = 1; }
-  if (mods & GLFW_MOD_ALT) { modifiers.alt = 1; }
-  if (caps_lock_) { modifiers.caps_lock = 1; }
-  if (num_lock_) { modifiers.num_lock = 1; }
+  if (mods & GLFW_MOD_SHIFT) {
+    modifiers.shift = 1;
+  }
+  if (mods & GLFW_MOD_CONTROL) {
+    modifiers.control = 1;
+  }
+  if (mods & GLFW_MOD_ALT) {
+    modifiers.alt = 1;
+  }
+  if (caps_lock_) {
+    modifiers.caps_lock = 1;
+  }
+  if (num_lock_) {
+    modifiers.num_lock = 1;
+  }
   return modifiers;
 }
 
 void GLFWWindow::Impl::key_cb(GLFWwindow* window, int key, int scancode, int action, int mods) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_key_cb_) { impl->prev_key_cb_(window, key, scancode, action, mods); }
+  if (impl->prev_key_cb_) {
+    impl->prev_key_cb_(window, key, scancode, action, mods);
+  }
 
   if (!impl->key_callbacks_.empty()) {
     // The Holoviz key enum values are identical to the GLFW key values, so we can just cast
@@ -263,7 +287,9 @@ void GLFWWindow::Impl::key_cb(GLFWwindow* window, int key, int scancode, int act
 
   const bool pressed = action != GLFW_RELEASE;
 
-  if (pressed && (key == GLFW_KEY_ESCAPE)) { glfwSetWindowShouldClose(window, 1); }
+  if (pressed && (key == GLFW_KEY_ESCAPE)) {
+    glfwSetWindowShouldClose(window, 1);
+  }
 
   // Keeping track of the modifiers
   if ((key == GLFW_KEY_LEFT_CONTROL) || (key == GLFW_KEY_RIGHT_CONTROL)) {
@@ -272,15 +298,23 @@ void GLFWWindow::Impl::key_cb(GLFWwindow* window, int key, int scancode, int act
   if ((key == GLFW_KEY_LEFT_SHIFT) || (key == GLFW_KEY_RIGHT_SHIFT)) {
     impl->inputs_.shift = pressed;
   }
-  if ((key == GLFW_KEY_LEFT_ALT) || (key == GLFW_KEY_RIGHT_ALT)) { impl->inputs_.alt = pressed; }
-  if (key == GLFW_KEY_CAPS_LOCK) { impl->caps_lock_ = pressed; }
-  if (key == GLFW_KEY_NUM_LOCK) { impl->num_lock_ = pressed; }
+  if ((key == GLFW_KEY_LEFT_ALT) || (key == GLFW_KEY_RIGHT_ALT)) {
+    impl->inputs_.alt = pressed;
+  }
+  if (key == GLFW_KEY_CAPS_LOCK) {
+    impl->caps_lock_ = pressed;
+  }
+  if (key == GLFW_KEY_NUM_LOCK) {
+    impl->num_lock_ = pressed;
+  }
 }
 
 void GLFWWindow::Impl::unicode_char_cb(GLFWwindow* window, unsigned int code_point) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_unicode_char_cb_) { impl->prev_unicode_char_cb_(window, code_point); }
+  if (impl->prev_unicode_char_cb_) {
+    impl->prev_unicode_char_cb_(window, code_point);
+  }
 
   for (auto&& unicode_char_callbacks : impl->unicode_char_callbacks_) {
     unicode_char_callbacks(code_point);
@@ -290,7 +324,9 @@ void GLFWWindow::Impl::unicode_char_cb(GLFWwindow* window, unsigned int code_poi
 void GLFWWindow::Impl::mouse_button_cb(GLFWwindow* window, int button, int action, int mods) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_mouse_button_cb_) { impl->prev_mouse_button_cb_(window, button, action, mods); }
+  if (impl->prev_mouse_button_cb_) {
+    impl->prev_mouse_button_cb_(window, button, action, mods);
+  }
 
   if (!impl->mouse_button_callbacks_.empty()) {
     MouseButton ext_mouse_button;
@@ -326,14 +362,20 @@ void GLFWWindow::Impl::mouse_button_cb(GLFWwindow* window, int button, int actio
 void GLFWWindow::Impl::scroll_cb(GLFWwindow* window, double x, double y) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_scroll_cb_) { impl->prev_scroll_cb_(window, x, y); }
+  if (impl->prev_scroll_cb_) {
+    impl->prev_scroll_cb_(window, x, y);
+  }
 
   if (!impl->scroll_callbacks_.empty()) {
-    for (auto&& scroll_callback : impl->scroll_callbacks_) { scroll_callback(x, y); }
+    for (auto&& scroll_callback : impl->scroll_callbacks_) {
+      scroll_callback(x, y);
+    }
   }
 
   // Allow camera movement only when not editing
-  if ((ImGui::GetCurrentContext() != nullptr) && ImGui::GetIO().WantCaptureMouse) { return; }
+  if ((ImGui::GetCurrentContext() != nullptr) && ImGui::GetIO().WantCaptureMouse) {
+    return;
+  }
 
   CameraManip.wheel(y > 0.0 ? 1 : -1, impl->inputs_);
 }
@@ -341,14 +383,20 @@ void GLFWWindow::Impl::scroll_cb(GLFWwindow* window, double x, double y) {
 void GLFWWindow::Impl::cursor_pos_cb(GLFWwindow* window, double x, double y) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_cursor_pos_cb_) { impl->prev_cursor_pos_cb_(window, x, y); }
+  if (impl->prev_cursor_pos_cb_) {
+    impl->prev_cursor_pos_cb_(window, x, y);
+  }
 
   if (!impl->cursor_pos_callbacks_.empty()) {
-    for (auto&& cursor_pos_callback : impl->cursor_pos_callbacks_) { cursor_pos_callback(x, y); }
+    for (auto&& cursor_pos_callback : impl->cursor_pos_callbacks_) {
+      cursor_pos_callback(x, y);
+    }
   }
 
   // Allow camera movement only when not editing
-  if ((ImGui::GetCurrentContext() != nullptr) && ImGui::GetIO().WantCaptureMouse) { return; }
+  if ((ImGui::GetCurrentContext() != nullptr) && ImGui::GetIO().WantCaptureMouse) {
+    return;
+  }
 
   if (impl->inputs_.lmb || impl->inputs_.rmb || impl->inputs_.mmb) {
     CameraManip.mouseMove(static_cast<int>(x), static_cast<int>(y), impl->inputs_);
@@ -358,7 +406,9 @@ void GLFWWindow::Impl::cursor_pos_cb(GLFWwindow* window, double x, double y) {
 void GLFWWindow::Impl::framebuffer_size_cb(GLFWwindow* window, int width, int height) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_framebuffer_size_cb_) { impl->prev_framebuffer_size_cb_(window, width, height); }
+  if (impl->prev_framebuffer_size_cb_) {
+    impl->prev_framebuffer_size_cb_(window, width, height);
+  }
 
   for (auto&& framebuffer_size_callback : impl->framebuffer_size_callbacks_) {
     framebuffer_size_callback(width, height);
@@ -372,7 +422,9 @@ void GLFWWindow::Impl::framebuffer_size_cb(GLFWwindow* window, int width, int he
 void GLFWWindow::Impl::window_size_cb(GLFWwindow* window, int width, int height) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_window_size_cb_) { impl->prev_window_size_cb_(window, width, height); }
+  if (impl->prev_window_size_cb_) {
+    impl->prev_window_size_cb_(window, width, height);
+  }
 
   for (auto&& window_size_callback : impl->window_size_callbacks_) {
     window_size_callback(width, height);
@@ -385,7 +437,9 @@ void GLFWWindow::Impl::window_size_cb(GLFWwindow* window, int width, int height)
 void GLFWWindow::Impl::iconify_cb(GLFWwindow* window, int iconified) {
   GLFWWindow::Impl* const impl = static_cast<GLFWWindow::Impl*>(glfwGetWindowUserPointer(window));
 
-  if (impl->prev_window_iconify_cb_) { impl->prev_window_iconify_cb_(window, iconified); }
+  if (impl->prev_window_iconify_cb_) {
+    impl->prev_window_iconify_cb_(window, iconified);
+  }
 
   impl->minimized_ = iconified == GLFW_TRUE;
 }
@@ -545,7 +599,9 @@ bool GLFWWindow::should_close() {
 }
 
 bool GLFWWindow::is_minimized() {
-  if (impl_->minimized_) { usleep(50); }
+  if (impl_->minimized_) {
+    usleep(50);
+  }
   return impl_->minimized_;
 }
 

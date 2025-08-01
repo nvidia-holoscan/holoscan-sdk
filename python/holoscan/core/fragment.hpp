@@ -23,6 +23,7 @@
 
 #include <memory>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -70,9 +71,23 @@ class PyFragment : public Fragment {
   void add_flow(const std::shared_ptr<Operator>& upstream_op,
                 const std::shared_ptr<Operator>& downstream_op,
                 std::set<std::pair<std::string, std::string>> io_map) override;
+  void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                const std::shared_ptr<Operator>& downstream_op,
+                IOSpec::ConnectorType connector_type) override;
+  void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                const std::shared_ptr<Operator>& downstream_op,
+                std::set<std::pair<std::string, std::string>> io_map,
+                IOSpec::ConnectorType connector_type) override;
 
   void compose() override;
   void run() override;
+
+  /**
+   * Register all services with the given `id` from another fragment.
+   * @param fragment  Source fragment. Must not be nullptr and must out-live *this* call.
+   * @throws std::invalid_argument if `fragment == nullptr`.
+   */
+  bool register_service_from(Fragment* fragment, std::string_view id) override;
 
   /// Get a Python service from the registry
   py::object get_python_service(const std::string& service_id) const;

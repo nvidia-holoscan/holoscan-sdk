@@ -90,23 +90,42 @@ void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32
   }
   auto params = spec()->params();
   auto param_iter = params.find("cuda_stream_pool");
-  if (param_iter != params.end()) { return; }
+  if (param_iter != params.end()) {
+    return;
+  }
 
   // If a CudaStreamPool resource is already present, do nothing
   for (auto& resource : resources_) {
     // If the user already passed in a CudaStreamPool argument, do nothing
     auto stream_pool_resource = std::dynamic_pointer_cast<CudaStreamPool>(resource.second);
-    if (stream_pool_resource) { return; }
+    if (stream_pool_resource) {
+      return;
+    }
   }
 
   // If no CudaStreamPool was found, create a default one
-  auto cuda_stream_pool = std::make_shared<CudaStreamPool>(
-      dev_id, stream_flags, stream_priority, reserved_size, max_size);
-  cuda_stream_pool->name("default_cuda_stream_pool");
+
+  auto cuda_stream_pool =
+      fragment()->make_resource<CudaStreamPool>(fmt::format("{}_stream_pool", name_),
+                                                dev_id,
+                                                stream_flags,
+                                                stream_priority,
+                                                reserved_size,
+                                                max_size);
 
   // set it to belong to the operator's GXF entity
-  if (graph_entity_) { cuda_stream_pool->gxf_eid(graph_entity_->eid()); }
-  add_arg(cuda_stream_pool);
+  if (graph_entity_) {
+    cuda_stream_pool->gxf_eid(graph_entity_->eid());
+  }
+  // if the operator has already been initialized, initialize the stream pool
+  if (is_initialized_) {
+    cuda_stream_pool->initialize();
+    // manually register in resources mapping
+    resources_[cuda_stream_pool->name()] = cuda_stream_pool;
+  } else {
+    // add to arguments to be processed during operator initialization
+    add_arg(cuda_stream_pool);
+  }
 }
 
 bool Operator::is_root() {
@@ -129,7 +148,9 @@ bool Operator::is_leaf() {
 bool Operator::is_all_operator_successor_virtual(OperatorNodeType op, OperatorGraph& graph) {
   auto next_nodes = graph.get_next_nodes(op);
   for (auto& next_node : next_nodes) {
-    if (next_node->operator_type() != Operator::OperatorType::kVirtual) { return false; }
+    if (next_node->operator_type() != Operator::OperatorType::kVirtual) {
+      return false;
+    }
   }
   return true;
 }
@@ -137,7 +158,9 @@ bool Operator::is_all_operator_successor_virtual(OperatorNodeType op, OperatorGr
 bool Operator::is_all_operator_predecessor_virtual(OperatorNodeType op, OperatorGraph& graph) {
   auto prev_nodes = graph.get_previous_nodes(op);
   for (auto& prev_node : prev_nodes) {
-    if (prev_node->operator_type() != Operator::OperatorType::kVirtual) { return false; }
+    if (prev_node->operator_type() != Operator::OperatorType::kVirtual) {
+      return false;
+    }
   }
   return true;
 }
@@ -152,7 +175,9 @@ std::string Operator::qualified_name() {
 
 std::pair<std::string, std::string> Operator::parse_port_name(const std::string& op_port_name) {
   auto pos = op_port_name.find('.');
-  if (pos == std::string::npos) { return std::make_pair(op_port_name, ""); }
+  if (pos == std::string::npos) {
+    return std::make_pair(op_port_name, "");
+  }
 
   auto op_name = op_port_name.substr(0, pos);
   auto port_name = op_port_name.substr(pos + 1);
@@ -174,7 +199,9 @@ holoscan::MessageLabel Operator::get_consolidated_input_label() {
     // Flatten the message_paths in input_message_labels into a single MessageLabel
     for (auto& it : this->input_message_labels) {
       MessageLabel everyinput = it.second;
-      for (auto& p : everyinput.paths()) { m.add_new_path(p); }
+      for (auto& p : everyinput.paths()) {
+        m.add_new_path(p);
+      }
     }
   } else {  // Root operator
     if (!this->is_root() && !this->is_user_defined_root()) {
@@ -290,9 +317,13 @@ YAML::Node Operator::to_yaml_node() const {
   YAML::Node node = ComponentBase::to_yaml_node();
   node["type"] = operatortype_namemap[operator_type_];
   node["conditions"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const auto& c : conditions_) { node["conditions"].push_back(c.second->to_yaml_node()); }
+  for (const auto& c : conditions_) {
+    node["conditions"].push_back(c.second->to_yaml_node());
+  }
   node["resources"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const auto& r : resources_) { node["resources"].push_back(r.second->to_yaml_node()); }
+  for (const auto& r : resources_) {
+    node["resources"].push_back(r.second->to_yaml_node());
+  }
   if (spec_) {
     node["spec"] = spec_->to_yaml_node();
   } else {
@@ -337,7 +368,9 @@ void Operator::initialize_conditions() {
         // already been initialized. It should not hurt to call add_arg again on them again. It
         // will just result in debug level messages about initialize having already been called
         // for each.
-        for (const auto& term : terms) { add_arg(term); }
+        for (const auto& term : terms) {
+          add_arg(term);
+        }
       }
     }
   }
@@ -415,9 +448,13 @@ void Operator::find_ports_used_by_condition_args() {
         if (connector_arg_iter->arg_type().element_type() == ArgElementType::kYAMLNode) {
           auto node = std::any_cast<YAML::Node>(connector_arg_iter->value());
           // skip if this was not a scalar node or does not contain a string
-          if (!node.IsScalar()) { continue; }
+          if (!node.IsScalar()) {
+            continue;
+          }
           connector_name = node.as<std::string>();
-          if (connector_name.empty()) { continue; }
+          if (connector_name.empty()) {
+            continue;
+          }
         } else {
           connector_name = std::any_cast<std::string>(connector_arg_iter->value());
         }
@@ -453,9 +490,13 @@ void Operator::update_connector_arguments() {
         if (connector_arg_iter->arg_type().element_type() == ArgElementType::kYAMLNode) {
           auto node = std::any_cast<YAML::Node>(connector_arg_iter->value());
           // skip if this was not a scalar node or does not contain a string
-          if (!node.IsScalar()) { continue; }
+          if (!node.IsScalar()) {
+            continue;
+          }
           connector_name = node.as<std::string>();
-          if (connector_name.empty()) { continue; }
+          if (connector_name.empty()) {
+            continue;
+          }
         } else {
           connector_name = std::any_cast<std::string>(connector_arg_iter->value());
         }
@@ -527,10 +568,14 @@ bool Operator::has_ucx_connector() {
     throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
   }
   for (const auto& [_, io_spec] : spec_->inputs()) {
-    if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) { return true; }
+    if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
+      return true;
+    }
   }
   for (const auto& [_, io_spec] : spec_->outputs()) {
-    if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) { return true; }
+    if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
+      return true;
+    }
   }
   return false;
 }
@@ -544,14 +589,18 @@ void Operator::reset_graph_entities() {
   auto reset_resource = [](std::shared_ptr<holoscan::Resource> resource) {
     if (resource) {
       auto gxf_resource = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(resource);
-      if (gxf_resource) { gxf_resource->reset_gxf_graph_entity(); }
+      if (gxf_resource) {
+        gxf_resource->reset_gxf_graph_entity();
+      }
       resource->reset_graph_entities();
     }
   };
   auto reset_condition = [](std::shared_ptr<holoscan::Condition> condition) {
     if (condition) {
       auto gxf_condition = std::dynamic_pointer_cast<holoscan::gxf::GXFCondition>(condition);
-      if (gxf_condition) { gxf_condition->reset_gxf_graph_entity(); }
+      if (gxf_condition) {
+        gxf_condition->reset_gxf_graph_entity();
+      }
       condition->reset_graph_entities();
     }
   };
@@ -560,11 +609,17 @@ void Operator::reset_graph_entities() {
        reset_condition](const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_specs) {
         for (auto& [_, io_spec] : io_specs) {
           reset_resource(io_spec->connector());
-          for (auto& [_, condition] : io_spec->conditions()) { reset_condition(condition); }
+          for (auto& [_, condition] : io_spec->conditions()) {
+            reset_condition(condition);
+          }
         }
       };
-  for (auto& [_, resource] : resources_) { reset_resource(resource); }
-  for (auto& [_, condition] : conditions_) { reset_condition(condition); }
+  for (auto& [_, resource] : resources_) {
+    reset_resource(resource);
+  }
+  for (auto& [_, condition] : conditions_) {
+    reset_condition(condition);
+  }
   resources_.clear();
   conditions_.clear();
   reset_iospec(spec_->inputs());
@@ -579,10 +634,14 @@ std::optional<std::shared_ptr<Receiver>> Operator::receiver(const std::string& p
   }
   auto inputs = spec_->inputs();
   auto input_iter = inputs.find(port_name);
-  if (input_iter == inputs.end()) { return std::nullopt; }
+  if (input_iter == inputs.end()) {
+    return std::nullopt;
+  }
   auto connector = input_iter->second->connector();
   auto receiver = std::dynamic_pointer_cast<Receiver>(connector);
-  if (receiver == nullptr) { return std::nullopt; }
+  if (receiver == nullptr) {
+    return std::nullopt;
+  }
   return receiver;
 }
 
@@ -610,10 +669,14 @@ std::optional<std::shared_ptr<Transmitter>> Operator::transmitter(const std::str
   }
   auto outputs = spec_->outputs();
   auto output_iter = outputs.find(port_name);
-  if (output_iter == outputs.end()) { return std::nullopt; }
+  if (output_iter == outputs.end()) {
+    return std::nullopt;
+  }
   auto connector = output_iter->second->connector();
   auto transmitter = std::dynamic_pointer_cast<Transmitter>(connector);
-  if (transmitter == nullptr) { return std::nullopt; }
+  if (transmitter == nullptr) {
+    return std::nullopt;
+  }
   return transmitter;
 }
 
@@ -676,7 +739,9 @@ void Operator::initialize_next_flows() {
 }
 
 const std::vector<std::shared_ptr<Operator::FlowInfo>>& Operator::next_flows() {
-  if (!next_flows_) { initialize_next_flows(); }
+  if (!next_flows_) {
+    initialize_next_flows();
+  }
   return *next_flows_;
 }
 
@@ -751,7 +816,9 @@ const std::shared_ptr<Operator::FlowInfo>& Operator::find_flow_info(
     const std::function<bool(const std::shared_ptr<Operator::FlowInfo>&)>& predicate) {
   const auto& flows = next_flows();
   auto it = std::find_if(flows.begin(), flows.end(), predicate);
-  if (it == flows.end()) { return kEmptyFlowInfo; }
+  if (it == flows.end()) {
+    return kEmptyFlowInfo;
+  }
   return *it;
 }
 

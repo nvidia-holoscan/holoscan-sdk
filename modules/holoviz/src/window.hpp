@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,8 +92,7 @@ class Window {
   /// window size callback type
   typedef void (*WindowSizeCallbackType)(int width, int height);
   /// window size callback function type
-  typedef std::function<std::remove_pointer_t<WindowSizeCallbackType>>
-      WindowSizeCallbackFunction;
+  typedef std::function<std::remove_pointer_t<WindowSizeCallbackType>> WindowSizeCallbackFunction;
 
   /**
    * Add a key callback. The callback function is called when a key is pressed, released or

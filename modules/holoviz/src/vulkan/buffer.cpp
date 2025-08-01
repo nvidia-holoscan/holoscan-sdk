@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +36,8 @@ Buffer::~Buffer() {
       device_ptr_.reset();
     }
     alloc_->destroy(buffer_);
-  } catch (const std::exception& e) {}  // ignore potential exceptions
+  } catch (const std::exception& e) {
+  }  // ignore potential exceptions
 }
 
 void Buffer::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {

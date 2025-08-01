@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,14 +50,17 @@ class GILGuardedPyObject {
     try {
       py::gil_scoped_acquire scope_guard;
       py::handle handle = obj_.release();
-      if (handle) { handle.dec_ref(); }
+      if (handle) {
+        handle.dec_ref();
+      }
     } catch (py::error_already_set& eas) {
       // Discard any Python error using Python APIs
       // https://pybind11.readthedocs.io/en/stable/advanced/exceptions.html#handling-unraisable-exceptions
       try {
         // ignore potential runtime_error from release() call internal to discard_as_unraisable
         eas.discard_as_unraisable(__func__);
-      } catch (...) {}
+      } catch (...) {
+      }
     } catch (const std::exception& e) {
       // catch and print info on any C++ exception raised in the destructor
       try {

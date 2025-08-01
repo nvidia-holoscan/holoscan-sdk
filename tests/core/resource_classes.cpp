@@ -149,6 +149,15 @@ TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferReceiverDefaultConstructor
   auto resource = F.make_resource<DoubleBufferReceiver>();
 }
 
+TEST_F(ResourceClassesWithGXFContext, TestAsyncBufferReceiver) {
+  const std::string name{"receiver"};
+  auto resource = F.make_resource<AsyncBufferReceiver>(name);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<AsyncBufferReceiver>()));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "holoscan::HoloscanAsyncBufferReceiver"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
 TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferTransmitter) {
   const std::string name{"transmitter"};
   ArgList arglist{
@@ -164,6 +173,15 @@ TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferTransmitter) {
 
 TEST_F(ResourceClassesWithGXFContext, TestDoubleBufferTransmitterDefaultConstructor) {
   auto resource = F.make_resource<DoubleBufferTransmitter>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestAsyncBufferTransmitter) {
+  const std::string name{"transmitter"};
+  auto resource = F.make_resource<AsyncBufferTransmitter>(name);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<AsyncBufferTransmitter>()));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "holoscan::HoloscanAsyncBufferTransmitter"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestStdComponentSerializer) {
@@ -469,6 +487,34 @@ TEST_F(ResourceClassesWithGXFContext, TestCPUThread) {
 
 TEST_F(ResourceClassesWithGXFContext, TestCPUThreadDefaultConstructor) {
   auto resource = F.make_resource<CPUThread>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithPinCores) {
+  const std::string name{"thread0"};
+  std::vector<uint32_t> pin_cores{0, 2};
+  ArgList arglist{Arg{"pin_entity", true}, Arg{"pin_cores", pin_cores}};
+  auto resource = F.make_resource<CPUThread>(name, arglist);
+
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeScheduling) {
+  const std::string name{"thread0"};
+  std::vector<uint32_t> pin_cores{0, 2};
+  ArgList arglist{Arg{"pin_entity", true},
+                  Arg{"pin_cores", pin_cores},
+                  Arg{"sched_policy", "SCHED_DEADLINE"},
+                  Arg{"sched_priority", static_cast<uint32_t>(1)},
+                  Arg{"sched_runtime", static_cast<uint64_t>(1000000)},
+                  Arg{"sched_deadline", static_cast<uint64_t>(1000000000)},
+                  Arg{"sched_period", static_cast<uint64_t>(1000000000)}};
+  auto resource = F.make_resource<CPUThread>(name, arglist);
+
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestGPUDevice) {

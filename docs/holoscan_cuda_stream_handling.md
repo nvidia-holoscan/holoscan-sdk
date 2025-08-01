@@ -237,7 +237,18 @@ The `allocate_cuda_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::allocate
 ```cpp
 // The code below would appear within `Operator::compute`
 
-cudaStream_t my_stream = context.allocate_cuda_stream("my_stream");
+// allocate a new CUDA stream
+auto maybe_stream = context.allocate_cuda_stream("my_stream");
+
+// raise an error if no stream was allocated
+if (!maybe_stream) {
+  const auto& error = maybe_stream.error();
+  throw std::runtime_error(
+      fmt::format("Failed to allocate cuda stream with error: {}", error.what()));
+}
+
+// retrieve the stream from the `expected<cudaStream_t, RuntimeError>`
+cudaStream_t my_stream = maybe_stream.value();
 
 // some custom code using the CUDA stream here
 

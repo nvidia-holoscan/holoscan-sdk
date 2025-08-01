@@ -628,6 +628,8 @@ class Fragment : public FragmentServiceProvider {
     return true;
   }
 
+  virtual bool register_service_from(Fragment* fragment, std::string_view id);
+
   /**
    * @brief Retrieve a registered fragment service or resource
    *
@@ -707,6 +709,16 @@ class Fragment : public FragmentServiceProvider {
   std::shared_ptr<FragmentService> get_service_by_type_info(const std::type_info& service_type,
                                                             std::string_view id = "") const {
     return get_service_erased(service_type, id);
+  }
+
+  /**
+   * @brief Get the fragment services by key.
+   *
+   * @return The fragment services by key.
+   */
+  const std::unordered_map<ServiceKey, std::shared_ptr<FragmentService>, ServiceKeyHash>&
+  fragment_services_by_key() const {
+    return fragment_services_by_key_;
   }
 
   /**
@@ -846,6 +858,30 @@ class Fragment : public FragmentServiceProvider {
   virtual void add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs);
+  /**
+   * @brief Add a flow between two operators with a connector type.
+   *
+   * @param upstream_op The upstream operator.
+   * @param downstream_op The downstream operator.
+   * @param connector_type The connector type.
+   */
+  virtual void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Operator>& downstream_op,
+                        const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Add a flow between two operators with specified port pairs and a connector type.
+   *
+   * @param upstream_op The upstream operator.
+   * @param downstream_op The downstream operator.
+   * @param port_pairs The port pairs. The first element of the pair is the port of the upstream
+   * operator and the second element is the port of the downstream operator.
+   * @param connector_type The connector type.
+   */
+  virtual void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Operator>& downstream_op,
+                        std::set<std::pair<std::string, std::string>> port_pairs,
+                        const IOSpec::ConnectorType connector_type);
 
   /**
    * @brief Set a callback function to define dynamic flows for an operator at runtime.
@@ -1047,6 +1083,9 @@ class Fragment : public FragmentServiceProvider {
 
   /// Cleanup helper that will by called by GXFExecutor prior to GxfContextDestroy.
   void reset_graph_entities();
+
+  /// Shutdown data loggers to ensure async loggers complete before GXF context destruction.
+  void shutdown_data_loggers();
 
   /**
    * @brief Reset internal fragment state to allow for multiple run calls

@@ -494,7 +494,9 @@ gxf_result_t BufferInfo::init(const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer
       }
     }
 
-    if (image_format == HolovizOp::ImageFormat::AUTO_DETECT) { return GXF_FAILURE; }
+    if (image_format == HolovizOp::ImageFormat::AUTO_DETECT) {
+      return GXF_FAILURE;
+    }
   } else {
     image_format = input_image_format;
     auto result = component_and_swizzle(image_format);

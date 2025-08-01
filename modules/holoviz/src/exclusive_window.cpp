@@ -175,7 +175,9 @@ vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_devic
     auto p = planes[i];
 
     // skip planes bound to different display
-    if (p.currentDisplay && (p.currentDisplay != display)) { continue; }
+    if (p.currentDisplay && (p.currentDisplay != display)) {
+      continue;
+    }
 
     const std::vector<vk::DisplayKHR> displays =
         physical_device.getDisplayPlaneSupportedDisplaysKHR(i);
@@ -187,10 +189,14 @@ vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_devic
       }
     }
 
-    if (found_plane) { break; }
+    if (found_plane) {
+      break;
+    }
   }
 
-  if (!found_plane) { throw std::runtime_error("Could not find a compatible display plane!"); }
+  if (!found_plane) {
+    throw std::runtime_error("Could not find a compatible display plane!");
+  }
 
   // find alpha mode bit
   const vk::DisplayPlaneCapabilitiesKHR plane_capabilities =

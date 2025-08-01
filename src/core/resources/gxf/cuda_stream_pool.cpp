@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,24 +37,34 @@ constexpr int32_t kDefaultDeviceId = 0;
 CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component)
     : Allocator(name, component) {
   auto maybe_stream_flags = component->getParameter<int32_t>("stream_flags");
-  if (!maybe_stream_flags) { throw std::runtime_error("Failed to get stream_flags"); }
+  if (!maybe_stream_flags) {
+    throw std::runtime_error("Failed to get stream_flags");
+  }
   stream_flags_ = maybe_stream_flags.value();
 
   auto maybe_stream_priority = component->getParameter<int32_t>("stream_priority");
-  if (!maybe_stream_priority) { throw std::runtime_error("Failed to get stream_priority"); }
+  if (!maybe_stream_priority) {
+    throw std::runtime_error("Failed to get stream_priority");
+  }
   stream_priority_ = maybe_stream_priority.value();
 
   auto maybe_reserved_size = component->getParameter<uint32_t>("reserved_size");
-  if (!maybe_reserved_size) { throw std::runtime_error("Failed to get reserved_size"); }
+  if (!maybe_reserved_size) {
+    throw std::runtime_error("Failed to get reserved_size");
+  }
   reserved_size_ = maybe_reserved_size.value();
 
   auto maybe_max_size = component->getParameter<uint32_t>("max_size");
-  if (!maybe_max_size) { throw std::runtime_error("Failed to get max_size"); }
+  if (!maybe_max_size) {
+    throw std::runtime_error("Failed to get max_size");
+  }
   max_size_ = maybe_max_size.value();
 
   auto maybe_gpu_device =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
-  if (!maybe_gpu_device) { throw std::runtime_error("Failed to get dev_id"); }
+  if (!maybe_gpu_device) {
+    throw std::runtime_error("Failed to get dev_id");
+  }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();
 }

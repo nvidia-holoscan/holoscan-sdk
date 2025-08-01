@@ -1001,7 +1001,7 @@ class HolovizDepthMapSourceOp(Operator):
         spec.output("out")
 
     def compute(self, op_input, op_output, context):
-        import cupy as cp
+        cp = pytest.importorskip("cupy")
 
         depth_map = np.empty((self.height, self.width, 1), dtype=self.depth_data_type)
         index = 0

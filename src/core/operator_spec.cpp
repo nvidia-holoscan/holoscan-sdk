@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,9 +22,13 @@ namespace holoscan {
 YAML::Node OperatorSpec::to_yaml_node() const {
   YAML::Node node = ComponentSpec::to_yaml_node();
   node["inputs"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const auto& i : inputs_) { node["inputs"].push_back(i.second->to_yaml_node()); }
+  for (const auto& i : inputs_) {
+    node["inputs"].push_back(i.second->to_yaml_node());
+  }
   node["outputs"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const auto& o : outputs_) { node["outputs"].push_back(o.second->to_yaml_node()); }
+  for (const auto& o : outputs_) {
+    node["outputs"].push_back(o.second->to_yaml_node());
+  }
   return node;
 }
 

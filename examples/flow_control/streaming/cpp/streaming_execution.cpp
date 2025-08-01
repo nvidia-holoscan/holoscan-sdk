@@ -34,7 +34,8 @@ class PingTxOp : public holoscan::Operator {
                holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     value_++;
-    std::cout << name() << " - " << "Sending value " << value_ << std::endl;
+    std::cout << name() << " - "
+              << "Sending value " << value_ << std::endl;
     op_output.emit(value_, "output");
   }
 
@@ -56,7 +57,8 @@ class PingMxOp : public holoscan::Operator {
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value = op_input.receive<int>("input").value();
-    std::cout << name() << " - " << "Received value " << value << std::endl;
+    std::cout << name() << " - "
+              << "Received value " << value << std::endl;
     op_output.emit(value, "output");
   }
 };
@@ -73,7 +75,8 @@ class PingRxOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value = op_input.receive<int>("input").value();
-    std::cout << name() << " - " << "Received value " << value << std::endl;
+    std::cout << name() << " - "
+              << "Received value " << value << std::endl;
   }
 };
 

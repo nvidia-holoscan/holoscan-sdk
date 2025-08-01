@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,9 +37,9 @@ class holoscan_scoped_range_in {
 
   template <typename... Args>
   explicit holoscan_scoped_range_in(Args const&... args) noexcept
-      : holoscan_scoped_range_in{ event_attributes{ args... } } {}
+      : holoscan_scoped_range_in{event_attributes{args...}} {}
 
-  holoscan_scoped_range_in() noexcept : holoscan_scoped_range_in{ event_attributes{} } {}
+  holoscan_scoped_range_in() noexcept : holoscan_scoped_range_in{event_attributes{}} {}
 
   void* operator new(std::size_t) = delete;
 
@@ -61,44 +61,50 @@ class holoscan_scoped_range_in {
  * Registers an integer ID with a profiler category. Should be called before
  * any events are profiled using that category.
  */
-#define PROF_REGISTER_CATEGORY(id_, name_) \
-  holoscan::profiler::named_category(id_, name_)
+#define PROF_REGISTER_CATEGORY(id_, name_) holoscan::profiler::named_category(id_, name_)
 
 /**
  * Helper to provide the category handle from its ID.
  */
-#define PROF_CATEGORY(category_) \
-  holoscan::profiler::category(category_)
+#define PROF_CATEGORY(category_) holoscan::profiler::category(category_)
 
 /**
  * Defines an event type to be used for profiling.
  */
-#define PROF_DEFINE_EVENT(name_, message_, r_, g_, b_) \
-  struct name_ { \
-    static constexpr char const* message{message_}; \
+#define PROF_DEFINE_EVENT(name_, message_, r_, g_, b_)           \
+  struct name_ {                                                 \
+    static constexpr char const* message{message_};              \
     static constexpr nvtx3::color color{nvtx3::rgb{r_, g_, b_}}; \
   }
 
 /**
  * Helper to provide the event arguments from its type name.
  */
-#define PROF_EVENT(name_) \
-  holoscan::profiler::message::get<name_>(), name_::color
+#define PROF_EVENT(name_) holoscan::profiler::message::get<name_>(), name_::color
 
 /**
  * Declares a scoped profiling event given a category ID and event name.
  */
-#define PROF_SCOPED_EVENT(category_, name_) \
-  holoscan::profiler::scoped_range p { \
-    PROF_CATEGORY(category_), \
-    PROF_EVENT(name_) \
+#define PROF_SCOPED_EVENT(category_, name_)     \
+  holoscan::profiler::scoped_range p {          \
+    PROF_CATEGORY(category_), PROF_EVENT(name_) \
+  }
+
+/**
+ * Declares a scoped profiling event with pre-formatted port-specific message.
+ * Uses operator-level category but port-specific message for better granularity.
+ * No string formatting overhead - message should be pre-formatted (e.g., IOSpec::unique_id()).
+ */
+#define PROF_SCOPED_PORT_EVENT(category_, message_, color_)    \
+  holoscan::profiler::scoped_range p {                         \
+    PROF_CATEGORY(category_), nvtx3::message{message_}, color_ \
   }
 
 namespace holoscan::profiler {
 
 // Domain
 struct domain {
-  static constexpr char const* name{ "Holoscan" };
+  static constexpr char const* name{"Holoscan"};
 };
 
 // Aliases

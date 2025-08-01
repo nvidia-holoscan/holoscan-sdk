@@ -146,10 +146,11 @@ obj : holoscan.core.IOSpec
 PYDOC(connector, R"doc(
 Add a connector (transmitter or receiver) to this input/output.
 
-The following ConditionTypes are supported:
+The following ConnectorTypes are supported:
 
 - `IOSpec.ConnectorType.DEFAULT`
 - `IOSpec.ConnectorType.DOUBLE_BUFFER`
+- `IOSpec.ConnectorType.ASYNC_BUFFER`
 - `IOSpec.ConnectorType.UCX`
 
 If this method is not been called, the IOSpec's `connector_type` will be

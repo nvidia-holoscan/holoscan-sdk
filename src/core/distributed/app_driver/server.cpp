@@ -49,7 +49,9 @@ void AppDriverServer::stop() {
 
 void AppDriverServer::wait() {
   std::unique_lock<std::mutex> lock(join_mutex_);
-  if (server_thread_ && server_thread_->joinable()) { server_thread_->join(); }
+  if (server_thread_ && server_thread_->joinable()) {
+    server_thread_->join();
+  }
 }
 
 void AppDriverServer::run() {
@@ -85,7 +87,16 @@ void AppDriverServer::run() {
       if (server) {
         HOLOSCAN_LOG_INFO("AppDriverServer listening on {}", server_address);
 
-        if (need_health_check_) {
+        // Initialize fragment services for distributed execution
+        if (!app_driver_->handle_driver_start(server_ip)) {
+          HOLOSCAN_LOG_ERROR("Failed to start driver services");
+          should_stop_ = true;
+
+          // Shutdown the server if services failed to start
+          if (server) {
+            server->Shutdown();
+          }
+        } else if (need_health_check_) {
           app_driver_service.set_health_check_service(server->GetHealthCheckService());
         }
       } else {
@@ -103,7 +114,16 @@ void AppDriverServer::run() {
     app_driver_->process_message_queue();
   }
 
-  if (server) { server->Shutdown(); }
+  if (server) {
+    server->Shutdown();
+
+    // Terminate distributed fragment services
+    if (!app_driver_->handle_driver_shutdown()) {
+      HOLOSCAN_LOG_ERROR("AppDriverServer: Driver shutdown encountered errors");
+      // Since we're already shutting down, we can't do much more than log
+      // but at least the error is visible in CI logs
+    }
+  }
 }
 
 void AppDriverServer::notify() {

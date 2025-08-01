@@ -23,6 +23,10 @@ CMake (https://gitlab.kitware.com/cmake/cmake)
 Copyright 2000-2023 Kitware, Inc. and Contributors. All rights reserved.
 Licensed under BSD-3-clause (https://gitlab.kitware.com/cmake/cmake/raw/master/Copyright.txt)
 
+moodycamel::ConcurrentQueue (https://github.com/cameron314/concurrentqueue)
+Copyright (c) 2013 - 2016 Cameron Desrochers
+Licensed under BSD-2-clause (https://github.com/cameron314/concurrentqueue/blob/v1.0.4/LICENSE.md)
+
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
 Licensed under MIT (https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
@@ -44,7 +48,7 @@ Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPY
 
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
-Licensed under MIT (https://github.com/fmtlib/fmt/blob/10.1.1/LICENSE.rst)
+Licensed under MIT (https://github.com/fmtlib/fmt/blob/11.0.2/LICENSE)
 
 GLFW (https://www.glfw.org/)
 Copyright (c) 2002-2006 Marcus Geelnard
@@ -277,8 +281,8 @@ Copyright (c) 2020 Gabriel de Marmiesse de Lussan
 Licensed under MIT (https://github.com/gabrieldemarmiesse/python-on-whales/raw/master/LICENSE)
 
 RAPIDS rapids-cmake (https://github.com/rapidsai/rapids-cmake)
-Copyright (c) 2020-2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-Licensed under Apache-2.0 (https://github.com/rapidsai/rapids-cmake/blob/branch-23.06/LICENSE)
+Copyright (c) 2020-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under Apache-2.0 (https://github.com/rapidsai/rapids-cmake/blob/v24.12.00/LICENSE)
 
 RMM (https://github.com/rapidsai/rmm)
 Copyright (c) 2018-2024, NVIDIA CORPORATION.
@@ -320,6 +324,10 @@ Copyright (C) 2019           UChicago Argonne, LLC.  All rights reserved.
 Copyright (C) 2020           Huawei Technologies Co., Ltd. All rights reserved.
 Copyright (C) 2016-2020      Stony Brook University. All rights reserved.
 Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.17.0/LICENSE)
+
+UCXX (https://github.com/rapidsai/ucxx)
+Copyright (c) 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under BSD-3-clause (https://github.com/rapidsai/ucxx/blob/v0.44.00/LICENSE)
 
 v4l-utils (https://packages.ubuntu.com/jammy/v4l-utils)
 2006-2010 Mauro Carvalho Chehab <mchehab@redhat.com>

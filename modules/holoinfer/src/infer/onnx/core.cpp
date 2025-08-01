@@ -179,7 +179,9 @@ void OnnxInferImpl::populate_model_details() {
     ONNXTensorElementDataType tensor_element_type = input_tensor_info.GetElementType();
     input_type_.push_back(get_holoinfer_datatype(tensor_element_type));
     auto indim = input_tensor_info.GetShape();
-    if (indim[0] <= 0) { indim[0] = 1; }
+    if (indim[0] <= 0) {
+      indim[0] = 1;
+    }
     input_dims_.push_back(indim);
   }
 
@@ -195,7 +197,9 @@ void OnnxInferImpl::populate_model_details() {
 
     output_type_.push_back(get_holoinfer_datatype(tensor_element_type));
     auto outdim = output_tensor_info.GetShape();
-    if (outdim[0] <= 0) { outdim[0] = 1; }
+    if (outdim[0] <= 0) {
+      outdim[0] = 1;
+    }
     output_dims_.push_back(outdim);
   }
 
@@ -362,10 +366,18 @@ OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool enable_fp1
 }
 
 OnnxInferImpl::~OnnxInferImpl() {
-  if (tensor_rt_options_) { Ort::GetApi().ReleaseTensorRTProviderOptions(tensor_rt_options_); }
-  if (cuda_options_) { Ort::GetApi().ReleaseCUDAProviderOptions(cuda_options_); }
-  if (cuda_stream_) { cudaStreamDestroy(cuda_stream_); }
-  if (cuda_event_) { cudaEventDestroy(cuda_event_); }
+  if (tensor_rt_options_) {
+    Ort::GetApi().ReleaseTensorRTProviderOptions(tensor_rt_options_);
+  }
+  if (cuda_options_) {
+    Ort::GetApi().ReleaseCUDAProviderOptions(cuda_options_);
+  }
+  if (cuda_stream_) {
+    cudaStreamDestroy(cuda_stream_);
+  }
+  if (cuda_event_) {
+    cudaEventDestroy(cuda_event_);
+  }
 }
 
 Ort::Value OnnxInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& data_buffer,

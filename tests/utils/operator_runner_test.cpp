@@ -267,7 +267,9 @@ class DataForwardOp : public holoscan::Operator {
     auto output = op_runner_->pop_output<T>("out");
 
     // Forward the result
-    if (output) { op_output.emit(output.value(), "out"); }
+    if (output) {
+      op_output.emit(output.value(), "out");
+    }
   }
 
  private:

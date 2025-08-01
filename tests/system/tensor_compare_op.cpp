@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,12 +55,26 @@ void TensorCompareOp::compute(InputContext& op_input, [[maybe_unused]] OutputCon
   }
 
   std::vector<uint8_t> data1(tensor1->nbytes());
-  HOLOSCAN_CUDA_CALL(
-      cudaMemcpy(data1.data(), tensor1->data(), tensor1->nbytes(), cudaMemcpyDeviceToHost));
+  cudaMemcpyKind copy_kind1;
+  if (tensor1->device().device_type == kDLCUDAManaged) {
+    copy_kind1 = cudaMemcpyDefault;
+  } else if (tensor1->device().device_type == kDLCUDAHost) {
+    copy_kind1 = cudaMemcpyHostToHost;
+  } else {
+    copy_kind1 = cudaMemcpyDeviceToHost;
+  }
+  HOLOSCAN_CUDA_CALL(cudaMemcpy(data1.data(), tensor1->data(), tensor1->nbytes(), copy_kind1));
 
   std::vector<uint8_t> data2(tensor2->nbytes());
-  HOLOSCAN_CUDA_CALL(
-      cudaMemcpy(data2.data(), tensor2->data(), tensor2->nbytes(), cudaMemcpyDeviceToHost));
+  cudaMemcpyKind copy_kind2;
+  if (tensor2->device().device_type == kDLCUDAManaged) {
+    copy_kind2 = cudaMemcpyDefault;
+  } else if (tensor2->device().device_type == kDLCUDAHost) {
+    copy_kind2 = cudaMemcpyHostToHost;
+  } else {
+    copy_kind2 = cudaMemcpyDeviceToHost;
+  }
+  HOLOSCAN_CUDA_CALL(cudaMemcpy(data2.data(), tensor2->data(), tensor2->nbytes(), copy_kind2));
 
   auto result = std::mismatch(data1.begin(), data1.end(), data2.begin());
   if (result.first != data1.end()) {

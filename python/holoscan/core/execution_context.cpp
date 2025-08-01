@@ -131,7 +131,9 @@ PyExecutionContext::PyExecutionContext(gxf_context_t context,
     : gxf::GXFExecutionContext() {
   if (py_op) {
     op_ = py_op.get();
-    if (op_->graph_entity()) { eid_ = op_->graph_entity()->eid(); }
+    if (op_->graph_entity()) {
+      eid_ = op_->graph_entity()->eid();
+    }
     py_input_context_ = std::make_shared<PyInputContext>(this, op_, op_->spec()->inputs(), py_op);
     py_output_context_ =
         std::make_shared<PyOutputContext>(this, op_, op_->spec()->outputs(), py_op);

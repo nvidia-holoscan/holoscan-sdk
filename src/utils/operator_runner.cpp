@@ -239,7 +239,9 @@ holoscan::expected<void, holoscan::RuntimeError> OperatorRunner::push_input(
 holoscan::expected<void, holoscan::RuntimeError> OperatorRunner::push_input(
     const std::string& port_name, const holoscan::TensorMap& data) {
   auto out_message = holoscan::gxf::Entity::New(gxf_wrapper_->execution_context());
-  for (auto& [key, tensor] : data) { out_message.add(tensor, key.c_str()); }
+  for (auto& [key, tensor] : data) {
+    out_message.add(tensor, key.c_str());
+  }
   return push_input(port_name, out_message);
 }
 

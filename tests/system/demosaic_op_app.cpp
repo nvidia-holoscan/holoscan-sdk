@@ -41,7 +41,9 @@ class DummyDemosaicApp : public holoscan::Application {
                                                  make_condition<CountCondition>(3));
 
     auto cuda_stream_pool = make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5);
-    if (explicit_stream_pool_init_) { cuda_stream_pool->initialize(); }
+    if (explicit_stream_pool_init_) {
+      cuda_stream_pool->initialize();
+    }
     int32_t out_channels = 3;
     ArgList demosaic_arglist = ArgList{
         Arg("in_tensor_name", tensor_name),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -139,7 +139,9 @@ InferStatus GenerateBoxes::initialize(const std::vector<std::string>& input_tens
   std::ifstream infile(label_file_path);
   std::string label;
   if (infile) {  // read all labels and store them
-    while (std::getline(infile, label)) { label_strings.push_back(label); }
+    while (std::getline(infile, label)) {
+      label_strings.push_back(label);
+    }
     HOLOSCAN_LOG_INFO("Count of labels: {}", label_strings.size());
   } else {
     HOLOSCAN_LOG_ERROR("Error opening label file {}", label_file_path);
@@ -173,10 +175,14 @@ InferStatus GenerateBoxes::initialize(const std::vector<std::string>& input_tens
         holoscan::inference::string_split(current_color, tokens, ' ');
         switch (tokens.size()) {
           case 4:
-            for (const auto& t : tokens) { col.push_back(std::stof(t)); }
+            for (const auto& t : tokens) {
+              col.push_back(std::stof(t));
+            }
             break;
           case 3:
-            for (const auto& t : tokens) { col.push_back(std::stof(t)); }
+            for (const auto& t : tokens) {
+              col.push_back(std::stof(t));
+            }
             col.push_back(1.0);
             break;
           default:

@@ -15,7 +15,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
-from holoscan.conditions import CountCondition, PeriodicCondition
+from holoscan.conditions import (
+    AsynchronousCondition,
+    AsynchronousEventState,
+    CountCondition,
+    PeriodicCondition,
+)
 from holoscan.core import Application, Operator, OperatorSpec, OperatorStatus
 from holoscan.schedulers import EventBasedScheduler, MultiThreadScheduler
 
@@ -213,7 +218,6 @@ def test_execution_context_available(capfd):
 
 def test_async_condition(capfd):
     """Test that we can access and use the async_condition property."""
-    from holoscan.conditions import AsynchronousCondition, AsynchronousEventState
 
     class AsyncTestOp(Operator):
         def compute(self, op_input, op_output, context):

@@ -35,6 +35,7 @@ YAML::Node IOSpec::to_yaml_node() const {
   std::unordered_map<ConnectorType, std::string> connectortype_namemap{
       {ConnectorType::kDefault, "kDefault"s},
       {ConnectorType::kDoubleBuffer, "kDoubleBuffer"s},
+      {ConnectorType::kAsyncBuffer, "kAsyncBuffer"s},
       {ConnectorType::kUCX, "kUCX"s},
   };
 
@@ -52,9 +53,13 @@ YAML::Node IOSpec::to_yaml_node() const {
   node["io_type"] = iotype_namemap[io_type()];
   node["typeinfo_name"] = std::string{typeinfo()->name()};
   node["connector_type"] = connectortype_namemap[connector_type()];
-  if (!unique_id_.empty()) { node["unique_id"] = unique_id_; }
+  if (!unique_id_.empty()) {
+    node["unique_id"] = unique_id_;
+  }
   auto conn = connector();
-  if (conn) { node["connector"] = conn->to_yaml_node(); }
+  if (conn) {
+    node["connector"] = conn->to_yaml_node();
+  }
   node["conditions"] = YAML::Node(YAML::NodeType::Sequence);
   for (const auto& c : conditions_) {
     if (c.first == ConditionType::kNone) {

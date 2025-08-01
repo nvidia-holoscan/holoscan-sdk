@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,7 +54,9 @@ class ThreadSafeQueue {
    */
   std::optional<T> pop() {
     std::unique_lock<std::mutex> lock(mutex_);
-    if (queue_.empty()) { return {}; }
+    if (queue_.empty()) {
+      return {};
+    }
     T item = std::move(queue_.front());
     queue_.pop();
     return std::optional<T>(std::move(item));
@@ -94,9 +96,8 @@ class WorkQueue {
    * @return std::shared_pointer with std::packed_task
    */
   template <class F, class... Args>
-  auto async(F&& f, Args&&... args)
-      -> std::shared_ptr<
-          std::packaged_task<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>()>> {
+  auto async(F&& f, Args&&... args) -> std::shared_ptr<
+      std::packaged_task<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>()>> {
     auto packed_task = std::make_shared<
         std::packaged_task<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>()>>(
         std::bind(std::forward<F>(f), std::forward<Args>(args)...));

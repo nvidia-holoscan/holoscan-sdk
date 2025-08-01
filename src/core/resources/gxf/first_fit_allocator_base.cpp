@@ -24,8 +24,8 @@ namespace holoscan {
 void FirstFitAllocatorBase::Memory::update(const Memory& left_child, const Memory& right_child) {
   // The memory available from the left is either left_child.left or if left_child is fully empty,
   // it is left_child.size + right_child.left.
-  left = left_child.size == left_child.left ? (left_child.size + right_child.left)
-                                            : left_child.left;
+  left =
+      left_child.size == left_child.left ? (left_child.size + right_child.left) : left_child.left;
   // Same for the memory available from the right side.
   right = right_child.size == right_child.right ? (right_child.size + left_child.right)
                                                 : right_child.right;
@@ -48,16 +48,17 @@ FirstFitAllocatorBase::expected_t<void> FirstFitAllocatorBase::allocate(const in
     return unexpected_t(Error::kAlreadyInUse);
   }
   // Quick check size is valid [1, 2^30[
-  if (size <= 0 || size >= 1<<30) {
+  if (size <= 0 || size >= 1 << 30) {
     return unexpected_t(Error::kInvalidSize);
   }
   // Compute the memory used
   size_ = size;
   last_layer_first_index_ = 1;
   // Given size < 2^30, we are guaranteed that last_layer_first_index_ won't overflow.
-  while (last_layer_first_index_ < size) last_layer_first_index_ *= 2;
+  while (last_layer_first_index_ < size)
+    last_layer_first_index_ *= 2;
   // Allocate the memory and check it worked
-  tree_.reset(new(std::nothrow) Memory[last_layer_first_index_ * 2]);
+  tree_.reset(new (std::nothrow) Memory[last_layer_first_index_ * 2]);
   if (tree_.get() == nullptr) {
     return unexpected_t(Error::kOutOfMemory);
   }
@@ -74,8 +75,8 @@ FirstFitAllocatorBase::expected_t<void> FirstFitAllocatorBase::allocate(const in
   // We can now update backward the other nodes.
   for (int32_t idx = last_layer_first_index_ - 1; idx > 0; idx--) {
     // First we set the size which is constant over time.
-    tree_.get()[idx].size = tree_.get()[2*idx].size + tree_.get()[2*idx + 1].size;
-    tree_.get()[idx].update(tree_.get()[2*idx], tree_.get()[2*idx + 1]);
+    tree_.get()[idx].size = tree_.get()[2 * idx].size + tree_.get()[2 * idx + 1].size;
+    tree_.get()[idx].update(tree_.get()[2 * idx], tree_.get()[2 * idx + 1]);
   }
   return expected_t<void>{};
 }
@@ -117,12 +118,12 @@ FirstFitAllocatorBase::expected_t<int32_t> FirstFitAllocatorBase::acquire(const 
       tree_[last_layer_first_index_ + index].max = -1;
       tree_[last_layer_first_index_ + index].size = size;
       return index;
-    } else if (ptr[2*idx].max >= size) {
+    } else if (ptr[2 * idx].max >= size) {
       // The next available spot is on the left side.
       idx *= 2;
-    } else if (ptr[2*idx].right + ptr[2*idx+1].left >= size) {
+    } else if (ptr[2 * idx].right + ptr[2 * idx + 1].left >= size) {
       // There is an available spot in between both children.
-      index += ptr[2*idx].size - ptr[2*idx].right;
+      index += ptr[2 * idx].size - ptr[2 * idx].right;
       update(index, index + size, /* free = */ 0);
       // Store the size allocated that starts at the given index.
       tree_[last_layer_first_index_ + index].max = -1;
@@ -130,7 +131,7 @@ FirstFitAllocatorBase::expected_t<int32_t> FirstFitAllocatorBase::acquire(const 
       return index;
     } else {
       // The next available spot is on the right side.
-      index += ptr[2*idx].size;
+      index += ptr[2 * idx].size;
       idx = idx * 2 + 1;
     }
   }
@@ -141,7 +142,7 @@ FirstFitAllocatorBase::expected_t<int32_t> FirstFitAllocatorBase::acquire(const 
 void FirstFitAllocatorBase::propagate_to_root(int32_t idx) {
   auto* ptr = tree_.get();
   while (idx > 0) {
-    ptr[idx].update(ptr[2*idx], ptr[2*idx + 1]);
+    ptr[idx].update(ptr[2 * idx], ptr[2 * idx + 1]);
     idx /= 2;
   }
 }
@@ -152,7 +153,7 @@ void FirstFitAllocatorBase::update(int32_t left, int32_t right, const int32_t fr
   right += last_layer_first_index_ - 1;
   auto* ptr = tree_.get();
   while (left <= right) {
-    if (left&1) {
+    if (left & 1) {
       // If left is a right child we need to update it and move to the sibling of the parent.
       ptr[left].set(free);
       propagate_to_root(left / 2);
@@ -161,7 +162,7 @@ void FirstFitAllocatorBase::update(int32_t left, int32_t right, const int32_t fr
       // Otherwise updating the parent is enough.
       left /= 2;
     }
-    if (right&1) {
+    if (right & 1) {
       // If right is a right child, updating the parent is enough
       right /= 2;
     } else {

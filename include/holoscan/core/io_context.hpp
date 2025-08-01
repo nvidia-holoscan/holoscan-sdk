@@ -41,6 +41,27 @@
 #include "./message.hpp"
 #include "./operator.hpp"
 #include "./type_traits.hpp"
+#include "holoscan/profiler/profiler.hpp"
+
+// IO Context specific profiling events
+PROF_DEFINE_EVENT(event_receive, "receive", 0x33, 0xDD, 0xCC);
+PROF_DEFINE_EVENT(event_receive_impl, "receive_impl", 0x55, 0xBB, 0xAA);
+PROF_DEFINE_EVENT(event_receive_metadata, "receive_metadata", 0xFF, 0x99, 0x00);
+PROF_DEFINE_EVENT(event_receive_streams, "receive_streams", 0x99, 0xFF, 0x00);
+// Data logging profiling events (all use purple color for consistency)
+PROF_DEFINE_EVENT(event_data_logging, "data_logging", 0x99, 0x33, 0xFF);
+PROF_DEFINE_EVENT(event_log_data, "log_data", 0x99, 0x33, 0xFF);
+PROF_DEFINE_EVENT(event_log_tensor, "log_tensor", 0x99, 0x33, 0xFF);
+PROF_DEFINE_EVENT(event_log_tensormap, "log_tensormap", 0x99, 0x33, 0xFF);
+// OutputContext emit profiling events (all use cyan/blue color variants)
+PROF_DEFINE_EVENT(event_emit, "emit", 0x00, 0x99, 0xFF);
+PROF_DEFINE_EVENT(event_emit_impl, "emit_impl", 0x33, 0x77, 0xDD);
+PROF_DEFINE_EVENT(event_emit_metadata, "emit_metadata", 0xFF, 0x99, 0x00);
+PROF_DEFINE_EVENT(event_emit_streams, "emit_streams", 0x99, 0xFF, 0x00);
+// CUDA stream profiling events (all use same green color for consistency)
+PROF_DEFINE_EVENT(event_receive_cuda_stream, "receive_cuda_stream", 0x99, 0xFF, 0x00);
+PROF_DEFINE_EVENT(event_receive_cuda_streams, "receive_cuda_streams", 0x99, 0xFF, 0x00);
+PROF_DEFINE_EVENT(event_set_cuda_stream, "set_cuda_stream", 0x99, 0xFF, 0x00);
 
 namespace holoscan {
 
@@ -71,10 +92,14 @@ struct NoAccessibleMessageType : public std::string {
 static inline std::string get_well_formed_name(
     const char* name, const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_list) {
   // If name is provided, use it directly
-  if (name != nullptr && name[0] != '\0') { return name; }
+  if (name != nullptr && name[0] != '\0') {
+    return name;
+  }
 
   // Handle empty name with execution port case (relatively common) -> use the only port
-  if (io_list.size() == 1) { return io_list.begin()->first; }
+  if (io_list.size() == 1) {
+    return io_list.begin()->first;
+  }
 
   return "";
 }
@@ -142,7 +167,9 @@ class InputContext {
     // First see if the name could be found in the inputs
     auto& inputs = op_->spec()->inputs();
     auto it = inputs.find(std::string(name));
-    if (it != inputs.end()) { return empty_impl(name); }
+    if (it != inputs.end()) {
+      return empty_impl(name);
+    }
 
     // Then see if it is in the parameters
     auto& params = op_->spec()->params();
@@ -162,7 +189,9 @@ class InputContext {
       int num_inputs = param.get().size();
       for (int i = 0; i < num_inputs; ++i) {
         // if any of them is not empty return false
-        if (!empty_impl(fmt::format("{}:{}", name, i).c_str())) { return false; }
+        if (!empty_impl(fmt::format("{}:{}", name, i).c_str())) {
+          return false;
+        }
       }
       return true;  // all of them are empty, so return true.
     }
@@ -223,19 +252,33 @@ class InputContext {
    */
   template <typename DataT>
   holoscan::expected<DataT, holoscan::RuntimeError> receive(const char* name = nullptr) {
+    std::string input_name = holoscan::get_well_formed_name(name, inputs_);
+    auto input_it = inputs_.find(input_name);
+    std::string unique_id;
+    if (input_it != inputs_.end()) {
+      unique_id = input_it->second->unique_id();
+    } else {
+      unique_id = fmt::format("{}.{}", op_->name(), name == nullptr ? "<unknown>" : name);
+    }
+    PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_receive::color);
+
     auto& data_loggers = op_->fragment()->data_loggers();
+    HOLOSCAN_LOG_TRACE("InputContext::receive for op: {}, name: {}",
+                       op_->name(),
+                       name == nullptr ? "nullptr" : name);
 
     // Special case handling for std::shared_ptr<holoscan::Tensor>
     if constexpr (std::is_same_v<DataT, std::shared_ptr<holoscan::Tensor>>) {
+      HOLOSCAN_LOG_TRACE("\tstd::shared_ptr<Tensor> code path");
       auto maybe_tensormap = receive<holoscan::TensorMap>(name);
       if (maybe_tensormap.has_value()) {
+        HOLOSCAN_LOG_TRACE("\t\tTensorMap code path");
         auto& tensor_map = maybe_tensormap.value();
         if (tensor_map.size() == 1) {
           // Return the shared_ptr directly from the map
           auto tensor_ptr = tensor_map.begin()->second;
           if (!data_loggers.empty()) {
             HOLOSCAN_LOG_TRACE("[receive] logging single Tensor from TensorMap");
-            std::string input_name = holoscan::get_well_formed_name(name, inputs_);
             log_tensor(tensor_ptr, input_name.c_str(), IOSpec::IOType::kInput);
           }
           return tensor_ptr;
@@ -245,6 +288,7 @@ class InputContext {
             "Data received was a TensorMap containing more than one tensor. Please use "
             "receive<holoscan::TensorMap>(name) instead."));
       } else {
+        HOLOSCAN_LOG_TRACE("\t\tsingle Tensor code path");
         std::string input_name = holoscan::get_well_formed_name(name, inputs_);
         auto maybe_tensor = receive_single_value<std::shared_ptr<holoscan::Tensor>>(
             input_name.c_str(), InputType::kAny);
@@ -258,7 +302,6 @@ class InputContext {
 
     // Original implementation for other types
     auto& params = op_->spec()->params();
-    std::string input_name = holoscan::get_well_formed_name(name, inputs_);
     auto param_it = params.find(input_name);
     InputType in_type = InputType::kAny;
     // Check if the type is a GXF entity or a vector of GXF entities
@@ -266,10 +309,12 @@ class InputContext {
                                       nvidia::gxf::Entity>) {
       in_type = InputType::kGXFEntity;
     }
+    HOLOSCAN_LOG_TRACE("\tin_type: {}", magic_enum::enum_name(in_type));
 
     if constexpr (holoscan::is_vector_v<DataT>) {
       DataT input_vector;
       std::string error_message;
+      HOLOSCAN_LOG_TRACE("\tin vector<DataT> code path");
 
       if (param_it != params.end()) {
         auto& param_wrapper = param_it->second;
@@ -291,6 +336,7 @@ class InputContext {
       }
       return input_vector;
     } else {
+      HOLOSCAN_LOG_TRACE("\tin non-vector DataT code path");
       return receive_single_value<DataT>(input_name.c_str(), in_type);
     }
   }
@@ -364,11 +410,14 @@ class InputContext {
    * @param in_type The input type (kGXFEntity or kAny).
    * @param no_error_message Whether to print an error message when the input port is not
    * found.
+   * @param omit_data_logging Whether any calls to log_backend_specific should be skipped.
+   * Currently used to avoid duplication of logging of TensorMap contents.
    * @return The data received from the input port.
    */
   virtual std::any receive_impl([[maybe_unused]] const char* name = nullptr,
                                 [[maybe_unused]] InputType in_type = InputType::kAny,
-                                [[maybe_unused]] bool no_error_message = false) {
+                                [[maybe_unused]] bool no_error_message = false,
+                                [[maybe_unused]] bool omit_data_logging = false) {
     return nullptr;
   }
 
@@ -411,7 +460,9 @@ class InputContext {
     const auto& inputs = op_->spec()->inputs();
     const auto input_it = inputs.find(std::string(name));
 
-    if (input_it == inputs.end()) { return false; }
+    if (input_it == inputs.end()) {
+      return false;
+    }
 
     int index = 0;
     while (true) {
@@ -442,11 +493,15 @@ class InputContext {
 
   // Get unique_id for an input or output port
   std::string get_unique_id(Operator* op, const std::string& port_name, IOSpec::IOType io_type) {
-    if (!op->spec()) { throw std::runtime_error("Operator spec is not available"); }
+    if (!op->spec()) {
+      throw std::runtime_error("Operator spec is not available");
+    }
 
     auto& ports = io_type == IOSpec::IOType::kInput ? op->spec()->inputs() : op->spec()->outputs();
     auto it = ports.find(port_name);
-    if (it != ports.end()) { return it->second->unique_id(); }
+    if (it != ports.end()) {
+      return it->second->unique_id();
+    }
 
     HOLOSCAN_LOG_WARN("Input port '{}' not found", port_name);
     return fmt::format("{}.{}", op->qualified_name(), port_name);
@@ -454,22 +509,26 @@ class InputContext {
 
   inline bool log_tensor(const std::shared_ptr<Tensor>& tensor, const char* port_name,
                          IOSpec::IOType io_type) {
+    PROF_SCOPED_EVENT(op_->id(), event_data_logging);
     const std::string unique_id{get_unique_id(op_, port_name, io_type)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
+        PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
         data_logger->log_tensor_data(tensor, unique_id, -1, metadata_ptr, io_type);
       }
     }
     return true;
   }
 
-  inline bool log_tensor_map(const holoscan::TensorMap& tensor_map, const char* port_name,
-                             IOSpec::IOType io_type) {
+  inline bool log_tensormap(const holoscan::TensorMap& tensor_map, const char* port_name,
+                            IOSpec::IOType io_type) {
+    PROF_SCOPED_EVENT(op_->id(), event_data_logging);
     const std::string unique_id{get_unique_id(op_, port_name, io_type)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
+        PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
         data_logger->log_tensormap_data(tensor_map, unique_id, -1, metadata_ptr, io_type);
       }
     }
@@ -568,10 +627,10 @@ class InputContext {
           HOLOSCAN_LOG_DEBUG(error_message);
           return false;
         }
-        HOLOSCAN_LOG_TRACE("[receive] logging tensor map (via bad_any_cast)");
+        HOLOSCAN_LOG_TRACE("[receive] logging tensor map");
         auto& data_loggers = op_->fragment()->data_loggers();
         if (tensor_map.size() > 0 && !data_loggers.empty()) {
-          log_tensor_map(tensor_map, port_name, IOSpec::IOType::kInput);
+          log_tensormap(tensor_map, port_name, IOSpec::IOType::kInput);
         }
       } catch (const std::bad_any_cast& e) {
         error_message = fmt::format(
@@ -598,7 +657,11 @@ class InputContext {
   template <typename DataT>
   inline holoscan::expected<DataT, holoscan::RuntimeError> receive_single_value(const char* name,
                                                                                 InputType in_type) {
-    auto value = receive_impl(name, in_type);
+    bool omit_data_logging = false;
+    if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
+      omit_data_logging = true;
+    }
+    auto value = receive_impl(name, in_type, false, omit_data_logging);
     const std::type_info& value_type = value.type();
 
     if (value_type == typeid(NoMessageType)) {
@@ -636,7 +699,7 @@ class InputContext {
         HOLOSCAN_LOG_TRACE("[receive] logging tensor map");
         auto& data_loggers = op_->fragment()->data_loggers();
         if (tensor_map.size() > 0 && !data_loggers.empty()) {
-          log_tensor_map(tensor_map, name, IOSpec::IOType::kInput);
+          log_tensormap(tensor_map, name, IOSpec::IOType::kInput);
         }
         return tensor_map;
       } else {
@@ -796,6 +859,19 @@ class OutputContext {
   template <typename DataT,
             typename = std::enable_if_t<holoscan::is_one_of_derived_v<DataT, nvidia::gxf::Entity>>>
   void emit(DataT& data, const char* name = nullptr, const int64_t acq_timestamp = -1) {
+    HOLOSCAN_LOG_TRACE("OutputContext::emit (Entity DataT) for op: {}, name: {}",
+                       op_->name(),
+                       name == nullptr ? "nullptr" : name);
+    std::string output_name = holoscan::get_well_formed_name(name, outputs_);
+    auto output_it = outputs_.find(output_name);
+    std::string unique_id;
+    if (output_it != outputs_.end()) {
+      unique_id = output_it->second->unique_id();
+    } else {
+      unique_id = fmt::format("{}.{}", op_->name(), name == nullptr ? "<unknown>" : name);
+    }
+    PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
+
     // if it is the same as nvidia::gxf::Entity then just pass it to emit_impl
     if constexpr (holoscan::is_one_of_v<DataT, nvidia::gxf::Entity>) {
       emit_impl(data, name, OutputType::kGXFEntity, acq_timestamp);
@@ -857,6 +933,19 @@ class OutputContext {
   template <typename DataT,
             typename = std::enable_if_t<!holoscan::is_one_of_derived_v<DataT, nvidia::gxf::Entity>>>
   void emit(DataT data, const char* name = nullptr, const int64_t acq_timestamp = -1) {
+    HOLOSCAN_LOG_TRACE("OutputContext::emit (non-Entity DataT) for op: {}, name: {}",
+                       op_->name(),
+                       name == nullptr ? "nullptr" : name);
+    std::string output_name = holoscan::get_well_formed_name(name, outputs_);
+    auto output_it = outputs_.find(output_name);
+    std::string unique_id;
+    if (output_it != outputs_.end()) {
+      unique_id = output_it->second->unique_id();
+    } else {
+      unique_id = fmt::format("{}.{}", op_->name(), name == nullptr ? "<unknown>" : name);
+    }
+    PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
+
     emit_impl(std::move(data), name, OutputType::kAny, acq_timestamp);
   }
 
@@ -874,8 +963,23 @@ class OutputContext {
    */
   void emit(holoscan::TensorMap& data, const char* name = nullptr,
             const int64_t acq_timestamp = -1) {
+    HOLOSCAN_LOG_TRACE("OutputContext::emit (TensorMap) for op: {}, name: {}",
+                       op_->name(),
+                       name == nullptr ? "nullptr" : name);
+    std::string output_name = holoscan::get_well_formed_name(name, outputs_);
+    auto output_it = outputs_.find(output_name);
+    std::string unique_id;
+    if (output_it != outputs_.end()) {
+      unique_id = output_it->second->unique_id();
+    } else {
+      unique_id = fmt::format("{}.{}", op_->name(), name == nullptr ? "<unknown>" : name);
+    }
+    PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
+
     auto out_message = holoscan::gxf::Entity::New(execution_context_);
-    for (auto& [key, tensor] : data) { out_message.add(tensor, key.c_str()); }
+    for (auto& [key, tensor] : data) {
+      out_message.add(tensor, key.c_str());
+    }
     emit(out_message, name, acq_timestamp);
   }
 
@@ -896,6 +1000,19 @@ class OutputContext {
    */
   void emit(std::shared_ptr<holoscan::Tensor> data, const char* name = nullptr,
             const int64_t acq_timestamp = -1) {
+    HOLOSCAN_LOG_TRACE(
+        "OutputContext::emit (std::shared_ptr<holoscan::Tensor>) for op: {}, name: {}",
+        op_->name(),
+        name == nullptr ? "nullptr" : name);
+    std::string output_name = holoscan::get_well_formed_name(name, outputs_);
+    auto output_it = outputs_.find(output_name);
+    std::string unique_id;
+    if (output_it != outputs_.end()) {
+      unique_id = output_it->second->unique_id();
+    } else {
+      unique_id = fmt::format("{}.{}", op_->name(), name == nullptr ? "<unknown>" : name);
+    }
+    PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
     auto out_message = holoscan::gxf::Entity::New(execution_context_);
     out_message.add(data, "");
     emit(out_message, name, acq_timestamp);

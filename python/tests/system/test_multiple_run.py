@@ -15,6 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
+import gc
+import tracemalloc
+
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import PingRxOp
@@ -57,9 +60,6 @@ class MyPingApp(Application):
 
 
 def test_multiple_run():
-    import gc
-    import tracemalloc
-
     tracemalloc.start()
 
     # log at warning level to make logs less verbose on failure
@@ -89,9 +89,6 @@ def test_multiple_run():
 
 
 def test_multiple_run_async():
-    import gc
-    import tracemalloc
-
     tracemalloc.start()
 
     # log at warning level to make logs less verbose on failure
@@ -122,9 +119,6 @@ def test_multiple_run_async():
 
 
 def main():
-    import gc
-    import tracemalloc
-
     tracemalloc.start()
 
     app = MyPingApp()

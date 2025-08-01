@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +46,8 @@ struct YAML::convert<nvidia::gxf::PeriodicSchedulingPolicy> {
   }
 
   static bool decode(const Node& node, nvidia::gxf::PeriodicSchedulingPolicy& rhs) {
-    if (!node.IsScalar()) return false;
+    if (!node.IsScalar())
+      return false;
 
     const std::string value = node.as<std::string>();
     if (strcmp(value.c_str(), "CatchUpMissedTicks") == 0) {
@@ -180,7 +181,9 @@ void PeriodicCondition::setup(ComponentSpec& spec) {
 void PeriodicCondition::recess_period(int64_t recess_period_ns) {
   std::string recess_period = std::to_string(recess_period_ns);
   auto periodic = get();
-  if (periodic) { periodic->setParameter<std::string>("recess_period", recess_period); }
+  if (periodic) {
+    periodic->setParameter<std::string>("recess_period", recess_period);
+  }
   recess_period_ = recess_period;
   recess_period_ns_ = recess_period_ns;
 }

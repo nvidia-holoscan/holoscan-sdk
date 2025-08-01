@@ -63,7 +63,9 @@ template <typename typeT>
 static inline expected<typeT, RuntimeError> deserialize_trivial_type(Endpoint* endpoint) {
   typeT encoded;
   auto maybe_value = endpoint->read_trivial_type(&encoded);
-  if (!maybe_value) { return forward_error(maybe_value); }
+  if (!maybe_value) {
+    return forward_error(maybe_value);
+  }
   return encoded;
 }
 
@@ -100,9 +102,13 @@ static inline expected<size_t, RuntimeError> serialize_binary_blob(const vectorT
   header.size = data.size();
   header.bytes_per_element = header.size > 0 ? sizeof(data[0]) : 1;
   auto size = endpoint->write_trivial_type<ContiguousDataHeader>(&header);
-  if (!size) { return forward_error(size); }
+  if (!size) {
+    return forward_error(size);
+  }
   auto size2 = endpoint->write(data.data(), header.size * header.bytes_per_element);
-  if (!size2) { return forward_error(size2); }
+  if (!size2) {
+    return forward_error(size2);
+  }
   return size.value() + size2.value();
 }
 
@@ -110,11 +116,15 @@ template <typename vectorT>
 static inline expected<vectorT, RuntimeError> deserialize_binary_blob(Endpoint* endpoint) {
   ContiguousDataHeader header;
   auto header_size = endpoint->read_trivial_type<ContiguousDataHeader>(&header);
-  if (!header_size) { return forward_error(header_size); }
+  if (!header_size) {
+    return forward_error(header_size);
+  }
   vectorT data;
   data.resize(header.size);
   auto result = endpoint->read(data.data(), header.size * header.bytes_per_element);
-  if (!result) { return forward_error(result); }
+  if (!result) {
+    return forward_error(result);
+  }
   return data;
 }
 
@@ -135,10 +145,14 @@ template <typename arrayT>
 static inline expected<arrayT, RuntimeError> deserialize_array(Endpoint* endpoint) {
   ContiguousDataHeader header;
   auto header_size = endpoint->read_trivial_type<ContiguousDataHeader>(&header);
-  if (!header_size) { return forward_error(header_size); }
+  if (!header_size) {
+    return forward_error(header_size);
+  }
   arrayT data;
   auto result = endpoint->read(data.data(), header.size * header.bytes_per_element);
-  if (!result) { return forward_error(result); }
+  if (!result) {
+    return forward_error(result);
+  }
   return data;
 }
 
@@ -179,7 +193,9 @@ struct codec<CloudPickleSerializedObject> {
   }
   static expected<CloudPickleSerializedObject, RuntimeError> deserialize(Endpoint* endpoint) {
     auto maybe_string = deserialize_binary_blob<std::string>(endpoint);
-    if (!maybe_string) { return forward_error(maybe_string); }
+    if (!maybe_string) {
+      return forward_error(maybe_string);
+    }
     CloudPickleSerializedObject cloudpickle_obj{std::move(maybe_string.value())};
     return cloudpickle_obj;
   }
@@ -199,7 +215,9 @@ struct codec<std::vector<bool>> {
     size_t num_bits = data.size();
     size_t num_bytes = (num_bits + 7) / 8;  // the number of bytes needed to store the bits
     auto size = endpoint->write_trivial_type<size_t>(&num_bits);
-    if (!size) { return forward_error(size); }
+    if (!size) {
+      return forward_error(size);
+    }
     total_bytes += size.value();
     std::vector<uint8_t> packed_data(num_bytes, 0);  // Create a vector to store the packed data
     for (size_t i = 0; i < num_bits; ++i) {
@@ -208,7 +226,9 @@ struct codec<std::vector<bool>> {
       }
     }
     auto result = endpoint->write(packed_data.data(), packed_data.size());
-    if (!result) { return forward_error(result); }
+    if (!result) {
+      return forward_error(result);
+    }
     total_bytes += result.value();
     return total_bytes;
   }
@@ -216,12 +236,16 @@ struct codec<std::vector<bool>> {
   static expected<std::vector<bool>, RuntimeError> deserialize(Endpoint* endpoint) {
     size_t num_bits;
     auto size = endpoint->read_trivial_type<size_t>(&num_bits);
-    if (!size) { return forward_error(size); }
+    if (!size) {
+      return forward_error(size);
+    }
     size_t num_bytes =
         (num_bits + 7) / 8;  // Calculate the number of bytes needed to store the bits
     std::vector<uint8_t> packed_data(num_bytes, 0);  // Create a vector to store the packed data
     auto result = endpoint->read(packed_data.data(), packed_data.size());
-    if (!result) { return forward_error(result); }
+    if (!result) {
+      return forward_error(result);
+    }
     std::vector<bool> data(num_bits, false);  // Create a vector to store the unpacked data
     for (size_t i = 0; i < num_bits; ++i) {
       if (packed_data[i / 8] & (1 << (i % 8))) {  // Unpack the bits from the bytes
@@ -245,7 +269,9 @@ static inline expected<size_t, RuntimeError> serialize_vector_of_vectors(const t
   // header is just the total number of vectors
   size_t num_vectors = vectors.size();
   auto size = endpoint->write_trivial_type<size_t>(&num_vectors);
-  if (!size) { return forward_error(size); }
+  if (!size) {
+    return forward_error(size);
+  }
   total_size += size.value();
 
   using vectorT = typename typeT::value_type;
@@ -253,7 +279,9 @@ static inline expected<size_t, RuntimeError> serialize_vector_of_vectors(const t
   // now transmit each individual vector
   for (const auto& vector : vectors) {
     size = codec<vectorT>::serialize(vector, endpoint);
-    if (!size) { return forward_error(size); }
+    if (!size) {
+      return forward_error(size);
+    }
     total_size += size.value();
   }
   return total_size;
@@ -263,7 +291,9 @@ template <typename typeT>
 static inline expected<typeT, RuntimeError> deserialize_vector_of_vectors(Endpoint* endpoint) {
   size_t num_vectors;
   auto size = endpoint->read_trivial_type<size_t>(&num_vectors);
-  if (!size) { return forward_error(size); }
+  if (!size) {
+    return forward_error(size);
+  }
 
   using vectorT = typename typeT::value_type;
 
@@ -271,7 +301,9 @@ static inline expected<typeT, RuntimeError> deserialize_vector_of_vectors(Endpoi
   data.reserve(num_vectors);
   for (size_t i = 0; i < num_vectors; i++) {
     auto vec = codec<vectorT>::deserialize(endpoint);
-    if (!vec) { return forward_error(vec); }
+    if (!vec) {
+      return forward_error(vec);
+    }
     data.push_back(vec.value());
   }
   return data;
@@ -310,7 +342,9 @@ struct codec<std::shared_ptr<typeT>> {
   }
   static expected<std::shared_ptr<typeT>, RuntimeError> deserialize(Endpoint* endpoint) {
     auto value = codec<typeT>::deserialize(endpoint);
-    if (!value) { return forward_error(value); }
+    if (!value) {
+      return forward_error(value);
+    }
     return std::make_shared<typeT>(value.value());
   }
 };

@@ -18,7 +18,7 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
-#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
+#include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
 #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 
@@ -61,7 +61,9 @@ int main(int argc, char** argv) {
   // Get the yaml configuration file
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= std::filesystem::path("video_replayer.yaml");
-  if (argc >= 2) { config_path = argv[1]; }
+  if (argc >= 2) {
+    config_path = argv[1];
+  }
 
   auto app = holoscan::make_application<VideoReplayerApp>();
   app->config(config_path);
@@ -80,7 +82,7 @@ int main(int argc, char** argv) {
         "simple_text_serializer", app->from_config("simple_text_serializer"));
 
     // configure the console logger to use the custom text serializer
-    auto console_logger = app->make_resource<holoscan::data_loggers::BasicConsoleLogger>(
+    auto console_logger = app->make_resource<holoscan::data_loggers::AsyncConsoleLogger>(
         "console_logger",
         holoscan::Arg("serializer", text_serializer),
         app->from_config("basic_console_logger"));

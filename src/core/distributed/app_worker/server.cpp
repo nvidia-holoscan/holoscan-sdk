@@ -58,7 +58,9 @@ void AppWorkerServer::start() {
     std::string driver_address = app_worker_->options()->driver_address;
     auto driver_port_str = holoscan::CLIOptions::parse_port(driver_address);
     auto driver_port = kDefaultAppDriverPort;
-    if (!driver_port_str.empty()) { driver_port = std::stoi(driver_port_str); }
+    if (!driver_port_str.empty()) {
+      driver_port = std::stoi(driver_port_str);
+    }
     const std::vector<int> exclude_ports = {driver_port};
     auto unused_ports =
         get_unused_network_ports(1, kMinNetworkPort, kMaxNetworkPort, exclude_ports);
@@ -106,11 +108,16 @@ void AppWorkerServer::stop() {
       HOLOSCAN_LOG_WARN("Timeout waiting for fragment executors to complete");
     }
   }
+
+  // Disconnect worker endpoints for distributed fragment services
+  app_worker_->handle_worker_disconnect();
 }
 
 void AppWorkerServer::wait() {
   std::unique_lock<std::mutex> lock(join_mutex_);
-  if (server_thread_ && server_thread_->joinable()) { server_thread_->join(); }
+  if (server_thread_ && server_thread_->joinable()) {
+    server_thread_->join();
+  }
 }
 
 void AppWorkerServer::notify() {
@@ -167,7 +174,9 @@ void AppWorkerServer::run() {
   AppWorkerServiceImpl app_worker_service(app_worker_);
 
   // Start health checking server if needed
-  if (need_health_check_) { grpc::EnableDefaultHealthCheckService(true); }
+  if (need_health_check_) {
+    grpc::EnableDefaultHealthCheckService(true);
+  }
   grpc::ServerBuilder builder;
   builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
   builder.RegisterService(&app_worker_service);

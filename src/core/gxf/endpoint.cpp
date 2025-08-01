@@ -24,11 +24,15 @@ namespace gxf {
 
 // C++ API wrappers
 bool Endpoint::is_write_available() {
-  if (!gxf_endpoint_) { throw std::runtime_error("GXF endpoint has not been set"); }
+  if (!gxf_endpoint_) {
+    throw std::runtime_error("GXF endpoint has not been set");
+  }
   return gxf_endpoint_->isWriteAvailable();
 }
 bool Endpoint::is_read_available() {
-  if (!gxf_endpoint_) { throw std::runtime_error("GXF endpoint has not been set"); }
+  if (!gxf_endpoint_) {
+    throw std::runtime_error("GXF endpoint has not been set");
+  }
   return gxf_endpoint_->isReadAvailable();
 }
 

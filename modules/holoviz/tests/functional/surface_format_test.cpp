@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,7 +104,9 @@ TEST_P(SurfaceFormatColorSpace, ColorSpace) {
     }
   }
 
-  if (!found) { GTEST_SKIP() << "Color space " << int(color_space) << " not supported"; }
+  if (!found) {
+    GTEST_SKIP() << "Color space " << int(color_space) << " not supported";
+  }
 
   // draw something to make sure the Vulkan pipeline is executed
   EXPECT_NO_THROW(viz::Begin());

@@ -142,7 +142,9 @@ void init_component(py::module_& m) {
 
             // Get the fragment and delegate to its service method
             auto fragment = component->fragment();
-            if (!fragment) { throw std::runtime_error("Component has no associated fragment"); }
+            if (!fragment) {
+              throw std::runtime_error("Component has no associated fragment");
+            }
 
             // Get the Python fragment object and call its service method
             try {
@@ -171,7 +173,9 @@ void init_component(py::module_& m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto component = obj.cast<std::shared_ptr<ComponentBase>>();
-            if (component) { return component->description(); }
+            if (component) {
+              return component->description();
+            }
             return std::string("<Component: None>");
           },
           R"doc(Return repr(self).)doc");

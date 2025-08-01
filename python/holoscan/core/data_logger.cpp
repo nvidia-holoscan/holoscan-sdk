@@ -35,6 +35,7 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/data_logger.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/resources/async_data_logger.hpp"
 #include "holoscan/core/resources/data_logger.hpp"
 #include "kwarg_handling.hpp"
 #include "data_logger_pydoc.hpp"
@@ -54,7 +55,23 @@ void init_data_logger(py::module_& m) {
 
   // DataLoggerResource implementation
   py::class_<DataLoggerResource, DataLogger, Resource, std::shared_ptr<DataLoggerResource>>(
-      m, "DataLoggerResource", py::dynamic_attr(), "Resource-based data logger implementation");
+      m, "DataLoggerResource", py::dynamic_attr(), doc::DataLoggerResource::doc_DataLoggerResource);
+
+  py::enum_<AsyncQueuePolicy>(m, "AsyncQueuePolicy", "Policy for handling queue overflow")
+      .value("REJECT", AsyncQueuePolicy::kReject, "Reject new items when queue is full")
+      .value("RAISE", AsyncQueuePolicy::kRaise, "Raise exception when queue is full")
+      .export_values();
+
+  // AsyncDataLoggerResource implementation
+  py::class_<AsyncDataLoggerResource,
+             DataLoggerResource,
+             DataLogger,
+             Resource,
+             std::shared_ptr<AsyncDataLoggerResource>>(
+      m,
+      "AsyncDataLoggerResource",
+      py::dynamic_attr(),
+      doc::AsyncDataLoggerResource::doc_AsyncDataLoggerResource);
 }
 
 }  // namespace holoscan

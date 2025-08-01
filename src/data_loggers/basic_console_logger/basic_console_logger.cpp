@@ -21,10 +21,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>  // For std::shared_ptr in parameters
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
-
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/domain/tensor_map.hpp"
@@ -35,6 +35,10 @@
 
 namespace holoscan {
 namespace data_loggers {
+
+// External reference to shared mutex for thread-safe console output coordination
+// (to be used as needed to prevent interleaved output from separate loggers)
+extern std::mutex console_output_mutex;
 
 void BasicConsoleLogger::setup(ComponentSpec& spec) {
   spec.param(serializer_, "serializer", "Serializer", "Serializer to use for logging data");
@@ -56,9 +60,9 @@ void BasicConsoleLogger::initialize() {
   DataLoggerResource::initialize();
 }
 
-bool BasicConsoleLogger::log_data(std::any data, const std::string& unique_id,
+bool BasicConsoleLogger::log_data(const std::any& data, const std::string& unique_id,
                                   int64_t acquisition_timestamp,
-                                  std::shared_ptr<MetadataDictionary> metadata,
+                                  const std::shared_ptr<MetadataDictionary>& metadata,
                                   IOSpec::IOType io_type) {
   // Check if this message should be logged based on allowlist/denylist patterns
   if (!should_log_message(unique_id)) {
@@ -109,7 +113,8 @@ bool BasicConsoleLogger::log_data(std::any data, const std::string& unique_id,
   } else {
     // General case
     if (!serializer_->can_handle_message(data.type())) {
-      HOLOSCAN_LOG_WARN("BasicConsoleLogger: Cannot handle message type '{}'.", type_name);
+      HOLOSCAN_LOG_WARN(
+          "BasicConsoleLogger: Cannot handle message '{}' with type '{}'.", unique_id, type_name);
       return false;
     }
     serialized_content = serializer_->serialize_to_string(data);
@@ -122,20 +127,28 @@ bool BasicConsoleLogger::log_data(std::any data, const std::string& unique_id,
 
   // Check if serialization succeeded
   if (serialized_content.empty() && data.has_value()) {
-    HOLOSCAN_LOG_WARN("BasicConsoleLogger: Serialization failed for message type '{}'.", type_name);
+    HOLOSCAN_LOG_WARN("BasicConsoleLogger: Serialization failed for message '{}' with type '{}'.",
+                      unique_id,
+                      type_name);
     return false;
   }
 
-  // Format and output the log message
-  HOLOSCAN_LOG_INFO(
-      "BasicConsoleLogger[ID:{}][Acquisition Timestamp:{}][{}:{}][Category:{}][Type Name: {}] {}",
-      unique_id,
-      acquisition_timestamp,
-      io_type == IOSpec::IOType::kOutput ? "Emit Timestamp" : "Receive Timestamp",
-      current_timestamp,
-      log_category,
-      type_name,
-      serialized_content);
+  // Format the log message similar to BasicConsoleLogger using HOLOSCAN_LOG_INFO
+  {
+    // In general, should protect console output with mutex in case of concurrent access from
+    // multiple threads to prevent interleaved output. Should not be necessary here since there is
+    // only a single logging statement.
+    // std::lock_guard<std::mutex> lock(console_output_mutex);
+    HOLOSCAN_LOG_INFO(
+        "BasicConsoleLogger[ID:{}][Acquisition Timestamp:{}][{}:{}][Category:{}][Type Name: {}] {}",
+        unique_id,
+        acquisition_timestamp,
+        io_type == IOSpec::IOType::kOutput ? "Emit Timestamp" : "Receive Timestamp",
+        current_timestamp,
+        log_category,
+        type_name,
+        serialized_content);
+  }
 
   return true;
 }
@@ -158,6 +171,24 @@ bool BasicConsoleLogger::log_tensormap_data(const TensorMap& tensor_map,
   // Convert to std::any and dispatch to unified log_data method
   std::any data = tensor_map;
   return log_data(std::move(data), unique_id, acquisition_timestamp, metadata, io_type);
+}
+
+bool BasicConsoleLogger::log_backend_specific(const std::any& data, const std::string& unique_id,
+                                              int64_t acquisition_timestamp,
+                                              const std::shared_ptr<MetadataDictionary>& metadata,
+                                              IOSpec::IOType io_type) {
+  // Default implementation: backend-specific logging is not supported
+  HOLOSCAN_LOG_DEBUG(
+      "BasicConsoleLogger: Backend-specific logging not supported for type '{}'."
+      "Please use GXFConsoleLogger instead to log this type.",
+      data.type().name());
+  // still log metadata and timestamp
+  auto result = log_data(data, unique_id, acquisition_timestamp, metadata, io_type);
+  if (!result) {
+    HOLOSCAN_LOG_ERROR("BasicConsoleLogger: Failed to log metadata for port '{}'.", unique_id);
+  }
+  // return false since data was not processed
+  return false;
 }
 
 }  // namespace data_loggers

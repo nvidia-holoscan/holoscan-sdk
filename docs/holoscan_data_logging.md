@@ -11,6 +11,8 @@ The data logging system consists of several key components:
 - **{cpp:class}`DataLogger <holoscan::DataLogger>`** - The core interface that defines methods for logging different data types
 - **{cpp:class}`DataLoggerResource <holoscan::DataLoggerResource>`** - A resource-based implementation with common configuration parameters
 - **{cpp:class}`BasicConsoleLogger <holoscan::data_loggers::BasicConsoleLogger>`** - A concrete implementation that logs data to the console
+- **{cpp:class}`GXFConsoleLogger <holoscan::data_loggers::GXFConsoleLogger>`** - A version of `BasicConsoleLogger` which also logs Tensor within messages that are emitted or received as a `holoscan::gxf::Entity` or `nvidia::gxf::Entity`. It is recommended to use this version over `BasicConsoleLogger` as it will also log the tensors emitted or received by a number of the built-in operators of the SDK which directly use GXF::Entity type to support both Tensors as well as GXF VideoBuffers. `VideoBuffer` components are not currently logged by this implementation, but this could be added by overriding the `log_backend_specific` method.
+- **{cpp:class}`AsyncConsoleLogger <holoscan::data_loggers::AsyncConsoleLogger>`** - A version of `GXFConsoleLogger` which performs logging asynchronously by a queue that is processed by a worker thread owned by the logger. This version has the option of using separate logging queues for "large" data (e.g. Tensor/TensorMap) vs. other types so that data contents can be dropped if the queue size reaches a user-specfied limit.
 - **{cpp:class}`SimpleTextSerializer <holoscan::data_loggers::SimpleTextSerializer>`** - A serializer for converting data to human-readable text
 
 ### When Logging Occurs
@@ -29,6 +31,7 @@ The data logging system provides specialized methods for different data types:
 - **`log_data()`** - For general data types (passed as `std::any`)
 - **`log_tensor_data()`** - For `Tensor` objects with optional data content logging
 - **`log_tensormap_data()`** - For `TensorMap` objects with optional data content logging
+- **`log_backend_specific()`** - An optional method that can be used to log backend-specific data types. Currently GXF is the only supported backend for Holscan SDK and this method is called by `GXFInputContext::receive<T>()` or `GXFOutputContext::emit(data)` when the data type, `T`, is `holoscan::gxf::Entity` or `nvidia::gxf::Entity`.
 
 ## DataLogger Interface
 
@@ -138,12 +141,14 @@ If `allowlist_patterns` is specified, only messages matching those patterns will
 :::
 
 :::{note}
-Currently this simple `DataLoggerResource` performs logging synchronously on the same thread that is executing the `Operator::compute` call. In cases where logging overhead may be non-negligable (e.g. logging tensor contents to disk), a different design with asynchronous logging managed by dedicated logging threads will likely be advantageous. An example of such an `AsyncDataLoggerResource` may be provided in a future release of the SDK (or via an example on Holohub).
+Currently this simple `DataLoggerResource` performs logging synchronously on the same thread that is executing the `Operator::compute` call.
+
+In cases where logging overhead may be non-negligible (e.g. logging tensor contents to disk), the `AsyncDataLoggerResource` which maintains its own queue and corresponding worker thread for data logging is likely to be advantageous. For the `AsyncDataLoggerResource`, the thread running `Operator::compute` is only responsible for pushing the item to be logged onto the queue. The actual logging is handled by the logger's own worker thread(s).
 :::
 
 ## BasicConsoleLogger Example
 
-The `BasicConsoleLogger` is a concrete implementation that outputs logs to the console:
+The `BasicConsoleLogger` and `GXFConsoleLogger` are concrete implementations that output logs to the console. For existing Holoscan apps which always use the GXF-based backend, `GXFConsoleLogger` should be preferred as it also implements logging of `Tensor` objects present within data emitted or received as a `holoscan::gxf::Entity` or `nvidia::gxf::Entity`.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -160,7 +165,7 @@ class MyApp : public holoscan::Application {
     auto sink = make_operator<SinkOp>("sink");
 
     // Create and configure data logger
-    auto logger = make_resource<holoscan::data_loggers::BasicConsoleLogger>(
+    auto logger = make_resource<holoscan::data_loggers::GXFConsoleLogger>(
         "console_logger",
         Arg("log_inputs", true),
         Arg("log_outputs", true),
@@ -182,7 +187,7 @@ class MyApp : public holoscan::Application {
 ````{tab-item} Python
 ```python
 from holoscan.core import Application
-from holoscan.data_loggers import BasicConsoleLogger, SimpleTextSerializer
+from holoscan.data_loggers import GXFConsoleLogger, SimpleTextSerializer
 
 class MyApp(Application):
     def compose(self):
@@ -192,7 +197,7 @@ class MyApp(Application):
         sink = SinkOp(self, name="sink")
 
         # Create and configure data logger
-        logger = BasicConsoleLogger(
+        logger = GXFConsoleLogger(
             self,
             name="console_logger",
             log_inputs=True,
@@ -215,9 +220,9 @@ class MyApp(Application):
 The example above shows example code adding the logger within the `compose` method, but it can
 also be added from the `main` application file via as done in the following example applications:
 
-1. Tensor Interop ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.4.0/examples/tensor_interop/cpp/tensor_interop.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.4.0/examples/tensor_interop/python/tensor_interop.py))
-2. Multithread Scheduling ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.4.0/examples/multithread/cpp/multithread.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.4.0/examples/multithread/python/multithread.py))
-3. Video Replayer ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v3.4.0/examples/video_replayer/cpp/video_replayer.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.4.0/examples/video_replayer/python/video_replayer.py))
+1. Tensor Interop ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/tensor_interop/cpp/tensor_interop.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/tensor_interop/python/tensor_interop.py))
+2. Multithread Scheduling ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/multithread/cpp/multithread.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/multithread/python/multithread.py))
+3. Video Replayer ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v3.5.0/examples/video_replayer/cpp/video_replayer.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/video_replayer/python/video_replayer.py))
 
 As with any other resource or operator in the SDK, parameters can be passed in directly via
 arguments or indirectly via reading from the YAML config.
@@ -271,7 +276,7 @@ class MyApp : public holoscan::Application {
       )
 
       // Create logger with YAML configuration
-      auto logger = make_resource<holoscan::data_loggers::BasicConsoleLogger>(
+      auto logger = make_resource<holoscan::data_loggers::GXFConsoleLogger>(
           "console_logger",
           holoscan::Arg("serializer", text_serializer),
           from_config("basic_console_logger")
@@ -299,7 +304,7 @@ int main(int argc, char** argv) {
 ````{tab-item} Python
 ```python
 from holoscan.core import Application
-from holoscan.data_loggers import BasicConsoleLogger, SimpleTextSerializer
+from holoscan.data_loggers import GXFConsoleLogger, SimpleTextSerializer
 
 class MyApp(Application):
     def compose(self):
@@ -315,7 +320,7 @@ class MyApp(Application):
             logger_config = self.kwargs("basic_console_logger")
             serializer_config = self.kwargs("simple_text_serializer")
 
-            logger = BasicConsoleLogger(
+            logger = GXFConsoleLogger(
                 self,
                 name="console_logger",
                 serializer=SimpleTextSerializer(
@@ -349,7 +354,7 @@ if __name__ == "__main__":
 
 You can create custom data loggers by implementing the `DataLogger` interface. To be able to use
 Holoscan Parameters and configure them via YAML it may be useful to inherit from the provided
-`DataLoggerResource` (as done for `BasicConsoleLogger`). Note that it is not **required** to inherit
+`DataLoggerResource` (as done for `GXFConsoleLogger`). Note that it is not **required** to inherit
 from `DataLoggerResource`, though, only the `DataLogger` interface.
 
 `````{tab-set}
@@ -459,7 +464,7 @@ For non-distributed applications, the single fragment is typically not named and
 - `{operator_name}.{port_name}`
 - `{operator_name}.{port_name}:index`   (for N:1 receiver ports (`IOSpec::kAnySize`))
 
-The `allowlist_patterns` and `denylist_patterns` provide a way to include or exclude messages based on operator and/or port names. Note that `allowlist_patterns` is used whenever it is provided. Only if `allowlist_patterns` is empty will `denylist_patterns` be applied.
+The `allowlist_patterns` and `denylist_patterns` provide a way to include or exclude messages based on operator and/or port names. If there are no allowlist patterns, any messages not matching one of the denylist patterns are logged. If both types of patterns are specified, any messages that match at least one of the allowlist patterns but are not excluded by any of the denylist patterns are logged.
 
 :::{tip}
 Use the [multithread example](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/multithread) as a reference for a complete working implementation with data logging enabled.

@@ -36,6 +36,11 @@
 #include "holoscan/core/gxf/gxf_io_context.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/profiler/profiler.hpp"
+
+// Python-specific IO profiling events
+PROF_DEFINE_EVENT(event_py_receive, "py_receive", 0x66, 0xEE, 0xAA);
+PROF_DEFINE_EVENT(event_py_emit, "py_emit", 0x00, 0xBB, 0xDD);
 
 namespace py = pybind11;
 

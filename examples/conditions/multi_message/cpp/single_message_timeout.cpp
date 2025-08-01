@@ -44,7 +44,9 @@ class RxTimeoutOp : public Operator {
     // We haven't set a specific number of messages per port, so loop over each
     // input until no more messages are in the queue.
     auto in_value = op_input.receive<std::shared_ptr<std::string>>("in");
-    if (!in_value) { HOLOSCAN_LOG_INFO("No message available"); }
+    if (!in_value) {
+      HOLOSCAN_LOG_INFO("No message available");
+    }
     std::vector<std::string> msgs_input;
     size_t message_count = 0;
     while (in_value) {

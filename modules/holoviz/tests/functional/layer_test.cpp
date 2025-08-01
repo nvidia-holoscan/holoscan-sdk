@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -134,9 +134,15 @@ TEST_F(Layer, View) {
   for (uint32_t y = 0; y < height_; ++y) {
     for (uint32_t x = 0; x < width_; ++x) {
       uint32_t color = 0;
-      if ((x < width_ / 2) && (y < height_ / 2)) { color = red; }
-      if ((x >= width_ / 2) && (y < height_ / 2)) { color = green; }
-      if ((x < width_ / 2) && (y >= height_ / 2)) { color = blue; }
+      if ((x < width_ / 2) && (y < height_ / 2)) {
+        color = red;
+      }
+      if ((x >= width_ / 2) && (y < height_ / 2)) {
+        color = green;
+      }
+      if ((x < width_ / 2) && (y >= height_ / 2)) {
+        color = blue;
+      }
       if ((x >= width_ / 2 + width_ / 8) && (y >= height_ / 2 + height_ / 8) &&
           (x < width_ - width_ / 8) && (y < height_ - height_ / 8)) {
         color = blue;

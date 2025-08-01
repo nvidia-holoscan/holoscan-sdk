@@ -76,11 +76,15 @@ The parameter `initial_timestamp` controls the initial timestamp on the clock in
 
 ## Transmitter (advanced)
 
-Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators a `DoubleBufferTransmitter` will automatically be used, while for connections between fragments in a distributed application, a `UcxTransmitter` will be used. When data frame flow tracking is enabled any `DoubleBufferTransmitter` will be replaced by an `AnnotatedDoubleBufferTransmitter` which also records the timestamps needed for that feature.
+Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators a `DoubleBufferTransmitter` will automatically be used by default, while for connections between fragments in a distributed application, a `UcxTransmitter` will be used. When data frame flow tracking is enabled any `DoubleBufferTransmitter` will be replaced by an `AnnotatedDoubleBufferTransmitter` which also records the timestamps needed for that feature. `AsyncBufferTransmitter` is optionally used when `IOSpec::ConnectorType::kAsyncBuffer` is used in the `add_flow` method for lock-free, wait-free and asynchronous data flow.
 
 ### DoubleBufferTransmitter
 
-This is the transmitter class used by output ports of operators within a fragment.
+This is the default transmitter class used by output ports of operators within a fragment.
+
+### AsyncBufferTransmitter
+
+This is an optional transmitter class that can be used to connect two operators for lock-free, wait-free and asynchronous data flow. This transmitter is used by passing `IOSpec::ConnectorType::kAsyncBuffer` as the connector type in the `add_flow` method.
 
 ### UcxTransmitter
 
@@ -88,11 +92,15 @@ This is the transmitter class used by output ports of operators that connect fra
 
 ## Receiver (advanced)
 
-Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators, a `DoubleBufferReceiver` will be used, while for connections between fragments in a distributed application, the `UcxReceiver` will be used. When data frame flow tracking is enabled, any `DoubleBufferReceiver` will be replaced by an `AnnotatedDoubleBufferReceiver` which also records the timestamps needed for that feature.
+Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators, a `DoubleBufferReceiver` will be used by default, while for connections between fragments in a distributed application, the `UcxReceiver` will be used. When data frame flow tracking is enabled, any `DoubleBufferReceiver` will be replaced by an `AnnotatedDoubleBufferReceiver` which also records the timestamps needed for that feature. `AsyncBufferReceiver` is optionally used when `IOSpec::ConnectorType::kAsyncBuffer` is used in the `add_flow` method for lock-free, wait-free and asynchronous data flow.
 
 ### DoubleBufferReceiver
 
 This is the receiver class used by input ports of operators within a fragment.
+
+### AsyncBufferReceiver
+
+This is an optional receiver class that can be used to connect two operators for lock-free, wait-free and asynchronous data flow. This receiver is used by passing `IOSpec::ConnectorType::kAsyncBuffer` as the connector type in the `add_flow` method.
 
 ### UcxReceiver
 
@@ -121,3 +129,38 @@ The components in this "system resources" section are related to system resource
 This resource represents a thread pool that can be used to pin operators to run using specific CPU threads. This functionality is not supported by the `GreedyScheduler` because it is single-threaded, but it is supported by both the `EventBasedScheduler` and `MultiThreadScheduler`. Unlike other resource types, a ThreadPool should **not** be created via `make_resource` ({cpp:func}`C++ <holoscan::Fragment::make_resource>`/{py:func}`Python <holoscan.core.Fragment.make_resource>`), but should instead use the dedicated `make_thread_pool` ({cpp:func}`C++ <holoscan::Fragment::make_resource>`/{py:func}`Python <holoscan.core.Fragment.make_resource>`) method. This dedicated method is necessary as the thread pool requires some additional initialization logic that is not required by the other resource types. See the section on {ref}`configuring thread pools <configuring-app-thread-pools>` in the user guide for usage.
 
 - The parameter `initial_size` indicates the number of threads to initialize the thread pool with.
+
+## Data Logger Resources
+
+These native resource types are intended to add users in writing their own implementations of the holoscan::DataLogger interface that can be constructed via `Fragment::make_resource` and use Parameters in the same way as other resources (e.g. reading values either from user-provided `Arg` and/or `ArgList` or via reading from the application's provided YAML config).
+
+### DataLoggerResource
+
+A base class that can be inherited from to create data loggers where the logging runs synchronously on the same thread that called `Operator::compute`.
+
+If additional parameters are added in the child class, the user should make sure to call `DataLoggerResource::setup()` within their `setup` method override so that the base parameters are also available.
+
+- The `serializer` parameter specifies the text serializer used to convert data to string format. If not provided, a default SimpleTextSerializer will be created automatically.
+- The `log_inputs` parameter controls whether to log input messages. Default is True.
+- The `log_outputs` parameter controls whether to log output messages. Default is True.
+- The `log_tensor_data_content` parameter controls whether to log the actual content of tensor data. Default is False.
+- The `log_metadata` parameter controls whether to log metadata associated with messages. Default is True.
+- The `allowlist_patterns` parameter is a list of regex patterns. Only messages matching these patterns will be logged. If empty, all messages are allowed.
+- The `denylist_patterns` parameter is a list of regex patterns. Messages matching these patterns will be filtered out. If `allowlist_patterns` is specified, it takes precedence, and `denylist_patterns` is ignored.
+
+### AsyncDataLoggerResource
+
+A base class that can be inherited from to create data loggers where the logging runs asynchronously via a dedicated queue and worker thread that is managed by the logger resource. This is likely to be more performant than using `DataLoggerResource` in most cases.
+
+If additional parameters are added in the child class, the user should make sure to call `AsyncDataLoggerResource::setup()` within their `setup` method override so that the base parameters are also available.
+
+The AsyncDataLoggerResource inherits all of the parameters from DataLoggerResource and adds the following:
+
+- The `max_queue_size` parameter specifies the maximum number of entries in the data queue. The data queue handles metadata and tensor headers without full tensor content.
+- The `worker_sleep_time` parameter specifies the sleep duration in nanoseconds when the data queue is empty. Lower values reduce latency but increase CPU usage.
+- The `queue_policy` parameter controls how queue overflow is handled. Can be `kReject` (default) to reject new items with a warning, or `kRaise` to throw an exception. In the YAML configuration for this parameter, you can use string values "reject" or "raise" (case-insensitive).
+- The `large_data_max_queue_size` parameter specifies the maximum number of entries in the large data queue. The large data queue handles full tensor content for detailed logging.
+- The `large_data_worker_sleep_time` parameter specifies the sleep duration in nanoseconds when the large data queue is empty.
+- The `large_data_queue_policy` parameter controls how large data queue overflow is handled. Can be `kReject` (default) to reject new items with a warning, or `kRaise` to throw an exception. In the YAML configuration for this parameter, you can use string values "reject" or "raise" (case-insensitive).
+- The `enable_large_data_queue` parameter controls whether to enable the large data queue and worker thread for processing full tensor content.
+- The `shutdown_timeout` parameter specifies the maximum time in nanoseconds to wait for worker threads to shutdown gracefully.

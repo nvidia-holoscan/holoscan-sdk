@@ -76,6 +76,8 @@
 #include "holoscan/core/resources/gxf/dfft_collector.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
+#include "holoscan/core/resources/gxf/holoscan_async_buffer_receiver.hpp"
+#include "holoscan/core/resources/gxf/holoscan_async_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp"
 #include "holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
@@ -203,12 +205,16 @@ static void setup_gxf_logging() {
   // If the GXF logger is not already set, set it to a new GXFLogger
   std::shared_ptr<GXFLogger> gxf_logger_ptr =
       std::dynamic_pointer_cast<GXFLogger>(gxf_logger.logger());
-  if (!gxf_logger_ptr) { gxf_logger.logger(std::make_shared<GXFLogger>()); }
+  if (!gxf_logger_ptr) {
+    gxf_logger.logger(std::make_shared<GXFLogger>());
+  }
 }
 
 GXFExecutor::GXFExecutor(holoscan::Fragment* fragment, bool create_gxf_context)
     : Executor(fragment) {
-  if (fragment == nullptr) { throw std::runtime_error("Fragment is nullptr"); }
+  if (fragment == nullptr) {
+    throw std::runtime_error("Fragment is nullptr");
+  }
 
   if (create_gxf_context) {
     owns_context_ = true;
@@ -238,7 +244,9 @@ void GXFExecutor::initialize_gxf_resources(
     // Initialize GXF component if it is not already initialized.
     if (gxf_resource->gxf_context() == nullptr) {
       gxf_resource->fragment(fragment());
-      if (graph_entity) { gxf_resource->gxf_graph_entity(graph_entity); }
+      if (graph_entity) {
+        gxf_resource->gxf_graph_entity(graph_entity);
+      }
       gxf_resource->gxf_eid(eid);  // set GXF entity id
       gxf_resource->initialize();
     } else {
@@ -271,7 +279,9 @@ void GXFExecutor::run(OperatorGraph& graph) {
 }
 
 std::future<void> GXFExecutor::run_async(OperatorGraph& graph) {
-  if (!is_gxf_graph_initialized_) { initialize_gxf_graph(graph); }
+  if (!is_gxf_graph_initialized_) {
+    initialize_gxf_graph(graph);
+  }
 
   return std::async(std::launch::async, [this]() {
     // Note that run_gxf_graph() can raise an exception.
@@ -300,6 +310,7 @@ void GXFExecutor::reset_execution_state() {
 
   is_gxf_graph_initialized_ = false;
   is_gxf_graph_activated_ = false;
+  is_fragment_services_initialized_ = false;
   entity_prefix_ = "";
 
   connection_items_.clear();
@@ -322,10 +333,14 @@ void GXFExecutor::reset_execution_state() {
   // Create new context only if run method was invoked or context is nullptr
   if (is_run_called_ || !context_) {
     // Destroy existing context if it exists and run has been called already
-    if (is_run_called_ && context_) { destroy_context(); }
+    if (is_run_called_ && context_) {
+      destroy_context();
+    }
 
     auto frag_name_display = fragment_->name();
-    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+    if (!frag_name_display.empty()) {
+      frag_name_display = "[" + frag_name_display + "] ";
+    }
     HOLOSCAN_LOG_INFO("{}Creating context", frag_name_display);
     HOLOSCAN_GXF_CALL_FATAL(GxfContextCreate(&context_));
 
@@ -347,7 +362,9 @@ void GXFExecutor::reset_execution_state() {
   // When we use the GXF shared context, entity name collisions can occur if multiple fragments
   // are initialized at the same time.
   // To avoid this, we prefix the entity names with the fragment name.
-  if (application != fragment_) { entity_prefix_ = fmt::format("{}__", fragment_->name()); }
+  if (application != fragment_) {
+    entity_prefix_ = fmt::format("{}__", fragment_->name());
+  }
   HOLOSCAN_LOG_DEBUG("Entity prefix for fragment '{}': '{}'", fragment_->name(), entity_prefix_);
 }
 
@@ -355,10 +372,13 @@ void GXFExecutor::destroy_context() {
   // Deinitialize GXF context only if `owns_context_` is true and context is not nullptr
   if (owns_context_ && context_) {
     auto frag_name_display = fragment_->name();
-    if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+    if (!frag_name_display.empty()) {
+      frag_name_display = "[" + frag_name_display + "] ";
+    }
     try {
       HOLOSCAN_LOG_INFO("{}Destroying context", frag_name_display);
-    } catch (const std::exception& e) {}
+    } catch (const std::exception& e) {
+    }
 
     // Unregister signal handlers if any
     try {
@@ -369,11 +389,13 @@ void GXFExecutor::destroy_context() {
     } catch (const std::exception& e) {
       try {
         HOLOSCAN_LOG_ERROR("Failed to unregister signal handlers: {}", e.what());
-      } catch (const std::exception& e) {}
+      } catch (const std::exception& e) {
+      }
     }
     try {
       HOLOSCAN_GXF_CALL(GxfContextDestroy(context_));
-    } catch (const std::exception& e) {}
+    } catch (const std::exception& e) {
+    }
     // Reset the context pointer
     context_ = nullptr;
     // Reset the GXF holoscan extension after destroying the context
@@ -595,8 +617,16 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
         break;
       case IOSpec::ConnectorType::kDoubleBuffer:
         rx_resource = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
+        // This call to track() enables setup() to be called later for proper gxf_cptr setup
         if (fragment->data_flow_tracker()) {
           std::dynamic_pointer_cast<DoubleBufferReceiver>(rx_resource)->track();
+        }
+        break;
+      case IOSpec::ConnectorType::kAsyncBuffer:
+        rx_resource = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
+        // This call to track() enables setup() to be called later for proper gxf_cptr setup
+        if (fragment->data_flow_tracker()) {
+          std::dynamic_pointer_cast<AsyncBufferReceiver>(rx_resource)->track();
         }
         break;
       case IOSpec::ConnectorType::kUCX:
@@ -605,6 +635,7 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
       default:
         HOLOSCAN_LOG_ERROR("Unsupported GXF connector_type: '{}'", static_cast<int>(rx_type));
     }
+
     rx_resource->name(rx_name);
     rx_resource->fragment(fragment);
     auto rx_spec = std::make_shared<ComponentSpec>(fragment);
@@ -630,13 +661,25 @@ void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_contex
 
     if (fragment->data_flow_tracker()) {
       holoscan::AnnotatedDoubleBufferReceiver* dbl_buffer_ptr;
+      holoscan::HoloscanAsyncBufferReceiver* async_buffer_ptr;
       holoscan::HoloscanUcxReceiver* ucx_ptr;
+      if (!rx_resource->gxf_cptr()) {
+        throw std::runtime_error(fmt::format(
+            "Failed to get GXF component pointer for the receiver '{}' of operator '{}'",
+            rx_name,
+            op->name()));
+      }
       switch (rx_type) {
         case IOSpec::ConnectorType::kDefault:
         case IOSpec::ConnectorType::kDoubleBuffer:
           dbl_buffer_ptr =
               reinterpret_cast<holoscan::AnnotatedDoubleBufferReceiver*>(rx_resource->gxf_cptr());
           dbl_buffer_ptr->op(op);
+          break;
+        case IOSpec::ConnectorType::kAsyncBuffer:
+          async_buffer_ptr =
+              reinterpret_cast<holoscan::HoloscanAsyncBufferReceiver*>(rx_resource->gxf_cptr());
+          async_buffer_ptr->op(op);
           break;
         case IOSpec::ConnectorType::kUCX:
           std::dynamic_pointer_cast<UcxReceiver>(rx_resource)->track();
@@ -902,9 +945,18 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
         }
         break;
       case IOSpec::ConnectorType::kDoubleBuffer:
+        // These calls cannot be moved into the portion below where (fragment->data_flow_tracker())
+        // is checked. Reason being the setup step works according to whether track() method was
+        // called or not and setup() enables the gxf_cptr() that is being used in the later code
         tx_resource = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
         if (fragment->data_flow_tracker()) {
           std::dynamic_pointer_cast<DoubleBufferTransmitter>(tx_resource)->track();
+        }
+        break;
+      case IOSpec::ConnectorType::kAsyncBuffer:
+        tx_resource = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
+        if (fragment->data_flow_tracker()) {
+          std::dynamic_pointer_cast<AsyncBufferTransmitter>(tx_resource)->track();
         }
         break;
       case IOSpec::ConnectorType::kUCX:
@@ -913,6 +965,7 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
       default:
         HOLOSCAN_LOG_ERROR("Unsupported GXF connector_type: '{}'", static_cast<int>(tx_type));
     }
+
     tx_resource->name(tx_name);
     tx_resource->fragment(fragment);
     auto tx_spec = std::make_shared<ComponentSpec>(fragment);
@@ -924,13 +977,25 @@ void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_conte
 
     if (fragment->data_flow_tracker()) {
       holoscan::AnnotatedDoubleBufferTransmitter* dbl_buffer_ptr;
+      holoscan::HoloscanAsyncBufferTransmitter* async_buffer_ptr;
       holoscan::HoloscanUcxTransmitter* ucx_ptr;
+      if (!tx_resource->gxf_cptr()) {
+        throw std::runtime_error(fmt::format(
+            "Failed to get GXF component pointer for the transmitter '{}' of operator '{}'",
+            tx_name,
+            op->name()));
+      }
       switch (tx_type) {
         case IOSpec::ConnectorType::kDefault:
         case IOSpec::ConnectorType::kDoubleBuffer:
           dbl_buffer_ptr = reinterpret_cast<holoscan::AnnotatedDoubleBufferTransmitter*>(
               tx_resource->gxf_cptr());
           dbl_buffer_ptr->op(op);
+          break;
+        case IOSpec::ConnectorType::kAsyncBuffer:
+          async_buffer_ptr =
+              reinterpret_cast<holoscan::HoloscanAsyncBufferTransmitter*>(tx_resource->gxf_cptr());
+          async_buffer_ptr->op(op);
           break;
         case IOSpec::ConnectorType::kUCX:
           std::dynamic_pointer_cast<UcxTransmitter>(tx_resource)->track();
@@ -1013,7 +1078,9 @@ ConnectionMapType generate_connection_map(
     std::vector<std::shared_ptr<holoscan::ConnectionItem>>& connection_items) {
   // Construct name-to-operator map
   std::unordered_map<std::string, holoscan::OperatorGraph::NodeType> name_to_op;
-  for (const auto& op : graph.get_nodes()) { name_to_op[op->name()] = op; }
+  for (const auto& op : graph.get_nodes()) {
+    name_to_op[op->name()] = op;
+  }
 
   /// Construct connection item map
   ConnectionMapType connection_map;
@@ -1457,6 +1524,10 @@ void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType 
           curr_connector_policy = p.second;
         }
       } break;
+      case IOSpec::ConnectorType::kAsyncBuffer:
+        throw std::runtime_error(
+            "AsyncBuffer transmitters and receivers cannot be connected to multiple outputs or "
+            "multiple inputs");
       default:
         HOLOSCAN_LOG_ERROR("Unrecognized connector_type '{}' for source name '{}'",
                            static_cast<int>(connector_type),
@@ -1569,7 +1640,9 @@ bool GXFExecutor::initialize_fragment() {
     auto& op_name = op->name();
 
     // Check if we have already visited this node
-    if (visited_nodes.find(op) != visited_nodes.end()) { continue; }
+    if (visited_nodes.find(op) != visited_nodes.end()) {
+      continue;
+    }
     visited_nodes.insert(op);
 
     HOLOSCAN_LOG_DEBUG("Operator: {}", op_name);
@@ -1588,7 +1661,9 @@ bool GXFExecutor::initialize_fragment() {
           cycle_detected = true;
           break;
         }
-        if (visited_nodes.find(prev_op) == visited_nodes.end()) { cycle_detected = true; }
+        if (visited_nodes.find(prev_op) == visited_nodes.end()) {
+          cycle_detected = true;
+        }
       }
       if (cycle_detected) {
         HOLOSCAN_LOG_DEBUG(
@@ -1636,7 +1711,9 @@ bool GXFExecutor::initialize_fragment() {
       //       connection->target())' failed with error 'GXF_ENTITY_COMPONENT_NOT_FOUND'.
       //   [runtime.cpp:777] Could not unschedule entity '_holoscan_connections_entity' (E3) from
       //       execution: GXF_ENTITY_COMPONENT_NOT_FOUND
-      if (prev_op == op) { continue; }
+      if (prev_op == op) {
+        continue;
+      }
 
       auto port_map = graph.get_port_map(prev_op, op);
       if (!port_map.has_value()) {
@@ -1875,7 +1952,9 @@ bool GXFExecutor::initialize_fragment() {
   // must call initialize() on any loggers that inherit from DataLoggerResource
   for (auto& data_logger : fragment_->data_loggers()) {
     auto data_logger_resource = std::dynamic_pointer_cast<DataLoggerResource>(data_logger);
-    if (data_logger_resource) { data_logger_resource->initialize(); }
+    if (data_logger_resource) {
+      data_logger_resource->initialize();
+    }
   }
   return true;
 }
@@ -2222,7 +2301,9 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
         HOLOSCAN_LOG_DEBUG("  json_file_path: {}", json_file_path);
         auto stats =
             util_entity_->addComponent("nvidia::gxf::JobStatistics", "jobstats", jobstats_args);
-        if (!stats) { HOLOSCAN_LOG_ERROR("Failed to create JobStatistics component."); }
+        if (!stats) {
+          HOLOSCAN_LOG_ERROR("Failed to create JobStatistics component.");
+        }
       } else {
         HOLOSCAN_LOG_ERROR(
             "Failed to create clock for job statistics (statistics will not be collected).");
@@ -2262,10 +2343,14 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
                            op->id(),
                            is_current_op_leaf,
                            is_current_op_root);
-        if (is_current_op_leaf) { dfft_collector_ptr->add_leaf_op(op.get()); }
+        if (is_current_op_leaf) {
+          dfft_collector_ptr->add_leaf_op(op.get());
+        }
         // root and leaf operators may also be the same if there is only one operator in a
         // fragment
-        if (is_current_op_root) { dfft_collector_ptr->add_root_op(op.get()); }
+        if (is_current_op_root) {
+          dfft_collector_ptr->add_root_op(op.get());
+        }
       }
     }
 
@@ -2307,7 +2392,9 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       std::unordered_set<std::string> groups_with_device;
       for (auto& node : operator_graph.get_nodes()) {
         // exit early for virtual operators
-        if (node->operator_type() == Operator::OperatorType::kVirtual) { continue; }
+        if (node->operator_type() == Operator::OperatorType::kVirtual) {
+          continue;
+        }
 
         auto op_spec = node->spec();
         bool has_ucx_connector = false;
@@ -2326,7 +2413,9 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
           }
         }
         // done if there is no UCX connector
-        if (!has_ucx_connector) { continue; }
+        if (!has_ucx_connector) {
+          continue;
+        }
 
         // Add a GPUDevice to the entity group if one does not already exist there
         // (UcxTransmitter and/or UcxReceiver expect to find a GPUDevice resource).
@@ -2392,13 +2481,17 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       // Raise an error if any operator has a UCX connector.
       auto& operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
       for (auto& node : operator_graph.get_nodes()) {
-        if (node->has_ucx_connector()) { throw std::runtime_error(ucx_error_msg); }
+        if (node->has_ucx_connector()) {
+          throw std::runtime_error(ucx_error_msg);
+        }
       }
 
       // Raise an error if any broadcast entity has a UCX connector
       for (auto& broadcast_entity : implicit_broadcast_entities_) {
         // Add the entity to the entity group if it has a UCX connector
-        if (has_ucx_connector(broadcast_entity)) { throw std::runtime_error(ucx_error_msg); }
+        if (has_ucx_connector(broadcast_entity)) {
+          throw std::runtime_error(ucx_error_msg);
+        }
       }
     }
   }
@@ -2478,7 +2571,9 @@ void GXFExecutor::run_gxf_graph() {
 
   // Run the graph
   auto frag_name_display = fragment->name();
-  if (!frag_name_display.empty()) { frag_name_display = "[" + frag_name_display + "] "; }
+  if (!frag_name_display.empty()) {
+    frag_name_display = "[" + frag_name_display + "] ";
+  }
 
   activate_gxf_graph();
   HOLOSCAN_LOG_INFO("{}Running Graph...", frag_name_display);
@@ -2486,6 +2581,10 @@ void GXFExecutor::run_gxf_graph() {
   HOLOSCAN_LOG_INFO("{}Waiting for completion...", frag_name_display);
   auto wait_result = HOLOSCAN_GXF_CALL_WARN(GxfGraphWait(context));
   if (wait_result == GXF_SUCCESS) {
+    // CRITICAL: Shutdown data loggers BEFORE GXF graph deactivation to ensure
+    // async loggers complete processing before entities are destroyed
+    fragment->shutdown_data_loggers();
+
     HOLOSCAN_LOG_INFO("{}Deactivating Graph...", frag_name_display);
     // Usually the graph is already deactivated by the GXF framework (program.cpp)
     // when GxfGraphWait() fails.
@@ -2575,6 +2674,15 @@ void GXFExecutor::register_extensions() {
     extension_factory.add_component<holoscan::AnnotatedDoubleBufferTransmitter,
                                     nvidia::gxf::DoubleBufferTransmitter>(
         "Holoscan's annotated double buffer transmitter", {0x444505a86c014d90, 0xab7503bcd0782877});
+
+    // Add Async Buffer Receiver and Transmitter
+    extension_factory
+        .add_component<holoscan::HoloscanAsyncBufferReceiver, nvidia::gxf::AsyncBufferReceiver>(
+            "Holoscan's async buffer receiver", {0xa1b2c3d4e5f64001, 0xb001a2b3c4d5e6f7});
+
+    extension_factory.add_component<holoscan::HoloscanAsyncBufferTransmitter,
+                                    nvidia::gxf::AsyncBufferTransmitter>(
+        "Holoscan's async buffer transmitter", {0xa1b2c3d4e5f64002, 0xb002a2b3c4d5e6f7});
 
     extension_factory.add_component<holoscan::HoloscanUcxReceiver, nvidia::gxf::UcxReceiver>(
         "Holoscan's annotated ucx receiver", {0x9c8026256e4a4303, 0x865df1fe4428ed32});
@@ -2686,8 +2794,18 @@ bool GXFExecutor::initialize_network_context(NetworkContext* network_context) {
 }
 
 bool GXFExecutor::initialize_fragment_services() {
+  // This method may be invoked multiple times, for example, when both AppDriver and AppWorker are
+  // present in the same process.
+  // Fragment services should only be initialized a single time.
+  if (is_fragment_services_initialized_) {
+    return true;
+  }
+
   // Early return if no fragment services to initialize
-  if (fragment_->fragment_resource_to_service_key_map_.empty()) { return true; }
+  if (fragment_->fragment_resource_to_service_key_map_.empty()) {
+    is_fragment_services_initialized_ = true;  // mark success
+    return true;
+  }
 
   // Create fragment services entity
   const std::string fragment_services_entity_name =
@@ -2715,6 +2833,7 @@ bool GXFExecutor::initialize_fragment_services() {
     }
   }
 
+  is_fragment_services_initialized_ = true;
   return true;
 }
 
@@ -2766,7 +2885,9 @@ bool GXFExecutor::add_resource_to_graph_entity(
 
 bool GXFExecutor::add_iospec_to_graph_entity(
     IOSpec* io_spec, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
-  if (!io_spec || !graph_entity) { return false; }
+  if (!io_spec || !graph_entity) {
+    return false;
+  }
   auto resource = io_spec->connector();
   bool overall_status = false;
   if (!resource) {
@@ -2824,10 +2945,14 @@ void GXFExecutor::add_component_args_to_graph_entity(
         }
       } else if (element_type == ArgElementType::kResource) {
         auto resources = std::any_cast<std::vector<std::shared_ptr<Resource>>>(arg.value());
-        for (auto& resource : resources) { add_resource_to_graph_entity(resource, graph_entity); }
+        for (auto& resource : resources) {
+          add_resource_to_graph_entity(resource, graph_entity);
+        }
       } else if (element_type == ArgElementType::kIOSpec) {
         auto io_specs = std::any_cast<std::vector<IOSpec*>>(arg.value());
-        for (auto& io_spec : io_specs) { add_iospec_to_graph_entity(io_spec, graph_entity); }
+        for (auto& io_spec : io_specs) {
+          add_iospec_to_graph_entity(io_spec, graph_entity);
+        }
       }
     }
   }

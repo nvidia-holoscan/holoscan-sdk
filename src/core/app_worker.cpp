@@ -48,6 +48,7 @@ namespace holoscan {
 constexpr int kWorkerTerminationGracePeriodMs = 500;
 constexpr int kFragmentShutdownGracePeriodMs = 250;
 constexpr int kWorkerShutdownTimeoutSeconds = 10;
+constexpr int kDefaultFragmentServiceDriverPort = 13337;
 
 AppWorker::AppWorker(Application* app) : app_(app) {
   if (app_) {
@@ -61,7 +62,9 @@ AppWorker::AppWorker(Application* app) : app_(app) {
 AppWorker::~AppWorker() = default;
 
 CLIOptions* AppWorker::options() {
-  if (app_ == nullptr) { return nullptr; }
+  if (app_ == nullptr) {
+    return nullptr;
+  }
   return options_;
 }
 
@@ -116,10 +119,35 @@ bool AppWorker::execute_fragments(
     connection_map[fragment] = connection_list;
   }
 
+  // Initialize distributed fragment service worker endpoints
+  const auto& driver_address = options()->driver_address;
+  auto [driver_ip, driver_port_str] = CLIOptions::parse_address(
+      driver_address, "0.0.0.0", std::to_string(kDefaultFragmentServiceDriverPort));
+  int driver_port = 0;
+  try {
+    driver_port = std::stoi(driver_port_str);
+  } catch (const std::invalid_argument& e) {
+    HOLOSCAN_LOG_ERROR("Invalid port number '{}': {}. Using default port {}.",
+                       driver_port_str,
+                       e.what(),
+                       kDefaultFragmentServiceDriverPort);
+  }
+  if (driver_port == 0) {
+    driver_port = kDefaultFragmentServiceDriverPort;
+  }
+
+  // Initialize fragment services
+  app_->executor().initialize_fragment_services();
+
+  handle_worker_connect(driver_ip);
+
   // Compose scheduled fragments
   for (auto& fragment : scheduled_fragments) {
     try {
       fragment->compose_graph();
+
+      // Attach application services to the current fragment
+      app_->attach_services_to_fragment(fragment);
     } catch (const std::exception& exception) {
       HOLOSCAN_LOG_ERROR(
           "Failed to compose fragment graph '{}': {}", fragment->name(), exception.what());
@@ -177,7 +205,9 @@ bool AppWorker::execute_fragments(
   auto future = std::async(
       std::launch::async,
       [this, futures = std::move(futures), &notify_flag = need_notify_execution_finished_]() {
-        for (auto& future_obj : futures) { future_obj.wait(); }
+        for (auto& future_obj : futures) {
+          future_obj.wait();
+        }
 
         if (notify_flag) {
           submit_message(
@@ -272,7 +302,9 @@ bool AppWorker::terminate_scheduled_fragments() {
     std::vector<FragmentNodeType> current_roots;
 
     HOLOSCAN_LOG_DEBUG("Remaining scheduled fragments to shut down:");
-    for (auto& fragment : scheduled_fragments_) { HOLOSCAN_LOG_DEBUG("\t{}", fragment->name()); }
+    for (auto& fragment : scheduled_fragments_) {
+      HOLOSCAN_LOG_DEBUG("\t{}", fragment->name());
+    }
 
     for (auto& fragment : scheduled_fragments_) {
       auto node = fragment_graph.find_node(fragment->name());
@@ -346,7 +378,9 @@ bool AppWorker::terminate_scheduled_fragments() {
     // Update graph by removing terminated fragments
     for (const auto& terminated : terminated_fragments) {
       auto node = fragment_graph.find_node(terminated);
-      if (node) { fragment_graph.remove_node(node); }
+      if (node) {
+        fragment_graph.remove_node(node);
+      }
     }
   }
   return true;
@@ -375,6 +409,103 @@ std::vector<FragmentNodeType> AppWorker::get_target_fragments(FragmentGraph& fra
     }
   }
   return target_fragments;
+}
+
+void AppWorker::handle_worker_connect(const std::string_view& driver_ip) noexcept {
+  try {
+    std::unordered_set<std::shared_ptr<FragmentService>> executed_services;
+    std::vector<std::string> failed_services;  // Track failures
+
+    for (const auto& [service_key, service] : app_->fragment_services_by_key()) {
+      if (executed_services.find(service) != executed_services.end()) {
+        continue;
+      }
+      executed_services.insert(service);
+
+      try {
+        auto worker_endpoint =
+            std::dynamic_pointer_cast<distributed::ServiceWorkerEndpoint>(service);
+        HOLOSCAN_LOG_DEBUG(
+            "handle_worker_connect: checking '{}' ('{}')", service_key.id, service_key.type.name());
+        if (worker_endpoint) {
+          HOLOSCAN_LOG_DEBUG("handle_worker_connect: Starting worker endpoint for service '{}'",
+                             service_key.id);
+          worker_endpoint->worker_connect(driver_ip);
+        }
+      } catch (const std::exception& e) {
+        HOLOSCAN_LOG_ERROR(
+            "handle_worker_connect: Failed to connect service '{}': {}", service_key.id, e.what());
+        failed_services.push_back(service_key.id);
+      }
+    }
+
+    if (!failed_services.empty()) {
+      throw std::runtime_error(
+          fmt::format("Failed to connect services: {}", fmt::join(failed_services, ", ")));
+    }
+  } catch (const std::exception& e) {
+    // Wrap error logging in try-catch since we're in the outermost catch
+    try {
+      HOLOSCAN_LOG_ERROR("handle_worker_connect: exception caught: {}", e.what());
+    } catch (...) {
+    }
+  } catch (...) {
+    // Wrap error logging in try-catch since we're in the outermost catch
+    try {
+      HOLOSCAN_LOG_ERROR("handle_worker_connect: unknown exception caught");
+    } catch (...) {
+    }
+  }
+}
+
+void AppWorker::handle_worker_disconnect() noexcept {
+  try {
+    std::unordered_set<std::shared_ptr<FragmentService>> executed_services;
+    std::vector<std::string> failed_services;  // Track failures
+
+    for (const auto& [service_key, service] : app_->fragment_services_by_key()) {
+      if (executed_services.find(service) != executed_services.end()) {
+        continue;
+      }
+      executed_services.insert(service);
+
+      try {
+        HOLOSCAN_LOG_DEBUG("handle_worker_disconnect: checking '{}' ('{}')",
+                           service_key.id,
+                           service_key.type.name());
+        auto worker_endpoint =
+            std::dynamic_pointer_cast<distributed::ServiceWorkerEndpoint>(service);
+        if (worker_endpoint) {
+          HOLOSCAN_LOG_DEBUG(
+              "handle_worker_disconnect: Shutting down worker endpoint for service '{}'",
+              service_key.id);
+          worker_endpoint->worker_disconnect();
+        }
+      } catch (const std::exception& e) {
+        HOLOSCAN_LOG_ERROR("handle_worker_disconnect: Failed to disconnect service '{}': {}",
+                           service_key.id,
+                           e.what());
+        failed_services.push_back(service_key.id);
+      }
+    }
+
+    if (!failed_services.empty()) {
+      throw std::runtime_error(
+          fmt::format("Failed to disconnect services: {}", fmt::join(failed_services, ", ")));
+    }
+  } catch (const std::exception& e) {
+    // Wrap error logging in try-catch since we're in the outermost catch
+    try {
+      HOLOSCAN_LOG_ERROR("handle_worker_disconnect: exception caught: {}", e.what());
+    } catch (...) {
+    }
+  } catch (...) {
+    // Wrap error logging in try-catch since we're in the outermost catch
+    try {
+      HOLOSCAN_LOG_ERROR("handle_worker_disconnect: unknown exception caught");
+    } catch (...) {
+    }
+  }
 }
 
 void AppWorker::setup_signal_handlers() {

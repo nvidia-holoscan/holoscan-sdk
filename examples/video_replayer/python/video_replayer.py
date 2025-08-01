@@ -18,7 +18,7 @@ limitations under the License.
 import os
 
 from holoscan.core import Application
-from holoscan.data_loggers import BasicConsoleLogger, SimpleTextSerializer
+from holoscan.data_loggers import AsyncConsoleLogger, SimpleTextSerializer
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 from holoscan.resources import RMMAllocator
 
@@ -73,7 +73,7 @@ def main(config_file):
 
     dual_window = app.kwargs("dual_window").get("dual_window", False)
     if dual_window:
-        from holoscan.schedulers import EventBasedScheduler
+        from holoscan.schedulers import EventBasedScheduler  # noqa: PLC0415
 
         # Use an event-based scheduler to allow multiple operators to run in
         # parallel
@@ -91,9 +91,9 @@ def main(config_file):
     enable_data_logging = app.kwargs("data_logging").get("data_logging", False)
     if enable_data_logging:
         app.add_data_logger(
-            BasicConsoleLogger(
+            AsyncConsoleLogger(
                 app,
-                name="console_logger",
+                name="async_console_logger",
                 log_tensor_data_content=True,
                 log_metadata=False,
                 # set max_elements to limit the number of data elements printed for each tensor

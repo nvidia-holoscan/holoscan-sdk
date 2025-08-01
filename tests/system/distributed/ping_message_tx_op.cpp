@@ -185,7 +185,9 @@ void PingMessageTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCon
       // setting size large enough to exceed kDefaultUcxSerializationBufferSize
       std::vector<double> value(1'000'000);
       HOLOSCAN_LOG_INFO("created large double vec of size: {}", value.size());
-      for (size_t i = 0; i < value.size(); i++) { value[i] = i; }
+      for (size_t i = 0; i < value.size(); i++) {
+        value[i] = i;
+      }
       HOLOSCAN_LOG_INFO("finished setting double vec value");
       op_output.emit(value, "out");
       break;

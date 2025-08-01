@@ -3,7 +3,7 @@
 @@ -19,7 +19,13 @@ import os
  
  from holoscan.core import Application, Operator, OperatorSpec
- from holoscan.data_loggers import BasicConsoleLogger
+ from holoscan.data_loggers import GXFConsoleLogger
 -from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 +from holoscan.operators import (
 +    FormatConverterOp,

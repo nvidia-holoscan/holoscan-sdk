@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -115,7 +115,9 @@ class App : public holoscan::Application {
 };
 
 std::optional<bool> get_boolean_arg(std::vector<std::string> args, const std::string& name) {
-  if (std::find(args.begin(), args.end(), name) != std::end(args)) { return true; }
+  if (std::find(args.begin(), args.end(), name) != std::end(args)) {
+    return true;
+  }
   return {};
 }
 
@@ -146,7 +148,9 @@ std::optional<int64_t> get_int64_arg(std::vector<std::string> args, const std::s
 
 std::optional<std::string> get_str_arg(std::vector<std::string> args, const std::string& name) {
   auto loc = std::find(args.begin(), args.end(), name);
-  if ((loc != std::end(args)) && (++loc != std::end(args))) { return *loc; }
+  if ((loc != std::end(args)) && (++loc != std::end(args))) {
+    return *loc;
+  }
   return {};
 }
 

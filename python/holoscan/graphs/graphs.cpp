@@ -16,6 +16,7 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <functional>
@@ -82,7 +83,9 @@ struct graph_caster {
     for (auto&& value : src) {
       auto value_ =
           reinterpret_steal<object>(value_conv::cast(std::forward<NodeT>(value), policy, parent));
-      if (!value_) { return {}; }
+      if (!value_) {
+        return {};
+      }
       PyList_SET_ITEM(out.ptr(), index++, value_.release().ptr());  // steals a reference
     }
     return out.release();
@@ -161,11 +164,15 @@ PYBIND11_MODULE(_graphs, m) {
              const ::holoscan::OperatorGraph::NodeType& node_v) -> py::dict {
             py::dict port_dict;
             auto port_map_opt = graph.get_port_map(node_u, node_v);
-            if (!port_map_opt.has_value()) { return port_dict; }
+            if (!port_map_opt.has_value()) {
+              return port_dict;
+            }
             const auto& port_map = port_map_opt.value();
             for (const auto& [key, cpp_set] : *port_map) {
               py::set py_port_set;
-              for (const std::string& port_name : cpp_set) { py_port_set.add(py::cast(port_name)); }
+              for (const std::string& port_name : cpp_set) {
+                py_port_set.add(py::cast(port_name));
+              }
               port_dict[py::str(key)] = py_port_set;
             }
             return port_dict;
@@ -220,7 +227,17 @@ PYBIND11_MODULE(_graphs, m) {
           "context",
           [](const OperatorFlowGraph& graph) { return graph.context(); },
           [](OperatorFlowGraph& graph, void* ctx) { graph.context(ctx); },
-          doc::FlowGraph::doc_context);
+          doc::FlowGraph::doc_context)
+      .def(
+          "get_port_connectivity_maps",
+          [](const OperatorFlowGraph& graph) {
+            auto result = graph.get_port_connectivity_maps();
+            return py::make_tuple(result.first, result.second);
+          },
+          doc::FlowGraph::doc_get_port_connectivity_maps)
+      .def("port_map_description",
+           &OperatorFlowGraph::port_map_description,
+           doc::FlowGraph::doc_port_map_description);
 
   py::class_<FragmentFlowGraph, FragmentGraph, std::shared_ptr<FragmentFlowGraph>>(
       m, "FragmentFlowGraph", doc::FlowGraph::doc_FlowGraph)
@@ -233,11 +250,15 @@ PYBIND11_MODULE(_graphs, m) {
              const ::holoscan::FragmentGraph::NodeType& node_v) -> py::dict {
             py::dict port_dict;
             auto port_map_opt = graph.get_port_map(node_u, node_v);
-            if (!port_map_opt.has_value()) { return port_dict; }
+            if (!port_map_opt.has_value()) {
+              return port_dict;
+            }
             const auto& port_map = port_map_opt.value();
             for (const auto& [key, cpp_set] : *port_map) {
               py::set py_port_set;
-              for (const std::string& port_name : cpp_set) { py_port_set.add(py::cast(port_name)); }
+              for (const std::string& port_name : cpp_set) {
+                py_port_set.add(py::cast(port_name));
+              }
               port_dict[py::str(key)] = py_port_set;
             }
             return port_dict;
@@ -292,6 +313,16 @@ PYBIND11_MODULE(_graphs, m) {
           "context",
           [](const FragmentFlowGraph& graph) { return graph.context(); },
           [](FragmentFlowGraph& graph, void* ctx) { graph.context(ctx); },
-          doc::FlowGraph::doc_context);
+          doc::FlowGraph::doc_context)
+      .def(
+          "get_port_connectivity_maps",
+          [](const FragmentFlowGraph& graph) {
+            auto result = graph.get_port_connectivity_maps();
+            return py::make_tuple(result.first, result.second);
+          },
+          doc::FlowGraph::doc_get_port_connectivity_maps)
+      .def("port_map_description",
+           &FragmentFlowGraph::port_map_description,
+           doc::FlowGraph::doc_port_map_description);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

@@ -44,7 +44,9 @@ void nvprint_callback(int level, const char* fmt) {
   // nvpro_core requires a new-line, our logging is automatically adding it.
   // Remove the trailing newline if there is one.
   std::string str(fmt);
-  if (str.back() == '\n') { str.pop_back(); }
+  if (str.back() == '\n') {
+    str.pop_back();
+  }
 
   switch (level) {
     case LOGLEVEL_INFO:
@@ -87,14 +89,18 @@ class Context::Impl {
   void setup() {
     im_gui_context_ = ImGui::CreateContext();
     vulkan_.reset(new Vulkan);
-    if (surface_format_.has_value()) { vulkan_->set_surface_format(surface_format_.value()); }
+    if (surface_format_.has_value()) {
+      vulkan_->set_surface_format(surface_format_.value());
+    }
     vulkan_->set_present_mode(present_mode_);
     vulkan_->setup(window_.get(), font_path_, font_size_in_pixels_);
 
     // setup the window callbacks, they call the user callbacks if present
     key_callback_handle_ = window_->add_key_callback(
         [this](Key key, KeyAndButtonAction action, KeyModifiers modifiers) {
-          if (key_callback_) { key_callback_(key_user_pointer_, key, action, modifiers); }
+          if (key_callback_) {
+            key_callback_(key_user_pointer_, key, action, modifiers);
+          }
         });
     unicode_char_callback_handle_ = window_->add_unicode_char_callback([this](uint32_t code_point) {
       if (unicode_char_callback_) {
@@ -109,7 +115,9 @@ class Context::Impl {
         });
     scroll_callback_handle_ =
         window_->add_scroll_callback([this](double x_offset, double y_offset) {
-          if (scroll_callback_) { scroll_callback_(scroll_user_pointer_, x_offset, y_offset); }
+          if (scroll_callback_) {
+            scroll_callback_(scroll_user_pointer_, x_offset, y_offset);
+          }
         });
     cursor_pos_callback_handle_ =
         window_->add_cursor_pos_callback([this](double x_pos, double y_pos) {
@@ -228,7 +236,9 @@ Context::~Context() {
   impl_->key_callback_handle_.reset();
   impl_->window_.reset();
 
-  if (impl_->im_gui_context_) { ImGui::DestroyContext(impl_->im_gui_context_); }
+  if (impl_->im_gui_context_) {
+    ImGui::DestroyContext(impl_->im_gui_context_);
+  }
 
   if (prev_context) {
     // make the previous ImGui context current
@@ -236,7 +246,9 @@ Context::~Context() {
   }
 
   // if the context is current make it not current
-  if (g_context == this) { set(nullptr); }
+  if (g_context == this) {
+    set(nullptr);
+  }
 }
 
 void Context::set(Context* context) {
@@ -344,11 +356,15 @@ std::vector<SurfaceFormat> Context::get_surface_formats() const {
 void Context::set_surface_format(SurfaceFormat surface_format) {
   impl_->surface_format_ = surface_format;
   // update Vulkan surface format if Vulkan has already been initialized
-  if (impl_->vulkan_) { impl_->vulkan_->set_surface_format(impl_->surface_format_.value()); }
+  if (impl_->vulkan_) {
+    impl_->vulkan_->set_surface_format(impl_->surface_format_.value());
+  }
 }
 
 Window* Context::get_window() const {
-  if (!impl_->window_) { throw std::runtime_error("There is no window set."); }
+  if (!impl_->window_) {
+    throw std::runtime_error("There is no window set.");
+  }
 
   return impl_->window_.get();
 }
@@ -363,7 +379,9 @@ std::vector<PresentMode> Context::get_present_modes() const {
 void Context::set_present_mode(PresentMode present_mode) {
   impl_->present_mode_ = present_mode;
   // update Vulkan present mode if Vulkan has already been initialized
-  if (impl_->vulkan_) { impl_->vulkan_->set_present_mode(impl_->present_mode_); }
+  if (impl_->vulkan_) {
+    impl_->vulkan_->set_present_mode(impl_->present_mode_);
+  }
 }
 
 std::vector<ImageFormat> Context::get_image_formats() const {
@@ -416,11 +434,15 @@ void Context::end() {
 
   // sort layers (inverse because highest priority is drawn last)
   std::list<Layer*> sorted_layers;
-  for (auto&& item : impl_->layers_) { sorted_layers.emplace_back(item.get()); }
+  for (auto&& item : impl_->layers_) {
+    sorted_layers.emplace_back(item.get());
+  }
   sorted_layers.sort([](Layer* a, Layer* b) { return a->get_priority() < b->get_priority(); });
 
   // render
-  for (auto&& layer : sorted_layers) { layer->render(impl_->vulkan_.get()); }
+  for (auto&& layer : sorted_layers) {
+    layer->render(impl_->vulkan_.get());
+  }
 
   // rendering is done
   impl_->vulkan_->end_render_pass();
@@ -433,13 +455,17 @@ void Context::end() {
 }
 
 void Context::begin_image_layer() {
-  if (impl_->active_layer_) { throw std::runtime_error("There already is an active layer."); }
+  if (impl_->active_layer_) {
+    throw std::runtime_error("There already is an active layer.");
+  }
 
   impl_->active_layer_.reset(new ImageLayer());
 }
 
 void Context::begin_geometry_layer() {
-  if (impl_->active_layer_) { throw std::runtime_error("There already is an active layer."); }
+  if (impl_->active_layer_) {
+    throw std::runtime_error("There already is an active layer.");
+  }
 
   impl_->active_layer_.reset(new GeometryLayer());
 }
@@ -449,7 +475,9 @@ void Context::begin_im_gui_layer() {
     throw std::runtime_error("ImGui had not been setup, please call holoscan::viz::Init().");
   }
 
-  if (impl_->active_layer_) { throw std::runtime_error("There already is an active layer."); }
+  if (impl_->active_layer_) {
+    throw std::runtime_error("There already is an active layer.");
+  }
 
   if (!impl_->imgui_new_frame_) {
     // Start the Dear ImGui frame
@@ -463,7 +491,9 @@ void Context::begin_im_gui_layer() {
 }
 
 void Context::end_layer() {
-  if (!impl_->active_layer_) { throw std::runtime_error("There is no active layer."); }
+  if (!impl_->active_layer_) {
+    throw std::runtime_error("There is no active layer.");
+  }
 
   // scan the layer cache to check if the active layer already had been seen before
   for (auto it = impl_->layer_cache_.begin(); it != impl_->layer_cache_.end(); ++it) {
@@ -471,7 +501,7 @@ void Context::end_layer() {
       // set the 'soft' parameters
       /// @todo this is error prone and needs to be resolved in a better way,
       ///       maybe have different categories (sections) of parameters and then copy
-      ///       the 'soft' parameters to the re-used layer
+      ///       the 'soft' parameters to the reused layer
       (*it)->set_opacity(impl_->active_layer_->get_opacity());
       (*it)->set_priority(impl_->active_layer_->get_priority());
       (*it)->set_views(impl_->active_layer_->get_views());
@@ -500,12 +530,16 @@ void Context::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height,
 }
 
 Layer* Context::get_active_layer() const {
-  if (!impl_->active_layer_) { throw std::runtime_error("There is no active layer."); }
+  if (!impl_->active_layer_) {
+    throw std::runtime_error("There is no active layer.");
+  }
   return impl_->active_layer_.get();
 }
 
 ImageLayer* Context::get_active_image_layer() const {
-  if (!impl_->active_layer_) { throw std::runtime_error("There is no active layer."); }
+  if (!impl_->active_layer_) {
+    throw std::runtime_error("There is no active layer.");
+  }
 
   if (impl_->active_layer_->get_type() != Layer::Type::Image) {
     throw std::runtime_error("The active layer is not an image layer.");
@@ -515,7 +549,9 @@ ImageLayer* Context::get_active_image_layer() const {
 }
 
 GeometryLayer* Context::get_active_geometry_layer() const {
-  if (!impl_->active_layer_) { throw std::runtime_error("There is no active layer."); }
+  if (!impl_->active_layer_) {
+    throw std::runtime_error("There is no active layer.");
+  }
 
   if (impl_->active_layer_->get_type() != Layer::Type::Geometry) {
     throw std::runtime_error("The active layer is not a geometry layer.");

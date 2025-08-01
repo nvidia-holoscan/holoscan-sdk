@@ -50,7 +50,9 @@ class Endpoint : public holoscan::Endpoint {
   Endpoint(Endpoint&&) = default;
   ~Endpoint() override = default;
   explicit Endpoint(nvidia::gxf::Endpoint* gxf_endpoint) {
-    if (!gxf_endpoint) { throw std::invalid_argument("gxf_endpoint cannot be null"); }
+    if (!gxf_endpoint) {
+      throw std::invalid_argument("gxf_endpoint cannot be null");
+    }
     gxf_endpoint_ = gxf_endpoint;
   }
 

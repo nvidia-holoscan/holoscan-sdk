@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "fragment_service_pydoc.hpp"
 #include "resource.hpp"
@@ -52,6 +53,49 @@ void PyDefaultFragmentService::resource(const std::shared_ptr<Resource>& resourc
   DefaultFragmentService::resource(resource);
 }
 
+namespace distributed {
+void PyServiceDriverEndpoint::driver_start(std::string_view driver_ip) {
+  PYBIND11_OVERRIDE_PURE(void, ServiceDriverEndpoint, driver_start, driver_ip);
+}
+
+void PyServiceDriverEndpoint::driver_shutdown() {
+  PYBIND11_OVERRIDE_PURE(void, ServiceDriverEndpoint, driver_shutdown);
+}
+
+void PyServiceWorkerEndpoint::worker_connect(std::string_view driver_ip) {
+  PYBIND11_OVERRIDE_PURE(void, ServiceWorkerEndpoint, worker_connect, driver_ip);
+}
+
+void PyServiceWorkerEndpoint::worker_disconnect() {
+  PYBIND11_OVERRIDE_PURE(void, ServiceWorkerEndpoint, worker_disconnect);
+}
+
+}  // namespace distributed
+
+std::shared_ptr<Resource> PyDistributedAppService::resource() const {
+  PYBIND11_OVERRIDE_PURE(std::shared_ptr<Resource>, DistributedAppService, resource);
+}
+
+void PyDistributedAppService::resource(const std::shared_ptr<Resource>& resource) {
+  PYBIND11_OVERRIDE_PURE(void, DistributedAppService, resource, resource);
+}
+
+void PyDistributedAppService::driver_start(std::string_view driver_ip) {
+  PYBIND11_OVERRIDE_PURE(void, DistributedAppService, driver_start, driver_ip);
+}
+
+void PyDistributedAppService::driver_shutdown() {
+  PYBIND11_OVERRIDE_PURE(void, DistributedAppService, driver_shutdown);
+}
+
+void PyDistributedAppService::worker_connect(std::string_view driver_ip) {
+  PYBIND11_OVERRIDE_PURE(void, DistributedAppService, worker_connect, driver_ip);
+}
+
+void PyDistributedAppService::worker_disconnect() {
+  PYBIND11_OVERRIDE_PURE(void, DistributedAppService, worker_disconnect);
+}
+
 void init_fragment_service(py::module_& m) {
   py::class_<FragmentService, PyFragmentService, std::shared_ptr<FragmentService>>(
       m, "FragmentService", doc::FragmentService::doc_FragmentService)
@@ -70,6 +114,55 @@ void init_fragment_service(py::module_& m) {
       .def(py::init<const std::shared_ptr<Resource>&>(),
            "resource"_a,
            doc::DefaultFragmentService::doc_DefaultFragmentService_resource);
+
+  py::class_<distributed::ServiceDriverEndpoint,
+             distributed::PyServiceDriverEndpoint,
+             std::shared_ptr<distributed::ServiceDriverEndpoint>>(
+      m, "ServiceDriverEndpoint", doc::FragmentService::doc_ServiceDriverEndpoint)
+      .def(py::init<>(), doc::FragmentService::doc_ServiceDriverEndpoint_default)
+      .def("driver_start",
+           &distributed::ServiceDriverEndpoint::driver_start,
+           "driver_ip"_a,
+           doc::FragmentService::doc_driver_start)
+      .def("driver_shutdown",
+           &distributed::ServiceDriverEndpoint::driver_shutdown,
+           doc::FragmentService::doc_driver_shutdown);
+
+  py::class_<distributed::ServiceWorkerEndpoint,
+             distributed::PyServiceWorkerEndpoint,
+             std::shared_ptr<distributed::ServiceWorkerEndpoint>>(
+      m, "ServiceWorkerEndpoint", doc::FragmentService::doc_ServiceWorkerEndpoint)
+      .def(py::init<>(), doc::FragmentService::doc_ServiceWorkerEndpoint_default)
+      .def("worker_connect",
+           &distributed::ServiceWorkerEndpoint::worker_connect,
+           "driver_ip"_a,
+           doc::FragmentService::doc_worker_connect)
+      .def("worker_disconnect",
+           &distributed::ServiceWorkerEndpoint::worker_disconnect,
+           doc::FragmentService::doc_worker_disconnect);
+
+  py::class_<DistributedAppService,
+             PyDistributedAppService,
+             FragmentService,
+             distributed::ServiceDriverEndpoint,
+             distributed::ServiceWorkerEndpoint,
+             std::shared_ptr<DistributedAppService>>(
+      m, "DistributedAppService", doc::DistributedAppService::doc_DistributedAppService)
+      .def(py::init<>(), doc::DistributedAppService::doc_DistributedAppService_default)
+      .def("driver_start",
+           &DistributedAppService::driver_start,
+           "driver_ip"_a,
+           doc::DistributedAppService::doc_driver_start)
+      .def("driver_shutdown",
+           &DistributedAppService::driver_shutdown,
+           doc::DistributedAppService::doc_driver_shutdown)
+      .def("worker_connect",
+           &DistributedAppService::worker_connect,
+           "driver_ip"_a,
+           doc::DistributedAppService::doc_worker_connect)
+      .def("worker_disconnect",
+           &DistributedAppService::worker_disconnect,
+           doc::DistributedAppService::doc_worker_disconnect);
 }
 
 }  // namespace holoscan

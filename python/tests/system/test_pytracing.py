@@ -195,8 +195,8 @@ def verify_ncalls(pstats, func_name, expected_ncalls, func_count=1):
 
 
 def profile_main(scheduler_type="greedy"):
-    import pstats
-    from cProfile import Profile
+    import pstats  # noqa: PLC0415
+    from cProfile import Profile  # noqa: PLC0415
 
     pr = Profile()
     pr.runcall(main, scheduler_type)
@@ -216,7 +216,7 @@ def verify_traced_funcs(traced_funcs, should_exists):
 
 
 def trace_main(scheduler_type="greedy"):
-    import trace
+    import trace  # noqa: PLC0415
 
     tracer = trace.Trace(
         ignoredirs=[sys.prefix, sys.exec_prefix],
@@ -255,7 +255,7 @@ def trace_main(scheduler_type="greedy"):
 
 
 def verify_covered_funcs(covered_lines, should_exists):
-    import inspect
+    import inspect  # noqa: PLC0415
 
     for func in should_exists:
         func_code, func_start_line = inspect.getsourcelines(func)
@@ -269,7 +269,7 @@ def verify_covered_funcs(covered_lines, should_exists):
 
 def coverage_main(scheduler_type="greedy"):
     try:
-        from coverage import Coverage
+        from coverage import Coverage  # noqa: PLC0415
     except ImportError:
         print("coverage module is not installed. Skipping the execution of this method.")
         return
@@ -327,7 +327,7 @@ Please type the following commands to check if the breakpoints are hit.
 
 def yappi_main(scheduler_type="greedy"):
     try:
-        import yappi
+        import yappi  # noqa: PLC0415
     except ImportError:
         print("yappi module is not installed. Skipping the execution of this method.")
         return
@@ -335,7 +335,7 @@ def yappi_main(scheduler_type="greedy"):
     # Set the context ID callback to obtain the thread ID.
     # Without this, multiple contexts will be created for the same thread in the Holoscan
     # application.
-    import _thread
+    import _thread  # noqa: PLC0415
 
     yappi.set_context_id_callback(lambda: _thread.get_ident())
 

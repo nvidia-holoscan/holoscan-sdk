@@ -320,6 +320,8 @@ class GXFExecutor : public holoscan::Executor {
   bool is_gxf_graph_activated_ = false;
   /// The flag to indicate whether run() or run_async() has been invoked.
   bool is_run_called_ = false;
+  /// The flag to indicate whether the GXF fragment services are initialized.
+  bool is_fragment_services_initialized_ = false;
 
   /// The entity prefix for the fragment.
   std::string entity_prefix_;

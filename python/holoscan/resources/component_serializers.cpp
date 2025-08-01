@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,9 @@ class PyUcxComponentSerializer : public UcxComponentSerializer {
   explicit PyUcxComponentSerializer(Fragment* fragment,
                                     std::shared_ptr<holoscan::Allocator> allocator = nullptr,
                                     const std::string& name = "ucx_component_serializer") {
-    if (allocator) { this->add_arg(Arg{"allocator", allocator}); }
+    if (allocator) {
+      this->add_arg(Arg{"allocator", allocator});
+    }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
@@ -77,7 +79,9 @@ class PyUcxHoloscanComponentSerializer : public UcxHoloscanComponentSerializer {
   explicit PyUcxHoloscanComponentSerializer(
       Fragment* fragment, std::shared_ptr<holoscan::Allocator> allocator = nullptr,
       const std::string& name = "ucx_holoscan_component_serializer") {
-    if (allocator) { this->add_arg(Arg{"allocator", allocator}); }
+    if (allocator) {
+      this->add_arg(Arg{"allocator", allocator});
+    }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);

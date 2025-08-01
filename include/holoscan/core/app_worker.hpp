@@ -88,6 +88,12 @@ class AppWorker {
 
   std::shared_ptr<distributed::AppDriverClient> app_driver_client() const;
 
+  /// Start the fragment services
+  void handle_worker_connect(const std::string_view& driver_ip) noexcept;
+
+  /// Terminate the fragment services
+  void handle_worker_disconnect() noexcept;
+
   void setup_signal_handlers();
 
  private:

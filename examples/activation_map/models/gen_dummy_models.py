@@ -56,7 +56,7 @@ def main(output_dir: str = None, n: int = 3, tensor_size: int = 16):
         onnx.save_model(model, save_path)
         # Test model with onnxruntime
         try:
-            import onnxruntime as ort
+            import onnxruntime as ort  # noqa: PLC0415
 
             sess = ort.InferenceSession(save_path)
             input_ = np.asarray(

@@ -95,6 +95,13 @@ def main():
     app.config(config_file_path)
     app.run()
 
+    # If desired, input/output port mapping can be printed in human readable (YAML) format
+    print("====== APPLICATION PORT MAPPING =======\n")
+    print(app.fragment_graph.port_map_description())
+    for fragment in app.fragment_graph.get_nodes():
+        print(f"\n\n====== FRAGMENT '{fragment.name}' PORT MAPPING =======\n")
+        print(fragment.graph.port_map_description())
+
 
 if __name__ == "__main__":
     main()

@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <functional>
@@ -78,7 +79,9 @@ void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* wid
   const void* image_data = nullptr;
   stbi_uc* const file_image_data =
       stbi_load(filename.c_str(), width, height, components, convert_to_intensity ? 0 : 4);
-  if (!file_image_data) { throw std::runtime_error("Loading image failed."); }
+  if (!file_image_data) {
+    throw std::runtime_error("Loading image failed.");
+  }
 
   std::vector<uint8_t> tmp_image_data;
   if ((*components != 1) && (convert_to_intensity)) {
@@ -108,11 +111,15 @@ void loadImage(const std::string& filename, CUdeviceptr* cu_device_mem, int* wid
 
 void freeSourceData() {
   for (auto&& depth_mem : depth_mems) {
-    if (cuMemFree(depth_mem) != CUDA_SUCCESS) { throw std::runtime_error("cuMemFree failed."); }
+    if (cuMemFree(depth_mem) != CUDA_SUCCESS) {
+      throw std::runtime_error("cuMemFree failed.");
+    }
   }
   depth_mems.clear();
   for (auto&& color_mem : color_mems) {
-    if (cuMemFree(color_mem) != CUDA_SUCCESS) { throw std::runtime_error("cuMemFree failed."); }
+    if (cuMemFree(color_mem) != CUDA_SUCCESS) {
+      throw std::runtime_error("cuMemFree failed.");
+    }
   }
   color_mems.clear();
 }
@@ -167,8 +174,12 @@ void generateSourceData() {
   const uint32_t images = 100;
   CUdeviceptr cu_device_mem;
 
-  if (map_width == 0) { map_width = 512; }
-  if (map_height == 0) { map_height = 512; }
+  if (map_width == 0) {
+    map_width = 512;
+  }
+  if (map_height == 0) {
+    map_height = 512;
+  }
 
   size_t element_size;
   std::function<void(void*, size_t, float)> write_depth;
@@ -278,7 +289,9 @@ void tick() {
             palette.push_back(static_cast<uint32_t>(std::rand()) | 0xFF000000);
           }
           ImGui::SameLine();
-          if (ImGui::Button("-") && (palette.size() > 1)) { palette.pop_back(); }
+          if (ImGui::Button("-") && (palette.size() > 1)) {
+            palette.pop_back();
+          }
           ImGui::SliderInt("LUT index", &color_index, 0, palette.size() - 1);
 
           {
@@ -392,14 +405,18 @@ void tick() {
         break;
     }
     ++frame_index;
-    if (frame_index >= depth_mems.size()) { frame_index = 0; }
+    if (frame_index >= depth_mems.size()) {
+      frame_index = 0;
+    }
   }
 
   viz::End();
 }
 
 void initCuda() {
-  if (cuInit(0) != CUDA_SUCCESS) { throw std::runtime_error("cuInit failed."); }
+  if (cuInit(0) != CUDA_SUCCESS) {
+    throw std::runtime_error("cuInit failed.");
+  }
 
   if (cuDevicePrimaryCtxRetain(&cuda_context, 0) != CUDA_SUCCESS) {
     throw std::runtime_error("cuDevicePrimaryCtxRetain failed.");
@@ -442,7 +459,9 @@ int main(int argc, char** argv) {
       const int c =
           getopt_long(argc, argv, "hd:c:bl", static_cast<option*>(long_options), &option_index);
 
-      if (c == -1) { break; }
+      if (c == -1) {
+        break;
+      }
 
       const std::string argument(optarg ? optarg : "");
       switch (c) {
@@ -486,7 +505,9 @@ int main(int argc, char** argv) {
 
     viz::InitFlags flags = viz::InitFlags::NONE;
 
-    if (headless_mode) { flags = viz::InitFlags::HEADLESS; }
+    if (headless_mode) {
+      flags = viz::InitFlags::HEADLESS;
+    }
 
     viz::Init(1024, 768, "Holoviz Depth Render Example", flags);
 

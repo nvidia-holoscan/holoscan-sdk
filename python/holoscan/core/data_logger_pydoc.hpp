@@ -35,6 +35,35 @@ It can log data from input ports, output ports, and metadata.
 
 }  // namespace DataLogger
 
+namespace DataLoggerResource {
+
+PYDOC(DataLoggerResource, R"doc(
+Base data logger resource class.
+
+Inherits from both Resource and DataLogger to provide Parameter handling and a default
+set of parameters likely to be useful across many concrete data logger implementations.
+
+This simple class is intended for logging cases where the time needed to perform logging
+is minimal because the logging methods would run on the same thread that is calling
+`operator.compute`. Thus, any time spent in logging adds to the overall execution time of
+the operator. For situations where this is not acceptable, `AsyncDataLoggerResource` is
+provided as an alternative.
+)doc")
+
+}  // namespace DataLoggerResource
+
+namespace AsyncDataLoggerResource {
+
+PYDOC(AsyncDataLoggerResource, R"doc(
+Base asynchronous data logger resource class.
+
+This is a version of DataLoggerResource where it is intended that messages are pushed to the
+provided queue. Logging of messages from the queue is handled by a dedicated background thread
+that is managed by the AsyncDataLoggerResource.
+)doc")
+
+}  // namespace AsyncDataLoggerResource
+
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_CORE_DATA_LOGGER_PYDOC_HPP
+#endif /* PYHOLOSCAN_CORE_DATA_LOGGER_PYDOC_HPP */

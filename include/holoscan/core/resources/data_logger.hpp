@@ -21,6 +21,8 @@
 #include <any>
 #include <cstdint>
 #include <memory>  // For std::shared_ptr in parameters
+#include <mutex>
+#include <optional>
 #include <regex>
 #include <string>
 #include <vector>
@@ -34,6 +36,9 @@ namespace holoscan {
 class MetadataDictionary;  // forward declaration
 class Tensor;              // forward declaration
 class TensorMap;           // forward declaration
+
+// Shared mutex for thread-safe console output coordination across all console logger types
+extern std::mutex console_output_mutex;
 
 class DataLoggerResource : public DataLogger, public Resource {
  public:
@@ -69,8 +74,9 @@ class DataLoggerResource : public DataLogger, public Resource {
    * @param io_type The type of I/O port (kInput or kOutput).
    * @return true if logging (including serialization and sending) was successful, false otherwise.
    */
-  bool log_data(std::any data, const std::string& unique_id, int64_t acquisition_timestamp = -1,
-                std::shared_ptr<MetadataDictionary> metadata = nullptr,
+  bool log_data(const std::any& data, const std::string& unique_id,
+                int64_t acquisition_timestamp = -1,
+                const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
                 IOSpec::IOType io_type = IOSpec::IOType::kOutput) override = 0;
 
   /**
@@ -126,16 +132,47 @@ class DataLoggerResource : public DataLogger, public Resource {
                           IOSpec::IOType io_type = IOSpec::IOType::kOutput) override = 0;
 
   /**
+   * @brief Logs backend-specific data types.
+   *
+   * This method is called for logging backend-specific data types (intended for use with backends
+   * that have separate emit/receive codepaths for backend-specific types). The data parameter is
+   * kept as std::any here to avoid making the base interface specific to a particular backend, but
+   * a backend-specific concrete implementation should be provided as needed via run-time type
+   * checking.
+   *
+   * A concrete example of a backend-specific type is the GXF Entity type which is a
+   * heterogeneous collection of components. An implementation of this method for GXF entities is
+   * provided in the concrete implementation of the GXFConsoleLogger.
+   *
+   * The unique_id for the message will have the form:
+   * - operator_name.port_name
+   * - operator_name.port_name:index   (for multi-receivers with N:1 connection)
+   *
+   * For distributed applications, the fragment name will also appear in the unique id:
+   * - fragment_name.operator_name.port_name
+   * - fragment_name.operator_name.port_name:index
+   *
+   * @param data The backend-specific data to log, passed as std::any.
+   * @param unique_id A unique identifier for the message.
+   * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
+   * @param metadata Associated metadata dictionary for the message.
+   * @param io_type The type of I/O port (kInput or kOutput).
+   * @return true if logging was successful, false if backend-specific logging is not supported.
+   */
+  bool log_backend_specific(const std::any& data, [[maybe_unused]] const std::string& unique_id,
+                            int64_t acquisition_timestamp = -1,
+                            const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
+                            IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+
+  /**
    * @brief Checks if a message with the given unique_id should be logged based on
    * allowlist/denylist patterns.
    *
    * This utility function implements the filtering logic:
-   * - If allowlist patterns are specified and unique_id matches any allowlist pattern: log it
-   * - If allowlist patterns are specified and unique_id doesn't match any allowlist pattern: don't
-   * log it
-   * - If no allowlist patterns are specified, check denylist:
-   *   - If unique_id matches any denylist pattern: don't log it
-   *   - Otherwise: log it
+   * - First check if `denylist patterns` are specified and if there is a match, do not log it.
+   * - Next check if `allowlist_patterns` were specified:
+   *   - If no, return true (allow everything)
+   *   - If yes, return true only if there is a match to the specified patterns.
    *
    * @param unique_id The unique identifier to check against patterns.
    * @return true if the message should be logged, false otherwise.
@@ -210,8 +247,8 @@ class DataLoggerResource : public DataLogger, public Resource {
 
  private:
   // Compiled regex patterns for efficient matching
-  std::vector<std::regex> compiled_allowlist_patterns_;
-  std::vector<std::regex> compiled_denylist_patterns_;
+  std::optional<std::regex> compiled_allowlist_pattern_;
+  std::optional<std::regex> compiled_denylist_pattern_;
   bool patterns_compiled_ = false;
 
   /**

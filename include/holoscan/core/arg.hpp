@@ -98,7 +98,9 @@ class ArgType {
   static ArgElementType get_element_type(std::type_index index) {
     auto& elem_type_map = element_type_map_;
 
-    if (elem_type_map.find(index) == elem_type_map.end()) { return ArgElementType::kCustom; }
+    if (elem_type_map.find(index) == elem_type_map.end()) {
+      return ArgElementType::kCustom;
+    }
 
     const auto& elem_type = elem_type_map[index];
     return elem_type;
@@ -440,7 +442,10 @@ class ArgList {
    * @param args The arguments as an initializer list.
    */
   explicit ArgList(std::initializer_list<Arg> args) {
-    for (auto& arg : args) { args_.push_back(arg); }
+    args_.reserve(args.size());
+    for (auto& arg : args) {
+      args_.push_back(arg);
+    }
   }
 
   ~ArgList() = default;

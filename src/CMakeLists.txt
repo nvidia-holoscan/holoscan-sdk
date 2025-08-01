@@ -129,7 +129,10 @@ target_include_directories(profiler
 add_holoscan_library(pose_tree
     pose_tree/pose_tree_history.cpp
     pose_tree/pose_tree.cpp
-    pose_tree/pose_tree_manager.cpp)
+    pose_tree/pose_tree_manager.cpp
+    pose_tree/pose_tree_ucx_client.cpp
+    pose_tree/pose_tree_ucx_server.cpp
+)
 
 # Note: holoscan::pose_tree depends on holoscan::core and holoscan::eigen3,
 # but we can separate the core pose tree module (which doesn't depend on the Holoscan SDK)
@@ -229,10 +232,13 @@ add_holoscan_library(core
     core/operator.cpp
     core/operator_spec.cpp
     core/resource.cpp
+    core/resources/async_data_logger.cpp
     core/resources/data_logger.cpp
     core/resources/gxf/allocator.cpp
     core/resources/gxf/annotated_double_buffer_receiver.cpp
     core/resources/gxf/annotated_double_buffer_transmitter.cpp
+    core/resources/gxf/async_buffer_receiver.cpp
+    core/resources/gxf/async_buffer_transmitter.cpp
     core/resources/gxf/block_memory_pool.cpp
     core/resources/gxf/clock.cpp
     core/resources/gxf/condition_combiner.cpp
@@ -244,6 +250,8 @@ add_holoscan_library(core
     core/resources/gxf/dfft_collector.cpp
     core/resources/gxf/gxf_component_resource.cpp
     core/resources/gxf/first_fit_allocator_base.cpp
+    core/resources/gxf/holoscan_async_buffer_receiver.cpp
+    core/resources/gxf/holoscan_async_buffer_transmitter.cpp
     core/resources/gxf/holoscan_ucx_receiver.cpp
     core/resources/gxf/holoscan_ucx_transmitter.cpp
     core/resources/gxf/manual_clock.cpp
@@ -295,11 +303,14 @@ target_link_libraries(core
         GXF::ucx
         yaml-cpp
         holoscan::eigen3
+    INTERFACE
+        ucxx::ucxx
     PRIVATE
         hwloc
         gRPC::grpc++
         gRPC::grpc++_reflection
         protobuf::libprotobuf
+        ucxx::ucxx
 )
 
 target_include_directories(core

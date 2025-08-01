@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,9 @@ nvidia::gxf::Allocator* Allocator::get() const {
 
 bool Allocator::is_available(uint64_t size) {
   auto allocator = get();
-  if (allocator) { return allocator->is_available(size); }
+  if (allocator) {
+    return allocator->is_available(size);
+  }
 
   return false;
 }
@@ -39,7 +41,9 @@ nvidia::byte* Allocator::allocate(uint64_t size, MemoryStorageType type) {
   auto allocator = get();
   if (allocator) {
     auto result = allocator->allocate(size, static_cast<nvidia::gxf::MemoryStorageType>(type));
-    if (result) { return result.value(); }
+    if (result) {
+      return result.value();
+    }
   }
 
   HOLOSCAN_LOG_ERROR(
@@ -60,7 +64,9 @@ void Allocator::free(nvidia::byte* pointer) {
 
 uint64_t Allocator::block_size() {
   auto allocator = get();
-  if (!allocator) { throw std::runtime_error("null GXF component pointer"); }
+  if (!allocator) {
+    throw std::runtime_error("null GXF component pointer");
+  }
   return allocator->block_size();
 }
 

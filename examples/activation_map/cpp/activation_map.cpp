@@ -104,7 +104,9 @@ class MakeTensorsOp : public Operator {
                            allocator.value());
     std::vector<float> hdata;
     hdata.resize(TENSOR_SIZE);
-    for (auto i = 0; i < TENSOR_SIZE; i++) { hdata[i] = value; }
+    for (auto i = 0; i < TENSOR_SIZE; i++) {
+      hdata[i] = value;
+    }
     HOLOSCAN_CUDA_CALL(cudaMemcpy(
         tensor->pointer(), hdata.data(), TENSOR_SIZE * sizeof(float), cudaMemcpyHostToDevice));
   }
@@ -144,7 +146,9 @@ class PrintInferResultOp : public Operator {
     std::vector<std::string> selected_model;
 
     for (const auto& m : models) {
-      if (m.is_active()) { selected_model.push_back(m.model()); }
+      if (m.is_active()) {
+        selected_model.push_back(m.model());
+      }
     }
 
     HOLOSCAN_LOG_INFO(
@@ -200,7 +204,9 @@ int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<ActivationMapDemoApp>();
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= std::filesystem::path("activation_map.yaml");
-  if (argc > 1) { config_path = std::filesystem::path(argv[1]); }
+  if (argc > 1) {
+    config_path = std::filesystem::path(argv[1]);
+  }
   app->config(config_path);
   app->run();
   return 0;

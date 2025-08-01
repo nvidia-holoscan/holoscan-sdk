@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -195,7 +195,9 @@ TEST(SystemResourceManager, TestGetCPUInfo) {
   cpu_set_t cpu_set = cpu_resource_monitor.cpu_set();
   int num_of_processors = 0;
   for (int i = 0; i < cpu_info.num_cpus; i++) {
-    if (CPU_ISSET(i, &cpu_set)) { num_of_processors++; }
+    if (CPU_ISSET(i, &cpu_set)) {
+      num_of_processors++;
+    }
   }
   EXPECT_EQ(num_of_processors, cpu_info.num_processors);
 

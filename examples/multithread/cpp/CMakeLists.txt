@@ -67,6 +67,13 @@ install(FILES
   COMPONENT holoscan-examples
 )
 
+# Install the test script
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/run_with_output_testing.py"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_CPP_MULTITHREAD_OPERATOR_TEST
@@ -76,29 +83,44 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_CPP_MULTITHREAD_OPERATOR_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "sum of received values: 496")
 
-  # Test the flow tracking
+  # Write a configuration for testing flow tracking and data logging
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/multithread.yaml CONFIG_STRING)
   string(REPLACE "tracking: false" "tracking: true" CONFIG_STRING "${CONFIG_STRING}")
   string(REPLACE "data_logging: false" "data_logging: true" CONFIG_STRING "${CONFIG_STRING}")
+  set(TRACKING_CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/multithread_tracking.yaml)
+  file(WRITE ${TRACKING_CONFIG_FILE} "${CONFIG_STRING}")
 
-  # Write the config
-  set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/multithread_tracking.yaml)
-  file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
+  # Write a configuration for testing port mapping
+  file(READ ${CMAKE_CURRENT_SOURCE_DIR}/multithread.yaml CONFIG_STRING)
+  string(REPLACE "print_port_map: false" "print_port_map: true" CONFIG_STRING "${CONFIG_STRING}")
+  string(REPLACE "num_delay_ops: 32" "num_delay_ops: 4" CONFIG_STRING "${CONFIG_STRING}")
+  set(PORT_MAP_CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/multithread_port_map.yaml)
+  file(WRITE ${PORT_MAP_CONFIG_FILE} "${CONFIG_STRING}")
 
+  # Copy the test script to the build directory (used by both tests)
+  add_custom_target(multithread_test_script
+      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/run_with_output_testing.py" ${CMAKE_CURRENT_BINARY_DIR}
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/run_with_output_testing.py"
+      BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/run_with_output_testing.py"
+  )
+  set(TEST_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/run_with_output_testing.py)
+
+  # Test flow tracking and data logging (see run_with_output_testing.py for details)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_CPP_MULTITHREAD_OPERATOR_TRACKING_TEST
-           COMMAND multithread ${CONFIG_FILE}
+           COMMAND ${CMAKE_COMMAND} -E env
+           ${Python3_EXECUTABLE} ${TEST_SCRIPT}
+           $<TARGET_FILE:multithread> --config ${TRACKING_CONFIG_FILE} --mode tracking
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
           )
-  set_tests_properties(EXAMPLE_CPP_MULTITHREAD_OPERATOR_TRACKING_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Data Flow Tracking Results:"
-                       PASS_REGULAR_EXPRESSION "tx->out: 1"
-                       # representative expected data log entries
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:tx.out\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.values:15\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.in\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_val\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_name\\]"
-                       # rx.names:* expected to be excluded by denylist
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.names:15\\]"
-                       PASS_REGULAR_EXPRESSION "Category:Message \\(std::any\\)")
+  add_dependencies(multithread multithread_test_script)
+
+  # Test port mapping (see run_with_output_testing.py for details)
+  add_test(NAME EXAMPLE_CPP_MULTITHREAD_OPERATOR_PORT_MAP_TEST
+           COMMAND ${CMAKE_COMMAND} -E env
+           ${Python3_EXECUTABLE} ${TEST_SCRIPT}
+           $<TARGET_FILE:multithread> --config ${PORT_MAP_CONFIG_FILE} --mode port_map
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  add_dependencies(multithread multithread_test_script)
 endif()

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,9 @@ TEST_F(DistributedApp, TestTwoParallelFragmentsApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("SingleOp fragment1.op: 0 - 10") != std::string::npos)
@@ -59,7 +61,9 @@ TEST_F(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -75,7 +79,9 @@ TEST_F(DistributedApp, TestTwoMultipleSingleOutputOperatorsApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -91,7 +97,9 @@ TEST_F(DistributedApp, TestTwoMultipleSingleOutputOperatorsBroadcastApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -107,7 +115,9 @@ TEST_F(DistributedApp, TestOneTxBroadcastOneRxTwoInputs) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -123,7 +133,9 @@ TEST_F(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp2) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -139,7 +151,9 @@ TEST_F(DistributedApp, TestUCXConnectionApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -155,7 +169,9 @@ TEST_F(DistributedApp, TestUCXConnectionApp2) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 10") != std::string::npos)
@@ -170,7 +186,9 @@ TEST_F(DistributedApp, TestUCXLinearPipelineApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("received count: 20") != std::string::npos)
@@ -186,7 +204,9 @@ TEST_F(DistributedApp, TestUCXBroadcastApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Rx fragment3.rx message received count: 10") != std::string::npos)
@@ -206,7 +226,9 @@ TEST_F(DistributedApp, TestUCXBroadCastMultiReceiverAppLocal) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
 
@@ -229,7 +251,9 @@ TEST_F(DistributedApp, TestUCXBroadCastMultiReceiverAppWorker) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
 
@@ -264,7 +288,9 @@ TEST_F(DistributedApp, TestDriverTerminationWithConnectionFailure) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
   // The driver should terminate after the connection failure (after 1 retry)
 
   std::string log_output = testing::internal::GetCapturedStderr();

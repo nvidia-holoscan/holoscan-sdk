@@ -18,12 +18,14 @@
 #include "holoscan/core/application.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <mutex>  // for std::call_once
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -164,7 +166,9 @@ CLIOptions& Application::options() {
 }
 
 FragmentGraph& Application::fragment_graph() {
-  if (!fragment_graph_) { fragment_graph_ = make_graph<FragmentFlowGraph>(); }
+  if (!fragment_graph_) {
+    fragment_graph_ = make_graph<FragmentFlowGraph>();
+  }
   return *fragment_graph_;
 }
 
@@ -333,7 +337,9 @@ void Application::add_data_logger(std::shared_ptr<DataLogger> logger) {
     Fragment::add_data_logger(logger);
   } else {
     // add the data logger to each fragment in the fragment graph
-    for (const auto& fragment : fragment_graph().get_nodes()) { fragment->add_data_logger(logger); }
+    for (const auto& fragment : fragment_graph().get_nodes()) {
+      fragment->add_data_logger(logger);
+    }
   }
 }
 
@@ -348,7 +354,9 @@ void Application::metadata_policy(MetadataPolicy policy) {
 std::unordered_map<std::string, DataFlowTracker*> Application::track_distributed(
     uint64_t num_start_messages_to_skip, uint64_t num_last_messages_to_discard,
     int latency_threshold, bool is_limited_tracking) {
-  if (!is_composed_) { compose_graph(); }
+  if (!is_composed_) {
+    compose_graph();
+  }
   std::unordered_map<std::string, DataFlowTracker*> trackers;
   auto& frag_graph = fragment_graph();
   // iterate over all nodes in frag_graph
@@ -366,12 +374,16 @@ std::unordered_map<std::string, DataFlowTracker*> Application::track_distributed
 }
 
 AppDriver& Application::driver() {
-  if (!app_driver_) { app_driver_ = std::make_shared<AppDriver>(this); }
+  if (!app_driver_) {
+    app_driver_ = std::make_shared<AppDriver>(this);
+  }
   return *app_driver_;
 }
 
 AppWorker& Application::worker() {
-  if (!app_worker_) { app_worker_ = std::make_shared<AppWorker>(this); }
+  if (!app_worker_) {
+    app_worker_ = std::make_shared<AppWorker>(this);
+  }
   return *app_worker_;
 }
 
@@ -509,7 +521,9 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
                                          : kDefaultCheckRecessionPeriodMs;
 
   SchedulerType scheduler_type = SchedulerType::kDefault;
-  if (scheduler_type_env) { scheduler_type = scheduler_type_env.value(); }
+  if (scheduler_type_env) {
+    scheduler_type = scheduler_type_env.value();
+  }
 
   for (auto& fragment : target_fragments) {
     std::shared_ptr<Scheduler>& scheduler = fragment->scheduler_;
@@ -523,7 +537,9 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
 
       auto multi_thread_scheduler =
           std::dynamic_pointer_cast<holoscan::MultiThreadScheduler>(scheduler);
-      if (!multi_thread_scheduler) { scheduler_setting = SchedulerType::kMultiThread; }
+      if (!multi_thread_scheduler) {
+        scheduler_setting = SchedulerType::kMultiThread;
+      }
     }
 
     switch (scheduler_setting) {
@@ -600,6 +616,19 @@ std::shared_ptr<distributed::AppDriverClient> Application::app_driver_client() c
     return nullptr;
   }
   return app_worker_->app_driver_client();
+}
+
+void Application::attach_services_to_fragment(const std::shared_ptr<Fragment>& fragment) {
+  std::unordered_set<std::string> registered_service_ids;
+  for (const auto& [service_key, service] : fragment_services_by_key()) {
+    if (registered_service_ids.find(service_key.id) == registered_service_ids.end()) {
+      HOLOSCAN_LOG_DEBUG(
+          "Registering service '{}' with fragment '{}'", service_key.id, fragment->name());
+      // Register service from the application to the fragment
+      fragment->register_service_from(this, service_key.id);
+      registered_service_ids.insert(service_key.id);
+    }
+  }
 }
 
 void Application::initiate_distributed_app_shutdown(const std::string& fragment_name) {

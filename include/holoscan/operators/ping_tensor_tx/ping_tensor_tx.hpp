@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,7 +78,9 @@ class PingTensorTxOp : public Operator {
                [[maybe_unused]] ExecutionContext& context) override;
 
   nvidia::gxf::PrimitiveType element_type() {
-    if (element_type_.has_value()) { return element_type_.value(); }
+    if (element_type_.has_value()) {
+      return element_type_.value();
+    }
     element_type_ = primitive_type(data_type_.get());
     return element_type_.value();
   }

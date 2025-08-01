@@ -206,7 +206,9 @@ class StreamExecutionWithMonitorApp : public holoscan::Application {
       // If the detect event operator detects an event, add a dynamic flow to the report generation
       // operator.
       bool is_detected = op->metadata()->get<bool>("is_detected", false);
-      if (is_detected) { op->add_dynamic_flow(report_generation); }
+      if (is_detected) {
+        op->add_dynamic_flow(report_generation);
+      }
     });
   }
 };

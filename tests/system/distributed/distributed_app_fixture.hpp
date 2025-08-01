@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,7 +50,9 @@ static std::vector<int> generate_random_ports(int num_ports, int min_port, int m
 
   for (int i = 0; i < num_ports; ++i) {
     int port = dis(gen);
-    while (used_ports.find(port) != used_ports.end()) { port = dis(gen); }
+    while (used_ports.find(port) != used_ports.end()) {
+      port = dis(gen);
+    }
     used_ports.insert(port);
     ports.push_back(port);
   }
@@ -67,7 +69,9 @@ static bool are_ports_in_vector(const std::vector<int>& ports, const std::vector
         break;
       }
     }
-    if (!found) { return false; }
+    if (!found) {
+      return false;
+    }
   }
   return true;
 }

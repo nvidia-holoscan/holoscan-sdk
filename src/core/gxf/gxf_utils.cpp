@@ -40,7 +40,9 @@ format_context::iterator formatter<nvidia::gxf::Tensor>::format(const nvidia::gx
     dimensions[index] = shape.dimension(index);
   }
   std::vector<uint64_t> strides(t.rank());
-  for (uint32_t index = 0; index < t.rank(); ++index) { strides[index] = t.stride(index); }
+  for (uint32_t index = 0; index < t.rank(); ++index) {
+    strides[index] = t.stride(index);
+  }
   fmt::format_to(
       ctx.out(),
       "storage_type: {}, shape: ( {} ), strides: ( {} ), element_type: {}, element_count: {}",
@@ -177,7 +179,9 @@ std::optional<int32_t> gxf_device_id(gxf_context_t context, gxf_uid_t eid) {
     return std::nullopt;
   }
   auto resources = std::move(maybe_resources.value());
-  if (resources.empty()) { return std::nullopt; }
+  if (resources.empty()) {
+    return std::nullopt;
+  }
   if (resources.size() > 1) {
     HOLOSCAN_LOG_WARN(
         "Multiple ({}) GPUDevice resources found in entity {}.", resources.size(), eid);

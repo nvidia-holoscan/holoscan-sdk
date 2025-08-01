@@ -80,7 +80,9 @@ class ControllerOp : public holoscan::Operator {
     // Get all operators in the application except this one
     auto all_ops = fragment()->graph().get_nodes();
     for (auto& op : all_ops) {
-      if (op->name() != name()) { op_map_[op->name()] = op; }
+      if (op->name() != name()) {
+        op_map_[op->name()] = op;
+      }
     }
   }
 
@@ -174,7 +176,9 @@ class AsyncOperatorExecutionControlApp : public holoscan::Application {
  public:
   std::shared_ptr<ControllerOp> get_controller() {
     // Wait for the controller to have a non-null pointer
-    while (!controller_) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
+    while (!controller_) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     controller_->wait_for_start();
     return controller_;
   }

@@ -15,6 +15,7 @@
 
 if(HOLOSCAN_CPP_EXAMPLES)
     add_subdirectory(pose_tree_basic)
+    add_subdirectory(distributed_pose_tree)
 endif()
 
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})

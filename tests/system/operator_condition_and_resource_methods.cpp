@@ -93,7 +93,9 @@ class CheckResourceConditionOp : public Operator {
       }
 
       // can get a void* pointer to the underlying GXF class
-      if (pool->gxf_cptr() == nullptr) { HOLOSCAN_LOG_ERROR("null get_cptr() for pool"); }
+      if (pool->gxf_cptr() == nullptr) {
+        HOLOSCAN_LOG_ERROR("null get_cptr() for pool");
+      }
     }
   }
 };

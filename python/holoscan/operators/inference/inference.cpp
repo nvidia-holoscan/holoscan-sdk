@@ -109,7 +109,9 @@ class PyInferenceOp : public InferenceOp {
                             Arg{"dla_core", dla_core},
                             Arg{"dla_gpu_fallback", dla_gpu_fallback},
                             Arg{"is_engine_path", is_engine_path}}) {
-    if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    if (cuda_stream_pool) {
+      this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool});
+    }
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
@@ -138,22 +140,30 @@ class PyInferenceOp : public InferenceOp {
 
     auto temporal_map_infer = temporal_map.cast<py::dict>();
     for (const auto& [key, value] : temporal_map_infer) {
-      if (!py::isinstance<py::str>(value)) { temporal_map_infer[key] = py::str(value); }
+      if (!py::isinstance<py::str>(value)) {
+        temporal_map_infer[key] = py::str(value);
+      }
     }
 
     auto activation_map_infer = activation_map.cast<py::dict>();
     for (const auto& [key, value] : activation_map_infer) {
-      if (!py::isinstance<py::str>(value)) { activation_map_infer[key] = py::str(value); }
+      if (!py::isinstance<py::str>(value)) {
+        activation_map_infer[key] = py::str(value);
+      }
     }
 
     auto device_map_infer = device_map.cast<py::dict>();
     for (const auto& [key, value] : device_map_infer) {
-      if (!py::isinstance<py::str>(value)) { device_map_infer[key] = py::str(value); }
+      if (!py::isinstance<py::str>(value)) {
+        device_map_infer[key] = py::str(value);
+      }
     }
 
     auto dla_core_map_infer = dla_core_map.cast<py::dict>();
     for (const auto& [key, value] : dla_core_map_infer) {
-      if (!py::isinstance<py::str>(value)) { dla_core_map_infer[key] = py::str(value); }
+      if (!py::isinstance<py::str>(value)) {
+        dla_core_map_infer[key] = py::str(value);
+      }
     }
 
     // convert from Python dict to InferenceOp::DataVecMap

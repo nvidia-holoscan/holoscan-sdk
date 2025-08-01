@@ -27,7 +27,7 @@
 #include <gxf/std/tensor.hpp>
 #include <holoscan/core/domain/tensor_map.hpp>
 #include <holoscan/core/gxf/gxf_extension_registrar.hpp>
-#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
+#include "holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp"
 #include <holoscan/holoscan.hpp>
 
 #include "./receive_tensor_gxf.hpp"
@@ -102,7 +102,9 @@ class ProcessTensorOp : public Operator {
                         key,
                         fmt::join(tensor->shape(), ","),
                         fmt::join(in_data, ","));
-      for (size_t i = 0; i < data_size; i++) { in_data[i] *= 2; }
+      for (size_t i = 0; i < data_size; i++) {
+        in_data[i] *= 2;
+      }
       HOLOSCAN_LOG_INFO("ProcessTensorOp After key: '{}', shape: ({}), data: [{}]",
                         key,
                         fmt::join(tensor->shape(), ","),
@@ -179,7 +181,9 @@ int main() {
   auto app = holoscan::make_application<App>();
 
   // DataLogger classes log input/outputs of native operators (ProcessTensorOp for this app)
-  app->add_data_logger(app->make_resource<holoscan::data_loggers::BasicConsoleLogger>(
+  // GXF Codelets cannot be logged via data loggers, so the 'tx' and 'rx' operators are not
+  // expected to be logged by this implementation.
+  app->add_data_logger(app->make_resource<holoscan::data_loggers::GXFConsoleLogger>(
       "console_logger", holoscan::Arg{"log_tensor_data_content", false}));
 
   app->run();

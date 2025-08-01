@@ -49,5 +49,4 @@ class HoloscanLogger : public ::nvidia::logger::SpdlogLogger {
 
 }  // namespace holoscan
 
-
 #endif /* HOLOSCAN_LOGGER_HOLOSCAN_LOGGER_HPP */

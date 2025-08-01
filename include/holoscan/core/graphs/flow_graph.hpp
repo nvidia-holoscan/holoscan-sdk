@@ -25,6 +25,7 @@
 #include <string>
 #include <map>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "../graph.hpp"
@@ -61,7 +62,9 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
 
     bool operator()(const NodeType& lhs, const NodeType& rhs) const {
       // If ordered_nodes is null, fall back to name comparison
-      if (!ordered_nodes) { return lhs->name() < rhs->name(); }
+      if (!ordered_nodes) {
+        return lhs->name() < rhs->name();
+      }
       // Find the positions in ordered_nodes_
       auto lhs_it = std::find(ordered_nodes->begin(), ordered_nodes->end(), lhs);
       auto rhs_it = std::find(ordered_nodes->begin(), ordered_nodes->end(), rhs);
@@ -127,6 +130,72 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
    * @return A vector of all previous nodes.
    */
   std::vector<NodeType> get_previous_nodes(const NodeType& node) const override;
+
+  /**
+   * @brief Get the outdegree of a given node of a given port.
+   *
+   * @param node The node to get the outdegree of.
+   * @param port_name The name of the port in the given node.
+   * @return The outdegree of the given node of the given port.
+   */
+  size_t get_outdegree(const NodeType& node, const std::string& port_name) const override;
+
+  /**
+   * @brief Get port connectivity maps for the graph.
+   *
+   * Returns two maps that describe the connectivity between input and output ports:
+   * 1. Input-to-Output map: Keys are input port unique IDs,
+   *    values are vectors of output port unique IDs that connect to this input port.
+   * 2. Output-to-Input map: Keys are output port unique IDs, values are vectors of input port
+   *    unique IDs that this output port connects to.
+   *
+   * For multi-receiver ports, each individual port (e.g., "in:0", "in:1", "in:2") is listed as
+   * a separate key.
+   *
+   * For `OperatorFlowGraph` the unique ID has format:
+   *     "<fragment_name>.<operator_name>.<port_name>"
+   *     (or just <operator_name>.<port_name> if no fragment name was assigned).
+   *
+   * For `FragmentGraph` the unique ID has format: "<fragment_name>.<port_name>".
+   *
+   * @return A pair containing (input_to_output_map, output_to_input_map)
+   */
+  std::pair<std::map<std::string, std::vector<std::string>>,
+            std::map<std::string, std::vector<std::string>>>
+  get_port_connectivity_maps() const override;
+
+  /**
+   * @brief Get a YAML formatted description of the port connectivity maps.
+   *
+   * Returns a string containing the port connectivity information in YAML format.
+   * The output includes both input-to-output and output-to-input mappings.
+   *
+   * Example output for the following computation graph
+   *
+   * tx -> mx ---- rx1
+   *          \___ rx2
+   *
+   * (assume each operator has one input port named 'in' and one output port named 'out')
+   *
+   * ```yaml
+   * input_to_output:
+   *   mx.in:
+   *     - tx.out
+   *   rx1.in:
+   *     - mx.out
+   *   rx2.in:
+   *     - mx.out
+   * output_to_input:
+   *   tx.out:
+   *     - mx.in
+   *   mx.out:
+   *     - rx1.in
+   *     - rx2.in
+   * ```
+   *
+   * @return A YAML formatted string describing the port connectivity
+   */
+  std::string port_map_description() const override;
 
   NodeType find_node(const NodePredicate& pred) const override;
 

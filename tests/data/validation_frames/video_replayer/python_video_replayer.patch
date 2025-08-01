@@ -1,7 +1,7 @@
 --- ../examples/video_replayer/python/video_replayer.py	2023-11-16 01:35:53.593301380 +0000
 +++ examples/video_replayer/python/video_replayer_test.py	2023-11-20 03:25:57.853150634 +0000
 @@ -21,6 +21,13 @@ from holoscan.core import Application
- from holoscan.data_loggers import BasicConsoleLogger
+ from holoscan.data_loggers import AsyncConsoleLogger, SimpleTextSerializer
  from holoscan.operators import HolovizOp, VideoStreamReplayerOp
  from holoscan.resources import RMMAllocator
 +from holoscan.operators import (

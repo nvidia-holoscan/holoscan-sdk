@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -161,5 +161,7 @@ TEST(Init, MultiThreaded) {
   for (int i = 0; i < 8; ++i) {
     futures.push_back(std::async(std::launch::async, [] { viz::Init(640, 480, "Holoviz test"); }));
   }
-  for (auto&& future : futures) { future.wait(); }
+  for (auto&& future : futures) {
+    future.wait();
+  }
 }

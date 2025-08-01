@@ -249,10 +249,14 @@ class PingTxTensorMapMetadataOp : public Operator {
     // allocate two tensors of the specified shape and data type
     auto result = gxf_tensor1->reshapeCustom(
         tensor_shape, dtype, bytes_per_element, strides, storage_type, allocator.value());
-    if (!result) { HOLOSCAN_LOG_ERROR("failed to generate tensor1"); }
+    if (!result) {
+      HOLOSCAN_LOG_ERROR("failed to generate tensor1");
+    }
     result = gxf_tensor2->reshapeCustom(
         tensor_shape, dtype, bytes_per_element, strides, storage_type, allocator.value());
-    if (!result) { HOLOSCAN_LOG_ERROR("failed to generate tensor2"); }
+    if (!result) {
+      HOLOSCAN_LOG_ERROR("failed to generate tensor2");
+    }
 
     // Create Holoscan tensors from the GXF tensors
     auto maybe_dl_ctx1 = (*gxf_tensor1).toDLManagedTensorContext();

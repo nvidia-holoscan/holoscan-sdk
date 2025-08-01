@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,11 +26,15 @@ namespace holoscan {
 
 std::string ArgType::to_string() const {
   std::string el_type_str = element_type_name_map_.at(element_type_);
-  if (container_type_ == ArgContainerType::kNative) { return el_type_str; }
+  if (container_type_ == ArgContainerType::kNative) {
+    return el_type_str;
+  }
   std::string nested_str =
       container_type_ == ArgContainerType::kVector ? "std::vector<{}>" : "std::array<{},N>";
   std::string container_str = nested_str;
-  for (int32_t i = 1; i < dimension_; ++i) { container_str = fmt::format(nested_str, nested_str); }
+  for (int32_t i = 1; i < dimension_; ++i) {
+    container_str = fmt::format(nested_str, container_str);
+  }
   return fmt::format(container_str, el_type_str);
 }
 
@@ -56,7 +60,9 @@ inline static YAML::Node vector_as_node(const std::any& val) {
   } catch (const std::bad_cast& e) {  // 2d:  std::vector<std::vector<T>>
     try {
       return YAML::Node(std::any_cast<std::vector<std::vector<T>>>(val));
-    } catch (const std::bad_cast& e) { return YAML::Node(YAML::NodeType::Undefined); }
+    } catch (const std::bad_cast& e) {
+      return YAML::Node(YAML::NodeType::Undefined);
+    }
   }
 }
 
@@ -140,7 +146,9 @@ YAML::Node ArgList::to_yaml_node() const {
   YAML::Node node;
   node["name"] = name_;
   node["args"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const Arg& arg : args_) { node["args"].push_back(arg.to_yaml_node()); }
+  for (const Arg& arg : args_) {
+    node["args"].push_back(arg.to_yaml_node());
+  }
   return node;
 }
 

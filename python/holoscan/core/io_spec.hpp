@@ -38,6 +38,7 @@ static const std::unordered_map<IOSpec::IOType, const char*> io_type_namemap{
 static const std::unordered_map<IOSpec::ConnectorType, const char*> connector_type_namemap{
     {IOSpec::ConnectorType::kDefault, "DEFAULT"},
     {IOSpec::ConnectorType::kDoubleBuffer, "DOUBLE_BUFFER"},
+    {IOSpec::ConnectorType::kAsyncBuffer, "ASYNC_BUFFER"},
     {IOSpec::ConnectorType::kUCX, "UCX"},
 };
 

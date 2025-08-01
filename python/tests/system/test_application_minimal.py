@@ -15,6 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
+import re
+
 import pytest
 
 from holoscan.conditions import CountCondition
@@ -159,8 +161,6 @@ def test_app_log_function(capfd):
     captured = capfd.readouterr()
     # Extract text (log_func_ptr=0x<address>) from the log message and check if the addresses are
     # all same.
-    import re
-
     addresses = re.findall(r"log_func_ptr=0x[0-9a-fA-F]+", captured.err)
     assert len(set(addresses)) == 1
 

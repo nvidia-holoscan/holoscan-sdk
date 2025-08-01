@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -101,7 +102,9 @@ SpdlogLogger::SpdlogLogger(const char* name, const std::shared_ptr<ILogger>& log
   }
 
   // Set default sinks (stderr)
-  for (int level = spdlog::level::n_levels - 2; level >= 0; --level) { redirect(level, stderr); }
+  for (int level = spdlog::level::n_levels - 2; level >= 0; --level) {
+    redirect(level, stderr);
+  }
 
   // Set default log level and pattern
   level(spdlog::level::info);

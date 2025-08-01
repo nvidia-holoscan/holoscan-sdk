@@ -140,10 +140,14 @@ class MonitorOp : public holoscan::Operator {
     bool is_pipeline_idle = true;
     for (const auto& op_name : monitored_operators_.get()) {
       auto maybe_status = context.get_operator_status(op_name);
-      if (!maybe_status) { throw std::runtime_error(maybe_status.error().what()); }
+      if (!maybe_status) {
+        throw std::runtime_error(maybe_status.error().what());
+      }
       auto status = maybe_status.value();
       std::cerr << "  - " << op_name << ": " << magic_enum::enum_name(status) << std::endl;
-      if (status != holoscan::OperatorStatus::kIdle) { is_pipeline_idle = false; }
+      if (status != holoscan::OperatorStatus::kIdle) {
+        is_pipeline_idle = false;
+      }
     }
 
     if (is_pipeline_idle) {

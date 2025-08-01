@@ -71,13 +71,19 @@ class DelayOp : public Operator {
     double delay = delay_.get();
     bool silent = silent_.get();
     if (delay > 0) {
-      if (!silent) { HOLOSCAN_LOG_INFO("{}: now waiting {} s", name(), delay); }
+      if (!silent) {
+        HOLOSCAN_LOG_INFO("{}: now waiting {} s", name(), delay);
+      }
       // sleep for the specified time (rounded down to the nearest microsecond)
       int delay_us = static_cast<int>(delay * 1000000);
       usleep(delay_us);
-      if (!silent) { HOLOSCAN_LOG_INFO("{}: finished waiting", name()); }
+      if (!silent) {
+        HOLOSCAN_LOG_INFO("{}: finished waiting", name());
+      }
     }
-    if (!silent) { HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value); }
+    if (!silent) {
+      HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value);
+    }
 
     // Debug logging for data logger issue
     HOLOSCAN_LOG_INFO("{}: About to emit int {} and string '{}'", name(), new_value, nm);
@@ -122,8 +128,12 @@ class PingRxOp : public Operator {
       HOLOSCAN_LOG_INFO("number of received values: {}", value_vector.size());
     }
     int total = 0;
-    for (const auto& vp : value_vector) { total += vp; }
-    if (!silent_) { HOLOSCAN_LOG_INFO("sum of received values: {}", total); }
+    for (const auto& vp : value_vector) {
+      total += vp;
+    }
+    if (!silent_) {
+      HOLOSCAN_LOG_INFO("sum of received values: {}", total);
+    }
   };
 
  private:
@@ -173,13 +183,17 @@ int main([[maybe_unused]] int argc, char** argv) {
   // Get the configuration
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= std::filesystem::path("multithread.yaml");
-  if (argc >= 2) { config_path = argv[1]; }
+  if (argc >= 2) {
+    config_path = argv[1];
+  }
   app->config(config_path);
 
   // Turn on data flow tracking if it is specified in the YAML
   auto tracking = app->from_config("tracking").as<bool>();
   holoscan::DataFlowTracker* tracker = nullptr;
-  if (tracking) { tracker = &app->track(0, 0, 0); }
+  if (tracking) {
+    tracker = &app->track(0, 0, 0);
+  }
 
   // set customizable application parameters via the YAML
   auto num_delay_ops = app->from_config("num_delay_ops").as<int>();
@@ -223,8 +237,16 @@ int main([[maybe_unused]] int argc, char** argv) {
 
   app->run();
 
+  auto print_port_map = app->from_config("print_port_map").as<bool>();
+  if (print_port_map) {
+    std::string port_map_yaml = app->graph().port_map_description();
+    HOLOSCAN_LOG_INFO("====== PORT MAPPING =======\n{}", port_map_yaml);
+  }
+
   // Print all the results of data flow tracking
-  if (tracking) { tracker->print(); }
+  if (tracking) {
+    tracker->print();
+  }
 
   return 0;
 }

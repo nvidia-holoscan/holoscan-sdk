@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,7 +89,9 @@ void ImGuiLayer::end(Vulkan* vulkan) {
 
 void ImGuiLayer::render(Vulkan* vulkan) {
   // nothing to do if there are no vertices
-  if (impl_->draw_data_->TotalVtxCount == 0) { return; }
+  if (!impl_->draw_data_ || impl_->draw_data_->TotalVtxCount == 0) {
+    return;
+  }
 
   // setup the base view matrix in a way that coordinates are in the range [0...1]
   nvmath::mat4f view_matrix_base;
@@ -99,7 +101,9 @@ void ImGuiLayer::render(Vulkan* vulkan) {
       {2.F / impl_->draw_data_->DisplaySize.x, 2.F / impl_->draw_data_->DisplaySize.y, 1.F});
 
   std::vector<Layer::View> views = get_views();
-  if (views.empty()) { views.push_back(Layer::View()); }
+  if (views.empty()) {
+    views.push_back(Layer::View());
+  }
 
   for (const View& view : views) {
     vulkan->set_viewport(view.offset_x, view.offset_y, view.width, view.height);

@@ -31,7 +31,9 @@ EnvVarWrapper::EnvVarWrapper(
   // Save existing environment variables and apply new ones
   for (const auto& [env_var, value] : env_var_settings_) {
     const char* orig_value = getenv(env_var.c_str());
-    if (orig_value) { orig_env_vars_[env_var] = orig_value; }
+    if (orig_value) {
+      orig_env_vars_[env_var] = orig_value;
+    }
     setenv(env_var.c_str(), value.c_str(), 1);
   }
   orig_log_level_ = static_cast<int>(holoscan::log_level());

@@ -24,7 +24,7 @@ ARG ONNX_RUNTIME_VERSION=1.18.1_38712740_24.08-cuda-12.6
 ARG LIBTORCH_VERSION=2.5.0_24.08
 ARG TORCHVISION_VERSION=0.20.0_24.08
 ARG GRPC_VERSION=1.54.2
-ARG GXF_VERSION=5.0.0_20250506_dad6e7b
+ARG GXF_VERSION=5.0dev_20250715_a53dae794
 ARG MOFED_VERSION=24.07-0.6.1.0
 
 ############################################################
@@ -85,7 +85,7 @@ WORKDIR /opt/onnxruntime
 RUN curl -S -L -# -o ort.tgz \
     https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-$(uname -m).tar.gz
 RUN mkdir -p ${ONNX_RUNTIME_VERSION}
-RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2
+RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2 --no-same-owner --no-same-permissions
 
 ############################################################
 # Libtorch
@@ -101,7 +101,7 @@ RUN ARCH=$(uname -m) && if [ "$ARCH" = "aarch64" ]; then ARCH="${ARCH}-${GPU_TYP
     curl -S -# -o libtorch.tgz -L \
         https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/libtorch/libtorch-${LIBTORCH_VERSION}-${ARCH}.tar.gz
 RUN mkdir -p ${LIBTORCH_VERSION}
-RUN tar -xf libtorch.tgz -C ${LIBTORCH_VERSION} --strip-components 1
+RUN tar -xf libtorch.tgz -C ${LIBTORCH_VERSION} --strip-components 1 --no-same-owner --no-same-permissions
 
 # Patch step to remove kineto from config to remove warning, not needed by holoscan
 RUN find . -type f -name "*Config.cmake" -exec sed -i '/kineto/d' {} +
@@ -124,7 +124,7 @@ RUN ARCH=$(uname -m) && if [ "$ARCH" = "aarch64" ]; then ARCH="${ARCH}-${GPU_TYP
     curl -S -# -o torchvision.tgz -L \
         https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/torchvision/torchvision-${TORCHVISION_VERSION}-${ARCH}.tar.gz
 RUN mkdir -p ${TORCHVISION_VERSION}
-RUN tar -xf torchvision.tgz -C ${TORCHVISION_VERSION} --strip-components 1
+RUN tar -xf torchvision.tgz -C ${TORCHVISION_VERSION} --strip-components 1 --no-same-owner --no-same-permissions
 
 ############################################################
 # gRPC libraries and binaries
@@ -163,7 +163,7 @@ RUN UBUNTU_VERSION=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d= -f2) 
     && OFED_PACKAGE="MLNX_OFED_LINUX-${MOFED_VERSION}-ubuntu${UBUNTU_VERSION}-$(uname -m)" \
     && curl -S -# -o ${OFED_PACKAGE}.tgz -L \
         https://www.mellanox.com/downloads/ofed/MLNX_OFED-${MOFED_VERSION}/${OFED_PACKAGE}.tgz \
-    && tar xf ${OFED_PACKAGE}.tgz \
+    && tar xf ${OFED_PACKAGE}.tgz --no-same-owner --no-same-permissions \
     && MOFED_INSTALLER=$(find . -name mlnxofedinstall -type f -executable -print) \
     && MOFED_DEPS=$(${MOFED_INSTALLER} ${MOFED_INSTALL_FLAGS} --check-deps-only 2>/dev/null | tail -n1 |  cut -d' ' -f3-) \
     && apt-get update \
@@ -196,7 +196,7 @@ WORKDIR /opt/nvidia/gxf
 RUN curl -S -# -L -o gxf.tgz \
         https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_holoscan-sdk_$(uname -m).tar.gz
 RUN mkdir -p ${GXF_VERSION}
-RUN tar xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1
+RUN tar xzf gxf.tgz -C ${GXF_VERSION} --strip-components 1 --no-same-owner --no-same-permissions
 
 ############################################################
 # Build image (final)
@@ -329,6 +329,23 @@ RUN apt-get update \
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+#  cmake >=3.26.4 - required for RMM dependency
+#  supersedes manually installed CMake 3.24.0 in the TensorRT 24.08 base container
+RUN apt-get update \
+    && wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
+        | gpg --dearmor - \
+        | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
+    && echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' \
+        | tee /etc/apt/sources.list.d/kitware.list >/dev/null \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y \
+        cmake=3.26.4-* \
+        cmake-data=3.26.4-* \
+    # replace TensorRT 24.08 CMake installation
+    && rm /usr/local/bin/cmake \
+    && ln -s /usr/bin/cmake /usr/local/bin/cmake \
+    && echo "Installed CMake: $(which cmake) $(cmake --version)  "
 
 # PIP INSTALLS
 #  mkl - dependency for libtorch plugin on x86_64 (match pytorch container version)

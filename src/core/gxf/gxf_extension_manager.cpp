@@ -40,7 +40,9 @@ GXFExtensionManager::GXFExtensionManager(gxf_context_t context) : ExtensionManag
 }
 
 GXFExtensionManager::~GXFExtensionManager() {
-  for (auto& [_, handle] : extension_handles_map_) { dlclose(handle); }
+  for (auto& [_, handle] : extension_handles_map_) {
+    dlclose(handle);
+  }
 }
 
 void GXFExtensionManager::reset_context(gxf_context_t context) {
@@ -52,7 +54,9 @@ void GXFExtensionManager::reset_context(gxf_context_t context) {
 }
 
 void GXFExtensionManager::refresh() {
-  if (context_ == nullptr) { return; }
+  if (context_ == nullptr) {
+    return;
+  }
 
   // Configure request data
   runtime_info_ = {nullptr, kGXFExtensionsMaxSize, extension_tid_list_};
@@ -65,7 +69,9 @@ void GXFExtensionManager::refresh() {
   extension_tids_.clear();
 
   // Add the extension tids to the set
-  for (uint64_t i = 0; i < num_extensions; ++i) { extension_tids_.insert(extensions[i]); }
+  for (uint64_t i = 0; i < num_extensions; ++i) {
+    extension_tids_.insert(extensions[i]);
+  }
 
   // Load extensions that were previously loaded & cached
   for (const auto& [tid, extension] : loaded_extensions_) {
@@ -163,10 +169,14 @@ bool GXFExtensionManager::load_extension(const std::string& file_name, bool no_e
                 }
               }
             }
-            if (found_extension) { break; }
+            if (found_extension) {
+              break;
+            }
           }
         }
-        if (found_extension) { break; }
+        if (found_extension) {
+          break;
+        }
       }
     }
     if (handle == nullptr) {
@@ -230,7 +240,9 @@ bool GXFExtensionManager::load_extensions_from_yaml(const YAML::Node& node, bool
         continue;
       }
       auto result = load_extension(file_name, no_error_message, search_path_envs);
-      if (!result) { return false; }
+      if (!result) {
+        return false;
+      }
     }
   } catch (std::exception& e) {
     HOLOSCAN_LOG_ERROR("Error loading extension from yaml: {}", e.what());
@@ -246,7 +258,9 @@ bool GXFExtensionManager::is_extension_loaded(gxf_tid_t tid) {
 std::vector<std::string> GXFExtensionManager::tokenize(const std::string& str,
                                                        const std::string& delimiters) {
   std::vector<std::string> search_paths;
-  if (str.size() == 0) { return search_paths; }
+  if (str.size() == 0) {
+    return search_paths;
+  }
 
   // Find the number of possible paths based on str and delimiters
   const auto possible_path_count =
@@ -306,7 +320,9 @@ bool GXFExtensionManager::load_extension(nvidia::gxf::Extension* extension) {
 void* GXFExtensionManager::open_extension_library(const std::string& file_path) {
   // Check if the extension is already loaded
   auto it = extension_handles_map_.find(file_path);
-  if (it != extension_handles_map_.end()) { return it->second; }
+  if (it != extension_handles_map_.end()) {
+    return it->second;
+  }
 
   // Load the extension
   void* handle = dlopen(file_path.c_str(), RTLD_LAZY | RTLD_NODELETE);

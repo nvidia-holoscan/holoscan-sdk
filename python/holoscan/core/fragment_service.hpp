@@ -21,6 +21,7 @@
 #include <pybind11/pybind11.h>
 
 #include <memory>
+#include <string_view>
 
 #include "holoscan/core/fragment_service.hpp"
 
@@ -61,6 +62,56 @@ class PYBIND11_EXPORT PyDefaultFragmentService : public DefaultFragmentService {
 
   std::shared_ptr<Resource> resource() const override;
   void resource(const std::shared_ptr<Resource>& resource) override;
+};
+
+namespace distributed {
+
+/**
+ * @brief Trampoline class for ServiceDriverEndpoint.
+ *
+ * This class is used to allow Python classes to inherit from
+ * holoscan::distributed::ServiceDriverEndpoint and override its virtual methods.
+ */
+class PYBIND11_EXPORT PyServiceDriverEndpoint : public ServiceDriverEndpoint {
+ public:
+  /* Inherit the constructors */
+  using ServiceDriverEndpoint::ServiceDriverEndpoint;
+
+  void driver_start(std::string_view driver_ip) override;
+  void driver_shutdown() override;
+};
+
+/**
+ * @brief Trampoline class for ServiceWorkerEndpoint.
+ *
+ * This class is used to allow Python classes to inherit from
+ * holoscan::distributed::ServiceWorkerEndpoint and override its virtual methods.
+ */
+class PYBIND11_EXPORT PyServiceWorkerEndpoint : public ServiceWorkerEndpoint {
+ public:
+  /* Inherit the constructors */
+  using ServiceWorkerEndpoint::ServiceWorkerEndpoint;
+
+  void worker_connect(std::string_view driver_ip) override;
+  void worker_disconnect() override;
+};
+
+}  // namespace distributed
+
+class PYBIND11_EXPORT PyDistributedAppService : public DistributedAppService {
+ public:
+  /* Inherit the constructors */
+  using DistributedAppService::DistributedAppService;
+
+  // must be defined because FragmentService::resource is pure virtual
+  std::shared_ptr<Resource> resource() const override;
+  void resource(const std::shared_ptr<Resource>& resource) override;
+
+  // Override virtual functions
+  void driver_start(std::string_view driver_ip) override;
+  void driver_shutdown() override;
+  void worker_connect(std::string_view driver_ip) override;
+  void worker_disconnect() override;
 };
 
 }  // namespace holoscan

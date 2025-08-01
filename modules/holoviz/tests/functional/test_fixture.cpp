@@ -70,7 +70,9 @@ void TestBase::SetUp() {
 }
 
 void TestBase::TearDown() {
-  if (viz::GetCurrent()) { ASSERT_NO_THROW(viz::Shutdown()); }
+  if (viz::GetCurrent()) {
+    ASSERT_NO_THROW(viz::Shutdown());
+  }
 }
 
 void TestBase::SetCUDADevice(uint32_t device_ordinal) {
@@ -357,7 +359,9 @@ bool TestBase::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
 
     std::ostringstream str;
     str << "CRC mismatch, expected {" << std::hex << std::setw(8);
-    for (auto&& value : crc32) { str << "0x" << value << ", "; }
+    for (auto&& value : crc32) {
+      str << "0x" << value << ", ";
+    }
     str << "} but calculated 0x" << read_crc32 << ", wrote failing image to " << image_file_name
         << ". " << crc_instructions;
     EXPECT_FALSE(true) << str.str();
@@ -393,7 +397,9 @@ bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
 
     std::ostringstream str;
     str << "CRC mismatch, expected {" << std::hex << std::setw(8);
-    for (auto&& value : crc32) { str << "0x" << value << ", "; }
+    for (auto&& value : crc32) {
+      str << "0x" << value << ", ";
+    }
     str << "} but calculated 0x" << read_crc32 << ", wrote failing image to " << image_file_name
         << ". " << crc_instructions;
     EXPECT_FALSE(true) << str.str();

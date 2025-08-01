@@ -34,11 +34,15 @@ struct codec<ops::InferenceOp::ActivationSpec> {
                                                   Endpoint* endpoint) {
     size_t total_size = 0;
     auto maybe_size = codec<std::string>::serialize(spec.model_name_, endpoint);
-    if (!maybe_size) { return forward_error(maybe_size); }
+    if (!maybe_size) {
+      return forward_error(maybe_size);
+    }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<bool>(spec.active_, endpoint);
-    if (!maybe_size) { return forward_error(maybe_size); }
+    if (!maybe_size) {
+      return forward_error(maybe_size);
+    }
     total_size += maybe_size.value();
 
     return total_size;
@@ -47,11 +51,15 @@ struct codec<ops::InferenceOp::ActivationSpec> {
   static expected<ops::InferenceOp::ActivationSpec, RuntimeError> deserialize(Endpoint* endpoint) {
     ops::InferenceOp::ActivationSpec out;
     auto model_name = codec<std::string>::deserialize(endpoint);
-    if (!model_name) { return forward_error(model_name); }
+    if (!model_name) {
+      return forward_error(model_name);
+    }
     out.model_name_ = model_name.value();
 
     auto active = deserialize_trivial_type<bool>(endpoint);
-    if (!active) { return forward_error(active); }
+    if (!active) {
+      return forward_error(active);
+    }
     out.active_ = active.value();
 
     return out;
@@ -68,13 +76,17 @@ struct codec<std::vector<ops::InferenceOp::ActivationSpec>> {
     // header is just the total number of specs
     size_t num_specs = specs.size();
     auto size = endpoint->write_trivial_type<size_t>(&num_specs);
-    if (!size) { return forward_error(size); }
+    if (!size) {
+      return forward_error(size);
+    }
     total_size += size.value();
 
     // now transmit each individual spec
     for (const auto& spec : specs) {
       size = codec<ops::InferenceOp::ActivationSpec>::serialize(spec, endpoint);
-      if (!size) { return forward_error(size); }
+      if (!size) {
+        return forward_error(size);
+      }
       total_size += size.value();
     }
     return total_size;
@@ -83,13 +95,17 @@ struct codec<std::vector<ops::InferenceOp::ActivationSpec>> {
       Endpoint* endpoint) {
     size_t num_specs;
     auto size = endpoint->read_trivial_type<size_t>(&num_specs);
-    if (!size) { return forward_error(size); }
+    if (!size) {
+      return forward_error(size);
+    }
 
     std::vector<ops::InferenceOp::ActivationSpec> data;
     data.reserve(num_specs);
     for (size_t i = 0; i < num_specs; i++) {
       auto spec = codec<ops::InferenceOp::ActivationSpec>::deserialize(endpoint);
-      if (!spec) { return forward_error(spec); }
+      if (!spec) {
+        return forward_error(spec);
+      }
       data.push_back(spec.value());
     }
     return data;

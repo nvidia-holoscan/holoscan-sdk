@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_holoscan_data_logger(basic_console_logger basic_console_logger.cpp simple_text_serializer.cpp)  #  json_text_serializer.cpp
+add_holoscan_data_logger(basic_console_logger
+    basic_console_logger.cpp
+    gxf_console_logger.cpp
+    simple_text_serializer.cpp
+)
 
 target_link_libraries(data_loggers_basic_console_logger
     PUBLIC

@@ -51,11 +51,78 @@ log_tensor_data_content : bool, optional
 log_metadata : bool, optional
     Whether to log metadata associated with messages. Default is True.
 allowlist_patterns : list of str, optional
-    List of regex patterns. Only messages matching these patterns will be logged.
-    If empty, all messages are allowed.
+    List of regex patterns to apply to message unique IDs. If empty, all messages not matching a
+    denylist pattern will be logged. Otherwise, there must be a match to one of the allowlist
+    patterns. See notes below for more details.
 denylist_patterns : list of str, optional
-    List of regex patterns. Messages matching these patterns will be filtered out.
-    Denylist takes precedence over allowlist.
+    List of regex patterns to apply to message unique IDs. If specified and there is a match at
+    least one of these patterns, the message is not logged. See notes below for more details.
+name : str, optional (constructor only)
+    The name of the data logger. Default value is ``"basic_console_logger"``.
+
+Notes
+-----
+If `allowlist_patterns` or `denylist_patterns` are specified, they are applied to the `unique_id`
+assigned to messages by the underlying framework.
+
+In a non-distributed application (without a fragment name), the unique_id for a message will have
+one of the following forms:
+
+  - operator_name.port_name
+  - operator_name.port_name:index  (for multi-receivers with N:1 connection)
+
+For distributed applications, the fragment name will also appear in the unique id:
+
+  - fragment_name.operator_name.port_name
+  - fragment_name.operator_name.port_name:index  (for multi-receivers with N:1 connection)
+
+The pattern matching logic is as follows:
+
+  - If `denylist patterns` is specified and there is a match, do not log it.
+  - Next check if `allowlist_patterns` is empty:
+    - If yes, return true (allow everything)
+    - If no, return true only if there is a match to at least one of the specified patterns.
+)doc")
+
+}  // namespace BasicConsoleLogger
+
+namespace GXFConsoleLogger {
+
+PYDOC(GXFConsoleLogger, R"doc(
+GXF-based console logger for debugging and development purposes.
+
+This logger operates the same as BasicConsoleLogger but also logs on emit or receive of
+`holoscan::gxf::Entity` and `nvidia::gxf::Entity` types. Currently only Tensors present within the
+entity will be logged.
+
+This data logger outputs structured log messages to the console (via the Holoscan logging system)
+for any data received. It can handle tensors, tensor maps, metadata, and general data types by
+converting them to human-readable text format.
+
+The logger provides filtering capabilities to control which messages are logged.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment (constructor only)
+    The fragment that the data logger belongs to.
+serializer : holoscan.data_loggers.SimpleTextSerializer, optional
+    Text serializer used to convert data to string format. If not provided, a default
+    SimpleTextSerializer will be created automatically.
+log_inputs : bool, optional
+    Whether to log input messages. Default is True.
+log_outputs : bool, optional
+    Whether to log output messages. Default is True.
+log_tensor_data_content : bool, optional
+    Whether to log the actual content of tensor data. Default is False.
+log_metadata : bool, optional
+    Whether to log metadata associated with messages. Default is True.
+allowlist_patterns : list of str, optional
+    List of regex patterns to apply to message unique IDs. If empty, all messages not matching a
+    denylist pattern will be logged. Otherwise, there must be a match to one of the allowlist
+    patterns. See notes below for more details.
+denylist_patterns : list of str, optional
+    List of regex patterns to apply to message unique IDs. If specified and there is a match at
+    least one of these patterns, the message is not logged. See notes below for more details.
 name : str, optional (constructor only)
     The name of the data logger. Default value is ``"basic_console_logger"``.
 }  // namespace BasicConsoleLogger
@@ -68,16 +135,23 @@ assigned to messages by the underlying framework.
 In a non-distributed application (without a fragment name), the unique_id for a message will have
 one of the following forms:
 
-- operator_name.port_name
-- operator_name.port_name:index  (for multi-receivers with N:1 connection)
+  - operator_name.port_name
+  - operator_name.port_name:index  (for multi-receivers with N:1 connection)
 
 For distributed applications, the fragment name will also appear in the unique id:
 
-- fragment_name.operator_name.port_name
-- fragment_name.operator_name.port_name:index  (for multi-receivers with N:1 connection)
+  - fragment_name.operator_name.port_name
+  - fragment_name.operator_name.port_name:index  (for multi-receivers with N:1 connection)
+
+The pattern matching logic is as follows:
+
+  - If `denylist patterns` is specified and there is a match, do not log it.
+  - Next check if `allowlist_patterns` is empty:
+    - If yes, return true (allow everything)
+    - If no, return true only if there is a match to at least one of the specified patterns.
 )doc")
 
-}  // namespace BasicConsoleLogger
+}  // namespace GXFConsoleLogger
 
 namespace SimpleTextSerializer {
 

@@ -232,7 +232,9 @@ inline void process_resource_arg(void* gxf_context, uint64_t cid,
     return;
   }
   auto add_resource_arg = [&](auto* ptr, const std::shared_ptr<holoscan::Resource>& resource) {
-    if (ptr) { add_arg_func(Arg(param_ptr->key()) = resource); }
+    if (ptr) {
+      add_arg_func(Arg(param_ptr->key()) = resource);
+    }
   };
 
   auto process_resource = [&](auto* resource_ptr, auto resource_type) {
@@ -383,7 +385,8 @@ inline gxf_result_t initialize_holoscan_object(
       const auto& arg_type = gxf_param->arg_type;
       auto param_ptr = gxf_param->param_ptr;
       const auto& arg = gxf_param->param.try_get();
-      if (!arg) continue;
+      if (!arg)
+        continue;
 
       auto& param_gxf = const_cast<YAML::Node&>(arg.value());
       auto add_arg_func = [&](const Arg& a) { obj->add_arg(a); };

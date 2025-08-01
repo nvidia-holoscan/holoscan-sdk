@@ -27,7 +27,9 @@ void GXFNetworkContext::set_parameters() {
   update_params_from_args();
 
   // Set Handler parameters
-  for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
+  for (auto& [key, param_wrap] : spec_->params()) {
+    set_gxf_parameter(name_, key, param_wrap);
+  }
 }
 
 void GXFNetworkContext::reset_graph_entities() {

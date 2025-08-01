@@ -64,18 +64,37 @@ def deprecated_extension_config_file():
     return config_file
 
 
-def pytest_configure(config):
+def pytest_configure(config):  # noqa: ARG001
     os.environ["HOLOSCAN_DISABLE_BACKTRACE"] = "1"
-    config.addinivalue_line("markers", "slow: mark test as slow to run")
 
 
 def pytest_addoption(parser):
-    parser.addoption("--runslow", action="store_true", help="include tests marked slow")
+    parser.addoption(
+        "--runslow",
+        "--run-slow",
+        action="store_true",
+        help="include tests marked slow (--runslow and --run-slow are equivalent)",
+    )
+    parser.addoption(
+        "--run-realtime",
+        action="store_true",
+        default=False,
+        help="run tests marked as requiring real-time kernel config",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
     if not config.getoption("--runslow"):
-        skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+        skip_slow = pytest.mark.skip(reason="need --run-slow (or --runslow) option to run")
         for item in items:
             if item.get_closest_marker("slow"):
                 item.add_marker(skip_slow)
+
+    if not config.getoption("--run-realtime"):
+        skip_realtime = pytest.mark.skip(reason="need --run-realtime option to run")
+        for item in items:
+            if item.get_closest_marker("realtime"):
+                item.add_marker(skip_realtime)
+
+
+# Note: see [tool.pytest.ini_options] in pyproject.toml for marker definitions

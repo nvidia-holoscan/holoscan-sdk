@@ -17,6 +17,6 @@ limitations under the License.
 
 import holoscan.core  # noqa: F401
 
-from ._basic_console_logger import BasicConsoleLogger, SimpleTextSerializer
+from ._basic_console_logger import BasicConsoleLogger, GXFConsoleLogger, SimpleTextSerializer
 
-__all__ = ["BasicConsoleLogger", "SimpleTextSerializer"]
+__all__ = ["BasicConsoleLogger", "GXFConsoleLogger", "SimpleTextSerializer"]

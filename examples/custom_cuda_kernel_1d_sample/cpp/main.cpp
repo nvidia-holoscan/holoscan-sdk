@@ -87,7 +87,9 @@ int main(int argc, char** argv) {
   auto app = holoscan::make_application<App>();
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path += "/custom_cuda_kernel_1d_sample.yaml";
-  if (argc >= 2) { config_path = argv[1]; }
+  if (argc >= 2) {
+    config_path = argv[1];
+  }
 
   app->config(config_path);
   app->run();

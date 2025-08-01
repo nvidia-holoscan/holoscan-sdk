@@ -121,8 +121,15 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    # PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+    # test for some expected strings in the distributed app port-mapping output
+    # PASS_REGULAR_EXPRESSION "APPLICATION_PORT_MAPPING"
+    # PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:"
+    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment1' PORT MAPPING"
+    # PASS_REGULAR_EXPRESSION "fragment1.replayer.output:"
+    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment2' PORT MAPPING"
+    PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:0"
   )
 
   # repeat the default test, but with HOLOSCAN_UCX_ASYNCHRONOUS=TRUE to set

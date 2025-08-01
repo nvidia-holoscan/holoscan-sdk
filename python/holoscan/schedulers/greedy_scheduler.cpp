@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,7 +63,9 @@ class PyGreedyScheduler : public GreedyScheduler {
                                 Arg{"stop_on_deadlock_timeout", stop_on_deadlock_timeout}}) {
     // max_duration_ms is an optional argument in GXF. We use a negative value in this constructor
     // to indicate that the argument should not be set.
-    if (max_duration_ms >= 0) { this->add_arg(Arg{"max_duration_ms", max_duration_ms}); }
+    if (max_duration_ms >= 0) {
+      this->add_arg(Arg{"max_duration_ms", max_duration_ms});
+    }
     name_ = name;
     fragment_ = fragment;
     if (clock) {

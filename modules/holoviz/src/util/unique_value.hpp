@@ -77,7 +77,9 @@ class UniqueValue : public NonCopyable {
   void reset(T value = T()) noexcept {
     T old_value = value_;
     value_ = std::move(value);
-    if (old_value != T()) { F(old_value); }
+    if (old_value != T()) {
+      F(old_value);
+    }
   }
 
   /**

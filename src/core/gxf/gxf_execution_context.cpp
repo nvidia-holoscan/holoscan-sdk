@@ -30,12 +30,15 @@
 #include "holoscan/core/gxf/gxf_operator.hpp"
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/profiler/profiler.hpp"
 
 namespace holoscan::gxf {
 
 GXFExecutionContext::GXFExecutionContext(gxf_context_t context, Operator* op) {
   op_ = op;
-  if (op && op->graph_entity()) { eid_ = op->graph_entity()->eid(); }
+  if (op && op->graph_entity()) {
+    eid_ = op->graph_entity()->eid();
+  }
   gxf_input_context_ = std::make_shared<GXFInputContext>(this, op);
   gxf_output_context_ = std::make_shared<GXFOutputContext>(this, op);
 
@@ -58,15 +61,21 @@ void GXFExecutionContext::init_cuda_object_handler(Operator* op) {
 }
 
 void GXFExecutionContext::release_internal_cuda_streams() {
-  if (cuda_object_handler_ != nullptr) { cuda_object_handler_->release_internal_streams(context_); }
+  if (cuda_object_handler_ != nullptr) {
+    cuda_object_handler_->release_internal_streams(context_);
+  }
 }
 
 void GXFExecutionContext::clear_received_streams() {
-  if (cuda_object_handler_ != nullptr) { cuda_object_handler_->clear_received_streams(); }
+  if (cuda_object_handler_ != nullptr) {
+    cuda_object_handler_->clear_received_streams();
+  }
 }
 
 void GXFExecutionContext::synchronize_streams(
     const std::vector<std::optional<cudaStream_t>>& cuda_streams, cudaStream_t target_cuda_stream) {
+  PROF_SCOPED_EVENT(op_->id(), event_synchronize_streams);
+
   if (cuda_object_handler_ == nullptr) {
     throw std::runtime_error("Failed to sync streams: cuda_object_handler_ is nullptr");
   }
@@ -74,7 +83,9 @@ void GXFExecutionContext::synchronize_streams(
   std::vector<cudaStream_t> streams;
   streams.reserve(cuda_streams.size());
   for (const auto& stream : cuda_streams) {
-    if (stream.has_value()) { streams.push_back(stream.value()); }
+    if (stream.has_value()) {
+      streams.push_back(stream.value());
+    }
   }
   auto result_code = cuda_object_handler_->synchronize_streams(streams, target_cuda_stream);
   gxf_result_t gxf_result = static_cast<gxf_result_t>(result_code);
@@ -94,8 +105,12 @@ expected<CudaStreamHandle, RuntimeError> GXFExecutionContext::allocate_cuda_stre
 
 expected<cudaStream_t, RuntimeError> GXFExecutionContext::allocate_cuda_stream(
     const std::string& stream_name) {
+  PROF_SCOPED_EVENT(op_->id(), event_allocate_cuda_stream);
+
   auto maybe_stream_handle = allocate_cuda_stream_handle(stream_name);
-  if (!maybe_stream_handle) { return forward_error(maybe_stream_handle); }
+  if (!maybe_stream_handle) {
+    return forward_error(maybe_stream_handle);
+  }
   return maybe_stream_handle.value()->stream().value();
 }
 
@@ -120,8 +135,12 @@ expected<gxf::CudaStreamHandle, RuntimeError> GXFExecutionContext::stream_handle
 
 // @brief determine the CUDA device corresponding to the given stream
 expected<int, RuntimeError> GXFExecutionContext::device_from_stream(cudaStream_t stream) {
+  PROF_SCOPED_EVENT(op_->id(), event_device_from_stream);
+
   auto maybe_handle = stream_handle_from_stream(stream);
-  if (maybe_handle) { return maybe_handle.value()->dev_id(); }
+  if (maybe_handle) {
+    return maybe_handle.value()->dev_id();
+  }
   return make_unexpected(RuntimeError(ErrorCode::kFailure,
                                       "device_from_stream only supports retrieving the device ID "
                                       "from streams being managed by Holoscan SDK"));
@@ -129,7 +148,9 @@ expected<int, RuntimeError> GXFExecutionContext::device_from_stream(cudaStream_t
 
 std::shared_ptr<Operator> GXFExecutionContext::find_operator(
     const std::string& op_name /* = "" */) {
-  if (op_name.empty()) { return op_->self_shared(); }
+  if (op_name.empty()) {
+    return op_->self_shared();
+  }
   return op_->fragment()->graph().find_node(op_name);
 }
 
@@ -140,7 +161,9 @@ expected<holoscan::OperatorStatus, RuntimeError> GXFExecutionContext::get_operat
   // If op_name is provided, get the GXF entity ID of the operator
   if (!op_name.empty()) {
     auto maybe_eid = get_operator_eid(op_name);
-    if (!maybe_eid) { return forward_error(maybe_eid); }
+    if (!maybe_eid) {
+      return forward_error(maybe_eid);
+    }
     eid = maybe_eid.value();
   }
 
@@ -176,7 +199,9 @@ expected<gxf_uid_t, RuntimeError> GXFExecutionContext::get_operator_eid(
     const std::string& op_name) {
   // Check if the entity ID is already in the cache
   auto cache_it = operator_eid_cache_.find(op_name);
-  if (cache_it != operator_eid_cache_.end()) { return cache_it->second; }
+  if (cache_it != operator_eid_cache_.end()) {
+    return cache_it->second;
+  }
 
   // Not in cache, look up the operator
   auto op = find_operator(op_name);

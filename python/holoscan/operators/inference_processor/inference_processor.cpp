@@ -91,7 +91,9 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
                                      Arg{"transmit_on_cuda", transmit_on_cuda},
                                      Arg{"config_path", config_path},
                                      Arg{"disable_transmitter", disable_transmitter}}) {
-    if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
+    if (cuda_stream_pool) {
+      this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool});
+    }
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
@@ -129,7 +131,9 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
 
     auto custom_kernels_process = custom_kernels.cast<py::dict>();
     for (const auto& [key, value] : custom_kernels_process) {
-      if (!py::isinstance<py::str>(value)) { custom_kernels_process[key] = py::str(value); }
+      if (!py::isinstance<py::str>(value)) {
+        custom_kernels_process[key] = py::str(value);
+      }
     }
 
     // convert from Python dict to InferenceProcessorOp::DataMap

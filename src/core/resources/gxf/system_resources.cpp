@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,7 +52,8 @@ void ThreadPool::setup(ComponentSpec& spec) {
              1L);
 }
 
-void ThreadPool::add(const std::shared_ptr<Operator>& op, bool pin_operator) {
+void ThreadPool::add(const std::shared_ptr<Operator>& op, bool pin_operator,
+                     std::vector<uint32_t> pin_cores) {
   // add a CPUThread argument if one did not already exist
   const auto& resource_map = op->resources();
   auto thread_arg_it = std::find_if(resource_map.begin(), resource_map.end(), [](const auto& r) {
@@ -62,8 +63,8 @@ void ThreadPool::add(const std::shared_ptr<Operator>& op, bool pin_operator) {
   if (thread_arg_it == resource_map.end()) {
     // Create a CPUThread resource and add it to the Operator's list of arguments
     const std::string thread_name = fmt::format("{}_cpu_thread", op->name());
-    auto cpu_thread =
-        fragment_->make_resource<CPUThread>(thread_name, Arg{"pin_entity", pin_operator});
+    auto cpu_thread = fragment_->make_resource<CPUThread>(
+        thread_name, Arg{"pin_entity", pin_operator}, Arg{"pin_cores", pin_cores});
     auto cpu_thread_resource = std::dynamic_pointer_cast<holoscan::Resource>(cpu_thread);
     if (!cpu_thread_resource) {
       throw std::runtime_error(
@@ -77,14 +78,56 @@ void ThreadPool::add(const std::shared_ptr<Operator>& op, bool pin_operator) {
   operators_.push_back(op);
 }
 
-void ThreadPool::add(std::vector<std::shared_ptr<Operator>> ops, bool pin_operator) {
-  for (const auto& op : ops) { add(op, pin_operator); }
+void ThreadPool::add(std::vector<std::shared_ptr<Operator>> ops, bool pin_operator,
+                     std::vector<uint32_t> pin_cores) {
+  for (const auto& op : ops) {
+    add(op, pin_operator, pin_cores);
+  }
+}
+
+void ThreadPool::add_realtime(const std::shared_ptr<Operator>& op, SchedulingPolicy sched_policy,
+                              bool pin_operator, std::vector<uint32_t> pin_cores,
+                              uint32_t sched_priority, uint64_t sched_runtime,
+                              uint64_t sched_deadline, uint64_t sched_period) {
+  // add a CPUThread argument if one did not already exist
+  const auto& resource_map = op->resources();
+  auto thread_arg_it = std::find_if(resource_map.begin(), resource_map.end(), [](const auto& r) {
+    // check type by whether pointer cast to CPUThread succeeds
+    return typeid(*r.second) == typeid(CPUThread);
+  });
+  if (thread_arg_it == resource_map.end()) {
+    // Create a CPUThread resource with real-time parameters and add it to the
+    // Operator's list of arguments
+    YAML::Node sched_policy_node;
+    sched_policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(sched_policy);
+    const std::string thread_name = fmt::format("{}_cpu_thread", op->name());
+    auto cpu_thread = fragment_->make_resource<CPUThread>(thread_name,
+                                                          Arg{"pin_entity", pin_operator},
+                                                          Arg{"pin_cores", pin_cores},
+                                                          Arg{"sched_policy", sched_policy_node},
+                                                          Arg{"sched_priority", sched_priority},
+                                                          Arg{"sched_runtime", sched_runtime},
+                                                          Arg{"sched_deadline", sched_deadline},
+                                                          Arg{"sched_period", sched_period});
+    auto cpu_thread_resource = std::dynamic_pointer_cast<holoscan::Resource>(cpu_thread);
+    if (!cpu_thread_resource) {
+      throw std::runtime_error(
+          "Failed to cast std::shared_ptr<CPUThread> to std::shared_ptr<holoscan::Resource>");
+    }
+    op->add_arg(cpu_thread_resource);
+  }
+
+  // store pointer to operators for later assignment to the entity group
+  // (need to do the assignment from GXFExecutor only after the Operator has been initialized)
+  operators_.push_back(op);
 }
 
 YAML::Node ThreadPool::to_yaml_node() const {
   YAML::Node node = GXFSystemResourceBase::to_yaml_node();
   node["operators in pool"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const auto& op : operators_) { node["operators in pool"].push_back(YAML::Node(op->name())); }
+  for (const auto& op : operators_) {
+    node["operators in pool"].push_back(YAML::Node(op->name()));
+  }
   return node;
 }
 

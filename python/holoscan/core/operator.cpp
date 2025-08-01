@@ -321,7 +321,9 @@ void init_operator(py::module_& m) {
           [](Operator& op, const py::str& name) -> std::optional<py::object> {
             auto resources = op.resources();
             auto res = resources.find(name);
-            if (res == resources.end()) { return py::none(); }
+            if (res == resources.end()) {
+              return py::none();
+            }
             return py::cast(res->second);
           },
           "name"_a,
@@ -388,7 +390,9 @@ void init_operator(py::module_& m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto op = obj.cast<std::shared_ptr<Operator>>();
-            if (op) { return op->description(); }
+            if (op) {
+              return op->description();
+            }
             return std::string("<Operator: None>");
           },
           R"doc(Return repr(self).)doc");
@@ -451,7 +455,9 @@ void PyOperatorSpec::py_param(const std::string& name, const py::object& default
 }
 
 py::object PyOperatorSpec::py_op() const {
-  if (auto py_op = py_op_.lock()) { return py::cast(py_op); }
+  if (auto py_op = py_op_.lock()) {
+    return py::cast(py_op);
+  }
   return py::none();
 }
 
@@ -584,7 +590,9 @@ PyOperator::TracingThreadLocal& PyOperator::get_tracing_data() {
   auto& data = gil_guarded_thread_local->data;
 
   // Return the cached thread-local data if it is already initialized
-  if (data.is_initialized) { return data; }
+  if (data.is_initialized) {
+    return data;
+  }
 
   try {
     if (data.dummy_thread.is_none()) {
@@ -653,7 +661,9 @@ void PyOperator::set_py_tracing() {
 
   try {
     // If tracing is not enabled, do nothing and return
-    if (!tracing_data.in_tracing) { return; }
+    if (!tracing_data.in_tracing) {
+      return;
+    }
 
 #if PY_VERSION_HEX >= 0x030D0000  // >= Python 3.13.0
     // Python 3.13 increased enforcement of thread safety
@@ -732,7 +742,7 @@ void PyOperator::set_py_tracing() {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     py_thread_state->cframe->current_frame =
         reinterpret_cast<_PyInterpreterFrame*>(tracing_data.py_last_frame);
-#else  // < Python 3.11.0
+#else                               // < Python 3.11.0
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     py_thread_state->frame = reinterpret_cast<PyFrameObject*>(tracing_data.py_last_frame);
 #endif
@@ -753,7 +763,7 @@ void PyOperator::set_py_tracing() {
     _PyEval_SetProfile(
         py_thread_state, tracing_data.c_profilefunc, tracing_data.c_profileobj.ptr());
     _PyEval_SetTrace(py_thread_state, tracing_data.c_tracefunc, tracing_data.c_traceobj.ptr());
-#else  // < Python 3.11.0
+#else                               // < Python 3.11.0
     py_thread_state->c_profilefunc = tracing_data.c_profilefunc;
     Py_XINCREF(tracing_data.c_profileobj.ptr());
     Py_XDECREF(py_thread_state->c_profileobj);
@@ -763,12 +773,12 @@ void PyOperator::set_py_tracing() {
     Py_XINCREF(tracing_data.c_traceobj.ptr());
     Py_XDECREF(py_thread_state->c_traceobj);
     py_thread_state->c_traceobj = tracing_data.c_traceobj.ptr();
-#if PY_VERSION_HEX >= 0x030A00B1  // >= Python 3.10.0 b1
+#if PY_VERSION_HEX >= 0x030A00B1    // >= Python 3.10.0 b1
     py_thread_state->cframe->use_tracing = 1;
-#else                             // < Python 3.10.0 b1
+#else                               // < Python 3.10.0 b1
     py_thread_state->use_tracing = 1;
-#endif                            // about Python 3.10.0 b1
-#endif                            // about Python 3.11.0
+#endif                              // about Python 3.10.0 b1
+#endif                              // about Python 3.11.0
   } catch (const std::exception& e) {
     HOLOSCAN_LOG_WARN("Exception occurred while setting trace/profile functions: {}", e.what());
     tracing_data.is_initialized = true;

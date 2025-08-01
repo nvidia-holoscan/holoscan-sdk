@@ -33,6 +33,7 @@
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/dataflow_tracker.hpp"
+#include "holoscan/core/errors.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/gxf/entity_group.hpp"
@@ -128,7 +129,9 @@ void Fragment::add_data_logger(const std::shared_ptr<DataLogger>& logger) {
 }
 
 void Fragment::config(const std::string& config_file, const std::string& prefix) {
-  if (config_) { HOLOSCAN_LOG_WARN("Config object was already created. Overwriting..."); }
+  if (config_) {
+    HOLOSCAN_LOG_WARN("Config object was already created. Overwriting...");
+  }
   if (is_composed_) {
     HOLOSCAN_LOG_WARN(
         "Graph has already been composed. Please make sure that graph composition is not dependent "
@@ -159,7 +162,9 @@ void Fragment::config(const std::string& config_file, const std::string& prefix)
 }
 
 void Fragment::config(std::shared_ptr<Config>& config) {
-  if (config_) { HOLOSCAN_LOG_WARN("Config object was already created. Overwriting..."); }
+  if (config_) {
+    HOLOSCAN_LOG_WARN("Config object was already created. Overwriting...");
+  }
   if (is_composed_) {
     HOLOSCAN_LOG_WARN(
         "Graph has already been composed. Please make sure that graph composition is not dependent "
@@ -203,7 +208,9 @@ OperatorGraph& Fragment::graph() {
 }
 
 std::shared_ptr<OperatorGraph> Fragment::graph_shared() {
-  if (!graph_) { graph_ = make_graph<OperatorFlowGraph>(); }
+  if (!graph_) {
+    graph_ = make_graph<OperatorFlowGraph>();
+  }
   return graph_;
 }
 
@@ -212,7 +219,9 @@ Executor& Fragment::executor() {
 }
 
 std::shared_ptr<Executor> Fragment::executor_shared() {
-  if (!executor_) { executor_ = make_executor<gxf::GXFExecutor>(); }
+  if (!executor_) {
+    executor_ = make_executor<gxf::GXFExecutor>();
+  }
   return executor_;
 }
 
@@ -221,7 +230,9 @@ void Fragment::scheduler(const std::shared_ptr<Scheduler>& scheduler) {
 }
 
 std::shared_ptr<Scheduler> Fragment::scheduler() {
-  if (!scheduler_) { scheduler_ = make_scheduler<GreedyScheduler>(); }
+  if (!scheduler_) {
+    scheduler_ = make_scheduler<GreedyScheduler>();
+  }
   return scheduler_;
 }
 
@@ -243,7 +254,9 @@ std::unordered_set<std::string> nested_yaml_map_keys_(YAML::Node yaml_node) {
     keys.emplace(key);
     if (value.IsMap()) {
       std::unordered_set<std::string> inner_keys = nested_yaml_map_keys_(it->second);
-      for (const auto& inner_key : inner_keys) { keys.emplace(key + "."s + inner_key); }
+      for (const auto& inner_key : inner_keys) {
+        keys.emplace(key + "."s + inner_key);
+      }
     }
   }
   return keys;
@@ -258,7 +271,9 @@ std::unordered_set<std::string> Fragment::config_keys() {
   for (const auto& yaml_node : yaml_nodes) {
     if (yaml_node.IsMap()) {
       auto node_keys = nested_yaml_map_keys_(yaml_node);
-      for (const auto& k : node_keys) { all_keys.insert(k); }
+      for (const auto& k : node_keys) {
+        all_keys.insert(k);
+      }
     }
   }
   return all_keys;
@@ -273,7 +288,9 @@ ArgList Fragment::from_config(const std::string& key) {
   size_t pos = 0;
   while (pos != std::string::npos) {
     size_t next_pos = key.find_first_of('.', pos);
-    if (next_pos == std::string::npos) { break; }
+    if (next_pos == std::string::npos) {
+      break;
+    }
     key_parts.push_back(key.substr(pos, next_pos - pos));
     pos = next_pos + 1;
   }
@@ -319,6 +336,42 @@ ArgList Fragment::from_config(const std::string& key) {
   return args;
 }
 
+bool Fragment::register_service_from(Fragment* fragment, std::string_view id) {
+  if (!fragment) {
+    return false;
+  }
+
+  const std::string id_str{id};
+  bool found_any = false;
+
+  // Lock both registries (always lock lower-address first to avoid dead-lock)
+  auto* first = this < fragment ? this : fragment;
+  auto* second = this < fragment ? fragment : this;
+
+  std::unique_lock<std::shared_mutex> l1(first->fragment_service_registry_mutex_, std::defer_lock);
+  std::shared_lock<std::shared_mutex> l2(second->fragment_service_registry_mutex_, std::defer_lock);
+  std::lock(l1, l2);
+
+  for (const auto& [service_key, service] : fragment->fragment_services_by_key_) {
+    if (service_key.id == id_str) {
+      fragment_services_by_key_[service_key] = service;
+      found_any = true;
+    }
+  }
+
+  for (const auto& [resource, service_key] : fragment->fragment_resource_to_service_key_map_) {
+    if (service_key.id == id_str) {
+      HOLOSCAN_LOG_DEBUG("register_service_from: resource = {} (0x{:x})",
+                         resource->name(),
+                         reinterpret_cast<uint64_t>(resource.get()));
+      fragment_resource_to_service_key_map_.insert_or_assign(resource, service_key);
+      fragment_resource_services_by_name_[resource->name()] = resource;
+      found_any = true;
+    }
+  }
+  return found_any;
+}
+
 const std::shared_ptr<Operator>& Fragment::start_op() {
   if (!start_op_) {
     // According to `GxfEntityCreateInfo` definition, the entity name should not start with
@@ -336,12 +389,27 @@ void Fragment::add_operator(const std::shared_ptr<Operator>& op) {
 
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Operator>& downstream_op) {
-  add_flow(upstream_op, downstream_op, {});
+  add_flow(upstream_op, downstream_op, IOSpec::ConnectorType::kDefault);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  add_flow(upstream_op, downstream_op, port_pairs, IOSpec::ConnectorType::kDefault);
+}
+
+void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Operator>& downstream_op,
+                        const IOSpec::ConnectorType connector_type) {
+  add_flow(upstream_op, downstream_op, {}, connector_type);
+}
+
+void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Operator>& downstream_op,
+                        std::set<std::pair<std::string, std::string>> port_pairs,
+                        const IOSpec::ConnectorType connector_type) {
+  const std::string async_buffer_err_msg =
+      "kAsyncBuffer is only allowed between a single input and output port in one-to-one mapping.";
   auto port_map = std::make_shared<OperatorEdgeDataElementType>();
 
   auto upstream_op_spec = upstream_op->spec();
@@ -376,6 +444,12 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
         return;
       }
 
+      if (connector_type == IOSpec::ConnectorType::kAsyncBuffer) {
+        HOLOSCAN_LOG_ERROR(
+            "Execution port connection cannot be added with IOSpec::ConnectorType::kAsyncBuffer.");
+        return;
+      }
+
       // Add the control flow between the operators
       (*port_map)[Operator::kOutputExecPortName] = {Operator::kInputExecPortName};
 
@@ -388,7 +462,9 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     }
     if (op_outputs.size() > 1) {
       std::vector<std::string> output_labels;
-      for (const auto& [key, _] : op_outputs) { output_labels.push_back(key); }
+      for (const auto& [key, _] : op_outputs) {
+        output_labels.push_back(key);
+      }
 
       HOLOSCAN_LOG_ERROR(
           "The upstream operator has more than one output port ({}) so mapping should be "
@@ -398,7 +474,9 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     }
     if (op_inputs.size() > 1) {
       std::vector<std::string> input_labels;
-      for (const auto& [key, _] : op_inputs) { input_labels.push_back(key); }
+      for (const auto& [key, _] : op_inputs) {
+        input_labels.push_back(key);
+      }
       HOLOSCAN_LOG_ERROR(
           "The downstream operator has more than one input port ({}) so mapping should be "
           "specified "
@@ -417,6 +495,20 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     if (port_map->find(key) == port_map->end()) {
       (*port_map)[key] = std::set<std::string, std::less<>>();
       output_labels.push_back(key);  // maintain the order of output labels
+    } else {
+      // Key is already there, so a single output port is connected to multiple
+      // input ports. This is not allowed for kAsyncBuffer
+      if (connector_type == IOSpec::ConnectorType::kAsyncBuffer) {
+        // throw a runtime error
+        auto err_msg = fmt::format(
+            "add_flow failed. The upstream operator ({}) is connected to multiple input ports of "
+            "the downstream operator ({}). This is not allowed for "
+            "IOSpec::ConnectorType::kAsyncBuffer. {}",
+            upstream_op->name(),
+            downstream_op->name(),
+            async_buffer_err_msg);
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+      }
     }
     (*port_map)[key].insert(value);
   }
@@ -584,6 +676,74 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         std::move_iterator<str_iter>(new_input_labels.end()));
     new_input_labels.clear();
     // Do not use 'new_input_labels' after this point
+
+    // Check if the output port already has a connector type of kAsyncBuffer
+    if (op_outputs[output_label]->connector_type() == IOSpec::ConnectorType::kAsyncBuffer) {
+      auto err_msg = fmt::format(
+          "add_flow failed. The upstream operator ({})'s output port '{}' is already connected "
+          "via IOSpec::ConnectorType::kAsyncBuffer. "
+          "Connecting the output port to other input ports ({}) is not allowed. {}",
+          upstream_op->name(),
+          output_label,
+          fmt::join(input_labels, ", "),
+          async_buffer_err_msg);
+      throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+    }
+
+    // Check if the upstream operator's output port is
+    // already connected to other input ports.
+    if (connector_type == IOSpec::ConnectorType::kAsyncBuffer &&
+        graph().get_outdegree(upstream_op, output_label) > 0) {
+      auto err_msg = fmt::format(
+          "add_flow failed. The upstream operator ({})'s output port '{}' is already connected to "
+          "other input ports. It cannot be connected to the downstream operator ({})'s input port "
+          "'{}' with the connector type IOSpec::ConnectorType::kAsyncBuffer. {}",
+          upstream_op->name(),
+          output_label,
+          downstream_op->name(),
+          *(input_labels.begin()),
+          async_buffer_err_msg);
+      throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+    }
+
+    if (connector_type == IOSpec::ConnectorType::kAsyncBuffer) {
+      // if the connector type is kAsyncBuffer, then both the upstream and
+      // downstream operators must be updated with the
+      // IOSpec::ConnectorType::kAsyncBuffer for the connector type.
+      // update the upstream operator's output port with the kAsyncBuffer connector type
+      if (op_outputs[output_label]->connector_type() != IOSpec::ConnectorType::kDefault &&
+          op_outputs[output_label]->connector_type() != IOSpec::ConnectorType::kAsyncBuffer) {
+        auto err_msg = fmt::format(
+            "add_flow failed. The upstream operator ({})'s output port '{}' is already assigned a "
+            "non-default and non-(async lock-free buffer) connector. Please check the connector "
+            "type "
+            "of output port '{}' of {} operator. Currently connected connector type is {}.",
+            upstream_op->name(),
+            output_label,
+            output_label,
+            upstream_op->name(),
+            (unsigned int)op_outputs[output_label]->connector_type());
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+      }
+      if (op_inputs[*(input_labels.begin())]->connector_type() != IOSpec::ConnectorType::kDefault &&
+          op_inputs[*(input_labels.begin())]->connector_type() !=
+              IOSpec::ConnectorType::kAsyncBuffer) {
+        auto err_msg = fmt::format(
+            "add_flow failed. The downstream operator ({})'s input port '{}' is already assigned a "
+            "non-default and non-(async lock-free buffer) connector. Please check the connector "
+            "type "
+            "of input port '{}' of {} operator. Currently connected connector type is {}.",
+            downstream_op->name(),
+            *(input_labels.begin()),
+            *(input_labels.begin()),
+            downstream_op->name(),
+            (unsigned int)op_inputs[*(input_labels.begin())]->connector_type());
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+      }
+      op_outputs[output_label]->connector(IOSpec::ConnectorType::kAsyncBuffer);
+      // update the downstream operator's input port with the kAsyncBuffer connector type
+      op_inputs[*(input_labels.begin())]->connector(IOSpec::ConnectorType::kAsyncBuffer);
+    }
   }
 
   upstream_op->set_self_shared(upstream_op);
@@ -594,7 +754,9 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
 void Fragment::set_dynamic_flows(
     const std::shared_ptr<Operator>& op,
     const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func) {
-  if (op) { op->set_dynamic_flows(dynamic_flow_func); }
+  if (op) {
+    op->set_dynamic_flows(dynamic_flow_func);
+  }
 }
 
 void Fragment::compose() {}
@@ -667,13 +829,17 @@ FragmentPortMap Fragment::port_info() const {
     // set of input port names
     std::unordered_set<std::string> input_names;
     input_names.reserve(op_spec->inputs().size());
-    for (auto& in : op_spec->inputs()) { input_names.insert(in.first); }
+    for (auto& in : op_spec->inputs()) {
+      input_names.insert(in.first);
+    }
     HOLOSCAN_LOG_TRACE("\t\tadded {} inputs", input_names.size());
 
     // set of output port names
     std::unordered_set<std::string> output_names;
     output_names.reserve(op_spec->outputs().size());
-    for (auto& out : op_spec->outputs()) { output_names.insert(out.first); }
+    for (auto& out : op_spec->outputs()) {
+      output_names.insert(out.first);
+    }
     HOLOSCAN_LOG_TRACE("\t\tadded {} outputs", output_names.size());
 
     // set of multi-receiver parameter names
@@ -708,8 +874,27 @@ void Fragment::stop_execution(const std::string& op_name) {
     // (`get_nodes()` returns the nodes in the order they were added to the graph.)
     // If needed, we can use more sophisticated termination logic to stop the operators
     // (e.g., monitoring the operator statuses and stopping the operators when they are finished).
-    for (auto& op : graph().get_nodes()) { op->stop_execution(); }
+    for (auto& op : graph().get_nodes()) {
+      op->stop_execution();
+    }
   }
+}
+
+void Fragment::shutdown_data_loggers() {
+  HOLOSCAN_LOG_DEBUG("Fragment '{}': Starting data logger shutdown", name());
+  // Explicitly stop background threads and shutdown resources before clearing the vector
+  // This ensures proper cleanup even if external shared_ptr references exist
+  for (auto& data_logger : data_loggers_) {
+    if (!data_logger)
+      continue;
+    try {
+      data_logger->shutdown();
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_ERROR(
+          "Fragment '{}': Exception during data logger shutdown: {}", name(), e.what());
+    }
+  }
+  data_loggers_.clear();
 }
 
 void Fragment::reset_graph_entities() {
@@ -718,11 +903,17 @@ void Fragment::reset_graph_entities() {
   // call to `GxfContextDestroy` to avoid a segfault in the `nvidia::gxf::GraphEntity` destructor.
   // This method is invoked by the GXFExecutor::run_gxf_graph() function and during the Fragment
   // destructor to ensure proper cleanup of graph entity resources.
-  for (auto& op : graph().get_nodes()) { op->reset_graph_entities(); }
+  for (auto& op : graph().get_nodes()) {
+    op->reset_graph_entities();
+  }
   auto gxf_sch = std::dynamic_pointer_cast<gxf::GXFScheduler>(scheduler());
-  if (gxf_sch) { gxf_sch->reset_graph_entities(); }
+  if (gxf_sch) {
+    gxf_sch->reset_graph_entities();
+  }
   auto gxf_network_context = std::dynamic_pointer_cast<gxf::GXFNetworkContext>(network_context());
-  if (gxf_network_context) { gxf_network_context->reset_graph_entities(); }
+  if (gxf_network_context) {
+    gxf_network_context->reset_graph_entities();
+  }
 }
 
 void Fragment::reset_state() {

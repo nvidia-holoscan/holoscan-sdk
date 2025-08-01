@@ -33,7 +33,7 @@ exclude = [
 ]
 line-length = 100
 fix = false  # don't automatically apply fixes (can override with ruff --fix)
-target-version = "py39"
+target-version = "py310"
 
 
 [tool.ruff.lint]
@@ -90,3 +90,9 @@ order-by-type = true
 # Declare the default aliases.
 cupy = "cp"
 numpy = "np"
+
+[tool.pytest.ini_options]
+markers = [
+  "slow: mark test as slow to run (opt-in via --run-slow)",
+  "realtime: marks tests as requiring real-time Linux kernel configuration (opt-in via --run-realtime)",
+]

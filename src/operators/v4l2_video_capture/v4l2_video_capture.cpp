@@ -44,7 +44,9 @@
 #define POSIX_CALL(stmt)                                                             \
   ({                                                                                 \
     int _result;                                                                     \
-    do { _result = stmt; } while ((_result == -1) && (errno == EINTR));              \
+    do {                                                                             \
+      _result = stmt;                                                                \
+    } while ((_result == -1) && (errno == EINTR));                                   \
     if (_result == -1) {                                                             \
       throw std::runtime_error(                                                      \
           fmt::format("Call `{}` in line {} of file {} failed with '{}' (errno {})", \
@@ -258,7 +260,9 @@ static void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t heigh
   jpeg_mem_src(&cinfo, src_buf, jpg_size);
   int rc = jpeg_read_header(&cinfo, TRUE);
 
-  if (rc != 1) { throw std::runtime_error("Failed to read jpeg header"); }
+  if (rc != 1) {
+    throw std::runtime_error("Failed to read jpeg header");
+  }
 
   jpeg_start_decompress(&cinfo);
 
@@ -367,7 +371,9 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
 
   // Create tensor or video buffer
   auto out_message = nvidia::gxf::Entity::New(context.context());
-  if (!out_message) { throw std::runtime_error("Failed to allocate video output; terminating."); }
+  if (!out_message) {
+    throw std::runtime_error("Failed to allocate video output; terminating.");
+  }
 
   if (pass_through_ && ((v4l2_to_gxf_format_ == v4l2_to_gxf_format.end()) ||
                         (v4l2_to_gxf_format_->second->format_ ==
@@ -376,7 +382,9 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
     // (e.g. MJPEG, H264) or YUYV (common for USB cameras)), output as Tensor
     nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>> tensor =
         out_message.value().add<nvidia::gxf::Tensor>();
-    if (!tensor) { throw std::runtime_error("Failed to allocate tensor; terminating."); }
+    if (!tensor) {
+      throw std::runtime_error("Failed to allocate tensor; terminating.");
+    }
 
     nvidia::gxf::Shape shape;
     nvidia::gxf::PrimitiveType element_type;
@@ -482,6 +490,7 @@ void V4L2VideoCaptureOp::stop() {
         HOLOSCAN_CUDA_CALL(cudaFreeHost(buffers_[i].ptr));
         break;
       case nvidia::gxf::MemoryStorageType::kDevice:
+      case nvidia::gxf::MemoryStorageType::kCudaManaged:
         HOLOSCAN_CUDA_CALL(cudaFree(buffers_[i].ptr));
         break;
       case nvidia::gxf::MemoryStorageType::kSystem:
@@ -581,6 +590,7 @@ void V4L2VideoCaptureOp::v4l2_request_buffers() {
                                        "Failed to allocate CUDA host memory");
         break;
       case nvidia::gxf::MemoryStorageType::kDevice:
+      case nvidia::gxf::MemoryStorageType::kCudaManaged:
         HOLOSCAN_CUDA_CALL_THROW_ERROR(
             cudaMallocManaged(&buffers_[i].ptr, buf.length, cudaMemAttachGlobal),
             "Failed to allocate CUDA malloced memory");
@@ -588,7 +598,9 @@ void V4L2VideoCaptureOp::v4l2_request_buffers() {
       case nvidia::gxf::MemoryStorageType::kSystem:
         buffers_[i].ptr =
             mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.m.offset);
-        if (MAP_FAILED == buffers_[i].ptr) { throw std::runtime_error("MMAP failed"); }
+        if (MAP_FAILED == buffers_[i].ptr) {
+          throw std::runtime_error("MMAP failed");
+        }
         break;
       default:
         throw std::runtime_error("Unhandled memory type");
@@ -652,12 +664,11 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
     bool cant_convert_to_rgba = false;
     FormatList::const_iterator it = v4l2_to_gxf_format.begin();
     while (it != v4l2_to_gxf_format.end()) {
-      auto v4l_format =
-          std::find_if(v4l2_formats.cbegin(),
-                       v4l2_formats.cend(),
-                       [pixel_format = it->first](const v4l2_fmtdesc& format_desc) {
-                         return pixel_format == format_desc.pixelformat;
-                       });
+      auto v4l_format = std::find_if(v4l2_formats.cbegin(),
+                                     v4l2_formats.cend(),
+                                     [pixel_format = it->first](const v4l2_fmtdesc& format_desc) {
+                                       return pixel_format == format_desc.pixelformat;
+                                     });
       if (v4l_format != v4l2_formats.end()) {
         // if pass through is disabled we also have to be able to convert that format to RGBA
         if (!pass_through_) {
@@ -757,7 +768,9 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
       if ((height_.get() == 0) || (frmsize.discrete.height == height_.get())) {
         supported_formats += 1;
       }
-      if (supported_formats == 2) { break; }
+      if (supported_formats == 2) {
+        break;
+      }
       frmsize.index++;
     }
     if (supported_formats != 2) {
@@ -1011,9 +1024,13 @@ void V4L2VideoCaptureOp::v4l2_read_buffer(v4l2_buffer& buf) {
 
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = capture_memory_method_;
-    do { result = ioctl(fd_, VIDIOC_DQBUF, &buf); } while ((result == -1) && (errno == EINTR));
+    do {
+      result = ioctl(fd_, VIDIOC_DQBUF, &buf);
+    } while ((result == -1) && (errno == EINTR));
     if (result == -1) {
-      if (errno == EAGAIN) { continue; }
+      if (errno == EAGAIN) {
+        continue;
+      }
       throw std::runtime_error(
           fmt::format("VIDIOC_DQBUF failed with `{}` (errno {})", strerror(errno), errno));
     }

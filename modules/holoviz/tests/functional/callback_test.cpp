@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,9 @@ class Callback : public TestWindow {
   void SetUp() override {
     TestWindow::SetUp();
 
-    if (glfwGetPlatform() != GLFW_PLATFORM_X11) { GTEST_SKIP() << "Test runs on X11 only."; }
+    if (glfwGetPlatform() != GLFW_PLATFORM_X11) {
+      GTEST_SKIP() << "Test runs on X11 only.";
+    }
 
     dpy_ = XOpenDisplay(NULL);
     ASSERT_NE(dpy_, nullptr) << "XOpenDisplay() failed";
@@ -53,7 +55,9 @@ class Callback : public TestWindow {
   }
 
   void TearDown() override {
-    if (dpy_) { XCloseDisplay(dpy_); }
+    if (dpy_) {
+      XCloseDisplay(dpy_);
+    }
     TestWindow::TearDown();
   }
 
@@ -74,10 +78,16 @@ class Callback : public TestWindow {
     event.y_root = 1;
     event.same_screen = True;
 
-    if (modifiers.shift) { event.state |= ShiftMask; }
-    if (modifiers.control) { event.state |= ControlMask; }
-    if (modifiers.alt) { event.state |= Mod1Mask; }
-    // for caps lock and num lock we need to send actual events since thet are not part of the
+    if (modifiers.shift) {
+      event.state |= ShiftMask;
+    }
+    if (modifiers.control) {
+      event.state |= ControlMask;
+    }
+    if (modifiers.alt) {
+      event.state |= Mod1Mask;
+    }
+    // for caps lock and num lock we need to send actual events since they are not part of the
     // XSendEvent() modifiers
     if (modifiers.caps_lock) {
       event.keycode = XKeysymToKeycode(dpy_, XK_Caps_Lock);

@@ -35,7 +35,9 @@ YAML::Node ComponentBase::to_yaml_node() const {
     node["fragment"] = YAML::Null;
   }
   node["args"] = YAML::Node(YAML::NodeType::Sequence);
-  for (const Arg& arg : args_) { node["args"].push_back(arg.to_yaml_node()); }
+  for (const Arg& arg : args_) {
+    node["args"].push_back(arg.to_yaml_node());
+  }
   return node;
 }
 
@@ -112,13 +114,17 @@ void ComponentBase::reset_graph_entities() {
         case ArgContainerType::kNative: {
           auto condition = std::any_cast<std::shared_ptr<Condition>>(arg.value());
           auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
-          if (gxf_condition) { gxf_condition->reset_gxf_graph_entity(); }
+          if (gxf_condition) {
+            gxf_condition->reset_gxf_graph_entity();
+          }
         } break;
         case ArgContainerType::kVector: {
           auto conditions = std::any_cast<std::vector<std::shared_ptr<Condition>>>(arg.value());
           for (auto& condition : conditions) {
             auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
-            if (gxf_condition) { gxf_condition->reset_gxf_graph_entity(); }
+            if (gxf_condition) {
+              gxf_condition->reset_gxf_graph_entity();
+            }
           }
         } break;
         default:

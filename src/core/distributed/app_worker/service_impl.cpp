@@ -41,7 +41,10 @@ grpc::Status AppWorkerServiceImpl::GetAvailablePorts(
 
   // Create a vector of uint32_t from the used_ports
   std::vector<int> used_ports;
-  for (const auto& port : request->used_ports()) { used_ports.push_back(port); }
+  used_ports.reserve(request->used_ports_size());
+  for (const auto& port : request->used_ports()) {
+    used_ports.push_back(port);
+  }
 
   // Get preferred network ports from environment variable
   auto prefer_ports = get_preferred_network_ports("HOLOSCAN_UCX_PORTS");
@@ -51,7 +54,9 @@ grpc::Status AppWorkerServiceImpl::GetAvailablePorts(
                                                            used_ports,
                                                            prefer_ports);
 
-  for (int port : unused_ports) { response->add_unused_ports(port); }
+  for (int port : unused_ports) {
+    response->add_unused_ports(port);
+  }
 
   return grpc::Status::OK;
 }
@@ -91,9 +96,15 @@ grpc::Status AppWorkerServiceImpl::GetFragmentInfo(
       holoscan::distributed::MultiFragmentPortInfo_OperatorPortInfo op_info;
       op_info.set_operator_name(op_name);
       const auto& [in_names, out_names, receiver_names] = port_tuple;
-      for (const auto& in_name : in_names) { op_info.add_input_names(in_name); }
-      for (const auto& out_name : out_names) { op_info.add_output_names(out_name); }
-      for (const auto& recv_name : receiver_names) { op_info.add_receiver_names(recv_name); }
+      for (const auto& in_name : in_names) {
+        op_info.add_input_names(in_name);
+      }
+      for (const auto& out_name : out_names) {
+        op_info.add_output_names(out_name);
+      }
+      for (const auto& recv_name : receiver_names) {
+        op_info.add_receiver_names(recv_name);
+      }
       frag_info.add_operators_info()->CopyFrom(op_info);
     }
 

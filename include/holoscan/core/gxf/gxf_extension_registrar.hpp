@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,13 +91,17 @@ class GXFExtensionRegistrar {
       case TypeKind::kExtension: {
         gxf_extension_info_t extension_info;
         auto result = GxfExtensionInfo(context_, tid, &extension_info);
-        if (!result) { return false; }
+        if (!result) {
+          return false;
+        }
         break;
       }
       case TypeKind::kComponent: {
         gxf_component_info_t component_info;
         auto result = GxfComponentInfo(context_, tid, &component_info);
-        if (!result) { return false; }
+        if (!result) {
+          return false;
+        }
         break;
       }
     }
@@ -113,7 +117,9 @@ class GXFExtensionRegistrar {
    */
   gxf_tid_t allocate_tid(TypeKind kind) {
     gxf_tid_t tid = create_random_tid();
-    while (is_allocated(tid, kind)) { tid = create_random_tid(); }
+    while (is_allocated(tid, kind)) {
+      tid = create_random_tid();
+    }
     return tid;
   }
 

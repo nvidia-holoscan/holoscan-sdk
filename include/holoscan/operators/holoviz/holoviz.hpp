@@ -1222,7 +1222,9 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
       default:
         break;
     }
-    for (auto&& view : input_spec.views_) { node["views"].push_back(view); }
+    for (auto&& view : input_spec.views_) {
+      node["views"].push_back(view);
+    }
     return node;
   }
 
@@ -1242,7 +1244,9 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
     try {
       const auto maybe_input_type =
           holoscan::ops::HolovizOp::inputTypeFromString(node["type"].as<std::string>());
-      if (!maybe_input_type) { return false; }
+      if (!maybe_input_type) {
+        return false;
+      }
 
       input_spec.tensor_name_ = node["name"].as<std::string>();
       input_spec.type_ = maybe_input_type.value();
@@ -1255,7 +1259,9 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
           if (node["image_format"]) {
             const auto maybe_image_format = holoscan::ops::HolovizOp::imageFormatFromString(
                 node["image_format"].as<std::string>());
-            if (maybe_image_format) { input_spec.image_format_ = maybe_image_format.value(); }
+            if (maybe_image_format) {
+              input_spec.image_format_ = maybe_image_format.value();
+            }
           }
           if (node["yuv_model_conversion"]) {
             const auto maybe_yuv_model_conversion =
@@ -1268,7 +1274,9 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec> {
           if (node["yuv_range"]) {
             const auto maybe_yuv_range =
                 holoscan::ops::HolovizOp::yuvRangeFromString(node["yuv_range"].as<std::string>());
-            if (maybe_yuv_range) { input_spec.yuv_range_ = maybe_yuv_range.value(); }
+            if (maybe_yuv_range) {
+              input_spec.yuv_range_ = maybe_yuv_range.value();
+            }
           }
           if (node["x_chroma_location"]) {
             const auto maybe_x_chroma_location = holoscan::ops::HolovizOp::chromaLocationFromString(
@@ -1346,7 +1354,9 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
     node["offset_y"] = view.offset_y_;
     node["width"] = view.width_;
     node["height"] = view.height_;
-    if (view.matrix_.has_value()) { node["matrix"] = view.matrix_.value(); }
+    if (view.matrix_.has_value()) {
+      node["matrix"] = view.matrix_.value();
+    }
     return node;
   }
 
@@ -1368,7 +1378,9 @@ struct YAML::convert<holoscan::ops::HolovizOp::InputSpec::View> {
       view.offset_y_ = node["offset_y"].as<float>(view.offset_y_);
       view.width_ = node["width"].as<float>(view.width_);
       view.height_ = node["height"].as<float>(view.height_);
-      if (node["matrix"]) { view.matrix_ = node["matrix"].as<std::array<float, 16>>(); }
+      if (node["matrix"]) {
+        view.matrix_ = node["matrix"].as<std::array<float, 16>>();
+      }
 
       return true;
     } catch (const std::exception& e) {
@@ -1401,7 +1413,9 @@ struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
    * @return true if successful, false otherwise.
    */
   static bool decode(const Node& node, holoscan::ops::HolovizOp::ColorSpace& color_space) {
-    if (!node.IsScalar()) { return false; }
+    if (!node.IsScalar()) {
+      return false;
+    }
 
     // YAML is using exceptions, catch them
     try {

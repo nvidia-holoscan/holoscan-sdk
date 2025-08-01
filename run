@@ -686,6 +686,7 @@ build() {
                 cmake -S . -B ${build_path} -G Ninja \
                     -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
                     -D HOLOSCAN_BUILD_PYTHON=${build_python} \
+                    -D HOLOSCAN_PYTHON_EXAMPLES=${build_python} \
                     -D HOLOSCAN_ENABLE_CLANG_TIDY=${enable_clang_tidy} \
                     -D CMAKE_CUDA_ARCHITECTURES='${cuda_archs}' \
                     -D CMAKE_BUILD_TYPE=${build_type} \
@@ -810,15 +811,24 @@ lint() {
     # Since we care about the success/failure of cpplint and not of grep, we:
     #  1. use `set -o pipefail` to fail if `cpplint` fails
     #  2. use `grep -v ... || true` to ignore whether grep hid any output
+    #
+    # Reasoning for specific filters applied:
+    #   - -whitespace/indent_namespace  : many false positives in cpplint 2.0.2
+    #   - -build/c++17                  : disallows #include <filesystem>
     run_command set -o pipefail && run_command ${HOLOSCAN_PY_EXE} -m cpplint \
             --exclude .cache \
+            --exclude .local \
+            --exclude tmp \
             --exclude build \
             --exclude install \
             --exclude build-\* \
             --exclude install-\* \
+            --exclude gxf-build-\* \
             --exclude src/core/distributed/generated \
+            --exclude src/core/services/generated \
             --exclude modules/holoviz/thirdparty/nvpro_core \
             --exclude examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu \
+            --filter=-whitespace/indent_namespace,-build/c++17 \
             --recursive $DIR_TO_RUN \
         | { grep -v "Ignoring\|Done processing" || true; } || exit_code=1
 
@@ -828,7 +838,7 @@ lint() {
     # `# codespell-ignore` at the end of the line
     run_command codespell --version
     run_command codespell $DIR_TO_RUN --skip="*.onnx,NOTICE.txt,*.toml,./docs/vale/styles/write-good" \
-        --ignore-regex=".*codespell-ignore$" || exit_code=1
+        --ignore-regex=".*codespell-ignore$" --toml $(pwd)/pyproject.toml || exit_code=1
 
     c_echo W "Linting CMake"
     run_command cmakelint --filter=-whitespace/indent,-linelength,-readability/wonkycase,-convention/filename,-package/stdargs \
@@ -1135,6 +1145,7 @@ launch() {
         -e CUPY_CACHE_DIR=${container_top}/.cupy/kernel_cache \
         --ipc=host \
         --cap-add=CAP_SYS_PTRACE \
+        --cap-add=CAP_SYS_NICE \
         --ulimit memlock=-1 \
         --ulimit stack=67108864 \
         ${extra_args[@]} \
@@ -1144,7 +1155,7 @@ launch() {
             if [ -f \"\${gxf_path}\" ]; then
                 export PYTHONPATH=\$PYTHONPATH:\$(realpath \$(dirname "\$gxf_path")/../..)
             fi;
-            $run_cmd" 
+            $run_cmd"
 }
 
 vscode_desc() { c_echo 'Launch VSCode in DevContainer

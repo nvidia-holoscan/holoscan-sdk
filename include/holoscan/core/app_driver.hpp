@@ -20,6 +20,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <atomic>
 #include <future>
 #include <memory>
 #include <queue>
@@ -38,6 +39,21 @@
 #include "holoscan/core/io_spec.hpp"
 
 namespace holoscan {
+
+/**
+ * @brief The default TCP/IP segment size used by UCX.
+ *
+ * If the user has not explicitly set UCX_TCP_TX_SEG_SIZE and UCX_TCP_RX_SEG_SIZE,
+ * they will be set to this default value.
+ *
+ * UCX's default value of 8k results in slow TCP/IP + cuda_copy performance.
+ * Changing to 128k should substantially improve performance of GPU tensor transfers.
+ *
+ * If this value is reduced from 128k, it will be necessary to also reduce
+ * kDefaultUcxSerializationBufferSize for UcxSerializationBuffer to a smaller
+ * value as that buffer must be smaller than this segment size.
+ */
+constexpr const char* kDefaultTCPIPSegmentSize = "128k";  // 128 KiB
 
 // Forward declarations
 struct AppWorkerTerminationStatus;
@@ -196,6 +212,16 @@ class AppDriver {
   /// Allow AppDriverServiceImpl to set the app status
   void set_status(AppStatus status);
 
+  /// Start the fragment services
+  bool handle_driver_start(const std::string_view& server_ip);
+
+  /**
+   * @brief Handle driver shutdown for fragment services
+   *
+   * @return true if all services shut down successfully, false if any failures occurred
+   */
+  bool handle_driver_shutdown() noexcept;
+
  private:
   friend class distributed::AppDriverServer;  ///< Allow AppDriverServer to access private members.
 
@@ -307,6 +333,10 @@ class AppDriver {
 
   /// ids of workers that are currently running root fragments
   std::set<std::string> current_root_workers_;
+
+  /// Flag to prevent rescheduling
+  bool scheduling_started_{false};
+  std::mutex scheduling_mutex_;  ///< Mutex for fragment scheduling.
 
   /// Helper method to update root fragments after a fragment is terminated
   void update_root_fragments(const FragmentGraph& graph,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #include <netdb.h>       // for getaddrinfo(), gai_strerror(), freeaddrinfo(), addrinfo
 #include <netinet/in.h>  // for sockaddr_in
 #include <unistd.h>
+#include <cstdio>
 #include <cstdlib>  // for rand()
 #include <cstring>  // for memset()
 #include <iostream>
@@ -35,11 +36,15 @@ namespace holoscan {
 class Socket {
  public:
   explicit Socket(int domain, int type, int protocol) : sockfd_(socket(domain, type, protocol)) {
-    if (sockfd_ < 0) { throw std::runtime_error("Error creating socket"); }
+    if (sockfd_ < 0) {
+      throw std::runtime_error("Error creating socket");
+    }
   }
 
   ~Socket() {
-    if (sockfd_ >= 0) { close(sockfd_); }
+    if (sockfd_ >= 0) {
+      close(sockfd_);
+    }
     sockfd_ = -1;
   }
 
@@ -68,7 +73,7 @@ class AddrInfo {
 };
 
 static bool is_port_available(int port) {
-  struct addrinfo hints {};
+  struct addrinfo hints{};
   // Set up the hints structure
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
@@ -91,12 +96,16 @@ static bool is_port_available(int port) {
           continue;
         }
 
-        if (bind(sockfd.descriptor(), p->ai_addr, p->ai_addrlen) == 0) { return true; }
+        if (bind(sockfd.descriptor(), p->ai_addr, p->ai_addrlen) == 0) {
+          return true;
+        }
       } catch (const std::exception& e) {
         HOLOSCAN_LOG_ERROR("Error creating socket: {}", e.what());
       }
     }
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Error creating addrinfo: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Error creating addrinfo: {}", e.what());
+  }
 
   return false;
 }
@@ -119,7 +128,9 @@ std::vector<int> get_unused_network_ports(uint32_t num_ports, uint32_t min_port,
   };
 
   // Try to insert prefer_ports first
-  for (int port : prefer_ports) { try_insert_port(port); }
+  for (int port : prefer_ports) {
+    try_insert_port(port);
+  }
 
   if (!prefer_ports.empty()) {
     min_port = prefer_ports.back() + 1;
@@ -139,9 +150,13 @@ std::vector<int> get_unused_network_ports(uint32_t num_ports, uint32_t min_port,
 }
 
 std::vector<int> get_preferred_network_ports(const char* env_var_name) {
-  if (env_var_name == nullptr || env_var_name[0] == '\0') { return {}; }
+  if (env_var_name == nullptr || env_var_name[0] == '\0') {
+    return {};
+  }
   const char* preferred_ports_str = std::getenv(env_var_name);
-  if (preferred_ports_str == nullptr || preferred_ports_str[0] == '\0') { return {}; }
+  if (preferred_ports_str == nullptr || preferred_ports_str[0] == '\0') {
+    return {};
+  }
 
   std::vector<int> preferred_ports;
   std::istringstream iss(preferred_ports_str);
@@ -207,7 +222,8 @@ std::string get_associated_local_ip(const std::string& remote_ip) {
   HOLOSCAN_LOG_DEBUG("Querying local IP for remote IP '{}': {}", remote_ip, resolved_ip);
 
   for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
-    if (ifa->ifa_addr == nullptr) continue;
+    if (ifa->ifa_addr == nullptr)
+      continue;
 
     std::string ip = convert_sockaddr_to_ip(ifa->ifa_addr);
     HOLOSCAN_LOG_DEBUG("  checking interface: {}, IP: {}", ifa->ifa_name, ip);

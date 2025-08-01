@@ -31,9 +31,9 @@ from holoscan.resources import CudaStreamPool
 
 
 class StreamRxOp(Operator):
-    def __init__(self, fragment, *args, has_stream_pool=False, **kwargs):
+    def __init__(self, fragment, *args, use_default_pool=False, **kwargs):
         self.index = 0
-        self.has_stream_pool = has_stream_pool
+        self.use_default_pool = use_default_pool
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
@@ -46,7 +46,8 @@ class StreamRxOp(Operator):
         tensors = op_input.receive("in")
         assert "tensor" in tensors
 
-        stream = op_input.receive_cuda_stream("in")
+        allocate = self.use_default_pool
+        stream = op_input.receive_cuda_stream("in", allocate=allocate)
         print(f"{stream=}")
         assert stream != 0
 
@@ -57,7 +58,7 @@ class StreamRxOp(Operator):
 
         streams = op_input.receive_cuda_streams("in")
         assert len(streams) == 1
-        if self.has_stream_pool:
+        if self.use_default_pool:
             # stream will be the operator's internal stream not the received one
             assert stream != streams[0]
         else:
@@ -67,23 +68,19 @@ class StreamRxOp(Operator):
         # assert streams[0] is not None
         print(f"{streams=}")
 
-        # This operator doesn't have a cuda_stream_pool_ parameter, so will
-        # get back the default stream.
+        # The operator will have a default stream pool capable of creating a
+        # new stream.
         new_stream = context.allocate_cuda_stream("my_stream")
-        if self.has_stream_pool:
-            assert new_stream != 0
-        else:
-            assert new_stream == 0
+        assert new_stream != 0
 
         # emit an additional stream on the "out" port
-        if self.has_stream_pool:
-            op_output.set_cuda_stream(new_stream, "out")
+        op_output.set_cuda_stream(new_stream, "out")
 
 
 class MyStreamTestApp(Application):
-    def __init__(self, *args, add_rx_stream_pool=False, count=10, **kwargs):
+    def __init__(self, *args, rx_enable_pool=False, count=10, **kwargs):
         self.count = count
-        self.add_rx_stream_pool = add_rx_stream_pool
+        self.rx_enable_pool = rx_enable_pool
         super().__init__(*args, **kwargs)
 
     def compose(self):
@@ -108,8 +105,7 @@ class MyStreamTestApp(Application):
             async_device_allocation=True,
             name="tx",
         )
-        args = (stream_pool,) if self.add_rx_stream_pool else ()
-        rx = StreamRxOp(self, *args, has_stream_pool=self.add_rx_stream_pool, name="stream_rx")
+        rx = StreamRxOp(self, use_default_pool=self.rx_enable_pool, name="stream_rx")
         self.add_flow(tx, rx)
 
 
@@ -177,9 +173,10 @@ class PingTxResourceCheckOp(Operator):
         spec.output("out")
 
     def compute(self, op_input, op_output, context):
-        if "default_cuda_stream_pool" in self.resources:
+        default_pool_name = f"{self.name}_stream_pool"
+        if default_pool_name in self.resources:
             print("tx: default CudaStreamPool found")
-            assert isinstance(self.resources["default_cuda_stream_pool"], CudaStreamPool)
+            assert isinstance(self.resources[default_pool_name], CudaStreamPool)
         else:
             print("tx: CudaStreamPool not found")
         op_output.emit(0, "out")
@@ -193,9 +190,10 @@ class PingRxResourceCheckOp(Operator):
         value = op_input.receive("in")
         print(f"rx message value: {value}")
 
-        if "default_cuda_stream_pool" in self.resources:
+        default_pool_name = f"{self.name}_stream_pool"
+        if default_pool_name in self.resources:
             print("rx: default CudaStreamPool found")
-            assert isinstance(self.resources["default_cuda_stream_pool"], CudaStreamPool)
+            assert isinstance(self.resources[default_pool_name], CudaStreamPool)
         else:
             print("rx: CudaStreamPool not found")
 
@@ -212,13 +210,13 @@ class DefaultCudaStreamPoolApp(Application):
         self.add_flow(tx, rx)
 
 
-@pytest.mark.parametrize("add_rx_stream_pool", [False, True])
-def test_stream_pool_methods(add_rx_stream_pool):
+@pytest.mark.parametrize("rx_enable_pool", [False, True])
+def test_stream_pool_methods(rx_enable_pool):
     try:
         cp.cuda.Device()
     except RuntimeError:
         pytest.skip("no available CUDA device: skipping stream test")
-    app = MyStreamTestApp(add_rx_stream_pool=add_rx_stream_pool)
+    app = MyStreamTestApp(rx_enable_pool=rx_enable_pool)
     app.run()
 
 

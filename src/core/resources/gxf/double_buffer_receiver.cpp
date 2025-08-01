@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,9 +29,13 @@ DoubleBufferReceiver::DoubleBufferReceiver(const std::string& name,
                                            nvidia::gxf::DoubleBufferReceiver* component)
     : Receiver(name, component) {
   auto maybe_capacity = component->getParameter<uint64_t>("capacity");
-  if (!maybe_capacity) { throw std::runtime_error("Failed to get capacity"); }
+  if (!maybe_capacity) {
+    throw std::runtime_error("Failed to get capacity");
+  }
   auto maybe_policy = component->getParameter<uint64_t>("policy");
-  if (!maybe_policy) { throw std::runtime_error("Failed to get policy"); }
+  if (!maybe_policy) {
+    throw std::runtime_error("Failed to get policy");
+  }
   capacity_ = maybe_capacity.value();
   policy_ = maybe_policy.value();
 }
@@ -40,9 +44,13 @@ DoubleBufferReceiver::DoubleBufferReceiver(const std::string& name,
                                            AnnotatedDoubleBufferReceiver* component)
     : Receiver(name, component) {
   auto maybe_capacity = component->getParameter<uint64_t>("capacity");
-  if (!maybe_capacity) { throw std::runtime_error("Failed to get capacity"); }
+  if (!maybe_capacity) {
+    throw std::runtime_error("Failed to get capacity");
+  }
   auto maybe_policy = component->getParameter<uint64_t>("policy");
-  if (!maybe_policy) { throw std::runtime_error("Failed to get policy"); }
+  if (!maybe_policy) {
+    throw std::runtime_error("Failed to get policy");
+  }
   capacity_ = maybe_capacity.value();
   policy_ = maybe_policy.value();
   tracking_ = true;

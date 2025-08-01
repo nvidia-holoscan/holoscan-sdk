@@ -120,7 +120,9 @@ void Logger::set_level(LogLevel level, bool* is_overridden_by_env) {
       env_level = LogLevel::OFF;
     }
 
-    if (is_overridden_by_env) { *is_overridden_by_env = true; }
+    if (is_overridden_by_env) {
+      *is_overridden_by_env = true;
+    }
     level = env_level;
   }
 
@@ -137,7 +139,9 @@ LogLevel Logger::level() {
 
 void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
   // Consider the pattern set by the user if it is not empty
-  if (!pattern.empty()) { Logger::log_pattern_set_by_user = true; }
+  if (!pattern.empty()) {
+    Logger::log_pattern_set_by_user = true;
+  }
 
   // Get the concrete log pattern
   pattern = get_concrete_log_pattern(pattern);
@@ -149,7 +153,9 @@ void Logger::set_pattern(std::string pattern, bool* is_overridden_by_env) {
     std::string log_pattern = env_p;
     env_pattern = get_concrete_log_pattern(std::move(log_pattern));
 
-    if (is_overridden_by_env) { *is_overridden_by_env = true; }
+    if (is_overridden_by_env) {
+      *is_overridden_by_env = true;
+    }
 
     pattern = env_pattern;
   }

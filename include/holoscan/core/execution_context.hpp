@@ -29,6 +29,12 @@
 #include "./expected.hpp"
 #include "./io_context.hpp"
 #include "./operator_status.hpp"
+#include "holoscan/profiler/profiler.hpp"
+
+// ExecutionContext CUDA stream profiling events (use same green color for consistency)
+PROF_DEFINE_EVENT(event_allocate_cuda_stream, "allocate_cuda_stream", 0x99, 0xFF, 0x00);
+PROF_DEFINE_EVENT(event_synchronize_streams, "synchronize_streams", 0x99, 0xFF, 0x00);
+PROF_DEFINE_EVENT(event_device_from_stream, "device_from_stream", 0x99, 0xFF, 0x00);
 
 namespace holoscan {
 
@@ -102,7 +108,7 @@ class ExecutionContext {
  protected:
   std::shared_ptr<InputContext> input_context_ = nullptr;    ///< The input context.
   std::shared_ptr<OutputContext> output_context_ = nullptr;  ///< The output context.
-  void* context_ = nullptr;                  ///< The context.
+  void* context_ = nullptr;                                  ///< The context.
 };
 
 }  // namespace holoscan

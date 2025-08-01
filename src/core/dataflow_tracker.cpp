@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,10 +41,13 @@ DataFlowTracker::~DataFlowTracker() {
 }
 
 void DataFlowTracker::end_logging() {
-  if (!logger_ofstream_.is_open()) return;
+  if (!logger_ofstream_.is_open())
+    return;
 
   // Write out the remaining messages from the log buffer and close ofstream
-  for (const auto& it : buffered_messages_) { logger_ofstream_ << it << "\n"; }
+  for (const auto& it : buffered_messages_) {
+    logger_ofstream_ << it << "\n";
+  }
   logger_ofstream_.close();
 }
 
@@ -65,7 +68,9 @@ void DataFlowTracker::print() const {
   } else {
     std::cout << "Number of source messages [format: source operator->transmitter name: number of "
                  "messages]:\n";
-    for (const auto& it : source_messages_) { std::cout << it.first << ": " << it.second << "\n"; }
+    for (const auto& it : source_messages_) {
+      std::cout << it.first << ": " << it.second << "\n";
+    }
   }
 
   std::cout.flush();  // flush standard output; otherwise output may not be printed
@@ -158,7 +163,9 @@ int DataFlowTracker::get_num_paths() {
 std::vector<std::string> DataFlowTracker::get_path_strings() {
   std::vector<std::string> all_pathstrings;
   all_pathstrings.reserve(all_path_metrics_.size());
-  for (const auto& it : all_path_metrics_) { all_pathstrings.push_back(it.first); }
+  for (const auto& it : all_path_metrics_) {
+    all_pathstrings.push_back(it.first);
+  }
   return all_pathstrings;
 }
 
@@ -198,14 +205,18 @@ void DataFlowTracker::enable_logging(std::string filename, uint64_t num_buffered
 
 void DataFlowTracker::write_to_logfile(std::string text) {
   if (!text.empty() && is_file_logging_enabled_) {
-    if (!logger_ofstream_.is_open()) { logger_ofstream_.open(logger_filename_); }
+    if (!logger_ofstream_.is_open()) {
+      logger_ofstream_.open(logger_filename_);
+    }
     std::scoped_lock lock(buffered_messages_mutex_);
     buffered_messages_.push_back(std::to_string(++logfile_messages_) + ":\n" + text);
     // When the vector's size is equal to buffered number of messages,
     // flush out the buffer to file
     // and clear the vector to re-reserve the memory
     if (buffered_messages_.size() == num_buffered_messages_) {
-      for (const auto& it : buffered_messages_) { logger_ofstream_ << it << "\n"; }
+      for (const auto& it : buffered_messages_) {
+        logger_ofstream_ << it << "\n";
+      }
       logger_ofstream_ << std::flush;
       buffered_messages_.clear();
       buffered_messages_.reserve(num_buffered_messages_);

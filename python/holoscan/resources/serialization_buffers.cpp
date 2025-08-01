@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +48,9 @@ class PySerializationBuffer : public SerializationBuffer {
       : SerializationBuffer(ArgList{
             Arg{"buffer_size", buffer_size},
         }) {
-    if (allocator) { this->add_arg(Arg{"allocator", allocator}); }
+    if (allocator) {
+      this->add_arg(Arg{"allocator", allocator});
+    }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
@@ -69,7 +71,9 @@ class PyUcxSerializationBuffer : public UcxSerializationBuffer {
       : UcxSerializationBuffer(ArgList{
             Arg{"buffer_size", buffer_size},
         }) {
-    if (allocator) { this->add_arg(Arg{"allocator", allocator}); }
+    if (allocator) {
+      this->add_arg(Arg{"allocator", allocator});
+    }
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);

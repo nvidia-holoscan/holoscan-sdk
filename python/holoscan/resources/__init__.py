@@ -17,6 +17,8 @@
 .. autosummary::
 
     holoscan.resources.Allocator
+    holoscan.resources.AsyncBufferReceiver
+    holoscan.resources.AsyncBufferTransmitter
     holoscan.resources.BlockMemoryPool
     holoscan.resources.Clock
     holoscan.resources.CudaAllocator
@@ -30,6 +32,7 @@
     holoscan.resources.RealtimeClock
     holoscan.resources.Receiver
     holoscan.resources.RMMAllocator
+    holoscan.resources.SchedulingPolicy
     holoscan.resources.SerializationBuffer
     holoscan.resources.StdComponentSerializer
     holoscan.resources.StdEntitySerializer
@@ -47,6 +50,8 @@
 
 from ._resources import (
     Allocator,
+    AsyncBufferReceiver,
+    AsyncBufferTransmitter,
     BlockMemoryPool,
     Clock,
     CudaAllocator,
@@ -59,6 +64,7 @@ from ._resources import (
     RealtimeClock,
     Receiver,
     RMMAllocator,
+    SchedulingPolicy,
     SerializationBuffer,
     StdComponentSerializer,
     StdEntitySerializer,
@@ -79,6 +85,8 @@ from ._resources import (
 
 __all__ = [
     "Allocator",
+    "AsyncBufferReceiver",
+    "AsyncBufferTransmitter",
     "BlockMemoryPool",
     "Clock",
     "CudaAllocator",
@@ -92,6 +100,7 @@ __all__ = [
     "RealtimeClock",
     "Receiver",
     "RMMAllocator",
+    "SchedulingPolicy",
     "SerializationBuffer",
     "StdComponentSerializer",
     "StdEntitySerializer",
@@ -123,7 +132,7 @@ class GXFComponentResource(_GXFComponentResource):
         super().__setattr__(name, value)
 
     def __init__(self, fragment, *args, **kwargs):
-        from holoscan.core import ComponentSpec, _Fragment
+        from holoscan.core import ComponentSpec, _Fragment  # noqa: PLC0415
 
         if not isinstance(fragment, _Fragment):
             raise ValueError(

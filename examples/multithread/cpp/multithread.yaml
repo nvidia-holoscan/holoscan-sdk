@@ -23,6 +23,7 @@ count: 1
 silent: false
 tracking: false
 data_logging: false
+print_port_map: false
 
 greedy_scheduler:
   stop_on_deadlock: true

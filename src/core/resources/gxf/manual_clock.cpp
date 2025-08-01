@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,9 @@ namespace holoscan {
 ManualClock::ManualClock(const std::string& name, nvidia::gxf::ManualClock* component)
     : Clock(name, component) {
   auto maybe_initial_timestamp = component->getParameter<uint64_t>("initial_timestamp");
-  if (!maybe_initial_timestamp) { throw std::runtime_error("Failed to get initial_timestamp"); }
+  if (!maybe_initial_timestamp) {
+    throw std::runtime_error("Failed to get initial_timestamp");
+  }
   initial_timestamp_ = maybe_initial_timestamp.value();
 }
 
@@ -37,13 +39,17 @@ nvidia::gxf::ManualClock* ManualClock::get() const {
 
 double ManualClock::time() const {
   auto clock = get();
-  if (clock) { return clock->time(); }
+  if (clock) {
+    return clock->time();
+  }
   return 0.0;
 }
 
 int64_t ManualClock::timestamp() const {
   auto clock = get();
-  if (clock) { return clock->timestamp(); }
+  if (clock) {
+    return clock->timestamp();
+  }
   return 0;
 }
 

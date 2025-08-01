@@ -92,6 +92,23 @@ name : str, optional
 
 }  // namespace UcxReceiver
 
+namespace AsyncBufferReceiver {
+
+PYDOC(AsyncBufferReceiver, R"doc(
+Receiver using an asynchronous buffer.
+
+The latest message is received asynchronously.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment
+    The fragment to assign the resource to.
+name : str, optional
+    The name of the receiver.
+)doc")
+
+}  // namespace AsyncBufferReceiver
+
 }  // namespace holoscan::doc
 
 #endif  // PYHOLOSCAN_RESOURCES_COMPONENT_SERIALIZERS_PYDOC_HPP

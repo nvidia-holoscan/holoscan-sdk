@@ -1,6 +1,6 @@
 # Pose Tree Basic Example
 
-This example demonstrates how to use the `PoseTree` feature in the Holoscan SDK. It simulates the orbital mechanics of the Sun, Earth, and Moon to showcase how to manage and query dynamic coordinate frame transformations over time.
+This example demonstrates how to use the `PoseTree` feature in applications built with Holoscan SDK. It simulates the orbital mechanics of the Sun, Earth, and Moon to showcase how to manage and query dynamic coordinate frame transformations over time.
 
 ## Overview
 
@@ -51,12 +51,13 @@ python3 ./examples/pose_tree/pose_tree_basic/python/pose_tree_basic.py
 
 ## Key API Features Demonstrated
 
-- `holoscan::PoseTreeManager`: Used as a `FragmentService` to provide a shared `PoseTree` instance to multiple operators.
+- `holoscan::PoseTreeManager`: This is a `FragmentService` that manages a shared `PoseTree` instance.
+  - **Single-Fragment vs. Distributed Apps**: Using `PoseTreeManager` as a service is the key to making pose tree management work in both single-fragment and distributed applications. In this single-fragment example, it shares the tree between operators. In a multi-fragment application, Holoscan automatically handles the synchronization of the pose tree data across fragments behind the scenes. The configuration and operator code for accessing the pose tree remain the same, providing a seamless experience.
 - `PoseTree` API:
-    - `create_frame()`: To define new coordinate frames (e.g., "sun", "earth", "moon").
-    - `create_edges()`: To define the relationship between frames.
-    - `set()`: To update the transformation (pose) of a frame relative to another at a specific timestamp.
-    - `get()`: To query the transformation between any two frames at a given timestamp.
+  - `create_frame()`: To define new coordinate frames (e.g., "sun", "earth", "moon").
+  - `create_edges()`: To define the relationship between frames.
+  - `set()`: To update the transformation (pose) of a frame relative to another at a specific timestamp.
+  - `get()`: To query the transformation between any two frames at a given timestamp.
 - `holoscan::Pose3d` and `holoscan::SO3d` (C++) / `holoscan.pose_tree.Pose3` and `holoscan.pose_tree.SO3` (Python): For representing 3D poses and rotations.
 
 ## Expected Output
@@ -64,7 +65,7 @@ python3 ./examples/pose_tree/pose_tree_basic/python/pose_tree_basic.py
 The application will run for 365 steps (simulated days). For each day, it will print the poses for the Sun->Earth, Earth->Moon, and Sun->Moon transformations. The output will look similar to this:
 
 C++:
-```
+```text
 [day 1] Sun → Earth : T=(1.000,0.017,0.000) Q=(0.000,0.000,0.713,0.701)
 [day 1] Earth → Moon : T=(0.002,0.001,0.000) Q=(0.000,0.000,0.115,0.993)
 [day 1] Sun → Moon : T=(0.999,0.020,0.000) Q=(0.000,0.000,0.789,0.615)

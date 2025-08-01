@@ -23,7 +23,7 @@ class MyService : public holoscan::DefaultFragmentService {
  public:
   explicit MyService(int value) : value_(value) {}
 
-  int value() const { return value_; }
+  [[nodiscard]] int value() const { return value_; }
 
  private:
   int value_;

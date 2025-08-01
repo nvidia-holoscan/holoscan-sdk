@@ -37,28 +37,33 @@ install(FILES CMakeLists.min.txt
   COMPONENT holoscan-examples
 )
 
+# Install the test script
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/validate_data_logging_outputs.py"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-  add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TEST
-    COMMAND python3 multithread.py --name EXAMPLE_PYTHON_MULTITHREAD_TEST
-                                   --output_file multithread_times
-                                   --data_log
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  # Copy the test script to the build directory (used by both tests)
+  add_custom_target(data_logging_test_script
+      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/validate_data_logging_outputs.py" ${CMAKE_CURRENT_BINARY_DIR}
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/validate_data_logging_outputs.py"
+      BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/validate_data_logging_outputs.py"
   )
-  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "sum of received values: 496"
-                       # representative expected log entries
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:tx.out\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.values:15\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.in\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_val\\]"
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:delay15.out_name\\]"
-                       # rx.names:* expected to be excluded by denylist
-                       PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:rx.names:15\\]"
-                       PASS_REGULAR_EXPRESSION "Category:Message \\(std::any\\)"
-                       # log_python_object_contents -> messages contain the Python type and repr
-                       PASS_REGULAR_EXPRESSION "Python\\(int\\): 15"
-                       PASS_REGULAR_EXPRESSION "Python\\(str\\): delay15")
+  set(DATA_LOGGING_TEST_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/validate_data_logging_outputs.py)
+
+  # Test flow tracking and data logging
+  # (see validate_data_logging_outputs.py for details of data logging regex tests)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TEST
+           COMMAND ${CMAKE_COMMAND} -E env
+           ${Python3_EXECUTABLE} ${DATA_LOGGING_TEST_SCRIPT}
+           multithread.py --name EXAMPLE_PYTHON_MULTITHREAD_TEST --mode logging --output_file multithread_times --data_log
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  add_dependencies(python_multithread data_logging_test_script)
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_8_TEST
            COMMAND python3 multithread.py --threads 8 --num_delay_ops 8 --delay 0.25 --delay_step 0.1
@@ -113,7 +118,7 @@ if(HOLOSCAN_BUILD_TESTS)
     COMMAND python3 multithread.py --event_based
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
-  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TEST PROPERTIES
+  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_EVENT_BASED_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "sum of received values: 496")
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TRACK_TEST
@@ -121,6 +126,14 @@ if(HOLOSCAN_BUILD_TESTS)
           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
           )
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TRACK_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Number of messages: 6"
                        PASS_REGULAR_EXPRESSION "tx->out: 5")
+
+  add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_PRINT_PORT_MAP_TEST
+          COMMAND python3 multithread.py -n 4 --print_port_map
+          WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  # test a string expected to be present in the port map
+  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_PRINT_PORT_MAP_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "output_to_input:"
+  )
 endif()

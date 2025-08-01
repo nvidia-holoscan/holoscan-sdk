@@ -15,12 +15,15 @@
  * limitations under the License.
  */
 
+// NOLINTBEGIN(build/include_what_you_use)
+
 extern "C" __global__ void customKernel2(const unsigned char* input, unsigned char* output,
                                          int width, int height) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-  if (x >= width || y >= height) return;
+  if (x >= width || y >= height)
+    return;
 
   int sobel_x[3][3] = {// Sobel X kernel
                        {-1, 0, 1},
@@ -54,3 +57,5 @@ extern "C" __global__ void customKernel2(const unsigned char* input, unsigned ch
   int outIdx = y * width + x;
   output[outIdx] = magnitude;
 }
+
+// NOLINTEND(build/include_what_you_use)

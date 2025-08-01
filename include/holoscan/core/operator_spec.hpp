@@ -152,8 +152,10 @@ class OperatorSpec : public ComponentSpec {
 
     auto spec =
         std::make_shared<IOSpec>(this, name, IOSpec::IOType::kInput, &typeid(DataT), size, policy);
-    auto [iter, is_exist] = inputs_.insert_or_assign(name, std::move(spec));
-    if (!is_exist) { HOLOSCAN_LOG_ERROR("Input port '{}' already exists", name); }
+    auto [iter, inserted] = inputs_.insert_or_assign(name, std::move(spec));
+    if (!inserted) {
+      HOLOSCAN_LOG_ERROR("Input port '{}' already exists", name);
+    }
     return *(iter->second.get());
   }
 
@@ -218,7 +220,9 @@ class OperatorSpec : public ComponentSpec {
     auto spec =
         std::make_shared<IOSpec>(this, name, IOSpec::IOType::kOutput, &typeid(DataT), size, policy);
     auto [iter, is_exist] = outputs_.insert_or_assign(name, std::move(spec));
-    if (!is_exist) { HOLOSCAN_LOG_ERROR("Output port '{}' already exists", name); }
+    if (!is_exist) {
+      HOLOSCAN_LOG_ERROR("Output port '{}' already exists", name);
+    }
     return *(iter->second.get());
   }
 
@@ -254,7 +258,9 @@ class OperatorSpec : public ComponentSpec {
     parameter.flag_ = flag;
 
     auto [_, is_exist] = params_.try_emplace(key, parameter);
-    if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
+    if (!is_exist) {
+      HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key);
+    }
   }
 
   /**
@@ -287,7 +293,9 @@ class OperatorSpec : public ComponentSpec {
     parameter.default_value_ = static_cast<holoscan::IOSpec*>(nullptr);
 
     auto [_, is_exist] = params_.try_emplace(key, parameter);
-    if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
+    if (!is_exist) {
+      HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key);
+    }
   }
 
   /**
@@ -325,7 +333,9 @@ class OperatorSpec : public ComponentSpec {
     parameter.flag_ = flag;
 
     auto [_, is_exist] = params_.try_emplace(key, parameter);
-    if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
+    if (!is_exist) {
+      HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key);
+    }
   }
 
   /**
@@ -358,7 +368,9 @@ class OperatorSpec : public ComponentSpec {
     parameter.default_value_ = init_list;  // create a vector from initializer list
 
     auto [_, is_exist] = params_.try_emplace(key, parameter);
-    if (!is_exist) { HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key); }
+    if (!is_exist) {
+      HOLOSCAN_LOG_ERROR("Parameter '{}' already exists", key);
+    }
   }
 
   /**

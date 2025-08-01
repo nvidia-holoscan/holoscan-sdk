@@ -70,7 +70,9 @@ TEST(PoseTreeEdgeHistory, at) {
   EXPECT_EQ(history.at(0).value().time, 1.0);
   EXPECT_EQ(history.at(1).value().time, 2.0);
 
-  for (int it = 3; it < 128; it++) { history.set(static_cast<double>(it), Pose3d::identity(), it); }
+  for (int it = 3; it < 128; it++) {
+    history.set(static_cast<double>(it), Pose3d::identity(), it);
+  }
   EXPECT_FALSE(history.at(16));
   EXPECT_EQ(history.at(15).value().time, 127.0);
   EXPECT_EQ(history.at(0).value().time, 112.0);

@@ -61,9 +61,9 @@ class DataLogger {
    * @param io_type The type of I/O port (kInput or kOutput).
    * @return true if logging (including serialization and sending) was successful, false otherwise.
    */
-  virtual bool log_data(std::any data, const std::string& unique_id,
+  virtual bool log_data(const std::any&, const std::string& unique_id,
                         int64_t acquisition_timestamp = -1,
-                        std::shared_ptr<MetadataDictionary> metadata = nullptr,
+                        const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
                         IOSpec::IOType io_type = IOSpec::IOType::kOutput) = 0;
 
   /**
@@ -119,6 +119,43 @@ class DataLogger {
                                   IOSpec::IOType io_type = IOSpec::IOType::kOutput) = 0;
 
   /**
+   * @brief Logs backend-specific data types.
+   *
+   * This method is called for logging backend-specific data types (intended for use with backends
+   * that have separate emit/receive codepaths for backend-specific types). The data parameter is
+   * kept as std::any here to avoid making the base interface specific to a particular backend, but
+   * a backend-specific concrete implementation should be provided as needed via run-time type
+   * checking.
+   *
+   * A concrete example of a backend-specific type is the GXF Entity type which is a
+   * heterogeneous collection of components. An implementation of this method for GXF entities is
+   * provided in the concrete implementation of the GXFConsoleLogger.
+   *
+   * The unique_id for the message will have the form:
+   * - operator_name.port_name
+   * - operator_name.port_name:index   (for multi-receivers with N:1 connection)
+   *
+   * For distributed applications, the fragment name will also appear in the unique id:
+   * - fragment_name.operator_name.port_name
+   * - fragment_name.operator_name.port_name:index
+   *
+   * @param data The backend-specific data to log, passed as std::any.
+   * @param unique_id A unique identifier for the message.
+   * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
+   * @param metadata Associated metadata dictionary for the message.
+   * @param io_type The type of I/O port (kInput or kOutput).
+   * @return true if logging was successful, false if backend-specific logging is not supported.
+   */
+  virtual bool log_backend_specific(
+      [[maybe_unused]] const std::any& data, [[maybe_unused]] const std::string& unique_id,
+      [[maybe_unused]] int64_t acquisition_timestamp = -1,
+      [[maybe_unused]] const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
+      [[maybe_unused]] IOSpec::IOType io_type = IOSpec::IOType::kOutput) {
+    // Default implementation: backend-specific logging is not supported
+    return false;
+  }
+
+  /**
    * @brief Checks if the logger should log output ports.
    *
    * If False, the data logger will not be applied during op_output.emit() calls from
@@ -137,6 +174,18 @@ class DataLogger {
    * @return true if the logger should log input ports, false otherwise.
    */
   virtual bool should_log_input() const = 0;
+
+  /**
+   * @brief Shutdown the data logger.
+   *
+   * This method should be called to properly shutdown the data logger, including stopping
+   * any background threads and releasing resources. The default implementation does nothing.
+   * Data loggers that use background threads or other resources should override this method
+   * to perform proper cleanup.
+   */
+  virtual void shutdown() {
+    // Default implementation: no shutdown needed
+  }
 };
 
 }  // namespace holoscan

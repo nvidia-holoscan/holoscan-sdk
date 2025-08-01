@@ -115,7 +115,9 @@ void GXFResource::add_to_graph_entity(Fragment* fragment,
                                       std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
   if (gxf_context_ == nullptr) {
     // cannot reassign to a different graph entity if the resource was already initialized with GXF
-    if (gxf_graph_entity_ && is_initialized_) { return; }
+    if (gxf_graph_entity_ && is_initialized_) {
+      return;
+    }
 
     gxf_graph_entity_ = graph_entity;
     fragment_ = fragment;
@@ -139,21 +141,34 @@ void GXFResource::set_parameters() {
     // Issue 4336947: dev_id parameter for allocator needs to be handled manually
     if (key.compare(std::string("dev_id")) == 0) {
       if (!gxf_graph_entity_) {
-        HOLOSCAN_LOG_ERROR(
-            "`dev_id` parameter found, but gxf_graph_entity_ was not initialized so it could not "
-            "be added to the entity group. This parameter will be ignored and default GPU device 0 "
-            "will be used");
+        try {
+          auto dev_id_param = *std::any_cast<Parameter<int32_t>*>(param_wrap.value());
+          if (dev_id_param.has_value() && dev_id_param.get() != 0) {
+            // only log error if the parameter value does not match the GPU 0 default value
+            HOLOSCAN_LOG_ERROR(
+                "`dev_id` parameter with value {} found, but gxf_graph_entity_ was not initialized "
+                "so it could not be added to the entity group. This parameter will be ignored and "
+                "default GPU device 0 will be used",
+                dev_id_param.get());
+          }
+        } catch (const std::bad_any_cast& e) {
+          HOLOSCAN_LOG_ERROR("Cannot cast dev_id argument to int32_t: {}", e.what());
+        }
         continue;
       }
       std::optional<int32_t> dev_id_value;
       try {
         auto dev_id_param = *std::any_cast<Parameter<int32_t>*>(param_wrap.value());
-        if (dev_id_param.has_value()) { dev_id_value = dev_id_param.get(); }
+        if (dev_id_param.has_value()) {
+          dev_id_value = dev_id_param.get();
+        }
       } catch (const std::bad_any_cast& e) {
-        HOLOSCAN_LOG_ERROR("Cannot cast dev_id argument to int32_t: {}}", e.what());
+        HOLOSCAN_LOG_ERROR("Cannot cast dev_id argument to int32_t: {}", e.what());
       }
       bool dev_id_handled = handle_dev_id(dev_id_value);
-      if (dev_id_handled) { continue; }
+      if (dev_id_handled) {
+        continue;
+      }
     }
 
     set_gxf_parameter(name_, key, param_wrap);

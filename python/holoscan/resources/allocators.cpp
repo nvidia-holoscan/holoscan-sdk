@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -174,6 +174,7 @@ void init_allocators(py::module_& m) {
   py::enum_<MemoryStorageType>(m, "MemoryStorageType")
       .value("HOST", MemoryStorageType::kHost)
       .value("DEVICE", MemoryStorageType::kDevice)
+      .value("CUDA_MANAGED", MemoryStorageType::kCudaManaged)
       .value("SYSTEM", MemoryStorageType::kSystem);
 
   py::class_<Allocator, gxf::GXFResource, std::shared_ptr<Allocator>>(

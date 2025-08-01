@@ -148,6 +148,7 @@ ConfigureTest(DATA_LOGGER_CLASSES_TEST
 )
 target_link_libraries(DATA_LOGGER_CLASSES_TEST
   PRIVATE
+  holoscan::data_loggers::async_console_logger
   holoscan::data_loggers::basic_console_logger
 )
 
@@ -180,6 +181,7 @@ ConfigureTest(
   system/operator_status_test.cpp
   system/ping_rx_op.cpp
   system/ping_tx_op.cpp
+  system/realtime_ping_app.cpp
   system/receive_as_entity_test.cpp
   system/tensor_compare_op.cpp
   system/video_stream_replayer_op.cpp

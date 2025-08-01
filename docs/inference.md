@@ -41,6 +41,11 @@ Required parameters and related features available with the Holoscan Inference M
             - Torch backend expects input models to be in `torchscript` format.
                 - It is recommended to use the same version of torch for `torchscript` model generation, as used in the HOLOSCAN SDK on the respective architectures.
                 - Additionally, it is recommended to generate the `torchscript` model on the same architecture on which it will be executed. For example, `torchscript` model must be generated on `x86_64` to be executed in an application running on `x86_64` only.
+        - __Model Configuration Requirement__: The torch backend requires a companion `model.yaml` configuration file alongside each torchscript model file.
+          - The YAML file must have the same name as the model file but with a `.yaml` extension (e.g., if the model is `my_model.pt`, the configuration file should be `my_model.yaml`).
+          - The configuration file defines the input and output tensor formats, dimensions, and data types, enabling support for complex tensor structures beyond simple tensors.
+          - The system automatically validates that the YAML configuration matches the actual model schema extracted from the torchscript model.
+          - See [Torch Backend Model Configuration](#torch-backend-model-configuration) for detailed configuration examples and supported formats.
         - ONNX runtime:
             - CUDA and CPU based inference supported both on x86_64 and aarch64.
             - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
@@ -164,6 +169,149 @@ inference:
     is_engine_path: false
 ```
 
+## Torch Backend Model Configuration
+
+When using the `torch` backend, a companion `model.yaml` configuration file is required alongside each torchscript model. This file defines the model's input and output tensor specifications and supports complex tensor structures required for Pythonic I/O.
+
+On the operator side, each tensor is still specified individually in `pre_processor_map` and `inference_map`, but during inference the torch backend will reconstruct them into the defined Pythonic structure.
+
+### YAML Configuration Structure
+
+The configuration file must contain an `inference` section with the following components:
+
+- `input_nodes`: Defines the input tensor specifications including names, dimensions, and data types
+- `output_nodes`: Defines the output tensor specifications including names, dimensions, and data types
+- `input_format` *(optional)*: Specifies how input tensors are structured and organized (defaults to passing each tensor individually).
+- `output_format` *(optional)*: Specifies how output tensors are structured and organized (defaults to expecting individual tensors returned)
+
+### Basic Example
+
+For a simple model with single tensor input and output:
+
+```yaml
+inference:
+  input_nodes:
+    input_tensor:
+      dim: "3,224,224"
+      dtype: kFloat32
+  output_nodes:
+    output_tensor:
+      dim: "1000"
+      dtype: kFloat32
+```
+
+### Complex Structure Examples
+#### Dictionary Input
+This corresponds to calling the model with a dictionary:
+```python
+result = model.forward({"input1": feature1, "input2": feature2})
+```
+```yaml
+inference:
+  input_nodes:
+    feature1:
+      dim: "3,224,224"
+      dtype: kFloat32
+    feature2:
+      dim: "128"
+      dtype: kFloat32
+  output_nodes:
+    result:
+      dim: "10"
+      dtype: kFloat32
+  input_format: [{"input1": "feature1", "input2": "feature2"}]
+  output_format: "result"
+```
+
+#### List Input
+This corresponds to calling the model with a list:
+```python
+result = model.forward([tensor1, tensor2])
+```
+```yaml
+inference:
+  input_nodes:
+    tensor1:
+      dim: "3,224,224"
+      dtype: kFloat32
+    tensor2:
+      dim: "3,224,224"
+      dtype: kFloat32
+  output_nodes:
+    result:
+      dim: "10"
+      dtype: kFloat32
+  input_format: [["tensor1", "tensor2"]]
+  output_format: "result"
+```
+
+#### Nested Structures
+The system supports complex nested combinations of lists and dictionaries for both inputs and outputs:
+This corresponds to the following function call where detections is a dictionary.
+```python
+classification_result, detections = model.forward([{"feature1": tensor1}, {"feature1": tensor2, "feature2": tensor3}])
+```
+
+```yaml
+inference:
+  input_nodes:
+    tensor1:
+      dim: "3,224,224"
+      dtype: kFloat32
+    tensor2:
+      dim: "128"
+      dtype: kFloat32
+    tensor3:
+      dim: "64"
+      dtype: kFloat32
+  output_nodes:
+    classification_result:
+      dim: "10"
+      dtype: kFloat32
+    detection_boxes:
+      dim: "100,4"
+      dtype: kFloat32
+    detection_scores:
+      dim: "100"
+      dtype: kFloat32
+  input_format: [[{"feature1": "tensor1"}, {"feature1": "tensor2", "feature2": "tensor3"}]]
+  output_format: ["classification_result", {"detections": {"boxes": "detection_boxes", "scores": "detection_scores"}}]
+```
+
+#### Ignoring outputs
+There may be cases where some outputs of a model should not be forwarded. In these cases, enter a null value in the YAML to ignore an entire subtree on the output.
+```python
+_, detections = model.forward([img])
+```
+
+```yaml
+inference:
+  input_nodes:
+    img:
+      dim: "1080 1920 3"
+      dtype: kFloat32
+  output_nodes:
+    boxes:
+      dtype: kFloat32
+    labels:
+      dtype: kInt64
+    scores:
+      dtype: kFloat32
+  input_format: [["img"]]
+  output_format: [null, [{"boxes": "boxes", "labels": "labels", "scores": "scores"}]]
+```
+
+### Supported Input/Output Formats
+
+The torch backend supports the following tensor structure types:
+- `Tensor`: Single tensor
+- `Tensor[]`: List of tensors
+- `Dict(str, Tensor)`: Dictionary mapping strings to tensors
+- `Dict(str, Tensor[])`: Dictionary mapping strings to lists of tensors
+- `Dict(str, Dict(str, Tensor))`: Nested dictionary structures
+- `Dict(str, Tensor)[]`: List of dictionaries
+- `Tensor[][]`: Nested lists of tensors
+
 ## Inference Operator
 
 In Holoscan SDK, the built-in Inference operator (`InferenceOp`) is designed using the Holoscan Inference Module APIs. The Inference operator ingests the inference parameter set (from the configuration file) and the data receivers (from previous connected operators in the application), executes the inference and transmits the inferred results to the next connected operators in the application.
@@ -189,6 +337,10 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     The value of `backend` can be modified for other supported backends, and other parameters related to each backend. You must ensure the correct model type and model path are provided into the parameter set, along with supported values of all parameters for the respective backend.
 
     In this example, `path_to_model_1` must be an `onnx` file, which will be converted to a `tensorRT` engine file at first execution. During subsequent executions, the Holoscan inference module will automatically find the tensorRT engine file (if `path_to_model_1` has not changed). Additionally, if you have a pre-built `tensorRT` engine file, `path_to_model_1` must be path to the engine file and the parameter `is_engine_path` must be set to `true` in the parameter set.
+
+    :::{note}
+    When using the `torch` backend, ensure that a corresponding `model.yaml` configuration file exists alongside your torchscript model file. The YAML file must define the input and output tensor specifications as described in the [Torch Backend Model Configuration](#torch-backend-model-configuration) section.
+    :::
 
 
 - Single model inference using `TensorRT` backend with multiple outputs.

@@ -330,7 +330,9 @@ class OperatorRunner {
     }
 
     // Handle GXF Entity types
-    if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) { return DataT(entity); }
+    if constexpr (is_one_of_derived_v<DataT, nvidia::gxf::Entity>) {
+      return DataT(entity);
+    }
 
     // Handle TensorMap type
     if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {

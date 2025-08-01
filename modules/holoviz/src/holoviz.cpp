@@ -152,8 +152,7 @@ void GetImageFormats(uint32_t* image_format_count, ImageFormat* image_formats) {
           "`image_format_count` "
           "is not 0.");
     }
-    *image_format_count =
-        std::min((size_t)*image_format_count, supported_image_formats.size());
+    *image_format_count = std::min((size_t)*image_format_count, supported_image_formats.size());
     for (uint32_t index = 0; index < *image_format_count; ++index) {
       image_formats[index] = supported_image_formats[index];
     }
@@ -349,15 +348,21 @@ void SetCamera(float eye_x, float eye_y, float eye_z, float look_at_x, float loo
 }
 
 void GetCameraPose(size_t size, float* matrix) {
-  if (size != 16) { throw std::invalid_argument("Size of the matrix array should be 16"); }
-  if (matrix == nullptr) { throw std::invalid_argument("Pointer to matrix should not be nullptr"); }
+  if (size != 16) {
+    throw std::invalid_argument("Size of the matrix array should be 16");
+  }
+  if (matrix == nullptr) {
+    throw std::invalid_argument("Pointer to matrix should not be nullptr");
+  }
 
   nvmath::mat4f view_matrix;
   Context::get().get_window()->get_view_matrix(&view_matrix);
 
   // nvmath::mat4f is column major, the outgoing matrix is row major, transpose while copying
   for (uint32_t row = 0; row < 4; ++row) {
-    for (uint32_t col = 0; col < 4; ++col) { matrix[row * 4 + col] = view_matrix(row, col); }
+    for (uint32_t col = 0; col < 4; ++col) {
+      matrix[row * 4 + col] = view_matrix(row, col);
+    }
   }
 }
 
@@ -367,7 +372,9 @@ void GetCameraPose(float (&rotation)[9], float (&translation)[3]) {
 
   // nvmath::mat4f is column major, the outgoing matrix is row major, transpose while copying
   for (uint32_t row = 0; row < 3; ++row) {
-    for (uint32_t col = 0; col < 3; ++col) { rotation[row * 3 + col] = camera_matrix(row, col); }
+    for (uint32_t col = 0; col < 3; ++col) {
+      rotation[row * 3 + col] = camera_matrix(row, col);
+    }
   }
 
   translation[0] = camera_matrix(0, 3);

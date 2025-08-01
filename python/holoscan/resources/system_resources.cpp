@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,6 +54,11 @@ class PyThreadPool : public ThreadPool {
 };
 
 void init_system_resources(py::module_& m) {
+  py::enum_<SchedulingPolicy>(m, "SchedulingPolicy")
+      .value("SCHED_FIFO", SchedulingPolicy::kFirstInFirstOut)
+      .value("SCHED_RR", SchedulingPolicy::kRoundRobin)
+      .value("SCHED_DEADLINE", SchedulingPolicy::kDeadline);
+
   py::class_<ThreadPool,
              PyThreadPool,
              gxf::GXFSystemResourceBase,
@@ -65,14 +70,36 @@ void init_system_resources(py::module_& m) {
            "name"_a = "thread_pool"s,
            doc::ThreadPool::doc_ThreadPool_kwargs)
       .def("add",
-           py::overload_cast<const std::shared_ptr<Operator>&, bool>(&ThreadPool::add),
+           py::overload_cast<const std::shared_ptr<Operator>&, bool, std::vector<uint32_t>>(
+               &ThreadPool::add),
            "op"_a,
-           "pin_operator"_a = false)
+           "pin_operator"_a = false,
+           "pin_cores"_a = std::vector<uint32_t>())
       .def_property_readonly("operators", &ThreadPool::operators, doc::ThreadPool::doc_operators)
       .def("add",
-           py::overload_cast<std::vector<std::shared_ptr<Operator>>, bool>(&ThreadPool::add),
+           py::overload_cast<std::vector<std::shared_ptr<Operator>>, bool, std::vector<uint32_t>>(
+               &ThreadPool::add),
            "ops"_a,
            "pin_operator"_a = false,
-           doc::ThreadPool::doc_add);
+           "pin_cores"_a = std::vector<uint32_t>(),
+           doc::ThreadPool::doc_add)
+      .def("add_realtime",
+           py::overload_cast<const std::shared_ptr<Operator>&,
+                             SchedulingPolicy,
+                             bool,
+                             std::vector<uint32_t>,
+                             uint32_t,
+                             uint64_t,
+                             uint64_t,
+                             uint64_t>(&ThreadPool::add_realtime),
+           "op"_a,
+           "sched_policy"_a,
+           "pin_operator"_a = true,
+           "pin_cores"_a = std::vector<uint32_t>(),
+           "sched_priority"_a = 0,
+           "sched_runtime"_a = 0,
+           "sched_deadline"_a = 0,
+           "sched_period"_a = 0,
+           doc::ThreadPool::doc_add_realtime);
 }
 }  // namespace holoscan

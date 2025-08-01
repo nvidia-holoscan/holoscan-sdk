@@ -91,7 +91,9 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   // for short arrays containing parameter settings to operators/resources
   if (obj.attr("ndim").cast<int>() == 1) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-    for (const auto& item : obj) yaml_node.push_back(cast_to_yaml_node<T>(item));
+    for (const auto& item : obj) {
+      yaml_node.push_back(cast_to_yaml_node<T>(item));
+    }
     out = yaml_node;
   } else if (obj.attr("ndim").cast<int>() == 2) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
@@ -100,7 +102,9 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
       for (const auto& inner_item : item) {
         inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
       }
-      if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
+      if (inner_yaml_node.size() > 0) {
+        yaml_node.push_back(inner_yaml_node);
+      }
     }
     out = yaml_node;
   } else {
@@ -158,7 +162,9 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
       for (const auto& item : seq) {
         std::vector<T> vv;
         vv.reserve(static_cast<size_t>(py::len(item)));
-        for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+        for (const auto& inner_item : item) {
+          vv.push_back(inner_item.cast<T>());
+        }
         v.push_back(vv);
       }
       out = v;
@@ -167,7 +173,9 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
       std::vector<T> v;
       size_t length = py::len(seq);
       v.reserve(length);
-      for (const auto& item : seq) v.push_back(item.cast<T>());
+      for (const auto& item : seq) {
+        v.push_back(item.cast<T>());
+      }
       out = v;
     }
   } else {
@@ -180,13 +188,17 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
         for (const auto& inner_item : item) {
           inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
         }
-        if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
+        if (inner_yaml_node.size() > 0) {
+          yaml_node.push_back(inner_yaml_node);
+        }
       }
       out = yaml_node;
     } else {
       // 1d vector to handle a sequence of elements
       YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-      for (const auto& item : seq) yaml_node.push_back(cast_to_yaml_node<T>(item));
+      for (const auto& item : seq) {
+        yaml_node.push_back(cast_to_yaml_node<T>(item));
+      }
       out = yaml_node;
     }
   }
@@ -201,7 +213,9 @@ void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
     seq = py::list(obj);
   }
 
-  if (py::len(seq) == 0) { throw std::runtime_error("sequences of length 0 are not supported."); }
+  if (py::len(seq) == 0) {
+    throw std::runtime_error("sequences of length 0 are not supported.");
+  }
 
   auto item0 = seq[0];
   if (py::isinstance<py::sequence>(item0) && !py::isinstance<py::str>(item0)) {

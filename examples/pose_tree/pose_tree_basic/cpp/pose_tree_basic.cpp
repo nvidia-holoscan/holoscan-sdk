@@ -89,7 +89,8 @@ class OrbitSetterOp : public holoscan::Operator {
 
     // Sun → Earth pose (translation + rotation about Z)
     holoscan::Vector3d earth_pos(r_earth * std::cos(theta_e), r_earth * std::sin(theta_e), 0.0);
-    holoscan::SO3d earth_rot = holoscan::SO3d::from_axis_angle({0.0, 0.0, 1.0}, theta_e + M_PI_2);
+    constexpr double half_pi = M_PI / 2.0;
+    holoscan::SO3d earth_rot = holoscan::SO3d::from_axis_angle({0.0, 0.0, 1.0}, theta_e + half_pi);
     pose_tree_->set("sun", "earth", now, {earth_rot, earth_pos});
 
     // Earth → Moon pose
@@ -132,7 +133,7 @@ class TransformPrinterOp : public holoscan::Operator {
     HOLOSCAN_LOG_INFO("[day {:.0f}]  Sun → Moon   : {}", day, sun_to_moon);
 
     // Highlight interpolation: query pose at an intermediate time (12 hours ago)
-    if (day == 365) {
+    if (std::abs(day - 365.0) < 1e-6) {
       double interpolated_time = now - kDay / 2.0;
       auto sun_to_moon_interp = pose_tree_->get("sun", "moon", interpolated_time).value();
       HOLOSCAN_LOG_INFO(
@@ -177,7 +178,9 @@ int main(int argc, char** argv) {
   // Get the yaml configuration file
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= std::filesystem::path("pose_tree_basic.yaml");
-  if (argc >= 2) { config_path = argv[1]; }
+  if (argc >= 2) {
+    config_path = argv[1];
+  }
 
   auto app = holoscan::make_application<PoseTreeOrbitApp>();
   app->config(config_path);

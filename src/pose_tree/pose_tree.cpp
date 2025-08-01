@@ -17,6 +17,7 @@
 #include "holoscan/pose_tree/pose_tree.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <mutex>
 #include <new>
@@ -54,59 +55,98 @@ PoseTree::expected_t<void> PoseTree::init(const int32_t number_frames, const int
                                           const int32_t edges_chunk_size,
                                           const int32_t history_chunk_size) {
   // Check the parameters are valid.
-  if (number_frames <= 0) { return unexpected_t(Error::kInvalidArgument); }
-  if (number_edges <= 0) { return unexpected_t(Error::kInvalidArgument); }
-  if (history_length <= 0) { return unexpected_t(Error::kInvalidArgument); }
-  if (default_number_edges <= 0) { return unexpected_t(Error::kInvalidArgument); }
-  if (default_history_length <= 0) { return unexpected_t(Error::kInvalidArgument); }
-  if (edges_chunk_size <= 0) { return unexpected_t(Error::kInvalidArgument); }
-  if (history_chunk_size <= 0) { return unexpected_t(Error::kInvalidArgument); }
+  if (number_frames <= 0) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  if (number_edges <= 0) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  if (history_length <= 0) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  if (default_number_edges <= 0) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  if (default_history_length <= 0) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  if (edges_chunk_size <= 0) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  if (history_chunk_size <= 0) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
 
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
 
+  init_params_ = {number_frames,
+                  number_edges,
+                  history_length,
+                  default_number_edges,
+                  default_history_length,
+                  edges_chunk_size,
+                  history_chunk_size};
   default_number_edges_ = default_number_edges;
   default_history_length_ = default_history_length;
   {  // Initialize the history map
     const auto result = histories_map_.initialize(number_edges);
-    if (!result) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
   {  // Initialize the frame map
     const auto result = frame_map_.initialize(number_frames);
-    if (!result) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
   {  // Initialize the history memory management
     const auto result = histories_management_.allocate(number_edges, edges_chunk_size);
-    if (!result) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
   {  // Initialize the poses memory management
     const auto result = poses_management_.allocate(history_length, history_chunk_size);
-    if (!result) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
   {  // Initialize the callbacks
     // TODO(bbutin): We should use a parameter for the size of the callbacks
     const auto result1 = set_edge_callbacks_keys_.reserve(1024);
     const auto result2 = set_edge_callbacks_.initialize(1024);
-    if (!result1 || !result2) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result1 || !result2) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
   {  // Initialize the create frame callbacks
     // TODO(bbutin): We should use a parameter for the size of the callbacks
     const auto result1 = create_frame_callbacks_keys_.reserve(1024);
     const auto result2 = create_frame_callbacks_.initialize(1024);
-    if (!result1 || !result2) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result1 || !result2) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
   {  // Initialize the edges map
     const auto result1 = edges_map_.reserve(number_edges, 2 * number_edges);
     const auto result2 = edges_map_keys_.reserve(number_edges);
-    if (!result1 || !result2) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result1 || !result2) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
   {  // Initialize the edges map
     const auto result1 = name_to_uid_map_.reserve(number_frames, 2 * number_frames);
     const auto result2 = name_to_uid_map_keys_.reserve(number_frames);
-    if (!result1 || !result2) { return unexpected_t(Error::kOutOfMemory); }
+    if (!result1 || !result2) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
   }
 
   frames_stack_.reset(new (std::nothrow) frame_t[number_frames]);
-  if (frames_stack_.get() == nullptr) { return unexpected_t(Error::kOutOfMemory); }
+  if (frames_stack_.get() == nullptr) {
+    return unexpected_t(Error::kOutOfMemory);
+  }
 
   hint_version_ = 0;
   version_ = 1;
@@ -141,7 +181,9 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::find_frame(std::string_view na
 
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::find_frame_impl(std::string_view name) const {
   const auto it = name_to_uid_map_.get(name);
-  if (it) { return it.value(); }
+  if (it) {
+    return it.value();
+  }
   return unexpected_t(Error::kFrameNotFound);
 }
 
@@ -158,7 +200,9 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::find_or_create_frame(std::stri
 
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::find_or_create_frame_impl(
     std::string_view name, const int32_t number_edges) {
-  if (auto uid = find_frame_impl(name)) { return uid; }
+  if (auto uid = find_frame_impl(name)) {
+    return uid;
+  }
   return create_frame_impl(name, number_edges);
 }
 
@@ -182,7 +226,9 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame() {
 
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_view name,
                                                                     const int32_t number_edges) {
-  if (frame_map_.size() == frame_map_.capacity()) { return unexpected_t(Error::kOutOfMemory); }
+  if (frame_map_.size() == frame_map_.capacity()) {
+    return unexpected_t(Error::kOutOfMemory);
+  }
   if (!name.empty()) {
     // Check the name does not start with the reserved character
     if (name[0] == kAutoGeneratedFrameNamePrefix[0] || name.size() > kFrameNameMaximumLength) {
@@ -195,7 +241,9 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_
     }
   }
   const auto history = histories_management_.acquire(number_edges);
-  if (!history) { return unexpected_t(Error::kOutOfMemory); }
+  if (!history) {
+    return unexpected_t(Error::kOutOfMemory);
+  }
   const auto uid = frame_map_.emplace();
   if (!uid) {
     histories_management_.release(history.value().first);
@@ -217,7 +265,9 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_
   frame->uid = uid.value();
   frame->root = frame->uid;
   if (!name.empty()) {
-    for (size_t index = 0; index < name.size(); index++) { frame->name[index] = name[index]; }
+    for (size_t index = 0; index < name.size(); index++) {
+      frame->name[index] = name[index];
+    }
     frame->name_view = std::string_view(frame->name, name.size());
   } else {
     // Auto generate a name
@@ -245,9 +295,13 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_
     // Call each registered CreateFrameCallback callback
     std::shared_lock<std::shared_timed_mutex> callbacks_lock(create_frame_callbacks_mutex_);
     for (const auto& cid : create_frame_callbacks_keys_) {
-      if (!cid) { continue; }
+      if (!cid) {
+        continue;
+      }
       auto cb = create_frame_callbacks_.try_get(cid.value());
-      if (cb) { (*cb.value())(frame->uid); }
+      if (cb) {
+        (*cb.value())(frame->uid);
+      }
     }
     // TODO(bbutin): Find a better way, we should not need to acquire the lock again as all the code
     // is safe below that point beside the lock_guard unlocking (requiring it to be locked).
@@ -323,13 +377,19 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::create_edges(
 PoseTree::expected_t<PoseTree::version_t> PoseTree::create_edges_impl(
     frame_t lhs, frame_t rhs, const int32_t maximum_length,
     PoseTreeEdgeHistory::AccessMethod method) {
-  if (lhs > rhs) { std::swap(lhs, rhs); }
+  if (lhs > rhs) {
+    std::swap(lhs, rhs);
+  }
   // Make sure the frames exists
   const auto lhs_it = frame_map_.try_get(lhs);
   const auto rhs_it = frame_map_.try_get(rhs);
-  if (!lhs_it || !rhs_it) { return unexpected_t(Error::kFrameNotFound); }
+  if (!lhs_it || !rhs_it) {
+    return unexpected_t(Error::kFrameNotFound);
+  }
   // Make sure the edges do not exist yet
-  if (edges_map_.has({lhs, rhs})) { return unexpected_t(Error::kAlreadyExists); }
+  if (edges_map_.has({lhs, rhs})) {
+    return unexpected_t(Error::kAlreadyExists);
+  }
   // Check both frame have room for one more edge
   FrameInfo* lhs_frame = lhs_it.value();
   FrameInfo* rhs_frame = rhs_it.value();
@@ -338,7 +398,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::create_edges_impl(
     return unexpected_t(Error::kOutOfMemory);
   }
   const auto lhs_edge = poses_management_.acquire(maximum_length);
-  if (!lhs_edge) { return unexpected_t(Error::kOutOfMemory); }
+  if (!lhs_edge) {
+    return unexpected_t(Error::kOutOfMemory);
+  }
   const auto uid =
       method == PoseTreeEdgeHistory::AccessMethod::kDefault
           ? histories_map_.emplace(lhs, rhs, lhs_edge.value().second, lhs_edge.value().first)
@@ -365,7 +427,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::create_edges_impl(
 PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_frame(const frame_t uid) {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
   const auto uid_it = frame_map_.try_get(uid);
-  if (!uid_it) { return unexpected_t(Error::kFrameNotFound); }
+  if (!uid_it) {
+    return unexpected_t(Error::kFrameNotFound);
+  }
   FrameInfo* frame = uid_it.value();
   while (frame->number_edges) {
     const auto history = histories_map_.try_get(frame->history[frame->number_edges - 1]);
@@ -384,7 +448,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_frame(const frame_t u
   name_to_uid_map_.erase(frame->name_view);
   for (size_t i = 0; i < name_to_uid_map_keys_.size(); i++) {
     const auto key = name_to_uid_map_keys_[i];
-    if (!key) { return unexpected_t(Error::kLogicError); }
+    if (!key) {
+      return unexpected_t(Error::kLogicError);
+    }
     if (key.value() == frame->name_view) {
       name_to_uid_map_keys_.erase(i);
       break;
@@ -400,7 +466,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_frame(const std::stri
   {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     const auto maybe_uid = find_frame_impl(name);
-    if (!maybe_uid) { return unexpected_t(Error::kFrameNotFound); }
+    if (!maybe_uid) {
+      return unexpected_t(Error::kFrameNotFound);
+    }
     uid = maybe_uid.value();
   }
   return delete_frame(uid);
@@ -418,9 +486,13 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_edge(const std::strin
   {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     const auto maybe_lhs_uid = find_frame_impl(lhs);
-    if (!maybe_lhs_uid) { return unexpected_t(Error::kFrameNotFound); }
+    if (!maybe_lhs_uid) {
+      return unexpected_t(Error::kFrameNotFound);
+    }
     const auto maybe_rhs_uid = find_frame_impl(rhs);
-    if (!maybe_rhs_uid) { return unexpected_t(Error::kFrameNotFound); }
+    if (!maybe_rhs_uid) {
+      return unexpected_t(Error::kFrameNotFound);
+    }
     lhs_uid = maybe_lhs_uid.value();
     rhs_uid = maybe_rhs_uid.value();
   }
@@ -429,13 +501,19 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_edge(const std::strin
 
 PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_edge_impl(frame_t lhs, frame_t rhs,
                                                                      const version_t version) {
-  if (lhs > rhs) { std::swap(lhs, rhs); }
+  if (lhs > rhs) {
+    std::swap(lhs, rhs);
+  }
   // Make sure both the frame and edge exists.
   const auto lhs_it = frame_map_.try_get(lhs);
   const auto rhs_it = frame_map_.try_get(rhs);
-  if (!lhs_it || !rhs_it) { return unexpected_t(Error::kFrameNotFound); }
+  if (!lhs_it || !rhs_it) {
+    return unexpected_t(Error::kFrameNotFound);
+  }
   const auto lhs_rhs = edges_map_.get({lhs, rhs});
-  if (!lhs_rhs) { return unexpected_t(Error::kFramesNotLinked); }
+  if (!lhs_rhs) {
+    return unexpected_t(Error::kFramesNotLinked);
+  }
   // Helper pointer to the frame infos.
   FrameInfo* lhs_frame = lhs_it.value();
   FrameInfo* rhs_frame = rhs_it.value();
@@ -453,14 +531,18 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_edge_impl(frame_t lhs
 
   // Move the last edge to the place where lhs/rhs is stored and then remove the last edge.
   for (int32_t id = --lhs_frame->number_edges;; id--) {
-    if (id == -1) { return unexpected_t(Error::kLogicError); }
+    if (id == -1) {
+      return unexpected_t(Error::kLogicError);
+    }
     if (lhs_frame->history[id] == lhs_rhs.value()) {
       lhs_frame->history[id] = lhs_frame->history[lhs_frame->number_edges];
       break;
     }
   }
   for (int32_t id = --rhs_frame->number_edges;; id--) {
-    if (id == -1) { return unexpected_t(Error::kLogicError); }
+    if (id == -1) {
+      return unexpected_t(Error::kLogicError);
+    }
     if (rhs_frame->history[id] == lhs_rhs.value()) {
       rhs_frame->history[id] = rhs_frame->history[rhs_frame->number_edges];
       break;
@@ -470,7 +552,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_edge_impl(frame_t lhs
   edges_map_.erase({lhs, rhs});
   for (size_t i = 0; i < edges_map_keys_.size(); i++) {
     const auto key = edges_map_keys_[i];
-    if (!key) { return unexpected_t(Error::kLogicError); }
+    if (!key) {
+      return unexpected_t(Error::kLogicError);
+    }
     if (key.value().first == lhs && key.value().second == rhs) {
       edges_map_keys_.erase(i);
       break;
@@ -489,20 +573,28 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::delete_edge_impl(frame_t lhs
 
 PoseTree::expected_t<PoseTree::version_t> PoseTree::disconnect_edge(frame_t lhs, frame_t rhs,
                                                                     const double time) {
-  if (lhs > rhs) { std::swap(lhs, rhs); }
+  if (lhs > rhs) {
+    std::swap(lhs, rhs);
+  }
   // Make sure both the frame and edge exists.
   const auto lhs_it = frame_map_.try_get(lhs);
   const auto rhs_it = frame_map_.try_get(rhs);
-  if (!lhs_it || !rhs_it) { return unexpected_t(Error::kFrameNotFound); }
+  if (!lhs_it || !rhs_it) {
+    return unexpected_t(Error::kFrameNotFound);
+  }
   const auto lhs_rhs = edges_map_.get({lhs, rhs});
-  if (!lhs_rhs) { return unexpected_t(Error::kFramesNotLinked); }
+  if (!lhs_rhs) {
+    return unexpected_t(Error::kFramesNotLinked);
+  }
   const auto history = histories_map_.try_get(lhs_rhs.value());
   if (!history) {
     // This should never happen, assert?
     return unexpected_t(Error::kLogicError);
   }
   const auto result = history.value()->disconnect(time, version_ + 1);
-  if (!result) { return unexpected_t(Error::kPoseOutOfOrder); }
+  if (!result) {
+    return unexpected_t(Error::kPoseOutOfOrder);
+  }
   // Recompute the root of the subtree which got disconnected.
   if (lhs_it.value()->node_to_root == rhs) {
     update_root(lhs);
@@ -519,9 +611,13 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::disconnect_edge(const std::s
   {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     const auto maybe_lhs_uid = find_frame_impl(lhs);
-    if (!maybe_lhs_uid) { return unexpected_t(Error::kFrameNotFound); }
+    if (!maybe_lhs_uid) {
+      return unexpected_t(Error::kFrameNotFound);
+    }
     const auto maybe_rhs_uid = find_frame_impl(rhs);
-    if (!maybe_rhs_uid) { return unexpected_t(Error::kFrameNotFound); }
+    if (!maybe_rhs_uid) {
+      return unexpected_t(Error::kFrameNotFound);
+    }
     lhs_uid = maybe_lhs_uid.value();
     rhs_uid = maybe_rhs_uid.value();
   }
@@ -556,7 +652,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::disconnect_frame(const frame
     }
   }
   update_root(uid);
-  if (failed) { return unexpected_t(Error::kPoseOutOfOrder); }
+  if (failed) {
+    return unexpected_t(Error::kPoseOutOfOrder);
+  }
   return ++version_;
 }
 
@@ -566,7 +664,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::disconnect_frame(const std::
   {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     const auto maybe_uid = find_frame_impl(name);
-    if (!maybe_uid) { return unexpected_t(Error::kFrameNotFound); }
+    if (!maybe_uid) {
+      return unexpected_t(Error::kFrameNotFound);
+    }
     uid = maybe_uid.value();
   }
   return disconnect_frame(uid, time);
@@ -582,11 +682,21 @@ PoseTree::expected_t<std::string_view> PoseTree::get_frame_name(const frame_t ui
   return uid_it.value()->name_view;
 }
 
+PoseTree::expected_t<PoseTree::InitParameters> PoseTree::get_init_parameters() const {
+  std::shared_lock<std::shared_timed_mutex> lock(mutex_);
+  if (frames_stack_ == nullptr) {
+    return unexpected_t(Error::kLogicError);
+  }
+  return init_params_;
+}
+
 PoseTree::expected_t<void> PoseTree::update_root(const frame_t root) {
   int32_t size = 0;
   frame_t* stack = frames_stack_.get();
   auto it = frame_map_.try_get(root);
-  if (!it || stack == nullptr) { return unexpected_t(Error::kLogicError); }
+  if (!it || stack == nullptr) {
+    return unexpected_t(Error::kLogicError);
+  }
   it.value()->node_to_root = root;
   it.value()->root = root;
   it.value()->distance_to_root = 0;
@@ -599,9 +709,13 @@ PoseTree::expected_t<void> PoseTree::update_root(const frame_t root) {
     // Go through all the edges
     for (int edge = 0; edge < frame->number_edges; edge++) {
       const auto history = histories_map_.try_get(frame->history[edge]);
-      if (!history) { continue; }
+      if (!history) {
+        continue;
+      }
       // Ignore not connected edges
-      if (!history.value()->connected()) { continue; }
+      if (!history.value()->connected()) {
+        continue;
+      }
       it = frame_map_.try_get(history.value()->rhs() == frame->uid ? history.value()->lhs()
                                                                    : history.value()->rhs());
       if (!it) {
@@ -609,7 +723,9 @@ PoseTree::expected_t<void> PoseTree::update_root(const frame_t root) {
         continue;
       }
       // Make sure we haven't visited this edge before (it means it is where we come from).
-      if (it.value()->hint_version == hint_version_) { continue; }
+      if (it.value()->hint_version == hint_version_) {
+        continue;
+      }
       // Update the information
       it.value()->root = root;
       it.value()->hint_version = hint_version_;
@@ -652,7 +768,9 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(std::string_view lhs, st
 PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const frame_t rhs,
                                                         const double time,
                                                         const Pose3d& lhs_T_rhs) {
-  if (lhs > rhs) { return set(rhs, lhs, time, lhs_T_rhs.inverse()); }
+  if (lhs > rhs) {
+    return set(rhs, lhs, time, lhs_T_rhs.inverse());
+  }
   if (!lhs_T_rhs.translation.allFinite() ||
       !is_almost_one(lhs_T_rhs.rotation.quaternion().squaredNorm())) {
     HOLOSCAN_LOG_WARN("Invalid pose between: %zu and %zu", lhs, rhs);
@@ -679,9 +797,22 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const
       const auto result = create_edges_impl(
           lhs, rhs, default_history_length_, PoseTreeEdgeHistory::AccessMethod::kDefault);
       // It might fail due to a loop or memory issue.
-      if (!result) { return result; }
+      if (!result) {
+        HOLOSCAN_LOG_DEBUG("Unable to set pose: Unable to create edges for '{}' ({}) -> '{}' ({})",
+                           lhs_frame->name_view,
+                           lhs,
+                           rhs_frame->name_view,
+                           rhs);
+        return result;
+      }
       lhs_rhs = edges_map_.get({lhs, rhs});
       if (!lhs_rhs) {
+        HOLOSCAN_LOG_DEBUG(
+            "Unable to set pose: Unable to get edge map item for '{}' ({}) -> '{}' ({})",
+            lhs_frame->name_view,
+            lhs,
+            rhs_frame->name_view,
+            rhs);
         // Safety check, but this should never happen.
         return unexpected_t(Error::kLogicError);
       }
@@ -690,6 +821,11 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const
     // component and we should detect loop.
     auto history = histories_map_.try_get(lhs_rhs.value());
     if (!history) {
+      HOLOSCAN_LOG_DEBUG("Unable to set pose: Unable to get history for '{}' ({}) -> '{}' ({})",
+                         lhs_frame->name_view,
+                         lhs,
+                         rhs_frame->name_view,
+                         rhs);
       // Safety check, but this should never happen.
       return unexpected_t(Error::kLogicError);
     }
@@ -699,14 +835,29 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const
       // connection.
       if (lhs_frame->root == rhs_frame->root ||
           get_impl(lhs, rhs, time, PoseTreeEdgeHistory::AccessMethod::kNearest, version_)) {
+        HOLOSCAN_LOG_DEBUG(
+            "Unable to set pose: cycling dependency detected for '{}' ({}) -> '{}' ({})",
+            lhs_frame->name_view,
+            lhs,
+            rhs_frame->name_view,
+            rhs);
         return unexpected_t(Error::kCyclingDependency);
       }
     }
     // Store the pose in both histories
     const auto result = history.value()->set(time, lhs_T_rhs, version_ + 1);
-    if (!result) { return unexpected_t(Error::kPoseOutOfOrder); }
+    if (!result) {
+      HOLOSCAN_LOG_DEBUG("Unable to set pose: out of order for '{}' ({}) -> '{}' ({})",
+                         lhs_frame->name_view,
+                         lhs,
+                         rhs_frame->name_view,
+                         rhs);
+      return unexpected_t(Error::kPoseOutOfOrder);
+    }
     // Connect the components if needed
-    if (need_update) { update_root(lhs); }
+    if (need_update) {
+      update_root(lhs);
+    }
     version = ++version_;
   }
 
@@ -714,9 +865,13 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const
     // Call each registered SetEdgeCallback function
     std::shared_lock<std::shared_timed_mutex> callbacks_lock(set_edge_callbacks_mutex_);
     for (const auto& cid : set_edge_callbacks_keys_) {
-      if (!cid) { continue; }
+      if (!cid) {
+        continue;
+      }
       auto cb = set_edge_callbacks_.try_get(cid.value());
-      if (cb) { (*cb.value())(lhs, rhs, time, lhs_T_rhs); }
+      if (cb) {
+        (*cb.value())(lhs, rhs, time, lhs_T_rhs);
+      }
     }
   }
 
@@ -743,7 +898,9 @@ PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest(frame_t lhs
                                                                      frame_t rhs) const {
   if (lhs > rhs) {
     const auto result = get_latest(rhs, lhs);
-    if (!result) { return result; }
+    if (!result) {
+      return result;
+    }
     return std::make_pair(result.value().first.inverse(), result.value().second);
   }
   std::shared_lock<std::shared_timed_mutex> lock(mutex_);
@@ -756,14 +913,18 @@ PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest(frame_t lhs
   }
   const auto lhs_rhs = edges_map_.get({lhs, rhs});
   // Check the edge exist
-  if (!lhs_rhs) { return unexpected_t(Error::kFramesNotLinked); }
+  if (!lhs_rhs) {
+    return unexpected_t(Error::kFramesNotLinked);
+  }
   const auto history = histories_map_.try_get(lhs_rhs.value());
   if (!history) {
     // Safety check, but this should never happen.
     return unexpected_t(Error::kLogicError);
   }
   const auto timed_pose = history.value()->latest();
-  if (!timed_pose) { return unexpected_t(Error::kInvalidArgument); }
+  if (!timed_pose) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
   return std::make_pair(timed_pose.value().pose, timed_pose.value().time);
 }
 
@@ -867,10 +1028,14 @@ PoseTree::expected_t<Pose3d> PoseTree::get_impl(const frame_t lhs, const frame_t
                                                 const double time,
                                                 const PoseTreeEdgeHistory::AccessMethod method,
                                                 const version_t version) const {
-  if (lhs == rhs) { return Pose3d::identity(); }
+  if (lhs == rhs) {
+    return Pose3d::identity();
+  }
   if (lhs > rhs) {
     const auto result = get_impl(rhs, lhs, time, method, version);
-    if (!result) { return result; }
+    if (!result) {
+      return result;
+    }
     return result.value().inverse();
   }
   // Make sure both the frame exist.
@@ -884,13 +1049,17 @@ PoseTree::expected_t<Pose3d> PoseTree::get_impl(const frame_t lhs, const frame_t
   const FrameInfo* lhs_frame = lhs_it.value();
   const FrameInfo* rhs_frame = rhs_it.value();
   // Check if the hint will succeed.
-  if (lhs_frame->root != rhs_frame->root) { return get_dfs_impl(lhs, rhs, time, method, version); }
+  if (lhs_frame->root != rhs_frame->root) {
+    return get_dfs_impl(lhs, rhs, time, method, version);
+  }
   Pose3d lhs_T_parent = Pose3d::identity();
   Pose3d rhs_T_parent = Pose3d::identity();
 
   const auto update_pose = [&](const FrameInfo** frame, Pose3d& pose) {
     const auto next = frame_map_.try_get((*frame)->node_to_root);
-    if (!next) { return false; }
+    if (!next) {
+      return false;
+    }
     bool inverse = false;
     std::pair<frame_t, frame_t> key;
     if ((*frame)->uid < next.value()->uid) {
@@ -900,11 +1069,17 @@ PoseTree::expected_t<Pose3d> PoseTree::get_impl(const frame_t lhs, const frame_t
       inverse = true;
     }
     const auto history_it = edges_map_.get(key);
-    if (!history_it) { return false; }
+    if (!history_it) {
+      return false;
+    }
     const auto history = histories_map_.try_get(history_it.value());
-    if (!history) { return false; }
+    if (!history) {
+      return false;
+    }
     const auto current_T_next = history.value()->get(time, method, version);
-    if (!current_T_next) { return false; }
+    if (!current_T_next) {
+      return false;
+    }
     pose = pose * (inverse ? current_T_next.value().inverse() : current_T_next.value());
     *frame = next.value();
     return true;
@@ -936,7 +1111,9 @@ PoseTree::expected_t<PoseTree::uid_t> PoseTree::add_create_frame_callback(
     CreateFrameCallback callback) {
   std::unique_lock<std::shared_timed_mutex> lock(create_frame_callbacks_mutex_);
   const auto cid = create_frame_callbacks_.insert(callback);
-  if (!cid) { return unexpected_t(Error::kOutOfMemory); }
+  if (!cid) {
+    return unexpected_t(Error::kOutOfMemory);
+  }
   create_frame_callbacks_keys_.push_back(cid.value());
   return cid.value();
 }
@@ -945,13 +1122,19 @@ PoseTree::expected_t<void> PoseTree::remove_create_frame_callback(uid_t cid) {
   std::unique_lock<std::shared_timed_mutex> lock(create_frame_callbacks_mutex_);
   // If the cid does not have an associated callback function, return an error
   auto erase = create_frame_callbacks_.erase(cid);
-  if (!erase) { return unexpected_t(Error::kInvalidArgument); }
+  if (!erase) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
   for (size_t i = 0; i < create_frame_callbacks_keys_.size(); i++) {
     auto cid = create_frame_callbacks_keys_.at(i);
-    if (!cid) { return unexpected_t(Error::kLogicError); }
+    if (!cid) {
+      return unexpected_t(Error::kLogicError);
+    }
     if (cid.value() == cid) {
       auto last = create_frame_callbacks_keys_.back();
-      if (!last) { return unexpected_t(Error::kLogicError); }
+      if (!last) {
+        return unexpected_t(Error::kLogicError);
+      }
       cid.value() = last.value();
       create_frame_callbacks_keys_.pop_back();
       return expected_t<void>{};
@@ -963,7 +1146,9 @@ PoseTree::expected_t<void> PoseTree::remove_create_frame_callback(uid_t cid) {
 PoseTree::expected_t<PoseTree::uid_t> PoseTree::add_set_edge_callback(SetEdgeCallback callback) {
   std::unique_lock<std::shared_timed_mutex> lock(set_edge_callbacks_mutex_);
   const auto cid = set_edge_callbacks_.insert(callback);
-  if (!cid) { return unexpected_t(Error::kOutOfMemory); }
+  if (!cid) {
+    return unexpected_t(Error::kOutOfMemory);
+  }
   set_edge_callbacks_keys_.push_back(cid.value());
   return cid.value();
 }
@@ -972,13 +1157,19 @@ PoseTree::expected_t<void> PoseTree::remove_set_edge_callback(uid_t cid) {
   std::unique_lock<std::shared_timed_mutex> lock(set_edge_callbacks_mutex_);
   // If the cid does not have an associated callback function, return an error
   auto erase = set_edge_callbacks_.erase(cid);
-  if (!erase) { return unexpected_t(Error::kInvalidArgument); }
+  if (!erase) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
   for (size_t i = 0; i < set_edge_callbacks_keys_.size(); i++) {
     auto cid = set_edge_callbacks_keys_.at(i);
-    if (!cid) { return unexpected_t(Error::kLogicError); }
+    if (!cid) {
+      return unexpected_t(Error::kLogicError);
+    }
     if (cid.value() == cid) {
       auto last = set_edge_callbacks_keys_.back();
-      if (!last) { return unexpected_t(Error::kLogicError); }
+      if (!last) {
+        return unexpected_t(Error::kLogicError);
+      }
       cid.value() = last.value();
       set_edge_callbacks_keys_.pop_back();
       return expected_t<void>{};
@@ -995,7 +1186,9 @@ PoseTree::expected_t<Pose3d> PoseTree::get_dfs_impl(const frame_t lhs, const fra
   int32_t size = 0;
   frame_t* stack = frames_stack_.get();
   auto it = frame_map_.try_get(rhs);
-  if (!it) { return unexpected_t(Error::kLogicError); }
+  if (!it) {
+    return unexpected_t(Error::kLogicError);
+  }
   it.value()->hint_version = hint_version_;
   stack[size++] = rhs;
   // DFS implementation
@@ -1006,15 +1199,23 @@ PoseTree::expected_t<Pose3d> PoseTree::get_dfs_impl(const frame_t lhs, const fra
       while (frame->uid != rhs) {
         if (frame->uid < frame->dfs_link) {
           const auto history_it = edges_map_.get({frame->uid, frame->dfs_link});
-          if (!history_it) { return unexpected_t(Error::kLogicError); }
+          if (!history_it) {
+            return unexpected_t(Error::kLogicError);
+          }
           const auto history = histories_map_.try_get(history_it.value());
-          if (!history) { return unexpected_t(Error::kLogicError); }
+          if (!history) {
+            return unexpected_t(Error::kLogicError);
+          }
           pose = pose * history.value()->get(time, method, version).value();
         } else {
           const auto history_it = edges_map_.get({frame->dfs_link, frame->uid});
-          if (!history_it) { return unexpected_t(Error::kLogicError); }
+          if (!history_it) {
+            return unexpected_t(Error::kLogicError);
+          }
           const auto history = histories_map_.try_get(history_it.value());
-          if (!history) { return unexpected_t(Error::kLogicError); }
+          if (!history) {
+            return unexpected_t(Error::kLogicError);
+          }
           pose = pose * history.value()->get(time, method, version).value().inverse();
         }
         frame = frame_map_.try_get(frame->dfs_link).value();
@@ -1025,14 +1226,22 @@ PoseTree::expected_t<Pose3d> PoseTree::get_dfs_impl(const frame_t lhs, const fra
     // Go through all the edges
     for (int edge = 0; edge < frame->number_edges; edge++) {
       const auto history = histories_map_.try_get(frame->history[edge]);
-      if (!history) { continue; }
+      if (!history) {
+        continue;
+      }
       // Ignore not connected edges
-      if (!history.value()->get(time, method, version)) { continue; }
+      if (!history.value()->get(time, method, version)) {
+        continue;
+      }
       it = frame_map_.try_get(history.value()->rhs() == frame->uid ? history.value()->lhs()
                                                                    : history.value()->rhs());
-      if (!it) { continue; }
+      if (!it) {
+        continue;
+      }
       // Make sure we haven't visited this edge before (it means it is where we come from).
-      if (it.value()->hint_version == hint_version_) { continue; }
+      if (it.value()->hint_version == hint_version_) {
+        continue;
+      }
       // Update the information
       it.value()->hint_version = hint_version_;
       it.value()->dfs_link = frame->uid;

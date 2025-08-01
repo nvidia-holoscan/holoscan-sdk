@@ -25,6 +25,7 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/resources/gxf/async_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/transmitter.hpp"
 #include "holoscan/core/resources/gxf/ucx_transmitter.hpp"
@@ -74,7 +75,25 @@ class PyUcxTransmitter : public UcxTransmitter {
                                Arg{"port", port},
                                Arg{"local_port", local_port},
                                Arg{"maximum_connection_retries", maximum_connection_retries}}) {
-    if (buffer) { this->add_arg(Arg{"buffer", buffer}); }
+    if (buffer) {
+      this->add_arg(Arg{"buffer", buffer});
+    }
+    name_ = name;
+    fragment_ = fragment;
+    spec_ = std::make_shared<ComponentSpec>(fragment);
+    setup(*spec_);
+  }
+};
+
+class PyAsyncBufferTransmitter : public AsyncBufferTransmitter {
+ public:
+  /* Inherit the constructors */
+  using AsyncBufferTransmitter::AsyncBufferTransmitter;
+
+  // Define a constructor that fully initializes the object.
+  explicit PyAsyncBufferTransmitter(Fragment* fragment,
+                                    const std::string& name = "async_buffer_transmitter")
+      : AsyncBufferTransmitter() {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
@@ -101,6 +120,16 @@ void init_transmitters(py::module_& m) {
            "policy"_a = 2UL,
            "name"_a = "double_buffer_transmitter"s,
            doc::DoubleBufferTransmitter::doc_DoubleBufferTransmitter);
+
+  py::class_<AsyncBufferTransmitter,
+             PyAsyncBufferTransmitter,
+             Transmitter,
+             std::shared_ptr<AsyncBufferTransmitter>>(
+      m, "AsyncBufferTransmitter", doc::AsyncBufferTransmitter::doc_AsyncBufferTransmitter)
+      .def(py::init<Fragment*, const std::string&>(),
+           "fragment"_a,
+           "name"_a = "async_buffer_transmitter"s,
+           doc::AsyncBufferTransmitter::doc_AsyncBufferTransmitter);
 
   py::class_<UcxTransmitter, PyUcxTransmitter, Transmitter, std::shared_ptr<UcxTransmitter>>(
       m, "UcxTransmitter", doc::UcxTransmitter::doc_UcxTransmitter)

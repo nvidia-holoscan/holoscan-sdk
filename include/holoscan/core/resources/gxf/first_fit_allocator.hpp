@@ -39,7 +39,7 @@ namespace holoscan {
  *
  * @tparam T Type of elements that will be stored in the allocated memory.
  */
-template<class T>
+template <class T>
 class FirstFitAllocator {
  public:
   /// Expected type used by this class.
@@ -76,7 +76,7 @@ class FirstFitAllocator {
     chunk_size_ = chunk_size;
     number_of_chunks_ = get_number_of_chunks(size);
     // Allocate memory
-    buffer_.reset(new(std::nothrow) T[number_of_chunks_ * chunk_size_]);
+    buffer_.reset(new (std::nothrow) T[number_of_chunks_ * chunk_size_]);
     if (buffer_.get() == nullptr) {
       return unexpected_t(FirstFitAllocatorBase::Error::kOutOfMemory);
     }

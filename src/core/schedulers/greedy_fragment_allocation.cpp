@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -188,11 +188,21 @@ bool GreedyFragmentAllocationStrategy::AvailableSystemResourceComparator::operat
     // If 'a' has more target fragments, then 'a' has higher priority.
     return a.target_fragments.size() < b.target_fragments.size();
   }
-  if (a.shared_memory != b.shared_memory) { return a.shared_memory > b.shared_memory; }
-  if (a.gpu != b.gpu) { return a.gpu > b.gpu; }
-  if (a.gpu_memory != b.gpu_memory) { return a.gpu_memory > b.gpu_memory; }
-  if (a.cpu != b.cpu) { return a.cpu > b.cpu; }
-  if (a.memory != b.memory) { return a.memory > b.memory; }
+  if (a.shared_memory != b.shared_memory) {
+    return a.shared_memory > b.shared_memory;
+  }
+  if (a.gpu != b.gpu) {
+    return a.gpu > b.gpu;
+  }
+  if (a.gpu_memory != b.gpu_memory) {
+    return a.gpu_memory > b.gpu_memory;
+  }
+  if (a.cpu != b.cpu) {
+    return a.cpu > b.cpu;
+  }
+  if (a.memory != b.memory) {
+    return a.memory > b.memory;
+  }
 
   auto fragment_size = a.target_fragments.size();
   auto a_fragment_names_sorted_set =
@@ -228,19 +238,39 @@ bool GreedyFragmentAllocationStrategy::SystemResourceRequirementComparator::oper
   // If the value is -1 (for cpu/cpu_limit/gpu/gpu_limit) or zero (other fields), then it has lower
   // priority.
 
-  if (a.shared_memory != b.shared_memory) { return a.shared_memory < b.shared_memory; }
+  if (a.shared_memory != b.shared_memory) {
+    return a.shared_memory < b.shared_memory;
+  }
   if (a.shared_memory_limit != b.shared_memory_limit) {
     return a.shared_memory_limit < b.shared_memory_limit;
   }
-  if (a.gpu != b.gpu) { return a.gpu < b.gpu; }
-  if (a.gpu_limit != b.gpu_limit) { return a.gpu_limit < b.gpu_limit; }
-  if (a.gpu_memory != b.gpu_memory) { return a.gpu_memory < b.gpu_memory; }
-  if (a.gpu_memory_limit != b.gpu_memory_limit) { return a.gpu_memory_limit < b.gpu_memory_limit; }
-  if (a.cpu != b.cpu) { return a.cpu < b.cpu; }
-  if (a.cpu_limit != b.cpu_limit) { return a.cpu_limit < b.cpu_limit; }
-  if (a.memory != b.memory) { return a.memory < b.memory; }
-  if (a.memory_limit != b.memory_limit) { return a.memory_limit < b.memory_limit; }
-  if (a.fragment_name != b.fragment_name) { return a.fragment_name > b.fragment_name; }
+  if (a.gpu != b.gpu) {
+    return a.gpu < b.gpu;
+  }
+  if (a.gpu_limit != b.gpu_limit) {
+    return a.gpu_limit < b.gpu_limit;
+  }
+  if (a.gpu_memory != b.gpu_memory) {
+    return a.gpu_memory < b.gpu_memory;
+  }
+  if (a.gpu_memory_limit != b.gpu_memory_limit) {
+    return a.gpu_memory_limit < b.gpu_memory_limit;
+  }
+  if (a.cpu != b.cpu) {
+    return a.cpu < b.cpu;
+  }
+  if (a.cpu_limit != b.cpu_limit) {
+    return a.cpu_limit < b.cpu_limit;
+  }
+  if (a.memory != b.memory) {
+    return a.memory < b.memory;
+  }
+  if (a.memory_limit != b.memory_limit) {
+    return a.memory_limit < b.memory_limit;
+  }
+  if (a.fragment_name != b.fragment_name) {
+    return a.fragment_name > b.fragment_name;
+  }
 
   return false;
 }

@@ -61,7 +61,10 @@
 #include "./core/network_contexts/gxf/ucx_context.hpp"
 
 // Resources
+#include "./core/resources/async_data_logger.hpp"
 #include "./core/resources/data_logger.hpp"
+#include "./core/resources/gxf/async_buffer_receiver.hpp"
+#include "./core/resources/gxf/async_buffer_transmitter.hpp"
 #include "./core/resources/gxf/block_memory_pool.hpp"
 #include "./core/resources/gxf/clock.hpp"
 #include "./core/resources/gxf/condition_combiner.hpp"

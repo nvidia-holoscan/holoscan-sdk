@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "../config.hpp"
+#include "../flow_tracking/sample_test_graphs.hpp"
 #include "common/assert.hpp"
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/arg.hpp"
@@ -43,6 +44,7 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
+#include "holoscan/operators/holoviz/holoviz.hpp"
 #include "holoscan/operators/ping_rx/ping_rx.hpp"
 #include "holoscan/operators/ping_tx/ping_tx.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
@@ -205,6 +207,9 @@ TEST(Fragment, TestMakeThreadPool) {
   auto op1 = F.make_operator<Operator>("op1");
   auto op2 = F.make_operator<Operator>("op2");
   auto op3 = F.make_operator<Operator>("op3");
+  auto op4 = F.make_operator<Operator>("op4");
+  auto op5 = F.make_operator<Operator>("op5");
+  auto op6 = F.make_operator<Operator>("op6");
 
   // create a pool of size 1
   auto pool1 = F.make_thread_pool("pool1", 1);
@@ -216,8 +221,27 @@ TEST(Fragment, TestMakeThreadPool) {
   // add multiple operators, each with thread pinning
   pool2->add({std::move(op2), std::move(op3)}, true);
 
+  // create a pool of size 0
+  auto pool3 = F.make_thread_pool("pool3", 0);
+  // add an individual operator with SCHED_DEADLINE real-time scheduling policy
+  pool3->add_realtime(
+      op4, SchedulingPolicy::kDeadline, true, {0, 1}, 0, 1000000, 1000000000, 1000000000);
+
+  // create a pool of size 1
+  auto pool4 = F.make_thread_pool("pool4", 1);
+  // add an individual operator with SCHED_FIFO real-time scheduling policy
+  pool4->add_realtime(op5, SchedulingPolicy::kFirstInFirstOut, true, {2}, 1);
+
+  // create a pool of size 2
+  auto pool5 = F.make_thread_pool("pool5", 2);
+  // add an individual operator with SCHED_RR real-time scheduling policy
+  pool5->add_realtime(op6, SchedulingPolicy::kRoundRobin, true, {3}, 2);
+
   EXPECT_EQ(pool1->name(), std::string{"pool1"});
   EXPECT_EQ(pool2->name(), std::string{"pool2"});
+  EXPECT_EQ(pool3->name(), std::string{"pool3"});
+  EXPECT_EQ(pool4->name(), std::string{"pool4"});
+  EXPECT_EQ(pool5->name(), std::string{"pool5"});
 
   // check that the associated operators are as expected
   auto pool1_ops = pool1->operators();
@@ -227,6 +251,15 @@ TEST(Fragment, TestMakeThreadPool) {
   EXPECT_EQ(pool2_ops.size(), 2);
   EXPECT_EQ(pool2_ops[0]->name(), std::string{"op2"});
   EXPECT_EQ(pool2_ops[1]->name(), std::string{"op3"});
+  auto pool3_ops = pool3->operators();
+  EXPECT_EQ(pool3_ops.size(), 1);
+  EXPECT_EQ(pool3_ops[0]->name(), std::string{"op4"});
+  auto pool4_ops = pool4->operators();
+  EXPECT_EQ(pool4_ops.size(), 1);
+  EXPECT_EQ(pool4_ops[0]->name(), std::string{"op5"});
+  auto pool5_ops = pool5->operators();
+  EXPECT_EQ(pool5_ops.size(), 1);
+  EXPECT_EQ(pool5_ops[0]->name(), std::string{"op6"});
 
   // description contains the GXF typename and info on operators in the pool
   auto description1 = pool1->description();
@@ -274,6 +307,56 @@ TEST(Fragment, TestAddFlow) {
   EXPECT_EQ(*(input_port_set.begin()), "in");
 }
 
+TEST(Fragment, TestAddFlowAsyncBufferOneOutputTwoOperators) {
+  Fragment F;
+
+  auto tx = F.make_operator<ops::PingTxOp>("tx");
+  auto rx = F.make_operator<ops::PingRxOp>("rx");
+  auto rx2 = F.make_operator<ops::PingRxOp>("rx2");
+
+  F.add_flow(tx, rx, {{"out", "in"}}, IOSpec::ConnectorType::kAsyncBuffer);
+  EXPECT_THROW(F.add_flow(tx, rx2, {{"out", "in"}}), holoscan::RuntimeError);
+}
+
+TEST(Fragment, TestAddFlowAsyncBufferOneOutputTwoInputs) {
+  Fragment F;
+
+  auto tx = F.make_operator<ops::PingTxOp>("tx");
+  auto mx = F.make_operator<holoscan::TwoInOneOutOp>("mx");
+
+  EXPECT_THROW(
+      F.add_flow(tx, mx, {{"out", "in0"}, {"out", "in1"}}, IOSpec::ConnectorType::kAsyncBuffer),
+      holoscan::RuntimeError);
+}
+
+TEST(Fragment, TestAddFlowAsyncBufferOneOutputTwoOperatorsDoubleBufferFirst) {
+  Fragment F;
+
+  auto tx = F.make_operator<ops::PingTxOp>("tx");
+  auto rx = F.make_operator<ops::PingRxOp>("rx");
+  auto rx2 = F.make_operator<ops::PingRxOp>("rx2");
+
+  F.add_flow(tx, rx, {{"out", "in"}});  // Double Buffer first
+  EXPECT_THROW(F.add_flow(tx, rx2, {{"out", "in"}}, IOSpec::ConnectorType::kAsyncBuffer),
+               holoscan::RuntimeError);
+}
+
+TEST(Fragment, TestAddFlowAsyncBufferReceiversTwoOutputs) {
+  Fragment F;
+
+  auto tx = F.make_operator<holoscan::TwoInTwoOutOp>("tx");
+  auto rx = F.make_operator<ops::HolovizOp>("rx");
+
+  // the following is allowed, as it essentially makes two input ports:
+  // receivers:0 and receivers:1
+  testing::internal::CaptureStderr();
+  F.add_flow(
+      tx, rx, {{"out0", "receivers"}, {"out1", "receivers"}}, IOSpec::ConnectorType::kAsyncBuffer);
+  std::string log_output = testing::internal::GetCapturedStderr();
+  // expect no error
+  EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
 TEST(Fragment, TestOperatorOrder) {
   Fragment F;
 
@@ -292,7 +375,9 @@ TEST(Fragment, TestOperatorOrder) {
   const std::vector<std::string> expected_order = {"tx2", "tx", "rx", "rx2"};
   // verify that the operators were added to the graph in the correct order
   EXPECT_EQ(order.size(), expected_order.size());
-  for (size_t i = 0; i < order.size(); i++) { EXPECT_EQ(order[i]->name(), expected_order[i]); }
+  for (size_t i = 0; i < order.size(); i++) {
+    EXPECT_EQ(order[i]->name(), expected_order[i]);
+  }
 }
 
 TEST(Fragment, TestFragmentExecutor) {

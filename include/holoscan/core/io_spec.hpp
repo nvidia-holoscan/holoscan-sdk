@@ -40,6 +40,8 @@
 #include "./conditions/gxf/multi_message_available_timeout.hpp"
 #include "./conditions/gxf/periodic.hpp"
 #include "./resource.hpp"
+#include "./resources/gxf/async_buffer_receiver.hpp"
+#include "./resources/gxf/async_buffer_transmitter.hpp"
 #include "./resources/gxf/double_buffer_receiver.hpp"
 #include "./resources/gxf/double_buffer_transmitter.hpp"
 #include "./resources/gxf/ucx_receiver.hpp"
@@ -114,7 +116,7 @@ class IOSpec {
    * @brief Connector type. Determines the type of Receiver (when IOType is kInput) or Transmitter
    *        (when IOType is kOutput) class used.
    */
-  enum class ConnectorType { kDefault, kDoubleBuffer, kUCX };
+  enum class ConnectorType { kDefault, kDoubleBuffer, kAsyncBuffer, kUCX };
 
   /**
    * @enum QueuePolicy
@@ -292,6 +294,7 @@ class IOSpec {
    *
    * - ConnectorType::kDefault
    * - ConnectorType::kDoubleBuffer
+   * - ConnectorType::kAsyncBuffer
    * - ConnectorType::kUCX
    *
    * Note: Typically the application author does not need to call this method. The SDK will assign
@@ -322,6 +325,22 @@ class IOSpec {
           connector_ = std::make_shared<DoubleBufferReceiver>(std::forward<ArgsT>(args)...);
         } else {
           connector_ = std::make_shared<DoubleBufferTransmitter>(std::forward<ArgsT>(args)...);
+        }
+        break;
+      case ConnectorType::kAsyncBuffer:
+        // throw error if there are other args passed to this type of connector
+        if (sizeof...(args) > 0) {
+          throw std::invalid_argument(fmt::format(
+              "AsyncBufferReceiver and AsyncBufferTransmitter do not support any extra arguments "
+              "such as capacity or policy. "
+              "Please check the arguments of the"
+              "port '{}'.",
+              name_));
+        }
+        if (io_type_ == IOType::kInput) {
+          connector_ = std::make_shared<AsyncBufferReceiver>(std::forward<ArgsT>(args)...);
+        } else {
+          connector_ = std::make_shared<AsyncBufferTransmitter>(std::forward<ArgsT>(args)...);
         }
         break;
       case ConnectorType::kUCX:
@@ -380,7 +399,14 @@ class IOSpec {
    * @return The reference to this IOSpec.
    */
   IOSpec& queue_size(int64_t size) {
-    queue_size_.size(size);
+    if (connector_type_ == ConnectorType::kAsyncBuffer) {
+      HOLOSCAN_LOG_WARN(
+          "queue_size is not supported for IOSpec::ConnectorType::kAsyncBuffer. "
+          "Please check the queue size of the input/output port '{}'.",
+          name_);
+    } else {
+      queue_size_.size(size);
+    }
     return *this;
   }
 
@@ -412,7 +438,14 @@ class IOSpec {
    * @return The reference to this IOSpec.
    */
   IOSpec& queue_policy(IOSpec::QueuePolicy policy) {
-    queue_policy_ = policy;
+    if (connector_type_ == ConnectorType::kAsyncBuffer) {
+      HOLOSCAN_LOG_WARN(
+          "queue_policy is not supported for IOSpec::ConnectorType::kAsyncBuffer. "
+          "Please check the queue policy of the input/output port '{}'.",
+          name_);
+    } else {
+      queue_policy_ = policy;
+    }
     return *this;
   }
 

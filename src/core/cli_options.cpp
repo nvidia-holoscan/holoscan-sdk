@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,7 +94,9 @@ std::string CLIOptions::parse_port(const std::string& address, const std::string
   auto bracket_end = address.find(']', bracket_start);
   if (bracket_start != std::string::npos && bracket_end != std::string::npos) {
     auto colon_pos = address.find(':', bracket_end);
-    if (colon_pos != std::string::npos) { return address.substr(colon_pos + 1); }
+    if (colon_pos != std::string::npos) {
+      return address.substr(colon_pos + 1);
+    }
   } else {
     // If there are no brackets, we might be dealing with an IPv4 address, a hostname:port pair,
     // or an IPv6 address without a specified port.
@@ -149,7 +151,9 @@ std::pair<std::string, std::string> CLIOptions::parse_address(const std::string&
   }
 
   // If the IP address is not empty and `resolve_host` is true, resolve it to an IP address.
-  if (resolve_host && !ip_address.empty()) { ip_address = resolve_hostname(ip_address); }
+  if (resolve_host && !ip_address.empty()) {
+    ip_address = resolve_hostname(ip_address);
+  }
 
   bool is_ipv6 = false;
   auto first_colon_pos = ip_address.find(':');
@@ -160,7 +164,9 @@ std::pair<std::string, std::string> CLIOptions::parse_address(const std::string&
   }
 
   // Enclose IPv6 addresses in brackets if requested.
-  if (is_ipv6 && enclose_ipv6 && !port.empty()) { ip_address = '[' + ip_address + ']'; }
+  if (is_ipv6 && enclose_ipv6 && !port.empty()) {
+    ip_address = '[' + ip_address + ']';
+  }
 
   return std::make_pair(ip_address, port);
 }

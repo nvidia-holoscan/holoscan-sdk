@@ -146,7 +146,9 @@ ScopedWaitedFlock::ScopedWaitedFlock(int fd, int lock_type, int unlock_type, int
 }
 
 FileFIFOMutex::FileFIFOMutex(std::string file_path) {
-  if (file_path.empty()) { throw std::invalid_argument("The file path cannot be empty."); }
+  if (file_path.empty()) {
+    throw std::invalid_argument("The file path cannot be empty.");
+  }
 
   // Main lock file
   fd_ = open(file_path.c_str(), O_CREAT | O_RDWR, 0666);
@@ -172,10 +174,15 @@ FileFIFOMutex::~FileFIFOMutex() {
     // Silently handle any exceptions during cleanup
     try {
       HOLOSCAN_LOG_ERROR("FileFIFOMutex destructor failed with {}", e.what());
-    } catch (...) {}
+    } catch (...) {
+    }
   }
-  if (fd_ != -1) { close(fd_); }
-  if (queue_fd_ != -1) { close(queue_fd_); }
+  if (fd_ != -1) {
+    close(fd_);
+  }
+  if (queue_fd_ != -1) {
+    close(queue_fd_);
+  }
 }
 
 void FileFIFOMutex::set_wait_time_ms(int wait_time_ms) {
@@ -183,7 +190,9 @@ void FileFIFOMutex::set_wait_time_ms(int wait_time_ms) {
 }
 
 void FileFIFOMutex::lock() {
-  if (fd_ == -1 || queue_fd_ == -1) { return; }
+  if (fd_ == -1 || queue_fd_ == -1) {
+    return;
+  }
 
   size_t file_size = 0;
   {
@@ -251,7 +260,9 @@ void FileFIFOMutex::unlock() {
   // Only unlock if we actually have the lock
   if (locked_) {
     // First remove our PID from the front of the queue
-    if (queue_fd_ != -1) { pop_pid_from_queue(queue_fd_, pid_); }
+    if (queue_fd_ != -1) {
+      pop_pid_from_queue(queue_fd_, pid_);
+    }
 
     // Now release the main lock after queue is updated
     main_lock_.reset();  // early cleanup

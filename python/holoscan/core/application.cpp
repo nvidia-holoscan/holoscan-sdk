@@ -25,10 +25,12 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "application_pydoc.hpp"
+#include "fragment.hpp"
 #include "fragment_pydoc.hpp"
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -46,7 +48,7 @@ void init_application(py::module_& m) {
   // note: added py::dynamic_attr() to allow dynamically adding attributes in a Python subclass
   //       added std::shared_ptr<Fragment> to allow the custom holder type to be used
   //         (see https://github.com/pybind/pybind11/issues/956)
-  py::class_<Application, Fragment, PyApplication, std::shared_ptr<Application>>(
+  py::class_<Application, PyApplication, Fragment, std::shared_ptr<Application>>(
       m, "Application", py::dynamic_attr(), doc::Application::doc_Application)
       .def(py::init<const std::vector<std::string>&>(),
            "argv"_a = std::vector<std::string>(),
@@ -97,7 +99,25 @@ void init_application(py::module_& m) {
                             std::set<std::pair<std::string, std::string>>>(&Application::add_flow),
           "upstream_op"_a,
           "downstream_op"_a,
+          "port_pairs"_a)
+      .def(  // note: virtual function
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Operator>&,
+                            const std::shared_ptr<Operator>&,
+                            IOSpec::ConnectorType>(&Application::add_flow),
+          "upstream_op"_a,
+          "downstream_op"_a,
+          "connector_type"_a)
+      .def(  // note: virtual function
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Operator>&,
+                            const std::shared_ptr<Operator>&,
+                            std::set<std::pair<std::string, std::string>>,
+                            IOSpec::ConnectorType>(&Application::add_flow),
+          "upstream_op"_a,
+          "downstream_op"_a,
           "port_pairs"_a,
+          "connector_type"_a,
           doc::Fragment::doc_add_flow_pair)
       .def(  // note: virtual function
           "add_flow",
@@ -165,7 +185,9 @@ void init_application(py::module_& m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto app = obj.cast<std::shared_ptr<Application>>();
-            if (app) { return fmt::format("<holoscan.Application: name:{}>", app->name()); }
+            if (app) {
+              return fmt::format("<holoscan.Application: name:{}>", app->name());
+            }
             return std::string("<Application: None>");
           },
           R"doc(Return repr(self).)doc");
@@ -192,7 +214,8 @@ PyApplication::~PyApplication() {
     // Silently handle any exceptions during cleanup
     try {
       HOLOSCAN_LOG_ERROR("PyApplication destructor failed with {}", e.what());
-    } catch (...) {}
+    } catch (...) {
+    }
   }
 }
 
@@ -209,7 +232,9 @@ py::list PyApplication::py_argv() {
     argv.append(py::cast(*iter, py::return_value_policy::reference));
   }
 
-  if (argv.empty()) { argv.append(py::cast("", py::return_value_policy::reference)); }
+  if (argv.empty()) {
+    argv.append(py::cast("", py::return_value_policy::reference));
+  }
   return argv;
 }
 
@@ -239,7 +264,6 @@ void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
     python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
   }
 
-  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op);
 }
 
@@ -258,6 +282,42 @@ void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
 
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op, io_map);
+}
+
+void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                             const std::shared_ptr<Operator>& downstream_op,
+                             IOSpec::ConnectorType connector_type) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[upstream_op.get()] = py::cast(upstream_op);
+    python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
+  }
+
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Application, add_flow, upstream_op, downstream_op, connector_type);
+}
+
+void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                             const std::shared_ptr<Operator>& downstream_op,
+                             std::set<std::pair<std::string, std::string>> io_map,
+                             IOSpec::ConnectorType connector_type) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[upstream_op.get()] = py::cast(upstream_op);
+    python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
+  }
+
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(
+      void, Application, add_flow, upstream_op, downstream_op, io_map, connector_type);
 }
 
 void PyApplication::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
@@ -351,15 +411,65 @@ void PyApplication::reset_state() {
   python_service_registry_.clear();
 }
 
+void PyApplication::attach_services_to_fragment(const std::shared_ptr<Fragment>& fragment) {
+  py::gil_scoped_acquire gil;
+  auto py_fragment = std::dynamic_pointer_cast<PyFragment>(fragment);
+  if (!py_fragment) {
+    throw py::value_error(
+        fmt::format("Failed to cast fragment to PyFragment: '{}'", fragment->name()));
+  }
+
+  std::unordered_set<std::string> registered_service_ids;
+  for (const auto& [service_key, service] : fragment_services_by_key()) {
+    if (registered_service_ids.find(service_key.id) == registered_service_ids.end()) {
+      HOLOSCAN_LOG_DEBUG(
+          "Registering service '{}' with fragment '{}'", service_key.id, fragment->name());
+      // Register service from the application to the fragment
+      py_fragment->register_service_from(this, service_key.id);
+      registered_service_ids.insert(service_key.id);
+    }
+  }
+
+  // Copy the service from python_service_registry_ to each fragment
+  for (const auto& [service_key, service] : python_service_registry_) {
+    py_fragment->register_service_from(this, service_key);
+
+    ServiceKey key{typeid(DefaultFragmentService), service_key};
+    auto py_service = service.cast<std::shared_ptr<FragmentService>>();
+
+    fragment_services_by_key_[key] = py_service;
+  }
+}
+
 py::object PyApplication::get_python_service(const std::string& service_id) const {
   py::gil_scoped_acquire gil;
   auto it = python_service_registry_.find(service_id);
-  if (it != python_service_registry_.end()) { return it->second; }
+  if (it != python_service_registry_.end()) {
+    return it->second;
+  }
   return py::none();
 }
 
 void PyApplication::set_python_service(const std::string& service_id, py::object service) {
   py::gil_scoped_acquire gil;
+
+  try {
+    // In order for C++ code to detect and invoke ServiceDriverEndpoint and ServiceWorkerEndpoint
+    // methods, we must cast the Python service object to DistributedAppService (which inherits from
+    // both interfaces and FragmentService) and store it in the fragment_services_by_key_ map. For
+    // example, functions like 'AppDriver::handle_driver_start' access this map and attempt to cast
+    // entries to 'distributed::ServiceDriverEndpoint'. Without casting the Python object to
+    // std::shared_ptr<DistributedAppService>, the stored pointer cannot be dynamically cast to
+    // distributed::ServiceDriverEndpoint or distributed::ServiceWorkerEndpoint.
+    auto shared = service.cast<std::shared_ptr<DistributedAppService>>();
+    ServiceKey key{typeid(*shared), service_id};
+    fragment_services_by_key_[key] = shared;
+    HOLOSCAN_LOG_DEBUG("Fragment service '{}' is inherits from DistributedAppService", service_id);
+  } catch (const py::cast_error&) {
+    HOLOSCAN_LOG_DEBUG("Fragment service '{}' does not inherits from DistributedAppService",
+                       service_id);
+  }
+
   python_service_registry_[service_id] = std::move(service);
 }
 

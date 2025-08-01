@@ -91,7 +91,7 @@ bool
 )doc")
 
 PYDOC(is_user_defined_root, R"doc(
-Check if the node is a user-defined root node. 
+Check if the node is a user-defined root node.
 
 A user-defined root is the first node added to the graph.
 
@@ -179,6 +179,36 @@ list of Operator or Fragment
 
 PYDOC(context, R"doc(
 The graph's context (as an opaque PyCapsule object)
+)doc")
+
+PYDOC(get_port_connectivity_maps, R"doc(
+Get port connectivity maps for the graph.
+
+Returns a tuple of two dictionaries:
+1. Input ports to connected output ports mapping
+2. Output ports to connected input ports mapping
+
+Each port is identified by a unique string in the format "fragment.operator.port"
+(or "fragment.port" for FragmentFlowGraph).
+
+Returns
+-------
+tuple[dict[str, list[str]], dict[str, list[str]]]
+    A tuple containing (input_to_output_map, output_to_input_map) where:
+    - input_to_output_map: Maps input port IDs to lists of connected output port IDs
+    - output_to_input_map: Maps output port IDs to lists of connected input port IDs
+)doc")
+
+PYDOC(port_map_description, R"doc(
+Get a YAML-formatted description of the port connectivity maps.
+
+Returns a human-readable YAML string that describes the port connectivity
+of the graph.
+
+Returns
+-------
+str
+    A YAML-formatted string describing the port connectivity maps
 )doc")
 
 }  // namespace FlowGraph

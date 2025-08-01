@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,7 +85,7 @@ class CameraPoseForwardingOp(Operator):
 
         camera_pose = op_input.receive("camera_pose_input")
         # verify that received type matches expected types (depends on camera_pose_output_type)
-        assert isinstance(camera_pose, (list, Pose3D))
+        assert isinstance(camera_pose, list | Pose3D)
         op_output.emit(camera_pose, "camera_pose_output")
 
 

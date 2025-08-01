@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# CMAKE_CUDA_ARCHITECTURES=native requires >= 3.24
-cmake_minimum_required(VERSION 3.24)
+# RMM dependency requires >= 3.26.4
+cmake_minimum_required(VERSION 3.26.4)
 
 set(HOLOSCAN_PACKAGE_NAME holoscan)
 
@@ -254,6 +254,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     logger
     nvtx3-c
     nvtx3-cpp
+    data_loggers_async_console_logger
     data_loggers_basic_console_logger
     op_async_ping_rx
     op_async_ping_tx
@@ -287,7 +288,8 @@ if(HOLOSCAN_BUILD_PYTHON)
 endif()
 
 # Copy library files
-install(TARGETS ${HOLOSCAN_INSTALL_TARGETS}
+# Note: ucxx is handled separately since it's only available in build targets, not install targets
+install(TARGETS ${HOLOSCAN_INSTALL_TARGETS} ucxx
     DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
     EXPORT ${HOLOSCAN_PACKAGE_NAME}-exports
     COMPONENT holoscan-core
@@ -308,6 +310,12 @@ install(DIRECTORY ${tl-expected_SOURCE_DIR}/include/tl/
 # Copy bundled dlpack headers
 install(DIRECTORY ${dlpack_SOURCE_DIR}/include/dlpack/
     DESTINATION include/3rdparty/dlpack
+    COMPONENT holoscan-core
+)
+
+# Copy bundled concurrent_queue.h header
+install(FILES ${concurrent_queue_SOURCE_DIR}/concurrentqueue.h
+    DESTINATION include/3rdparty/
     COMPONENT holoscan-core
 )
 
@@ -443,6 +451,41 @@ if(TARGET GXF::ucx)
     )
 endif()
 
+# Find holoscan::ucp that is prerequisite of holoscan::ucxx
+if(NOT TARGET holoscan::ucp)
+  find_package(ucx QUIET)
+  # Create an alias for ucx::ucp to support downstream holoscan::ucxx export set
+  unset(UCP_IMPORTED_LOCATION)
+  if(TARGET ucx::ucp)
+      get_target_property(UCP_IMPORTED_LOCATION ucx::ucp IMPORTED_LOCATION)
+      if(NOT UCP_IMPORTED_LOCATION)
+          get_target_property(UCP_IMPORTED_LOCATION ucx::ucp IMPORTED_LOCATION_${CMAKE_BUILD_TYPE})
+      endif()
+      get_target_property(UCP_INCLUDE_DIRS ucx::ucp INTERFACE_INCLUDE_DIRECTORIES)
+  else()
+    set(UCP_IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libucp.so")
+    set(UCP_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include/3rdparty/ucx")
+  endif()
+  add_library(holoscan::ucp SHARED IMPORTED)
+  set_target_properties(holoscan::ucp PROPERTIES
+      INTERFACE_INCLUDE_DIRECTORIES "${UCP_INCLUDE_DIRS}"
+      IMPORTED_LOCATION "${UCP_IMPORTED_LOCATION}"
+      IMPORTED_SONAME "libucp.so"
+  )
+endif()
+
+if(NOT TARGET holoscan::ucxx)
+  # Create imported target holoscan::ucxx
+  add_library(holoscan::ucxx SHARED IMPORTED)
+
+  set_target_properties(holoscan::ucxx PROPERTIES
+    INTERFACE_COMPILE_DEFINITIONS "UCXX_ENABLE_RMM;RMM_LOG_ACTIVE_LEVEL=RAPIDS_LOGGER_LEVEL_INFO"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/3rdparty/ucxx"
+    INTERFACE_LINK_LIBRARIES "GXF::rmm;holoscan::ucp"
+    INTERFACE_POSITION_INDEPENDENT_CODE "ON"
+  )
+endif()
+
 if(NOT TARGET GXF::gxe)
   add_executable(GXF::gxe IMPORTED)
   set_target_properties(GXF::gxe PROPERTIES
@@ -463,7 +506,7 @@ set(holoscan_build_hook_code_string [=[
 
 
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_export.html#rapids-export
-# (rapids_export() always installs to lib and doesn’t use GNUInstallDirs)
+# (rapids_export() always installs to lib and doesn't use GNUInstallDirs)
 rapids_export(
     INSTALL ${HOLOSCAN_PACKAGE_NAME}
     EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports

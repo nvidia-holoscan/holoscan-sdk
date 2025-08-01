@@ -133,7 +133,9 @@ CPUInfo CPUResourceMonitor::update(uint64_t metric_flags) {
 }
 
 CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
-  if (metric_flags == CPUMetricFlag::DEFAULT) { metric_flags = metric_flags_; }
+  if (metric_flags == CPUMetricFlag::DEFAULT) {
+    metric_flags = metric_flags_;
+  }
 
   if (metric_flags & CPUMetricFlag::CORE_COUNT) {
     cpu_info.num_cores =
@@ -164,7 +166,9 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
 
       // Calculate the CPU usage
       uint64_t total_diff = 0;
-      for (int i = 0; i < 3; i++) { total_diff += (current_total_stats[i] - last_total_stats_[i]); }
+      for (int i = 0; i < 3; i++) {
+        total_diff += (current_total_stats[i] - last_total_stats_[i]);
+      }
 
       uint64_t idle_diff = current_total_stats[3] - last_total_stats_[3];
       total_diff += idle_diff;
@@ -212,7 +216,9 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
 
 CPUInfo CPUResourceMonitor::cpu_info(uint64_t metric_flags) {
   if (metric_flags == CPUMetricFlag::DEFAULT) {
-    if (!is_cached_) { update(); }
+    if (!is_cached_) {
+      update();
+    }
     return cpu_info_;
   }
 

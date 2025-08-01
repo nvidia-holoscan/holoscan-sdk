@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +46,9 @@ class PyNetworkContext : public NetworkContext {
     for (const auto& item : args) {
       auto arg_value = item.cast<py::object>();
       if (py::isinstance<Fragment>(arg_value)) {
-        if (n_fragments > 0) { throw std::runtime_error("multiple Fragment objects provided"); }
+        if (n_fragments > 0) {
+          throw std::runtime_error("multiple Fragment objects provided");
+        }
         fragment_ = arg_value.cast<Fragment*>();
         n_fragments += 1;
       } else {
@@ -116,7 +118,9 @@ void init_network_context(py::module_& m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto network_context = obj.cast<std::shared_ptr<NetworkContext>>();
-            if (network_context) { return network_context->description(); }
+            if (network_context) {
+              return network_context->description();
+            }
             return std::string("<NetworkContext: None>");
           },
           R"doc(Return repr(self).)doc");

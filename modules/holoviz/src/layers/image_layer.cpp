@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -370,7 +370,9 @@ void ImageLayer::end(Vulkan* vulkan) {
 void ImageLayer::render(Vulkan* vulkan) {
   if (impl_->texture_) {
     std::vector<Layer::View> views = get_views();
-    if (views.empty()) { views.push_back(Layer::View()); }
+    if (views.empty()) {
+      views.push_back(Layer::View());
+    }
 
     for (const View& view : views) {
       vulkan->set_viewport(view.offset_x, view.offset_y, view.width, view.height);

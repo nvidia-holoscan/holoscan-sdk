@@ -80,10 +80,16 @@ class HashMap {
    * @return Success or error status.
    */
   expected_t<void> reserve(int32_t size, int32_t capacity) {
-    if (size <= 0) { return unexpected_t(Error::kInvalidArgument); }
-    if (capacity < size) { return unexpected_t(Error::kInvalidArgument); }
+    if (size <= 0) {
+      return unexpected_t(Error::kInvalidArgument);
+    }
+    if (capacity < size) {
+      return unexpected_t(Error::kInvalidArgument);
+    }
     entries_.reset(new Entry[capacity]);
-    for (int32_t i = 0; i < capacity; ++i) { entries_[i].is_occupied = false; }
+    for (int32_t i = 0; i < capacity; ++i) {
+      entries_[i].is_occupied = false;
+    }
     max_size_ = size;
     capacity_ = capacity;
     return {};
@@ -99,9 +105,13 @@ class HashMap {
     hash_t hash = std::hash<Key>{}(key);
     int32_t index = hash % capacity_;
     while (entries_[index].is_occupied) {
-      if (entries_[index].hash == hash && entries_[index].key == key) { return true; }
+      if (entries_[index].hash == hash && entries_[index].key == key) {
+        return true;
+      }
       ++index;
-      if (index == capacity_) { index = 0; }
+      if (index == capacity_) {
+        index = 0;
+      }
     }
     return false;
   }
@@ -120,7 +130,9 @@ class HashMap {
         return entries_[index].value;
       }
       ++index;
-      if (index == capacity_) { index = 0; }
+      if (index == capacity_) {
+        index = 0;
+      }
     }
     return unexpected_t(Error::kKeyNotFound);
   }
@@ -134,7 +146,9 @@ class HashMap {
    *         Error::kKeyAlreadyExists if the key already exists.
    */
   expected_t<void> insert(const Key& key, Value value) {
-    if (size_ >= max_size_) { return unexpected_t(Error::kHashMapFull); }
+    if (size_ >= max_size_) {
+      return unexpected_t(Error::kHashMapFull);
+    }
     hash_t hash = std::hash<Key>{}(key);
     int32_t index = hash % capacity_;
     while (entries_[index].is_occupied) {
@@ -142,7 +156,9 @@ class HashMap {
         return unexpected_t(Error::kKeyAlreadyExists);
       }
       ++index;
-      if (index == capacity_) { index = 0; }
+      if (index == capacity_) {
+        index = 0;
+      }
     }
     entries_[index].hash = hash;
     entries_[index].key = key;
@@ -169,7 +185,9 @@ class HashMap {
         return {};
       }
       ++index;
-      if (index == capacity_) { index = 0; }
+      if (index == capacity_) {
+        index = 0;
+      }
     }
     return unexpected_t(Error::kKeyNotFound);
   }
@@ -214,9 +232,13 @@ class HashMap {
           index = 0;
           start_index -= capacity_;
         }
-        if (!entries_[index].is_occupied) { return; }
+        if (!entries_[index].is_occupied) {
+          return;
+        }
         int32_t target_index = entries_[index].hash % capacity_;
-        if (target_index > index) { target_index -= capacity_; }
+        if (target_index > index) {
+          target_index -= capacity_;
+        }
         if (target_index <= start_index) {
           std::swap(entries_[index], entries_[swap_index]);
           break;

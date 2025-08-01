@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,7 +95,7 @@ class FormatConverterStorageParameterizedTestFixture
 
 INSTANTIATE_TEST_CASE_P(FormatConverterOpAppTests, FormatConverterStorageParameterizedTestFixture,
                         ::testing::Values(std::string("device"), std::string("host"),
-                                          std::string("system")));
+                                          std::string("system"), std::string("cuda_managed")));
 
 // run this case with various tensor memory storage types
 TEST_P(FormatConverterStorageParameterizedTestFixture, TestFormatConverterStorageTypes) {

@@ -101,6 +101,40 @@ class PoseTree {
     kLogicError = 7,
   };
 
+  /**
+   * @brief Parameters used to initialize the PoseTree.
+   */
+  struct InitParameters {
+    /**
+     * @brief Maximum number of frames to support.
+     */
+    int32_t number_frames;
+    /**
+     * @brief Maximum number of edges to support.
+     */
+    int32_t number_edges;
+    /**
+     * @brief Maximum history length.
+     */
+    int32_t history_length;
+    /**
+     * @brief Default number of edges per frame.
+     */
+    int32_t default_number_edges;
+    /**
+     * @brief Default history length per edge.
+     */
+    int32_t default_history_length;
+    /**
+     * @brief Chunk size for edge allocation.
+     */
+    int32_t edges_chunk_size;
+    /**
+     * @brief Chunk size for history allocation.
+     */
+    int32_t history_chunk_size;
+  };
+
   /// The maximum size for the name of a frame. An additional '\0' is added at the end to make it
   /// 128 characters long.
   static constexpr int32_t kFrameNameMaximumLength = 127;
@@ -412,6 +446,13 @@ class PoseTree {
   expected_t<std::string_view> get_frame_name(frame_t uid) const;
 
   /**
+   * @brief Retrieve the parameters used to initialize this PoseTree.
+   *
+   * @return Initialization parameters on success, or an error on failure.
+   */
+  expected_t<InitParameters> get_init_parameters() const;
+
+  /**
    * @brief Get the latest pose between two frames as well as the time of that pose.
    *
    * The two poses needs to be directly linked.
@@ -657,15 +698,25 @@ class PoseTree {
   template <typename T>
   expected_t<void> get_edge_uids(T& container) const {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
+    if (container.capacity() < static_cast<typename T::size_type>(edges_map_.size())) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
     container.clear();
-    if (container.capacity() < edges_map_.size()) { return unexpected_t(Error::kOutOfMemory); }
     for (const auto& key : edges_map_keys_) {
-      if (!key) { return unexpected_t(Error::kLogicError); }
+      if (!key) {
+        return unexpected_t(Error::kLogicError);
+      }
       const auto value = edges_map_.get(key.value());
-      if (!value) { return unexpected_t(Error::kLogicError); }
+      if (!value) {
+        return unexpected_t(Error::kLogicError);
+      }
       const auto history = histories_map_.try_get(value.value());
-      if (!history) { return unexpected_t(Error::kLogicError); }
-      if (!history.value()->connected()) { continue; }
+      if (!history) {
+        return unexpected_t(Error::kLogicError);
+      }
+      if (!history.value()->connected()) {
+        continue;
+      }
       container.push_back(key.value());
     }
     return expected_t<void>{};
@@ -682,17 +733,29 @@ class PoseTree {
   expected_t<void> get_edge_names(T& container) const {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     container.clear();
-    if (container.capacity() < edges_map_.size()) { return unexpected_t(Error::kOutOfMemory); }
+    if (container.capacity() < edges_map_.size()) {
+      return unexpected_t(Error::kOutOfMemory);
+    }
     for (const auto& key : edges_map_keys_) {
-      if (!key) { return unexpected_t(Error::kLogicError); }
+      if (!key) {
+        return unexpected_t(Error::kLogicError);
+      }
       const auto value = edges_map_.get(key.value());
-      if (!value) { return unexpected_t(Error::kLogicError); }
+      if (!value) {
+        return unexpected_t(Error::kLogicError);
+      }
       const auto history = histories_map_.try_get(value.value());
-      if (!history) { return unexpected_t(Error::kLogicError); }
-      if (!history.value()->connected()) { continue; }
+      if (!history) {
+        return unexpected_t(Error::kLogicError);
+      }
+      if (!history.value()->connected()) {
+        continue;
+      }
       auto lhs_name = get_frame_name(key.value().first);
       auto rhs_name = get_frame_name(key.value().second);
-      if (!lhs_name || !rhs_name) { continue; }
+      if (!lhs_name || !rhs_name) {
+        continue;
+      }
       container.push_back({lhs_name.value(), rhs_name.value()});
     }
     return expected_t<void>{};
@@ -713,9 +776,13 @@ class PoseTree {
       return unexpected_t(Error::kOutOfMemory);
     }
     for (const auto& key : name_to_uid_map_keys_) {
-      if (!key) { return unexpected_t(Error::kLogicError); }
+      if (!key) {
+        return unexpected_t(Error::kLogicError);
+      }
       const auto value = name_to_uid_map_.get(key.value());
-      if (!value) { return unexpected_t(Error::kLogicError); }
+      if (!value) {
+        return unexpected_t(Error::kLogicError);
+      }
       container.push_back(value.value());
     }
     return expected_t<void>{};
@@ -736,7 +803,9 @@ class PoseTree {
       return unexpected_t(Error::kOutOfMemory);
     }
     for (const auto& key : name_to_uid_map_keys_) {
-      if (!key) { return unexpected_t(Error::kLogicError); }
+      if (!key) {
+        return unexpected_t(Error::kLogicError);
+      }
       container.push_back(key.value());
     }
     return expected_t<void>{};
@@ -883,6 +952,9 @@ class PoseTree {
   version_t version_{};
   /// Version of the hint. Mostly used to know if a node in the stack has been processed already.
   mutable version_t hint_version_{};
+
+  /// The initialization parameters.
+  InitParameters init_params_{};
 
   /// Default maximum number of edges a given frame can have
   int32_t default_number_edges_{};

@@ -145,17 +145,18 @@ class ParallelPingApp(Application):
 
 
 def main(
-    threads,
-    num_delays,
-    delay,
-    delay_step,
-    event_based,
-    count,
-    silent,
-    track,
-    enable_data_logging,
-    name,
-    output_file,
+    threads: int,
+    num_delays: int,
+    delay: float,
+    delay_step: float,
+    event_based: bool,
+    count: int,
+    silent: bool,
+    track: bool,
+    enable_data_logging: bool,
+    name: str,
+    output_file: str,
+    print_port_map: bool,
 ):
     app = ParallelPingApp(
         num_delays=num_delays, delay=delay, delay_step=delay_step, count=count, silent=silent
@@ -182,7 +183,7 @@ def main(
                 name="console_logger",
                 log_tensor_data_content=False,
                 log_metadata=False,
-                denylist_patterns=[".*rx.names.*"],
+                denylist_patterns=[".*rx.names.*", ".*out_val.*"],
                 # configure to log the __repr__ of Python objects
                 serializer=SimpleTextSerializer(
                     app,
@@ -201,6 +202,9 @@ def main(
             tracker.print()
     else:
         app.run()
+
+    if print_port_map:
+        print(app.graph.port_map_description())
 
     duration = time.time() - tstart
     print(f"Total app runtime = {duration:0.3f} s")
@@ -284,6 +288,11 @@ if __name__ == "__main__":
         help="enable data logging",
     )
     parser.add_argument(
+        "--print_port_map",
+        action="store_true",
+        help="print the input/output port mapping after the application runs",
+    )
+    parser.add_argument(
         "--name",
         help="specify the name of the specific run for the output file",
     )
@@ -319,4 +328,5 @@ if __name__ == "__main__":
         enable_data_logging=args.data_log,
         name=args.name,
         output_file=args.output_file,
+        print_port_map=args.print_port_map,
     )

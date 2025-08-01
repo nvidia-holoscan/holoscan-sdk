@@ -208,7 +208,9 @@ class MetaParameter {
    * @brief Set the default value object if the parameter does not contain a value.
    */
   void set_default_value() {
-    if (!value_.has_value()) { value_ = default_value_; }
+    if (!value_.has_value()) {
+      value_ = default_value_;
+    }
   }
 
   /**
@@ -332,7 +334,9 @@ class ParameterWrapper {
    * @return The type info of the parameter.
    */
   const std::type_info& type() const {
-    if (type_) { return *type_; }
+    if (type_) {
+      return *type_;
+    }
     return typeid(void);
   }
   /**

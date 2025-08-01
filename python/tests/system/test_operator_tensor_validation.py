@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -308,7 +308,7 @@ class SegmentationPostprocessorApp(Application):
 )
 @pytest.mark.parametrize("channels", [1, 5])
 @pytest.mark.parametrize("network_output_type", ["softmax", "sigmoid"])
-def test_segmentation_postproceesor_memory_layout(
+def test_segmentation_postprocessor_memory_layout(
     fortran_ordered, on_host, dtype, channels, network_output_type, capfd
 ):
     """Test HolovizOp with valid (row-major) and invalid (column-major) memory layouts."""
@@ -333,7 +333,10 @@ def test_segmentation_postproceesor_memory_layout(
         # assert that app raised exception on the first frame
         assert captured.out.count("Emitting frame") == 1
         if on_host:
-            assert "Input tensor must be in CUDA device or pinned host memory" in captured.err
+            assert (
+                "Input tensor must be in CUDA device, pinned host, or managed memory"
+                in captured.err
+            )
         elif fortran_ordered:
             assert "Input tensor must have row-major memory layout" in captured.err
         elif dtype != np.float32:

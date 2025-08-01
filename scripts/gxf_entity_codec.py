@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,14 +22,14 @@ import time
 from collections.abc import Generator, Sequence
 from enum import Enum
 from io import BufferedIOBase, BytesIO
-from typing import Any, Union
+from typing import Any, TypeAlias
 
 import numpy as np
 
-ArrayLike = Union[np.ndarray, list[float]]
-ReadOnlyBuffer = bytes
-WriteableBuffer = Union[bytearray, memoryview]
-ReadableBuffer = Union[ReadOnlyBuffer, WriteableBuffer]
+ArrayLike: TypeAlias = np.ndarray | list[float]
+ReadOnlyBuffer: TypeAlias = bytes
+WriteableBuffer: TypeAlias = bytearray | memoryview
+ReadableBuffer: TypeAlias = ReadOnlyBuffer | WriteableBuffer
 
 
 class EntityIndex:
@@ -879,7 +879,7 @@ class Component:
         return curr_offset - orig_offset
 
 
-def get_file_size(path_or_reader: Union[os.PathLike, BufferedIOBase]) -> int:
+def get_file_size(path_or_reader: os.PathLike | BufferedIOBase) -> int:
     if isinstance(path_or_reader, os.PathLike):
         return os.stat(path_or_reader).st_size
 
@@ -1008,7 +1008,7 @@ class EntityWriter:
         directory: os.PathLike = "./",
         basename: str = "tensor",
         *,
-        framerate: Union[int, float] = 30,
+        framerate: int | float = 30,
     ) -> None:
         """Initialize the writer.
 

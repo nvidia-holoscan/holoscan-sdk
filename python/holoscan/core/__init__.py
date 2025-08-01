@@ -25,6 +25,8 @@ create a custom application.
     holoscan.core.ArgElementType
     holoscan.core.ArgList
     holoscan.core.ArgType
+    holoscan.core.AsyncDataLoggerResource
+    holoscan.core.AsyncQueuePolicy
     holoscan.core.CLIOptions
     holoscan.core.Component
     holoscan.core.ComponentSpec
@@ -33,6 +35,7 @@ create a custom application.
     holoscan.core.Config
     holoscan.core.DataFlowMetric
     holoscan.core.DataFlowTracker
+    holoscan.core.DataLogger
     holoscan.core.DataLoggerResource
     holoscan.core.DefaultFragmentService
     holoscan.core.DLDevice
@@ -60,6 +63,8 @@ create a custom application.
     holoscan.core.arglist_to_kwargs
     holoscan.core.Resource
     holoscan.core.SchedulingStatusType
+    holoscan.core.ServiceDriverEndpoint
+    holoscan.core.ServiceWorkerEndpoint
     holoscan.core.Tensor
     holoscan.core.Tracker
     holoscan.core.kwargs_to_arglist
@@ -67,6 +72,7 @@ create a custom application.
 """
 
 import logging
+import sys
 
 # Note: Python 3.7+ expects the threading module to be initialized (imported) before additional
 # threads are created (by C++ modules using pybind11).
@@ -76,7 +82,6 @@ import threading as _threading  # noqa: F401, I001
 
 # Add ThreadPoolExecutor to imports if not already there
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 
 # Import statements for the C++ API classes
 from ..graphs._graphs import FragmentGraph, OperatorGraph
@@ -87,13 +92,17 @@ from ._core import (
     ArgElementType,
     ArgList,
     ArgType,
+    AsyncDataLoggerResource,
+    AsyncQueuePolicy,
     CLIOptions,
     Component,
     ConditionType,
     Config,
     DataFlowMetric,
     DataFlowTracker,
+    DataLogger,
     DataLoggerResource,
+    DistributedAppService,
     DLDevice,
     DLDeviceType,
     Executor,
@@ -109,6 +118,8 @@ from ._core import (
     ParameterFlag,
     Scheduler,
     SchedulingStatusType,
+    ServiceDriverEndpoint,
+    ServiceWorkerEndpoint,
     arg_to_py_object,
     arglist_to_kwargs,
     kwargs_to_arglist,
@@ -140,6 +151,8 @@ __all__ = [
     "ArgElementType",
     "ArgList",
     "ArgType",
+    "AsyncDataLoggerResource",
+    "AsyncQueuePolicy",
     "CLIOptions",
     "Component",
     "ComponentSpec",
@@ -148,8 +161,10 @@ __all__ = [
     "Config",
     "DataFlowMetric",
     "DataFlowTracker",
+    "DataLogger",
     "DataLoggerResource",
     "DefaultFragmentService",
+    "DistributedAppService",
     "DLDevice",
     "DLDeviceType",
     "ExecutionContext",
@@ -175,6 +190,8 @@ __all__ = [
     "Resource",
     "Scheduler",
     "SchedulingStatusType",
+    "ServiceDriverEndpoint",
+    "ServiceWorkerEndpoint",
     "START_OPERATOR_NAME",
     "Tensor",
     "Tracker",
@@ -230,8 +247,6 @@ class Application(_Application):
         # and ``Application().argv`` will return the same arguments as ``sys.argv``.
 
         if not argv:
-            import sys
-
             argv = [sys.executable, *sys.argv]
 
         # It is recommended to not use super()
@@ -302,7 +317,7 @@ class Application(_Application):
             The start operator instance. If it doesn't exist, it will be created with
             a CountCondition(1).
         """
-        from ..conditions import CountCondition
+        from ..conditions import CountCondition  # noqa: PLC0415
 
         if not self._start_op:
             self._start_op = Operator(self, CountCondition(self, 1), name=START_OPERATOR_NAME)
@@ -426,7 +441,7 @@ class Fragment(_Fragment):
             The start operator instance. If it doesn't exist, it will be created with
             a CountCondition(1).
         """
-        from ..conditions import CountCondition
+        from ..conditions import CountCondition  # noqa: PLC0415
 
         if not self._start_op:
             self._start_op = Operator(self, CountCondition(self, 1), name=START_OPERATOR_NAME)
@@ -562,7 +577,7 @@ class Condition(_Condition):
         """
         pass
 
-    def check(self, timestamp: int) -> tuple[SchedulingStatusType, Optional[int]]:
+    def check(self, timestamp: int) -> tuple[SchedulingStatusType, int | None]:
         """Default implementation of check.
 
         Parameters

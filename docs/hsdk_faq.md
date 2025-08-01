@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -1144,6 +1144,78 @@ When running the application, if it fails to start with an error like the follow
 ```
 
 This indicates that the requested memory sizes on host and/or device exceed the available memory. Please make sure that your device supports the specified memory size. Also check that the specified the values for `device_memory_initial_size`, `device_memory_max_size`, `host_memory_initial_size` and `host_memory_max_size` were specified using the intended units (B, KB, MB, GB or TB).
+
+**Q21: How do I fix X11 display issues when running Holoscan applications in Docker?**
+
+A21: If you encounter "X11: Failed to open display :0 [...] Failed to initialize GLFW" errors, enable permissions to your X server from Docker by either:
+
+- Passing `-u $(id -u):$(id -g)` to `docker run`, or
+- Running `xhost +local:docker` on your host
+
+**Q22: How do I resolve GLX context creation errors on virtual machines or headless systems?**
+
+A22: You may encounter "GLX: Failed to create context: GLXBadFBConfig" errors if the Holoscan Application runs on a Virtual Machine (by a Cloud Service Provider) or without a physical display attached. If you want to run applications that use GPU on x11 (e.g., VNC or NoMachine), set the following environment variables before executing the application to offload the rendering to GPU:
+
+```sh
+export __NV_PRIME_RENDER_OFFLOAD=1
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+```
+
+**Q23: How do I fix GXF entity and component not found errors?**
+
+A23: If you encounter `GXF_ENTITY_COMPONENT_NOT_FOUND` or `GXF_ENTITY_NOT_FOUND` errors, ensure all your application connections in the yaml file (`nvidia::gxf::Connection`) refer to entities or components defined within. This can occur when attempting to remove a component and not cleaning up the stale connections.
+
+**Q24: What does "No receiver connected to transmitter" error mean?**
+
+A24: The error "No receiver connected to transmitter of <scheduling term id> of entity <x>. The entity will never tick" indicates that your entity or component is an orphan and is not connected to a `nvidia::gxf::Connection`. Ensure your entity is properly connected in the application graph.
+
+**Q25: How do I resolve AJA device errors?**
+
+A25: AJA device errors like the following indicate that you don't have AJA support in your environment:
+
+```sh
+2022-06-09 18:45:13.826 ERROR gxf_extensions/aja/aja_source.cpp@80: Device 0 not found.
+2022-06-09 18:45:13.826 ERROR gxf_extensions/aja/aja_source.cpp@251: Failed to open device 0
+```
+
+To resolve this:
+
+- Double check that you have installed the AJA ntv2 driver
+- Load the driver after every reboot
+- If running in a docker container, specify `--device /dev/ajantv20:/dev/ajantv20` in the `docker run` command
+
+**Q26: How do I fix GXF format converter errors?**
+
+A26: GXF format converter errors like the following may indicate that you need to reconfigure your format converter's num_block number:
+
+```sh
+2022-06-09 18:47:30.769 ERROR gxf_extensions/format_converter/format_converter.cpp@521: Failed to allocate memory for the channel conversion
+2022-06-09 18:47:30.769 ERROR gxf_extensions/format_converter/format_converter.cpp@359: Failed to convert tensor format (conversion type:6)
+```
+
+Try increasing the current num_block number by 1 in the yaml file for all format converter entities. This may happen if your yaml file was configured for running with RDMA and you have decided to disable RDMA.
+
+**Q27: How do I resolve video device errors with V4L2?**
+
+A27: When running the V4L2 codelet, you may encounter video device errors:
+
+**"Failed to open device, OPEN: No such file or directory"**
+- Ensure you have a video device connected (ex: USB webcam) and listed when running `ls -l /dev/video*`
+
+**"Failed to open device, OPEN: Permission denied"**
+- This means the `/dev/video*` device is not available to the user from within docker
+- Add `--group-add video` to the `docker run` command
+
+**Q28: How do I fix HolovizOp failures on hybrid GPU systems?**
+
+A28: You may encounter errors when trying to run the Holoviz operator on a laptop equipped with an integrated and a discrete GPU. By default these systems will be using the integrated GPU when running an application. The integrated GPU does not provide the capabilities the Holoviz operator needs and the operator will fail.
+
+Set the following environment variables before executing the application to offload the rendering to the discrete GPU. See [PRIME Render Offload](https://download.nvidia.com/XFree86/Linux-x86_64/535.54.03/README/primerenderoffload.html) for more information:
+
+```sh
+export __NV_PRIME_RENDER_OFFLOAD=1
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+```
 
 
 ## Miscellaneous

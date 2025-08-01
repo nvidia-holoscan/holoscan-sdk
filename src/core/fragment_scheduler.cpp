@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,27 +63,35 @@ void FragmentAllocationStrategy::add_resource_requirement(
     const SystemResourceRequirement& resource_requirement) {
   auto result =
       resource_requirements_.emplace(resource_requirement.fragment_name, resource_requirement);
-  if (result.second) { on_add_resource_requirement(result.first->second); }
+  if (result.second) {
+    on_add_resource_requirement(result.first->second);
+  }
 }
 
 void FragmentAllocationStrategy::add_resource_requirement(
     SystemResourceRequirement&& resource_requirement) {
   auto result = resource_requirements_.emplace(resource_requirement.fragment_name,
                                                std::move(resource_requirement));
-  if (result.second) { on_add_resource_requirement(result.first->second); }
+  if (result.second) {
+    on_add_resource_requirement(result.first->second);
+  }
 }
 
 void FragmentAllocationStrategy::add_available_resource(
     const AvailableSystemResource& available_resource) {
   auto result = available_resources_.emplace(available_resource.app_worker_id, available_resource);
-  if (result.second) { on_add_available_resource(result.first->second); }
+  if (result.second) {
+    on_add_available_resource(result.first->second);
+  }
 }
 
 void FragmentAllocationStrategy::add_available_resource(
     AvailableSystemResource&& available_resource) {
   auto result =
       available_resources_.emplace(available_resource.app_worker_id, std::move(available_resource));
-  if (result.second) { on_add_available_resource(result.first->second); }
+  if (result.second) {
+    on_add_available_resource(result.first->second);
+  }
 }
 
 FragmentScheduler::FragmentScheduler(

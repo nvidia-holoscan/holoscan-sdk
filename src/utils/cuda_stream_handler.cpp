@@ -37,7 +37,8 @@ CudaStreamHandler::~CudaStreamHandler() {
     if (cudaSuccess != result) {
       try {
         HOLOSCAN_LOG_ERROR("Failed to destroy CUDA event: {}", cudaGetErrorString(result));
-      } catch (std::exception& e) {}
+      } catch (std::exception& e) {
+      }
     }
   }
   cuda_events_.clear();
@@ -75,7 +76,9 @@ gxf_result_t CudaStreamHandler::from_message(
   } else {
     // if no stream had been found, allocate a stream and use that
     gxf_result_t result = allocate_internal_stream(context);
-    if (result != GXF_SUCCESS) { return result; }
+    if (result != GXF_SUCCESS) {
+      return result;
+    }
     message_cuda_stream_handle_ = cuda_stream_handle_;
   }
   return GXF_SUCCESS;
@@ -94,7 +97,7 @@ gxf_result_t CudaStreamHandler::fromMessage(
 }
 
 gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
-                           const std::vector<holoscan::gxf::Entity>& messages) {
+                                              const std::vector<holoscan::gxf::Entity>& messages) {
   // call the common internal version using the pointer to the vector data, this only works
   // if the size of the nvidia and holoscan gxf::Entity versions is identical
   static_assert(sizeof(holoscan::gxf::Entity) == sizeof(nvidia::gxf::Entity));
@@ -102,7 +105,7 @@ gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
 }
 
 gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
-                           const std::vector<nvidia::gxf::Entity>& messages) {
+                                              const std::vector<nvidia::gxf::Entity>& messages) {
   // call the common internal version using the pointer to the vector data, this only works
   // if the size of the nvidia and holoscan gxf::Entity versions is identical
   static_assert(sizeof(holoscan::gxf::Entity) == sizeof(nvidia::gxf::Entity));
@@ -112,7 +115,9 @@ gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context,
 gxf_result_t CudaStreamHandler::from_messages(gxf_context_t context, size_t message_count,
                                               const nvidia::gxf::Entity* messages) {
   const gxf_result_t result = allocate_internal_stream(context);
-  if (result != GXF_SUCCESS) { return result; }
+  if (result != GXF_SUCCESS) {
+    return result;
+  }
 
   if (!cuda_stream_handle_) {
     // if no CUDA stream can be allocated because no stream pool is set, then don't sync
@@ -204,7 +209,9 @@ gxf_result_t CudaStreamHandler::toMessage(nvidia::gxf::Expected<nvidia::gxf::Ent
 nvidia::gxf::Handle<nvidia::gxf::CudaStream> CudaStreamHandler::get_stream_handle(
     gxf_context_t context) {
   // If there is a message stream handle, return this
-  if (message_cuda_stream_handle_) { return message_cuda_stream_handle_; }
+  if (message_cuda_stream_handle_) {
+    return message_cuda_stream_handle_;
+  }
 
   // else allocate an internal CUDA stream and return it
   allocate_internal_stream(context);
@@ -226,7 +233,9 @@ nvidia::gxf::Handle<nvidia::gxf::CudaStream> CudaStreamHandler::getStreamHandle(
 cudaStream_t CudaStreamHandler::get_cuda_stream(gxf_context_t context) {
   const nvidia::gxf::Handle<nvidia::gxf::CudaStream> cuda_stream_handle =
       get_stream_handle(context);
-  if (cuda_stream_handle) { return cuda_stream_handle->stream().value(); }
+  if (cuda_stream_handle) {
+    return cuda_stream_handle->stream().value();
+  }
   if (!default_stream_warning_) {
     default_stream_warning_ = true;
     HOLOSCAN_LOG_WARN(

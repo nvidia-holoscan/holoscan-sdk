@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,7 +68,9 @@ void Layer::set_views(const std::vector<View>& views) {
 }
 
 void Layer::add_view(const View& view) {
-  if (view.height == 0) { throw std::invalid_argument("Layer view height should not be zero"); }
+  if (view.height == 0) {
+    throw std::invalid_argument("Layer view height should not be zero");
+  }
   if (view.width <= 0) {
     throw std::invalid_argument("Layer view width should not be less than or equal to zero");
   }

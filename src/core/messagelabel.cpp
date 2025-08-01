@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include <limits.h>
 #include <algorithm>
+#include <iostream>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -82,7 +83,9 @@ std::string MessageLabel::to_string(MessageLabel::TimestampedPath path) {
 std::vector<std::string> MessageLabel::get_all_path_names() {
   std::vector<std::string> all_paths;
   all_paths.reserve(message_paths.size());
-  for (int i = 0; i < num_paths(); i++) { all_paths.push_back(get_path_name(i)); }
+  for (int i = 0; i < num_paths(); i++) {
+    all_paths.push_back(get_path_name(i));
+  }
   return all_paths;
 }
 
@@ -112,13 +115,17 @@ void MessageLabel::add_new_op_timestamp(holoscan::OperatorTimestampLabel o_times
 }
 
 void MessageLabel::update_last_op_publish() {
-  for (auto& path : message_paths) { path.back().pub_timestamp = get_current_time_us(); }
+  for (auto& path : message_paths) {
+    path.back().pub_timestamp = get_current_time_us();
+  }
 }
 
 void MessageLabel::add_new_path(MessageLabel::TimestampedPath path) {
   message_paths.push_back(path);
   PathOperators new_path_operators;
-  for (auto& op : path) { new_path_operators.insert(op.operator_name); }
+  for (auto& op : path) {
+    new_path_operators.insert(op.operator_name);
+  }
   message_path_operators.push_back(new_path_operators);
 }
 

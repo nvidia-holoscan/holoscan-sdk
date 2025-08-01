@@ -54,16 +54,24 @@ class PerReceiverRxOp : public Operator {
     std::string msg3{};
     std::string msg4{};
     auto in_value1 = op_input.receive<std::shared_ptr<std::string>>("in1");
-    if (in_value1) { msg1 = *in_value1.value(); }
+    if (in_value1) {
+      msg1 = *in_value1.value();
+    }
 
     // receive twice from in2 because there are 2 messages due to size = 2
     auto in_value2 = op_input.receive<std::shared_ptr<std::string>>("in2");
-    if (in_value2) { msg2 = *in_value2.value(); }
+    if (in_value2) {
+      msg2 = *in_value2.value();
+    }
     auto in_value3 = op_input.receive<std::shared_ptr<std::string>>("in2");
-    if (in_value3) { msg3 = *in_value3.value(); }
+    if (in_value3) {
+      msg3 = *in_value3.value();
+    }
 
     auto in_value4 = op_input.receive<std::shared_ptr<std::string>>("in3");
-    if (in_value4) { msg4 = *in_value4.value(); }
+    if (in_value4) {
+      msg4 = *in_value4.value();
+    }
 
     HOLOSCAN_LOG_INFO("message received on in1: {}", msg1);
     HOLOSCAN_LOG_INFO("first message received on in2: {}", msg2);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,8 @@ Texture::~Texture() {
       mipmaps_.clear();
     }
     alloc_->destroy(texture_);
-  } catch (const std::exception& e) {}  // ignore potential exceptions
+  } catch (const std::exception& e) {
+  }  // ignore potential exceptions
 }
 
 void Texture::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
@@ -141,7 +142,9 @@ void Texture::upload(CUstream ext_stream, const std::array<CUdeviceptr, 3>& devi
 
   std::array<Buffer*, 3> buffers{};
   for (uint32_t plane = 0; plane < device_ptr.size(); ++plane) {
-    if (!device_ptr[plane]) { break; }
+    if (!device_ptr[plane]) {
+      break;
+    }
 
     uint32_t channels, hw_channels, component_size, width_divisor, height_divisior;
     format_info(

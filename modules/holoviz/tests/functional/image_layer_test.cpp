@@ -941,7 +941,9 @@ TEST_F(ImageLayer, SwitchHostDevice) {
 
     EXPECT_NO_THROW(viz::End());
 
-    if (!CompareColorResult()) { break; }
+    if (!CompareColorResult()) {
+      break;
+    }
   }
 }
 
@@ -1101,7 +1103,9 @@ TEST_P(MultiGPU, Peer) {
 
   int device_count = 0;
   CudaCheck(cuDeviceGetCount(&device_count));
-  if (device_count < 2) { GTEST_SKIP() << "Single GPU system, skipping test."; }
+  if (device_count < 2) {
+    GTEST_SKIP() << "Single GPU system, skipping test.";
+  }
 
   SetupData(color_format);
 
@@ -1121,7 +1125,9 @@ TEST_P(MultiGPU, Peer) {
 
     {
       CUstream stream = 0;
-      if (use_stream) { CudaCheck(cuStreamCreate(&stream, CU_STREAM_DEFAULT)); }
+      if (use_stream) {
+        CudaCheck(cuStreamCreate(&stream, CU_STREAM_DEFAULT));
+      }
       EXPECT_NO_THROW(viz::SetCudaStream(stream));
 
       viz::UniqueCUdeviceptr color_device_ptr;

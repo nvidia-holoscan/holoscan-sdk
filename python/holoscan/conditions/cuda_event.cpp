@@ -59,7 +59,9 @@ class PyCudaEventCondition : public CudaEventCondition {
       : CudaEventCondition(Arg("event_name", event_name)) {
     name_ = name;
     fragment_ = fragment;
-    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
+    if (receiver.has_value()) {
+      this->add_arg(Arg("receiver", receiver.value()));
+    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }

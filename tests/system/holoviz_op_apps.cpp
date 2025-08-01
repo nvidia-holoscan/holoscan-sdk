@@ -45,10 +45,14 @@ class HolovizToHolovizApp : public holoscan::Application {
   }
 
   ArgList get_enable_arg() {
-    if (std::holds_alternative<Arg>(enable_arg_)) { return ArgList({std::get<Arg>(enable_arg_)}); }
+    if (std::holds_alternative<Arg>(enable_arg_)) {
+      return ArgList({std::get<Arg>(enable_arg_)});
+    }
     if (std::holds_alternative<std::string>(enable_arg_)) {
       std::string arg_name = std::get<std::string>(enable_arg_);
-      if (arg_name != "") { return from_config(arg_name); }
+      if (arg_name != "") {
+        return from_config(arg_name);
+      }
     }
     return ArgList();
   }
@@ -74,8 +78,8 @@ class HolovizToHolovizApp : public holoscan::Application {
 
     add_flow(source, renderer, {{"out", "receivers"}});
 
-    // TensorCompareOp only works for device tensors
-    if (storage_type_ == "device") {
+    // TensorCompareOp works for device, cuda host and cuda managed tensors
+    if (storage_type_ == "device" || storage_type_ == "cuda_managed" || storage_type_ == "host") {
       auto comparator = make_operator<ops::TensorCompareOp>("comparator");
       auto video_to_tensor =
           make_operator<ops::FormatConverterOp>("converter", in_dtype, out_dtype, pool);
@@ -128,7 +132,7 @@ class HolovizStorageParameterizedTestFixture : public ::testing::TestWithParam<s
 
 INSTANTIATE_TEST_CASE_P(HolovizOpAppTests, HolovizStorageParameterizedTestFixture,
                         ::testing::Values(std::string("device"), std::string("host"),
-                                          std::string("system")));
+                                          std::string("system"), std::string("cuda_managed")));
 
 // run this case with various tensor memory storage types
 TEST_P(HolovizStorageParameterizedTestFixture, TestHolovizStorageTypes) {
@@ -323,7 +327,9 @@ TEST_P(HolovizInputTestFixture, TestHolovizInputs) {
   std::string exception;
   try {
     app->run();
-  } catch (const std::exception& ex) { exception = ex.what(); }
+  } catch (const std::exception& ex) {
+    exception = ex.what();
+  }
   std::string log_output = testing::internal::GetCapturedStderr();
   std::string expected_log;
   std::string expected_exception;

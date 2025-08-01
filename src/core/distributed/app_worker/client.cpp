@@ -58,7 +58,9 @@ std::vector<int32_t> AppWorkerClient::available_ports(uint32_t number_of_ports, 
   request.set_min_port(min_port);
   request.set_max_port(max_port);
   if (!used_ports.empty()) {
-    for (const auto& port : used_ports) { request.add_used_ports(port); }
+    for (const auto& port : used_ports) {
+      request.add_used_ports(port);
+    }
   }
 
   holoscan::distributed::AvailablePortsResponse response;
@@ -68,7 +70,9 @@ std::vector<int32_t> AppWorkerClient::available_ports(uint32_t number_of_ports, 
   std::vector<int32_t> ports;
   if (status.ok()) {
     ports.reserve(response.unused_ports_size());
-    for (const auto& port : response.unused_ports()) { ports.push_back(port); }
+    for (const auto& port : response.unused_ports()) {
+      ports.push_back(port);
+    }
     HOLOSCAN_LOG_DEBUG("AvailablePorts response from worker '{}': {}",
                        worker_address_,
                        fmt::join(response.unused_ports(), ","));
@@ -84,7 +88,9 @@ std::vector<int32_t> AppWorkerClient::available_ports(uint32_t number_of_ports, 
 MultipleFragmentsPortMap AppWorkerClient::fragment_port_info(
     const std::vector<std::string>& fragment_names) {
   holoscan::distributed::FragmentInfoRequest request;
-  for (const auto& frag_name : fragment_names) { request.add_fragment_names(frag_name); }
+  for (const auto& frag_name : fragment_names) {
+    request.add_fragment_names(frag_name);
+  }
 
   MultipleFragmentsPortMap target_fragments_port_map;
   target_fragments_port_map.reserve(fragment_names.size());
@@ -121,15 +127,21 @@ MultipleFragmentsPortMap AppWorkerClient::fragment_port_info(
 
         std::unordered_set<std::string> input_names;
         input_names.reserve(op_info.input_names_size());
-        for (auto& in : op_info.input_names()) { input_names.insert(in); }
+        for (auto& in : op_info.input_names()) {
+          input_names.insert(in);
+        }
 
         std::unordered_set<std::string> output_names;
         output_names.reserve(op_info.output_names_size());
-        for (auto& out : op_info.output_names()) { output_names.insert(out); }
+        for (auto& out : op_info.output_names()) {
+          output_names.insert(out);
+        }
 
         std::unordered_set<std::string> receiver_names;
         receiver_names.reserve(op_info.receiver_names_size());
-        for (auto& recv : op_info.receiver_names()) { receiver_names.insert(recv); }
+        for (auto& recv : op_info.receiver_names()) {
+          receiver_names.insert(recv);
+        }
 
         fragment_port_map.try_emplace(std::move(op_name),
                                       std::move(input_names),
@@ -177,6 +189,12 @@ bool AppWorkerClient::fragment_execution(
           case IOSpec::ConnectorType::kDoubleBuffer:
             connection_item->set_connector_type(
                 holoscan::distributed::ConnectorType::DOUBLE_BUFFER);
+            break;
+          case IOSpec::ConnectorType::kAsyncBuffer:
+            throw std::runtime_error(
+                "AsyncBufferReceiver and AsyncBufferTransmitter are not"
+                "supported for inter-fragment connections in distributed"
+                "applications.");
             break;
           case IOSpec::ConnectorType::kUCX:
             connection_item->set_connector_type(holoscan::distributed::ConnectorType::UCX);

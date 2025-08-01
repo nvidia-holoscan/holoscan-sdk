@@ -39,6 +39,54 @@ PYDOC(resource, R"doc(
 The resource associated with the service.
 )doc")
 
+PYDOC(ServiceDriverEndpoint, R"doc(
+Interface for a distributed service endpoint on the driver side.
+
+This class defines the methods that are called on the driver (main) process
+when managing a distributed service.
+)doc")
+
+PYDOC(ServiceDriverEndpoint_default, R"doc(
+Construct a new ServiceDriverEndpoint object.
+)doc")
+
+PYDOC(driver_start, R"doc(
+Start the driver-side service.
+
+Parameters
+----------
+driver_ip : str
+    The IP address of the driver.
+)doc")
+
+PYDOC(driver_shutdown, R"doc(
+Shut down the driver-side service.
+)doc")
+
+PYDOC(ServiceWorkerEndpoint, R"doc(
+Interface for a distributed service endpoint on the worker side.
+
+This class defines the methods that are called on a worker process when
+managing a distributed service.
+)doc")
+
+PYDOC(ServiceWorkerEndpoint_default, R"doc(
+Construct a new ServiceWorkerEndpoint object.
+)doc")
+
+PYDOC(worker_connect, R"doc(
+Connect the worker-side service to the driver.
+
+Parameters
+----------
+driver_ip : str
+    The IP address of the driver to connect to.
+)doc")
+
+PYDOC(worker_disconnect, R"doc(
+Disconnect the worker-side service from the driver.
+)doc")
+
 }  // namespace FragmentService
 
 namespace DefaultFragmentService {
@@ -64,6 +112,38 @@ resource : holoscan.core.Resource
 )doc")
 
 }  // namespace DefaultFragmentService
+
+namespace DistributedAppService {
+
+PYDOC(DistributedAppService, R"doc(
+Composite service class that implements FragmentService and distributed service endpoints.
+
+This class combines the functionality of FragmentService, ServiceDriverEndpoint,
+and ServiceWorkerEndpoint to provide a single service that can be used as both
+a driver and worker endpoint in distributed environments.
+)doc")
+
+PYDOC(DistributedAppService_default, R"doc(
+Construct a new DistributedAppService object.
+)doc")
+
+PYDOC(driver_start, R"doc(
+Start the driver-side service.
+)doc")
+
+PYDOC(driver_shutdown, R"doc(
+Shut down the driver-side service.
+)doc")
+
+PYDOC(worker_connect, R"doc(
+Connect the worker-side service to the driver.
+)doc")
+
+PYDOC(worker_disconnect, R"doc(
+Disconnect the worker-side service from the driver.
+)doc")
+
+}  // namespace DistributedAppService
 
 }  // namespace holoscan::doc
 

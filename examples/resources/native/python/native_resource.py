@@ -57,7 +57,7 @@ class MinimalOp(Operator):
         # Two resources are expected: the native resource and the default CudaStreamPool
         assert len(resources) == 2
         assert isinstance(resources["msg_resource"], NativeResource)
-        assert isinstance(resources["default_cuda_stream_pool"], CudaStreamPool)
+        assert isinstance(resources[f"{self.name}_stream_pool"], CudaStreamPool)
 
 
 class MinimalNativeResourceApp(Application):

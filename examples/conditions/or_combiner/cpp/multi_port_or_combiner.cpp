@@ -43,10 +43,14 @@ class MultiRxOrOp : public Operator {
   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
     auto in_value1 = op_input.receive<int>("in1");
-    if (in_value1) { HOLOSCAN_LOG_INFO("count {}, message received on in1", count_); }
+    if (in_value1) {
+      HOLOSCAN_LOG_INFO("count {}, message received on in1", count_);
+    }
 
     auto in_value2 = op_input.receive<int>("in2");
-    if (in_value2) { HOLOSCAN_LOG_INFO("count {}, message received on in2", count_); }
+    if (in_value2) {
+      HOLOSCAN_LOG_INFO("count {}, message received on in2", count_);
+    }
     count_++;
   };
 

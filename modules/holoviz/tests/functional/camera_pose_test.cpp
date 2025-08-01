@@ -89,7 +89,9 @@ TEST_F(CameraPose, GetDefault) {
                                       -1.F,
                                       1.F};
   EXPECT_NO_THROW(viz::GetCameraPose(pose.size(), pose.data()));
-  for (int i = 0; i < 16; ++i) { EXPECT_FLOAT_EQ(pose[i], expected_pose[i]); }
+  for (int i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(pose[i], expected_pose[i]);
+  }
 }
 
 TEST_F(CameraPose, Anim) {

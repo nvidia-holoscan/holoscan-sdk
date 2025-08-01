@@ -31,12 +31,16 @@ SerializationBuffer::SerializationBuffer(const std::string& name,
                                          nvidia::gxf::SerializationBuffer* component)
     : GXFResource(name, component) {
   auto maybe_buffer_size = component->getParameter<size_t>("buffer_size");
-  if (!maybe_buffer_size) { throw std::runtime_error("Failed to get maybe_buffer_size"); }
+  if (!maybe_buffer_size) {
+    throw std::runtime_error("Failed to get maybe_buffer_size");
+  }
   buffer_size_ = maybe_buffer_size.value();
 
   auto maybe_allocator =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::Allocator>>("allocator");
-  if (!maybe_allocator) { throw std::runtime_error("Failed to get allocator"); }
+  if (!maybe_allocator) {
+    throw std::runtime_error("Failed to get allocator");
+  }
   auto allocator_handle = maybe_allocator.value();
   allocator_ =
       std::make_shared<Allocator>(std::string{allocator_handle->name()}, allocator_handle.get());
@@ -68,7 +72,9 @@ void SerializationBuffer::initialize() {
   if (has_allocator == args().end()) {
     auto allocator = frag->make_resource<UnboundedAllocator>("serialization_buffer_allocator");
     allocator->gxf_cname(allocator->name().c_str());
-    if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
+    if (gxf_eid_ != 0) {
+      allocator->gxf_eid(gxf_eid_);
+    }
     add_arg(Arg("allocator") = allocator);
   } else {
     // must set the gxf_eid for the provided allocator or GXF parameter registration will fail

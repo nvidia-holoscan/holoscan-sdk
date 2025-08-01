@@ -35,7 +35,9 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
 
   // Get handle to entity
   auto entity = nvidia::gxf::Entity::Shared(context(), eid);
-  if (!entity) { return ToResultCode(entity); }
+  if (!entity) {
+    return ToResultCode(entity);
+  }
   (void)timestamp;
   (void)code;
 
@@ -43,7 +45,9 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
 
   int64_t codelet_id = -1;
 
-  if (codelet.value()) { codelet_id = codelet.value()->cid(); }
+  if (codelet.value()) {
+    codelet_id = codelet.value()->cid();
+  }
 
   if (codelet_id < 0) {
     HOLOSCAN_LOG_ERROR("codelet_id is less than 0 in DFFTCollector.");

@@ -17,6 +17,7 @@
 
 #include "test_core.hpp"
 
+#include <iostream>
 #include <memory>
 #include <string>
 
@@ -45,7 +46,8 @@ void ProcessingTests::print_summary() {
 }
 
 int ProcessingTests::get_status() {
-  if (fail_test_count > 0) return 1;
+  if (fail_test_count > 0)
+    return 1;
   return 0;
 }
 

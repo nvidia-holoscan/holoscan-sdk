@@ -58,7 +58,9 @@ class PyCudaStreamCondition : public CudaStreamCondition {
                                  const std::string& name = "noname_cuda_stream_condition") {
     name_ = name;
     fragment_ = fragment;
-    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
+    if (receiver.has_value()) {
+      this->add_arg(Arg("receiver", receiver.value()));
+    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }

@@ -26,7 +26,9 @@ void VirtualOperator::initialize() {
 }
 
 IOSpec* VirtualOperator::input_spec() {
-  if (spec_ == nullptr) { return nullptr; }
+  if (spec_ == nullptr) {
+    return nullptr;
+  }
   if (input_spec_ == nullptr && io_type_ == IOSpec::IOType::kInput) {
     input_spec_ = spec_->inputs()[port_name_].get();
   }
@@ -34,7 +36,9 @@ IOSpec* VirtualOperator::input_spec() {
 }
 
 IOSpec* VirtualOperator::output_spec() {
-  if (spec_ == nullptr) { return nullptr; }
+  if (spec_ == nullptr) {
+    return nullptr;
+  }
   if (output_spec_ == nullptr && io_type_ == IOSpec::IOType::kOutput) {
     output_spec_ = spec_->outputs()[port_name_].get();
   }

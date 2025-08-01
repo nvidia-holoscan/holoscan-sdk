@@ -42,7 +42,9 @@ void codec_compare(dataT& value, size_t buffer_size = 4096, bool omit_size_check
 
   auto maybe_size = codec<dataT>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
-  if (!omit_size_check) { EXPECT_EQ(maybe_size.value(), sizeof(value)); }
+  if (!omit_size_check) {
+    EXPECT_EQ(maybe_size.value(), sizeof(value));
+  }
 
   auto maybe_value = codec<dataT>::deserialize(endpoint.get());
   auto result = maybe_value.value();
@@ -59,7 +61,9 @@ void codec_shared_compare(std::shared_ptr<dataT> value, size_t buffer_size = 409
 
   auto maybe_size = codec<std::shared_ptr<dataT>>::serialize(value, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
-  if (!omit_size_check) { EXPECT_EQ(maybe_size.value(), sizeof(*value)); }
+  if (!omit_size_check) {
+    EXPECT_EQ(maybe_size.value(), sizeof(*value));
+  }
 
   auto maybe_value = codec<std::shared_ptr<dataT>>::deserialize(endpoint.get());
   auto result = maybe_value.value();
@@ -117,7 +121,9 @@ void codec_vector_compare(dataT& value, size_t buffer_size = 4096, bool omit_siz
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
   if (!omit_size_check) {
     size_t expected_size = sizeof(holoscan::ContiguousDataHeader);
-    if (value.size() > 0) { expected_size += value.size() * sizeof(value[0]); }
+    if (value.size() > 0) {
+      expected_size += value.size() * sizeof(value[0]);
+    }
     EXPECT_EQ(maybe_size.value(), expected_size);
   }
 
@@ -127,7 +133,9 @@ void codec_vector_compare(dataT& value, size_t buffer_size = 4096, bool omit_siz
   EXPECT_EQ(result.size(), value.size());
 
   if (!omit_values_check) {
-    for (size_t i = 0; i < value.size(); i++) { EXPECT_EQ(result[i], value[i]); }
+    for (size_t i = 0; i < value.size(); i++) {
+      EXPECT_EQ(result[i], value[i]);
+    }
   }
 }
 
@@ -142,7 +150,9 @@ void codec_shared_vector_compare(std::shared_ptr<dataT> value, size_t buffer_siz
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
   if (!omit_size_check) {
     size_t expected_size = sizeof(holoscan::ContiguousDataHeader);
-    if (value->size() > 0) { expected_size += value->size() * sizeof(value->at(0)); }
+    if (value->size() > 0) {
+      expected_size += value->size() * sizeof(value->at(0));
+    }
     EXPECT_EQ(maybe_size.value(), expected_size);
   }
   auto maybe_value = codec<std::shared_ptr<dataT>>::deserialize(endpoint.get());
@@ -151,7 +161,9 @@ void codec_shared_vector_compare(std::shared_ptr<dataT> value, size_t buffer_siz
   EXPECT_EQ(result->size(), value->size());
 
   if (!omit_values_check) {
-    for (size_t i = 0; i < value->size(); i++) { EXPECT_EQ(result->at(i), value->at(i)); }
+    for (size_t i = 0; i < value->size(); i++) {
+      EXPECT_EQ(result->at(i), value->at(i));
+    }
   }
 }
 
@@ -165,7 +177,9 @@ void codec_vector_vector_compare(dataT& vectors, size_t buffer_size = 4096,
 
   auto maybe_size = codec<dataT>::serialize(vectors, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
-  if (!omit_size_check) { throw std::runtime_error("size check not implemented for this type"); }
+  if (!omit_size_check) {
+    throw std::runtime_error("size check not implemented for this type");
+  }
 
   auto maybe_vectors = codec<dataT>::deserialize(endpoint.get());
   auto result = maybe_vectors.value();
@@ -179,7 +193,9 @@ void codec_vector_vector_compare(dataT& vectors, size_t buffer_size = 4096,
       auto res = result[j];
       EXPECT_EQ(typeid(vec), typeid(res));
       EXPECT_EQ(vec.size(), res.size());
-      for (size_t i = 0; i < vec.size(); i++) { EXPECT_EQ(vec[i], res[i]); }
+      for (size_t i = 0; i < vec.size(); i++) {
+        EXPECT_EQ(vec[i], res[i]);
+      }
     }
   }
 }
@@ -195,7 +211,9 @@ void codec_shared_vector_vector_compare(std::shared_ptr<dataT> vectors, size_t b
 
   auto maybe_size = codec<std::shared_ptr<dataT>>::serialize(vectors, endpoint.get());
   EXPECT_EQ(typeid(maybe_size.value()), typeid(size_t));
-  if (!omit_size_check) { throw std::runtime_error("size check not implemented for this type"); }
+  if (!omit_size_check) {
+    throw std::runtime_error("size check not implemented for this type");
+  }
 
   auto maybe_vectors = codec<std::shared_ptr<dataT>>::deserialize(endpoint.get());
   auto result = maybe_vectors.value();
@@ -209,7 +227,9 @@ void codec_shared_vector_vector_compare(std::shared_ptr<dataT> vectors, size_t b
       auto res = result->at(j);
       EXPECT_EQ(typeid(vec), typeid(res));
       EXPECT_EQ(vec.size(), res.size());
-      for (size_t i = 0; i < vec.size(); i++) { EXPECT_EQ(vec[i], res[i]); }
+      for (size_t i = 0; i < vec.size(); i++) {
+        EXPECT_EQ(vec[i], res[i]);
+      }
     }
   }
 }
@@ -318,7 +338,9 @@ TEST(Codecs, TestVectorBool) {
   auto result = maybe_deserialized.value();
   EXPECT_EQ(typeid(result), typeid(value));
   EXPECT_EQ(result.size(), value.size());
-  for (size_t i = 0; i < value.size(); i++) { EXPECT_EQ(result[i], value[i]); }
+  for (size_t i = 0; i < value.size(); i++) {
+    EXPECT_EQ(result[i], value[i]);
+  }
 }
 
 TEST(Codecs, TestVectorInt32) {
@@ -334,7 +356,9 @@ TEST(Codecs, TestVectorUInt8) {
 TEST(Codecs, TestComplexUInt8Shared) {
   size_t sz = 10;
   auto value = std::make_shared<std::vector<uint8_t>>(sz);
-  for (size_t i = 0; i < 10; i++) { value->at(i) = i; }
+  for (size_t i = 0; i < 10; i++) {
+    value->at(i) = i;
+  }
   codec_shared_vector_compare<std::vector<uint8_t>>(value);
 }
 
@@ -389,7 +413,9 @@ TEST(Codecs, TestVectorVectorBool) {
 
   size_t expected_size = sizeof(size_t);  // number of vectors
   // add bit-packed serialization size of each vector
-  for (auto& v : bvecs) { expected_size += sizeof(size_t) + (v.size() + 7) / 8; }
+  for (auto& v : bvecs) {
+    expected_size += sizeof(size_t) + (v.size() + 7) / 8;
+  }
 
   // serialize to buffer of exactly expected_size (exception thrown if expected_size is too small)
   auto endpoint = std::make_shared<MockUcxSerializationBuffer>(
@@ -407,7 +433,9 @@ TEST(Codecs, TestVectorVectorBool) {
     auto res = result[j];
     EXPECT_EQ(typeid(vec), typeid(res));
     EXPECT_EQ(vec.size(), res.size());
-    for (size_t i = 0; i < vec.size(); i++) { EXPECT_EQ(res[i], vec[i]); }
+    for (size_t i = 0; i < vec.size(); i++) {
+      EXPECT_EQ(res[i], vec[i]);
+    }
   }
 }
 

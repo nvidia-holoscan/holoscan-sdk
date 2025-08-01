@@ -136,7 +136,8 @@ class InferenceOp : public holoscan::Operator {
 
     explicit operator bool() const noexcept { return !mappings_.empty(); }
     void insert(const std::string& key, const std::vector<std::string>& value) {
-      for (auto const& val : value) mappings_[key].push_back(val);
+      for (auto const& val : value)
+        mappings_[key].push_back(val);
     }
 
     std::map<std::string, std::vector<std::string>> get_map() const { return mappings_; }

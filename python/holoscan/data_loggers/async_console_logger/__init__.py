@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,18 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
-import torch
+import holoscan.core  # noqa: F401
 
+from ._async_console_logger import AsyncConsoleLogger
 
-class IdentityModule(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: list[torch.Tensor]):
-        # For rcnn, output in (losses, detections)
-        return (0, [{"output": torch.zeros(1, dtype=torch.float32, device=x[0].device)}])
-
-
-module = IdentityModule()
-script_module = torch.jit.script(module)
-script_module.save("identity_model.pt")
+__all__ = ["AsyncConsoleLogger"]

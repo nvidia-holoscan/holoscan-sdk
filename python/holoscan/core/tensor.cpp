@@ -147,7 +147,9 @@ void init_tensor(py::module_& m) {
             if (!copy.is_none()) {
               try {
                 cpp_copy = copy.cast<bool>();
-              } catch (const py::cast_error& e) { throw py::value_error("copy must be a boolean"); }
+              } catch (const py::cast_error& e) {
+                throw py::value_error("copy must be a boolean");
+              }
             }
 
             // Call the C++ function with the converted parameters
@@ -233,7 +235,9 @@ LazyDLManagedTensorDeleter::LazyDLManagedTensorDeleter() {
     while (true) {
       {
         std::lock_guard<std::mutex> lock(s_mutex);
-        if (!s_stop && !s_is_running) { break; }
+        if (!s_stop && !s_is_running) {
+          break;
+        }
       }
       // Yield to other threads
       std::this_thread::yield();
@@ -283,7 +287,8 @@ LazyDLManagedTensorDeleter::LazyDLManagedTensorDeleter() {
 LazyDLManagedTensorDeleter::~LazyDLManagedTensorDeleter() {
   try {
     release();
-  } catch (const std::exception& e) {}  // ignore potential fmt::v8::format_error
+  } catch (const std::exception& e) {
+  }  // ignore potential fmt::v8::format_error
 }
 
 void LazyDLManagedTensorDeleter::add(DLManagedTensor* dl_managed_tensor_ptr) {
@@ -311,11 +316,15 @@ void LazyDLManagedTensorDeleter::run() {
     });
 
     // Check if the thread should stop. If queue is not empty, process the queue.
-    if (s_stop && s_dlmanaged_tensors_queue.empty()) { break; }
+    if (s_stop && s_dlmanaged_tensors_queue.empty()) {
+      break;
+    }
 
     // Check if the condition variable should not wait for the thread so that fork() can be called
     // without deadlock.
-    if (s_cv_do_not_wait_thread) { continue; }
+    if (s_cv_do_not_wait_thread) {
+      continue;
+    }
 
     // move queue onto the local stack before releasing the lock
     std::queue<TensorPtr> local_queue;
@@ -363,7 +372,9 @@ void LazyDLManagedTensorDeleter::release() {
     while (true) {
       {
         std::lock_guard<std::mutex> lock(s_mutex);
-        if (!s_is_running) { break; }
+        if (!s_is_running) {
+          break;
+        }
       }
       // Yield to other threads
       std::this_thread::yield();
@@ -508,7 +519,9 @@ DLTensor init_dl_tensor_from_interface(
     throw std::runtime_error("Unable to determine DLDataType from NumPy typestr");
   }
   auto maybe_device = nvidia::gxf::DLDeviceFromPointer(data_ptr);
-  if (!maybe_device) { throw std::runtime_error("Unable to determine DLDevice from data pointer"); }
+  if (!maybe_device) {
+    throw std::runtime_error("Unable to determine DLDevice from data pointer");
+  }
   DLTensor local_dl_tensor{
       .data = data_ptr,
       .device = maybe_device.value(),
@@ -521,7 +534,9 @@ DLTensor init_dl_tensor_from_interface(
 
   // Process 'optional' entries
   py::object strides_obj = py::none();
-  if (array_interface.contains("strides")) { strides_obj = array_interface["strides"]; }
+  if (array_interface.contains("strides")) {
+    strides_obj = array_interface["strides"];
+  }
   auto& strides = memory_buf->dl_strides;
   if (strides_obj.is_none()) {
     calc_strides(local_dl_tensor, strides, true);
@@ -530,7 +545,9 @@ DLTensor init_dl_tensor_from_interface(
     // The array interface's stride is using bytes, not element size, so we need to divide it by
     // the element size.
     int64_t elem_size = local_dl_tensor.dtype.bits / 8;
-    for (auto& stride : strides) { stride /= elem_size; }
+    for (auto& stride : strides) {
+      stride /= elem_size;
+    }
   }
   local_dl_tensor.strides = strides.data();
 
@@ -579,7 +596,9 @@ std::shared_ptr<PyTensor> PyTensor::from_array_interface(const py::object& obj, 
       stream_obj = array_interface["stream"];
       static bool sync_streams =
           AppDriver::get_bool_env_var("HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC", true);
-      if (sync_streams) { process_array_interface_stream(stream_obj); }
+      if (sync_streams) {
+        process_array_interface_stream(stream_obj);
+      }
     }
   }
   // Create DLManagedTensor object
@@ -622,7 +641,9 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj, const py:
   }
   auto dlpack_device_func = obj.attr("__dlpack_device__");
   // We don't handle backward compatibility with older versions of DLPack
-  if (dlpack_device_func.is_none()) { throw std::runtime_error("DLPack device is not set"); }
+  if (dlpack_device_func.is_none()) {
+    throw std::runtime_error("DLPack device is not set");
+  }
 
   auto dlpack_device = py::cast<py::tuple>(dlpack_device_func());
   // https://dmlc.github.io/dlpack/latest/c_api.html#_CPPv48DLDevice
@@ -663,7 +684,9 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj, const py:
         // retry without v1.0 kwargs like max_version and copy if TypeError was raised
         if (e.matches(PyExc_TypeError)) {
           PyErr_Clear();  // Clear any residual error state
-          if (!copy.is_none()) { throw pybind11::type_error("copy kwarg not supported"); }
+          if (!copy.is_none()) {
+            throw pybind11::type_error("copy kwarg not supported");
+          }
           dlpack_capsule =
               py::reinterpret_borrow<py::capsule>(dlpack_func("stream"_a = stream_ptr));
         } else {
@@ -684,7 +707,9 @@ std::shared_ptr<PyTensor> PyTensor::from_dlpack(const py::object& obj, const py:
         // retry without v1.0 kwargs like max_version and copy if TypeError was raised
         if (e.matches(PyExc_TypeError)) {
           PyErr_Clear();  // Clear any residual error state
-          if (!copy.is_none()) { throw pybind11::type_error("copy kwarg not supported"); }
+          if (!copy.is_none()) {
+            throw pybind11::type_error("copy kwarg not supported");
+          }
           dlpack_capsule = py::reinterpret_borrow<py::capsule>(dlpack_func());
         } else {
           throw;  // Re-throw other exceptions
@@ -747,7 +772,9 @@ py::capsule PyTensor::dlpack(const py::object& obj, py::object stream,
                              std::optional<std::tuple<DLDeviceType, int>> dl_device,
                              std::optional<bool> copy) {
   auto tensor = py::cast<std::shared_ptr<Tensor>>(obj);
-  if (!tensor) { throw std::runtime_error("Failed to cast to Tensor"); }
+  if (!tensor) {
+    throw std::runtime_error("Failed to cast to Tensor");
+  }
 
   // Call the new py_dlpack function with separate parameters
   return py_dlpack(tensor.get(), std::move(stream), max_version, dl_device, copy);
@@ -755,7 +782,9 @@ py::capsule PyTensor::dlpack(const py::object& obj, py::object stream,
 
 py::tuple PyTensor::dlpack_device(const py::object& obj) {
   auto tensor = py::cast<std::shared_ptr<Tensor>>(obj);
-  if (!tensor) { throw std::runtime_error("Failed to cast to Tensor"); }
+  if (!tensor) {
+    throw std::runtime_error("Failed to cast to Tensor");
+  }
   // Do not copy 'obj' or a shared pointer here in the lambda expression's initializer, otherwise
   // the refcount of it will be increased by 1 and prevent the object from being destructed. Use a
   // raw pointer here instead.

@@ -25,6 +25,7 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/resources/gxf/async_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/receiver.hpp"
 #include "holoscan/core/resources/gxf/ucx_receiver.hpp"
@@ -68,7 +69,25 @@ class PyUcxReceiver : public UcxReceiver {
                             Arg{"policy", policy},
                             Arg{"address", address},
                             Arg{"port", port}}) {
-    if (buffer) { this->add_arg(Arg{"buffer", buffer}); }
+    if (buffer) {
+      this->add_arg(Arg{"buffer", buffer});
+    }
+    name_ = name;
+    fragment_ = fragment;
+    spec_ = std::make_shared<ComponentSpec>(fragment);
+    setup(*spec_);
+  }
+};
+
+class PyAsyncBufferReceiver : public AsyncBufferReceiver {
+ public:
+  /* Inherit the constructors */
+  using AsyncBufferReceiver::AsyncBufferReceiver;
+
+  // Define a constructor that fully initializes the object.
+  explicit PyAsyncBufferReceiver(Fragment* fragment,
+                                 const std::string& name = "async_buffer_receiver")
+      : AsyncBufferReceiver() {
     name_ = name;
     fragment_ = fragment;
     spec_ = std::make_shared<ComponentSpec>(fragment);
@@ -95,6 +114,16 @@ void init_receivers(py::module_& m) {
            "policy"_a = 2UL,
            "name"_a = "double_buffer_receiver"s,
            doc::DoubleBufferReceiver::doc_DoubleBufferReceiver);
+
+  py::class_<AsyncBufferReceiver,
+             PyAsyncBufferReceiver,
+             Receiver,
+             std::shared_ptr<AsyncBufferReceiver>>(
+      m, "AsyncBufferReceiver", doc::AsyncBufferReceiver::doc_AsyncBufferReceiver)
+      .def(py::init<Fragment*, const std::string&>(),
+           "fragment"_a,
+           "name"_a = "async_buffer_receiver"s,
+           doc::AsyncBufferReceiver::doc_AsyncBufferReceiver);
 
   py::class_<UcxReceiver, PyUcxReceiver, Receiver, std::shared_ptr<UcxReceiver>>(
       m, "UcxReceiver", doc::UcxReceiver::doc_UcxReceiver)

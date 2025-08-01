@@ -35,7 +35,9 @@ class PingTxOp : public Operator {
 
     std::vector<int> output;
     output.reserve(5);
-    for (int i = 0; i < 5; i++) { output.push_back(value1++); }
+    for (int i = 0; i < 5; i++) {
+      output.push_back(value1++);
+    }
 
     op_output.emit(output, "out");
   };

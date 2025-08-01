@@ -75,14 +75,24 @@ gxf_result_t GXFWrapper::tick() {
     HOLOSCAN_LOG_ERROR("GXFWrapper::tick() - Operator is not set");
     return GXF_FAILURE;
   }
+  PROF_SCOPED_EVENT(op_->id(), event_tick);
+
   // Ensure the contexts are initialized when used by `OperatorWrapper` as part of the GXF app
-  if (exec_context_ == nullptr) { initialize_contexts(); }
+  if (exec_context_ == nullptr) {
+    initialize_contexts();
+  }
 
   // clear any existing values from a previous compute call
-  op_->metadata()->clear();
+  {
+    PROF_SCOPED_EVENT(op_->id(), event_metadata_clear);
+    op_->metadata()->clear();
+  }
 
   // clear any received streams from previous compute call
-  exec_context_->clear_received_streams();
+  {
+    PROF_SCOPED_EVENT(op_->id(), event_clear_streams);
+    exec_context_->clear_received_streams();
+  }
 
   // Handle the signal if the operator has input execution port
   if (auto& input_exec_spec = op_->input_exec_spec()) {
@@ -104,7 +114,9 @@ gxf_result_t GXFWrapper::tick() {
     }
   }
   // Clear if dynamic flows are present
-  if (op_->dynamic_flows()) { op_->dynamic_flows()->clear(); }
+  if (op_->dynamic_flows()) {
+    op_->dynamic_flows()->clear();
+  }
 
   HOLOSCAN_LOG_TRACE("Calling operator: {}", op_->name());
   try {
@@ -281,7 +293,9 @@ OutputContext* GXFWrapper::output_context() const {
 
 void GXFWrapper::store_exception() {
   auto stored_exception = std::current_exception();
-  if (stored_exception != nullptr) { op_->fragment()->executor().exception(stored_exception); }
+  if (stored_exception != nullptr) {
+    op_->fragment()->executor().exception(stored_exception);
+  }
 }
 
 void GXFWrapper::initialize_contexts() {

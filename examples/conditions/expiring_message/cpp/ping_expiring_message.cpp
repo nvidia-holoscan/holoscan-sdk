@@ -80,7 +80,9 @@ class PingRxOp : public Operator {
     while (true) {
       auto in_value = op_input.receive<std::shared_ptr<std::string>>("in");
 
-      if (!in_value) { break; }
+      if (!in_value) {
+        break;
+      }
 
       auto message = in_value.value();
       if (message) {

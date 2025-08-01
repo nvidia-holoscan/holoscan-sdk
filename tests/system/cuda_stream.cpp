@@ -34,7 +34,11 @@ namespace holoscan {
 
 namespace ops {
 
-// Operator with two input ports accepting TensorMaps. Streams are also received from each.
+/** @briefOperator with two input ports accepting TensorMaps. Streams are also received from each.
+ *
+ * Note that `allocate=false` in calls to receive_cuda_stream so that no internal stream will be
+ * allocated.
+ */
 class PingTensorDualRxOp : public Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(PingTensorDualRxOp)
@@ -55,7 +59,12 @@ class PingTensorDualRxOp : public Operator {
         HOLOSCAN_LOG_ERROR("Failed to receive message from port '{}'", in_port_name);
         return;
       }
-      cudaStream_t stream = op_input.receive_cuda_stream(in_port_name.c_str(), true);
+
+      // If allocate_internal is set to true this stream will ALWAYS be non-default because
+      // a default CudaStreamPool will be added.
+      // Otherwise if allocate_inernal is false, stream will only be the default stream if there
+      // was no stream passed on from the input port.
+      cudaStream_t stream = op_input.receive_cuda_stream(in_port_name.c_str(), allocate_internal_);
       HOLOSCAN_LOG_INFO("{} received {}default CUDA stream from port '{}'",
                         name(),
                         stream == cudaStreamDefault ? "" : "non-",
@@ -91,8 +100,11 @@ class PingTensorDualRxOp : public Operator {
     count_++;
   }
 
+  void allocate_internal(bool value) { allocate_internal_ = value; }
+
  private:
   size_t count_ = 1;
+  bool allocate_internal_{true};
 };
 
 // Operator with one input port accepting a std::vector<TensorMap> of size 5.
@@ -209,6 +221,61 @@ class PingTensorMultiRxOp : public Operator {
   size_t count_ = 1;
 };
 
+class PingDefaultStreamPoolRxOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingDefaultStreamPoolRxOp)
+
+  PingDefaultStreamPoolRxOp() = default;
+
+  void setup(OperatorSpec& spec) override { spec.input<gxf::Entity>("in"); }
+
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               ExecutionContext& context) {
+    auto maybe_message = op_input.receive<gxf::Entity>("in");
+    cudaStream_t internal_stream = op_input.receive_cuda_stream("in");
+
+    if (internal_stream == cudaStreamDefault) {
+      throw std::runtime_error("expected a non-default stream for internal stream pool!");
+    }
+    HOLOSCAN_LOG_INFO("{}: Successfully received non-default stream", name());
+
+    // With manual stream handling via receive_cuda_streams expect to receive the
+    // non-default stream passed in by the upstream PingTensorTxOp
+    auto streams = op_input.receive_cuda_streams("in");
+    if (streams.size() != 1) {
+      throw std::runtime_error(fmt::format("expected 1 stream, got {}", streams.size()));
+    }
+    if (!streams[0].has_value()) {
+      throw std::runtime_error("optional<stream> returned by receive_cuda_streams is empty");
+    } else if (streams[0].value() == internal_stream) {
+      throw std::runtime_error(
+          "expected stream returned by receive_cuda_streams to be different from "
+          "the internal stream");
+    } else if (streams[0].value() == cudaStreamDefault) {
+      throw std::runtime_error(
+          "expected stream returned by receive_cuda_streams to be non-default, got "
+          "default stream");
+    } else {
+      HOLOSCAN_LOG_INFO("{}: Successfully received non-default upstream stream", name());
+    }
+
+    auto maybe_new_stream = context.allocate_cuda_stream("my_new_stream");
+    if (!maybe_new_stream) {
+      throw std::runtime_error("failed to allocate a new stream");
+    }
+    auto new_stream = maybe_new_stream.value();
+    if (new_stream == streams[0].value()) {
+      throw std::runtime_error(
+          "expected new stream returned by allocate_cuda_stream to be different from "
+          "the stream returned previously by receive_cuda_streams");
+    } else if (new_stream == cudaStreamDefault) {
+      throw std::runtime_error(
+          "expected new stream returned by allocate_cuda_stream not to be the default "
+          "stream");
+    }
+  }
+};
+
 }  // namespace ops
 
 /**
@@ -262,7 +329,11 @@ class StreamDualRxApp : public holoscan::Application {
 
     ArgList rx_args{};
     auto dual_rx = make_operator<ops::PingTensorDualRxOp>("dual_rx", rx_args);
-    if (rx_use_stream_pool_) { dual_rx->add_arg(cuda_stream_pool); }
+    if (rx_allocate_internal_) {
+      dual_rx->allocate_internal(true);
+    } else {
+      dual_rx->allocate_internal(false);
+    }
 
     add_flow(source1, converter1, {{"out", "source_video"}});
     add_flow(source2, converter2, {{"out", "source_video"}});
@@ -272,12 +343,12 @@ class StreamDualRxApp : public holoscan::Application {
 
   void async_alloc_tx(bool value) { async_alloc_tx_ = value; }
   void converters_use_stream_pool(bool value) { converters_use_stream_pool_ = value; }
-  void rx_use_stream_pool(bool value) { rx_use_stream_pool_ = value; }
+  void rx_allocate_internal(bool value) { rx_allocate_internal_ = value; }
 
  private:
   bool async_alloc_tx_ = false;
   bool converters_use_stream_pool_ = false;
-  bool rx_use_stream_pool_ = false;
+  bool rx_allocate_internal_ = true;
 };
 
 /**
@@ -403,6 +474,42 @@ class StreamSingleSourceTwoSinks : public holoscan::Application {
   }
 };
 
+/**
+ * @brief Application testing default stream pool behavior
+ *
+ * PingTensorTxOp tests
+ *    ExecutionContext::allocate_cuda_stream
+ *    OutputContext::set_cuda_stream
+ *
+ * PingDefaultStreamPoolRxOp tests
+ *    InputContext::receive_cuda_stream with internal stream pool returns non-default stream.
+ *    InputContext::receive_cuda_streams returns non-default stream that is not the internal stream.
+ */
+class DefaultStreamPoolApp : public holoscan::Application {
+  void compose() override {
+    const int32_t width = 320;
+    const int32_t height = 240;
+    const std::shared_ptr<CudaStreamPool> cuda_stream_pool =
+        make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5);
+
+    auto tx_args = ArgList({
+        Arg("rows", height),
+        Arg("columns", width),
+        Arg("channels", 4),
+        Arg("storage_type", std::string("device")),
+        Arg("cuda_stream_pool", cuda_stream_pool),
+        Arg("async_device_allocation", true),
+    });
+
+    auto tx = make_operator<ops::PingTensorTxOp>("tx", make_condition<CountCondition>(5), tx_args);
+
+    // Intentionally rely on the default stream pool for "rx"
+    auto rx = make_operator<ops::PingDefaultStreamPoolRxOp>("rx");
+
+    add_flow(tx, rx, {{"out", "in"}});
+  }
+};
+
 }  // namespace holoscan
 
 class CudaStreamParameterizedTestFixture
@@ -426,8 +533,9 @@ TEST_P(CudaStreamParameterizedTestFixture, TestStreamDualRxApp) {
 
   auto app = make_application<StreamDualRxApp>();
   app->async_alloc_tx(tx_stream_allocation);
+
   app->converters_use_stream_pool(format_converter_stream_allocation);
-  app->rx_use_stream_pool(rx_stream_allocation);
+  app->rx_allocate_internal(rx_stream_allocation);
 
   // capture output to check that the expected messages were logged
   testing::internal::CaptureStderr();
@@ -438,6 +546,7 @@ TEST_P(CudaStreamParameterizedTestFixture, TestStreamDualRxApp) {
 
   std::vector<std::string> port_names{"in1", "in2"};
   bool receivers_all_default = !(format_converter_stream_allocation || tx_stream_allocation);
+
   // either:
   //   1.) FormatConverterOp sent it internal non-default stream
   //   2.) a stream created by tx was automatically passed through format converter to rx
@@ -542,4 +651,43 @@ TEST(CudaStreamApps, TestStreamSingleSourceTwoSinks) {
 
   // the streams of the two sinks should be different
   EXPECT_NE(stream1, stream2) << "=== LOG ===\n" << log_output << "\n===========\n";
+}
+
+TEST(CudaStreamApps, TestDefaultStreamPoolApp) {
+  using namespace holoscan;
+
+  auto app = make_application<DefaultStreamPoolApp>();
+
+  // capture output to check that the expected messages were logged
+  testing::internal::CaptureStderr();
+
+  // Test should complete without any runtime errors
+  std::string exception_message;
+  bool exception_thrown = false;
+
+  try {
+    app->run();
+  } catch (const std::exception& e) {
+    exception_thrown = true;
+    exception_message = e.what();
+  }
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  // If an exception was thrown, fail with log output for debugging
+  if (exception_thrown) {
+    FAIL() << "Application threw an exception: " << exception_message << "\n=== LOG OUTPUT ===\n"
+           << log_output << "\n=================\n";
+  }
+
+  // Verify that both success messages were logged
+  std::string success_msg1 = "rx: Successfully received non-default stream";
+  EXPECT_TRUE(log_output.find(success_msg1) != std::string::npos)
+      << "Success message should appear in log output:\n=== LOG ===\n"
+      << log_output << "\n===========\n";
+
+  std::string success_msg2 = "rx: Successfully received non-default upstream stream";
+  EXPECT_TRUE(log_output.find(success_msg2) != std::string::npos)
+      << "Success message should appear in log output:\n=== LOG ===\n"
+      << log_output << "\n===========\n";
 }

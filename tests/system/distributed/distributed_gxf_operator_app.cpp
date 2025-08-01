@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -121,7 +121,9 @@ TEST_F(DistributedGXFOperatorApps, TestDistributedAppGXFOperatorReceive) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Failed to access in tensor") == std::string::npos)

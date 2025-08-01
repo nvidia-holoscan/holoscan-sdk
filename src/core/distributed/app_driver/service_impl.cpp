@@ -158,7 +158,9 @@ std::string AppDriverServiceImpl::parse_ip_from_peer(const std::string& peer) {
 
   // Find where the IP address begins, which is after the first colon.
   auto ip_start = decoded_peer.find(':');
-  if (ip_start == std::string::npos) { return ""; }
+  if (ip_start == std::string::npos) {
+    return "";
+  }
 
   // Extract the substring containing the IP address and the port.
   std::string ip_and_port = decoded_peer.substr(ip_start + 1);
@@ -183,7 +185,9 @@ std::string AppDriverServiceImpl::parse_port_from_peer(const std::string& peer) 
 
   // Find where the IP address begins, which is after the first colon.
   auto ip_start = decoded_peer.find(':');
-  if (ip_start == std::string::npos) { return ""; }
+  if (ip_start == std::string::npos) {
+    return "";
+  }
 
   // Extract the substring containing the IP address and the port.
   std::string ip_and_port = decoded_peer.substr(ip_start + 1);

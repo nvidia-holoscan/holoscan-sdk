@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,9 @@ void init_gxf_operator(py::module_& m) {
             // use py::object and obj.cast to avoid a segfault if object has not been
             // initialized
             auto op = obj.cast<std::shared_ptr<ops::GXFOperator>>();
-            if (op) { return op->description(); }
+            if (op) {
+              return op->description();
+            }
             return std::string("<GXFOperator: None>");
           },
           R"doc(Return repr(self).)doc");

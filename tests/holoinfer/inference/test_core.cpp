@@ -18,6 +18,7 @@
 #include "test_core.hpp"
 
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -93,7 +94,8 @@ void HoloInferTests::print_summary() {
 }
 
 int HoloInferTests::get_status() {
-  if (fail_test_count > 0) return 1;
+  if (fail_test_count > 0)
+    return 1;
   return 0;
 }
 
@@ -137,7 +139,9 @@ HoloInfer::InferStatus HoloInferTests::create_specifications() {
   try {
     setup_specifications();
     status = setup_inference();
-  } catch (const std::runtime_error& rt) { return status; }
+  } catch (const std::runtime_error& rt) {
+    return status;
+  }
   return status;
 }
 
@@ -168,7 +172,9 @@ HoloInfer::InferStatus HoloInferTests::do_inference() {
   HoloInfer::InferStatus status = HoloInfer::InferStatus(HoloInfer::holoinfer_code::H_ERROR);
 
   try {
-    if (!holoscan_infer_context_) { return status; }
+    if (!holoscan_infer_context_) {
+      return status;
+    }
     return holoscan_infer_context_->execute_inference(inference_specs_);
   } catch (...) {
     std::cout << "Exception occurred in inference.\n";

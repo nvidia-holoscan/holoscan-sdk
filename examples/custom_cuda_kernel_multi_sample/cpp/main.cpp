@@ -107,7 +107,9 @@ int main(int argc, char** argv) {
 
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path += "/custom_cuda_kernel_multi_sample.yaml";
-  if (argc >= 2) { config_path = argv[1]; }
+  if (argc >= 2) {
+    config_path = argv[1];
+  }
 
   app->config(config_path);
 

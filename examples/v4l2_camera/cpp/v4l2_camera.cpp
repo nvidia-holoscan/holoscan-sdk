@@ -119,7 +119,9 @@ class App : public holoscan::Application {
     if (key_exists(source_args, "width") && key_exists(source_args, "height")) {
       // Set Holoviz width and height from source resolution
       for (auto& arg : source_args) {
-        if (arg.name() == "width" || arg.name() == "height") { viz_args.add(arg); }
+        if (arg.name() == "width" || arg.name() == "height") {
+          viz_args.add(arg);
+        }
       }
     }
 
@@ -144,7 +146,9 @@ int main(int argc, char** argv) {
   // Get the configuration
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path += "/v4l2_camera.yaml";
-  if (argc >= 2) { config_path = argv[1]; }
+  if (argc >= 2) {
+    config_path = argv[1];
+  }
 
   app.config(config_path);
   app.run();

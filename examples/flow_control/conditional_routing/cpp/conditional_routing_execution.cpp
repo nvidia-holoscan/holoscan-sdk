@@ -56,7 +56,9 @@ class PingRx : public holoscan::Operator {
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto msg = op_input.receive<int>();
-    if (msg) { std::cout << "Received value " << *msg << " - " << name() << std::endl; }
+    if (msg) {
+      std::cout << "Received value " << *msg << " - " << name() << std::endl;
+    }
   }
 };
 

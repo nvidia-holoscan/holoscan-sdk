@@ -288,7 +288,9 @@ class PingRxOp : public holoscan::Operator {
     } else {
       while (true) {
         auto maybe_value = op_input.receive<std::shared_ptr<ValueData>>("receivers");
-        if (!maybe_value) { break; }
+        if (!maybe_value) {
+          break;
+        }
         auto value = maybe_value.value();
         HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: 1)", count_++);
         if (value) {
@@ -355,7 +357,9 @@ class PingRawPtrRxOp : public holoscan::Operator {
     } else {
       while (true) {
         auto maybe_value = op_input.receive<const char*>("receivers");
-        if (!maybe_value) { break; }
+        if (!maybe_value) {
+          break;
+        }
         auto value = maybe_value.value();
         HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: 1)", count_++);
         if (value) {
@@ -406,7 +410,9 @@ class PingTensorMapRxOp : public holoscan::Operator {
         for (const auto& [name, tensor] : value) {
           std::vector<int> data_vector;
           if (tensor) {
-            for (const auto& shape : tensor->shape()) { data_vector.push_back(shape); }
+            for (const auto& shape : tensor->shape()) {
+              data_vector.push_back(shape);
+            }
           }
           HOLOSCAN_LOG_INFO(
               "Rx message values {} (count: {}): [{}]", name, count_, fmt::join(data_vector, ", "));
@@ -415,12 +421,16 @@ class PingTensorMapRxOp : public holoscan::Operator {
     } else {
       while (true) {
         auto maybe_value = op_input.receive<holoscan::TensorMap>("receivers");
-        if (!maybe_value) { break; }
+        if (!maybe_value) {
+          break;
+        }
         auto value = maybe_value.value();
         for (const auto& [name, tensor] : value) {
           std::vector<int> data_vector;
           if (tensor) {
-            for (const auto& shape : tensor->shape()) { data_vector.push_back(shape); }
+            for (const auto& shape : tensor->shape()) {
+              data_vector.push_back(shape);
+            }
           }
           HOLOSCAN_LOG_INFO(
               "Rx message values {} (count: {}): [{}]", name, count_, fmt::join(data_vector, ", "));
@@ -471,7 +481,9 @@ class PingEntityRxOp : public holoscan::Operator {
             value.get<holoscan::Tensor>("tensor_common");
         std::vector<int> data_vector;
         if (tensor_common) {
-          for (const auto& shape : tensor_common->shape()) { data_vector.push_back(shape); }
+          for (const auto& shape : tensor_common->shape()) {
+            data_vector.push_back(shape);
+          }
         }
         HOLOSCAN_LOG_INFO("Rx message values tensor_common (count: {}): [{}]",
                           count_,
@@ -480,14 +492,18 @@ class PingEntityRxOp : public holoscan::Operator {
     } else {
       while (true) {
         auto maybe_value = op_input.receive<holoscan::gxf::Entity>("receivers");
-        if (!maybe_value) { break; }
+        if (!maybe_value) {
+          break;
+        }
         auto value = maybe_value.value();
 
         std::shared_ptr<holoscan::Tensor> tensor_common =
             value.get<holoscan::Tensor>("tensor_common");
         std::vector<int> data_vector;
         if (tensor_common) {
-          for (const auto& shape : tensor_common->shape()) { data_vector.push_back(shape); }
+          for (const auto& shape : tensor_common->shape()) {
+            data_vector.push_back(shape);
+          }
         }
         HOLOSCAN_LOG_INFO("Rx message values tensor_common (count: {}): [{}]",
                           count_,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,7 +65,9 @@ __global__ void postprocessing_kernel(Shape shape, const float* input, output_ty
   const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
 
-  if ((x >= shape.width) || (y >= shape.height)) { return; }
+  if ((x >= shape.width) || (y >= shape.height)) {
+    return;
+  }
 
   uint8_t max_index = 0;
 

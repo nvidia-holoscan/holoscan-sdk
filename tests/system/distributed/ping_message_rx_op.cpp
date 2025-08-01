@@ -98,27 +98,37 @@ void PingMessageRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputCon
   switch (type_) {
     case MessageType::BOOL: {
       auto value = op_input.receive<bool>("in");
-      if (value) { valid_value = value.value() == true; }
+      if (value) {
+        valid_value = value.value() == true;
+      }
       break;
     }
     case MessageType::FLOAT: {
       auto value = op_input.receive<float>("in");
-      if (value) { valid_value = value.value() == 3.5; }
+      if (value) {
+        valid_value = value.value() == 3.5;
+      }
       break;
     }
     case MessageType::INT32: {
       auto value = op_input.receive<int32_t>("in");
-      if (value) { valid_value = value.value() == -128573; }
+      if (value) {
+        valid_value = value.value() == -128573;
+      }
       break;
     }
     case MessageType::UINT32: {
       auto value = op_input.receive<uint32_t>("in");
-      if (value) { valid_value = value.value() == 128573; }
+      if (value) {
+        valid_value = value.value() == 128573;
+      }
       break;
     }
     case MessageType::STRING: {
       auto value = op_input.receive<std::string>("in");
-      if (value) { valid_value = value.value() == std::string("abcdefgh"); }
+      if (value) {
+        valid_value = value.value() == std::string("abcdefgh");
+      }
       break;
     }
     case MessageType::VEC_BOOL: {

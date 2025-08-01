@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,9 @@ __global__ void ConvertR8G8B8ToR8G8B8A8Kernel(uint32_t width, uint32_t height, c
                                               uint8_t alpha) {
   const uint2 launch_index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
-  if ((launch_index.x >= width) || (launch_index.y >= height)) { return; }
+  if ((launch_index.x >= width) || (launch_index.y >= height)) {
+    return;
+  }
 
   const size_t src_offset = launch_index.x * 3 + launch_index.y * src_pitch;
 
@@ -71,7 +73,9 @@ __global__ void ConvertB8G8R8A8ToR8G8B8A8Kernel(uint32_t width, uint32_t height,
                                                 size_t src_pitch, uint8_t* dst, size_t dst_pitch) {
   const uint2 launch_index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
-  if ((launch_index.x >= width) || (launch_index.y >= height)) { return; }
+  if ((launch_index.x >= width) || (launch_index.y >= height)) {
+    return;
+  }
 
   const size_t src_offset = launch_index.x * 4 + launch_index.y * src_pitch;
   const size_t dst_offset = launch_index.x * 4 + launch_index.y * dst_pitch;

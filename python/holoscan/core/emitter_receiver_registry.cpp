@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,9 @@ const EmitterReceiverRegistry::EmitterReceiver& EmitterReceiverRegistry::get_emi
 
 bool EmitterReceiverRegistry::has_emitter_receiver(const std::type_index& index) const {
   auto maybe_name = index_to_name(index);
-  if (maybe_name) { return emitter_receiver_map_.count(maybe_name.value()) > 0; }
+  if (maybe_name) {
+    return emitter_receiver_map_.count(maybe_name.value()) > 0;
+  }
   return false;
 }
 
@@ -122,7 +124,9 @@ expected<std::string, RuntimeError> EmitterReceiverRegistry::index_to_name(
 std::vector<std::string> EmitterReceiverRegistry::registered_types() const {
   std::vector<std::string> names;
   names.reserve(emitter_receiver_map_.size());
-  for (const auto& [key, _] : emitter_receiver_map_) { names.emplace_back(key); }
+  for (const auto& [key, _] : emitter_receiver_map_) {
+    names.emplace_back(key);
+  }
   return names;
 }
 

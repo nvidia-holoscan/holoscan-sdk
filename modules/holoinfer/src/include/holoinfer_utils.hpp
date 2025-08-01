@@ -27,6 +27,11 @@
 #include "holoinfer_buffer.hpp"
 #include "holoinfer_constants.hpp"
 
+// Forward declaration for YAML::Node to allow use use in header files
+namespace YAML {
+class Node;
+}
+
 namespace holoscan {
 namespace inference {
 
@@ -105,17 +110,20 @@ InferStatus tensor_dimension_check(const MultiMappings& pre_processor_map,
                                    const std::map<std::string, std::vector<int>>& dims_per_tensor);
 
 using node_type = std::map<std::string, std::map<std::string, std::string>>;
+
 static const std::map<std::string, holoinfer_datatype> kHoloInferDataTypeMap = {
     {"kFloat32", holoinfer_datatype::h_Float32},
     {"kInt32", holoinfer_datatype::h_Int32},
     {"kInt8", holoinfer_datatype::h_Int8},
     {"kUInt8", holoinfer_datatype::h_UInt8},
     {"kInt64", holoinfer_datatype::h_Int64},
-    {"kFloat16", holoinfer_datatype::h_Float16}};
+    {"kFloat16", holoinfer_datatype::h_Float16},
+    {"kBool", holoinfer_datatype::h_Int8}};
 
-InferStatus parse_yaml_node(const node_type& in_config, std::vector<std::string>& names,
+InferStatus parse_yaml_node(const YAML::Node& in_config, std::vector<std::string>& names,
                             std::vector<std::vector<int64_t>>& dims,
-                            std::vector<holoinfer_datatype>& types);
+                            std::vector<std::string>& types);
+
 }  // namespace inference
 }  // namespace holoscan
 #endif /* HOLOINFER_SRC_INCLUDE_HOLOINFER_UTILS_HPP */

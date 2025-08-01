@@ -121,7 +121,9 @@ void init_arg(py::module_& m) {
            [](Arg& arg) -> py::object {
              auto result = arg_to_py_object(arg);
              if (!result.is_none()) {
-               if (py::isinstance<py::int_>(result)) { return result; }
+               if (py::isinstance<py::int_>(result)) {
+                 return result;
+               }
                if (py::isinstance<py::float_>(result)) {
                  return py::int_(static_cast<int64_t>(result.cast<double>()));
                }
@@ -132,7 +134,9 @@ void init_arg(py::module_& m) {
            [](Arg& arg) -> py::object {
              auto result = arg_to_py_object(arg);
              if (!result.is_none()) {
-               if (py::isinstance<py::float_>(result)) { return result; }
+               if (py::isinstance<py::float_>(result)) {
+                 return result;
+               }
                if (py::isinstance<py::int_>(result)) {
                  return py::float_(static_cast<double>(result.cast<int64_t>()));
                }
@@ -142,14 +146,20 @@ void init_arg(py::module_& m) {
       .def("__bool__",
            [](Arg& arg) -> py::object {
              auto result = arg_to_py_object(arg);
-             if (!result.is_none()) { return py::bool_(py::cast<bool>(result)); }
+             if (!result.is_none()) {
+               return py::bool_(py::cast<bool>(result));
+             }
              return py::none();
            })
       .def("__str__",
            [](Arg& arg) -> py::object {
              auto result = arg_to_py_object(arg);
-             if (py::isinstance<py::str>(result)) { return result; }
-             if (!result.is_none()) { return py::str(result); }
+             if (py::isinstance<py::str>(result)) {
+               return result;
+             }
+             if (!result.is_none()) {
+               return py::str(result);
+             }
              return py::str();
            })
       .def_property_readonly("description", &Arg::description, doc::Arg::doc_description)

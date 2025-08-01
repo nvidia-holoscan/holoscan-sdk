@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -132,7 +132,9 @@ class MessageLabel {
   explicit MessageLabel(const std::vector<TimestampedPath> m_paths) : message_paths(m_paths) {
     for (auto& path : m_paths) {
       PathOperators new_path_operators;
-      for (auto& op : path) { new_path_operators.insert(op.operator_name); }
+      for (auto& op : path) {
+        new_path_operators.insert(op.operator_name);
+      }
       message_path_operators.push_back(new_path_operators);
     }
   }

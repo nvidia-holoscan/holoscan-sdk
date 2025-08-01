@@ -19,6 +19,7 @@
 #include <getopt.h>
 
 #include <chrono>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -313,7 +314,9 @@ int main(int argc, char** argv) {
     const int c = getopt_long(argc, argv, "hc:", static_cast<option*>(long_options), &option_index);
     // NOLINTEND(concurrency-mt-unsafe)
 
-    if (c == -1) { break; }
+    if (c == -1) {
+      break;
+    }
 
     const std::string argument(optarg != nullptr ? optarg : "");
     switch (c) {

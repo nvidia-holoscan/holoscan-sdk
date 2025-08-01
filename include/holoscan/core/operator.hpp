@@ -480,8 +480,9 @@ class Operator : public ComponentBase {
    */
   template <typename typeT>
   [[deprecated(
-      "Use holoscan::gxf::GXFExecutor::register_codec() instead of Operator::register_codec()")]]
-  static void register_codec(const std::string& codec_name, bool overwrite = true) {
+      "Use holoscan::gxf::GXFExecutor::register_codec() instead of "
+      "Operator::register_codec()")]] static void
+  register_codec(const std::string& codec_name, bool overwrite = true) {
     HOLOSCAN_LOG_WARN(
         "Operator::register_codec is deprecated. Please use the static method "
         "holoscan::gxf::GXFExecutor::register_codec instead.");
@@ -561,9 +562,9 @@ class Operator : public ComponentBase {
   void metadata_policy(MetadataPolicy policy) { dynamic_metadata_->policy(policy); }
 
   /**
-   * @brief Add no CudaStreamPool parameter or argument already exists, add a default one.
+   * @brief If no `CudaStreamPool` parameter or argument already exists, add a default one.
    *
-   * This method is available to be called by derived classes to add a default CudaStreamPool in
+   * This method is available to be called by derived classes to add a default `CudaStreamPool` in`
    * the case that the user did not pass one in as an argument to `make_operator`.
    *
    * This function will not add an additional CUDA stream pool if one was already passed in as an
@@ -778,6 +779,8 @@ class Operator : public ComponentBase {
   // externally by them
   friend class AnnotatedDoubleBufferReceiver;
   friend class AnnotatedDoubleBufferTransmitter;
+  friend class HoloscanAsyncBufferReceiver;
+  friend class HoloscanAsyncBufferTransmitter;
   friend class HoloscanUcxTransmitter;
   friend class HoloscanUcxReceiver;
   friend class DFFTCollector;

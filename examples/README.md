@@ -53,6 +53,8 @@ The following examples demonstrate the basics of the Holoscan core API, and are 
    4. [**ping_distributed**](ping_distributed): transmit tensors from one fragment to another in a
       distributed application
    5. [**ping_cycle**](ping_cycle): connecting operators in a cyclic path
+   6. [**ping_simple_async_buffer**](ping_simple_async_buffer): connecting two operators with an async buffer
+   7. [**ping_periodic_async_buffer**](ping_periodic_async_buffer): demonstrating async buffer connection between two operators that are running with periodic conditions
 3. [**Video Replayer**](video_replayer): switch the source/sink from Tx/Rx to loading a video from disk and displaying its frames
 4. [**Distributed Video Replayer**](video_replayer_distributed): switch the source/sink from Tx/Rx
    to loading a video from disk and displaying its frames, with a distributed application

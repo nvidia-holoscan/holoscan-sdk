@@ -87,20 +87,28 @@ static inline Expected<size_t> serialize_string(const std::string& data, Endpoin
   header.size = data.size();
   header.bytes_per_element = header.size > 0 ? sizeof(data[0]) : 1;
   auto size = endpoint->writeTrivialType<holoscan::ContiguousDataHeader>(&header);
-  if (!size) { return ForwardError(size); }
+  if (!size) {
+    return ForwardError(size);
+  }
   auto size2 = endpoint->write(data.data(), header.size * header.bytes_per_element);
-  if (!size2) { return ForwardError(size2); }
+  if (!size2) {
+    return ForwardError(size2);
+  }
   return size.value() + size2.value();
 }
 
 static inline Expected<std::string> deserialize_string(Endpoint* endpoint) {
   holoscan::ContiguousDataHeader header;
   auto header_size = endpoint->readTrivialType<holoscan::ContiguousDataHeader>(&header);
-  if (!header_size) { return ForwardError(header_size); }
+  if (!header_size) {
+    return ForwardError(header_size);
+  }
   std::string data;
   data.resize(header.size);
   auto result = endpoint->read(data.data(), header.size * header.bytes_per_element);
-  if (!result) { return ForwardError(result); }
+  if (!result) {
+    return ForwardError(result);
+  }
   return data;
 }
 
@@ -120,13 +128,17 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeHoloscanMessage(
 
   // serialize the codec_name of the holoscan::Message codec to retrieve
   auto maybe_size = serialize_string(codec_name, endpoint);
-  if (!maybe_size) { return ForwardError(maybe_size); }
+  if (!maybe_size) {
+    return ForwardError(maybe_size);
+  }
   auto total_size = maybe_size.value();
 
   // serialize the message contents
   auto serialize_func = registry.get_serializer(codec_name);
   maybe_size = serialize_func(message, endpoint);
-  if (!maybe_size) { return ForwardError(maybe_size); }
+  if (!maybe_size) {
+    return ForwardError(maybe_size);
+  }
   total_size += maybe_size.value();
   return total_size;
 }
@@ -137,7 +149,9 @@ Expected<holoscan::Message> UcxHoloscanComponentSerializer::deserializeHoloscanM
 
   // deserialize the type_name of the holoscan::Message codec to retrieve
   auto maybe_codec_name = deserialize_string(endpoint);
-  if (!maybe_codec_name) { return ForwardError(maybe_codec_name); }
+  if (!maybe_codec_name) {
+    return ForwardError(maybe_codec_name);
+  }
 
   // deserialize the message contents
   auto& registry = holoscan::gxf::CodecRegistry::get_instance();
@@ -152,19 +166,25 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeMetadataDictionary(
   // store the number of keys to expect
   uint32_t num_items = static_cast<uint32_t>(metadata.size());
   auto maybe_size = endpoint->writeTrivialType<uint32_t>(&num_items);
-  if (!maybe_size) { return ForwardError(maybe_size); }
+  if (!maybe_size) {
+    return ForwardError(maybe_size);
+  }
   size_t total_size = maybe_size.value();
 
   // serialize all items in the dictionary
   for (const auto& [key, value] : metadata) {
     // serialize the key
     auto maybe_size = serialize_string(key, endpoint);
-    if (!maybe_size) { return ForwardError(maybe_size); }
+    if (!maybe_size) {
+      return ForwardError(maybe_size);
+    }
     total_size += maybe_size.value();
 
     // serialize the holoscan::Message value
     maybe_size = serializeHoloscanMessage(*value, endpoint);
-    if (!maybe_size) { return ForwardError(maybe_size); }
+    if (!maybe_size) {
+      return ForwardError(maybe_size);
+    }
     total_size += maybe_size.value();
   }
   return total_size;
@@ -183,11 +203,15 @@ UcxHoloscanComponentSerializer::deserializeMetadataDictionary(Endpoint* endpoint
   for (size_t i = 0; i < num_items; i++) {
     // deserialize the key
     auto maybe_key = deserialize_string(endpoint);
-    if (!maybe_key) { return ForwardError(maybe_key); }
+    if (!maybe_key) {
+      return ForwardError(maybe_key);
+    }
 
     // deserialize the value
     auto maybe_value = deserializeHoloscanMessage(endpoint);
-    if (!maybe_value) { return ForwardError(maybe_value); }
+    if (!maybe_value) {
+      return ForwardError(maybe_value);
+    }
 
     // store the deserialized item in the metadata dictionary
     metadata.set(maybe_key.value(), std::make_shared<holoscan::Message>(maybe_value.value()));
@@ -203,7 +227,9 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeMessageLabel(
   // Get the total number of paths in message label and write it first
   int total_paths = messagelabel.num_paths();
   auto maybe_size = endpoint->writeTrivialType<int>(&total_paths);
-  if (!maybe_size) { return ForwardError(maybe_size); }
+  if (!maybe_size) {
+    return ForwardError(maybe_size);
+  }
   total_size += maybe_size.value();
 
   // for every path in message label, write the number of operators in the path first.
@@ -211,15 +237,21 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeMessageLabel(
   for (const auto& path : messagelabel.paths()) {
     uint32_t num_operators = path.size();
     maybe_size = endpoint->writeTrivialType<uint32_t>(&num_operators);
-    if (!maybe_size) { return ForwardError(maybe_size); }
+    if (!maybe_size) {
+      return ForwardError(maybe_size);
+    }
     total_size += maybe_size.value();
     for (const auto& optimestamp : path) {
       maybe_size = serializeOperatorTimestampLabel(optimestamp, endpoint);
-      if (!maybe_size) { return ForwardError(maybe_size); }
+      if (!maybe_size) {
+        return ForwardError(maybe_size);
+      }
       total_size += maybe_size.value();
     }
   }
-  // check the total_size <= 8KB - This is an UCX transfer limitation for non-tensor data
+  // Check the total_size is less than the serialization buffer size (defaults to
+  // holoscan::kDefaultSerializationBufferSize) - This is an UCX transfer limitation for non-tensor
+  // data
   auto ucx_buf = dynamic_cast<nvidia::gxf::UcxSerializationBuffer*>(endpoint);
   if (!ucx_buf) {
     GXF_LOG_ERROR("Dynamic cast of Endpoint* to nvidia::gxf::UcxSerializationBuffer* failed");
@@ -247,15 +279,21 @@ Expected<holoscan::MessageLabel> UcxHoloscanComponentSerializer::deserializeMess
 
   int total_paths;
   auto size = endpoint->readTrivialType<int>(&total_paths);
-  if (!size) { return ForwardError(size); }
+  if (!size) {
+    return ForwardError(size);
+  }
   for (int i = 0; i < total_paths; i++) {
     uint32_t num_operators;
     auto size = endpoint->readTrivialType<uint32_t>(&num_operators);
-    if (!size) { return ForwardError(size); }
+    if (!size) {
+      return ForwardError(size);
+    }
     holoscan::MessageLabel::TimestampedPath path;
     for (int j = 0; j < num_operators; j++) {
       auto maybe_optimestamp = deserializeOperatorTimestampLabel(endpoint);
-      if (!maybe_optimestamp) { return ForwardError(maybe_optimestamp); }
+      if (!maybe_optimestamp) {
+        return ForwardError(maybe_optimestamp);
+      }
       path.push_back(maybe_optimestamp.value());
     }
     messagelabel.add_new_path(path);
@@ -267,13 +305,19 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeOperatorTimestampLabel
     const holoscan::OperatorTimestampLabel& operatortimestamplabel, Endpoint* endpoint) {
   GXF_LOG_DEBUG("UcxHoloscanComponentSerializer::serializeOperatorTimestampLabel");
   auto maybe_size = serialize_string(operatortimestamplabel.operator_name, endpoint);
-  if (!maybe_size) { return ForwardError(maybe_size); }
+  if (!maybe_size) {
+    return ForwardError(maybe_size);
+  }
   size_t total_size = maybe_size.value();
   maybe_size = endpoint->writeTrivialType<int64_t>(&operatortimestamplabel.rec_timestamp);
-  if (!maybe_size) { return ForwardError(maybe_size); }
+  if (!maybe_size) {
+    return ForwardError(maybe_size);
+  }
   total_size += maybe_size.value();
   maybe_size = endpoint->writeTrivialType<int64_t>(&operatortimestamplabel.pub_timestamp);
-  if (!maybe_size) { return ForwardError(maybe_size); }
+  if (!maybe_size) {
+    return ForwardError(maybe_size);
+  }
   total_size += maybe_size.value();
   return total_size;
 }
@@ -284,17 +328,23 @@ UcxHoloscanComponentSerializer::deserializeOperatorTimestampLabel(Endpoint* endp
   holoscan::OperatorTimestampLabel operatortimestamplabel;
 
   auto maybe_operator_name = deserialize_string(endpoint);
-  if (!maybe_operator_name) { return ForwardError(maybe_operator_name); }
+  if (!maybe_operator_name) {
+    return ForwardError(maybe_operator_name);
+  }
   operatortimestamplabel.operator_name = maybe_operator_name.value();
 
   int64_t maybe_rec_timestamp;
   auto size = endpoint->readTrivialType<int64_t>(&maybe_rec_timestamp);
-  if (!size) { return ForwardError(size); }
+  if (!size) {
+    return ForwardError(size);
+  }
   operatortimestamplabel.rec_timestamp = maybe_rec_timestamp;
 
   int64_t maybe_pub_timestamp;
   size = endpoint->readTrivialType<int64_t>(&maybe_pub_timestamp);
-  if (!size) { return ForwardError(size); }
+  if (!size) {
+    return ForwardError(size);
+  }
   operatortimestamplabel.pub_timestamp = maybe_pub_timestamp;
 
   return operatortimestamplabel;

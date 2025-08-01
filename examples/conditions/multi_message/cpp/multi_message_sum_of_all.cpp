@@ -36,14 +36,14 @@ class SumOfAllThrottledRxOp : public Operator {
     spec.input<std::shared_ptr<std::string>>("in2", IOSpec::IOSize(10));
     spec.input<std::shared_ptr<std::string>>("in3", IOSpec::IOSize(10));
 
-    // Use kMultiMessageAvailableTimeout to consider all three ports together. In this
+    // Use `kMultiMessageAvailableTimeout` to consider all three ports together. In this
     // "SumOfAll" mode, it only matters that `min_sum` messages have arrived across all the ports
     // {"in1", "in2", "in3"}, but it does not matter which ports the messages arrived on. The
-    // "execution_frequency" is set to 30ms, so the operator can run once 30 ms has elapsed even
-    // if 20 messages have not arrived. Use ConditionType::kMultiMessageAvailable instead if the
+    // "execution_frequency" is set to 300ms, so the operator can run once 300 ms has elapsed even
+    // if 20 messages have not arrived. Use `ConditionType::kMultiMessageAvailable` instead if the
     // timeout interval is not desired.
     ArgList multi_message_args{
-        holoscan::Arg("execution_frequency", std::string{"30ms"}),
+        holoscan::Arg("execution_frequency", std::string{"300ms"}),
         holoscan::Arg("min_sum", static_cast<size_t>(20)),
         holoscan::Arg("sampling_mode",
                       MultiMessageAvailableTimeoutCondition::SamplingMode::kSumOfAll)};
@@ -91,15 +91,15 @@ class MultiMessageThrottledApp : public holoscan::Application {
     using namespace std::chrono_literals;
 
     auto tx1 = make_operator<ops::StringTxOp>(
-        "tx1", make_condition<PeriodicCondition>("periodic-condition1", 4ms));
+        "tx1", make_condition<PeriodicCondition>("periodic-condition1", 40ms));
     tx1->set_message("tx1");
 
     auto tx2 = make_operator<ops::StringTxOp>(
-        "tx2", make_condition<PeriodicCondition>("periodic-condition2", 8ms));
+        "tx2", make_condition<PeriodicCondition>("periodic-condition2", 80ms));
     tx2->set_message("tx2");
 
     auto tx3 = make_operator<ops::StringTxOp>(
-        "tx3", make_condition<PeriodicCondition>("periodic-condition3", 16ms));
+        "tx3", make_condition<PeriodicCondition>("periodic-condition3", 160ms));
     tx3->set_message("tx3");
 
     auto multi_rx_timeout = make_operator<ops::SumOfAllThrottledRxOp>(

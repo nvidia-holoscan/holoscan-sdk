@@ -65,7 +65,9 @@ class step_iterator {
 static __global__ void normalize(size_t rows, size_t cols, size_t channels,
                                  cub::KeyValuePair<int, float>* d_argmax, float* out) {
   const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index > channels) { return; }
+  if (index >= channels) {
+    return;
+  }
 
   const int src_index = d_argmax[index].key;
   int row = src_index / cols;
@@ -472,7 +474,9 @@ InferStatus DataProcessor::prepareCustomKernel() {
   }
 
   result = cuDeviceGet(&device_, 0);
-  if (result == CUDA_SUCCESS) { result = cuCtxCreate(&context_, 0, device_); }
+  if (result == CUDA_SUCCESS) {
+    result = cuCtxCreate(&context_, 0, device_);
+  }
   if (result != CUDA_SUCCESS) {
     HOLOSCAN_LOG_ERROR("Cuda Context creation failed.");
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context creation failed.");

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,9 @@ __global__ void GenDepthMapCoordsKernel(uint32_t width, uint32_t height, float i
                                         float inv_height, const T* src, float* dst) {
   const uint2 launch_index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
-  if ((launch_index.x >= width) || (launch_index.y >= height)) { return; }
+  if ((launch_index.x >= width) || (launch_index.y >= height)) {
+    return;
+  }
 
   const size_t offset = launch_index.x + launch_index.y * width;
 
@@ -54,7 +56,9 @@ __global__ void GenDepthMapIndicesKernel(uint32_t width, uint32_t height, uint32
 
   switch (render_mode) {
     case DepthMapRenderMode::LINES: {
-      if ((launch_index.x >= width) || (launch_index.y >= height)) { return; }
+      if ((launch_index.x >= width) || (launch_index.y >= height)) {
+        return;
+      }
 
       const size_t offset = launch_index.x * 4 + launch_index.y * ((width - 1) * 4 + 2);
       dst += offset;
@@ -73,7 +77,9 @@ __global__ void GenDepthMapIndicesKernel(uint32_t width, uint32_t height, uint32
       }
     } break;
     case DepthMapRenderMode::TRIANGLES: {
-      if ((launch_index.x >= width - 1) || (launch_index.y >= height - 1)) { return; }
+      if ((launch_index.x >= width - 1) || (launch_index.y >= height - 1)) {
+        return;
+      }
 
       const size_t offset = (launch_index.x + launch_index.y * width) * 6;
       dst += offset;

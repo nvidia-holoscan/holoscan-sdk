@@ -42,6 +42,7 @@
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 #include "holoscan/operators/inference/inference.hpp"
+#include "holoscan/profiler/profiler.hpp"
 #include "io_context_pydoc.hpp"
 #include "operator.hpp"  // for PyOperator
 #include "tensor.hpp"    // for PyTensor
@@ -95,7 +96,9 @@ struct codec<std::shared_ptr<GILGuardedPyObject>> {
         "\tdeserialize CloudPickleSerializedObject corresponding to "
         "std::shared_ptr<GILGuardedPyObject>");
     auto maybe_obj = codec<CloudPickleSerializedObject>::deserialize(endpoint);
-    if (!maybe_obj) { return forward_error(maybe_obj); }
+    if (!maybe_obj) {
+      return forward_error(maybe_obj);
+    }
     return std::move(maybe_obj.value());
   }
 };
@@ -155,7 +158,9 @@ bool should_return_as_tuple(const std::string& name, const std::string& kind,
       auto input_spec = py_op_spec->inputs().find(name);
       if (input_spec != py_op_spec->inputs().end()) {
         auto queue_size = input_spec->second->queue_size();
-        if (queue_size == IOSpec::kPrecedingCount || queue_size > 1) { should_return_tuple = true; }
+        if (queue_size == IOSpec::kPrecedingCount || queue_size > 1) {
+          should_return_tuple = true;
+        }
       }
     }
   }
@@ -170,7 +175,9 @@ py::object PyInputContext::receive_as_tuple(const std::string& name) {
     return py::none();
   }
   auto any_result = maybe_any_result.value();
-  if (any_result.empty()) { return py::make_tuple(); }
+  if (any_result.empty()) {
+    return py::make_tuple();
+  }
 
   // Get receiver from registry based only on the type of the first element
   auto& registry = holoscan::EmitterReceiverRegistry::get_instance();
@@ -211,10 +218,14 @@ py::object PyInputContext::receive_as_single(const std::string& name) {
 }
 
 py::object PyInputContext::py_receive(const std::string& name, const std::string& kind) {
+  PROF_SCOPED_EVENT(py_op_->id(), event_py_receive);
+
   auto py_op_spec = py_op_->py_shared_spec();
 
   bool should_return_tuple = should_return_as_tuple(name, kind, py_op_spec);
-  if (should_return_tuple) { return receive_as_tuple(name); }
+  if (should_return_tuple) {
+    return receive_as_tuple(name);
+  }
   return receive_as_single(name);
 }
 
@@ -283,7 +294,9 @@ bool PyOutputContext::check_distributed_app(const std::string& name) {
     is_ucx_connector = connector_type == IOSpec::ConnectorType::kUCX;
   }
 
-  if (is_ucx_connector) { return true; }
+  if (is_ucx_connector) {
+    return true;
+  }
 
   // If this operator doesn't have a UCX connector, can still determine if the app is
   // a multi-fragment app via the application pointer assigned to the fragment
@@ -291,7 +304,9 @@ bool PyOutputContext::check_distributed_app(const std::string& name) {
   auto* app_ptr = py_op_spec->fragment()->application();
   if (app_ptr != nullptr) {
     // a non-empty fragment graph means that the application is multi-fragment
-    if (!(app_ptr->fragment_graph().is_empty())) { return true; }
+    if (!(app_ptr->fragment_graph().is_empty())) {
+      return true;
+    }
   }
   return false;
 }
@@ -318,6 +333,8 @@ void PyOutputContext::emit_python_object(py::object& data, const std::string& na
 
 void PyOutputContext::py_emit(py::object& data, const std::string& name,
                               const std::string& emitter_name, int64_t acq_timestamp) {
+  PROF_SCOPED_EVENT(py_op_->id(), event_py_emit);
+
   // Note:: Issue 4206197
   // In the UcxTransmitter::sync_io_abi(), while popping an entity from the queue,
   // Runtime::GxfEntityRefCountDec() on the entity can be called (which locks 'ref_count_mutex_').
@@ -352,16 +369,24 @@ void PyOutputContext::py_emit(py::object& data, const std::string& name,
   }
 
   // If this is a PyEntity emit a gxf::Entity so that it can be consumed by non-Python operator.
-  if (handle_py_entity(data, name, acq_timestamp, registry)) { return; }
+  if (handle_py_entity(data, name, acq_timestamp, registry)) {
+    return;
+  }
 
   /// @todo Workaround for HolovizOp which expects a list of input specs.
   /// If we don't do the cast here the operator receives a python list object. There should be a
   /// generic way for this, or the operator needs to register expected types.
-  if (handle_holoviz_op(data, name, acq_timestamp, registry)) { return; }
-  if (handle_inference_op(data, name, acq_timestamp, registry)) { return; }
+  if (handle_holoviz_op(data, name, acq_timestamp, registry)) {
+    return;
+  }
+  if (handle_inference_op(data, name, acq_timestamp, registry)) {
+    return;
+  }
 
   // handle pybind11::dict separately from other Python types for special TensorMap treatment
-  if (handle_py_dict(data, name, acq_timestamp, registry)) { return; }
+  if (handle_py_dict(data, name, acq_timestamp, registry)) {
+    return;
+  }
 
   bool is_distributed_app = check_distributed_app(name);
   HOLOSCAN_LOG_DEBUG("py_emit: detected {}distributed app", is_distributed_app ? "" : "non-");

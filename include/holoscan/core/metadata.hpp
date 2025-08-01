@@ -138,7 +138,9 @@ class MetadataDictionary {
   template <typename ValueT>
   ValueT get(const std::string& key, const ValueT& default_value) const {
     auto it = dictionary_->find(key);
-    if (it == dictionary_->end()) { return default_value; }
+    if (it == dictionary_->end()) {
+      return default_value;
+    }
     const auto& shared_obj = it->second;
     return std::any_cast<ValueT>(shared_obj->value());
   }

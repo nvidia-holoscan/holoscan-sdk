@@ -165,8 +165,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.config:
-        config_file = args.config
-    else:
-        config_file = os.path.join(os.path.dirname(__file__), "activation_map.yaml")
+    config_file = args.config or os.path.join(os.path.dirname(__file__), "activation_map.yaml")
     main(config_file=config_file)

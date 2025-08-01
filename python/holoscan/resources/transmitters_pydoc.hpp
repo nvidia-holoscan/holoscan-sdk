@@ -99,6 +99,24 @@ name : str, optional
 
 }  // namespace UcxTransmitter
 
+namespace AsyncBufferTransmitter {
+
+// Constructor
+PYDOC(AsyncBufferTransmitter, R"doc(
+Transmitter using an asynchronous buffer.
+
+The latest message is pushed asynchronously.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment
+    The fragment to assign the resource to.
+name : str, optional
+    The name of the transmitter.
+)doc")
+
+}  // namespace AsyncBufferTransmitter
+
 }  // namespace holoscan::doc
 
 #endif  // PYHOLOSCAN_RESOURCES_COMPONENT_SERIALIZERS_PYDOC_HPP

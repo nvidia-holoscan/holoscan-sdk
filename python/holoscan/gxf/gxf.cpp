@@ -122,7 +122,9 @@ PYBIND11_MODULE(_gxf, m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto resource = obj.cast<std::shared_ptr<gxf::GXFResource>>();
-            if (resource) { return resource->description(); }
+            if (resource) {
+              return resource->description();
+            }
             return std::string("<GXFResource: None>");
           },
           R"doc(Return repr(self).)doc");
@@ -139,7 +141,9 @@ PYBIND11_MODULE(_gxf, m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto resource = obj.cast<std::shared_ptr<gxf::GXFSystemResourceBase>>();
-            if (resource) { return resource->description(); }
+            if (resource) {
+              return resource->description();
+            }
             return std::string("<GXFSystemResourceBase: None>");
           },
           R"doc(Return repr(self).)doc");
@@ -152,7 +156,9 @@ PYBIND11_MODULE(_gxf, m) {
           [](const py::object& obj) {
             // use py::object and obj.cast to avoid a segfault if object has not been initialized
             auto condition = obj.cast<std::shared_ptr<gxf::GXFCondition>>();
-            if (condition) { return condition->description(); }
+            if (condition) {
+              return condition->description();
+            }
             return std::string("<GXFCondition: None>");
           },
           R"doc(Return repr(self).)doc");

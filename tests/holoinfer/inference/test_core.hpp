@@ -143,7 +143,10 @@ class HoloInferTests {
       {29, "Torch backend, dtype missing in input node in Config file"},
       {30, "Torch backend, Incorrect dtype in inference"},
       {31, "Torch backend, Output node missing in Config file"},
-      {32, "TRT backend, disable CUDA Graphs"}};
+      {32, "TRT backend, disable CUDA Graphs"},
+      {33, "Torch backend, Unsupported input format in Config file"},
+      {34, "Torch backend, outer most node is not a list in Config file"},
+      {35, "Torch backend, Input format mismatch in Config file"}};
 
   const std::map<unsigned int, std::string> test_identifier_infer = {
       {1, "TRT backend, Empty input data"},
@@ -179,11 +182,18 @@ class HoloInferTests {
       {31, "TRT backend, Parallel inference on multi-GPU with Output on host"},
       {32, "TRT backend, multi rank test (rank 5)"},
       {33, "TRT backend, multi rank test (rank 9)"},
-      {34, "Torch backend, Basic inference"},
-      {35, "ONNX backend, Basic parallel end-to-end cuda inference"},
-      {36, "ONNX backend, Input on host, cuda inference"},
-      {37, "ONNX backend, Output on host, cuda inference"},
-      {38, "ONNX backend, Input and output on device, CPU inference"}};
+      {34, "ONNX backend, Basic parallel end-to-end cuda inference"},
+      {35, "ONNX backend, Input on host, cuda inference"},
+      {36, "ONNX backend, Output on host, cuda inference"},
+      {37, "ONNX backend, Input and output on device, CPU inference"},
+      {38, "Torch backend, Basic inference"},
+      {39, "Torch backend, policy with dict input"},
+      {40, "Torch backend, policy with list input"},
+      {41, "Torch backend, policy with tuple output"},
+      {42, "Torch backend, policy with nested list input"},
+      {43, "Torch backend, policy with nested dict input"},
+      {44, "Torch backend, policy with nested list and dict input"},
+      {45, "Torch backend, policy with heterogeneous input output"}};
 };
 
 #endif /* HOLOINFER_INFERENCE_TESTS_HPP */

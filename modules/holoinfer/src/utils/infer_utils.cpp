@@ -14,14 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// need to add nolint flag because this file does not have an associated .h or .hpp file
+#include <algorithm>  // NOLINT(build/include_order)
+#include <map>        // NOLINT(build/include_order)
+#include <string>     // NOLINT(build/include_order)
+#include <utility>    // NOLINT(build/include_order)
+#include <vector>     // NOLINT(build/include_order)
 
-#include <algorithm>
-#include <map>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <holoinfer_utils.hpp>
+#include <yaml-cpp/yaml.h>      // NOLINT(build/include_order)
+#include <holoinfer_utils.hpp>  // NOLINT(build/include_order)
 
 namespace holoscan {
 namespace inference {
@@ -234,7 +235,9 @@ InferStatus inference_validity_check(const Mappings& model_path_map,
   }
 
   l_status = check_multi_mappings_size_value(inference_map, "inference_map");
-  if (l_status.get_code() == holoinfer_code::H_ERROR) { return l_status; }
+  if (l_status.get_code() == holoinfer_code::H_ERROR) {
+    return l_status;
+  }
 
   if (!check_equality(model_path_map.size(), pre_processor_map.size(), inference_map.size())) {
     status.set_message(
@@ -360,7 +363,9 @@ InferStatus processor_validity_check(const MultiMappings& processed_map,
     // if processed map is absent, then its dynamic I/O or its print operation.
   } else {
     auto l_status = check_multi_mappings_size_value(processed_map, "processed_map");
-    if (l_status.get_code() == holoinfer_code::H_ERROR) { return l_status; }
+    if (l_status.get_code() == holoinfer_code::H_ERROR) {
+      return l_status;
+    }
 
     std::vector<std::string> output_tensors;
     for (const auto& p_map : processed_map) {
@@ -400,22 +405,28 @@ InferStatus processor_validity_check(const MultiMappings& processed_map,
 void string_split(const std::string& line, std::vector<std::string>& tokens, char c) {
   std::string token;
   std::istringstream tokenStream(line);
-  while (std::getline(tokenStream, token, c)) { tokens.push_back(token); }
+  while (std::getline(tokenStream, token, c)) {
+    tokens.push_back(token);
+  }
 }
 
-InferStatus parse_yaml_node(const node_type& in_config, std::vector<std::string>& names,
+InferStatus parse_yaml_node(const YAML::Node& in_config, std::vector<std::string>& names,
                             std::vector<std::vector<int64_t>>& dims,
-                            std::vector<holoinfer_datatype>& types) {
-  for (const auto& [key, properties] : in_config) {
+                            std::vector<std::string>& types) {
+  // Iterate over YAML::Node directly to preserve insertion order
+  for (auto it = in_config.begin(); it != in_config.end(); ++it) {
+    std::string key = it->first.as<std::string>();
+    auto properties_yaml = it->second;
+
     if (key.length() == 0) {
       HOLOSCAN_LOG_ERROR("Key cannot be an empty string");
       return InferStatus(holoinfer_code::H_ERROR, "Error in yaml node parsing.");
     }
     names.push_back(key);
 
-    if (properties.find("dim") != properties.end()) {
+    if (properties_yaml["dim"]) {
       std::vector<std::string> tokens;
-      auto value = properties.at("dim");
+      auto value = properties_yaml["dim"].as<std::string>();
 
       if (value.length() != 0) {
         string_split(value, tokens, ' ');
@@ -440,10 +451,10 @@ InferStatus parse_yaml_node(const node_type& in_config, std::vector<std::string>
       dims.push_back({0});
     }
 
-    if (properties.find("dtype") != properties.end()) {
-      auto value = properties.at("dtype");
+    if (properties_yaml["dtype"]) {
+      auto value = properties_yaml["dtype"].as<std::string>();
       if (kHoloInferDataTypeMap.find(value) != kHoloInferDataTypeMap.end()) {
-        types.push_back(kHoloInferDataTypeMap.at(value));
+        types.push_back(value);
       } else {
         HOLOSCAN_LOG_ERROR("Output datatype {} not supported", value);
         return InferStatus(holoinfer_code::H_ERROR, "Error in yaml node parsing.");

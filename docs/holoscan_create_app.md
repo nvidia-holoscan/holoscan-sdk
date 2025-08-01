@@ -432,11 +432,14 @@ For example, we set three conditions on this operator `my_op`:
 ````{tab-set-code}
 ```{code-block} c++
 void compose() override {
+  using namespace holoscan;
+  using namespace std::chrono_literals;
+
   // Limit to 10 iterations
   auto c1 = make_condition<CountCondition>("my_count_condition", 10);
 
   // Wait at least 200 milliseconds between each execution
-  auto c2 = make_condition<PeriodicCondition>("my_periodic_condition", "200ms");
+  auto c2 = make_condition<PeriodicCondition>("my_periodic_condition", 200ms);
 
   // Stop when the condition calls `disable_tick()`
   auto c3 = make_condition<BooleanCondition>("my_bool_condition");
@@ -661,7 +664,7 @@ The default scheduler is a single-threaded [`GreedyScheduler`](./components/sche
 
 For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](./components/schedulers.md#multithread-scheduler) or [`EventBasedScheduler`](./components/schedulers.md#event-based-scheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute.
 
-The code snippet belows shows how to set and configure a non-default scheduler:
+The code snippet below shows how to set and configure a non-default scheduler:
 
 `````{tab-set}
 ````{tab-item} C++

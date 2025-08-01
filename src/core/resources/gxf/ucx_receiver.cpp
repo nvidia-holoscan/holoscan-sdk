@@ -34,25 +34,35 @@ namespace holoscan {
 UcxReceiver::UcxReceiver(const std::string& name, nvidia::gxf::Receiver* component)
     : Receiver(name, component) {
   auto maybe_capacity = component->getParameter<uint64_t>("capacity");
-  if (!maybe_capacity) { throw std::runtime_error("Failed to get capacity"); }
+  if (!maybe_capacity) {
+    throw std::runtime_error("Failed to get capacity");
+  }
   capacity_ = maybe_capacity.value();
 
   auto maybe_policy = component->getParameter<uint64_t>("policy");
-  if (!maybe_policy) { throw std::runtime_error("Failed to get policy"); }
+  if (!maybe_policy) {
+    throw std::runtime_error("Failed to get policy");
+  }
   policy_ = maybe_policy.value();
 
   auto maybe_address = component->getParameter<std::string>("address");
-  if (!maybe_address) { throw std::runtime_error("Failed to get address"); }
+  if (!maybe_address) {
+    throw std::runtime_error("Failed to get address");
+  }
   address_ = maybe_address.value();
 
   auto maybe_port = component->getParameter<uint32_t>("port");
-  if (!maybe_port) { throw std::runtime_error("Failed to get port"); }
+  if (!maybe_port) {
+    throw std::runtime_error("Failed to get port");
+  }
   port_ = maybe_port.value();
 
   // get the serialization buffer object
   auto maybe_buffer =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::UcxSerializationBuffer>>("buffer");
-  if (!maybe_buffer) { throw std::runtime_error("Failed to get buffer"); }
+  if (!maybe_buffer) {
+    throw std::runtime_error("Failed to get buffer");
+  }
   auto buffer_handle = maybe_buffer.value();
   buffer_ = std::make_shared<holoscan::UcxSerializationBuffer>(std::string{buffer_handle->name()},
                                                                buffer_handle.get());
@@ -89,7 +99,9 @@ void UcxReceiver::initialize() {
         frag->make_resource<holoscan::UcxSerializationBuffer>("ucx_rx_serialization_buffer");
     add_arg(Arg("buffer") = buffer);
     buffer->gxf_cname(buffer->name().c_str());
-    if (gxf_eid_ != 0) { buffer->gxf_eid(gxf_eid_); }
+    if (gxf_eid_ != 0) {
+      buffer->gxf_eid(gxf_eid_);
+    }
   } else {
     // must set the gxf_eid for the provided buffer or GXF parameter registration will fail
     auto buffer_arg = *has_buffer;

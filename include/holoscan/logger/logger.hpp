@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -161,18 +161,27 @@ class Logger {
   template <typename FormatT, typename... ArgsT>
   static void log(const char* file, int line, const char* function_name, LogLevel level,
                   const FormatT& format, ArgsT&&... args) {
+// Version number of the fmt library represented as (major * 10000 + minor * 100 + patch)
+#if FMT_VERSION >= 110000
+    log_message(file, line, function_name, level, format, fmt::make_format_args(args...));
+#else
     log_message(file,
                 line,
                 function_name,
                 level,
                 format,
-                fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...));
+                fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT> > >(args...));
+#endif
   }
 
   template <typename FormatT, typename... ArgsT>
   static void log(LogLevel level, const FormatT& format, ArgsT&&... args) {
+#if FMT_VERSION >= 110000
+    log_message(level, format, fmt::make_format_args(args...));
+#else
     log_message(
-        level, format, fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...));
+        level, format, fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT> > >(args...));
+#endif
   }
 
   /**

@@ -154,12 +154,16 @@ void GPUResourceMonitor::init() {
   close();
 
   handle_ = dlopen(kDefaultNvmlLibraryPath, RTLD_NOW);
-  if (handle_) { HOLOSCAN_LOG_DEBUG("NVML library loaded from '{}'", kDefaultNvmlLibraryPath); }
+  if (handle_) {
+    HOLOSCAN_LOG_DEBUG("NVML library loaded from '{}'", kDefaultNvmlLibraryPath);
+  }
 
   if (!init_nvml()) {
     // If NVML initialization fails (e.g., iGPU case: nvml is not fully supported),
     // try to use CUDA Runtime API.
-    if (!init_cuda_runtime()) { return; }
+    if (!init_cuda_runtime()) {
+      return;
+    }
   }
 
   // Initialize the GPU info vector
@@ -199,7 +203,9 @@ std::vector<GPUInfo> GPUResourceMonitor::update(uint64_t metric_flags) {
 }
 
 GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t metric_flags) {
-  if (metric_flags == GPUMetricFlag::DEFAULT) { metric_flags = metric_flags_; }
+  if (metric_flags == GPUMetricFlag::DEFAULT) {
+    metric_flags = metric_flags_;
+  }
 
   gpu_info.index = index;
 
@@ -296,7 +302,9 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
                                           "properties for GPU {}",
                                           index);
       // Check if the device is integrated GPU sharing Host Memory
-      if (prop.integrated) { gpu_info.is_integrated = true; }
+      if (prop.integrated) {
+        gpu_info.is_integrated = true;
+      }
 
       // prop.name has a length of 256 but copy only the first 63 characters
       // to gpu_info.name which has a length of 64
@@ -403,7 +411,9 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
 
 GPUInfo GPUResourceMonitor::gpu_info(uint32_t index, uint64_t metric_flags) {
   if (metric_flags == GPUMetricFlag::DEFAULT) {
-    if (!is_cached_) { update(metric_flags); }
+    if (!is_cached_) {
+      update(metric_flags);
+    }
     return gpu_info_[index];
   }
 
@@ -415,7 +425,9 @@ GPUInfo GPUResourceMonitor::gpu_info(uint32_t index, uint64_t metric_flags) {
 
 std::vector<GPUInfo> GPUResourceMonitor::gpu_info(uint64_t metric_flags) {
   if (metric_flags == GPUMetricFlag::DEFAULT) {
-    if (!is_cached_) { update(); }
+    if (!is_cached_) {
+      update();
+    }
     return gpu_info_;
   }
 
@@ -434,7 +446,9 @@ uint32_t GPUResourceMonitor::num_gpus() const {
 }
 
 bool GPUResourceMonitor::is_integrated_gpu(uint32_t index) {
-  if (index >= gpu_count_) { return false; }
+  if (index >= gpu_count_) {
+    return false;
+  }
 
   return gpu_info_[index].is_integrated;
 }
@@ -537,7 +551,9 @@ bool GPUResourceMonitor::bind_cuda_runtime_methods() {
 
 bool GPUResourceMonitor::init_nvml() {
   // Skip if handle_ is nullptr
-  if (handle_ == nullptr) { return false; }
+  if (handle_ == nullptr) {
+    return false;
+  }
 
   bind_nvml_methods();
 
@@ -589,7 +605,9 @@ bool GPUResourceMonitor::init_nvml() {
 
 bool GPUResourceMonitor::init_cuda_runtime() {
   // Skip if already initialized
-  if (cuda_handle_ != nullptr) { return true; }
+  if (cuda_handle_ != nullptr) {
+    return true;
+  }
 
   const char* libcudart_path = "";
 
@@ -599,7 +617,9 @@ bool GPUResourceMonitor::init_cuda_runtime() {
   for (uint32_t i = 0; i < sizeof(kDefaultCudaRuntimeLibraryPaths) / sizeof(char*); ++i) {
     libcudart_path = kDefaultCudaRuntimeLibraryPaths[i];
     cuda_handle_ = dlopen(libcudart_path, RTLD_NOW);
-    if (cuda_handle_ != nullptr) { break; }
+    if (cuda_handle_ != nullptr) {
+      break;
+    }
   }
   if (cuda_handle_ == nullptr) {
     HOLOSCAN_LOG_WARN(
@@ -635,7 +655,8 @@ void GPUResourceMonitor::shutdown_nvml() noexcept {
         // (shutdown_nvml is called from ~GPUResourceMonitor)
         try {
           HOLOSCAN_LOG_ERROR("Could not shutdown NVML");
-        } catch (const std::exception& e) {}
+        } catch (const std::exception& e) {
+        }
       }
     }
 

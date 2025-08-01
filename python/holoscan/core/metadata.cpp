@@ -83,7 +83,9 @@ void set_vector_metadata_via_numpy_array(const std::string& key, const py::array
   if (obj.attr("ndim").cast<int>() == 1) {
     std::vector<T> v;
     v.reserve(obj.attr("size").cast<size_t>());
-    for (const auto& item : obj) { v.push_back(item.cast<T>()); }
+    for (const auto& item : obj) {
+      v.push_back(item.cast<T>());
+    }
     out.set(key, v);
   } else if (obj.attr("ndim").cast<int>() == 2) {
     std::vector<std::vector<T>> v;
@@ -92,7 +94,9 @@ void set_vector_metadata_via_numpy_array(const std::string& key, const py::array
     for (const auto& item : obj) {
       std::vector<T> vv;
       vv.reserve(static_cast<size_t>(shape[1]));
-      for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+      for (const auto& inner_item : item) {
+        vv.push_back(inner_item.cast<T>());
+      }
       v.push_back(vv);
     }
     out.set(key, v);
@@ -115,7 +119,9 @@ void set_vector_metadata_via_py_sequence(const std::string& key, const py::seque
     for (const auto& item : seq) {
       std::vector<T> vv;
       vv.reserve(static_cast<size_t>(py::len(item)));
-      for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+      for (const auto& inner_item : item) {
+        vv.push_back(inner_item.cast<T>());
+      }
       v.push_back(vv);
     }
     out.set(key, v);
@@ -124,7 +130,9 @@ void set_vector_metadata_via_py_sequence(const std::string& key, const py::seque
     std::vector<T> v;
     size_t length = py::len(seq);
     v.reserve(length);
-    for (const auto& item : seq) { v.push_back(item.cast<T>()); }
+    for (const auto& item : seq) {
+      v.push_back(item.cast<T>());
+    }
     out.set(key, v);
   }
 }
@@ -139,7 +147,9 @@ void set_vector_metadata_via_iterable(const std::string& key, const py::object& 
     seq = py::list(obj);
   }
 
-  if (py::len(seq) == 0) { throw std::runtime_error("sequences of length 0 are not supported."); }
+  if (py::len(seq) == 0) {
+    throw std::runtime_error("sequences of length 0 are not supported.");
+  }
 
   auto item0 = seq[0];
   if (py::isinstance<py::sequence>(item0) && !py::isinstance<py::str>(item0)) {
@@ -387,7 +397,9 @@ py::object metadata_obj_to_pyobject(MetadataObject& meta_obj) {
   const auto& id = value.type();
 
   auto it = cast_map.find(id);
-  if (it != cast_map.end()) { return it->second(value); }
+  if (it != cast_map.end()) {
+    return it->second(value);
+  }
 
   return py::none();
 }
@@ -414,7 +426,9 @@ void init_metadata(py::module_& m) {
           [](MetadataDictionary& meta_dict,
              const std::string& key,
              const py::object& default_value = py::none()) -> py::object {
-            if (!meta_dict.has_key(key)) { return default_value; }
+            if (!meta_dict.has_key(key)) {
+              return default_value;
+            }
             auto meta_obj = meta_dict.get(key);
             return metadata_obj_to_pyobject(*meta_obj);
           },
@@ -424,7 +438,9 @@ void init_metadata(py::module_& m) {
       .def(
           "__getitem__",
           [](MetadataDictionary& meta_dict, const std::string& key) -> py::object {
-            if (!meta_dict.has_key(key)) { throw py::key_error(key); }
+            if (!meta_dict.has_key(key)) {
+              throw py::key_error(key);
+            }
             auto meta_obj = meta_dict.get(key);
             return metadata_obj_to_pyobject(*meta_obj);
           },
@@ -456,7 +472,9 @@ void init_metadata(py::module_& m) {
              const std::string& key,
              const py::object& default_value = py::none()) -> py::object {
             if (!meta_dict.has_key(key)) {
-              if (py::isinstance<MetaNoneValue>(default_value)) { throw py::key_error(key); }
+              if (py::isinstance<MetaNoneValue>(default_value)) {
+                throw py::key_error(key);
+              }
               return default_value;
             }
             auto meta_obj = meta_dict.get(key);

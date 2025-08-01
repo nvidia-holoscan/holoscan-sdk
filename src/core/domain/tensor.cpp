@@ -30,7 +30,9 @@ DLManagedMemoryBufferVersioned::DLManagedMemoryBufferVersioned(DLManagedTensorVe
     : self_(self) {}
 
 DLManagedMemoryBufferVersioned::~DLManagedMemoryBufferVersioned() {
-  if (self_ && self_->deleter != nullptr) { self_->deleter(self_); }
+  if (self_ && self_->deleter != nullptr) {
+    self_->deleter(self_);
+  }
 }
 
 Tensor::Tensor(DLManagedTensor* dl_managed_tensor_ptr) {
@@ -59,7 +61,9 @@ bool Tensor::is_contiguous() const {
   for (int32_t i = r - 1; i >= 0; --i) {
     int64_t s = tensor_strides[i];                       // stride
     int64_t d = static_cast<uint64_t>(tensor_shape[i]);  // dimension
-    if (s != expected_stride) { return false; }
+    if (s != expected_stride) {
+      return false;
+    }
     expected_stride *= d;
   }
   return true;
@@ -128,7 +132,9 @@ int64_t Tensor::size() const {
   const auto ndim = dl_ctx_->tensor.dl_tensor.ndim;
   const auto shape_ptr = dl_ctx_->tensor.dl_tensor.shape;
   int64_t size = 1;
-  for (int i = 0; i < ndim; ++i) { size *= shape_ptr[i]; }
+  for (int i = 0; i < ndim; ++i) {
+    size *= shape_ptr[i];
+  }
   return size;
 }
 

@@ -71,8 +71,12 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
                                    Arg{"numBuffers", num_buffers},
                                    Arg{"pixel_format", pixel_format},
                                    Arg{"pass_through", pass_through}}) {
-    if (exposure_time.has_value()) { this->add_arg(Arg{"exposure_time", exposure_time.value()}); }
-    if (gain.has_value()) { this->add_arg(Arg{"gain", gain.value()}); }
+    if (exposure_time.has_value()) {
+      this->add_arg(Arg{"exposure_time", exposure_time.value()});
+    }
+    if (gain.has_value()) {
+      this->add_arg(Arg{"gain", gain.value()});
+    }
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;

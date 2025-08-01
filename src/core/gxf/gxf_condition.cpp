@@ -84,7 +84,9 @@ void GXFCondition::initialize() {
   update_params_from_args();
 
   // Set Handler parameters
-  for (auto& [key, param_wrap] : spec_->params()) { set_gxf_parameter(name_, key, param_wrap); }
+  for (auto& [key, param_wrap] : spec_->params()) {
+    set_gxf_parameter(name_, key, param_wrap);
+  }
   is_initialized_ = true;
   Condition::initialize();
 }
@@ -92,7 +94,9 @@ void GXFCondition::initialize() {
 void GXFCondition::add_to_graph_entity(Operator* op) {
   if (gxf_context_ == nullptr) {
     // cannot reassign to a different graph entity if the condition was already initialized with GXF
-    if (gxf_graph_entity_ && is_initialized_) { return; }
+    if (gxf_graph_entity_ && is_initialized_) {
+      return;
+    }
 
     gxf_graph_entity_ = op->graph_entity();
     fragment_ = op->fragment();

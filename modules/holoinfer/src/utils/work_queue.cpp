@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,9 @@ namespace inference {
 
 WorkQueue::WorkQueue(uint32_t threads) {
   threads_.resize(threads);
-  for (uint32_t i = 0; i < threads; ++i) { add_thread(i); }
+  for (uint32_t i = 0; i < threads; ++i) {
+    add_thread(i);
+  }
 }
 
 WorkQueue::~WorkQueue() {
@@ -39,7 +41,9 @@ void WorkQueue::add_thread(int i) {
     while (true) {
       while (func) {
         (**func)();
-        if (done_) { return; }
+        if (done_) {
+          return;
+        }
         func = queue_.pop();
       }
 
@@ -59,7 +63,9 @@ void WorkQueue::add_thread(int i) {
 }
 
 void WorkQueue::stop() {
-  if (done_) { return; }
+  if (done_) {
+    return;
+  }
 
   // signal the threads to finish
   done_ = true;
@@ -72,11 +78,14 @@ void WorkQueue::stop() {
 
   // wait for the threads to finish
   for (size_t i = 0; i < threads_.size(); ++i) {
-    if (threads_[i]->joinable()) { threads_[i]->join(); }
+    if (threads_[i]->joinable()) {
+      threads_[i]->join();
+    }
   }
 
   // clear the queue
-  while (queue_.pop()) {}
+  while (queue_.pop()) {
+  }
 
   threads_.clear();
 }

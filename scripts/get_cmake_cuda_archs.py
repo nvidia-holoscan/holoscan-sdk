@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import NoReturn, Optional
+from typing import NoReturn
 
 
 def die(msg: str) -> NoReturn:
@@ -83,7 +83,7 @@ def parse_requested_archs(req_str: str) -> list[str]:
     return filtered_archs
 
 
-def filter_archs_with_min_arch(archs: list[str], min_arch: Optional[int]) -> list[str]:
+def filter_archs_with_min_arch(archs: list[str], min_arch: int | None) -> list[str]:
     """Filters architecture list based on the minimum required major version."""
     if min_arch is None or min_arch <= 0:
         return list(archs)
@@ -164,7 +164,7 @@ def validate_user_archs(
     min_filtered_archs: list[str],
     platform_filtered_archs: list[str],
     non_specific_archs: list[str],
-    min_arch_value: Optional[int],
+    min_arch_value: int | None,
     allow_specific_archs: bool,
 ) -> list[str]:
     """Validates user-provided architectures against supported and filtered lists."""
@@ -316,7 +316,7 @@ def main() -> None:
         sys.exit(0)
 
     # Get nvcc path
-    nvcc_path: Optional[Path] = None
+    nvcc_path: Path | None = None
     if args.nvcc_path:
         nvcc_path = Path(args.nvcc_path).resolve()
         logging.debug(f"Using user-provided nvcc path: {nvcc_path}")

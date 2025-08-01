@@ -18,6 +18,7 @@
 #include "data_processor.hpp"
 
 #include <functional>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -259,7 +260,9 @@ InferStatus DataProcessor::print_results(const std::vector<int>& dimensions, con
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, Incorrect input data size");
   }
   auto indata_float = static_cast<const float*>(indata);
-  for (unsigned int i = 0; i < dsize - 1; i++) { std::cout << indata_float[i] << ", "; }
+  for (unsigned int i = 0; i < dsize - 1; i++) {
+    std::cout << indata_float[i] << ", ";
+  }
   std::cout << indata_float[dsize - 1] << "\n";
   return InferStatus();
 }
@@ -273,7 +276,9 @@ InferStatus DataProcessor::print_results_int32(const std::vector<int>& dimension
   }
   auto indata_int32 = static_cast<const int32_t*>(indata);
 
-  for (unsigned int i = 0; i < dsize - 1; i++) { std::cout << indata_int32[i] << ", "; }
+  for (unsigned int i = 0; i < dsize - 1; i++) {
+    std::cout << indata_int32[i] << ", ";
+  }
   std::cout << indata_int32[dsize - 1] << "\n";
   return InferStatus();
 }
@@ -409,8 +414,12 @@ InferStatus DataProcessor::scale_intensity_cpu(const std::vector<int>& dimension
 
   for (auto index = 0; index < dsize; index++) {
     float v = input_data[index];
-    if (max < v) { max = v; }
-    if (min > v) { min = v; }
+    if (max < v) {
+      max = v;
+    }
+    if (min > v) {
+      min = v;
+    }
   }
 
   std::vector<uint32_t> histogram(256, 0);
@@ -423,13 +432,19 @@ InferStatus DataProcessor::scale_intensity_cpu(const std::vector<int>& dimension
   std::vector<uint32_t> cdf_histogram(256);
 
   cdf_histogram[0] = histogram[0];
-  for (int i = 1; i < 256; i++) { cdf_histogram[i] = histogram[i] + cdf_histogram[i - 1]; }
+  for (int i = 1; i < 256; i++) {
+    cdf_histogram[i] = histogram[i] + cdf_histogram[i - 1];
+  }
 
   uint32_t cdf_histogram_min = dsize, cdf_histogram_max = 0;
   for (int i = 0; i < 256; i++) {
     int32_t count = cdf_histogram[i];
-    if (count < cdf_histogram_min) { cdf_histogram_min = count; }
-    if (count > cdf_histogram_max) { cdf_histogram_max = count; }
+    if (count < cdf_histogram_min) {
+      cdf_histogram_min = count;
+    }
+    if (count > cdf_histogram_max) {
+      cdf_histogram_max = count;
+    }
   }
 
   std::vector<uint32_t> updated_histogram(256);
@@ -442,7 +457,9 @@ InferStatus DataProcessor::scale_intensity_cpu(const std::vector<int>& dimension
     auto dm_index = channels * index;
     auto fvalue = uint32_t(255 * ((input_data[index] - min) / (max - min)));
     auto value = updated_histogram[fvalue];
-    for (int c = 0; c < channels; c++) { processed_data[dm_index + c] = value; }
+    for (int c = 0; c < channels; c++) {
+      processed_data[dm_index + c] = value;
+    }
   }
 
   return InferStatus();

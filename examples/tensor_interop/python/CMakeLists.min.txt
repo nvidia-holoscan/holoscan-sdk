@@ -52,7 +52,7 @@ if(BUILD_TESTING)
     # Data logging tests (Tensors are sent via the C++ TensorMap type).
     PASS_REGULAR_EXPRESSION "Category:TensorMap"
     # Data logging tests (Various tensor attributes are logged)
-    PASS_REGULAR_EXPRESSION "TensorMap\\(size=1\\) \\{'': Tensor\\(shape=\\[540, 960, 3], dtype=kDLUInt:8:1, device=kDLCUDA:0, size=1555200, nbytes=1555200, C-contiguous=true\\)\\}"
+    PASS_REGULAR_EXPRESSION "TensorMap\\(size=1\\) \\{'': Tensor\\(shape=\\[540, 960, 3\\], dtype=kDLUInt:8:1, device=kDLCUDA:0, size=1555200, nbytes=1555200, C-contiguous=true\\)\\}"
   )
 
   # Add a test to check the validity of the frames

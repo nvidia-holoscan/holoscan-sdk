@@ -162,13 +162,16 @@ void SimpleTextSerializer::initialize_default_encoders() {
 
 // Helper to convert std::any to string for common types
 std::string SimpleTextSerializer::to_string(const std::any& data) const {
-  if (!data.has_value()) return "<empty>";
+  if (!data.has_value())
+    return "<empty>";
 
   // Look up the encoder for this type
   std::type_index type_idx(data.type());
   auto it = encoders_.find(type_idx);
 
-  if (it != encoders_.end()) { return it->second(data); }
+  if (it != encoders_.end()) {
+    return it->second(data);
+  }
 
   // Fallback: print type name for unregistered types
   return std::string("<unhandled type: ") + data.type().name() + ">";
@@ -189,7 +192,8 @@ std::string SimpleTextSerializer::format_vector(const std::vector<T>& vec) const
   size_t max_elements = static_cast<size_t>(max_elements_.get());
   size_t elements_to_show = std::min(vec.size(), max_elements);
   for (size_t i = 0; i < elements_to_show; ++i) {
-    if (i > 0) oss << ", ";
+    if (i > 0)
+      oss << ", ";
 
     // Fast paths for common types to avoid std::any overhead
     if constexpr (std::is_same_v<T, std::string>) {
@@ -242,7 +246,9 @@ std::string SimpleTextSerializer::format_vector(const std::vector<T>& vec) const
     }
   }
 
-  if (vec.size() > max_elements) { oss << ", ... (" << (vec.size() - max_elements) << " more)"; }
+  if (vec.size() > max_elements) {
+    oss << ", ... (" << (vec.size() - max_elements) << " more)";
+  }
 
   oss << "]";
   return oss.str();
@@ -268,7 +274,8 @@ std::string SimpleTextSerializer::format_metadata_dict(const MetadataDictionary&
       break;
     }
 
-    if (!first) oss << ", ";
+    if (!first)
+      oss << ", ";
     first = false;
 
     oss << "'" << key << "': ";
@@ -311,7 +318,8 @@ std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_p
   oss << "Tensor(";
   oss << "shape=[";
   for (size_t i = 0; i < shape.size(); ++i) {
-    if (i > 0) oss << ", ";
+    if (i > 0)
+      oss << ", ";
     oss << shape[i];
   }
   std::string device_name{magic_enum::enum_name(static_cast<DLDeviceType>(device.device_type))};
@@ -352,14 +360,13 @@ std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_p
         if (device.device_type == DLDeviceType::kDLCUDA) {
           // For CUDA device memory, copy only the elements we need to show
           host_data.resize(elements_to_show);
-          cudaError_t result = HOLOSCAN_CUDA_CALL(
-            cudaMemcpy(host_data.data(),
-                       tensor->data(),
-                       elements_to_show * sizeof(T),
-                       cudaMemcpyDeviceToHost));
+          cudaError_t result = HOLOSCAN_CUDA_CALL(cudaMemcpy(host_data.data(),
+                                                             tensor->data(),
+                                                             elements_to_show * sizeof(T),
+                                                             cudaMemcpyDeviceToHost));
           if (cudaSuccess != result) {
             HOLOSCAN_LOG_ERROR(
-              "Copy of GPU data back to host failed... cannot log the data values");
+                "Copy of GPU data back to host failed... cannot log the data values");
             oss << "...cudaMemcpy error...]";
             return;
           }
@@ -372,7 +379,8 @@ std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_p
 
         // print the values
         for (size_t i = 0; i < elements_to_show; ++i) {
-          if (i > 0) oss << ", ";
+          if (i > 0)
+            oss << ", ";
 
           if constexpr (std::is_same_v<T, int8_t>) {
             oss << static_cast<int>(data_ptr[i]);
@@ -470,7 +478,8 @@ std::string SimpleTextSerializer::serialize_tensormap_to_string(const TensorMap&
 
   bool first = true;
   for (const auto& [key, tensor_ptr] : tensor_map) {
-    if (!first) oss << ", ";
+    if (!first)
+      oss << ", ";
     first = false;
 
     oss << "'" << key << "': ";

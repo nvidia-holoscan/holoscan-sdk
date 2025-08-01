@@ -93,7 +93,9 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
 
   // Get tensor attached to the message
   // The type of `maybe_tensor` is 'std::shared_ptr<holoscan::Tensor>'.
-  if (tensormap.empty()) { throw std::runtime_error("No tensors found in received message"); }
+  if (tensormap.empty()) {
+    throw std::runtime_error("No tensors found in received message");
+  }
   auto tensor_it = tensormap.find(in_tensor_name);
   std::shared_ptr<Tensor> in_tensor;
   if (tensor_it != tensormap.end()) {
@@ -109,8 +111,10 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
 
   // validate tensor format
   DLDevice dev = in_tensor->device();
-  if (dev.device_type != kDLCUDA && dev.device_type != kDLCUDAHost) {
-    throw std::runtime_error("Input tensor must be in CUDA device or pinned host memory.");
+  if (dev.device_type != kDLCUDA && dev.device_type != kDLCUDAHost &&
+      dev.device_type != kDLCUDAManaged) {
+    throw std::runtime_error(
+        "Input tensor must be in CUDA device, pinned host, or managed memory.");
   }
   DLDataType dtype = in_tensor->dtype();
   if (dtype.code != kDLFloat || dtype.bits != 32) {
@@ -132,13 +136,17 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
       shape.channels = in_tensor->shape()[2];
     } break;
     case DataFormat::kNCHW: {
-      if (in_tensor->shape()[0] != 1) { throw std::runtime_error("Batch size must be 1"); }
+      if (in_tensor->shape()[0] != 1) {
+        throw std::runtime_error("Batch size must be 1");
+      }
       shape.channels = in_tensor->shape()[1];
       shape.height = in_tensor->shape()[2];
       shape.width = in_tensor->shape()[3];
     } break;
     case DataFormat::kNHWC: {
-      if (in_tensor->shape()[0] != 1) { throw std::runtime_error("Batch size must be 1"); }
+      if (in_tensor->shape()[0] != 1) {
+        throw std::runtime_error("Batch size must be 1");
+      }
       shape.height = in_tensor->shape()[1];
       shape.width = in_tensor->shape()[2];
       shape.channels = in_tensor->shape()[3];
@@ -164,7 +172,9 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
   auto out_message = nvidia::gxf::Entity::New(context.context());
 
   auto out_tensor = out_message.value().add<nvidia::gxf::Tensor>("out_tensor");
-  if (!out_tensor) { throw std::runtime_error("Failed to allocate output tensor"); }
+  if (!out_tensor) {
+    throw std::runtime_error("Failed to allocate output tensor");
+  }
 
   // Allocate and convert output buffer on the device.
   nvidia::gxf::Shape output_shape{shape.height, shape.width, 1};
@@ -181,7 +191,9 @@ void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext&
   const float* in_tensor_data = static_cast<float*>(in_tensor->data());
 
   nvidia::gxf::Expected<uint8_t*> out_tensor_data = out_tensor.value()->data<uint8_t>();
-  if (!out_tensor_data) { throw std::runtime_error("Failed to get out tensor data!"); }
+  if (!out_tensor_data) {
+    throw std::runtime_error("Failed to get out tensor data!");
+  }
 
   cuda_postprocess(network_output_type_value_,
                    data_format_value_,

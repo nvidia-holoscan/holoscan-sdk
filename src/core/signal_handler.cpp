@@ -187,7 +187,9 @@ void SignalHandler::unregister_signal_handler_impl(void* context, int signal) {
   if (it != signal_handlers_.end()) {
     HOLOSCAN_LOG_DEBUG("Unregistering signal ({}) handler for context: {}", signal, context);
     it->second.erase(signal);
-    if (it->second.empty()) { signal_handlers_.erase(it); }
+    if (it->second.empty()) {
+      signal_handlers_.erase(it);
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,7 +94,9 @@ class Primitive {
         break;
       case PrimitiveTopology::RECTANGLE_LIST:
         required_data_size = primitive_count * 2 * 2;
-        for (uint32_t i = 0; i < primitive_count; ++i) { vertex_counts_.push_back(5); }
+        for (uint32_t i = 0; i < primitive_count; ++i) {
+          vertex_counts_.push_back(5);
+        }
         vk_topology_ = vk::PrimitiveTopology::eLineStrip;
         break;
       case PrimitiveTopology::OVAL_LIST:
@@ -133,7 +135,9 @@ class Primitive {
       throw std::runtime_error(buf.str().c_str());
     }
 
-    if (host_data) { host_data_.assign(host_data, host_data + required_data_size); }
+    if (host_data) {
+      host_data_.assign(host_data, host_data + required_data_size);
+    }
     data_size_ = required_data_size;
   }
   Primitive() = delete;
@@ -306,9 +310,15 @@ void GeometryLayer::point_size(float size) {
 
 void GeometryLayer::primitive(PrimitiveTopology topology, uint32_t primitive_count,
                               size_t data_size, const float* data) {
-  if (primitive_count == 0) { throw std::invalid_argument("primitive_count should not be zero"); }
-  if (data_size == 0) { throw std::invalid_argument("data_size should not be zero"); }
-  if (data == nullptr) { throw std::invalid_argument("data should not be nullptr"); }
+  if (primitive_count == 0) {
+    throw std::invalid_argument("primitive_count should not be zero");
+  }
+  if (data_size == 0) {
+    throw std::invalid_argument("data_size should not be zero");
+  }
+  if (data == nullptr) {
+    throw std::invalid_argument("data should not be nullptr");
+  }
 
   const auto& primitive = impl_->primitives_.emplace_back(impl_->attributes_,
                                                           topology,
@@ -319,14 +329,22 @@ void GeometryLayer::primitive(PrimitiveTopology topology, uint32_t primitive_cou
                                                           impl_->vertex_count_,
                                                           Context::get().get_cuda_stream());
 
-  for (auto&& vertex_count : primitive.vertex_counts_) { impl_->vertex_count_ += vertex_count; }
+  for (auto&& vertex_count : primitive.vertex_counts_) {
+    impl_->vertex_count_ += vertex_count;
+  }
 }
 
 void GeometryLayer::primitive_cuda_device(PrimitiveTopology topology, uint32_t primitive_count,
                                           size_t data_size, CUdeviceptr data) {
-  if (primitive_count == 0) { throw std::invalid_argument("primitive_count should not be zero"); }
-  if (data_size == 0) { throw std::invalid_argument("data_size should not be zero"); }
-  if (data == 0) { throw std::invalid_argument("data should not be 0"); }
+  if (primitive_count == 0) {
+    throw std::invalid_argument("primitive_count should not be zero");
+  }
+  if (data_size == 0) {
+    throw std::invalid_argument("data_size should not be zero");
+  }
+  if (data == 0) {
+    throw std::invalid_argument("data should not be 0");
+  }
 
   const auto& primitive = impl_->primitives_.emplace_back(impl_->attributes_,
                                                           topology,
@@ -337,12 +355,18 @@ void GeometryLayer::primitive_cuda_device(PrimitiveTopology topology, uint32_t p
                                                           impl_->vertex_count_,
                                                           Context::get().get_cuda_stream());
 
-  for (auto&& vertex_count : primitive.vertex_counts_) { impl_->vertex_count_ += vertex_count; }
+  for (auto&& vertex_count : primitive.vertex_counts_) {
+    impl_->vertex_count_ += vertex_count;
+  }
 }
 
 void GeometryLayer::text(float x, float y, float size, const char* text) {
-  if (size == 0) { throw std::invalid_argument("size should not be zero"); }
-  if (text == nullptr) { throw std::invalid_argument("text should not be nullptr"); }
+  if (size == 0) {
+    throw std::invalid_argument("size should not be zero");
+  }
+  if (text == nullptr) {
+    throw std::invalid_argument("text should not be nullptr");
+  }
 
   impl_->texts_.emplace_back(impl_->attributes_, x, y, size, text);
 }
@@ -617,7 +641,9 @@ void GeometryLayer::render(Vulkan* vulkan) {
   view_matrix_2d_base.translate({-.5F, -.5F, 0.F});
 
   std::vector<Layer::View> views = get_views();
-  if (views.empty()) { views.push_back(Layer::View()); }
+  if (views.empty()) {
+    views.push_back(Layer::View());
+  }
 
   for (const View& view : views) {
     vulkan->set_viewport(view.offset_x, view.offset_y, view.width, view.height);

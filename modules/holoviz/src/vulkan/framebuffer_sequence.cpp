@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,10 +35,14 @@ FramebufferSequence::~FramebufferSequence() {
     swap_chain_->deinit();
     swap_chain_.reset();
   } else {
-    for (auto&& color_texture : color_textures_) { alloc_->destroy(color_texture); }
+    for (auto&& color_texture : color_textures_) {
+      alloc_->destroy(color_texture);
+    }
     semaphores_.clear();
   }
-  for (auto&& depth_texture : depth_textures_) { alloc_->destroy(depth_texture); }
+  for (auto&& depth_texture : depth_textures_) {
+    alloc_->destroy(depth_texture);
+  }
 }
 
 void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device,
@@ -152,7 +156,9 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
     const std::vector<vk::PresentModeKHR> present_modes =
         physical_device_.getSurfacePresentModesKHR(surface_);
     HOLOSCAN_LOG_INFO("Available present modes");
-    for (auto present_mode : present_modes) { HOLOSCAN_LOG_INFO(" {}", to_string(present_mode)); }
+    for (auto present_mode : present_modes) {
+      HOLOSCAN_LOG_INFO(" {}", to_string(present_mode));
+    }
   }
 #endif
 }
@@ -289,12 +295,16 @@ void FramebufferSequence::update(uint32_t width, uint32_t height, PresentMode pr
       }
 
       --retries;
-      if (retries == 0) { throw std::runtime_error("Failed to update swap chain."); }
+      if (retries == 0) {
+        throw std::runtime_error("Failed to update swap chain.");
+      }
     }
 
     image_count_ = swap_chain_->getImageCount();
   } else {
-    for (auto&& color_texture : color_textures_) { alloc_->destroy(color_texture); }
+    for (auto&& color_texture : color_textures_) {
+      alloc_->destroy(color_texture);
+    }
     color_textures_.clear();
 
     color_textures_.resize(image_count_);
@@ -324,7 +334,9 @@ void FramebufferSequence::update(uint32_t width, uint32_t height, PresentMode pr
     }
   }
 
-  for (auto&& depth_texture : depth_textures_) { alloc_->destroy(depth_texture); }
+  for (auto&& depth_texture : depth_textures_) {
+    alloc_->destroy(depth_texture);
+  }
   depth_textures_.clear();
   depth_textures_.resize(image_count_);
   for (uint32_t i = 0; i < image_count_; ++i) {
@@ -366,21 +378,29 @@ void FramebufferSequence::acquire() {
 }
 
 uint32_t FramebufferSequence::get_active_image_index() const {
-  if (swap_chain_) { return swap_chain_->getActiveImageIndex(); }
+  if (swap_chain_) {
+    return swap_chain_->getActiveImageIndex();
+  }
 
   return current_image_;
 }
 
 vk::ImageView FramebufferSequence::get_color_image_view(uint32_t i) const {
-  if (swap_chain_) { return swap_chain_->getImageView(i); }
+  if (swap_chain_) {
+    return swap_chain_->getImageView(i);
+  }
 
-  if (i >= color_textures_.size()) { throw std::runtime_error("Invalid image view index"); }
+  if (i >= color_textures_.size()) {
+    throw std::runtime_error("Invalid image view index");
+  }
 
   return color_textures_[i].descriptor.imageView;
 }
 
 vk::ImageView FramebufferSequence::get_depth_image_view(uint32_t i) const {
-  if (i >= depth_textures_.size()) { throw std::runtime_error("Invalid image view index"); }
+  if (i >= depth_textures_.size()) {
+    throw std::runtime_error("Invalid image view index");
+  }
 
   return depth_textures_[i].descriptor.imageView;
 }
@@ -394,19 +414,25 @@ void FramebufferSequence::present(vk::Queue queue) {
 }
 
 vk::Semaphore FramebufferSequence::get_active_read_semaphore() const {
-  if (swap_chain_) { return swap_chain_->getActiveReadSemaphore(); }
+  if (swap_chain_) {
+    return swap_chain_->getActiveReadSemaphore();
+  }
 
   return active_semaphore_;
 }
 
 vk::Semaphore FramebufferSequence::get_active_written_semaphore() const {
-  if (swap_chain_) { return swap_chain_->getActiveWrittenSemaphore(); }
+  if (swap_chain_) {
+    return swap_chain_->getActiveWrittenSemaphore();
+  }
 
   return semaphores_[current_image_].get();
 }
 
 vk::Image FramebufferSequence::get_active_color_image() const {
-  if (swap_chain_) { return swap_chain_->getActiveImage(); }
+  if (swap_chain_) {
+    return swap_chain_->getActiveImage();
+  }
 
   return color_textures_[current_image_].image;
 }
@@ -416,7 +442,9 @@ vk::Image FramebufferSequence::get_active_depth_image() const {
 }
 
 void FramebufferSequence::cmd_update_barriers(vk::CommandBuffer cmd) const {
-  if (swap_chain_) { swap_chain_->cmdUpdateBarriers(cmd); }
+  if (swap_chain_) {
+    swap_chain_->cmdUpdateBarriers(cmd);
+  }
 }
 
 }  // namespace holoscan::viz

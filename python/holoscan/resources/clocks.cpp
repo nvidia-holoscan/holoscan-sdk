@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,13 +38,17 @@ namespace py = pybind11;
 namespace holoscan {
 
 int64_t get_duration_ns(const py::object& duration) {
-  if (py::isinstance<py::int_>(duration)) { return py::cast<int64_t>(duration); }
+  if (py::isinstance<py::int_>(duration)) {
+    return py::cast<int64_t>(duration);
+  }
   // Must acquire GIL before calling C API functions like PyDelta_Check
   py::gil_scoped_acquire scope_guard;
 
   // Must initialize PyDateTime_IMPORT here in order to be able to use PyDelta_Check below
   // see: https://docs.python.org/3/c-api/datetime.html?highlight=pydelta_check#datetime-objects
-  if (PyDateTimeAPI == nullptr) { PyDateTime_IMPORT; }
+  if (PyDateTimeAPI == nullptr) {
+    PyDateTime_IMPORT;
+  }
 
   if (PyDelta_Check(duration.ptr())) {
     // timedelta stores integer days, seconds, microseconds
@@ -55,7 +59,9 @@ int64_t get_duration_ns(const py::object& duration) {
       seconds += days * seconds_per_day;
     }
     int64_t microseconds = PyDateTime_DELTA_GET_MICROSECONDS(duration.ptr());
-    if (seconds > 0) { microseconds += 1000000 * seconds; }
+    if (seconds > 0) {
+      microseconds += 1000000 * seconds;
+    }
     int64_t delta_ns = 1000 * microseconds;
     return delta_ns;
   }

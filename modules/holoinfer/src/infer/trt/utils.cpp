@@ -59,7 +59,9 @@ bool generate_engine_path(const NetworkOptions& options, const std::string& onnx
     engine_path += ".fp32";
   }
 
-  if (options.dla_core > -1) { engine_path += ".dla" + std::to_string(options.dla_core); }
+  if (options.dla_core > -1) {
+    engine_path += ".dla" + std::to_string(options.dla_core);
+  }
 
   return true;
 }
@@ -92,16 +94,22 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   }
 
   auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
-  if (!builder) { return false; }
+  if (!builder) {
+    return false;
+  }
 
   auto explicit_batch = 1;
   auto network =
       std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(explicit_batch));
-  if (!network) { return false; }
+  if (!network) {
+    return false;
+  }
 
   auto parser =
       std::unique_ptr<nvonnxparser::IParser>(nvonnxparser::createParser(*network, logger));
-  if (!parser) { return false; }
+  if (!parser) {
+    return false;
+  }
 
   if (!parser->parseFromFile(onnx_model_path.c_str(),
                              static_cast<int>(nvinfer1::ILogger::Severity::kWARNING))) {
@@ -110,7 +118,9 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   }
 
   auto config = std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
-  if (!config) { return false; }
+  if (!config) {
+    return false;
+  }
 
   // Create optimization profile
   nvinfer1::IOptimizationProfile* profile = builder->createOptimizationProfile();
@@ -133,7 +143,9 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   config->addOptimizationProfile(profile);
   config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, network_options.max_memory);
 
-  if (network_options.use_fp16) { config->setFlag(nvinfer1::BuilderFlag::kFP16); }
+  if (network_options.use_fp16) {
+    config->setFlag(nvinfer1::BuilderFlag::kFP16);
+  }
   if (network_options.dla_core > -1) {
     const int32_t available_dla_cores = builder->getNbDLACores();
     if (network_options.dla_core > available_dla_cores - 1) {
@@ -159,11 +171,15 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   }
 
   auto profileStream = makeCudaStream();
-  if (!profileStream) { return false; }
+  if (!profileStream) {
+    return false;
+  }
   config->setProfileStream(*profileStream);
 
   std::unique_ptr<nvinfer1::IHostMemory> plan{builder->buildSerializedNetwork(*network, *config)};
-  if (!plan) { return false; }
+  if (!plan) {
+    return false;
+  }
 
   std::ofstream outfile(engine_path, std::ofstream::binary);
   if (!outfile) {

@@ -44,9 +44,12 @@ namespace holoscan {
  * - **allocator** (std::shared_ptr<holoscan::Allocator>, optional): The allocator used to
  * allocate/free the buffer memory. If no allocator is set, an `UnboundedAllocator` will be used.
  * - **buffer_size** (size_t, optional): The size of the buffer in bytes (Defaults to
- * holoscan::kDefaultSerializationBufferSize).
+ * holoscan::kDefaultSerializationBufferSize). The max buffer size that can be used depends on the
+ * maximum header size that can be sent by the UCX ucx_am_send_nbx call used within the GXF UCX
+ * extension. That header size is affected by the segment size set for the transport layer.
+ * For TCP/IP the segment size is controlled by UCX_TCP_TX_SEG_SIZE and UCX_TCP_RX_SEG_SIZE.
  */
-constexpr size_t kDefaultUcxSerializationBufferSize = 7168;  // 7 kB
+constexpr size_t kDefaultUcxSerializationBufferSize = 130048;  // 127 KiB
 
 /**
  * @brief Memory buffer used by UcxComponentSerializer and UcxHoloscanComponentSerializer.

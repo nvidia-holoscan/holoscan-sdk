@@ -34,7 +34,9 @@ void GXFOperator::initialize() {
 
 gxf_uid_t GXFOperator::add_codelet_to_graph_entity() {
   HOLOSCAN_LOG_TRACE("calling graph_entity()->addCodelet for {}", name_);
-  if (!graph_entity_) { throw std::runtime_error("graph entity is not initialized"); }
+  if (!graph_entity_) {
+    throw std::runtime_error("graph entity is not initialized");
+  }
   codelet_handle_ = graph_entity_->addCodelet(gxf_typename(), name_.c_str());
   if (!codelet_handle_) {
     throw std::runtime_error("Failed to add codelet of type " + std::string(gxf_typename()));

@@ -14,7 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <holoinfer_utils.hpp>
 
+#include <cuda_fp16.h>
+
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -24,7 +28,7 @@
 
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
-#include <holoinfer_utils.hpp>
+
 #include "gxf/std/tensor.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/utils/holoinfer_utils.hpp"
@@ -121,7 +125,9 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
 
     nvidia::gxf::MemoryStorageType to = nvidia::gxf::MemoryStorageType::kHost;
 
-    if (cuda_buffer_out) { to = nvidia::gxf::MemoryStorageType::kDevice; }
+    if (cuda_buffer_out) {
+      to = nvidia::gxf::MemoryStorageType::kDevice;
+    }
 
     auto messages = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers").value();
     // get the CUDA stream from the input messages
@@ -233,7 +239,9 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
     HoloInfer::timer_check(s_time, e_time, module);
   } catch (std::exception& _ex) {
     return report_error(module, "Data extraction, Message: " + std::string(_ex.what()));
-  } catch (...) { return report_error(module, "Data extraction, Unknown exception"); }
+  } catch (...) {
+    return report_error(module, "Data extraction, Unknown exception");
+  }
   return GXF_SUCCESS;
 }
 
@@ -248,7 +256,9 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
 
     nvidia::gxf::MemoryStorageType to = nvidia::gxf::MemoryStorageType::kHost;
 
-    if (cuda_buffer_out) { to = nvidia::gxf::MemoryStorageType::kDevice; }
+    if (cuda_buffer_out) {
+      to = nvidia::gxf::MemoryStorageType::kDevice;
+    }
 
     auto maybe_messages = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers");
     if (!maybe_messages || maybe_messages->empty()) {
@@ -366,7 +376,9 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
     HoloInfer::timer_check(s_time, e_time, module);
   } catch (std::exception& _ex) {
     return report_error(module, "Data extraction, Message: " + std::string(_ex.what()));
-  } catch (...) { return report_error(module, "Data extraction, Unknown exception"); }
+  } catch (...) {
+    return report_error(module, "Data extraction, Unknown exception");
+  }
   return GXF_SUCCESS;
 }
 
@@ -378,7 +390,8 @@ gxf_result_t transmit_data(nvidia::gxf::MemoryStorageType from, nvidia::gxf::Mem
                            const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_,
                            const std::string& module, cudaStream_t cstream) {
   auto out_tensor = out_message.value().add<nvidia::gxf::Tensor>(current_tensor.c_str());
-  if (!out_tensor) return report_error(module, "Data transmission, Out tensor allocation.");
+  if (!out_tensor)
+    return report_error(module, "Data transmission, Out tensor allocation.");
 
   if (from == nvidia::gxf::MemoryStorageType::kHost) {
     if (to == nvidia::gxf::MemoryStorageType::kHost) {
@@ -486,15 +499,21 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     nvidia::gxf::MemoryStorageType from = nvidia::gxf::MemoryStorageType::kHost;
     nvidia::gxf::MemoryStorageType to = nvidia::gxf::MemoryStorageType::kHost;
 
-    if (cuda_buffer_in) { from = nvidia::gxf::MemoryStorageType::kDevice; }
-    if (cuda_buffer_out) { to = nvidia::gxf::MemoryStorageType::kDevice; }
+    if (cuda_buffer_in) {
+      from = nvidia::gxf::MemoryStorageType::kDevice;
+    }
+    if (cuda_buffer_out) {
+      to = nvidia::gxf::MemoryStorageType::kDevice;
+    }
 
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
 
     // single transmitter used
     auto out_message = nvidia::gxf::Entity::New(cont);
-    if (!out_message) { return report_error(module, "Data transmission, Out message allocation"); }
+    if (!out_message) {
+      return report_error(module, "Data transmission, Out message allocation");
+    }
 
     // to combine static and dynamic I/O tensors, existing out_tensors must be checked for every
     // tensor in input_data_map
@@ -535,7 +554,9 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
             }
           }
 
-          if (key_name.length() != 0) { break; }
+          if (key_name.length() != 0) {
+            break;
+          }
         }
       }
 
@@ -555,14 +576,18 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
       switch (dims.size()) {
         case 4: {
           std::array<int, 4> dimarray;
-          for (size_t u = 0; u < 4; ++u) { dimarray[u] = (static_cast<int>(dims[u])); }
+          for (size_t u = 0; u < 4; ++u) {
+            dimarray[u] = (static_cast<int>(dims[u]));
+          }
           nvidia::gxf::Shape out_shape(dimarray);
           output_shape = std::move(out_shape);
           break;
         }
         case 3: {
           std::array<int, 3> dimarray;
-          for (size_t u = 0; u < 3; ++u) { dimarray[u] = (static_cast<int>(dims[u])); }
+          for (size_t u = 0; u < 3; ++u) {
+            dimarray[u] = (static_cast<int>(dims[u]));
+          }
           nvidia::gxf::Shape out_shape(dimarray);
           output_shape = std::move(out_shape);
           break;
@@ -588,6 +613,19 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
       gxf_result_t stat = GXF_SUCCESS;
       switch (tensor_dtype) {
+        case HoloInfer::holoinfer_datatype::h_Float16: {
+          stat = transmit_data<__half>(from,
+                                       to,
+                                       out_message,
+                                       current_out_tensor,
+                                       output_shape,
+                                       buffer_size,
+                                       input_data_map,
+                                       allocator_,
+                                       module,
+                                       cuda_stream_handler.get_cuda_stream(cont));
+          break;
+        }
         case HoloInfer::holoinfer_datatype::h_Float32: {
           stat = transmit_data<float>(from,
                                       to,
@@ -654,7 +692,8 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
           break;
         }
         default: {
-          HOLOSCAN_LOG_INFO("Outgoing tensors must be of type: float, int32, int64, int8, uint8");
+          HOLOSCAN_LOG_INFO(
+              "Outgoing tensors must be of type: float, float16, int32, int64, int8, uint8");
           HOLOSCAN_LOG_ERROR("Unsupported data type in HoloInfer data transmission.");
           stat = GXF_FAILURE;
         }
@@ -679,7 +718,9 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     HoloInfer::timer_init(e_time);
   } catch (std::exception& _ex) {
     return report_error(module, "Data transmission, Message: " + std::string(_ex.what()));
-  } catch (...) { return report_error(module, "Data transmission, Unknown exception"); }
+  } catch (...) {
+    return report_error(module, "Data transmission, Unknown exception");
+  }
   HoloInfer::timer_init(e_time);
   HoloInfer::timer_check(s_time, e_time, module + " Data transmission ");
 
@@ -700,15 +741,21 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     nvidia::gxf::MemoryStorageType from = nvidia::gxf::MemoryStorageType::kHost;
     nvidia::gxf::MemoryStorageType to = nvidia::gxf::MemoryStorageType::kHost;
 
-    if (cuda_buffer_in) { from = nvidia::gxf::MemoryStorageType::kDevice; }
-    if (cuda_buffer_out) { to = nvidia::gxf::MemoryStorageType::kDevice; }
+    if (cuda_buffer_in) {
+      from = nvidia::gxf::MemoryStorageType::kDevice;
+    }
+    if (cuda_buffer_out) {
+      to = nvidia::gxf::MemoryStorageType::kDevice;
+    }
 
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
 
     // single transmitter used
     auto out_message = nvidia::gxf::Entity::New(cont);
-    if (!out_message) { return report_error(module, "Data transmission, Out message allocation"); }
+    if (!out_message) {
+      return report_error(module, "Data transmission, Out message allocation");
+    }
 
     // to combine static and dynamic I/O tensors, existing out_tensors must be checked for every
     // tensor in input_data_map
@@ -749,7 +796,9 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
             }
           }
 
-          if (key_name.length() != 0) { break; }
+          if (key_name.length() != 0) {
+            break;
+          }
         }
       }
 
@@ -769,14 +818,18 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
       switch (dims.size()) {
         case 4: {
           std::array<int, 4> dimarray;
-          for (size_t u = 0; u < 4; ++u) { dimarray[u] = (static_cast<int>(dims[u])); }
+          for (size_t u = 0; u < 4; ++u) {
+            dimarray[u] = (static_cast<int>(dims[u]));
+          }
           nvidia::gxf::Shape out_shape(dimarray);
           output_shape = std::move(out_shape);
           break;
         }
         case 3: {
           std::array<int, 3> dimarray;
-          for (size_t u = 0; u < 3; ++u) { dimarray[u] = (static_cast<int>(dims[u])); }
+          for (size_t u = 0; u < 3; ++u) {
+            dimarray[u] = (static_cast<int>(dims[u]));
+          }
           nvidia::gxf::Shape out_shape(dimarray);
           output_shape = std::move(out_shape);
           break;
@@ -802,6 +855,19 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
       gxf_result_t stat = GXF_SUCCESS;
       switch (tensor_dtype) {
+        case HoloInfer::holoinfer_datatype::h_Float16: {
+          stat = transmit_data<__half>(from,
+                                       to,
+                                       out_message,
+                                       current_out_tensor,
+                                       output_shape,
+                                       buffer_size,
+                                       input_data_map,
+                                       allocator_,
+                                       module,
+                                       cstream);
+          break;
+        }
         case HoloInfer::holoinfer_datatype::h_Float32: {
           stat = transmit_data<float>(from,
                                       to,
@@ -868,7 +934,8 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
           break;
         }
         default: {
-          HOLOSCAN_LOG_INFO("Outgoing tensors must be of type: float, int32, int64, int8, uint8");
+          HOLOSCAN_LOG_INFO(
+              "Outgoing tensors must be of type: float, float16, int32, int64, int8, uint8");
           HOLOSCAN_LOG_ERROR("Unsupported data type in HoloInfer data transmission.");
           stat = GXF_FAILURE;
         }
@@ -885,7 +952,9 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     HoloInfer::timer_init(e_time);
   } catch (std::exception& _ex) {
     return report_error(module, "Data transmission, Message: " + std::string(_ex.what()));
-  } catch (...) { return report_error(module, "Data transmission, Unknown exception"); }
+  } catch (...) {
+    return report_error(module, "Data transmission, Unknown exception");
+  }
   HoloInfer::timer_init(e_time);
   HoloInfer::timer_check(s_time, e_time, module + " Data transmission ");
 
@@ -896,11 +965,15 @@ gxf_result_t set_activation_per_model(
     std::shared_ptr<HoloInfer::InferenceSpecs>& inference_specs,
     const HoloInfer::Mappings& activation_map,
     const std::vector<HoloInfer::ActivationSpec>& activation_specs, const std::string& module) {
-  if (!inference_specs) { return report_error(module, "Inference specs is null"); }
+  if (!inference_specs) {
+    return report_error(module, "Inference specs is null");
+  }
 
   HoloInfer::Mappings on_fly_act_map;
   // Merge predefined act with on_fly_act_map
-  for (auto& it : activation_map) { on_fly_act_map[it.first] = it.second; }
+  for (auto& it : activation_map) {
+    on_fly_act_map[it.first] = it.second;
+  }
 
   // Update activation_map by specs
   for (const auto& x : activation_specs) {

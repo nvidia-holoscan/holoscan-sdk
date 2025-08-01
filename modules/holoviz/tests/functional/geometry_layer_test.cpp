@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -297,7 +297,9 @@ TEST_P(PrimitiveTopology, Primitive) {
   for (uint32_t i = 0; i < 3; ++i) {
     EXPECT_NO_THROW(viz::BeginGeometryLayer());
 
-    if (i != 0) { EXPECT_NO_THROW(viz::Color(1.F, 0.5F, 0.25F, 0.75F)); }
+    if (i != 0) {
+      EXPECT_NO_THROW(viz::Color(1.F, 0.5F, 0.25F, 0.75F));
+    }
     if (i == 2) {
       EXPECT_NO_THROW(viz::PointSize(4.F));
       EXPECT_NO_THROW(viz::LineWidth(3.F));
@@ -312,7 +314,9 @@ TEST_P(PrimitiveTopology, Primitive) {
 
     EXPECT_NO_THROW(viz::EndLayer());
 
-    for (auto&& item : data) { item += 0.1F; }
+    for (auto&& item : data) {
+      item += 0.1F;
+    }
     if (source == Source::CUDA_DEVICE) {
       EXPECT_EQ(cuMemcpyHtoD(device_ptr.get(), data.data(), data.size() * sizeof(float)),
                 CUDA_SUCCESS);
@@ -430,7 +434,9 @@ TEST_P(DepthMapRenderMode, DepthMap) {
   switch (depth_fmt) {
     case viz::ImageFormat::R8_UNORM: {
       std::vector<uint8_t> depth_data(map_width * map_height);
-      for (size_t index = 0; index < depth_data.size(); ++index) { depth_data[index] = index * 4; }
+      for (size_t index = 0; index < depth_data.size(); ++index) {
+        depth_data[index] = index * 4;
+      }
       EXPECT_EQ(cuMemcpyHtoD(
                     depth_ptr.get(), depth_data.data(), depth_data.size() * depth_component_size),
                 CUDA_SUCCESS);

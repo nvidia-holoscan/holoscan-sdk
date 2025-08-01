@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,11 +71,21 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
                                Arg{"tensor_name", tensor_name},
                                Arg{"async_device_allocation", async_device_allocation}}) {
     add_positional_condition_and_resource_args(this, args);
-    if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
-    if (allocator.has_value()) { this->add_arg(Arg{"allocator", allocator.value()}); }
-    if (batch_size.has_value()) { this->add_arg(Arg{"batch_size", batch_size.value()}); }
-    if (batch_size.has_value()) { this->add_arg(Arg{"columns", columns.value()}); }
-    if (batch_size.has_value()) { this->add_arg(Arg{"channels", channels.value()}); }
+    if (cuda_stream_pool) {
+      this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool});
+    }
+    if (allocator.has_value()) {
+      this->add_arg(Arg{"allocator", allocator.value()});
+    }
+    if (batch_size.has_value()) {
+      this->add_arg(Arg{"batch_size", batch_size.value()});
+    }
+    if (columns.has_value()) {
+      this->add_arg(Arg{"columns", columns.value()});
+    }
+    if (channels.has_value()) {
+      this->add_arg(Arg{"channels", channels.value()});
+    }
     if (std::holds_alternative<std::string>(dtype)) {
       this->add_arg(Arg("data_type", std::get<std::string>(dtype)));
     } else {

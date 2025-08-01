@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,7 +61,9 @@ class MemoryBuffer {
   nvidia::gxf::Expected<void> freeBuffer() {
     if (release_func_ && pointer_) {
       const nvidia::gxf::Expected<void> result = release_func_(pointer_);
-      if (!result) { return nvidia::gxf::ForwardError(result); }
+      if (!result) {
+        return nvidia::gxf::ForwardError(result);
+      }
 
       release_func_ = nullptr;
       pointer_ = nullptr;

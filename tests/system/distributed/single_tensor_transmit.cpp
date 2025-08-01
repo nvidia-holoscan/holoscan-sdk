@@ -50,7 +50,9 @@ class TensorSource : public holoscan::Operator {
 
     // create host tensor
     host_array_buffer_.reserve(4 * 128 * 512);
-    for (auto i = 0; i < 4 * 128 * 512; i++) { host_array_buffer_[i] = 0.0; }
+    for (auto i = 0; i < 4 * 128 * 512; i++) {
+      host_array_buffer_[i] = 0.0;
+    }
 
     auto tensor_shape = nvidia::gxf::Shape{{4, 128, 512}};
     auto dtype = nvidia::gxf::PrimitiveType::kFloat32;
@@ -117,7 +119,9 @@ class TensorSink : public holoscan::Operator {
                holoscan::ExecutionContext&) override {
     if (use_tensormap_) {
       auto in_message = op_input.receive<holoscan::TensorMap>("in_tensor");
-      if (!in_message) { throw std::runtime_error("Failed to receive TensorMap"); }
+      if (!in_message) {
+        throw std::runtime_error("Failed to receive TensorMap");
+      }
       auto hs_tensor = in_message.value()["tensor"];
     } else {
       auto in_tensor = op_input.receive<std::shared_ptr<holoscan::Tensor>>("in_tensor");
@@ -187,7 +191,9 @@ TEST_F(SingleTensorTransmitDistributedApp, TestTensorTransmitApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Failed to receive") == std::string::npos)

@@ -468,6 +468,13 @@ class Application : public Fragment {
    */
   void reset_state() override;
 
+  /**
+   * @brief Attach application services to a specified fragment.
+   *
+   * @param fragment The fragment to which services will be attached.
+   */
+  virtual void attach_services_to_fragment(const std::shared_ptr<Fragment>& fragment);
+
   // This flag tracks whether the fragment graph has been composed, allowing us to preserve
   // the graph structure when compose_graph() is called after reset_state()
   // sets is_composed_ to false.

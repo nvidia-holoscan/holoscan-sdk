@@ -113,7 +113,9 @@ class InferenceProcessorOp : public holoscan::Operator {
     DataVecMap() = default;
     explicit operator bool() const noexcept { return !mappings_.empty(); }
     void insert(const std::string& key, const std::vector<std::string>& value) {
-      for (const auto& val : value) mappings_[key].push_back(val);
+      for (const auto& val : value) {
+        mappings_[key].push_back(val);
+      }
     }
 
     std::map<std::string, std::vector<std::string>> get_map() const { return mappings_; }

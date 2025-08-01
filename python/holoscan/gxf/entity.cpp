@@ -52,13 +52,17 @@ void init_entity(py::module_& m) {
 
 PyEntity PyEntity::py_create(const PyExecutionContext& ctx) {
   auto result = nvidia::gxf::Entity::New(ctx.context());
-  if (!result) { throw std::runtime_error("Failed to create entity"); }
+  if (!result) {
+    throw std::runtime_error("Failed to create entity");
+  }
   return static_cast<PyEntity>(result.value());
 }
 
 py::object PyEntity::py_get(const char* name, bool log_errors) const {
   auto tensor = get<Tensor>(name, log_errors);
-  if (!tensor) { return py::none(); }
+  if (!tensor) {
+    return py::none();
+  }
 
   auto py_tensor = py::cast(tensor);
 

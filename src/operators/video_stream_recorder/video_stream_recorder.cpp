@@ -114,7 +114,8 @@ VideoStreamRecorderOp::~VideoStreamRecorderOp() {
     auto code = nvidia::gxf::ToResultCode(result);
     try {
       HOLOSCAN_LOG_ERROR("Failed to close binary_file_stream_ with error: {}", GxfResultStr(code));
-    } catch (std::exception& e) {}
+    } catch (std::exception& e) {
+    }
   }
 
   // Close index file stream
@@ -123,7 +124,8 @@ VideoStreamRecorderOp::~VideoStreamRecorderOp() {
     auto code = nvidia::gxf::ToResultCode(result);
     try {
       HOLOSCAN_LOG_ERROR("Failed to close index_file_stream_ with error: {}", GxfResultStr(code));
-    } catch (std::exception& e) {}
+    } catch (std::exception& e) {
+    }
   }
 }
 

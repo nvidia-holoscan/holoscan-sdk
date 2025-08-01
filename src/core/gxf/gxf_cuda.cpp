@@ -28,6 +28,7 @@
 #include "gxf/cuda/cuda_stream.hpp"
 #include "gxf/cuda/cuda_stream_id.hpp"
 #include "gxf/cuda/cuda_stream_pool.hpp"
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/parameter.hpp"
@@ -42,7 +43,8 @@ CudaObjectHandler::~CudaObjectHandler() {
     if (cudaSuccess != result) {
       try {
         HOLOSCAN_LOG_WARN("Failed to destroy CUDA event: {}", cudaGetErrorString(result));
-      } catch (std::exception& e) {}
+      } catch (std::exception& e) {
+      }
     }
   }
 }
@@ -76,6 +78,8 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
       HOLOSCAN_LOG_ERROR(
           "Failed to cast cuda_stream_pool parameter of operator '{}': {}", op->name(), e.what());
     }
+    // don't add a stream pool by default if a "cuda_stream_pool" parameter was defined
+    return;
   }
 
   for (auto& resource : op->resources()) {
@@ -100,12 +104,25 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
     cuda_status = HOLOSCAN_CUDA_CALL_WARN_MSG(
         cudaGetDevice(&device), "Failed to determine the currently active GPU device");
     if (cuda_status == cudaSuccess) {
-      if (gpu_count > 0) { op->add_cuda_stream_pool(device, 0, 0, 1, 0); }
-      HOLOSCAN_LOG_DEBUG(
-          "No cuda_stream_pool parameter or resource found for operator '{}'."
-          "Added a default CUDA stream pool with initial size 1 on device {}.",
-          op->name(),
-          device);
+      if (gpu_count > 0) {
+        // Note: `op` will have already been initialized, so do not use
+        // `op->add_cuda_stream_pool`. Instead, manually handle creating and initializing
+        // the stream pool here.
+        auto cuda_stream_pool = op->fragment()->make_resource<CudaStreamPool>(
+            fmt::format("{}_stream_pool", op->name()).c_str(), device, 0, 0, 1, 0);
+        // assign this new stream pool resource to the same entity as the operator
+        if (op->graph_entity()) {
+          cuda_stream_pool->gxf_eid(op->graph_entity()->eid());
+        }
+        cuda_stream_pool->initialize();
+        op->add_arg(cuda_stream_pool);
+        cuda_stream_pool_ = cuda_stream_pool;
+        HOLOSCAN_LOG_DEBUG(
+            "No cuda_stream_pool parameter or resource found for operator '{}'."
+            "Added a default CUDA stream pool with initial size 1 on device {}.",
+            op->name(),
+            device);
+      }
     }
   }
 }
@@ -133,7 +150,9 @@ gxf_result_t CudaObjectHandler::streams_from_message(gxf_context_t context,
 
       // keep reverse mapping from stream->handle to allow later use from add_stream
       auto maybe_stream = stream_handle->stream();
-      if (maybe_stream) { stream_to_stream_handle_[maybe_stream.value()] = stream_handle; }
+      if (maybe_stream) {
+        stream_to_stream_handle_[maybe_stream.value()] = stream_handle;
+      }
     }
   } else {
     auto& id_vector = received_cuda_stream_ids_[input_name];
@@ -172,7 +191,9 @@ expected<gxf_uid_t, ErrorCode> CudaObjectHandler::get_output_stream_cid(
       HOLOSCAN_LOG_TRACE("Using received stream as the stream emitted for output port '{}'",
                          output_port_name);
       auto stream_handle = received_iter->second[0];
-      if (!stream_handle.has_value()) { return make_unexpected<ErrorCode>(ErrorCode::kNotFound); }
+      if (!stream_handle.has_value()) {
+        return make_unexpected<ErrorCode>(ErrorCode::kNotFound);
+      }
       return stream_handle.value().cid();
     }
   }
@@ -202,7 +223,9 @@ CudaObjectHandler::get_cuda_stream_handles(gxf_context_t context,
                                            const std::string& input_port_name) {
   // If there is already a stream handle for this input port, return that
   auto it = received_cuda_stream_handles_.find(input_port_name);
-  if (it != received_cuda_stream_handles_.end()) { return it->second; }
+  if (it != received_cuda_stream_handles_.end()) {
+    return it->second;
+  }
   HOLOSCAN_LOG_TRACE("get_cuda_stream_handles: no stream handles found");
 
   auto out = std::vector<std::optional<CudaStreamHandle>>{};
@@ -211,7 +234,9 @@ CudaObjectHandler::get_cuda_stream_handles(gxf_context_t context,
   auto id_it = received_cuda_stream_ids_.find(input_port_name);
   if (id_it != received_cuda_stream_ids_.end()) {
     const auto& stream_id_vec = id_it->second;
-    if (stream_id_vec.empty()) { return out; }
+    if (stream_id_vec.empty()) {
+      return out;
+    }
     out.reserve(stream_id_vec.size());
     for (auto& maybe_id : stream_id_vec) {
       if (maybe_id) {
@@ -387,7 +412,9 @@ CudaObjectHandler::cuda_stream_pool_handle(gxf_context_t context) {
 expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::allocate_cuda_stream(
     gxf_context_t context) {
   auto maybe_gxf_stream_pool_handle = cuda_stream_pool_handle(context);
-  if (!maybe_gxf_stream_pool_handle) { return forward_error(maybe_gxf_stream_pool_handle); }
+  if (!maybe_gxf_stream_pool_handle) {
+    return forward_error(maybe_gxf_stream_pool_handle);
+  }
   auto gxf_stream_pool_handle = maybe_gxf_stream_pool_handle.value();
 
   // allocate a stream
@@ -406,7 +433,9 @@ cudaStream_t CudaObjectHandler::stream_from_stream_handle(CudaStreamHandle strea
     return cudaStreamDefault;
   }
   const auto& maybe_stream = stream_handle->stream();
-  if (maybe_stream.has_value()) { return maybe_stream.value(); }
+  if (maybe_stream.has_value()) {
+    return maybe_stream.value();
+  }
   HOLOSCAN_LOG_TRACE(
       "CudaStream object does not contain a stream value, returning cudaStreamDefault.");
   return cudaStreamDefault;
@@ -415,7 +444,9 @@ cudaStream_t CudaObjectHandler::stream_from_stream_handle(CudaStreamHandle strea
 expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::stream_handle_from_stream(
     cudaStream_t stream) {
   auto stream_it = stream_to_stream_handle_.find(stream);
-  if (stream_it != stream_to_stream_handle_.end()) { return stream_it->second; }
+  if (stream_it != stream_to_stream_handle_.end()) {
+    return stream_it->second;
+  }
   return make_unexpected<RuntimeError>(
       RuntimeError(ErrorCode::kNotFound,
                    "No CudaStreamHandle is currently mapped to the provided CUDA stream."));
@@ -468,7 +499,9 @@ std::vector<std::optional<cudaStream_t>> CudaObjectHandler::get_cuda_streams(
 gxf_result_t CudaObjectHandler::synchronize_streams(
     std::vector<std::optional<CudaStreamHandle>> stream_handles,
     CudaStreamHandle target_stream_handle, bool sync_to_default_stream) {
-  if (stream_handles.empty()) { return GXF_SUCCESS; }
+  if (stream_handles.empty()) {
+    return GXF_SUCCESS;
+  }
 
   auto maybe_target_cuda_stream = target_stream_handle->stream();
   if (!maybe_target_cuda_stream) {
@@ -494,8 +527,12 @@ int CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cuda_stream
                                            bool sync_to_default_stream) {
   HOLOSCAN_LOG_DEBUG("Synchronizing {} streams to target stream.", cuda_streams.size());
   // exit early if there is nothing to synchronize
-  if (target_cuda_stream == cudaStreamDefault) { sync_to_default_stream = false; }
-  if (cuda_streams.empty() && !sync_to_default_stream) { return GXF_SUCCESS; }
+  if (target_cuda_stream == cudaStreamDefault) {
+    sync_to_default_stream = false;
+  }
+  if (cuda_streams.empty() && !sync_to_default_stream) {
+    return GXF_SUCCESS;
+  }
 
   if (!event_created_) {
     // Create the internal event if needed
@@ -516,7 +553,9 @@ int CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cuda_stream
       continue;
     }
     result = HOLOSCAN_CUDA_CALL(cudaEventRecord(cuda_event_, cuda_stream));
-    if (cudaSuccess != result) { return GXF_FAILURE; }
+    if (cudaSuccess != result) {
+      return GXF_FAILURE;
+    }
 
     // Note: cudaStreamWaitEvent will work even for streams associated with separate devices
     result = HOLOSCAN_CUDA_CALL(cudaStreamWaitEvent(target_cuda_stream, cuda_event_));
@@ -529,9 +568,13 @@ int CudaObjectHandler::synchronize_streams(std::vector<cudaStream_t> cuda_stream
   // also sync the target stream to the default stream
   if (sync_to_default_stream) {
     cudaError_t result = HOLOSCAN_CUDA_CALL(cudaEventRecord(cuda_event_, target_cuda_stream));
-    if (cudaSuccess != result) { return GXF_FAILURE; }
+    if (cudaSuccess != result) {
+      return GXF_FAILURE;
+    }
     result = HOLOSCAN_CUDA_CALL(cudaStreamWaitEvent(cudaStreamDefault, cuda_event_));
-    if (cudaSuccess != result) { return static_cast<int>(GXF_FAILURE); }
+    if (cudaSuccess != result) {
+      return static_cast<int>(GXF_FAILURE);
+    }
   }
   return static_cast<int>(GXF_SUCCESS);
 }
@@ -543,7 +586,9 @@ expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::allocate_internal_st
   if (it == allocated_cuda_stream_handles_.end()) {
     HOLOSCAN_LOG_DEBUG("allocating internal stream named '{}'", stream_name);
     auto maybe_stream_handle = allocate_cuda_stream(context);
-    if (!maybe_stream_handle) { return forward_error(maybe_stream_handle); }
+    if (!maybe_stream_handle) {
+      return forward_error(maybe_stream_handle);
+    }
     auto stream_handle = maybe_stream_handle.value();
     stream_to_stream_handle_.emplace(stream_handle->stream().value(), stream_handle);
     allocated_cuda_stream_handles_.emplace(stream_name, stream_handle);
@@ -554,7 +599,9 @@ expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::allocate_internal_st
 }
 
 int CudaObjectHandler::release_internal_streams(void* context) {
-  if (allocated_cuda_stream_handles_.empty()) { return GXF_SUCCESS; }
+  if (allocated_cuda_stream_handles_.empty()) {
+    return GXF_SUCCESS;
+  }
 
   auto maybe_gxf_stream_pool_handle = cuda_stream_pool_handle(context);
   if (!maybe_gxf_stream_pool_handle) {
@@ -579,8 +626,12 @@ int CudaObjectHandler::release_internal_streams(void* context) {
 
 void CudaObjectHandler::clear_received_streams() {
   // retain the existing unordered_maps and vectors, but clear the contents
-  for (auto& item : received_cuda_stream_ids_) { item.second.clear(); }
-  for (auto& item : received_cuda_stream_handles_) { item.second.clear(); }
+  for (auto& item : received_cuda_stream_ids_) {
+    item.second.clear();
+  }
+  for (auto& item : received_cuda_stream_handles_) {
+    item.second.clear();
+  }
 }
 
 }  // namespace holoscan::gxf

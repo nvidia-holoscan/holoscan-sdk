@@ -35,7 +35,9 @@ struct YAML::convert<holoscan::ops::InferenceProcessorOp::DataMap> {
   static Node encode(const holoscan::ops::InferenceProcessorOp::DataMap& datamap) {
     Node node;
     auto mappings = datamap.get_map();
-    for (const auto& [key, value] : mappings) { node[key] = value; }
+    for (const auto& [key, value] : mappings) {
+      node[key] = value;
+    }
     return node;
   }
 
@@ -68,7 +70,8 @@ struct YAML::convert<holoscan::ops::InferenceProcessorOp::DataVecMap> {
     Node node;
     auto mappings = datavmap.get_map();
     for (const auto& [key, vec_of_values] : mappings) {
-      for (const auto& value : vec_of_values) node[key].push_back(value);
+      for (const auto& value : vec_of_values)
+        node[key].push_back(value);
     }
     return node;
   }
@@ -198,7 +201,9 @@ void InferenceProcessorOp::start() {
   } catch (const std::runtime_error& rt_) {
     HOLOSCAN_LOG_ERROR(rt_.what());
     throw;
-  } catch (...) { HoloInfer::raise_error(module_, "Start, Unknown exception"); }
+  } catch (...) {
+    HoloInfer::raise_error(module_, "Start, Unknown exception");
+  }
 
   // Initialize holoscan processing context
   auto status = holoscan_postprocess_context_->initialize(process_operations_.get().get_map(),
@@ -238,7 +243,9 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
                                                             module_,
                                                             cuda_stream);
 
-    if (stat != GXF_SUCCESS) { HoloInfer::raise_error(module_, "Tick, Data extraction"); }
+    if (stat != GXF_SUCCESS) {
+      HoloInfer::raise_error(module_, "Tick, Data extraction");
+    }
 
     // Transmit this stream on the output port if needed
     if (cuda_stream != cudaStreamDefault && output_on_cuda_.get()) {
@@ -280,11 +287,15 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
                                                       allocator.value(),
                                                       module_,
                                                       cuda_stream);
-      if (stat != GXF_SUCCESS) { HoloInfer::report_error(module_, "Tick, Data Transmission"); }
+      if (stat != GXF_SUCCESS) {
+        HoloInfer::report_error(module_, "Tick, Data Transmission");
+      }
     }
   } catch (const std::runtime_error& r_) {
     HoloInfer::report_error(module_, "Tick, Message->" + std::string(r_.what()));
-  } catch (...) { HoloInfer::report_error(module_, "Tick, unknown exception"); }
+  } catch (...) {
+    HoloInfer::report_error(module_, "Tick, unknown exception");
+  }
 }
 
 }  // namespace holoscan::ops

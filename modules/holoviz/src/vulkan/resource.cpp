@@ -48,7 +48,8 @@ Resource::~Resource() {
       // Silently handle any exceptions during cleanup
       try {
         HOLOSCAN_LOG_ERROR("Resource destructor failed with {}", e.what());
-      } catch (...) {}
+      } catch (...) {
+      }
     }
   }
 }

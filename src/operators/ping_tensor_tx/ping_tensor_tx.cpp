@@ -151,10 +151,16 @@ void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCont
   auto dtype = element_type();
 
   std::vector<int32_t> shape_vec;
-  if (batch_size > 0) { shape_vec.push_back(batch_size); }
+  if (batch_size > 0) {
+    shape_vec.push_back(batch_size);
+  }
   shape_vec.push_back(rows);
-  if (columns > 0) { shape_vec.push_back(columns); }
-  if (channels > 0) { shape_vec.push_back(channels); }
+  if (columns > 0) {
+    shape_vec.push_back(columns);
+  }
+  if (channels > 0) {
+    shape_vec.push_back(channels);
+  }
   auto tensor_shape = nvidia::gxf::Shape{shape_vec};
 
   const uint64_t bytes_per_element = nvidia::gxf::PrimitiveTypeSize(dtype);
@@ -168,10 +174,13 @@ void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCont
     storage_type = nvidia::gxf::MemoryStorageType::kHost;
   } else if (storage_name == std::string("system")) {
     storage_type = nvidia::gxf::MemoryStorageType::kSystem;
+  } else if (storage_name == std::string("cuda_managed")) {
+    storage_type = nvidia::gxf::MemoryStorageType::kCudaManaged;
   } else {
-    throw std::runtime_error(fmt::format(
-        "Unrecognized storage_device ({}), should be one of ['device', 'host', 'system']",
-        storage_name));
+    throw std::runtime_error(
+        fmt::format("Unrecognized storage_device ({}), should be one of ['device', 'host', "
+                    "'system', 'cuda_managed']",
+                    storage_name));
   }
 
   bool use_async_allocation =
@@ -180,7 +189,9 @@ void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCont
     // allocate a tensor of the specified shape and data type
     auto result = gxf_tensor->reshapeCustom(
         tensor_shape, dtype, bytes_per_element, strides, storage_type, allocator.value());
-    if (!result) { HOLOSCAN_LOG_ERROR("failed to generate tensor"); }
+    if (!result) {
+      HOLOSCAN_LOG_ERROR("failed to generate tensor");
+    }
   } else {
     // Tensor doesn't currently have an API for async allocation so have to allocate with CUDA
     // and then wrap it using wrapMemory.

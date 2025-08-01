@@ -43,19 +43,33 @@ nvidia::gxf::Handle<nvidia::gxf::Component> add_component_to_graph_entity(
   bool is_derived = false;
   gxf_result_t result;
   result = GxfComponentTypeId(context, type_name, &derived_tid);
-  if (result != GXF_SUCCESS) { return null_component; }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
 
   result = GxfComponentTypeId(context, "nvidia::gxf::Codelet", &base_tid);
-  if (result != GXF_SUCCESS) { return null_component; }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
   result = GxfComponentIsBase(context, derived_tid, base_tid, &is_derived);
-  if (result != GXF_SUCCESS) { return null_component; }
-  if (is_derived) { return graph_entity->addCodelet(type_name, name); }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
+  if (is_derived) {
+    return graph_entity->addCodelet(type_name, name);
+  }
 
   result = GxfComponentTypeId(context, "nvidia::gxf::SchedulingTerm", &base_tid);
-  if (result != GXF_SUCCESS) { return null_component; }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
   result = GxfComponentIsBase(context, derived_tid, base_tid, &is_derived);
-  if (result != GXF_SUCCESS) { return null_component; }
-  if (is_derived) { return graph_entity->addSchedulingTerm(type_name, name, arg_list); }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
+  if (is_derived) {
+    return graph_entity->addSchedulingTerm(type_name, name, arg_list);
+  }
 
   // Commented out use of addTransmitter or addReceiver as this have additional restrictions or
   // defaults in GXF that we don't currently want for Holoscan. Transmitters and receivers will
@@ -75,16 +89,28 @@ nvidia::gxf::Handle<nvidia::gxf::Component> add_component_to_graph_entity(
   // if (is_derived) { return graph_entity->addReceiver(type_name, name, arg_list, omit_term); }
 
   result = GxfComponentTypeId(context, "nvidia::gxf::Clock", &base_tid);
-  if (result != GXF_SUCCESS) { return null_component; }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
   result = GxfComponentIsBase(context, derived_tid, base_tid, &is_derived);
-  if (result != GXF_SUCCESS) { return null_component; }
-  if (is_derived) { return graph_entity->addClock(type_name, name, arg_list); }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
+  if (is_derived) {
+    return graph_entity->addClock(type_name, name, arg_list);
+  }
 
   result = GxfComponentTypeId(context, "nvidia::gxf::Component", &base_tid);
-  if (result != GXF_SUCCESS) { return null_component; }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
   result = GxfComponentIsBase(context, derived_tid, base_tid, &is_derived);
-  if (result != GXF_SUCCESS) { return null_component; }
-  if (is_derived) { return graph_entity->addComponent(type_name, name, arg_list); }
+  if (result != GXF_SUCCESS) {
+    return null_component;
+  }
+  if (is_derived) {
+    return graph_entity->addComponent(type_name, name, arg_list);
+  }
 
   HOLOSCAN_LOG_ERROR("type_name {} is not of Component type", type_name);
   return nvidia::gxf::Handle<nvidia::gxf::Component>::Null();

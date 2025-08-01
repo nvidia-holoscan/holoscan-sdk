@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,15 +47,15 @@ class SumOfAllThrottledRxOp(Operator):
         spec.input("in2", size=IOSpec.IOSize(20))
         spec.input("in3", size=IOSpec.IOSize(20))
 
-        # Use kMultiMessageAvailableTimeout to considers all three ports together. In this
+        # Use `kMultiMessageAvailableTimeout`` to considers all three ports together. In this
         # "SumOfAll" mode, it only matters that `min_sum` messages have arrived across all the
         # ports that are listed in `input_port_names` below, but it does not matter which ports the
-        # messages arrived on. The "execution_frequency" is set to 30ms, so the operator can run
-        # once 30 ms has elapsed even if 20 messages have not arrived. Use
-        # ConditionType.MULTI_MESSAGE_AVAILABLE instead if the timeout interval is not desired.
+        # messages arrived on. The "execution_frequency" is set to 300ms, so the operator can run
+        # once 300 ms has elapsed even if 20 messages have not arrived. Use
+        # `ConditionType.MULTI_MESSAGE_AVAILABLE instead` if the timeout interval is not desired.
         spec.multi_port_condition(
             kind=ConditionType.MULTI_MESSAGE_AVAILABLE_TIMEOUT,
-            execution_frequency="30ms",
+            execution_frequency="300ms",
             port_names=["in1", "in2", "in3"],
             sampling_mode="SumOfAll",
             min_sum=20,
@@ -72,13 +72,13 @@ class SumOfAllThrottledRxOp(Operator):
 
 class MultiMessageThrottledApp(Application):
     def compose(self):
-        period1 = PeriodicCondition(self, recess_period=datetime.timedelta(milliseconds=4))
+        period1 = PeriodicCondition(self, recess_period=datetime.timedelta(milliseconds=40))
         tx1 = StringTxOp(self, period1, message="tx1", name="tx1")
 
-        period2 = PeriodicCondition(self, recess_period=datetime.timedelta(milliseconds=8))
+        period2 = PeriodicCondition(self, recess_period=datetime.timedelta(milliseconds=80))
         tx2 = StringTxOp(self, period2, message="tx2", name="tx2")
 
-        period3 = PeriodicCondition(self, recess_period=datetime.timedelta(milliseconds=16))
+        period3 = PeriodicCondition(self, recess_period=datetime.timedelta(milliseconds=160))
         tx3 = StringTxOp(self, period3, message="tx3", name="tx3")
 
         multi_rx_timeout = SumOfAllThrottledRxOp(

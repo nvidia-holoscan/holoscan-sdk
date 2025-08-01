@@ -16,6 +16,7 @@
  */
 #include "process_manager.hpp"
 
+#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
@@ -44,7 +45,9 @@ InferStatus ManagerProcessor::process_multi_tensor_operation(
 
   std::vector<std::string> tensor_tokens;
 
-  if (tensor_name.find(":") != std::string::npos) { string_split(tensor_name, tensor_tokens, ':'); }
+  if (tensor_name.find(":") != std::string::npos) {
+    string_split(tensor_name, tensor_tokens, ':');
+  }
 
   // Single operation supported on multi-tensor data
   for (const auto& operation_name : operation_names) {
@@ -84,8 +87,7 @@ InferStatus ManagerProcessor::process(const MultiMappings& tensor_oper_map,
                                       const MultiMappings& in_out_tensor_map,
                                       DataMap& inferred_result_map,
                                       const std::map<std::string, std::vector<int>>& dimension_map,
-                                      bool process_with_cuda,
-                                      cudaStream_t cuda_stream) {
+                                      bool process_with_cuda, cudaStream_t cuda_stream) {
   for (const auto& current_tensor_operation : tensor_oper_map) {
     auto& tensor_name = current_tensor_operation.first;
     auto operations = current_tensor_operation.second;
@@ -248,14 +250,13 @@ InferStatus ProcessorContext::process(const MultiMappings& tensor_to_oper_map,
                                       const MultiMappings& in_out_tensor_map,
                                       DataMap& inferred_result_map,
                                       const std::map<std::string, std::vector<int>>& model_dims,
-                                      bool process_with_cuda,
-                                      cudaStream_t cuda_stream) {
+                                      bool process_with_cuda, cudaStream_t cuda_stream) {
   return process_manager_->process(tensor_to_oper_map,
-                                  in_out_tensor_map,
-                                  inferred_result_map,
-                                  model_dims,
-                                  process_with_cuda,
-                                  cuda_stream);
+                                   in_out_tensor_map,
+                                   inferred_result_map,
+                                   model_dims,
+                                   process_with_cuda,
+                                   cuda_stream);
 }
 
 InferStatus ProcessorContext::initialize(const MultiMappings& process_operations,

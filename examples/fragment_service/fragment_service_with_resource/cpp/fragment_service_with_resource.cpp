@@ -29,7 +29,7 @@ class MyServiceResource : public holoscan::Resource {
   void setup(holoscan::ComponentSpec& spec) override {
     spec.param(int_param_, "int_value", "Integer parameter", "Integer parameter for testing", {});
   }
-  int value() const { return int_param_.get(); }
+  [[nodiscard]] int value() const { return int_param_.get(); }
 
  private:
   holoscan::Parameter<int> int_param_;
@@ -49,7 +49,7 @@ class MyResourceManagerSelfRef : public holoscan::Resource, public holoscan::Fra
     spec.param(int_param_, "int_value", "Integer parameter", "Integer parameter for testing", {});
   }
 
-  int value() const { return int_param_.get(); }
+  [[nodiscard]] int value() const { return int_param_.get(); }
 
  private:
   holoscan::Parameter<int> int_param_;
@@ -75,13 +75,13 @@ class MyResourceManagerEnabledShared
     return std::const_pointer_cast<MyResourceManagerEnabledShared>(shared_from_this());
   }
 
-  void resource(const std::shared_ptr<Resource>&) override {}
+  void resource([[maybe_unused]] const std::shared_ptr<Resource>& resource) override {}
 
   void setup(holoscan::ComponentSpec& spec) override {
     spec.param(int_param_, "int_value", "Integer parameter", "Integer parameter for testing", {});
   }
 
-  int value() const { return int_param_.get(); }
+  [[nodiscard]] int value() const { return int_param_.get(); }
 
  private:
   holoscan::Parameter<int> int_param_;

@@ -63,7 +63,9 @@ class RoundRobinBroadcastOp : public holoscan::Operator {
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto message = op_input.receive<std::any>("input");
-    if (!message) { throw std::runtime_error("No message found on port named 'input'"); }
+    if (!message) {
+      throw std::runtime_error("No message found on port named 'input'");
+    }
     auto out_port_name = output_name(port_index_);
     auto value = message.value();
 
@@ -125,13 +127,19 @@ class SlowOp : public Operator {
     double delay = delay_.get();
     bool silent = silent_.get();
     if (delay > 0) {
-      if (!silent) { HOLOSCAN_LOG_INFO("{}: now waiting {} s", name(), delay); }
+      if (!silent) {
+        HOLOSCAN_LOG_INFO("{}: now waiting {} s", name(), delay);
+      }
       // sleep for the specified time (rounded down to the nearest microsecond)
       int delay_us = static_cast<int>(delay * 1000000);
       usleep(delay_us);
-      if (!silent) { HOLOSCAN_LOG_INFO("{}: finished waiting", name()); }
+      if (!silent) {
+        HOLOSCAN_LOG_INFO("{}: finished waiting", name());
+      }
     }
-    if (!silent) { HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value); }
+    if (!silent) {
+      HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value);
+    }
     op_output.emit(new_value, "out");
   };
 
@@ -280,13 +288,17 @@ int main([[maybe_unused]] int argc, char** argv) {
   // Get the configuration
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= std::filesystem::path("round_robin.yaml");
-  if (argc >= 2) { config_path = argv[1]; }
+  if (argc >= 2) {
+    config_path = argv[1];
+  }
   app->config(config_path);
 
   // Turn on data flow tracking if it is specified in the YAML
   auto tracking = app->from_config("tracking").as<bool>();
   holoscan::DataFlowTracker* tracker = nullptr;
-  if (tracking) { tracker = &app->track(0, 0, 0); }
+  if (tracking) {
+    tracker = &app->track(0, 0, 0);
+  }
 
   // set customizable application parameters via the YAML
   auto scheduler = app->from_config("scheduler").as<std::string>();
@@ -307,7 +319,9 @@ int main([[maybe_unused]] int argc, char** argv) {
   app->run();
 
   // Print all the results of data flow tracking
-  if (tracking) { tracker->print(); }
+  if (tracking) {
+    tracker->print();
+  }
 
   return 0;
 }

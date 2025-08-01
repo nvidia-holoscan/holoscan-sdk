@@ -130,25 +130,25 @@ def test_py_object_to_arg(value, container_type, element_type):
             round_trip_value = arg_to_py_object(arg)
             assert isinstance(round_trip_value, list)
             assert isinstance(round_trip_value[0], bool)
-            assert all(r == v for r, v in zip(round_trip_value, val_list))
+            assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
         elif isinstance(v0, int) or (numpy_scalar and value_dtype.kind in "iu"):
             print("int case testing")
             round_trip_value = arg_to_py_object(arg)
             assert isinstance(round_trip_value, list)
             assert isinstance(round_trip_value[0], int)
-            assert all(r == v for r, v in zip(round_trip_value, val_list))
+            assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
         elif isinstance(v0, float) or (numpy_scalar and value_dtype.kind in "f"):
             print("float case testing")
             round_trip_value = arg_to_py_object(arg)
             assert isinstance(round_trip_value, list)
             assert isinstance(round_trip_value[0], float)
-            assert all(r == v for r, v in zip(round_trip_value, val_list))
+            assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
         elif isinstance(v0, str):
             print("str case testing")
             round_trip_value = arg_to_py_object(arg)
             assert isinstance(round_trip_value, list)
             assert isinstance(round_trip_value[0], str)
-            assert all(r == v for r, v in zip(round_trip_value, val_list))
+            assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
 
 
 @pytest.mark.parametrize(
@@ -249,25 +249,25 @@ def test_py_object_to_arg_2d(value, container_type, element_type):
         round_trip_value = arg_to_py_object(arg)
         assert isinstance(round_trip_value, list)
         assert isinstance(round_trip_value[0][0], bool)
-        assert all(r == v for r, v in zip(round_trip_value, val_list))
+        assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
     elif isinstance(v0, int) or (numpy_scalar and value_dtype.kind in "iu"):
         print("int case testing")
         round_trip_value = arg_to_py_object(arg)
         assert isinstance(round_trip_value, list)
         assert isinstance(round_trip_value[0][0], int)
-        assert all(r == v for r, v in zip(round_trip_value, val_list))
+        assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
     elif isinstance(v0, float) or (numpy_scalar and value_dtype.kind in "f"):
         print("float case testing")
         round_trip_value = arg_to_py_object(arg)
         assert isinstance(round_trip_value, list)
         assert isinstance(round_trip_value[0][0], float)
-        assert all(r == v for r, v in zip(round_trip_value, val_list))
+        assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
     elif isinstance(v0, str):
         print("str case testing")
         round_trip_value = arg_to_py_object(arg)
         assert isinstance(round_trip_value, list)
         assert isinstance(round_trip_value[0][0], str)
-        assert all(r == v for r, v in zip(round_trip_value, val_list))
+        assert all(r == v for r, v in zip(round_trip_value, val_list, strict=True))
 
 
 @pytest.mark.parametrize("as_vector", [False, True])

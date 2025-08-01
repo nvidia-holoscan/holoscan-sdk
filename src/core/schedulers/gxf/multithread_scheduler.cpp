@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,7 +85,9 @@ void MultiThreadScheduler::initialize() {
   if (has_clock == args().end()) {
     clock_ = frag->make_resource<holoscan::RealtimeClock>("multithread_scheduler__realtime_clock");
     clock_->gxf_cname(clock_->name().c_str());
-    if (gxf_eid_ != 0) { clock_->gxf_eid(gxf_eid_); }
+    if (gxf_eid_ != 0) {
+      clock_->gxf_eid(gxf_eid_);
+    }
     add_arg(clock_.get());
   }
 

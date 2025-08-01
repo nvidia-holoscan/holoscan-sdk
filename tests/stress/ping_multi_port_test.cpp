@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,8 @@ class ValueData {
   ~ValueData() {
     try {
       HOLOSCAN_LOG_TRACE("ValueData::~ValueData(): {}", data_);
-    } catch (const std::exception& e) {}
+    } catch (const std::exception& e) {
+    }
   }
 
   void data(int value) { data_ = value; }

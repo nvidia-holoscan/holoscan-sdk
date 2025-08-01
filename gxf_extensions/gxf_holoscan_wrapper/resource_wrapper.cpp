@@ -25,7 +25,9 @@ namespace holoscan::gxf {
 ResourceWrapper::ResourceWrapper() : nvidia::gxf::Component() {
   // Set the log level from the environment variable if it exists.
   // Or, set the default log level to INFO if it hasn't been set by the user.
-  if (!Logger::log_level_set_by_user) { holoscan::set_log_level(LogLevel::INFO); }
+  if (!Logger::log_level_set_by_user) {
+    holoscan::set_log_level(LogLevel::INFO);
+  }
   // Set the log format from the environment variable if it exists.
   // Or, set the default log format depending on the log level if it hasn't been set by the user.
   holoscan::set_log_pattern();
@@ -87,7 +89,9 @@ gxf_result_t ResourceWrapper::registerInterface(nvidia::gxf::Registrar* registra
   // available.
   result &= registrar->registerParameterlessComponent();
   auto code = register_parameters(registrar, parameters_);
-  if (code != GXF_SUCCESS) return code;
+  if (code != GXF_SUCCESS) {
+    return code;
+  }
 
   return nvidia::gxf::ToResultCode(result);
 }

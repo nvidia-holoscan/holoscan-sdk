@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,20 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-diff --git CMakeLists.txt CMakeLists.txt
-index 56454d4b..0a59296 100644
---- CMakeLists.txt
-+++ CMakeLists.txt
-@@ -12,7 +12,7 @@
- # the License.
- # =============================================================================
- 
--cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
-+cmake_minimum_required(VERSION 3.24.0 FATAL_ERROR)
- 
- include(rapids_config.cmake)
- 
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 56454d4b..0a59296d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
 @@ -131,6 +131,7 @@ endif()
  
  # ##################################################################################################
@@ -42,35 +32,40 @@ index 56454d4b..0a59296 100644
  # ##################################################################################################
  # * make documentation -----------------------------------------------------------------------------
  
-diff --git include/rmm/cuda_stream_view.hpp include/rmm/cuda_stream_view.hpp
-index a34897d..231aae9 100644
---- include/rmm/cuda_stream_view.hpp
-+++ include/rmm/cuda_stream_view.hpp
-@@ -18,6 +18,7 @@
-
+diff --git a/include/rmm/cuda_stream_view.hpp b/include/rmm/cuda_stream_view.hpp
+index a34897df..c896277d 100644
+--- a/include/rmm/cuda_stream_view.hpp
++++ b/include/rmm/cuda_stream_view.hpp
+@@ -18,6 +18,10 @@
+ 
  #include <rmm/detail/error.hpp>
-
+ 
++#ifndef LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE
 +#define LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE
++#endif
++
  #include <cuda/stream_ref>
  #include <cuda_runtime_api.h>
-
-diff --git include/rmm/logger.hpp include/rmm/logger.hpp
-index 6213221..edaf605 100644
---- include/rmm/logger.hpp
-+++ include/rmm/logger.hpp
-@@ -16,6 +16,7 @@
-
+ 
+diff --git a/include/rmm/logger.hpp b/include/rmm/logger.hpp
+index 6213221a..9524ffa0 100644
+--- a/include/rmm/logger.hpp
++++ b/include/rmm/logger.hpp
+@@ -16,6 +16,10 @@
+ 
  #pragma once
-
+ 
++#ifndef FMT_HEADER_ONLY
 +#define FMT_HEADER_ONLY
++#endif
++
  #include <fmt/format.h>
  #include <fmt/ostream.h>
  #include <spdlog/sinks/basic_file_sink.h>
-
-diff --git include/rmm/mr/device/cuda_async_memory_resource.hpp include/rmm/mr/device/cuda_async_memory_resource.hpp
+diff --git a/include/rmm/mr/device/cuda_async_memory_resource.hpp b/include/rmm/mr/device/cuda_async_memory_resource.hpp
 index ac6b7207..702efae6 100644
---- include/rmm/mr/device/cuda_async_memory_resource.hpp
-+++ include/rmm/mr/device/cuda_async_memory_resource.hpp
+--- a/include/rmm/mr/device/cuda_async_memory_resource.hpp
++++ b/include/rmm/mr/device/cuda_async_memory_resource.hpp
 @@ -85,22 +85,22 @@ class cuda_async_memory_resource final : public device_memory_resource {
     * resource should support interprocess communication (IPC). Default is
     * `cudaMemHandleTypeNone` for no IPC support.

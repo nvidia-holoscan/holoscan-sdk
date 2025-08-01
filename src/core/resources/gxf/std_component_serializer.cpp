@@ -42,7 +42,9 @@ void StdComponentSerializer::initialize() {
     auto frag = fragment();
     auto allocator = frag->make_resource<UnboundedAllocator>("std_component_serializer_allocator");
     allocator->gxf_cname(allocator->name().c_str());
-    if (gxf_eid_ != 0) { allocator->gxf_eid(gxf_eid_); }
+    if (gxf_eid_ != 0) {
+      allocator->gxf_eid(gxf_eid_);
+    }
     add_arg(Arg("allocator") = allocator);
   } else {
     // must set the gxf_eid for the provided allocator or GXF parameter registration will fail

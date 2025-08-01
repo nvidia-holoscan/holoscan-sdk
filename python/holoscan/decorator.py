@@ -27,9 +27,9 @@ limitations under the License.
 import ast
 import inspect
 import textwrap
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import cupy as cp
 import numpy as np
@@ -111,12 +111,12 @@ class Input:
     """
 
     name: str
-    arg_map: Optional[Union[str, dict[str, str]]] = ()
-    size: Union[int, IOSpec.IOSize] = IOSpec.SIZE_ONE
-    policy: Optional[IOSpec.QueuePolicy] = None
-    condition_type: Optional[ConditionType] = None
+    arg_map: str | dict[str, str] | None = ()
+    size: int | IOSpec.IOSize = IOSpec.SIZE_ONE
+    policy: IOSpec.QueuePolicy | None = None
+    condition_type: ConditionType | None = None
     condition_kwargs: dict[str, Any] = field(default_factory=dict)
-    connector_type: Optional[IOSpec.ConnectorType] = None
+    connector_type: IOSpec.ConnectorType | None = None
     connector_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def create_input(self, spec: OperatorSpec) -> IOSpec:
@@ -173,12 +173,12 @@ class Output:
     """
 
     name: str
-    tensor_names: Optional[Union[str, tuple[str]]] = ()
-    size: Union[int, IOSpec.IOSize] = IOSpec.SIZE_ONE
-    policy: Optional[IOSpec.QueuePolicy] = None
-    condition_type: Optional[ConditionType] = None
+    tensor_names: str | tuple[str] | None = ()
+    size: int | IOSpec.IOSize = IOSpec.SIZE_ONE
+    policy: IOSpec.QueuePolicy | None = None
+    condition_type: ConditionType | None = None
     condition_kwargs: dict[str, Any] = field(default_factory=dict)
-    connector_type: Optional[IOSpec.ConnectorType] = None
+    connector_type: IOSpec.ConnectorType | None = None
     connector_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def create_output(self, spec: OperatorSpec) -> IOSpec:
@@ -197,7 +197,7 @@ class Output:
             iospec = iospec.connector(self.connector_type, **self.connector_kwargs)
 
 
-def _as_input(input_: Union[str, Input]):
+def _as_input(input_: str | Input):
     """Cast str to Output object."""
     if isinstance(input_, str):
         return Input(input_, arg_map=input_)
@@ -206,7 +206,7 @@ def _as_input(input_: Union[str, Input]):
     return input_
 
 
-def _as_output(output: Union[str, Output]):
+def _as_output(output: str | Output):
     """Cast str to Output object."""
     if isinstance(output, str):
         return Output(output)
@@ -262,11 +262,11 @@ def _has_function_returns_value(func):
 
 
 def create_op(
-    function_or_class: Optional[Union[type, Callable[..., Any]]] = None,
-    inputs: Union[str, Input, Sequence[Union[str, Input]]] = (),
-    outputs: Union[str, Output, Sequence[Union[str, Output]]] = (),
+    function_or_class: type | Callable[..., Any] | None = None,
+    inputs: str | Input | Sequence[str | Input] = (),
+    outputs: str | Output | Sequence[str | Output] = (),
     cast_tensors: bool = True,
-    op_param: Optional[str] = None,
+    op_param: str | None = None,
 ) -> Callable:
     """Decorator for creating an operator from a function or a class.
 
@@ -308,12 +308,12 @@ def create_op(
     is_without_args = function_or_class is not None
 
     # convert scalars to tuple
-    if isinstance(inputs, (str, Input)):
+    if isinstance(inputs, str | Input):
         inputs = (inputs,)
     # convert any str in the tuple to an Input object
     inputs = tuple(_as_input(i) for i in inputs)
 
-    if isinstance(outputs, (str, Output)):
+    if isinstance(outputs, str | Output):
         outputs = (outputs,)
     # convert any str in the tuple to an Output object
     outputs = tuple(_as_output(o) for o in outputs)
@@ -365,9 +365,7 @@ def create_op(
                     # remove conditions and resources from *args
                     condition_args = tuple(a for a in args if isinstance(a, ConditionBase))
                     resource_args = tuple(a for a in args if isinstance(a, ResourceBase))
-                    args = tuple(
-                        a for a in args if not isinstance(a, (ConditionBase, ResourceBase))
-                    )
+                    args = tuple(a for a in args if not isinstance(a, ConditionBase | ResourceBase))
                     self.func_args = args
 
                     # add a boolean condition to prevent triggering if the function is a generator
@@ -449,7 +447,9 @@ def create_op(
                         if n_default_positional > 0:
                             self.func_args = self.func_args[:-n_default_positional]
                         n_required_positional = len(argspec.args) - len(argspec.defaults)
-                        for k, v in zip(argspec.args[n_required_positional:], argspec.defaults):
+                        for k, v in zip(
+                            argspec.args[n_required_positional:], argspec.defaults, strict=False
+                        ):
                             # don't overwrite any kwargs that were provided
                             if k not in self.fixed_kwargs:
                                 self.fixed_kwargs[k] = v
@@ -574,7 +574,7 @@ def create_op(
                                 f"Number of output tensors = {len(self.output_tensor_map)}"
                             )
                         for (port_name, tensor_names), out_element in zip(
-                            self.output_tensor_map.items(), out
+                            self.output_tensor_map.items(), out, strict=False
                         ):
                             if _is_tensor_like(out_element):
                                 name = "" if len(tensor_names) == 0 else tensor_names[0]

@@ -51,7 +51,9 @@ constexpr std::array<std::pair<std::string_view, PeriodicConditionPolicy>, 3>
 
 constexpr PeriodicConditionPolicy ToPeriodicConditionPolicy(std::string_view value) {
   for (const auto& [name, policy] : PeriodicConditionPolicyMapping) {
-    if (name == value) { return policy; }
+    if (name == value) {
+      return policy;
+    }
   }
   // Default to CatchUpMissedTicks
   return PeriodicConditionPolicy::kCatchUpMissedTicks;

@@ -21,6 +21,7 @@
 #include <pybind11/stl.h>
 
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,8 @@
 #include "holoscan/pose_tree/math/so2.hpp"
 #include "holoscan/pose_tree/math/so3.hpp"
 #include "holoscan/pose_tree/pose_tree.hpp"
+#include "holoscan/pose_tree/pose_tree_ucx_client.hpp"
+#include "holoscan/pose_tree/pose_tree_ucx_server.hpp"
 
 namespace py = pybind11;
 
@@ -159,7 +162,7 @@ void init_pose_tree(py::module_& m) {
       .value("DEFAULT", PoseTreeEdgeHistory::AccessMethod::kDefault);
 
   // Bind the PoseTree class
-  py::class_<PoseTree>(m, "PoseTree")
+  py::class_<PoseTree, std::shared_ptr<PoseTree>>(m, "PoseTree")
       .def(py::init<>())
       // Initialize method
       .def(
@@ -179,7 +182,9 @@ void init_pose_tree(py::module_& m) {
                                  default_history_length,
                                  edges_chunk_size,
                                  history_chunk_size);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
           },
           py::arg("number_frames") = 1024,
           py::arg("number_edges") = 16384,
@@ -198,7 +203,9 @@ void init_pose_tree(py::module_& m) {
           "create_frame",
           [](PoseTree& self, std::string_view name, int32_t number_edges) {
             auto ret = self.create_frame(name, number_edges);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("name") = "",
@@ -208,7 +215,9 @@ void init_pose_tree(py::module_& m) {
           "find_frame",
           [](PoseTree& self, std::string_view name) {
             auto ret = self.find_frame(name);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("name"))
@@ -217,7 +226,9 @@ void init_pose_tree(py::module_& m) {
           "find_or_create_frame",
           [](PoseTree& self, std::string_view name, int32_t number_edges) {
             auto ret = self.find_or_create_frame(name, number_edges);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("name"),
@@ -227,7 +238,9 @@ void init_pose_tree(py::module_& m) {
           "get_frame_name",
           [](PoseTree& self, PoseTree::frame_t uid) {
             auto ret = self.get_frame_name(uid);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("uid"))
@@ -241,7 +254,9 @@ void init_pose_tree(py::module_& m) {
              int32_t number_edges,
              PoseTreeEdgeHistory::AccessMethod method) {
             auto ret = self.create_edges(lhs, rhs, number_edges, method);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -257,7 +272,9 @@ void init_pose_tree(py::module_& m) {
              int32_t number_edges,
              PoseTreeEdgeHistory::AccessMethod method) {
             auto ret = self.create_edges(lhs, rhs, number_edges, method);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -269,7 +286,9 @@ void init_pose_tree(py::module_& m) {
           "delete_edge",
           [](PoseTree& self, PoseTree::frame_t lhs, PoseTree::frame_t rhs) {
             auto ret = self.delete_edge(lhs, rhs);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -279,7 +298,9 @@ void init_pose_tree(py::module_& m) {
           "delete_edge",
           [](PoseTree& self, std::string_view lhs, std::string_view rhs) {
             auto ret = self.delete_edge(lhs, rhs);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -289,7 +310,9 @@ void init_pose_tree(py::module_& m) {
           "disconnect_edge",
           [](PoseTree& self, PoseTree::frame_t lhs, PoseTree::frame_t rhs, double time) {
             auto ret = self.disconnect_edge(lhs, rhs, time);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -300,7 +323,9 @@ void init_pose_tree(py::module_& m) {
           "disconnect_edge",
           [](PoseTree& self, std::string_view lhs, std::string_view rhs, double time) {
             auto ret = self.disconnect_edge(lhs, rhs, time);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -311,7 +336,9 @@ void init_pose_tree(py::module_& m) {
           "delete_frame",
           [](PoseTree& self, PoseTree::frame_t uid) {
             auto ret = self.delete_frame(uid);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("uid"))
@@ -320,7 +347,9 @@ void init_pose_tree(py::module_& m) {
           "delete_frame",
           [](PoseTree& self, std::string_view name) {
             auto ret = self.delete_frame(name);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("name"))
@@ -329,7 +358,9 @@ void init_pose_tree(py::module_& m) {
           "disconnect_frame",
           [](PoseTree& self, PoseTree::frame_t uid, double time) {
             auto ret = self.disconnect_frame(uid, time);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("name"),
@@ -338,7 +369,9 @@ void init_pose_tree(py::module_& m) {
           "disconnect_frame",
           [](PoseTree& self, std::string_view name, double time) {
             auto ret = self.disconnect_frame(name, time);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("name"),
@@ -348,7 +381,9 @@ void init_pose_tree(py::module_& m) {
           "get_latest",
           [](PoseTree& self, PoseTree::frame_t lhs, PoseTree::frame_t rhs) {
             auto ret = self.get_latest(lhs, rhs);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -358,7 +393,9 @@ void init_pose_tree(py::module_& m) {
           "get_latest",
           [](PoseTree& self, std::string_view lhs, std::string_view rhs) {
             auto ret = self.get_latest(lhs, rhs);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -373,9 +410,13 @@ void init_pose_tree(py::module_& m) {
              double time,
              PoseTreeEdgeHistory::AccessMethod method,
              PoseTree::version_t version) {
-            if (version == 0) { version = self.get_pose_tree_version(); }
+            if (version == 0) {
+              version = self.get_pose_tree_version();
+            }
             auto ret = self.get(lhs, rhs, time, method, version);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -391,9 +432,13 @@ void init_pose_tree(py::module_& m) {
              double time,
              PoseTreeEdgeHistory::AccessMethod method,
              PoseTree::version_t version) {
-            if (version == 0) { version = self.get_pose_tree_version(); }
+            if (version == 0) {
+              version = self.get_pose_tree_version();
+            }
             auto ret = self.get(lhs, rhs, time, method, version);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -410,9 +455,13 @@ void init_pose_tree(py::module_& m) {
              double time,
              PoseTreeEdgeHistory::AccessMethod method,
              PoseTree::version_t version) {
-            if (version == 0) { version = self.get_pose_tree_version(); }
+            if (version == 0) {
+              version = self.get_pose_tree_version();
+            }
             auto ret = self.get_pose2_xy(lhs, rhs, time, method, version);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -428,9 +477,13 @@ void init_pose_tree(py::module_& m) {
              double time,
              PoseTreeEdgeHistory::AccessMethod method,
              PoseTree::version_t version) {
-            if (version == 0) { version = self.get_pose_tree_version(); }
+            if (version == 0) {
+              version = self.get_pose_tree_version();
+            }
             auto ret = self.get_pose2_xy(lhs, rhs, time, method, version);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -448,7 +501,9 @@ void init_pose_tree(py::module_& m) {
              double time,
              const Pose3d& pose) {
             auto ret = self.set(lhs, rhs, time, pose);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -463,7 +518,9 @@ void init_pose_tree(py::module_& m) {
              double time,
              const Pose3d& pose) {
             auto ret = self.set(lhs, rhs, time, pose);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -478,7 +535,9 @@ void init_pose_tree(py::module_& m) {
              double time,
              const Pose2d& pose) {
             auto ret = self.set(lhs, rhs, time, pose);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -493,7 +552,9 @@ void init_pose_tree(py::module_& m) {
              double time,
              const Pose2d& pose) {
             auto ret = self.set(lhs, rhs, time, pose);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return ret.value();
           },
           py::arg("lhs"),
@@ -508,7 +569,9 @@ void init_pose_tree(py::module_& m) {
             std::vector<PoseTree::frame_t> container;
             container.reserve(maximum_number_frames);  // reasonable initial capacity
             auto ret = self.get_frame_uids(container);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return container;
           },
           py::arg("maximum_number_frames") = 1024)
@@ -518,7 +581,9 @@ void init_pose_tree(py::module_& m) {
             std::vector<std::string_view> container;
             container.reserve(maximum_number_frames);  // reasonable initial capacity
             auto ret = self.get_frame_names(container);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return container;
           },
           py::arg("maximum_number_frames") = 1024)
@@ -528,7 +593,9 @@ void init_pose_tree(py::module_& m) {
             std::vector<std::pair<PoseTree::frame_t, PoseTree::frame_t>> container;
             container.reserve(maximum_number_edges);  // reasonable initial capacity
             auto ret = self.get_edge_uids(container);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return container;
           },
           py::arg("maximum_number_edges") = 1024)
@@ -538,10 +605,100 @@ void init_pose_tree(py::module_& m) {
             std::vector<std::pair<std::string_view, std::string_view>> container;
             container.reserve(maximum_number_edges);  // reasonable initial capacity
             auto ret = self.get_edge_names(container);
-            if (!ret) { throw std::runtime_error(PoseTree::error_to_str(ret.error())); }
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
             return container;
           },
           py::arg("maximum_number_edges") = 1024);
+}
+
+void init_pose_tree_ucx(py::module_& m) {
+  // Bind PoseTreeUCXServerConfig
+  py::class_<PoseTreeUCXServerConfig>(m, "PoseTreeUCXServerConfig")
+      .def(py::init<>())
+      .def_readwrite("worker_progress_sleep_us", &PoseTreeUCXServerConfig::worker_progress_sleep_us)
+      .def_readwrite("shutdown_timeout_ms", &PoseTreeUCXServerConfig::shutdown_timeout_ms)
+      .def_readwrite("shutdown_poll_sleep_ms", &PoseTreeUCXServerConfig::shutdown_poll_sleep_ms);
+
+  // Bind PoseTreeUCXServer Error enum
+  py::enum_<PoseTreeUCXServer::Error>(m, "PoseTreeUCXServerError")
+      .value("ALREADY_RUNNING", PoseTreeUCXServer::Error::kAlreadyRunning)
+      .value("INVALID_ARGUMENT", PoseTreeUCXServer::Error::kInvalidArgument)
+      .value("STARTUP_FAILED", PoseTreeUCXServer::Error::kStartupFailed)
+      .value("NOT_RUNNING", PoseTreeUCXServer::Error::kNotRunning)
+      .value("SHUTDOWN_TIMEOUT", PoseTreeUCXServer::Error::kShutdownTimeout)
+      .value("INTERNAL_ERROR", PoseTreeUCXServer::Error::kInternalError);
+
+  // Bind PoseTreeUCXServer.
+  // The shared_ptr holder type is needed as it is passed as a shared_ptr to the client.
+  py::class_<PoseTreeUCXServer, std::shared_ptr<PoseTreeUCXServer>>(m, "PoseTreeUCXServer")
+      .def(py::init<std::shared_ptr<PoseTree>, PoseTreeUCXServerConfig>(),
+           py::arg("pose_tree"),
+           py::arg("config") = PoseTreeUCXServerConfig{})
+      .def(
+          "start",
+          [](PoseTreeUCXServer& self, uint16_t port) {
+            auto result = self.start(port);
+            if (!result) {
+              throw std::runtime_error(PoseTreeUCXServer::error_to_str(result.error()));
+            }
+          },
+          py::arg("port"))
+      .def("stop",
+           [](PoseTreeUCXServer& self) {
+             auto result = self.stop();
+             if (!result) {
+               throw std::runtime_error(PoseTreeUCXServer::error_to_str(result.error()));
+             }
+           })
+      .def_property_readonly("is_running", &PoseTreeUCXServer::is_running)
+      .def_static("error_to_str", &PoseTreeUCXServer::error_to_str);
+
+  // Bind PoseTreeUCXClientConfig
+  py::class_<PoseTreeUCXClientConfig>(m, "PoseTreeUCXClientConfig")
+      .def(py::init<>())
+      .def_readwrite("request_timeout_ms", &PoseTreeUCXClientConfig::request_timeout_ms)
+      .def_readwrite("request_poll_sleep_us", &PoseTreeUCXClientConfig::request_poll_sleep_us)
+      .def_readwrite("worker_progress_sleep_us",
+                     &PoseTreeUCXClientConfig::worker_progress_sleep_us);
+
+  // Bind PoseTreeUCXClient Error enum
+  py::enum_<PoseTreeUCXClient::Error>(m, "PoseTreeUCXClientError")
+      .value("ALREADY_CONNECTED", PoseTreeUCXClient::Error::kAlreadyConnected)
+      .value("INVALID_ARGUMENT", PoseTreeUCXClient::Error::kInvalidArgument)
+      .value("CONNECTION_FAILED", PoseTreeUCXClient::Error::kConnectionFailed)
+      .value("NOT_CONNECTED", PoseTreeUCXClient::Error::kNotConnected)
+      .value("THREAD_ERROR", PoseTreeUCXClient::Error::kThreadError)
+      .value("SHUTDOWN_ERROR", PoseTreeUCXClient::Error::kShutdownError)
+      .value("INTERNAL_ERROR", PoseTreeUCXClient::Error::kInternalError);
+
+  // unique_ptr holder for a non-copyable class
+  using PoseTreeUCXClientUPtr = std::unique_ptr<PoseTreeUCXClient>;
+  py::class_<PoseTreeUCXClient, PoseTreeUCXClientUPtr>(m, "PoseTreeUCXClient")
+      .def(py::init<std::shared_ptr<PoseTree>, PoseTreeUCXClientConfig>(),
+           py::arg("pose_tree"),
+           py::arg("config") = PoseTreeUCXClientConfig{})
+      .def(
+          "connect",
+          [](PoseTreeUCXClient& self, std::string_view host, uint16_t port, bool request_snapshot) {
+            auto result = self.connect(host, port, request_snapshot);
+            if (!result) {
+              throw std::runtime_error(PoseTreeUCXClient::error_to_str(result.error()));
+            }
+          },
+          py::arg("host"),
+          py::arg("port"),
+          py::arg("request_snapshot"))
+      .def("disconnect",
+           [](PoseTreeUCXClient& self) {
+             auto result = self.disconnect();
+             if (!result) {
+               throw std::runtime_error(PoseTreeUCXClient::error_to_str(result.error()));
+             }
+           })
+      .def_property_readonly("is_running", &PoseTreeUCXClient::is_running)
+      .def_static("error_to_str", &PoseTreeUCXClient::error_to_str);
 }
 
 PYBIND11_MODULE(_pose_tree, m) {
@@ -553,6 +710,7 @@ PYBIND11_MODULE(_pose_tree, m) {
 
   init_pose_tree_geometry(m);
   init_pose_tree(m);
+  init_pose_tree_ucx(m);
 }
 
 }  // namespace holoscan

@@ -47,7 +47,9 @@ PoseTreeEdgeHistory::expected_t<void> PoseTreeEdgeHistory::disconnect(const doub
                                                                       const version_t version) {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
   const auto maybe_idx = reserve_new_pose(time, version);
-  if (!maybe_idx) { return unexpected_t(maybe_idx.error()); }
+  if (!maybe_idx) {
+    return unexpected_t(maybe_idx.error());
+  }
   const int32_t idx = maybe_idx.value();
   edges_info_[idx].valid = false;
   return expected_t<void>{};
@@ -58,7 +60,9 @@ PoseTreeEdgeHistory::expected_t<void> PoseTreeEdgeHistory::set(const double time
                                                                const version_t version) {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
   const auto maybe_idx = reserve_new_pose(time, version);
-  if (!maybe_idx) { return unexpected_t(maybe_idx.error()); }
+  if (!maybe_idx) {
+    return unexpected_t(maybe_idx.error());
+  }
   const int32_t idx = maybe_idx.value();
   edges_info_[idx].pose = pose;
   edges_info_[idx].valid = true;
@@ -67,7 +71,9 @@ PoseTreeEdgeHistory::expected_t<void> PoseTreeEdgeHistory::set(const double time
 
 PoseTreeEdgeHistory::expected_t<int32_t> PoseTreeEdgeHistory::reserve_new_pose(
     const double time, const version_t version) {
-  if (maximum_size_ <= 0 || edges_info_ == nullptr) { return unexpected_t(Error::kOutOfRange); }
+  if (maximum_size_ <= 0 || edges_info_ == nullptr) {
+    return unexpected_t(Error::kOutOfRange);
+  }
   const int32_t last_idx = (pos_ + size_ - 1) % maximum_size_;
   if (size_ != 0 &&
       (edges_info_[last_idx].time >= time || edges_info_[last_idx].version >= version)) {
@@ -76,7 +82,9 @@ PoseTreeEdgeHistory::expected_t<int32_t> PoseTreeEdgeHistory::reserve_new_pose(
   int32_t idx;
   if (size_ == maximum_size_) {
     idx = pos_++;
-    if (pos_ == maximum_size_) { pos_ = 0; }
+    if (pos_ == maximum_size_) {
+      pos_ = 0;
+    }
   } else {
     idx = size_++;
   }
@@ -87,14 +95,18 @@ PoseTreeEdgeHistory::expected_t<int32_t> PoseTreeEdgeHistory::reserve_new_pose(
 
 PoseTreeEdgeHistory::expected_t<PoseTreeEdgeHistory::TimedPose> PoseTreeEdgeHistory::latest()
     const {
-  if (size_ == 0) { return unexpected_t(Error::kOutOfRange); }
+  if (size_ == 0) {
+    return unexpected_t(Error::kOutOfRange);
+  }
   return edges_info_[(pos_ + size_ - 1) % maximum_size_];
 }
 
 PoseTreeEdgeHistory::expected_t<PoseTreeEdgeHistory::TimedPose> PoseTreeEdgeHistory::at(
     const int32_t index) const {
   std::shared_lock<std::shared_timed_mutex> lock(mutex_);
-  if (index < 0 || index >= size_) { return unexpected_t(Error::kInvalidArgument); }
+  if (index < 0 || index >= size_) {
+    return unexpected_t(Error::kInvalidArgument);
+  }
   const int32_t idx = (pos_ + index) % maximum_size_;
   return edges_info_[idx];
 }
@@ -121,10 +133,14 @@ PoseTreeEdgeHistory::expected_t<Pose3d> PoseTreeEdgeHistory::get(const double ti
     }
   }
   const int32_t index = start % maximum_size_;
-  if (!edges_info_[index].valid) { return unexpected_t(Error::kFramesNotLinked); }
+  if (!edges_info_[index].valid) {
+    return unexpected_t(Error::kFramesNotLinked);
+  }
   const int32_t next_index = (start + 1) % maximum_size_;
 
-  if (method == AccessMethod::kDefault) { method = default_access_method_; }
+  if (method == AccessMethod::kDefault) {
+    method = default_access_method_;
+  }
 
   // If the valid pose is the last one, we handle separately.
   if (next_index == (pos_ + size_) % maximum_size_ || edges_info_[next_index].version > version ||
@@ -138,9 +154,13 @@ PoseTreeEdgeHistory::expected_t<Pose3d> PoseTreeEdgeHistory::get(const double ti
       }
       case AccessMethod::kExtrapolateSlerp:
       case AccessMethod::kExtrapolateLinearly: {
-        if (pos_ == start) { return unexpected_t(Error::kOutOfRange); }
+        if (pos_ == start) {
+          return unexpected_t(Error::kOutOfRange);
+        }
         const auto& pose1 = edges_info_[(index + maximum_size_ - 1) % maximum_size_];
-        if (!pose1.valid) { return unexpected_t(Error::kOutOfRange); }
+        if (!pose1.valid) {
+          return unexpected_t(Error::kOutOfRange);
+        }
         const auto& pose2 = edges_info_[index];
         const double delta_time = time - pose1.time;
         const double total_time = pose2.time - pose1.time;

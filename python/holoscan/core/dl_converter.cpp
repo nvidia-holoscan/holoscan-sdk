@@ -107,7 +107,9 @@ void set_array_interface(const py::object& obj,
     switch (dl_tensor.device.device_type) {
       case kDLCPU:
       case kDLCUDAHost: {
-        if (py::hasattr(obj, "__array_interface__")) { py::delattr(obj, "__array_interface__"); }
+        if (py::hasattr(obj, "__array_interface__")) {
+          py::delattr(obj, "__array_interface__");
+        }
       } break;
       case kDLCUDA:
       case kDLCUDAManaged: {
@@ -147,7 +149,9 @@ void process_dlpack_stream(py::object stream_obj) {
           "(per-thread default stream), or a positive integer (stream pointer)");
     }
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr)
-    if (stream_id > 2) { stream_ptr = reinterpret_cast<cudaStream_t>(stream_id); }
+    if (stream_id > 2) {
+      stream_ptr = reinterpret_cast<cudaStream_t>(stream_id);
+    }
   } else {
     throw std::runtime_error(fmt::format("Invalid stream type: should be int type but given '{}'",
                                          std::string(py::str(stream_obj))));
@@ -171,7 +175,9 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream,
   bool use_versioned = false;  // Default to unversioned for backward compatibility
   if (max_version.has_value()) {
     auto [major, minor] = max_version.value();
-    if (major >= 1) { use_versioned = true; }
+    if (major >= 1) {
+      use_versioned = true;
+    }
   }
   // Note: Follow the array API standard for exception type that must be returned (BufferError)
   // https://data-apis.org/array-api/latest/API_specification/generated/array_api.array.__dlpack__.html#array_api.array.__dlpack__
@@ -239,7 +245,8 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream,
   // Create capsule with appropriate name and deleter
   py::capsule dlpack_capsule(dl_managed_tensor_ptr, capsule_name, [](PyObject* ptr) {
     const char* name = PyCapsule_GetName(ptr);
-    if (name == nullptr) return;
+    if (name == nullptr)
+      return;
 
     bool is_versioned = (strcmp(name, dlpack_versioned_capsule_name) == 0);
     const char* valid_name = is_versioned ? dlpack_versioned_capsule_name : dlpack_capsule_name;
@@ -256,7 +263,9 @@ py::capsule py_dlpack(Tensor* tensor, py::object stream,
       } else {
         auto* dl_managed_tensor =
             static_cast<DLManagedTensor*>(PyCapsule_GetPointer(ptr, valid_name));
-        if (dl_managed_tensor != nullptr) { dl_managed_tensor->deleter(dl_managed_tensor); }
+        if (dl_managed_tensor != nullptr) {
+          dl_managed_tensor->deleter(dl_managed_tensor);
+        }
       }
     }
   });

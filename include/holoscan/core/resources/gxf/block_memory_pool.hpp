@@ -37,9 +37,10 @@ namespace holoscan {
  * - **block_size** (uint64_t): The size of the individual memory blocks in the pool (in bytes).
  * - **num_blocks** (uint64_t): The number of memory blocks available in the pool.
  * - **storage_type** (int32_t, optional): The memory type allocated by the pool (0=Host, 1=Device,
- * 2=System) will use (Default: 0). Here "host" and "system" are both CPU memory, but "host" refers
- * to pinned host memory (allocated via `cudaMallocHost`) while "system" is memory allocated by
- * standard C++ `new`.
+ * 2=System, 3=CUDA Managed) will use (Default: 0). Here "host" and "system" are both CPU memory,
+ * but "host" refers to pinned host memory (allocated via `cudaMallocHost`) while "system" is memory
+ * allocated by standard C++ `new`. CUDA Managed memory is allocated via CUDA's managed memory APIs
+ * and can be used from both host and device.
  * - **dev_id** (int32_t, optional): The CUDA device id specifying which device the memory pool
  * will use (Default: 0).
  */

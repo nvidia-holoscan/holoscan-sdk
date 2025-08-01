@@ -128,14 +128,18 @@ class VerboseCountCondition : public Condition {
   void on_execute(int64_t timestamp) override {
     HOLOSCAN_LOG_INFO("In on_execute for condition {}, remaining = {}", name(), remaining_);
     remaining_--;
-    if (remaining_ == 0) { current_state_ = SchedulingStatusType::kNever; }
+    if (remaining_ == 0) {
+      current_state_ = SchedulingStatusType::kNever;
+    }
     last_run_timestamp_ = timestamp;
     return;
   };
 
   void update_state([[maybe_unused]] int64_t timestamp) override {
     HOLOSCAN_LOG_INFO("In update_state for condition {}, remaining = {}", name(), remaining_);
-    if (remaining_ == 0) { current_state_ = SchedulingStatusType::kNever; }
+    if (remaining_ == 0) {
+      current_state_ = SchedulingStatusType::kNever;
+    }
     return;
   };
 
@@ -206,7 +210,9 @@ TEST_P(OrCombinerAppTest, TestHoloscanCountConditionCombine) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Rx message value: 10") != std::string::npos)

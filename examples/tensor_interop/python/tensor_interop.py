@@ -18,7 +18,7 @@ limitations under the License.
 import os
 
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.data_loggers import BasicConsoleLogger
+from holoscan.data_loggers import GXFConsoleLogger
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
 
 try:
@@ -132,7 +132,7 @@ def main(config_file):
 
     # log the messages sent between operators
     app.add_data_logger(
-        BasicConsoleLogger(
+        GXFConsoleLogger(
             app,
             name="console_logger",
             log_tensor_data_content=False,

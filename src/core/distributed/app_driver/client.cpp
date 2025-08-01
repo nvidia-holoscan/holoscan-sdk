@@ -46,7 +46,9 @@ bool AppDriverClient::fragment_allocation(const std::string& worker_ip,
   request.set_worker_port(worker_port);
 
   // Adding fragment names
-  for (const auto& fragment : target_fragments) { request.add_fragment_names(fragment->name()); }
+  for (const auto& fragment : target_fragments) {
+    request.add_fragment_names(fragment->name());
+  }
 
   // Creating AvailableSystemResource and adding it to the request
 

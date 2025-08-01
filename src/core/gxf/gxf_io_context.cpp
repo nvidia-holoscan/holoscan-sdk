@@ -35,49 +35,13 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/profiler/profiler.hpp"
 
 #include "gxf/core/gxf.h"
 #include "gxf/std/receiver.hpp"
 #include "gxf/std/transmitter.hpp"
 
 namespace holoscan::gxf {
-
-namespace {
-// Check if any nvidia::gxf::Tensor components are present in the entity and log them
-// TODO(grelee): should we have a flag to disable this entity-based logging?
-//               should we log other components aside from Tensor that are in the entity?
-inline void log_tensors_in_entity(Operator* op, const nvidia::gxf::Entity& gxf_entity,
-                                  const std::shared_ptr<IOSpec>& io_spec, IOSpec::IOType io_type,
-                                  int64_t acq_timestamp = -1) {
-  auto tensor_components_expected = gxf_entity.findAllHeap<nvidia::gxf::Tensor>();
-  if (tensor_components_expected.has_value() && tensor_components_expected.value().size() > 0) {
-    TensorMap tensor_map;
-    for (const auto& gxf_tensor : tensor_components_expected.value()) {
-      // Do zero-copy conversion to holoscan::Tensor (as in
-      // gxf_entity.get<holoscan::Tensor>())
-      auto maybe_dl_ctx = (*gxf_tensor->get()).toDLManagedTensorContext();
-      if (!maybe_dl_ctx) {
-        HOLOSCAN_LOG_ERROR(
-            "Failed to get std::shared_ptr<DLManagedTensorContext> from "
-            "nvidia::gxf::Tensor");
-        continue;
-      }
-      auto holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
-      tensor_map.insert({gxf_tensor->name(), holoscan_tensor});
-    }
-    if (tensor_map.size() > 0) {
-      const std::string unique_id = io_spec->unique_id();
-      auto metadata_ptr = op->is_metadata_enabled() ? op->metadata() : nullptr;
-      for (auto& data_logger : op->fragment()->data_loggers()) {
-        if (data_logger->should_log_output()) {
-          data_logger->log_tensormap_data(
-              tensor_map, unique_id, acq_timestamp, metadata_ptr, io_type);
-        }
-      }
-    }
-  }
-}
-}  // namespace
 
 nvidia::gxf::Receiver* get_gxf_receiver(const std::shared_ptr<IOSpec>& input_spec) {
   auto connector = input_spec->connector();
@@ -112,7 +76,9 @@ GXFInputContext::GXFInputContext(ExecutionContext* execution_context, Operator* 
     : InputContext(execution_context, op, inputs) {}
 
 gxf_context_t GXFInputContext::gxf_context() const {
-  if (execution_context_) { return execution_context_->context(); }
+  if (execution_context_) {
+    return execution_context_->context();
+  }
   return nullptr;
 }
 
@@ -153,6 +119,8 @@ gxf_result_t GXFInputContext::retrieve_cuda_streams(nvidia::gxf::Entity& message
 
 cudaStream_t GXFInputContext::receive_cuda_stream(const char* input_port_name, bool allocate,
                                                   bool sync_to_default) {
+  PROF_SCOPED_EVENT(op_->id(), event_receive_cuda_stream);
+
   std::string input_name = holoscan::get_well_formed_name(input_port_name, inputs_);
   if (inputs_.find(input_name) == inputs_.end()) {
     std::string err_msg = fmt::format("An input port with name '{}' is not found", input_name);
@@ -172,6 +140,8 @@ cudaStream_t GXFInputContext::receive_cuda_stream(const char* input_port_name, b
 
 std::vector<std::optional<cudaStream_t>> GXFInputContext::receive_cuda_streams(
     const char* input_port_name) {
+  PROF_SCOPED_EVENT(op_->id(), event_receive_cuda_streams);
+
   std::string input_name = holoscan::get_well_formed_name(input_port_name, inputs_);
   if (inputs_.find(input_name) == inputs_.end()) {
     std::string err_msg = fmt::format("An input port with name {} is not found", input_name);
@@ -187,13 +157,22 @@ std::vector<std::optional<cudaStream_t>> GXFInputContext::receive_cuda_streams(
   return streams;
 }
 
-std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool no_error_message) {
+std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool no_error_message,
+                                       bool omit_data_logging) {
   std::string input_name = holoscan::get_well_formed_name(name, inputs_);
+  PROF_SCOPED_EVENT(op_->id(), event_receive_impl);
+  HOLOSCAN_LOG_TRACE("GXFInputContext::receive_impl for op: {}, input_name: {}, in_type: {}",
+                     op_->name(),
+                     input_name,
+                     magic_enum::enum_name(in_type));
+
   auto& data_loggers = op_->fragment()->data_loggers();
 
   auto it = inputs_.find(input_name);
   if (it == inputs_.end()) {
-    if (no_error_message) { return kNoReceivedMessage; }
+    if (no_error_message) {
+      return kNoReceivedMessage;
+    }
     // Show error message because the input name is not found.
     const auto input_port_size = inputs_.size();
     if (input_port_size == 1) {
@@ -252,32 +231,59 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
 
   // Update operator metadata using any metadata found in the entity.
   if (op_->is_metadata_enabled()) {
-    // Merge metadata from all input ports into the dynamic metadata of the operator
-    auto maybe_metadata = entity.get<holoscan::MetadataDictionary>("metadata_");
-    if (!maybe_metadata) {
-      // If the operator does not have any metadata it is expected that the MetadataDictionary
-      // component will not be present, so don't warn in this case.
-      HOLOSCAN_LOG_TRACE(
-          "No MetadataDictionary found for input '{}' on operator '{}'", input_name, op_->name());
-    } else {
-      auto metadata = maybe_metadata.value();
-      HOLOSCAN_LOG_TRACE("MetadataDictionary with size {} found for input '{}' of operator '{}'",
-                         metadata->size(),
-                         input_name,
-                         op_->name());
-      auto metadata_ptr = metadata.get();
-      // use update here to respect the Operator's MetadataPolicy
-      op_->metadata()->update(*metadata_ptr);
+    {
+      PROF_SCOPED_EVENT(op_->id(), event_receive_metadata);
+      // Merge metadata from all input ports into the dynamic metadata of the operator
+      auto maybe_metadata = entity.get<holoscan::MetadataDictionary>("metadata_");
+      if (!maybe_metadata) {
+        // If the operator does not have any metadata it is expected that the MetadataDictionary
+        // component will not be present, so don't warn in this case.
+        HOLOSCAN_LOG_TRACE(
+            "No MetadataDictionary found for input '{}' on operator '{}'", input_name, op_->name());
+      } else {
+        auto metadata = maybe_metadata.value();
+        HOLOSCAN_LOG_TRACE("MetadataDictionary with size {} found for input '{}' of operator '{}'",
+                           metadata->size(),
+                           input_name,
+                           op_->name());
+        auto metadata_ptr = metadata.get();
+        // use update here to respect the Operator's MetadataPolicy
+        op_->metadata()->update(*metadata_ptr);
+      }
     }
   }
 
   // Handle any streams found in the entity
-  retrieve_cuda_streams(entity, input_name);
+  {
+    PROF_SCOPED_EVENT(op_->id(), event_receive_streams);
+    retrieve_cuda_streams(entity, input_name);
+  }
 
   // If the input type is GXFEntity, return the entity directly
   if (in_type == InputType::kGXFEntity) {
-    if (!data_loggers.empty()) {
-      log_tensors_in_entity(op_, entity, io_spec, IOSpec::IOType::kInput);
+    if (!omit_data_logging && !data_loggers.empty()) {
+      // Log the entity itself using log_backend_specific
+      auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+      const std::string unique_id = io_spec->unique_id();
+      for (auto& data_logger : data_loggers) {
+        HOLOSCAN_LOG_TRACE("\t log_backend_specific code path");
+        if (data_logger->should_log_input()) {
+          // Create a shared entity to ensure proper lifetime management for async logging
+          auto shared_entity_expected = entity.clone();
+          if (shared_entity_expected) {
+            HOLOSCAN_LOG_TRACE("\t\t calling log_backend_specific");
+            PROF_SCOPED_EVENT(op_->id(), event_log_backend_specific);
+            data_logger->log_backend_specific(shared_entity_expected.value(),
+                                              unique_id,
+                                              -1,
+                                              metadata_ptr,
+                                              IOSpec::IOType::kInput);
+          } else {
+            HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
+                               GxfResultStr(shared_entity_expected.error()));
+          }
+        }
+      }
     }
     // Convert nvidia::gxf::Entity to holoscan::gxf::Entity
     holoscan::gxf::Entity entity_wrapper(entity);
@@ -286,8 +292,31 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
 
   auto message = entity.get<holoscan::Message>();
   if (!message) {
-    if (!data_loggers.empty()) {
-      log_tensors_in_entity(op_, entity, io_spec, IOSpec::IOType::kInput);
+    // TensorMap case is already logged in the outer InputContext::receive call, so don't log it
+    // here as well.
+    if (!omit_data_logging && !data_loggers.empty()) {
+      HOLOSCAN_LOG_TRACE("\t log_backend_specific code path 2");
+      // Log the entity itself using log_backend_specific
+      auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+      const std::string unique_id = io_spec->unique_id();
+      for (auto& data_logger : data_loggers) {
+        if (data_logger->should_log_input()) {
+          // Create a shared entity to ensure proper lifetime management for async logging
+          auto shared_entity_expected = entity.clone();
+          if (shared_entity_expected) {
+            HOLOSCAN_LOG_TRACE("\t\t calling log_backend_specific");
+            PROF_SCOPED_EVENT(op_->id(), event_log_backend_specific);
+            data_logger->log_backend_specific(shared_entity_expected.value(),
+                                              unique_id,
+                                              -1,
+                                              metadata_ptr,
+                                              IOSpec::IOType::kInput);
+          } else {
+            HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
+                               GxfResultStr(shared_entity_expected.error()));
+          }
+        }
+      }
     }
     // Convert nvidia::gxf::Entity to holoscan::gxf::Entity
     holoscan::gxf::Entity entity_wrapper(entity);
@@ -299,6 +328,7 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
   auto value = message_ptr->value();
 
   if (!data_loggers.empty()) {
+    PROF_SCOPED_EVENT(op_->id(), event_data_logging);
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
     const std::string unique_id = io_spec->unique_id();
 
@@ -309,6 +339,7 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
       //   2. should we log the stream associated with the operator
       //   3. should the value logged be the memory address of the cudaStream_t? (or GXF cid?)
       if (data_logger->should_log_input()) {
+        PROF_SCOPED_EVENT(op_->id(), event_log_data);
         data_logger->log_data(value, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput);
       }
     }
@@ -326,7 +357,9 @@ GXFOutputContext::GXFOutputContext(
     : OutputContext(execution_context, op, outputs) {}
 
 gxf_context_t GXFOutputContext::gxf_context() const {
-  if (execution_context_) { return execution_context_->context(); }
+  if (execution_context_) {
+    return execution_context_->context();
+  }
   return nullptr;
 }
 
@@ -338,6 +371,8 @@ void GXFOutputContext::populate_output_metadata(nvidia::gxf::Handle<MetadataDict
 }
 
 void GXFOutputContext::set_cuda_stream(const cudaStream_t stream, const char* output_port_name) {
+  PROF_SCOPED_EVENT(op_->id(), event_set_cuda_stream);
+
   std::string output_name = holoscan::get_well_formed_name(output_port_name, outputs_);
   if (outputs_.find(output_name) == outputs_.end()) {
     std::string err_msg = fmt::format("An input port with name '{}' is not found", output_name);
@@ -379,6 +414,11 @@ gxf_result_t add_stream_id_to_entity(nvidia::gxf::Entity& gxf_entity, gxf_uid_t 
 void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out_type,
                                  const int64_t acq_timestamp) {
   std::string output_name = holoscan::get_well_formed_name(name, outputs_);
+  PROF_SCOPED_EVENT(op_->id(), event_emit_impl);
+  HOLOSCAN_LOG_TRACE("GXFOutputContext::emit_impl for op: {}, output_name: {}, out_type: {}",
+                     op_->name(),
+                     output_name,
+                     magic_enum::enum_name(out_type));
 
   // Fast path: direct lookup of the output port
   auto it = outputs_.find(output_name);
@@ -392,7 +432,9 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
                         [exec_spec = op_->output_exec_spec()](const auto& pair) {
                           return pair.second != exec_spec;
                         });
-      if (it != outputs_.end()) { output_name = it->first; }
+      if (it != outputs_.end()) {
+        output_name = it->first;
+      }
     }
 
     // If still not found, handle error cases and return
@@ -437,13 +479,18 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
   // check if there is a CUDA stream to be emitted on this output port
   bool stream_found = false;
   gxf_uid_t stream_cid{kNullUid};
-  auto object_handler = gxf_cuda_object_handler();
-  if (object_handler == nullptr) {
-    HOLOSCAN_LOG_DEBUG("CudaObjectHandler not initialized, no streams will be emitted");
-  } else {
-    auto maybe_stream_cid = object_handler->get_output_stream_cid(output_name);
-    stream_found = maybe_stream_cid.has_value();
-    if (stream_found) { stream_cid = maybe_stream_cid.value(); }
+  {
+    PROF_SCOPED_EVENT(op_->id(), event_emit_streams);
+    auto object_handler = gxf_cuda_object_handler();
+    if (object_handler == nullptr) {
+      HOLOSCAN_LOG_DEBUG("CudaObjectHandler not initialized, no streams will be emitted");
+    } else {
+      auto maybe_stream_cid = object_handler->get_output_stream_cid(output_name);
+      stream_found = maybe_stream_cid.has_value();
+      if (stream_found) {
+        stream_cid = maybe_stream_cid.value();
+      }
+    }
   }
 
   const std::shared_ptr<IOSpec>& output_spec = it->second;
@@ -470,15 +517,21 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       auto buffer = gxf_entity.value().add<Message>();
 
       if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
-        auto metadata = gxf_entity.value().add<MetadataDictionary>("metadata_");
-        populate_output_metadata(metadata.value());
+        {
+          PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
+          auto metadata = gxf_entity.value().add<MetadataDictionary>("metadata_");
+          populate_output_metadata(metadata.value());
+        }
       }
 
       if (stream_found) {
-        auto stream_result = add_stream_id_to_entity(gxf_entity.value(), stream_cid);
-        if (stream_result != GXF_SUCCESS) {
-          throw std::runtime_error(fmt::format("Failed to add CUDA stream to output message: {}",
-                                               GxfResultStr(stream_result)));
+        {
+          PROF_SCOPED_EVENT(op_->id(), event_emit_streams);
+          auto stream_result = add_stream_id_to_entity(gxf_entity.value(), stream_cid);
+          if (stream_result != GXF_SUCCESS) {
+            throw std::runtime_error(fmt::format("Failed to add CUDA stream to output message: {}",
+                                                 GxfResultStr(stream_result)));
+          }
         }
       }
 
@@ -486,6 +539,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
 
       if (!data_loggers.empty()) {
+        PROF_SCOPED_EVENT(op_->id(), event_data_logging);
         enum class DataType { Tensor, TensorMap, Other };
         DataType data_type = DataType::Other;
         std::shared_ptr<Tensor> tensor_ptr;
@@ -513,19 +567,22 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
         for (auto& data_logger : data_loggers) {
           if (data_logger->should_log_output()) {
             switch (data_type) {
-              case DataType::Tensor:
+              case DataType::Tensor: {
+                PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
                 data_logger->log_tensor_data(
                     tensor_ptr, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
-                break;
-              case DataType::TensorMap:
+              } break;
+              case DataType::TensorMap: {
+                PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
                 data_logger->log_tensormap_data(
                     tensor_map, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
-                break;
+              } break;
               case DataType::Other:
-              default:
+              default: {
+                PROF_SCOPED_EVENT(op_->id(), event_log_data);
                 data_logger->log_data(
                     data, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
-                break;
+              } break;
             }
           }
         }
@@ -557,23 +614,49 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
         auto gxf_entity = std::any_cast<nvidia::gxf::Entity>(std::move(data));
 
         if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
-          auto metadata = gxf_entity.add<MetadataDictionary>("metadata_");
-          populate_output_metadata(metadata.value());
+          {
+            PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
+            auto metadata = gxf_entity.add<MetadataDictionary>("metadata_");
+            populate_output_metadata(metadata.value());
+          }
         }
 
         if (stream_found) {
-          auto stream_result = add_stream_id_to_entity(gxf_entity, stream_cid);
-          if (stream_result != GXF_SUCCESS) {
-            throw std::runtime_error(fmt::format("Failed to add CUDA stream to output message: {}",
-                                                 GxfResultStr(stream_result)));
+          {
+            PROF_SCOPED_EVENT(op_->id(), event_emit_streams);
+            auto stream_result = add_stream_id_to_entity(gxf_entity, stream_cid);
+            if (stream_result != GXF_SUCCESS) {
+              throw std::runtime_error(fmt::format(
+                  "Failed to add CUDA stream to output message: {}", GxfResultStr(stream_result)));
+            }
           }
         }
 
         auto& data_loggers = op_->fragment()->data_loggers();
         HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
         if (!data_loggers.empty()) {
-          log_tensors_in_entity(
-              op_, gxf_entity, output_spec, IOSpec::IOType::kOutput, acq_timestamp);
+          HOLOSCAN_LOG_TRACE("\t log_backend_specific code path");
+          auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+          const std::string unique_id = output_spec->unique_id();
+
+          for (auto& data_logger : data_loggers) {
+            if (data_logger->should_log_output()) {
+              // Create a shared entity to ensure proper lifetime management for async logging
+              auto shared_entity_expected = gxf_entity.clone();
+              if (shared_entity_expected) {
+                HOLOSCAN_LOG_TRACE("\t\t calling log_backend_specific");
+                PROF_SCOPED_EVENT(op_->id(), event_log_backend_specific);
+                data_logger->log_backend_specific(shared_entity_expected.value(),
+                                                  unique_id,
+                                                  acq_timestamp,
+                                                  metadata_ptr,
+                                                  IOSpec::IOType::kOutput);
+              } else {
+                HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
+                                   GxfResultStr(shared_entity_expected.error()));
+              }
+            }
+          }
         }
 
         nvidia::gxf::Expected<void> gxf_result;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 
 #include <gtest/gtest.h>
 #include <cuda.h>
@@ -125,7 +124,6 @@ static const uint8_t kArgmaxOutputData[] = {
     4, 1, 0, 2, 2, 1, 0, 3, 3, 4, 2, 2, 4, 0, 0, 0, 2, 4, 4, 2, 0, 0, 2, 2, 3, 0, 0, 2, 2, 2, 1, 3,
     2, 1, 0, 4, 3, 1, 0, 4, 2, 4, 4, 1, 4, 3, 3, 0, 4, 2, 4, 1, 1, 1, 3, 1, 4, 1, 3, 0, 2, 0};
 
-
 // The fixture for testing the Segmentation Postprocessor
 class SegmentationPostprocessorTest : public testing::Test {
  protected:
@@ -134,15 +132,15 @@ class SegmentationPostprocessorTest : public testing::Test {
     shape.width = 10;
     shape.channels = 5;
 
-     // Allocate device memory needed by the tests
+    // Allocate device memory needed by the tests
     cuda_status = cudaMalloc(reinterpret_cast<void**>(&device_input_data), input_data_size);
     if (cuda_status == cudaSuccess) {
       cuda_status = cudaMalloc(reinterpret_cast<void**>(&device_output_data), output_data_size);
     }
     // Copy input data to the device
     if (cuda_status == cudaSuccess) {
-      cuda_status = cudaMemcpy(device_input_data, kArgmaxInputData, input_data_size,
-                               cudaMemcpyHostToDevice);
+      cuda_status =
+          cudaMemcpy(device_input_data, kArgmaxInputData, input_data_size, cudaMemcpyHostToDevice);
     }
   }
 
@@ -164,7 +162,6 @@ class SegmentationPostprocessorTest : public testing::Test {
   float* device_input_data = nullptr;
   holoscan::ops::segmentation_postprocessor::output_type_t* device_output_data = nullptr;
 };
-
 
 TEST_F(SegmentationPostprocessorTest, Argmax) {
   // check that no CUDA errors occurred during SetUp()

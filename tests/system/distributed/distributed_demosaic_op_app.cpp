@@ -124,7 +124,9 @@ TEST_F(DistributedDemosaicOpApp, TestDistributedDummyDemosaicApp) {
 
   try {
     app->run();
-  } catch (const std::exception& e) { HOLOSCAN_LOG_ERROR("Exception: {}", e.what()); }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception: {}", e.what());
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("Graph activation failed") == std::string::npos)

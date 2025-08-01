@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,7 +80,7 @@ void GXFComponentResource::set_parameters() {
           dev_id_value = std::any_cast<int32_t>(arg.value());
           continue;
         } catch (const std::bad_any_cast& e) {
-          HOLOSCAN_LOG_ERROR("Cannot cast dev_id argument to int32_t: {}}", e.what());
+          HOLOSCAN_LOG_ERROR("Cannot cast dev_id argument to int32_t: {}", e.what());
         }
       }
     }
@@ -92,11 +92,14 @@ void GXFComponentResource::set_parameters() {
   }
   if (has_dev_id_param) {
     if (!gxf_graph_entity_) {
-      HOLOSCAN_LOG_ERROR(
-          "`dev_id` parameter found, but gxf_graph_entity_ was not initialized so it could not "
-          "be added to the entity group. This parameter will be ignored and default GPU device "
-          "0 "
-          "will be used");
+      // only log error if the parameter value does not match the GPU 0 default value
+      if (dev_id_value.has_value() && dev_id_value.value() != 0) {
+        HOLOSCAN_LOG_ERROR(
+            "`dev_id` parameter value '{}' found, but gxf_graph_entity_ was not initialized so it "
+            "could not be added to the entity group. This parameter will be ignored and default "
+            "GPU device 0 will be used",
+            dev_id_value.value());
+      }
     } else {
       // Get default value if not set by arguments
       if (!dev_id_value.has_value()) {

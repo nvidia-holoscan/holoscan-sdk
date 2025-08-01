@@ -57,4 +57,4 @@ basic_console_logger:
   denylist_patterns: []
 
 simple_text_serializer:
-  max_elements: 8
+  max_elements: 10

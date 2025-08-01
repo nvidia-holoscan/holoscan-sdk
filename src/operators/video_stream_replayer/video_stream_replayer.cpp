@@ -304,7 +304,9 @@ void VideoStreamReplayerOp::compute([[maybe_unused]] InputContext& op_input,
       }
     }
 
-    if (time_to_delay > 0) { std::this_thread::sleep_for(std::chrono::nanoseconds(time_to_delay)); }
+    if (time_to_delay > 0) {
+      std::this_thread::sleep_for(std::chrono::nanoseconds(time_to_delay));
+    }
 
     // emit the entity
     auto result = gxf::Entity(std::move(entity.value()));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,7 +100,9 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   // for short arrays containing parameter settings to operators/resources
   if (obj.attr("ndim").cast<int>() == 1) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-    for (const auto& item : obj) { yaml_node.push_back(cast_to_yaml_node<T>(item)); }
+    for (const auto& item : obj) {
+      yaml_node.push_back(cast_to_yaml_node<T>(item));
+    }
     out = yaml_node;
   } else if (obj.attr("ndim").cast<int>() == 2) {
     YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
@@ -109,7 +111,9 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
       for (const auto& inner_item : item) {
         inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
       }
-      if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
+      if (inner_yaml_node.size() > 0) {
+        yaml_node.push_back(inner_yaml_node);
+      }
     }
     out = yaml_node;
   } else {
@@ -127,7 +131,9 @@ YAML::Node process_nested_sequence_as_node(const py::sequence& sequence) {
     for (const auto& inner_item : item) {
       inner_yaml_node.push_back(cast_to_yaml_node<T>(inner_item));
     }
-    if (inner_yaml_node.size() > 0) { yaml_node.push_back(inner_yaml_node); }
+    if (inner_yaml_node.size() > 0) {
+      yaml_node.push_back(inner_yaml_node);
+    }
   }
   return yaml_node;
 }
@@ -135,7 +141,9 @@ YAML::Node process_nested_sequence_as_node(const py::sequence& sequence) {
 template <typename T>
 YAML::Node process_sequence_as_node(const py::sequence& sequence) {
   YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-  for (const auto& item : sequence) { yaml_node.push_back(cast_to_yaml_node<T>(item)); }
+  for (const auto& item : sequence) {
+    yaml_node.push_back(cast_to_yaml_node<T>(item));
+  }
   return yaml_node;
 }
 
@@ -144,7 +152,9 @@ std::vector<T> process_shared_ptr_sequence(const py::sequence& sequence) {
   std::vector<T> v;
   size_t length = py::len(sequence);
   v.reserve(length);
-  for (const auto& item : sequence) { v.push_back(item.cast<T>()); }
+  for (const auto& item : sequence) {
+    v.push_back(item.cast<T>());
+  }
   return v;
 }
 
@@ -155,7 +165,9 @@ std::vector<std::vector<T>> process_nested_shared_ptr_sequence(const py::sequenc
   for (const auto& item : sequence) {
     std::vector<T> vv;
     vv.reserve(static_cast<size_t>(py::len(item)));
-    for (const auto& inner_item : item) { vv.push_back(inner_item.cast<T>()); }
+    for (const auto& inner_item : item) {
+      vv.push_back(inner_item.cast<T>());
+    }
     v.push_back(vv);
   }
   return v;
@@ -193,7 +205,9 @@ void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
     seq = py::list(obj);
   }
 
-  if (py::len(seq) == 0) { throw std::runtime_error("sequences of length 0 are not supported."); }
+  if (py::len(seq) == 0) {
+    throw std::runtime_error("sequences of length 0 are not supported.");
+  }
 
   auto item0 = seq[0];
   if (py::isinstance<py::sequence>(item0) && !py::isinstance<py::str>(item0)) {
@@ -280,7 +294,9 @@ py::object vector_arg_to_py_object(Arg& arg) {
 py::object yaml_node_to_py_object(const YAML::Node& node) {
   if (node.IsSequence()) {
     py::list list;
-    for (const auto& item : node) { list.append(yaml_node_to_py_object(item)); }
+    for (const auto& item : node) {
+      list.append(yaml_node_to_py_object(item));
+    }
     return list;
   }
   if (node.IsMap()) {
@@ -292,26 +308,36 @@ py::object yaml_node_to_py_object(const YAML::Node& node) {
   }
   if (node.IsScalar()) {
     // Check if it is null.
-    if (node.IsNull()) { return py::none(); }
+    if (node.IsNull()) {
+      return py::none();
+    }
     // Check if it is an integer.
     {
       int64_t t{};
-      if (YAML::convert<int64_t>::decode(node, t)) { return py::int_(t); }
+      if (YAML::convert<int64_t>::decode(node, t)) {
+        return py::int_(t);
+      }
     }
     // Check if it is a float.
     {
       double t{};
-      if (YAML::convert<double>::decode(node, t)) { return py::float_(t); }
+      if (YAML::convert<double>::decode(node, t)) {
+        return py::float_(t);
+      }
     }
     // Check if it is a boolean.
     {
       bool t{};
-      if (YAML::convert<bool>::decode(node, t)) { return py::bool_(t); }
+      if (YAML::convert<bool>::decode(node, t)) {
+        return py::bool_(t);
+      }
     }
     // Check if it is a string.
     {
       std::string t{};
-      if (YAML::convert<std::string>::decode(node, t)) { return py::str(t); }
+      if (YAML::convert<std::string>::decode(node, t)) {
+        return py::str(t);
+      }
     }
   }
   return py::none();

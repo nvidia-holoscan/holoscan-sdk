@@ -15,7 +15,10 @@
  * limitations under the License.
  */
 
+#include <fmt/format.h>
+
 #include <filesystem>
+#include <iostream>
 #include <string>
 
 #include <holoscan/core/arg.hpp>
@@ -121,5 +124,15 @@ int main([[maybe_unused]] int argc, char** argv) {
   auto app = holoscan::make_application<DistributedVideoReplayerApp>();
   app->config(config_path);
   app->run();
+
+  // If desired, input/output port mapping can be printed in human readable (YAML) format
+  auto& fragment_graph = app->fragment_graph();
+  std::cout << "====== APPLICATION PORT MAPPING =======\n";
+  std::cout << fmt::format("{}", fragment_graph.port_map_description());
+  for (const auto& fragment : fragment_graph.get_nodes()) {
+    std::cout << fmt::format("\n\n====== FRAGMENT '{}' PORT MAPPING =======\n", fragment->name());
+    std::cout << fmt::format("{}", fragment->graph().port_map_description());
+  }
+
   return 0;
 }

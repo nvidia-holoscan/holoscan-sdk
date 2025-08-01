@@ -15,6 +15,10 @@ Copyright (c) 2012, Regents of the University of California.
 Copyright (c) 2009 PiCloud, Inc. Copyright
 Licensed under BSD-3-clause (https://github.com/cloudpipe/cloudpickle/blob/master/LICENSE)
 
+moodycamel::ConcurrentQueue (https://github.com/cameron314/concurrentqueue)
+Copyright (c) 2013 - 2016 Cameron Desrochers
+Licensed under BSD-2-clause (https://github.com/cameron314/concurrentqueue/blob/v1.0.4/LICENSE.md)
+
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
 Licensed under MIT (https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
@@ -32,7 +36,7 @@ Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPY
 
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
-Licensed under MIT (https://github.com/fmtlib/fmt/blob/10.1.1/LICENSE.rst)
+Licensed under MIT (https://github.com/fmtlib/fmt/blob/11.0.2/LICENSE)
 
 GLFW (https://www.glfw.org/)
 Copyright (c) 2002-2006 Marcus Geelnard
@@ -137,6 +141,10 @@ nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
 Licensed under Apache 2.0 (https://github.com/nvpro-samples/nvpro_core/blob/master/LICENSE)
 
+NVTX
+Copyright 2009-2022, NVIDIA CORPORATION
+Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+
 pytest (https://github.com/pytest-dev/pytest)
 Copyright (c) 2004 Holger Krekel and others
 Licensed under MIT (https://github.com/pytest-dev/pytest/blob/main/LICENSE)
@@ -169,6 +177,10 @@ Copyright (C) 2019           UChicago Argonne, LLC.  All rights reserved.
 Copyright (C) 2020           Huawei Technologies Co., Ltd. All rights reserved.
 Copyright (C) 2016-2020      Stony Brook University. All rights reserved.
 Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.17.0/LICENSE)
+
+UCXX (https://github.com/rapidsai/ucxx)
+Copyright (c) 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under BSD-3-clause (https://github.com/rapidsai/ucxx/blob/v0.44.00/LICENSE)
 
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.

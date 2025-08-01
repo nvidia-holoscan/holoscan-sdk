@@ -169,7 +169,8 @@ class ScopedHolovizFileMutex {
           HOLOSCAN_LOG_ERROR(
               "FileFIFOMutex unlock failed during ScopedHolovizFileMutex destructor with {}",
               e.what());
-        } catch (...) {}
+        } catch (...) {
+        }
       }
     }
   }
@@ -492,7 +493,9 @@ HolovizOp::inputTypeFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kInputTypeToStr),
                                std::cend(kInputTypeToStr),
                                [&string](const auto& v) { return v.second == string; });
-  if (it != std::cend(kInputTypeToStr)) { return it->first; }
+  if (it != std::cend(kInputTypeToStr)) {
+    return it->first;
+  }
 
   HOLOSCAN_LOG_ERROR("Unsupported input type '{}'", string);
   return nvidia::gxf::Unexpected{GXF_FAILURE};
@@ -503,7 +506,9 @@ HolovizOp::inputTypeFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kInputTypeToStr),
                                std::cend(kInputTypeToStr),
                                [&input_type](const auto& v) { return v.first == input_type; });
-  if (it != std::cend(kInputTypeToStr)) { return it->second; }
+  if (it != std::cend(kInputTypeToStr)) {
+    return it->second;
+  }
 
   return "invalid";
 }
@@ -566,7 +571,9 @@ HolovizOp::imageFormatFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kImageFormatToStr),
                                std::cend(kImageFormatToStr),
                                [&string](const auto& v) { return v.second == string; });
-  if (it != std::cend(kImageFormatToStr)) { return it->first; }
+  if (it != std::cend(kImageFormatToStr)) {
+    return it->first;
+  }
 
   HOLOSCAN_LOG_ERROR("Unsupported image format '{}'", string);
   return nvidia::gxf::Unexpected{GXF_FAILURE};
@@ -577,7 +584,9 @@ HolovizOp::imageFormatFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kImageFormatToStr),
                                std::cend(kImageFormatToStr),
                                [&image_format](const auto& v) { return v.first == image_format; });
-  if (it != std::cend(kImageFormatToStr)) { return it->second; }
+  if (it != std::cend(kImageFormatToStr)) {
+    return it->second;
+  }
 
   return "invalid";
 }
@@ -593,7 +602,9 @@ HolovizOp::depthMapRenderModeFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kDepthMapRenderModeToStr),
                                std::cend(kDepthMapRenderModeToStr),
                                [&string](const auto& v) { return v.second == string; });
-  if (it != std::cend(kDepthMapRenderModeToStr)) { return it->first; }
+  if (it != std::cend(kDepthMapRenderModeToStr)) {
+    return it->first;
+  }
 
   HOLOSCAN_LOG_ERROR("Unsupported depth map render mode '{}'", string);
   return nvidia::gxf::Unexpected{GXF_FAILURE};
@@ -605,7 +616,9 @@ HolovizOp::depthMapRenderModeFromString(const std::string& string) {
       std::cbegin(kDepthMapRenderModeToStr),
       std::cend(kDepthMapRenderModeToStr),
       [&depth_map_render_mode](const auto& v) { return v.first == depth_map_render_mode; });
-  if (it != std::cend(kDepthMapRenderModeToStr)) { return it->second; }
+  if (it != std::cend(kDepthMapRenderModeToStr)) {
+    return it->second;
+  }
 
   return "invalid";
 }
@@ -621,7 +634,9 @@ HolovizOp::yuvModelConversionFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kYuvModelConversionToStr),
                                std::cend(kYuvModelConversionToStr),
                                [&string](const auto& v) { return v.second == string; });
-  if (it != std::cend(kYuvModelConversionToStr)) { return it->first; }
+  if (it != std::cend(kYuvModelConversionToStr)) {
+    return it->first;
+  }
 
   HOLOSCAN_LOG_ERROR("Unsupported yuv model conversion '{}'", string);
   return nvidia::gxf::Unexpected{GXF_FAILURE};
@@ -633,7 +648,9 @@ HolovizOp::yuvModelConversionFromString(const std::string& string) {
       std::cbegin(kYuvModelConversionToStr),
       std::cend(kYuvModelConversionToStr),
       [&yuv_model_conversion](const auto& v) { return v.first == yuv_model_conversion; });
-  if (it != std::cend(kYuvModelConversionToStr)) { return it->second; }
+  if (it != std::cend(kYuvModelConversionToStr)) {
+    return it->second;
+  }
 
   return "invalid";
 }
@@ -647,7 +664,9 @@ HolovizOp::yuvModelConversionFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kYuvRangeToStr),
                                std::cend(kYuvRangeToStr),
                                [&string](const auto& v) { return v.second == string; });
-  if (it != std::cend(kYuvRangeToStr)) { return it->first; }
+  if (it != std::cend(kYuvRangeToStr)) {
+    return it->first;
+  }
 
   HOLOSCAN_LOG_ERROR("Unsupported yuv range '{}'", string);
   return nvidia::gxf::Unexpected{GXF_FAILURE};
@@ -657,7 +676,9 @@ HolovizOp::yuvModelConversionFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kYuvRangeToStr),
                                std::cend(kYuvRangeToStr),
                                [&yuv_range](const auto& v) { return v.first == yuv_range; });
-  if (it != std::cend(kYuvRangeToStr)) { return it->second; }
+  if (it != std::cend(kYuvRangeToStr)) {
+    return it->second;
+  }
 
   return "invalid";
 }
@@ -672,7 +693,9 @@ HolovizOp::chromaLocationFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(kChromaLoactionToStr),
                                std::cend(kChromaLoactionToStr),
                                [&string](const auto& v) { return v.second == string; });
-  if (it != std::cend(kChromaLoactionToStr)) { return it->first; }
+  if (it != std::cend(kChromaLoactionToStr)) {
+    return it->first;
+  }
 
   HOLOSCAN_LOG_ERROR("Unsupported chroma location '{}'", string);
   return nvidia::gxf::Unexpected{GXF_FAILURE};
@@ -684,7 +707,9 @@ HolovizOp::chromaLocationFromString(const std::string& string) {
       std::find_if(std::cbegin(kChromaLoactionToStr),
                    std::cend(kChromaLoactionToStr),
                    [&chroma_location](const auto& v) { return v.first == chroma_location; });
-  if (it != std::cend(kChromaLoactionToStr)) { return it->second; }
+  if (it != std::cend(kChromaLoactionToStr)) {
+    return it->second;
+  }
 
   return "invalid";
 }
@@ -704,7 +729,9 @@ HolovizOp::colorSpaceFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(HolovizOp::kColorSpaceToStr),
                                std::cend(HolovizOp::kColorSpaceToStr),
                                [&string](const auto& v) { return v.second == string; });
-  if (it != std::cend(HolovizOp::kColorSpaceToStr)) { return it->first; }
+  if (it != std::cend(HolovizOp::kColorSpaceToStr)) {
+    return it->first;
+  }
 
   HOLOSCAN_LOG_ERROR("Unsupported color space '{}'", string);
   return nvidia::gxf::Unexpected{GXF_FAILURE};
@@ -715,7 +742,9 @@ HolovizOp::colorSpaceFromString(const std::string& string) {
   const auto it = std::find_if(std::cbegin(HolovizOp::kColorSpaceToStr),
                                std::cend(HolovizOp::kColorSpaceToStr),
                                [&color_space](const auto& v) { return v.first == color_space; });
-  if (it != std::cend(HolovizOp::kColorSpaceToStr)) { return it->second; }
+  if (it != std::cend(HolovizOp::kColorSpaceToStr)) {
+    return it->second;
+  }
 
   return "invalid";
 }
@@ -760,7 +789,9 @@ bool HolovizOp::enable_conditional_port(const std::string& port_name,
   }
 
   // Disable the '(port_name)' argument based on the value of "enable_(port_name)"
-  if (!enable_port) { add_arg(Arg(port_name) = static_cast<holoscan::IOSpec*>(nullptr)); }
+  if (!enable_port) {
+    add_arg(Arg(port_name) = static_cast<holoscan::IOSpec*>(nullptr));
+  }
 
   // If 'set_none_condition_on_disabled' is true and the port (named by 'port_name') is disabled,
   // insert ConditionType::kNone condition so that its default condition
@@ -803,7 +834,9 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
     }
   } else {
     entity = holoscan::gxf::Entity::New(&context);
-    if (!entity) { throw std::runtime_error("Failed to allocate message for buffer output."); }
+    if (!entity) {
+      throw std::runtime_error("Failed to allocate message for buffer output.");
+    }
 
     video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>(buffer_output_name.c_str());
     if (!video_buffer) {
@@ -878,7 +911,9 @@ void HolovizOp::set_input_spec(const InputSpec& input_spec) {
   viz::LayerOpacity(input_spec.opacity_);
   for (auto&& view : input_spec.views_) {
     const float* matrix = nullptr;
-    if (view.matrix_.has_value()) { matrix = view.matrix_.value().data(); }
+    if (view.matrix_.has_value()) {
+      matrix = view.matrix_.value().data();
+    }
     viz::LayerAddView(view.offset_x_, view.offset_y_, view.width_, view.height_, matrix);
   }
 }
@@ -1521,22 +1556,30 @@ void HolovizOp::start() {
   }
 
   // set the font to be used
-  if (!font_path_.get().empty()) { viz::SetFont(font_path_.get().c_str(), 25.F); }
+  if (!font_path_.get().empty()) {
+    viz::SetFont(font_path_.get().c_str(), 25.F);
+  }
 
   // create Holoviz instance
   instance_ = viz::Create();
   // make the instance current
   ScopedPushInstance scoped_instance(instance_);
 
-  if (vsync_) { viz::SetPresentMode(viz::PresentMode::FIFO); }
+  if (vsync_) {
+    viz::SetPresentMode(viz::PresentMode::FIFO);
+  }
 
   // initialize Holoviz
   viz::InitFlags init_flags = viz::InitFlags::NONE;
   if (fullscreen_ && headless_) {
     throw std::runtime_error("Headless and fullscreen are mutually exclusive.");
   }
-  if (fullscreen_) { init_flags = viz::InitFlags::FULLSCREEN; }
-  if (headless_) { init_flags = viz::InitFlags::HEADLESS; }
+  if (fullscreen_) {
+    init_flags = viz::InitFlags::FULLSCREEN;
+  }
+  if (headless_) {
+    init_flags = viz::InitFlags::HEADLESS;
+  }
 
   if (use_exclusive_display_) {
     // In exclusive mode, we don't use Holoviz mutex for initialization.
@@ -1641,14 +1684,18 @@ void HolovizOp::start() {
   }
 
   // setup callbacks
-  if (key_callback_.has_value()) { viz::SetKeyCallback(this, key_callback_handler); }
+  if (key_callback_.has_value()) {
+    viz::SetKeyCallback(this, key_callback_handler);
+  }
   if (unicode_char_callback_.has_value()) {
     viz::SetUnicodeCharCallback(this, unicode_char_callback_handler);
   }
   if (mouse_button_callback_.has_value()) {
     viz::SetMouseButtonCallback(this, mouse_button_callback_handler);
   }
-  if (scroll_callback_.has_value()) { viz::SetScrollCallback(this, scroll_callback_handler); }
+  if (scroll_callback_.has_value()) {
+    viz::SetScrollCallback(this, scroll_callback_handler);
+  }
   if (cursor_pos_callback_.has_value()) {
     viz::SetCursorPosCallback(this, cursor_pos_callback_handler);
   }
@@ -1661,7 +1708,9 @@ void HolovizOp::start() {
 }
 
 void HolovizOp::stop() {
-  if (instance_) { viz::Shutdown(instance_); }
+  if (instance_) {
+    viz::Shutdown(instance_);
+  }
   if (is_holoviz_multiprocess_mutex_enabled_ && multiprocess_framedrop_waittime_ms_) {
     HOLOSCAN_LOG_INFO("Dropped {} frames due to unavailable mutex in multiprocess scenario.",
                       dropped_frame_count_);
@@ -1709,10 +1758,14 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   ScopedPushInstance scoped_instance(instance_);
 
   // cast Condition to BooleanCondition
-  if (viz::WindowShouldClose()) { disable_via_window_close(); }
+  if (viz::WindowShouldClose()) {
+    disable_via_window_close();
+  }
 
   // nothing to do if minimized
-  if (viz::WindowIsMinimized()) { return; }
+  if (viz::WindowIsMinimized()) {
+    return;
+  }
 
   // Right near the window minimization option, check if we need to lock and whether
   // the mutex is available.
@@ -1727,9 +1780,15 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
   // handle camera messages
   if (camera_eye_message || camera_eye_message || camera_up_message) {
-    if (camera_eye_message) { camera_eye_cur_ = camera_eye_message.value(); }
-    if (camera_look_at_message) { camera_look_at_cur_ = camera_look_at_message.value(); }
-    if (camera_up_message) { camera_up_cur_ = camera_up_message.value(); }
+    if (camera_eye_message) {
+      camera_eye_cur_ = camera_eye_message.value();
+    }
+    if (camera_look_at_message) {
+      camera_look_at_cur_ = camera_look_at_message.value();
+    }
+    if (camera_up_message) {
+      camera_up_cur_ = camera_up_message.value();
+    }
     // set the camera
     viz::SetCamera(camera_eye_cur_[0],
                    camera_eye_cur_[1],
@@ -1821,7 +1880,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   cudaStream_t cuda_stream = cudaStreamDefault;
   // `receive_cuda_stream` returns a new stream if there is a cuda stream pool or the first input
   // stream. If there are multiple streams, the streams are synchronized to the returned stream.
-  if (receivers_messages.size() > 0) { cuda_stream = op_input.receive_cuda_stream("receivers"); }
+  if (receivers_messages.size() > 0) {
+    cuda_stream = op_input.receive_cuda_stream("receivers");
+  }
 
   viz::SetCudaStream(cuda_stream);
 
@@ -1885,7 +1946,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
     // if the input type is unknown it now can be detected using the image format
     if (input_spec.type_ == InputType::UNKNOWN) {
       const auto maybe_input_type = detect_input_type(buffer_info, !lut_.empty());
-      if (maybe_input_type) { input_spec.type_ = maybe_input_type.value(); }
+      if (maybe_input_type) {
+        input_spec.type_ = maybe_input_type.value();
+      }
     }
 
     // if
@@ -1911,7 +1974,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
     }
 
     // If the buffer is empty, skip processing it
-    if (buffer_info.bytes_size == 0) { continue; }
+    if (buffer_info.bytes_size == 0) {
+      continue;
+    }
 
     switch (input_spec.type_) {
       case InputType::COLOR:
@@ -2001,7 +2066,9 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
   }
 
   // call the layer callback when there is one specified
-  if (layer_callback_.has_value()) { layer_callback_.get()(receivers_messages); }
+  if (layer_callback_.has_value()) {
+    layer_callback_.get()(receivers_messages);
+  }
 
   viz::End();
 

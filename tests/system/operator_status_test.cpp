@@ -43,7 +43,9 @@ class TestSourceOp : public Operator {
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
     HOLOSCAN_LOG_INFO("TestSourceOp::compute: count_ = {}", count_);
-    if (count_ < max_count_.get()) { op_output.emit(count_, "out"); }
+    if (count_ < max_count_.get()) {
+      op_output.emit(count_, "out");
+    }
     count_++;
   }
 
@@ -91,7 +93,9 @@ class TestConsumerOp : public Operator {
     received_values_.push_back(data);
 
     // Stop execution after receiving a certain number of values
-    if (received_values_.size() >= static_cast<size_t>(stop_after_.get())) { stop_execution(); }
+    if (received_values_.size() >= static_cast<size_t>(stop_after_.get())) {
+      stop_execution();
+    }
   }
 
   const std::vector<int>& received_values() const { return received_values_; }
@@ -126,7 +130,9 @@ class TestMonitorOp : public Operator {
       if (maybe_status) {
         operator_statuses_[op_name] = maybe_status.value();
         // If any operator is not idle, the pipeline is not idle
-        if (maybe_status.value() != OperatorStatus::kIdle) { is_pipeline_idle = false; }
+        if (maybe_status.value() != OperatorStatus::kIdle) {
+          is_pipeline_idle = false;
+        }
       } else {
         is_pipeline_idle = false;
       }
@@ -296,7 +302,6 @@ class AsyncTestOp : public Operator {
   HOLOSCAN_OPERATOR_FORWARD_ARGS(AsyncTestOp)
 
   AsyncTestOp() = default;
-
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {

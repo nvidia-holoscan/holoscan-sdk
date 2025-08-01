@@ -147,7 +147,9 @@ class ProcessTensorOp : public holoscan::Operator {
                         key,
                         fmt::join(tensor->shape(), ","),
                         fmt::join(in_data, ","));
-      for (size_t i = 0; i < data_size; i++) { in_data[i] *= 2; }
+      for (size_t i = 0; i < data_size; i++) {
+        in_data[i] *= 2;
+      }
       HOLOSCAN_LOG_INFO("ProcessTensorOp After key: '{}', shape: ({}), data: [{}]",
                         key,
                         fmt::join(tensor->shape(), ","),

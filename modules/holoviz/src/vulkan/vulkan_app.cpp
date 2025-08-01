@@ -74,7 +74,9 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #if VK_HEADER_VERSION < 213
 namespace vk {
 VULKAN_HPP_INLINE void resultCheck(Result result, char const* message) {
-  if (result != Result::eSuccess) { throwResultException(result, message); }
+  if (result != Result::eSuccess) {
+    throwResultException(result, message);
+  }
 }
 }  // namespace vk
 #endif
@@ -203,18 +205,33 @@ class Vulkan::Impl {
    public:
     ~NvvkObjects() {
       try {
-        if (index_buffer_.buffer) { alloc_.destroy(index_buffer_); }
-        if (vertex_buffer_.buffer) { alloc_.destroy(vertex_buffer_); }
-        if (read_transfer_cmd_pool_initialized_) { read_transfer_cmd_pool_.deinit(); }
-        if (transfer_cmd_pool_initialized_) { transfer_cmd_pool_.deinit(); }
-        if (export_alloc_dedicated_initialized_) { export_alloc_dedicated_.deinit(); }
-        if (export_alloc_initialized_) { export_alloc_.deinit(); }
-        if (alloc_initialized_) { alloc_.deinit(); }
+        if (index_buffer_.buffer) {
+          alloc_.destroy(index_buffer_);
+        }
+        if (vertex_buffer_.buffer) {
+          alloc_.destroy(vertex_buffer_);
+        }
+        if (read_transfer_cmd_pool_initialized_) {
+          read_transfer_cmd_pool_.deinit();
+        }
+        if (transfer_cmd_pool_initialized_) {
+          transfer_cmd_pool_.deinit();
+        }
+        if (export_alloc_dedicated_initialized_) {
+          export_alloc_dedicated_.deinit();
+        }
+        if (export_alloc_initialized_) {
+          export_alloc_.deinit();
+        }
+        if (alloc_initialized_) {
+          alloc_.deinit();
+        }
         vk_ctx_.deinit();
       } catch (const std::exception& e) {
         try {
           HOLOSCAN_LOG_ERROR("NvvkObjects destructor failed with {}", e.what());
-        } catch (...) {}
+        } catch (...) {
+        }
       }
     }
 
@@ -279,13 +296,13 @@ class Vulkan::Impl {
     vk::Fence frame_fence_ = nullptr;
 
     /**
-     * Reset the job so it can be re-used
+     * Reset the job so it can be reused
      *
      * @param device Vulkan device
      */
     void reset(vk::Device& device) {
       if (fence_) {
-        // reset the fence to be re-used
+        // reset the fence to be reused
         device.resetFences(fence_.get());
       }
       fence_triggered_ = false;
@@ -293,7 +310,7 @@ class Vulkan::Impl {
     }
   };
   std::list<TransferJob> transfer_jobs_;
-  // a list of finished transfer jobs which can be re-used
+  // a list of finished transfer jobs which can be reused
   std::list<TransferJob> finished_transfer_jobs_;
 
   enum ReadTransferType { COLOR, DEPTH, COUNT };
@@ -341,7 +358,8 @@ Vulkan::Impl::~Impl() {
   } catch (const std::exception& e) {
     try {
       HOLOSCAN_LOG_ERROR("Vulkan::Impl destructor failed with {}", e.what());
-    } catch (...) {}
+    } catch (...) {
+    }
   }
 }
 
@@ -711,7 +729,9 @@ void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_
     font_size_in_pixels = 25.F;
     font = io.Fonts->AddFontFromMemoryTTF(
         roboto_bold_ttf, sizeof(roboto_bold_ttf), font_size_in_pixels, &font_config);
-    if (!font) { throw std::runtime_error("Failed to add default font."); }
+    if (!font) {
+      throw std::runtime_error("Failed to add default font.");
+    }
   }
 
   // the size of the ImGui default font is 13 pixels, set the global font scale so that the
@@ -719,7 +739,9 @@ void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_
   io.FontGlobalScale = 13.F / font_size_in_pixels;
 
   // build the font atlast
-  if (!io.Fonts->Build()) { throw std::runtime_error("Failed to build font atlas."); }
+  if (!io.Fonts->Build()) {
+    throw std::runtime_error("Failed to build font atlas.");
+  }
   ImGui::SetCurrentFont(font);
 
   // Upload Fonts
@@ -748,7 +770,9 @@ void Vulkan::Impl::begin_transfer_pass() {
 }
 
 void Vulkan::Impl::end_transfer_pass() {
-  if (transfer_jobs_.empty()) { throw std::runtime_error("Not in transfer pass."); }
+  if (transfer_jobs_.empty()) {
+    throw std::runtime_error("Not in transfer pass.");
+  }
 
   TransferJob& transfer_job = transfer_jobs_.back();
 
@@ -890,7 +914,7 @@ void Vulkan::Impl::prepare_frame() {
     exit(-1);
   }
 
-  // reset the fence to be re-used
+  // reset the fence to be reused
   device_.resetFences(wait_fences_[image_index].get());
 
   // if there is a pending transfer job assign the frame fence of the frame which is about to be
@@ -1192,7 +1216,9 @@ void Vulkan::Impl::create_frame_buffers() {
 }
 
 void Vulkan::Impl::on_framebuffer_size(int w, int h) {
-  if ((w == 0) || (h == 0)) { return; }
+  if ((w == 0) || (h == 0)) {
+    return;
+  }
 
   // Update imgui
   if (ImGui::GetCurrentContext() != nullptr) {
@@ -1302,7 +1328,9 @@ vk::UniquePipeline Vulkan::Impl::create_pipeline(
   state.clearBlendAttachmentStates();
   state.addBlendAttachmentState(color_blend_attachment_state);
 
-  for (auto&& dynamic_state : dynamic_states) { state.addDynamicStateEnable(dynamic_state); }
+  for (auto&& dynamic_state : dynamic_states) {
+    state.addDynamicStateEnable(dynamic_state);
+  }
 
   state.update();
 
@@ -1376,7 +1404,9 @@ std::unique_ptr<Texture> Vulkan::Impl::create_texture(Vulkan* vulkan,
       nvvk::makeImageViewCreateInfo(image.image, image_create_info);
   // for Y'CbCr the component mapping of SamplerYcbcrConversion and is set there, so only set it
   // here for non-Y'CbCr formats
-  if (!is_yuv_format(args.format_)) { image_view_info.components = args.component_mapping_; }
+  if (!is_yuv_format(args.format_)) {
+    image_view_info.components = args.component_mapping_;
+  }
 
   vk::SamplerYcbcrConversionInfo sampler_ycbcr_conversion;
   if (texture->sampler_ycbcr_conversion_) {
@@ -1444,7 +1474,9 @@ std::unique_ptr<Texture> Vulkan::Impl::create_texture(Vulkan* vulkan,
                         attribute_description_float_3);
   }
 
-  if (args.cuda_interop_) { texture->import_to_cuda(cuda_service_); }
+  if (args.cuda_interop_) {
+    texture->import_to_cuda(cuda_service_);
+  }
 
   return texture;
 }
@@ -1492,7 +1524,9 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const vo
   vk::ImageSubresourceRange subresource_range;
   if (is_multi_planar_format(texture->format_)) {
     for (uint32_t plane = 0; plane < host_ptr.size(); ++plane) {
-      if (!host_ptr[plane]) { continue; }
+      if (!host_ptr[plane]) {
+        continue;
+      }
       subresource_range.aspectMask |=
           vk::ImageAspectFlagBits(int(vk::ImageAspectFlagBits::ePlane0) << plane);
     }
@@ -1511,7 +1545,9 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const vo
                               subresource_range);
 
   for (uint32_t plane = 0; plane < host_ptr.size(); ++plane) {
-    if (!host_ptr[plane]) { continue; }
+    if (!host_ptr[plane]) {
+      continue;
+    }
 
     uint32_t channels, hw_channels, component_size, width_divisor, height_divisior;
     format_info(texture->format_,
@@ -1577,7 +1613,9 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const vo
           src += 3;
           ++dst;
         }
-        if (row_pitch[plane] != 0) { src += row_pitch[plane] - src_pitch; }
+        if (row_pitch[plane] != 0) {
+          src += row_pitch[plane] - src_pitch;
+        }
       }
     } else {
       if ((row_pitch[plane] == 0) || (row_pitch[plane] == dst_pitch)) {
@@ -1626,7 +1664,9 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<Buffer*,
   vk::ImageSubresourceRange subresource_range;
   if (is_multi_planar_format(texture->format_)) {
     for (uint32_t plane = 0; plane < buffers.size(); ++plane) {
-      if (!buffers[plane]) { continue; }
+      if (!buffers[plane]) {
+        continue;
+      }
       subresource_range.aspectMask |=
           vk::ImageAspectFlagBits(int(vk::ImageAspectFlagBits::ePlane0) << plane);
     }
@@ -1645,7 +1685,9 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<Buffer*,
                               subresource_range);
 
   for (uint32_t plane = 0; plane < buffers.size(); ++plane) {
-    if (!buffers[plane]) { continue; }
+    if (!buffers[plane]) {
+      continue;
+    }
 
     uint32_t channels, hw_channels, component_size, width_divisor, height_divisior;
     format_info(texture->format_,
@@ -1867,8 +1909,12 @@ void Vulkan::Impl::draw_texture(Texture* texture, Texture* depth_texture, Textur
 
   // tag the textures with the current fence
   texture->fence_ = wait_fences_[get_active_image_index()].get();
-  if (depth_texture) { depth_texture->fence_ = wait_fences_[get_active_image_index()].get(); }
-  if (lut) { lut->fence_ = wait_fences_[get_active_image_index()].get(); }
+  if (depth_texture) {
+    depth_texture->fence_ = wait_fences_[get_active_image_index()].get();
+  }
+  if (lut) {
+    lut->fence_ = wait_fences_[get_active_image_index()].get();
+  }
 }
 
 void Vulkan::Impl::draw(vk::PrimitiveTopology topology, uint32_t count, uint32_t first,
@@ -1990,7 +2036,9 @@ void Vulkan::Impl::draw_indexed(vk::Pipeline pipeline, vk::PipelineLayout pipeli
     vertex_buffer->access_with_vulkan(nvvk_.batch_submission_);
   }
 
-  if (line_width > 0.F) { cmd_buf.setLineWidth(line_width); }
+  if (line_width > 0.F) {
+    cmd_buf.setLineWidth(line_width);
+  }
 
   if (desc_set) {
     cmd_buf.bindDescriptorSets(
@@ -2136,7 +2184,9 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
   const uint32_t read_height = std::min(size_.height, height);
 
   const size_t data_size = read_width * read_height * hw_channels * component_size;
-  if (buffer_size < data_size) { throw std::runtime_error("The size of the buffer is too small"); }
+  if (buffer_size < data_size) {
+    throw std::runtime_error("The size of the buffer is too small");
+  }
 
   // allocate the transfer buffer if needed
   const size_t src_data_size = read_width * read_height * channels * component_size;
@@ -2164,12 +2214,14 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
       exit(-1);
     }
 
-    // reset the fence to be re-used
+    // reset the fence to be reused
     device_.resetFences(read_job.fence_.get());
   }
 
   // create a command buffer, destroying the previous one if present
-  if (read_job.cmd_buffer_) { nvvk_.read_transfer_cmd_pool_.destroy(read_job.cmd_buffer_); }
+  if (read_job.cmd_buffer_) {
+    nvvk_.read_transfer_cmd_pool_.destroy(read_job.cmd_buffer_);
+  }
   read_job.cmd_buffer_ = nvvk_.read_transfer_cmd_pool_.createCommandBuffer();
 
   // Make the image layout vk::ImageLayout::eTransferSrcOptimal to copy to buffer

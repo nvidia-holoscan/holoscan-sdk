@@ -15,6 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
+import sys
+
 import pytest
 
 from holoscan import as_tensor
@@ -57,6 +59,7 @@ from holoscan.graphs import FlowGraph, OperatorFlowGraph
 from holoscan.resources import (
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
+    SchedulingPolicy,
     UcxReceiver,
     UcxTransmitter,
 )
@@ -755,6 +758,9 @@ class TestFragment:
     def test_make_thread_pool(self, fragment):
         op_tx, op_rx = get_tx_and_rx_ops(fragment)
         op_tx2, op_rx2 = get_tx_and_rx_ops(fragment)
+        op_tx3, op_rx3 = get_tx_and_rx_ops(fragment)
+        op_tx4, op_rx4 = get_tx_and_rx_ops(fragment)
+        op_tx5, op_rx5 = get_tx_and_rx_ops(fragment)
 
         pool1 = fragment.make_thread_pool("pool1", 2)
         pool1.add(op_tx, True)
@@ -763,14 +769,58 @@ class TestFragment:
         pool2 = fragment.make_thread_pool("pool2", 2)
         pool2.add([op_tx2, op_rx2], True)
 
+        # add a pool and real-time operator with SCHED_FIFO policy
+        pool3 = fragment.make_thread_pool("pool3", 0)
+        pool3.add_realtime(
+            op_tx3,
+            SchedulingPolicy.SCHED_FIFO,
+            pin_operator=True,
+            pin_cores=[0],
+            sched_priority=1,
+        )
+        pool3.add(op_rx3, True, [1, 2])
+
+        # add a pool and real-time operator with SCHED_RR policy
+        pool4 = fragment.make_thread_pool("pool4", 1)
+        pool4.add_realtime(
+            op_tx4,
+            SchedulingPolicy.SCHED_RR,
+            pin_operator=True,
+            pin_cores=[0],
+            sched_priority=2,
+        )
+        pool4.add(op_rx4, True, [1, 2])
+
+        # add a pool and real-time operator with SCHED_DEADLINE policy
+        pool5 = fragment.make_thread_pool("pool5", 2)
+        pool5.add_realtime(
+            op_tx5,
+            SchedulingPolicy.SCHED_DEADLINE,
+            pin_operator=True,
+            pin_cores=[0],
+            sched_runtime=1000000,
+            sched_deadline=1000000000,
+            sched_period=1000000000,
+        )
+        pool5.add(op_rx5, True, [1, 2])
+
         assert pool1.name == "pool1"
         assert pool2.name == "pool2"
+        assert pool3.name == "pool3"
+        assert pool4.name == "pool4"
+        assert pool5.name == "pool5"
 
         # check that the expected operators are associated with each pool
         assert op_rx in pool1.operators
         assert op_tx in pool1.operators
         assert op_rx2 in pool2.operators
         assert op_tx2 in pool2.operators
+        assert op_rx3 in pool3.operators
+        assert op_tx3 in pool3.operators
+        assert op_rx4 in pool4.operators
+        assert op_tx4 in pool4.operators
+        assert op_rx5 in pool5.operators
+        assert op_tx5 in pool5.operators
 
         assert "gxf_typename: nvidia::gxf::ThreadPool" in repr(pool1)
         assert "operators in pool" in repr(pool1)
@@ -796,8 +846,6 @@ class TestFragment:
 
 class TestApplication:
     def test_init(self):
-        import sys
-
         # Note that executing the following code (Application()) under PyTest can cause a segfault
         # if Application.__init__() in python/holoscan/core/__init__.py raises an exception before
         # calling '_Application.__init__(self, *args, **kwargs)',
@@ -828,8 +876,6 @@ class TestApplication:
         assert repr(CLIOptions()) == repr(app.options)
 
     def test_init_with_argv(self):
-        import sys
-
         app = Application([])
         assert app.argv == sys.argv
 
@@ -1158,9 +1204,6 @@ class TestIOTypeRegistry:
         assert "PyObject" in registered_types
 
     def test_holoviz_registered_types(self):
-        # import HolovizOp to ensure its associated types will have been registered
-        from holoscan.operators import HolovizOp  # noqa: F401
-
         registered_types = io_type_registry.registered_types()
         assert "std::shared_ptr<nvidia::gxf::Pose3D>" in registered_types
         assert "std::shared_ptr<std::array<float, 16>>" in registered_types

@@ -56,7 +56,9 @@ void StdEntitySerializer::initialize() {
     auto component_serializer =
         frag->make_resource<holoscan::StdComponentSerializer>("std_component_serializer");
     component_serializer->gxf_cname(component_serializer->name().c_str());
-    if (gxf_eid_ != 0) { component_serializer->gxf_eid(gxf_eid_); }
+    if (gxf_eid_ != 0) {
+      component_serializer->gxf_eid(gxf_eid_);
+    }
     add_arg(Arg("component_serializers") =
                 std::vector<std::shared_ptr<Resource>>{component_serializer});
   } else {

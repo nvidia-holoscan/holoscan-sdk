@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +46,8 @@ struct YAML::convert<ThrowMethod> {
   }
 
   static bool decode(const Node& node, ThrowMethod& rhs) {
-    if (!node.IsScalar()) return false;
+    if (!node.IsScalar())
+      return false;
     uint8_t throw_method = node.as<uint8_t>();
     if (throw_method <= static_cast<uint8_t>(ThrowMethod::kNone)) {
       rhs = static_cast<ThrowMethod>(throw_method);

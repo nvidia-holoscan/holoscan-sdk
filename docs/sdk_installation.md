@@ -83,11 +83,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.4.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -196,7 +196,7 @@ For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia
 |  | NGC dev Container | Debian Package | Python Wheels |
 |---|:---:|:---:|:---:|
 | Runtime libraries | **Included** | **Included** | **Included** |
-| Python module | 3.10 | N/A | **3.9 to 3.12** |
+| Python module | 3.10 | N/A | **3.10 to 3.13** |
 | C++ headers and<br>CMake config | **Included** | **Included** | N/A |
 | Examples (+ source) | **Included** | **Included** | [retrieve from<br>GitHub][examples] |
 | Sample datasets | **Included** | [retrieve from<br>NGC][data] | [retrieve from<br>NGC][data] |

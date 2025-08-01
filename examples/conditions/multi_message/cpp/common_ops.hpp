@@ -35,7 +35,9 @@ class StringTxOp : public Operator {
   void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
     auto value = std::make_shared<std::string>(message_);
-    if (verbose_) { HOLOSCAN_LOG_INFO("{}: sending message", name()); }
+    if (verbose_) {
+      HOLOSCAN_LOG_INFO("{}: sending message", name());
+    }
     op_output.emit(std::move(value), "out");
   };
 

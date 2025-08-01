@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +46,31 @@ ops : Operator or list[Operator]
     The operator(s) to add to the thread pool.
 pin_operator : bool, optional
     If True, the operator(s) will be pinned to a specific thread in the pool.
+pin_cores : list[int], optional
+    CPU core IDs to pin the worker thread to. Empty list means no core pinning. Default is empty list.
+)doc")
+
+PYDOC(add_realtime, R"doc(
+Assign an operator to use the thread pool with real-time scheduling capabilities.
+
+Parameters
+----------
+op : Operator
+    The operator to add to the thread pool.
+pin_operator : bool, optional
+    If True, the operator will be pinned to a specific thread in the pool. Default is True.
+pin_cores : list[int], optional
+    CPU core IDs to pin the worker thread to. Empty list means no core pinning. Default is empty list.
+sched_policy : SchedulingPolicy, optional
+    Real-time scheduling policy. Default is SchedulingPolicy.UNSPECIFIED.
+sched_priority : int, optional
+    Thread priority for FirstInFirstOut and RoundRobin policies. Default is 0.
+sched_runtime : int, optional
+    Expected worst case execution time in nanoseconds for Deadline policy. Default is 0.
+sched_deadline : int, optional
+    Relative deadline in nanoseconds for Deadline policy. Default is 0.
+sched_period : int, optional
+    Period in nanoseconds for Deadline policy. Default is 0.
 )doc")
 
 PYDOC(operators, R"doc(

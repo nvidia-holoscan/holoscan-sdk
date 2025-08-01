@@ -46,28 +46,36 @@
                          __FILE__,                                                    \
                          GxfResultStr(code),                                          \
                          static_cast<int>(code));                                     \
-      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) { PrettyPrintBacktrace(); }     \
+      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) {                               \
+        PrettyPrintBacktrace();                                                       \
+      }                                                                               \
     }                                                                                 \
     code;                                                                             \
   })
 
-#define HOLOSCAN_GXF_CALL_FATAL(stmt)                                                 \
-  {                                                                                   \
-    gxf_result_t code = HOLOSCAN_GXF_CALL(stmt);                                      \
-    if (code != GXF_SUCCESS) { throw std::runtime_error("failure during GXF call"); } \
+#define HOLOSCAN_GXF_CALL_FATAL(stmt)                      \
+  {                                                        \
+    gxf_result_t code = HOLOSCAN_GXF_CALL(stmt);           \
+    if (code != GXF_SUCCESS) {                             \
+      throw std::runtime_error("failure during GXF call"); \
+    }                                                      \
   }
 
-#define HOLOSCAN_GXF_CALL_MSG(stmt, ...)                          \
-  ({                                                              \
-    gxf_result_t code = HOLOSCAN_GXF_CALL(stmt);                  \
-    if (code != GXF_SUCCESS) { HOLOSCAN_LOG_ERROR(__VA_ARGS__); } \
-    code;                                                         \
+#define HOLOSCAN_GXF_CALL_MSG(stmt, ...)         \
+  ({                                             \
+    gxf_result_t code = HOLOSCAN_GXF_CALL(stmt); \
+    if (code != GXF_SUCCESS) {                   \
+      HOLOSCAN_LOG_ERROR(__VA_ARGS__);           \
+    }                                            \
+    code;                                        \
   })
 
-#define HOLOSCAN_GXF_CALL_MSG_FATAL(stmt, ...)                                        \
-  {                                                                                   \
-    gxf_result_t code = HOLOSCAN_GXF_CALL_MSG(stmt, __VA_ARGS__);                     \
-    if (code != GXF_SUCCESS) { throw std::runtime_error("failure during GXF call"); } \
+#define HOLOSCAN_GXF_CALL_MSG_FATAL(stmt, ...)                    \
+  {                                                               \
+    gxf_result_t code = HOLOSCAN_GXF_CALL_MSG(stmt, __VA_ARGS__); \
+    if (code != GXF_SUCCESS) {                                    \
+      throw std::runtime_error("failure during GXF call");        \
+    }                                                             \
   }
 
 // Duplicate of HOLOSCAN_GXF_CALL but without a backtrace and logs a warning instead of an error.
@@ -86,11 +94,13 @@
   })
 
 // Duplicate of HOLOSCAN_GXF_CALL_MSG but logs a warning instead of an error.
-#define HOLOSCAN_GXF_CALL_WARN_MSG(stmt, ...)                    \
-  ({                                                             \
-    gxf_result_t code = HOLOSCAN_GXF_CALL_WARN(stmt);            \
-    if (code != GXF_SUCCESS) { HOLOSCAN_LOG_WARN(__VA_ARGS__); } \
-    code;                                                        \
+#define HOLOSCAN_GXF_CALL_WARN_MSG(stmt, ...)         \
+  ({                                                  \
+    gxf_result_t code = HOLOSCAN_GXF_CALL_WARN(stmt); \
+    if (code != GXF_SUCCESS) {                        \
+      HOLOSCAN_LOG_WARN(__VA_ARGS__);                 \
+    }                                                 \
+    code;                                             \
   })
 
 // Formatters for GXF types
@@ -183,7 +193,9 @@ inline gxf_uid_t find_component_handle(gxf_context_t context, gxf_uid_t componen
   if (pos == std::string::npos) {
     // Get the entity of this component
     const gxf_result_t result_1 = GxfComponentEntity(context, component_uid, &eid);
-    if (result_1 != GXF_SUCCESS) { return 0; }
+    if (result_1 != GXF_SUCCESS) {
+      return 0;
+    }
     component_name = tag;
   } else {
     component_name = tag.substr(pos + 1);
@@ -229,7 +241,9 @@ inline gxf_uid_t find_component_handle(gxf_context_t context, gxf_uid_t componen
   // Get the type id of the component we are are looking for.
   gxf_tid_t tid;
   const gxf_result_t result_2 = GxfComponentTypeId(context, ::nvidia::TypenameAsString<S>(), &tid);
-  if (result_2 != GXF_SUCCESS) { return 0; }
+  if (result_2 != GXF_SUCCESS) {
+    return 0;
+  }
 
   // Find the component in the indicated entity
   gxf_uid_t cid;

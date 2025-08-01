@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +47,9 @@ std::string remove_ignored_errors(const std::string& captured_error) {
   }
 
   std::string result;
-  for (const std::string& line : err_lines) { result += line + "\n"; }
+  for (const std::string& line : err_lines) {
+    result += line + "\n";
+  }
 
   return result;
 }

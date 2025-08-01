@@ -59,7 +59,9 @@ class PyMessageAvailableCondition : public MessageAvailableCondition {
             ArgList{Arg{"min_size", min_size}, Arg{"front_stage_max_size", front_stage_max_size}}) {
     name_ = name;
     fragment_ = fragment;
-    if (receiver.has_value()) { this->add_arg(Arg("receiver", receiver.value())); }
+    if (receiver.has_value()) {
+      this->add_arg(Arg("receiver", receiver.value()));
+    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }

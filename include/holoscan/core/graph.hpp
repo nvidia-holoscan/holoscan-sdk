@@ -20,11 +20,13 @@
 
 #include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "./common.hpp"
@@ -160,6 +162,15 @@ class Graph {
   virtual std::vector<NodeType> get_next_nodes(const NodeType& node) const = 0;
 
   /**
+   * @brief Get the outdegree of a given node of a given port.
+   *
+   * @param node A node in the graph.
+   * @param port_name The name of the port in the given node.
+   * @return The outdegree of the given node of the given port.
+   */
+  virtual size_t get_outdegree(const NodeType& node, const std::string& port_name) const = 0;
+
+  /**
    * @brief Find a node in the graph that satisfies the given predicate.
    * @param pred A predicate.
    * @return The node if found, otherwise nullptr.
@@ -209,6 +220,33 @@ class Graph {
    * @param node The node to remove.
    */
   virtual void remove_node(const NodeType& node) = 0;
+
+  /**
+   * @brief Get port connectivity maps for the graph.
+   *
+   * Returns a pair of two maps:
+   * 1. Input ports to connected output ports mapping
+   * 2. Output ports to connected input ports mapping
+   *
+   * Each port is identified by a unique string.
+   *
+   * @return A pair containing (input_to_output_map, output_to_input_map) where:
+   *         - input_to_output_map: Maps input port IDs to lists of connected output port IDs
+   *         - output_to_input_map: Maps output port IDs to lists of connected input port IDs
+   */
+  virtual std::pair<std::map<std::string, std::vector<std::string>>,
+                    std::map<std::string, std::vector<std::string>>>
+  get_port_connectivity_maps() const = 0;
+
+  /**
+   * @brief Get a YAML-formatted description of the port connectivity maps.
+   *
+   * Returns a human-readable YAML string that describes the port connectivity
+   * of the graph.
+   *
+   * @return A YAML-formatted string describing the port connectivity maps
+   */
+  virtual std::string port_map_description() const = 0;
 
  protected:
   void* context_ = nullptr;  ///< The context.

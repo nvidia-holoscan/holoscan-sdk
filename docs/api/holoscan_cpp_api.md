@@ -152,6 +152,8 @@
 #### Resources
 
 - {ref}`exhale_class_classholoscan_1_1Allocator`
+- {ref}`exhale_class_classholoscan_1_1AsyncBufferReceiver`
+- {ref}`exhale_class_classholoscan_1_1AsyncBufferTransmitter`
 - {ref}`exhale_class_classholoscan_1_1BlockMemoryPool`
 - {ref}`exhale_class_classholoscan_1_1Clock`
 - {ref}`exhale_class_classholoscan_1_1CudaAllocator`
@@ -197,9 +199,12 @@
 
 ### Data Logging
 
+- {ref}`exhale_class_classholoscan_1_1AsyncDataLoggerResource`
 - {ref}`exhale_class_classholoscan_1_1DataLogger`
 - {ref}`exhale_class_classholoscan_1_1DataLoggerResource`
+- {ref}`exhale_class_classholoscan_1_1data__loggers_1_1AsyncConsoleLogger`
 - {ref}`exhale_class_classholoscan_1_1data__loggers_1_1BasicConsoleLogger`
+- {ref}`exhale_class_classholoscan_1_1data__loggers_1_1GXFConsoleLogger`
 - {ref}`exhale_class_classholoscan_1_1data__loggers_1_1SimpleTextSerializer`
 
 ### Domain Objects
@@ -232,6 +237,7 @@
 ## Enums
 
 - {ref}`exhale_enum_allocator_8hpp_1a8b7f69b7437dab3499a14e35a5d72c75`
+- {ref}`exhale_enum_async__data__logger_8hpp_1ace081bd64ef21138375cad458fcebba8`
 - {ref}`exhale_enum_arg_8hpp_1a797fe63fdfc22e0260d6d44b85f0d9f9`
 - {ref}`exhale_enum_arg_8hpp_1af4a95575587845846f8c58fa49bab5ab`
 - {ref}`exhale_enum_condition_8hpp_1a5dc906177a4609bd59caa475ba7cdb30`
@@ -279,7 +285,7 @@
 - {ref}`exhale_function_io__context_8hpp_1a24d0b14ea7aaf76c7505e5f3b707afc8`
 
 ## Typedefs
-
+- {ref}`exhale_typedef_cpu__thread_8hpp_1a6db9bbcd2dc267ea27fcd162b70b14ed`
 - {ref}`exhale_typedef_expected_8hpp_1a21751b7658eb9233f58d9a5a4f2c1bb3`
 - {ref}`exhale_typedef_expected_8hpp_1a8c29243ec7fdd4aef7d935f0c72dc3f2`
 - {ref}`exhale_typedef_expected_8hpp_1add9f49110f4c6595e76137d1481cc95e`

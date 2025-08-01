@@ -45,7 +45,9 @@ TEST(MultipleRunApp, TestMultipleRunApp) {
   testing::internal::CaptureStderr();
 
   // Run the app multiple times
-  for (int i = 0; i < num_runs; i++) { app->run(); }
+  for (int i = 0; i < num_runs; i++) {
+    app->run();
+  }
 
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"

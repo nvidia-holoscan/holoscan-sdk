@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,11 +39,15 @@ TEST_P(VSync, Modes) {
   }
 
   GLFWmonitor* const monitor = glfwGetPrimaryMonitor();
-  if (monitor == nullptr) { GTEST_SKIP() << "No monitor connected, skipping test."; }
+  if (monitor == nullptr) {
+    GTEST_SKIP() << "No monitor connected, skipping test.";
+  }
   const GLFWvidmode* const video_mode = glfwGetVideoMode(monitor);
   ASSERT_TRUE(video_mode != nullptr);
   // when running with Xvfb the refresh rate is zero, skip the test
-  if (video_mode->refreshRate == 0) { GTEST_SKIP() << "Refresh rate is zero, skipping test."; }
+  if (video_mode->refreshRate == 0) {
+    GTEST_SKIP() << "Refresh rate is zero, skipping test.";
+  }
 
   viz::PresentMode present_mode = GetParam();
 

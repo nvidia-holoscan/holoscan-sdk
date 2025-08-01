@@ -344,10 +344,11 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     columns = buffer_info.width;
     in_color_planes = buffer_info.color_planes;
 
+    bool is_cuda_managed = in_memory_storage_type == nvidia::gxf::MemoryStorageType::kCudaManaged;
     // If the buffer is in host memory, copy it to a device (GPU) buffer
     // as needed for the NPP resize/convert operations.
     if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem ||
-        in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost) {
+        in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost || is_cuda_managed) {
       uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(in_primitive_type);
       size_t buffer_size = static_cast<size_t>(rows) * columns * in_channels * element_size;
       if (buffer_size > device_scratch_buffer_->size()) {
@@ -358,11 +359,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
               fmt::format("Failed to allocate device scratch buffer ({} bytes)", buffer_size));
         }
       }
-      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(device_scratch_buffer_->pointer(),
-                                                frame->pointer(),
-                                                buffer_size,
-                                                cudaMemcpyHostToDevice),
-                                     "Failed to copy input data to device scratch buffer");
+
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(
+          cudaMemcpy(device_scratch_buffer_->pointer(),
+                     frame->pointer(),
+                     buffer_size,
+                     is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyHostToDevice),
+          "Failed to copy input data to device scratch buffer");
       in_tensor_data = device_scratch_buffer_->pointer();
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
     }
@@ -415,8 +418,9 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
                       stride_string));
     }
 
+    bool is_cuda_managed = in_memory_storage_type == nvidia::gxf::MemoryStorageType::kCudaManaged;
     if (in_memory_storage_type == nvidia::gxf::MemoryStorageType::kSystem ||
-        in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost) {
+        in_memory_storage_type == nvidia::gxf::MemoryStorageType::kHost || is_cuda_managed) {
       uint32_t element_size = nvidia::gxf::PrimitiveTypeSize(in_primitive_type);
       size_t buffer_size = static_cast<size_t>(rows) * columns * in_channels * element_size;
 
@@ -433,7 +437,7 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
           cudaMemcpy(static_cast<void*>(device_scratch_buffer_->pointer()),
                      static_cast<const void*>(in_tensor_gxf.pointer()),
                      buffer_size,
-                     cudaMemcpyHostToDevice),
+                     is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyHostToDevice),
           "Failed to copy input data to device scratch buffer");
       in_tensor_data = device_scratch_buffer_->pointer();
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
@@ -447,7 +451,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
   }
 
   if (in_memory_storage_type != nvidia::gxf::MemoryStorageType::kDevice &&
-      in_memory_storage_type != nvidia::gxf::MemoryStorageType::kHost) {
+      in_memory_storage_type != nvidia::gxf::MemoryStorageType::kHost &&
+      in_memory_storage_type != nvidia::gxf::MemoryStorageType::kCudaManaged) {
     throw std::runtime_error(fmt::format(
         "Tensor('{}') or VideoBuffer was not allocated via CUDA APIs.\n", in_tensor_name_.get()));
   }
@@ -492,7 +497,9 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
                                      in_primitive_type,
                                      resize_width_,
                                      resize_height_);
-    if (!resize_result) { throw std::runtime_error("Failed to resize image.\n"); }
+    if (!resize_result) {
+      throw std::runtime_error("Failed to resize image.\n");
+    }
 
     // Update the tensor pointer and shape
     out_shape = nvidia::gxf::Shape{resize_height_, resize_width_, out_channels};
@@ -554,9 +561,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
                         nvidia::gxf::ComputeTrivialStrides(out_shape, dst_typesize)}},
                       false);
 
-  if (!out_message) { throw std::runtime_error("failed to create out_message"); }
+  if (!out_message) {
+    throw std::runtime_error("failed to create out_message");
+  }
   const auto out_tensor = out_message.value().get<nvidia::gxf::Tensor>();
-  if (!out_tensor) { throw std::runtime_error("failed to create out_tensor"); }
+  if (!out_tensor) {
+    throw std::runtime_error("failed to create out_tensor");
+  }
 
   // Set tensor to constant using NPP
   if (in_channels == 2 || in_channels == 3 || in_channels == 4) {
@@ -653,7 +664,9 @@ nvidia::gxf::Expected<void*> FormatConverterOp::resizeImage(
       break;
   }
 
-  if (status != NPP_SUCCESS) { return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr); }
+  if (status != NPP_SUCCESS) {
+    return nvidia::gxf::ExpectedOrCode(GXF_FAILURE, nullptr);
+  }
 
   return nvidia::gxf::ExpectedOrCode(GXF_SUCCESS, converted_tensor_ptr);
 }
@@ -726,7 +739,9 @@ void FormatConverterOp::convertTensorFormat(
         if (out_channel_order.size() != 4) {
           throw std::runtime_error("Invalid channel order for RGBA8888.");
         }
-        for (int i = 0; i < 4; i++) { dst_order[i] = out_channel_order[i]; }
+        for (int i = 0; i < 4; i++) {
+          dst_order[i] = out_channel_order[i];
+        }
       }
       status = nppiSwapChannels_8u_C3C4R_Ctx(in_tensor_ptr,
                                              src_step,
@@ -747,7 +762,9 @@ void FormatConverterOp::convertTensorFormat(
         if (out_channel_order.size() != 3) {
           throw std::runtime_error("Invalid channel order for RGB888.");
         }
-        for (int i = 0; i < 3; i++) { dst_order[i] = out_channel_order[i]; }
+        for (int i = 0; i < 3; i++) {
+          dst_order[i] = out_channel_order[i];
+        }
       }
       status = nppiSwapChannels_8u_C4C3R_Ctx(
           in_tensor_ptr, src_step, out_tensor_ptr, dst_step, roi, dst_order, npp_stream_ctx_);
@@ -778,7 +795,9 @@ void FormatConverterOp::convertTensorFormat(
         if (out_channel_order.size() != 3) {
           throw std::runtime_error("Invalid channel order for RGB888");
         }
-        for (int i = 0; i < 3; i++) { dst_order[i] = out_channel_order[i]; }
+        for (int i = 0; i < 3; i++) {
+          dst_order[i] = out_channel_order[i];
+        }
       }
 
       const int32_t channel_buffer_step = columns * out_channels * src_typesize;
@@ -965,7 +984,9 @@ void FormatConverterOp::convertTensorFormat(
               throw std::runtime_error(
                   fmt::format("Invalid channel order for {}", out_dtype_str_.get()));
             }
-            for (int i = 0; i < 3; i++) { dst_order[i] = out_channel_order[i]; }
+            for (int i = 0; i < 3; i++) {
+              dst_order[i] = out_channel_order[i];
+            }
             switch (out_primitive_type_) {
               case nvidia::gxf::PrimitiveType::kUnsigned8: {
                 auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
@@ -992,7 +1013,9 @@ void FormatConverterOp::convertTensorFormat(
               throw std::runtime_error(
                   fmt::format("Invalid channel order for {}", out_dtype_str_.get()));
             }
-            for (int i = 0; i < 4; i++) { dst_order[i] = out_channel_order[i]; }
+            for (int i = 0; i < 4; i++) {
+              dst_order[i] = out_channel_order[i];
+            }
             switch (out_primitive_type_) {
               case nvidia::gxf::PrimitiveType::kUnsigned8: {
                 auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
@@ -1014,7 +1037,9 @@ void FormatConverterOp::convertTensorFormat(
             break;
           }
         }
-        if (status != NPP_SUCCESS) { throw std::runtime_error("Failed to convert channel order"); }
+        if (status != NPP_SUCCESS) {
+          throw std::runtime_error("Failed to convert channel order");
+        }
       }
     }
     default:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,7 +100,9 @@ bool CudaService::IsMultiGPU() const {
 
 bool CudaService::IsMemOnDevice(CUdeviceptr device_ptr) const {
   // if not MGPU, memory is always on the same device
-  if (!impl_->is_mgpu_) { return true; }
+  if (!impl_->is_mgpu_) {
+    return true;
+  }
   // else check the memory location
   int mem_device_ordinal;
   CudaCheck(
@@ -188,7 +190,9 @@ CUstream CudaService::select_cuda_stream(CUstream stream) {
 /*static*/ void CudaService::sync_with_selected_stream(CUstream ext_stream,
                                                        CUstream selected_stream) {
   // nothing to do if the external stream had been selected
-  if (ext_stream == selected_stream) { return; }
+  if (ext_stream == selected_stream) {
+    return;
+  }
 
   // synchronize the external stream with our selected stream, this time we don't need to get
   // the stream context since we record the event on our internal stream.

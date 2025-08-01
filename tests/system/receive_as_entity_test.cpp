@@ -107,7 +107,9 @@ class PingEntityRxOp : public holoscan::Operator {
       int vector_size = 0;
       while (true) {
         auto maybe_value = op_input.receive<ReceiveTypeT>("receivers");
-        if (!maybe_value) { break; }
+        if (!maybe_value) {
+          break;
+        }
         if (typeid(maybe_value.value()) != typeid(ReceiveTypeT)) {
           HOLOSCAN_LOG_ERROR("Received wrong entity type: {}", typeid(maybe_value.value()).name());
           break;

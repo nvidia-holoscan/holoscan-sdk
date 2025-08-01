@@ -2,11 +2,12 @@
 
 BasedOnStyle: Google
 ColumnLimit: 100
-AllowShortBlocksOnASingleLine: Always
+AllowShortBlocksOnASingleLine: Never
 AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: Always
+AllowShortIfStatementsOnASingleLine: false
 AllowShortLambdasOnASingleLine: All
-AllowShortLoopsOnASingleLine: true
+AllowShortLoopsOnASingleLine: false
+NamespaceIndentation: None
 
 # Google style doesn't specify a pointer and reference whitespace alignment: it allows both but
 # recommends consistency. We chose to enforce the style for pointers and references to be on the

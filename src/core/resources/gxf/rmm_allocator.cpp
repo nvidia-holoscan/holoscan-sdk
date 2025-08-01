@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,20 +49,28 @@ RMMAllocator::RMMAllocator(const std::string& name, nvidia::gxf::RMMAllocator* c
   device_memory_initial_size_ = maybe_device_initial.value();
 
   auto maybe_device_max = component->getParameter<std::string>("device_memory_max_size");
-  if (!maybe_device_max) { throw std::runtime_error("Failed to get device_memory_max_size"); }
+  if (!maybe_device_max) {
+    throw std::runtime_error("Failed to get device_memory_max_size");
+  }
   device_memory_max_size_ = maybe_device_max.value();
 
   auto maybe_host_initial = component->getParameter<std::string>("host_memory_initial_size");
-  if (!maybe_host_initial) { throw std::runtime_error("Failed to get host_memory_initial_size"); }
+  if (!maybe_host_initial) {
+    throw std::runtime_error("Failed to get host_memory_initial_size");
+  }
   host_memory_initial_size_ = maybe_host_initial.value();
 
   auto maybe_host_max = component->getParameter<std::string>("host_memory_max_size");
-  if (!maybe_host_max) { throw std::runtime_error("Failed to get host_memory_max_size"); }
+  if (!maybe_host_max) {
+    throw std::runtime_error("Failed to get host_memory_max_size");
+  }
   host_memory_max_size_ = maybe_host_max.value();
 
   auto maybe_gpu_device =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
-  if (!maybe_gpu_device) { throw std::runtime_error("Failed to get dev_id"); }
+  if (!maybe_gpu_device) {
+    throw std::runtime_error("Failed to get dev_id");
+  }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();
 }

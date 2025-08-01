@@ -48,6 +48,7 @@ void init_io_spec(py::module_& m) {
   py::enum_<IOSpec::ConnectorType>(iospec, "ConnectorType", doc::ConnectorType::doc_ConnectorType)
       .value("DEFAULT", IOSpec::ConnectorType::kDefault)
       .value("DOUBLE_BUFFER", IOSpec::ConnectorType::kDoubleBuffer)
+      .value("ASYNC_BUFFER", IOSpec::ConnectorType::kAsyncBuffer)
       .value("UCX", IOSpec::ConnectorType::kUCX);
 
   py::enum_<IOSpec::QueuePolicy>(iospec, "QueuePolicy", doc::QueuePolicy::doc_QueuePolicy)
